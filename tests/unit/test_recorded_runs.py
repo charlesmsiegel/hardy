@@ -46,7 +46,7 @@ class _Runtime:
 def _batch(tmp_path: Path, script, *, wall_seconds: float = 300.0, name: str = 'run') -> Path:
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -75,14 +75,14 @@ def _rewrite(path: Path, **fields) -> None:
 
 
 def test_a_verified_batch_run_is_self_consistent(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
 
     assert acceptance.validate_batch_consistency(_verified(tmp_path)) == ()
     assert acceptance.validate_recorded_run(_verified(tmp_path / 'again')) == ()
 
 
 def test_an_honest_failure_is_self_consistent_too(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
 
     assert json.loads((output / 'result.json').read_text())['terminal_reason'] == 'no_proof_submitted'
@@ -92,7 +92,7 @@ def test_an_honest_failure_is_self_consistent_too(tmp_path) -> None:
 def test_a_proof_lean_the_result_does_not_describe_is_refused(tmp_path) -> None:
     """The file a reader rechecks must be the request's declaration, the
     result's proof, and the audit line -- byte for byte."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     proof = output / 'proof.lean'
     proof.write_text(proof.read_text(encoding='utf-8').replace('True.intro', 'trivial'), encoding='utf-8')
@@ -106,7 +106,7 @@ def test_a_verdict_the_lean_output_does_not_support_is_refused(tmp_path) -> None
     """The audit verdict in `result.json` must match the axiom line Lean
     printed, as the trajectory kept it. A verdict is the model's run's own
     account; the line is Lean's."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     result = json.loads((output / 'result.json').read_text(encoding='utf-8'))
     result['axioms']['declarations'][0]['axioms'] = ['propext']
@@ -118,7 +118,7 @@ def test_a_verdict_the_lean_output_does_not_support_is_refused(tmp_path) -> None
 
 
 def test_a_run_without_a_toolchain_identity_is_a_story_not_evidence(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     unrecorded = {'unrecorded': 'a pinned Lean environment needs lean_project set'}
     _rewrite(output / 'trajectory.json', toolchain=unrecorded)
@@ -131,7 +131,7 @@ def test_a_run_without_a_toolchain_identity_is_a_story_not_evidence(tmp_path) ->
 
 def test_a_usage_field_that_is_absent_rather_than_null_is_refused(tmp_path) -> None:
     """A figure nobody reported is `None`. A key that is missing reads as free."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     for name in ('result.json', 'trajectory.json'):
         payload = json.loads((output / name).read_text(encoding='utf-8'))
@@ -147,7 +147,7 @@ def test_a_wall_clock_cancelled_run_may_not_claim_a_turn_count(tmp_path) -> None
     """The provider's count arrives with its final result, which a run Hardy's
     clock cancelled never receives -- a real-run behaviour the record encodes
     rather than rediscovers."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
@@ -169,7 +169,7 @@ def test_a_wall_clock_cancelled_run_may_not_claim_a_turn_count(tmp_path) -> None
 
 
 def test_a_verified_grade_with_no_proof_file_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     (output / 'proof.lean').unlink()
 
@@ -179,7 +179,7 @@ def test_a_verified_grade_with_no_proof_file_is_refused(tmp_path) -> None:
 
 
 def test_a_failed_run_that_left_a_proof_file_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
     shutil.copy(_verified(tmp_path / 'other') / 'proof.lean', output / 'proof.lean')
 
@@ -191,7 +191,7 @@ def test_a_failed_run_that_left_a_proof_file_is_refused(tmp_path) -> None:
 def test_the_deterministic_fixture_is_not_mistaken_for_a_recorded_run(tmp_path) -> None:
     """The no-model fixture is self-consistent and is not evidence: it opened
     no provider thread and elaborated nothing. A recorded run owes both."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     config_module = importlib.import_module('hardy.config')
     config = config_module.Config(
         model='deterministic-no-model',
@@ -214,7 +214,7 @@ def test_the_deterministic_fixture_is_not_mistaken_for_a_recorded_run(tmp_path) 
 
 
 def test_a_directory_that_is_not_a_run_says_so(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
 
     assert acceptance.validate_recorded_run(tmp_path) == (
         'not a Hardy run directory: neither manifest.json nor result.json is here',
@@ -237,7 +237,7 @@ def test_accept_recorded_audits_directories_and_runs_nothing(tmp_path, capsys) -
 def test_a_writeup_naming_another_toolchain_is_refused(tmp_path) -> None:
     """Nothing hashes a batch writeup, so the human-facing copy is compared
     with the record rather than trusted beside it."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     writeup = output / 'writeup.md'
     writeup.write_text(
@@ -254,10 +254,10 @@ def test_a_submission_accepted_after_the_deadline_is_read_as_discarded(tmp_path)
     so an honest timed-out run with a late kernel-accepted submission passes."""
     import time
 
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -287,7 +287,7 @@ def test_a_submission_accepted_after_the_deadline_is_read_as_discarded(tmp_path)
 def test_an_axiom_line_recorded_for_another_source_is_not_a_witness(tmp_path) -> None:
     """The runner records the hash of what each check elaborated. An accepted
     event about some other source cannot vouch for `proof.lean`."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     for event in trajectory['events']:
@@ -301,7 +301,7 @@ def test_an_axiom_line_recorded_for_another_source_is_not_a_witness(tmp_path) ->
 
 
 def test_a_record_that_is_json_but_not_an_object_is_a_finding(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     (output / 'result.json').write_text('[]\n', encoding='utf-8')
 
@@ -311,7 +311,7 @@ def test_a_record_that_is_json_but_not_an_object_is_a_finding(tmp_path) -> None:
 
 
 def test_a_writeup_about_another_statement_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     writeup = output / 'writeup.md'
     writeup.write_text(
@@ -327,7 +327,7 @@ def test_a_writeup_about_another_statement_is_refused(tmp_path) -> None:
 def test_a_directory_holding_one_run_is_audited_as_that_run(tmp_path) -> None:
     """A staged run lives one level below the directory a reader names, so
     `hardy accept --recorded acceptance/recorded/*` has to reach it."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     parent = tmp_path / 'prove-verified'
     _batch(parent, [('submit_proof', {'proof': 'by exact True.intro'})], name='20260901-run')
 
@@ -340,7 +340,7 @@ def test_a_directory_holding_one_run_is_audited_as_that_run(tmp_path) -> None:
 def test_a_discarded_acceptance_cannot_be_the_proof_a_verified_grade_rests_on(tmp_path) -> None:
     """The runner would not have graded a submission it discarded, so a record
     that grades one is inconsistent however sound the axiom line beside it."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     index = next(
@@ -358,7 +358,7 @@ def test_a_discarded_acceptance_cannot_be_the_proof_a_verified_grade_rests_on(tm
 def test_a_staged_manifest_cannot_state_fewer_exchanges_than_the_provider_reported(tmp_path) -> None:
     """The manifest is covered by no hash of its own; the provider's result
     events in the trajectory are what its spend is held to."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     domain = importlib.import_module('hardy.workflows.contracts')
     from datetime import UTC, datetime
     from uuid import UUID
@@ -387,7 +387,7 @@ def test_a_staged_manifest_cannot_state_fewer_exchanges_than_the_provider_report
 def test_a_discard_marker_condemns_only_the_submission_it_precedes(tmp_path) -> None:
     """`tool(on-time), discarded, tool(late)` is what the runner writes when a
     valid acceptance is followed by a late one; the valid one still stands."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     index = next(
@@ -405,7 +405,7 @@ def test_a_discard_marker_condemns_only_the_submission_it_precedes(tmp_path) -> 
 def test_a_failure_reason_needs_the_event_that_caused_it(tmp_path) -> None:
     """A completed run relabelled as starved would otherwise pass on its
     labels alone, with a trajectory that shows no deadline ever fired."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
@@ -454,7 +454,7 @@ def _staged_record(tmp_path, kinds_with_phase, log_text: str | None = None):
 def test_a_reader_on_the_formalizers_provider_session_is_not_independent(tmp_path) -> None:
     """One session id across the formalizer and the reader leaves open that
     the reader inherited the conversation which wrote the translation."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     run_dir, manifest = _staged_record(
         tmp_path,
         [('claude.result', 'proving', 'shared'), ('claude.result', 'awaiting_approval', 'shared'), ('claude.result', 'proving', 'shared')],
@@ -466,7 +466,7 @@ def test_a_reader_on_the_formalizers_provider_session_is_not_independent(tmp_pat
 
 
 def test_a_reader_on_its_own_session_passes(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     run_dir, manifest = _staged_record(
         tmp_path,
         [('claude.result', 'proving', 'one'), ('claude.result', 'awaiting_approval', 'two'), ('claude.result', 'proving', 'three')],
@@ -478,7 +478,7 @@ def test_a_reader_on_its_own_session_passes(tmp_path) -> None:
 
 
 def test_a_compiled_document_that_dropped_glyphs_is_refused_by_the_audit(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     run_dir, manifest = _staged_record(
         tmp_path,
         [('claude.result', 'proving', 'one')],
@@ -491,7 +491,7 @@ def test_a_compiled_document_that_dropped_glyphs_is_refused_by_the_audit(tmp_pat
 
 
 def test_a_compiled_document_that_read_host_files_is_refused_by_the_audit(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     run_dir, manifest = _staged_record(
         tmp_path,
         [('claude.result', 'proving', 'one')],
@@ -504,7 +504,7 @@ def test_a_compiled_document_that_read_host_files_is_refused_by_the_audit(tmp_pa
 
 
 def test_a_reader_result_without_a_session_is_not_independence_on_record(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     run_dir, manifest = _staged_record(
         tmp_path,
         [('claude.result', 'proving', 'one'), ('claude.result', 'awaiting_approval', None)],
@@ -518,7 +518,7 @@ def test_a_reader_result_without_a_session_is_not_independence_on_record(tmp_pat
 def test_a_credited_review_with_no_reader_result_is_refused(tmp_path) -> None:
     """The comparison of sessions has nothing to compare when the reader left
     no result event, and silence must not pass as independence."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     domain = importlib.import_module('hardy.workflows.contracts')
 
     run_dir, manifest = _staged_record(tmp_path, [('claude.result', 'proving', 'one')])
@@ -553,7 +553,7 @@ def _with_closers(
 ) -> Path:
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -573,7 +573,7 @@ def _with_closers(
 
 
 def test_a_ladder_that_really_ran_is_self_consistent(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
 
     assert acceptance.validate_batch_consistency(_with_closers(tmp_path)) == ()
 
@@ -581,7 +581,7 @@ def test_a_ladder_that_really_ran_is_self_consistent(tmp_path) -> None:
 def test_a_forged_closed_by_is_refused(tmp_path) -> None:
     """The field exists to say which experimental condition a run was. A field
     nothing cross-checks is a field a record can simply assert."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['closers']['closed_by'] = 'omega'
@@ -593,7 +593,7 @@ def test_a_forged_closed_by_is_refused(tmp_path) -> None:
 
 
 def test_removing_the_ladders_attempts_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['closers']['attempts'] = []
@@ -605,7 +605,7 @@ def test_removing_the_ladders_attempts_is_refused(tmp_path) -> None:
 
 
 def test_claiming_no_model_was_needed_beside_a_model_exchange_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['events'].append({'type': 'result', 'turns': 2, 'cost_usd': 0.1, 'usage': None})
@@ -619,7 +619,7 @@ def test_claiming_no_model_was_needed_beside_a_model_exchange_is_refused(tmp_pat
 def test_deleting_the_decline_does_not_hide_the_model_exchange(tmp_path) -> None:
     """Asked only as "if a turn was declined, does the rest agree", the check
     could be disarmed by deleting the decline itself."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['events'] = [
@@ -637,7 +637,7 @@ def test_deleting_the_decline_does_not_hide_the_model_exchange(tmp_path) -> None
 def test_editing_the_hole_count_out_of_the_writeup_is_refused(tmp_path) -> None:
     """The writeup is the artifact a reader opens, so it is where a partial
     result would most usefully conceal its remaining work."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     writeup = output / 'writeup.md'
     writeup.write_text(
@@ -650,7 +650,7 @@ def test_editing_the_hole_count_out_of_the_writeup_is_refused(tmp_path) -> None:
 
 
 def test_a_disabled_ladder_beside_a_ladder_that_ran_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['closers']['enabled'] = False
@@ -665,7 +665,7 @@ def test_a_record_from_before_closers_existed_still_validates(tmp_path) -> None:
     """The runs this audit is written for are kept evidence from paid
     experiments. A cross-check that cannot be made on them is skipped, not
     faked."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     del trajectory['closers']
@@ -686,7 +686,7 @@ def _sketched(tmp_path: Path, name: str = 'sketch') -> Path:
 
 
 def test_a_kept_sketch_is_self_consistent(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
 
     assert acceptance.validate_batch_consistency(_sketched(tmp_path)) == ()
 
@@ -694,7 +694,7 @@ def test_a_kept_sketch_is_self_consistent(tmp_path) -> None:
 def test_editing_the_holes_out_of_one_copy_is_refused(tmp_path) -> None:
     """A partial result is valid only when its remaining holes are explicit,
     so the three copies have to agree with each other and with Lean."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     result = json.loads((output / 'result.json').read_text(encoding='utf-8'))
     result['sketch']['holes'] = []
@@ -706,7 +706,7 @@ def test_editing_the_holes_out_of_one_copy_is_refused(tmp_path) -> None:
 
 
 def test_a_sketch_lean_never_accepted_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     for name in ('result.json', 'trajectory.json'):
         payload = json.loads((output / name).read_text(encoding='utf-8'))
@@ -719,11 +719,11 @@ def test_a_sketch_lean_never_accepted_is_refused(tmp_path) -> None:
 
 
 def test_a_writeup_with_its_sketch_section_removed_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     writeup = output / 'writeup.md'
     writeup.write_text(
-        writeup.read_text(encoding='utf-8').split(importlib.import_module('hardy.runner').SKETCH_HEADING)[0], encoding='utf-8'
+        writeup.read_text(encoding='utf-8').split(importlib.import_module('hardy.workflows.batch').SKETCH_HEADING)[0], encoding='utf-8'
     )
 
     issues = acceptance.validate_batch_consistency(output)
@@ -732,7 +732,7 @@ def test_a_writeup_with_its_sketch_section_removed_is_refused(tmp_path) -> None:
 
 
 def test_a_verified_run_may_not_record_a_sketch(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
     _rewrite(output / 'result.json', sketch={'proof': 'by sorry', 'holes': []})
     _rewrite(output / 'trajectory.json', sketch={'proof': 'by sorry', 'holes': []})
@@ -747,7 +747,7 @@ def test_a_harness_counted_timeout_may_report_its_turns(tmp_path) -> None:
     receives. A harness-owned loop counts its own provider calls and publishes
     them however the exchange ended, so refusing a count there would fail every
     truthful API-backed timeout."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
@@ -767,7 +767,7 @@ def test_a_harness_counted_timeout_may_report_its_turns(tmp_path) -> None:
 
 
 def test_a_provider_counted_timeout_still_may_not(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
@@ -790,8 +790,8 @@ def test_a_hole_list_that_agrees_with_itself_but_not_with_the_proof_is_refused(t
     """Edited consistently everywhere -- all three artifacts and the event --
     the copies agree with each other and conceal the hole from every one of
     them. Lean's own rule is the only thing outside that agreement."""
-    acceptance = importlib.import_module('hardy.acceptance')
-    runner = importlib.import_module('hardy.runner')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
+    runner = importlib.import_module('hardy.workflows.batch')
     output = _sketched(tmp_path)
     empty = {'proof': 'by sorry', 'holes': []}
     for name in ('result.json', 'trajectory.json'):
@@ -813,7 +813,7 @@ def test_a_hole_list_that_agrees_with_itself_but_not_with_the_proof_is_refused(t
 def test_a_closer_whose_submission_was_refused_may_not_be_credited(tmp_path) -> None:
     """Matching the submission's text alone let a refused attempt stand behind
     a `closed_by`."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path, tactic='nonsense_tactic')
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     # The ladder ran and closed nothing; forge the block to claim it did.
@@ -835,7 +835,7 @@ def test_a_closer_solve_relabelled_as_the_no_closer_condition_is_refused(tmp_pat
     """Blanking the block and deleting one event is all it took: the disabled
     branch returned before the decline check, leaving the signature of a closer
     solve inside a record certified as the no-closer experimental condition."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     closers = importlib.import_module('hardy.formal.closers')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
@@ -857,7 +857,7 @@ def test_a_run_whose_sketch_was_discarded_is_self_consistent(tmp_path) -> None:
     elaborated after the deadline carries the runner's discard marker and is
     not part of the result; counted as accepted, a truthful timeout was
     rejected for "accepting a sketch no record carries"."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _late_sketch(tmp_path)
 
     assert json.loads((output / 'result.json').read_text(encoding='utf-8'))['sketch'] is None
@@ -867,8 +867,8 @@ def test_a_run_whose_sketch_was_discarded_is_self_consistent(tmp_path) -> None:
 def test_a_sketch_swapped_for_another_skeleton_is_refused(tmp_path) -> None:
     """Every other comparison is the record against itself. The tool result's
     `source` is the one thing in the trajectory that came out of Lean."""
-    acceptance = importlib.import_module('hardy.acceptance')
-    runner = importlib.import_module('hardy.runner')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
+    runner = importlib.import_module('hardy.workflows.batch')
     output = _sketched(tmp_path)
     swapped = {'proof': 'by\n  admit', 'holes': [{'keyword': 'admit', 'line': 2, 'column': 2}]}
     for name in ('result.json', 'trajectory.json'):
@@ -894,7 +894,7 @@ def test_a_sketch_swapped_for_another_skeleton_is_refused(tmp_path) -> None:
 def test_a_sketch_with_no_recorded_source_is_refused(tmp_path) -> None:
     """Conditional checks let missing evidence pass. A sketch nothing can tie
     to a Lean run is a sketch with no evidence behind it."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     for event in trajectory['events']:
@@ -909,7 +909,7 @@ def test_a_sketch_with_no_recorded_source_is_refused(tmp_path) -> None:
 
 
 def test_a_sketch_whose_request_cannot_be_rebuilt_is_refused(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['request']['imports'] = []
@@ -924,7 +924,7 @@ def test_rewriting_a_failed_closer_attempt_is_refused(tmp_path) -> None:
     """Only the tactic that closed the statement was bound to a submission, so
     the names and outputs of the failures could be rewritten together while the
     proofs the run actually submitted stayed where they were."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path, tactic='nonsense_tactic')
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     for block in (trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']):
@@ -941,8 +941,8 @@ def test_deleting_the_sketch_fields_does_not_buy_the_legacy_exception(tmp_path) 
     """A trajectory holding an accepted sketch is a record from this code whose
     fields have been removed. Taking the compatibility exception there let the
     human-facing artifact drop every remaining hole."""
-    acceptance = importlib.import_module('hardy.acceptance')
-    runner = importlib.import_module('hardy.runner')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
+    runner = importlib.import_module('hardy.workflows.batch')
     output = _sketched(tmp_path)
     for name in ('result.json', 'trajectory.json'):
         payload = json.loads((output / name).read_text(encoding='utf-8'))
@@ -963,7 +963,7 @@ def test_dropping_a_trailing_closer_attempt_is_refused(tmp_path) -> None:
     could be recertified as the cheaper three-tactic condition by deleting the
     trailing attempts from the block and its duplicated event together, with
     the elaborations the run actually paid for still sitting in the events."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path, tactics=('nonsense_tactic', 'other_nonsense'))
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     blocks = [trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']]
@@ -986,7 +986,7 @@ def test_rewriting_a_closer_diagnostic_is_refused(tmp_path) -> None:
     the block and its duplicated event together while the `submit_proof` that
     produced it kept the real one -- a record saying a tactic failed for a
     reason Lean never gave."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path, tactic='nonsense_tactic')
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     blocks = [trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']]
@@ -1010,10 +1010,10 @@ def test_a_closer_that_landed_late_is_not_a_record_at_odds_with_itself(tmp_path)
     """
     import time
 
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -1071,7 +1071,7 @@ def test_a_malformed_sketch_is_a_finding_rather_than_a_crash(tmp_path) -> None:
     hole, so a truncated or hand-edited record took the audit down with a
     TypeError two comparisons later. "This artifact is invalid" is the finding;
     a crash is the one answer a validator may not give."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     for name in ('result.json', 'trajectory.json'):
         payload = json.loads((output / name).read_text(encoding='utf-8'))
@@ -1084,7 +1084,7 @@ def test_a_malformed_sketch_is_a_finding_rather_than_a_crash(tmp_path) -> None:
 
 
 def test_a_sketch_with_no_proof_is_refused_the_same_way(tmp_path) -> None:
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     for name in ('result.json', 'trajectory.json'):
         payload = json.loads((output / name).read_text(encoding='utf-8'))
@@ -1102,7 +1102,7 @@ def test_a_run_that_asked_no_provider_records_zero_turns(tmp_path) -> None:
     provider was asked and did not report -- so reading it off a runtime that
     was never built turned a measurement into an unknown, and a turn-based
     comparison could not use the run at all."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path, tactic='exact True.intro', name='ladder-only')
 
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
@@ -1127,10 +1127,10 @@ def test_a_zero_budget_run_does_not_blame_closers_that_never_ran(tmp_path) -> No
     record then said the closers had used the whole budget beside a `closers`
     block saying they were disabled -- a false sentence, and one the audit
     reads as evidence that the provider was deliberately unasked."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -1165,7 +1165,7 @@ def test_a_ladder_that_kept_going_past_a_success_is_refused(tmp_path) -> None:
     exactly one attempt succeeds and it is the last. Any other arrangement is a
     record no run could have produced, and a hand-edited or merged trajectory
     could otherwise certify a ladder order and a cost that never happened."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _with_closers(tmp_path, tactics=('nonsense_tactic', 'exact True.intro'))
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     blocks = [trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']]
@@ -1186,7 +1186,7 @@ def test_a_batch_run_records_the_window_it_was_planned_against(tmp_path) -> None
     did not: a batch aimed at a smaller gateway kept appending messages until
     the endpoint refused, and its trajectory did not even say which window had
     shaped the experiment."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [], name='windowed')
 
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
@@ -1200,7 +1200,7 @@ def test_a_batch_run_records_the_window_it_was_planned_against(tmp_path) -> None
 
 
 def test_a_batch_on_a_loop_hardy_owns_is_given_the_compactor(tmp_path) -> None:
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
     request = models.Request.from_dict(
@@ -1234,7 +1234,7 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
     assumptions, but it has the claim it was given and every failed attempt in
     Lean's own words."""
     compaction = importlib.import_module('hardy.agents.compaction')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
     request = models.Request.from_dict(
@@ -1276,7 +1276,7 @@ def test_a_malformed_arguments_value_is_a_finding_rather_than_a_crash(tmp_path) 
     """`or {}` is not a guard: a truthy non-mapping passes through it and
     raises `AttributeError` on `.get`, turning "this record is invalid" into a
     crash -- which is the one answer a validator may not give."""
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _sketched(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     for event in trajectory['events']:
@@ -1296,7 +1296,7 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
     alone would leave the model writing candidates that cannot type-check, with
     no way back to the skeleton the record says Hardy is holding."""
     compaction = importlib.import_module('hardy.agents.compaction')
-    runner = importlib.import_module('hardy.runner')
+    runner = importlib.import_module('hardy.workflows.batch')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
     request = models.Request.from_dict(
@@ -1325,7 +1325,7 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
     summary = rebuilt[0].text
     assert 'Statement' in summary
     assert 'theorem HardyTarget : True' in summary
-    # The skeleton itself, whole. `hardy.summary` indents each line of a
+    # The skeleton itself, whole. `hardy.workflows.interactive.summary` indents each line of a
     # multi-line entry under its heading, so the comparison is against the
     # body rather than against the indentation the renderer adds.
     assert 'Development in hand' in summary
@@ -1338,11 +1338,11 @@ def test_a_summary_with_nothing_held_has_no_development_heading() -> None:
     interactive workspace keeps its Lean on disk, so a heading saying "none"
     would answer a question that surface does not ask.
 
-    The two batch-only sections are the one place `hardy.summary` carries
+    The two batch-only sections are the one place `hardy.workflows.interactive.summary` carries
     something rather than reading it off a workspace, which is why they are the
     only two with no `empty` text.
     """
-    summary_module = importlib.import_module('hardy.summary')
+    summary_module = importlib.import_module('hardy.workflows.interactive.summary')
 
     rendered = summary_module.assemble(
         goal="Show it.",

@@ -40,10 +40,10 @@ def run_session(
         return _run_plain(config, session_factory, reopen=reopen)
 
     from hardy.app.terminal import confirm_assumption
-    from hardy.chat import SchemaError
     from hardy.foundation.files import LayoutError
     from hardy.tui.handlers import build_registry, load_templates
     from hardy.tui.shell import Shell
+    from hardy.workflows.interactive.session import SchemaError
 
     shell = None
     templates, notices = load_templates(config)

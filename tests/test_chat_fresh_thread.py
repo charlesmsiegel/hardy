@@ -21,7 +21,7 @@ from test_chat import FakeChatRuntime, factory
 from test_chat_usage import ReportingRuntime
 from workspace_helpers import events
 
-from hardy.chat import MathematicsSession
+from hardy.workflows.interactive.session import MathematicsSession
 
 SAID = [{"role": "assistant", "content": "Understood."}]
 

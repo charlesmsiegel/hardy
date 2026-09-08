@@ -20,15 +20,15 @@ from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
 from hardy.app.terminal import ConsoleTerminal
-from hardy.chat import MathematicsSession, SchemaError
 from hardy.formal import latency
 from hardy.formal import search as search_tools
 from hardy.formal.closers import CLOSERS
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
-from hardy.runner import WARNING, run
 from hardy.wiring import build_prove_workflow, runtime_factory
 from hardy.workflows import layout
+from hardy.workflows.batch import WARNING, run
+from hardy.workflows.interactive.session import MathematicsSession, SchemaError
 
 
 def choose_project(present: list[str], ask: Callable[[str], str] = input) -> str | None:
@@ -494,7 +494,7 @@ def run_prove(
     workflow_factory: Callable[..., Any] = build_prove_workflow,
     input_fn: Callable[[str], str] = input,
 ) -> int:
-    from hardy.workflow import ProveRequest
+    from hardy.workflows.prove import ProveRequest
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
     # Flags outrank the config file, the way every other setting resolves.
@@ -566,15 +566,15 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
 
 
 def run_accept(args: argparse.Namespace) -> int:
-    from hardy.acceptance import run_deterministic_experiment, validate_run_consistency
     from hardy.documents.contracts import DocumentStatus
     from hardy.formal.contracts import FormalStatus
-    from hardy.workflow import ProveRequest
+    from hardy.workflows.acceptance import run_deterministic_experiment, validate_run_consistency
     from hardy.workflows.contracts import FaithfulnessStatus, RunPhase, TerminalReason
+    from hardy.workflows.prove import ProveRequest
 
     recorded = getattr(args, "recorded", None)
     if recorded:
-        from hardy.acceptance import validate_recorded_run
+        from hardy.workflows.acceptance import validate_recorded_run
 
         all_passed = True
         for run_dir in recorded:
@@ -606,7 +606,7 @@ def run_accept(args: argparse.Namespace) -> int:
         return 0 if passed else 1
 
     payload = json.loads(
-        files("hardy").joinpath("acceptance_problems.json").read_text(encoding="utf-8")
+        files("hardy.workflows").joinpath("acceptance_problems.json").read_text(encoding="utf-8")
     )
     # Any number of problems, each with an id and an input: the set grows as
     # the acceptance test does (it began with two trivial statements), and a

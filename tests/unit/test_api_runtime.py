@@ -292,7 +292,7 @@ def test_the_output_cap_is_part_of_what_a_run_is_recorded_as() -> None:
     different point and gets a different amount of room to reach a submission.
     A record naming model, backend and limits but not this would call two
     conditions the same run."""
-    from hardy.chat import provenance
+    from hardy.workflows.interactive.session import provenance
 
     runtime = ApiRuntime(
         "claude-test",
@@ -309,7 +309,7 @@ def test_the_output_cap_is_part_of_what_a_run_is_recorded_as() -> None:
 def test_a_backend_that_imposes_no_cap_states_none() -> None:
     # Absent rather than null: a key that is present and empty would claim a
     # measurement about a transport that made none.
-    from hardy.chat import provenance
+    from hardy.workflows.interactive.session import provenance
 
     class Subscription:
         model, backend, endpoint = "m", "claude", "fake"
@@ -513,7 +513,7 @@ def test_a_batch_run_spends_no_turn_after_its_submission_is_accepted(tmp_path, m
 
     from hardy.formal.contracts import Request
     from hardy.formal.lean import LeanTools
-    from hardy.runner import run
+    from hardy.workflows.batch import run
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     request = Request.from_dict(
@@ -560,7 +560,7 @@ def test_the_gate_lets_a_run_with_nothing_yet_carry_on(tmp_path, monkeypatch: py
 
     from hardy.formal.contracts import Request
     from hardy.formal.lean import LeanTools
-    from hardy.runner import run
+    from hardy.workflows.batch import run
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     request = Request.from_dict(

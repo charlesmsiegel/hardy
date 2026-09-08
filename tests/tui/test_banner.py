@@ -4,8 +4,8 @@ import dataclasses
 from pathlib import Path
 
 from hardy import config as configuration
-from hardy import runner
 from hardy.tui import banner
+from hardy.workflows import batch as runner
 
 
 def settings(tmp_path: Path) -> configuration.Config:

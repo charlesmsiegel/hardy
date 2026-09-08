@@ -53,13 +53,13 @@ def _reachable(graph, start):
 
 def test_import_resolver_catches_absolute_relative_and_local_aliases():
     tree = ast.parse('''
-import hardy.chat as session
+import hardy.workflows.interactive.session as session
 def deferred():
-    from .. import runner
+    from ..workflows import batch
     from ..app import cli as commands
     from hardy import mcp_server
 ''')
-    modules = {'hardy.chat', 'hardy.runner', 'hardy.app.cli', 'hardy.mcp_server'}
+    modules = {'hardy.workflows.interactive.session', 'hardy.workflows.batch', 'hardy.app.cli', 'hardy.mcp_server'}
     assert _imports('hardy.agents.example', tree, modules) == modules
 
 
@@ -67,7 +67,7 @@ def test_full_tree_dependency_directions(import_graph):
     providers = {'hardy.agents.claude', 'hardy.agents.api', 'hardy.agents.codex',
                  'hardy.agents.staged', 'hardy.agents.loop'}
     launchers = {'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp'}
-    controllers = {'hardy.chat', 'hardy.workflow', 'hardy.runner', 'hardy.evals.runner'}
+    controllers = {'hardy.workflows.interactive.session', 'hardy.workflows.prove', 'hardy.workflows.batch', 'hardy.evals.runner'}
     readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'}
     capabilities = {name for name in import_graph if name.startswith(
         ('hardy.formal.', 'hardy.documents.', 'hardy.algebra.', 'hardy.literature.', 'hardy.corpus.')
@@ -114,16 +114,16 @@ def test_known_dynamic_launch_modules_still_exist():
                             and isinstance(following.value, str)
                             and following.value.startswith('hardy.')):
                         launches.add(following.value)
-    assert launches == {'hardy.mcp_server', 'hardy.algebra.driver'}
+    assert launches == {'hardy.mcp_server', 'hardy.cas_driver'}
     for module in launches:
         assert (SOURCE.parent / Path(*module.split('.'))).with_suffix('.py').is_file()
 
 
 @pytest.mark.parametrize("module, forbidden", [
-    ("completion", ("workspace", "latex")),
-    ("workflows.recorded", ("workflow", "runner", "staged", "claude_runtime")),
-    ("evals.scoreboard", ("evals.runner", "evals.commands", "evals.staged", "workflow")),
-    ("evals.pool", ("evals.runner", "evals.commands", "evals.staged", "workflow")),
+    ("documents.completion", ("formal.workspace", "documents.latex")),
+    ("workflows.recorded", ("workflows.prove", "workflows.batch", "agents.staged", "agents.claude")),
+    ("evals.scoreboard", ("evals.runner", "evals.commands", "evals.staged", "workflows.prove")),
+    ("evals.pool", ("evals.runner", "evals.commands", "evals.staged", "workflows.prove")),
 ])
 def test_evidence_reader_imports_no_execution(module, forbidden):
     script = f"import hardy.{module}; import sys; assert not ({{'hardy.' + x for x in {forbidden!r}}} & sys.modules.keys())"
@@ -131,10 +131,10 @@ def test_evidence_reader_imports_no_execution(module, forbidden):
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("module", ["claude_runtime", "api_runtime", "codex_runtime", "staged"])
+@pytest.mark.parametrize("module", ["agents.claude", "agents.api", "agents.codex", "agents.staged"])
 def test_agent_import_does_not_load_interactive_workflow(module):
     result = subprocess.run(
-        [sys.executable, "-c", f"import hardy.{module}; import sys; assert 'hardy.chat' not in sys.modules"],
+        [sys.executable, "-c", f"import hardy.{module}; import sys; assert 'hardy.workflows.interactive.session' not in sys.modules"],
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
@@ -149,17 +149,17 @@ def test_in_process_formal_tools_do_not_load_transport():
 
 
 def test_corpus_import_does_not_load_measurement_or_model_code():
-    script = "import hardy.corpus.catalog; import sys; assert not any(name.startswith(('hardy.evals', 'hardy.agents.claude', 'hardy.workflow')) for name in sys.modules)"
+    script = "import hardy.corpus.catalog; import sys; assert not any(name.startswith(('hardy.evals', 'hardy.agents.claude', 'hardy.workflows.prove')) for name in sys.modules)"
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("module", ["claude_runtime", "api_runtime", "codex_runtime", "staged", "loop"])
+@pytest.mark.parametrize("module", ["agents.claude", "agents.api", "agents.codex", "agents.staged", "agents.loop"])
 def test_agent_import_fence_includes_local_imports(module):
-    tree = ast.parse((SOURCE / f"{module}.py").read_text(encoding="utf-8"))
+    tree = ast.parse((SOURCE / Path(*module.split(".")).with_suffix(".py")).read_text(encoding="utf-8"))
     violations = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in {"chat", "cli", "hardy.chat", "hardy.cli"}:
+        if isinstance(node, ast.ImportFrom) and node.module in {"chat", "cli", "hardy.workflows.interactive.session", "hardy.cli"}:
             violations.append((node.lineno, node.module))
     assert not violations, violations
 

@@ -78,7 +78,7 @@ def test_every_binding_dispatches_into_the_same_runtime_and_budget(tmp_path, cas
     asked for, so the three dispatchers are driven against one session here.
     """
     from hardy.agents.staged import ClaudeStagedRuntime
-    from hardy.chat import MathematicsSession
+    from hardy.workflows.interactive.session import MathematicsSession
 
     session = cas_session()
     runtime = make_runtime(session, {})

@@ -340,7 +340,7 @@ async def test_the_press_refuses_further_stages_before_it_returns(ui, settings, 
 
 def test_abandon_is_the_instantaneous_half_of_cancel():
     """`ProveWorkflow.cancel` still refuses stages; it just blocks afterwards."""
-    from hardy import workflow as workflow_module
+    from hardy.workflows import prove as workflow_module
 
     built = workflow_module.ProveWorkflow.__new__(workflow_module.ProveWorkflow)
     import threading as _threading

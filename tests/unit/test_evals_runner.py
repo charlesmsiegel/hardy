@@ -93,8 +93,8 @@ def _scripted_batch(output: Path, script, *, declaration: str, informal_claim: s
     """
     import sys
 
-    from hardy import runner as hardy_runner
     from hardy.formal.lean import LeanTools
+    from hardy.workflows import batch as hardy_runner
     from hardy.workflows import batch_contracts as models
 
     payload = {"declaration": declaration, "informal_claim": informal_claim}
@@ -471,8 +471,8 @@ def test_the_batch_runner_uses_the_conditions_selected_model_not_configs(monkeyp
     actually be produced by it -- not by whatever `config.model` happens to
     be, which under an override is a different model entirely (item 1).
     """
-    from hardy import runner as hardy_runner
     from hardy import wiring
+    from hardy.workflows import batch as hardy_runner
 
     seen: dict = {}
     # Patched on `wiring`, where `_batch_runner` now imports it from: routing
@@ -496,9 +496,9 @@ def test_the_batch_runner_checks_proofs_with_the_recorded_toolchains_command(mon
     command, or its checks could pass under a toolchain the experiment was
     never actually measured against (item 2).
     """
-    from hardy import runner as hardy_runner
     from hardy.app import cli as cli_module
     from hardy.formal import lean as lean_module
+    from hardy.workflows import batch as hardy_runner
 
     seen: dict = {}
 

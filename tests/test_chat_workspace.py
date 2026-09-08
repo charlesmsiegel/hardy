@@ -6,7 +6,7 @@ from pathlib import Path
 from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import results
 
-from hardy.chat import _toolchain_identity
+from hardy.workflows.interactive.session import _toolchain_identity
 
 BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"

@@ -12,7 +12,7 @@ import importlib
 
 
 def test_a_modulo_grade_is_audited_like_a_verified_one() -> None:
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     domain = importlib.import_module("hardy.workflows.contracts")
 
     assert domain.FormalStatus.VERIFIED_MODULO in acceptance.VERIFIED_GRADES
@@ -23,7 +23,7 @@ def test_a_modulo_grade_is_audited_like_a_verified_one() -> None:
 def test_a_modulo_run_may_admit_exactly_the_axioms_it_declared() -> None:
     """The standard allowlist plus what the manifest says was assumed, and
     nothing else: an axiom in neither is the failure this check exists for."""
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
 
     assert acceptance.permitted_axioms(("Papers.a.one",)) == frozenset(
         {*acceptance.ALLOWED_AXIOMS, "Papers.a.one"}
@@ -36,7 +36,7 @@ def test_a_hole_is_never_permitted_however_much_was_assumed() -> None:
 
 
 def acceptance_permitted():
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     return acceptance.permitted_axioms(("sorryAx",))
 
 
@@ -46,7 +46,7 @@ def test_a_recorded_run_predating_a_grade_field_still_reconciles(tmp_path) -> No
     made every field added afterwards look like a disagreement about a run
     that never disagreed -- so both sides are read through the same model, and
     a real difference in any grade still fails."""
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     domain = importlib.import_module("hardy.workflows.contracts")
     grades = domain.Grades(formal=domain.FormalStatus.PARTIAL, known_gaps=("one",))
     recorded = grades.model_dump(mode="json")
@@ -61,7 +61,7 @@ def test_a_recorded_run_predating_a_grade_field_still_reconciles(tmp_path) -> No
 
 
 def _deterministic(tmp_path):
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     config_module = importlib.import_module("hardy.config")
     config = config_module.Config(
         model="deterministic-no-model",
@@ -156,7 +156,7 @@ def test_a_modulo_run_that_declared_nothing_is_refused(tmp_path) -> None:
     """The allowlist came from `manifest.grades.assumed`, which the audited run
     writes. Nothing read `assumptions.json`, so a run could name its own axiom
     and be believed -- `falsum : False` and every check passing."""
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run = _deterministic(tmp_path)
     forged = _forge_modulo(run.run_dir, run.manifest)
 
@@ -167,7 +167,7 @@ def test_a_modulo_run_that_declared_nothing_is_refused(tmp_path) -> None:
 
 
 def test_a_modulo_run_may_not_assume_what_nobody_declared(tmp_path) -> None:
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run = _deterministic(tmp_path)
     forged = _forge_modulo(
         run.run_dir,
@@ -183,7 +183,7 @@ def test_a_modulo_run_may_not_assume_what_nobody_declared(tmp_path) -> None:
 def test_a_modulo_run_whose_lean_states_a_different_axiom_is_refused(tmp_path) -> None:
     """The declaration file says one thing and the file the kernel read says
     another. What was elaborated is what counts."""
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run = _deterministic(tmp_path)
     forged = _forge_modulo(
         run.run_dir,
@@ -199,7 +199,7 @@ def test_a_modulo_run_whose_lean_states_a_different_axiom_is_refused(tmp_path) -
 
 def test_a_properly_declared_modulo_run_passes(tmp_path) -> None:
     """The check has to admit the honest case, or it is just a refusal."""
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run = _deterministic(tmp_path)
     forged = _forge_modulo(
         run.run_dir,

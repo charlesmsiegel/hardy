@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from hardy.config import DEFAULT_BACKEND, authentication
-from hardy.runner import WARNING
+from hardy.workflows.batch import WARNING
 
 
 def status_line(config: Any) -> str:

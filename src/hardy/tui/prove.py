@@ -165,7 +165,7 @@ def run(
     what there is to cancel.
     """
     from hardy.wiring import build_prove_workflow
-    from hardy.workflow import ProveRequest
+    from hardy.workflows.prove import ProveRequest
 
     workflow = build_prove_workflow(config, config.config_path, backend=backend)
     # The terminal asks the workflow whether the run is still wanted. Attached

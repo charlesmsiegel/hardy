@@ -9,9 +9,9 @@ import pytest
 from test_chat import FakeChatRuntime, call, factory
 from workspace_helpers import events, results
 
-from hardy.chat import MathematicsSession
 from hardy.formal.workspace import LeanWorkspace
 from hardy.foundation.files import LayoutError
+from hardy.workflows.interactive.session import MathematicsSession
 
 
 def workspace(tmp_path: Path, compiled: list[str], failing: set[str] | None = None) -> LeanWorkspace:
@@ -315,8 +315,8 @@ def test_a_personal_library_outside_the_project_is_importable_too(tmp_path: Path
     home = tmp_path / "home" / ".hardy"
     (home / "lean").mkdir(parents=True)
     (home / "lean" / "CommAlg.lean").write_text(SHARED_LEAN, encoding="utf-8")
-    monkeypatch.setattr("hardy.chat.global_lean", lambda: home / "lean")
-    monkeypatch.setattr("hardy.chat.global_build", lambda: home / ".build" / "lean")
+    monkeypatch.setattr("hardy.workflows.interactive.session.global_lean", lambda: home / "lean")
+    monkeypatch.setattr("hardy.workflows.interactive.session.global_build", lambda: home / ".build" / "lean")
     root, problem, _ = project(tmp_path, shared=None)
     chat = session(problem, saving(), root=root)
     chat.send("prove it")
@@ -546,8 +546,8 @@ def test_a_project_library_may_rest_on_the_users_own(tmp_path: Path, monkeypatch
     (home / "lean" / "Personal.lean").write_text(
         "import Mathlib\n\ntheorem personal_fact : True := by exact True.intro\n", encoding="utf-8"
     )
-    monkeypatch.setattr("hardy.chat.global_lean", lambda: home / "lean")
-    monkeypatch.setattr("hardy.chat.global_build", lambda: home / ".build" / "lean")
+    monkeypatch.setattr("hardy.workflows.interactive.session.global_lean", lambda: home / "lean")
+    monkeypatch.setattr("hardy.workflows.interactive.session.global_build", lambda: home / ".build" / "lean")
     root, problem, library = project(tmp_path, shared=None)
     (library / "CommAlg.lean").write_text(
         "import Personal\n\ntheorem shared_fact : True := by exact True.intro\n", encoding="utf-8"
@@ -609,8 +609,8 @@ def test_the_personal_library_does_not_compile_against_the_project_build(tmp_pat
     home = tmp_path / "home" / ".hardy"
     (home / "lean").mkdir(parents=True)
     (home / "lean" / "Personal.lean").write_text(SHARED_LEAN, encoding="utf-8")
-    monkeypatch.setattr("hardy.chat.global_lean", lambda: home / "lean")
-    monkeypatch.setattr("hardy.chat.global_build", lambda: home / ".build" / "lean")
+    monkeypatch.setattr("hardy.workflows.interactive.session.global_lean", lambda: home / "lean")
+    monkeypatch.setattr("hardy.workflows.interactive.session.global_build", lambda: home / ".build" / "lean")
     root, problem, _ = project(tmp_path)
     chat = session(problem, saving(), root=root)
 

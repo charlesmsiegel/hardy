@@ -19,7 +19,7 @@ from pathlib import Path
 
 from hardy.agents.contracts import TurnEvent
 from hardy.agents.staged import ClaudeStagedRuntime
-from hardy.chat import MathematicsSession
+from hardy.workflows.interactive.session import MathematicsSession
 
 
 class Runtime:

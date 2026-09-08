@@ -107,8 +107,8 @@ REAL_SYLOW = (
 
 def _closed_by(statement: str) -> list[str]:
     """Which vacuity tactics close `statement` stripped, read as `_vacuity_probe` reads them."""
-    from hardy.chat import _strip_hypotheses, _vacuity_source
     from hardy.formal.workspace import normalise_lean
+    from hardy.workflows.interactive.session import _strip_hypotheses, _vacuity_source
 
     stripped = _strip_hypotheses(normalise_lean(statement).strip())
     assert stripped is not None

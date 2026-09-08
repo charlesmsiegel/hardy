@@ -40,13 +40,13 @@ from hardy.formal.verifier import VerificationResult, verification_source
 from hardy.foundation.process import ProcessResult
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import PROMPT_SET_SHA256
-from hardy.workflow import ProveRequest, ProveWorkflow
 from hardy.workflows.contracts import (
     FaithfulnessReview,
     ProofSubmission,
     RunManifest,
     TerminalReason,
 )
+from hardy.workflows.prove import ProveRequest, ProveWorkflow
 from hardy.workflows.recorded import ASSUMPTIONS_FILE as ASSUMPTIONS_FILE
 from hardy.workflows.recorded import BATCH_FAILURES as BATCH_FAILURES
 from hardy.workflows.recorded import BATCH_SEARCH as BATCH_SEARCH

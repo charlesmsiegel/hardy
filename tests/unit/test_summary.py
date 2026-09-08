@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hardy import summary
+from hardy.workflows.interactive import summary
 
 
 def audit_record(name: str, axioms: list[str], *, assumed: list[str] = (), status: str = "clean"):

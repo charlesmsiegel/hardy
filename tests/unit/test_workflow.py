@@ -157,7 +157,7 @@ def _scripted_controller(
     lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
     verifier_module = importlib.import_module('hardy.formal.verifier')
-    workflow = importlib.import_module('hardy.workflow')
+    workflow = importlib.import_module('hardy.workflows.prove')
     writeup = importlib.import_module('hardy.documents.writeup')
     proposals = list(proposals or [_proposal(domain)])
     elaborations = list(elaborations or [True] * len(proposals))
@@ -321,7 +321,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
     lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
     verifier_module = importlib.import_module('hardy.formal.verifier')
-    workflow = importlib.import_module('hardy.workflow')
+    workflow = importlib.import_module('hardy.workflows.prove')
     writeup = importlib.import_module('hardy.documents.writeup')
     environment = _environment(domain)
     starts = []
@@ -478,7 +478,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
 
 def test_transition_table_is_exact_and_never_skips_user_approval() -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    workflow = importlib.import_module('hardy.workflow')
+    workflow = importlib.import_module('hardy.workflows.prove')
 
     expected = {
         domain.RunPhase.SETUP: {domain.RunPhase.FORMALIZING},
@@ -854,7 +854,7 @@ def test_a_terminal_that_fails_cannot_deny_the_verdict_on_disk(tmp_path) -> None
     assert manifest.grades.faithfulness_review is not None
     assert manifest.grades.faithfulness_review.agreed
     # The record has to hold together, not merely contain the verdict.
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     issues = acceptance.validate_run_consistency(run_dir, manifest)
     assert not [issue for issue in issues if 'faithfulness' in issue], issues
 
@@ -870,7 +870,7 @@ def test_an_honest_gate_halt_passes_the_repositorys_own_consistency_audit(
     and the one case where a missing writeup really is a finding could not be
     told apart from the many where its absence is correct.
     """
-    acceptance = importlib.import_module('hardy.acceptance')
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
     domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(
         tmp_path,
@@ -902,7 +902,7 @@ def test_a_reader_that_never_answered_is_not_a_refused_translation(tmp_path) -> 
 
     assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_UNAVAILABLE
     run_dir = next(tmp_path.iterdir())
-    assert importlib.import_module('hardy.acceptance').validate_run_consistency(
+    assert importlib.import_module('hardy.workflows.acceptance').validate_run_consistency(
         run_dir, manifest
     ) == ()
 
@@ -1390,7 +1390,7 @@ def test_the_second_press_reaches_the_runs_own_cas_kernel(tmp_path) -> None:
     kernel is deliberately not in it. So a `cas_run` out when Esc was pressed
     took neither press and ran to its own cell timeout, while the terminal said
     the second press kills what did not take the hint."""
-    workflow = importlib.import_module('hardy.workflow')
+    workflow = importlib.import_module('hardy.workflows.prove')
 
     class _Runtime:
         def __init__(self):
@@ -1410,7 +1410,7 @@ def test_the_second_press_reaches_the_runs_own_cas_kernel(tmp_path) -> None:
 
 def test_escalating_a_run_with_no_runtime_in_flight_is_quiet(tmp_path) -> None:
     """The press may land before a stage has opened one."""
-    workflow = importlib.import_module('hardy.workflow')
+    workflow = importlib.import_module('hardy.workflows.prove')
 
     run = workflow.ProveWorkflow.__new__(workflow.ProveWorkflow)
     run._runtime_in_flight = None

@@ -18,10 +18,10 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 from workspace_helpers import events
 
-from hardy import project_context
-from hardy.chat import MathematicsSession
 from hardy.formal.contracts import Request
-from hardy.runner import run
+from hardy.workflows.batch import run
+from hardy.workflows.interactive import context as project_context
+from hardy.workflows.interactive.session import MathematicsSession
 
 SAID = [{"role": "assistant", "content": "Understood."}]
 
@@ -417,7 +417,7 @@ def test_the_digest_is_never_committed_before_the_text_is_recorded(tmp_path: Pat
     root, workspace = project(tmp_path)
     (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
 
-    import hardy.chat as chat_module
+    import hardy.workflows.interactive.session as chat_module
 
     original = chat_module.MathematicsSession._record
 

@@ -139,7 +139,7 @@ def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
 
 def test_each_entry_point_sends_the_template_rather_than_its_own_copy():
     prompts = importlib.import_module("hardy.prompts")
-    chat = importlib.import_module("hardy.chat")
+    chat = importlib.import_module("hardy.workflows.interactive.session")
     staged = importlib.import_module("hardy.agents.staged")
 
     assert prompts.render("chat") == chat.SYSTEM_PROMPT

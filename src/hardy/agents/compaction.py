@@ -36,9 +36,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from hardy import summary as summary_module
 from hardy.agents.loop import Message, first_legal_cut
 from hardy.prompts import COMPACTION_PREAMBLE
+from hardy.workflows.interactive import summary as summary_module
 
 #: The window a conversation is compacted to fit, and how much of it is held
 #: back. Pi's numbers, and Pi's reasoning: the reserve is what the next request
@@ -58,7 +58,7 @@ PREAMBLE = COMPACTION_PREAMBLE
 def rendered(summary: summary_module.Summary) -> str:
     """The summary as a compaction sends it: the preamble, then the sections.
 
-    The sections come from `hardy.summary`, which assembles the same text
+    The sections come from `hardy.workflows.interactive.summary`, which assembles the same text
     `/status --full` prints. One assembler for both, deliberately: the whole
     argument for Hardy compacting its own sessions is that the summary can be
     checked against the workspace it was read off, and a user can only check

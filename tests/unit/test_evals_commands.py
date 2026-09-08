@@ -163,7 +163,7 @@ def test_baseline_refuses_unacknowledged_unsafe_execution(tmp_path, capsys):
     (item 6). An untrusted problem file gets no free pass just because there
     is no model to hand the warning to.
     """
-    from hardy.runner import WARNING
+    from hardy.workflows.batch import WARNING
 
     problems = _corpus(tmp_path)
     out = tmp_path / "baseline.json"

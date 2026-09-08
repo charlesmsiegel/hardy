@@ -245,7 +245,7 @@ def _identity(config: Any) -> EnvironmentIdentity:
 
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
-    from hardy.runner import WARNING
+    from hardy.workflows.batch import WARNING
 
     # `getattr`, not `args.workers`: a caller (or a test's hand-built
     # Namespace) that predates this flag carries no `workers` attribute, and
@@ -572,7 +572,7 @@ def check_command(args: Any) -> int:
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
     from hardy.formal.lean import environment_identity
     from hardy.prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
-    from hardy.runner import WARNING
+    from hardy.workflows.batch import WARNING
 
     if args.backend != "claude":
         print(

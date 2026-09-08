@@ -16,7 +16,7 @@ from hardy.evals import sweep, taxonomy
 from hardy.evals.problems import Entry, ProblemSet, Review
 from hardy.formal import lean as lean_module
 from hardy.formal.contracts import EnvironmentIdentity
-from hardy.runner import WARNING
+from hardy.workflows.batch import WARNING
 from hardy.workflows.contracts import RunLimits
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)

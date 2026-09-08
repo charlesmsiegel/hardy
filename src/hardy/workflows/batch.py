@@ -9,7 +9,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from hardy import summary as summary_module
 from hardy.agents import compaction
 from hardy.agents.contracts import provenance
 from hardy.agents.loop import TurnLimitReached
@@ -25,6 +24,7 @@ from hardy.formal.lean import LeanToolResult, LeanTools, environment_identity
 from hardy.foundation.values import ToolResult
 from hardy.prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
 from hardy.workflows.batch_contracts import RunResult
+from hardy.workflows.interactive import summary as summary_module
 
 WARNING = "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
 

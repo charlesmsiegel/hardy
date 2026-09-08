@@ -17,9 +17,10 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
-from hardy import chat, runner
 from hardy.foundation.files import LayoutError
 from hardy.tui import run_session
+from hardy.workflows import batch as runner
+from hardy.workflows.interactive import session as chat
 
 from .conftest import Streams
 

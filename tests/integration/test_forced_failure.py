@@ -1,8 +1,8 @@
 import json
 from types import SimpleNamespace
 
-from hardy.acceptance import run_deterministic_experiment
 from hardy.formal.contracts import FormalStatus
+from hardy.workflows.acceptance import run_deterministic_experiment
 from hardy.workflows.contracts import RunLimits, TerminalReason
 
 

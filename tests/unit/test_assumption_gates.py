@@ -320,7 +320,7 @@ def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
 # --- Vacuity ---
 
 
-_chat = importlib.import_module("hardy.chat")
+_chat = importlib.import_module("hardy.workflows.interactive.session")
 
 SYLOW = (
     "∀ {G : Type*} [Group G] [Fintype G] (p : ℕ) (hprime : Nat.Prime p) "

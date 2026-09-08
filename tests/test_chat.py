@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from hardy.agents.contracts import TurnEvent
-from hardy.chat import MathematicsSession, final_text
 from hardy.workflows import layout
+from hardy.workflows.interactive.session import MathematicsSession, final_text
 
 
 class FakeChatRuntime:

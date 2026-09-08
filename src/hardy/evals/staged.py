@@ -125,7 +125,7 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
     # every pooled row is supposed to share.
     from hardy.agents.staged import ClaudeStagedRuntime
     from hardy.wiring import build_prove_workflow
-    from hardy.workflow import ProveRequest
+    from hardy.workflows.prove import ProveRequest
 
     def run_one(entry: Entry, row_dir: Path, model: str) -> None:
         scoped = dataclasses.replace(config, runs_root=row_dir)

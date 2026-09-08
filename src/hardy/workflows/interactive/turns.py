@@ -13,13 +13,13 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from hardy import summary as summary_module
 from hardy.agents import compaction
 from hardy.agents.contracts import ChatRuntime, TurnEvent
 from hardy.agents.loop import Message, block_order, reasoning_digest
 from hardy.agents.usage import Usage
 from hardy.foundation import process
 from hardy.foundation.values import ToolResult
+from hardy.workflows.interactive import summary as summary_module
 
 
 @dataclass(frozen=True)

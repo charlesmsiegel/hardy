@@ -18,7 +18,7 @@ import pytest
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
 from hardy.foundation.process import ProcessResult
-from hardy.runner import run
+from hardy.workflows.batch import run
 
 
 class FakeRuntime:
@@ -343,7 +343,7 @@ def test_a_kept_hole_free_sketch_still_satisfies_the_audit(tmp_path: Path, proof
     to keep both halves checkable."""
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run(
         proof_request,
         factory([call("sketch_proof", {"proof": "by exact True.intro"})]),
@@ -389,7 +389,7 @@ def test_a_sketch_cannot_break_out_of_its_own_code_fence(tmp_path: Path, proof_r
 
 
 def test_the_fence_is_the_ordinary_three_when_nothing_needs_more() -> None:
-    from hardy.runner import sketch_section
+    from hardy.workflows.batch import sketch_section
 
     section = sketch_section({"proof": "by sorry", "holes": [{"keyword": "sorry", "line": 1}]})
 
@@ -456,7 +456,7 @@ def test_a_check_lean_refused_does_not_replace_the_sketch(tmp_path: Path, proof_
 def test_the_audit_accepts_a_candidate_check_proof_produced(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run(
         proof_request,
         factory([
@@ -587,7 +587,7 @@ def test_the_audit_accepts_a_candidate_a_refused_submission_produced(tmp_path: P
     """
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run(
         proof_request,
         factory([
@@ -613,7 +613,7 @@ def test_a_forged_submitted_flag_is_refused(tmp_path: Path, proof_request: Reque
     submitted as one the axiom report refused."""
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run(
         proof_request,
         factory([call("sketch_proof", {"proof": "by exact True.intro"})]),
@@ -682,7 +682,7 @@ def test_a_quotation_in_a_verified_proof_survives_recorded_acceptance(tmp_path: 
     """
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     proof = "by have _ := `(command| axiom bad : False); exact True.intro"
     result = run(
         proof_request,
@@ -714,7 +714,7 @@ def test_a_request_that_is_not_an_object_is_a_finding_not_a_crash(tmp_path: Path
     """
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run(
         proof_request,
         factory([call("submit_proof", {"proof": "by exact True.intro"})]),
@@ -747,7 +747,7 @@ def test_events_that_are_not_a_list_of_objects_are_a_finding_not_a_crash(tmp_pat
     """
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     run(
         proof_request,
         factory([call("submit_proof", {"proof": "by exact True.intro"})]),
@@ -779,7 +779,7 @@ def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_re
     """
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     toolchain = {
         "lean_version": "4.32.0",
         "lean_commit": "a" * 40,
@@ -829,7 +829,7 @@ def test_a_failed_run_clears_the_previous_run_s_proof(tmp_path: Path, proof_requ
     """
     import importlib
 
-    acceptance = importlib.import_module("hardy.acceptance")
+    acceptance = importlib.import_module("hardy.workflows.acceptance")
     toolchain = {
         "lean_version": "4.32.0",
         "lean_commit": "a" * 40,

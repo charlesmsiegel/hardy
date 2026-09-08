@@ -99,7 +99,7 @@ STRUCTURE_INSTRUCTION = "\n\n" + render("staged/structure") + "\n"
 CHAT_SYSTEM_PROMPT = render("chat")
 #: What the independent reader of an assumed paper statement is told, and
 #: nothing else -- no tools, no session history, no account of how the
-#: translation was arrived at. See `hardy.chat._review_assumption`.
+#: translation was arrived at. See `hardy.workflows.interactive.session._review_assumption`.
 ASSUME_REVIEW_PROMPT = render("assume_review")
 # What the search façade tells the model about an empty `inspect_declarations`
 # batch, and about a `search_modules` query that named a concept rather than a

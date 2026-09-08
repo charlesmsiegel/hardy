@@ -33,7 +33,7 @@ from hardy import config as configuration
 from hardy.app.cli import runtime_factory
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
-from hardy.runner import WARNING, run
+from hardy.workflows.batch import WARNING, run
 
 
 def _executable(command: str) -> str | None:

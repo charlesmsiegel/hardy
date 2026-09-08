@@ -17,7 +17,7 @@ import pytest
 from hardy.formal import closers
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
-from hardy.runner import run
+from hardy.workflows.batch import run
 
 
 class FakeRuntime:

@@ -8,8 +8,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from hardy.runner import WARNING
 from hardy.tui.ports import Choice
+from hardy.workflows.batch import WARNING
 
 
 def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:

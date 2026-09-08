@@ -12,7 +12,7 @@ from hardy import config as configuration
 from hardy.app import cli
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
-from hardy.runner import run
+from hardy.workflows.batch import run
 
 
 class FakeRuntime:

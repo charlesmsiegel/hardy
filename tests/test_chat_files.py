@@ -9,8 +9,8 @@ import pytest
 from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import results
 
-from hardy import chat as chat_module
 from hardy.algebra.export import ExportReport
+from hardy.workflows.interactive import session as chat_module
 
 BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"

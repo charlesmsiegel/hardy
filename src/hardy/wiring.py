@@ -51,7 +51,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     from hardy.formal.tools import LeanToolRuntime
     from hardy.formal.verifier import FinalVerifier
     from hardy.prompts import PROMPT_SET_SHA256
-    from hardy.workflow import ProveWorkflow
+    from hardy.workflows.prove import ProveWorkflow
 
     # Identified by the Lean the verifier will run -- `config.lake env lean`,
     # exactly as `FinalVerifier` spells it -- so the identity the claim is
@@ -188,7 +188,7 @@ def _unidentified_workflow(config: configuration.Config, reason: str):
     manifest that names no environment -- rather than one that names a
     compiler nobody identified.
     """
-    from hardy.workflow import ProveWorkflow
+    from hardy.workflows.prove import ProveWorkflow
 
     def unusable(_: configuration.Config) -> Any:
         return SimpleNamespace(healthy=False, authenticated=True, detail=reason)

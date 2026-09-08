@@ -288,8 +288,8 @@ def _batch_runner(config: Any, model: str) -> BatchRunner:
     # stops meaning "the same code produced these rows".
     from hardy.formal.contracts import Request
     from hardy.formal.lean import LeanTools
-    from hardy.runner import run
     from hardy.wiring import runtime_factory
+    from hardy.workflows.batch import run
 
     def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
         request = Request.from_dict({"declaration": entry.declaration(), "informal_claim": entry.input, "imports": list(entry.imports)})

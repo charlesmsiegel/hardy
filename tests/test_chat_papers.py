@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from test_chat import FakeChatRuntime, factory
 
-from hardy.chat import CHAT_TOOLS, MathematicsSession
 from hardy.literature import arxiv
+from hardy.workflows.interactive.session import CHAT_TOOLS, MathematicsSession
 
 FEED = (
     b'<?xml version="1.0" encoding="UTF-8"?>'

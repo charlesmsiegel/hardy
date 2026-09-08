@@ -173,7 +173,7 @@ def approvals():
 
 @pytest.fixture
 def session_factory(tmp_path):
-    from hardy.chat import MathematicsSession
+    from hardy.workflows.interactive.session import MathematicsSession
 
     class Runtime:
         model = "fake"

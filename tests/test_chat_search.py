@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 from test_chat import FakeChatRuntime, factory
 
-from hardy.chat import MathematicsSession
 from hardy.foundation.values import ToolResult
+from hardy.workflows.interactive.session import MathematicsSession
 
 
 class FakeSearch:
@@ -62,7 +62,7 @@ def session_factory(tmp_path: Path):
 
 
 def test_the_session_advertises_the_search_tools() -> None:
-    chat = importlib.import_module("hardy.chat")
+    chat = importlib.import_module("hardy.workflows.interactive.session")
 
     offered = {spec["function"]["name"] for spec in chat.CHAT_TOOLS}
 
@@ -72,7 +72,7 @@ def test_the_session_advertises_the_search_tools() -> None:
 def test_the_session_advertises_a_module_search() -> None:
     """The other three answer about declarations. The failure that motivated
     this one was a module path, which a declaration search cannot speak to."""
-    chat = importlib.import_module("hardy.chat")
+    chat = importlib.import_module("hardy.workflows.interactive.session")
 
     offered = {spec["function"]["name"] for spec in chat.CHAT_TOOLS}
 

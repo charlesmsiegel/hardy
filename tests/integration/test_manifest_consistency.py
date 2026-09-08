@@ -3,8 +3,8 @@ import json
 from importlib.resources import files
 from pathlib import Path
 
-from hardy.acceptance import run_deterministic_experiment, validate_run_consistency
 from hardy.formal.contracts import FormalStatus, FrozenClaim
+from hardy.workflows.acceptance import run_deterministic_experiment, validate_run_consistency
 
 
 def _config(runs_root, limits=None):
@@ -33,7 +33,7 @@ def test_packaged_acceptance_problems_match_the_required_root_file() -> None:
         (ROOT / 'acceptance' / 'problems.json').read_text(encoding='utf-8')
     )
     packaged_payload = json.loads(
-        files('hardy').joinpath('acceptance_problems.json').read_text(encoding='utf-8')
+        files('hardy.workflows').joinpath('acceptance_problems.json').read_text(encoding='utf-8')
     )
 
     assert packaged_payload == root_payload

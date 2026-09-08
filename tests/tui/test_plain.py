@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from hardy import runner
 from hardy.tui import plain
+from hardy.workflows import batch as runner
 
 from .conftest import Streams
 

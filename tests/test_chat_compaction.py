@@ -1,6 +1,6 @@
 """What a Hardy session's own compaction does (#100).
 
-The summary itself is `hardy.summary`'s, and `test_summary.py` and
+The summary itself is `hardy.workflows.interactive.summary`'s, and `test_summary.py` and
 `test_chat_summary.py` cover what it says and where each section is read from.
 This is the compaction around it: which messages are cut, what the request is
 costed against, and that a compaction leaves a trace in the record.
@@ -17,7 +17,7 @@ from workspace_helpers import events
 
 from hardy.agents import compaction
 from hardy.agents.loop import Message, ToolCall
-from hardy.chat import MathematicsSession, _digest
+from hardy.workflows.interactive.session import MathematicsSession, _digest
 
 
 @pytest.fixture

@@ -8,9 +8,9 @@ of them needs a model.
 
 from __future__ import annotations
 
-from hardy import summary as summary_module
 from hardy.agents import compaction
 from hardy.agents.loop import Message, ToolCall
+from hardy.workflows.interactive import summary as summary_module
 
 
 def _summary(**overrides) -> summary_module.Summary:
@@ -33,7 +33,7 @@ def _summary(**overrides) -> summary_module.Summary:
     return summary_module.assemble(**base)
 
 def test_the_summary_says_it_is_a_record_and_not_a_conversation() -> None:
-    """The preamble is compaction's own, and the sections are `hardy.summary`'s.
+    """The preamble is compaction's own, and the sections are `hardy.workflows.interactive.summary`'s.
 
     A model handed the summary with no framing reads it as a turn to answer.
     What it needs to know is that this is what happened, not what was said to

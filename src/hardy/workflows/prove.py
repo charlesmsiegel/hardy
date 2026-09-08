@@ -9,7 +9,7 @@ Between approval and proving sits the faithfulness gate: the frozen claim is
 read by an independent model that never saw the conversation which wrote it,
 and a run whose translation that reader will not accept stops here rather than
 spending its proving budget on a statement nobody established the user asked
-for. See `hardy.faithfulness` for why the read is fail-closed.
+for. See `hardy.workflows.faithfulness` for why the read is fail-closed.
 
 Time spent waiting for the user is measured and excluded from the run's active
 budget. Thinking about whether a formalization is right should not cost the
@@ -31,7 +31,6 @@ from uuid import UUID, uuid4
 from hardy.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
 from hardy.documents.writeup import DocumentResult, WriteupContent
-from hardy.faithfulness import dispute_gaps, review_translation
 from hardy.formal import refute
 from hardy.formal.contracts import (
     DeclaredAssumption,
@@ -54,6 +53,7 @@ from hardy.workflows.contracts import (
     RunPhase,
     TerminalReason,
 )
+from hardy.workflows.faithfulness import dispute_gaps, review_translation
 from hardy.workflows.storage import RunStore
 
 ALLOWED = {

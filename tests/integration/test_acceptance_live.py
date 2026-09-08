@@ -70,13 +70,6 @@ from typing import Any
 import pytest
 
 from hardy import config as configuration
-from hardy.acceptance import (
-    BATCH_SEARCH,
-    REFUSALS,
-    STAGED_SEARCH,
-    refusal_issues,
-    validate_recorded_run,
-)
 from hardy.app.cli import _find_run_dir, build_prove_workflow, runtime_factory
 from hardy.documents.contracts import DocumentStatus
 from hardy.documents.writeup import tectonic_version
@@ -90,9 +83,16 @@ from hardy.formal.verifier import (
     axiom_report_line,
 )
 from hardy.formal.workspace import strip_comments
-from hardy.runner import WARNING, run
-from hardy.workflow import ProveRequest
+from hardy.workflows.acceptance import (
+    BATCH_SEARCH,
+    REFUSALS,
+    STAGED_SEARCH,
+    refusal_issues,
+    validate_recorded_run,
+)
+from hardy.workflows.batch import WARNING, run
 from hardy.workflows.contracts import FaithfulnessStatus, RunPhase
+from hardy.workflows.prove import ProveRequest
 
 pytestmark = [pytest.mark.live, pytest.mark.real_toolchain]
 
@@ -108,7 +108,7 @@ MAX_TURNS = 60
 # and far too short for the nontrivial proof: the point of run 4 is a
 # trajectory with something in it that the clock then cuts off.
 STARVED_SECONDS = 30.0
-# REFUSALS, BATCH_SEARCH and STAGED_SEARCH come from hardy.acceptance, so this
+# REFUSALS, BATCH_SEARCH and STAGED_SEARCH come from hardy.workflows.acceptance, so this
 # live test and the recorded-run audit cannot drift apart on what a refusal
 # or a search is.
 # The names of the four recorded runs, as `acceptance/recorded/` keeps them.
@@ -423,7 +423,7 @@ def test_run_3_a_false_statement_is_refused_by_the_gate_not_graded(
     # elaborated: an exploratory `check_proof` may pass with a `sorry` in it
     # (that is how a model derives the negation inside a scratch proof), so
     # each one Lean accepted is required to have carried a hole. The same
-    # criterion the recorded-run scoreboard uses, from hardy.acceptance.
+    # criterion the recorded-run scoreboard uses, from hardy.workflows.acceptance.
     assert refusal_issues(output) == ()
     writeup = (output / "writeup.md").read_text(encoding="utf-8")
     assert "No completed artifact" in writeup

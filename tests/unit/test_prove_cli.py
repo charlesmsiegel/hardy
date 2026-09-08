@@ -413,7 +413,7 @@ def test_a_lean_that_cannot_be_identified_is_a_recorded_setup_failure(tmp_path) 
     `run_prove` uncaught, leaving no manifest and no trajectory behind."""
     cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.workflows.contracts')
-    workflow_module = importlib.import_module('hardy.workflow')
+    workflow_module = importlib.import_module('hardy.workflows.prove')
     config = _staged_config(tmp_path)
     config.lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
 

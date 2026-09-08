@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 from test_chat import FakeChatRuntime, session
 
-from hardy import chat
 from hardy.agents.contracts import TurnEvent
 from hardy.agents.usage import Usage
+from hardy.workflows.interactive import session as chat
 
 REPORT = {
     "input_tokens": 10,
