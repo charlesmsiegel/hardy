@@ -39,7 +39,7 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     from .corpus import load_corpus, manifest_digest
     from .outstanding import environment_digest_of_board
     from .problems import sha256_of
-    from .runner import Scoreboard
+    from .contracts import Scoreboard
     from .scoreboard import active_ids, aggregate, scoreboard_self_issues
     from .sweep import Baseline
 

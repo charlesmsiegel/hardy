@@ -12,7 +12,7 @@ from test_recorded_runs import FAKE_LEAN, _Runtime
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy.domain import EnvironmentIdentity
-from hardy.evals import runner, sweep
+from hardy.evals import runner, sweep, identity
 from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
 
@@ -578,7 +578,7 @@ def test_run_digest_moves_when_a_counted_module_changes(monkeypatch):
     def fewer():
         return tuple(p for p in real() if p.name != "closers.py")
 
-    monkeypatch.setattr(runner, "run_source_paths", fewer)
+    monkeypatch.setattr(identity, "run_source_paths", fewer)
     assert runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3}, repeats=1) != before
 
 

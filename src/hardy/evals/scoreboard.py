@@ -9,9 +9,10 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from .. import acceptance
+from ..workflows import recorded as acceptance
 from ..domain import EnvironmentIdentity, FormalStatus, FrozenModel, RunManifest, RunPhase
 from .problems import Entry
+from .contracts import Row, TierAggregate, Totals, Aggregates, Outcome
 from .sweep import Baseline, baseline_entries_mismatch, staleness
 
 # The two backends `_condition_issues` knows how to tell apart in a staged
@@ -20,7 +21,6 @@ from .sweep import Baseline, baseline_entries_mismatch, staleness
 # prefix a genuine record could ever carry, not a registry to extend lightly.
 KNOWN_BACKENDS = ("claude", "codex")
 
-Outcome = Literal["solved", "solved_other", "unsolved", "refused", "exhausted", "graded", "invalid"]
 EXHAUSTION = frozenset({"turn_limit", "wall_clock_limit"})
 #: The batch tools that invoke Lean, for the `lean_checks` metric. Named once
 #: so a tool added to the runner cannot quietly go uncounted: `sketch_proof`
@@ -30,32 +30,6 @@ LEAN_CALLS = frozenset({"check_proof", "submit_proof", "sketch_proof"})
 MEDIAN_FIELDS = ("exchanges", "turns", "cost_usd", "wall_seconds", "search_calls", "lean_checks")
 
 
-class Row(FrozenModel):
-    id: str
-    tier: int
-    twin_of: str | None
-    expected: Literal["true", "false"]
-    mode: Literal["batch", "staged"]
-    repeat: int
-    run_dir: str
-    outcome: Outcome
-    terminal_reason: str | None
-    cost_usd: float | None
-    exchanges: int | None
-    turns: int | None
-    wall_seconds: float | None
-    lean_checks: int
-    search_calls: int
-    canonical: Literal["agreed", "disputed", "unavailable"] | None = None
-    approval: Literal["automatic"] | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_tokens: int | None = None
-    cache_write_tokens: int | None = None
-    # The concurrency this row was produced under, so `wall_seconds` is
-    # self-describing: a contended figure summed across rows overstates serial
-    # wall clock, and a bare number invites a later reader to mistake it for one.
-    workers: int | None = None
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -147,7 +121,7 @@ def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, 
     # file as a consistency finding (item 5). A row whose `canonical.json`
     # cannot be parsed this way is simply `"unavailable"`; `_canonical_issues`
     # is what names the file as the finding.
-    from .staged import CanonicalVerdict
+    from .contracts import CanonicalVerdict
 
     canonical_path = row_dir / "canonical.json"
     try:
@@ -179,46 +153,8 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
-class TierAggregate(FrozenModel):
-    n: int
-    solved: int
-    solved_other: int
-    unsolved: int
-    invalid: int
-    solve_rate: float | None
-    interval: tuple[float, float]
-    refused: int
-    exhausted: int
-    graded: int
-    mechanically_false: int
-    refusal_rate: float | None
-    medians: dict[str, float | None]
-    unreported_costs: int
 
 
-class Totals(FrozenModel):
-    """Sums, and how many rows actually carried a value.
-
-    `Aggregates` is otherwise counts and medians. A total that silently skips
-    the rows holding `None` -- every `invalid` row does -- is worse than one
-    that says how many it skipped, so the coverage counts travel beside it.
-    """
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
-    cost_usd: float
-    wall_seconds: float
-    rows: int
-    rows_with_usage: int
-    rows_with_wall: int
-    # `cost_usd` gets its own denominator rather than borrowing
-    # `rows_with_usage`: a run can report token counts and still leave
-    # `cost_usd` null (`TierAggregate.unreported_costs` exists for exactly
-    # that case), so the two coverages genuinely differ and one standing in
-    # for the other would overstate what the summed cost is a sum over.
-    rows_with_cost: int
-    workers: int | None
 
 
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
@@ -242,11 +178,6 @@ def _totals(rows: list[Row]) -> Totals:
     )
 
 
-class Aggregates(FrozenModel):
-    tiers: dict[str, TierAggregate]
-    headline: TierAggregate
-    floor: dict[str, int]
-    totals: Totals
 
 
 def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
@@ -325,7 +256,7 @@ def active_ids(problems) -> set[str]:
 
 def _read_board(scoreboard_dir: Path) -> tuple[Any | None, tuple[str, ...]]:
     """The committed board, or the findings that stop anything from reading it."""
-    from .runner import Scoreboard
+    from .contracts import Scoreboard
 
     board_path = scoreboard_dir / "scoreboard.json"
     if not board_path.exists():
@@ -415,7 +346,8 @@ def _corpus_issues(board: Any, problems: Any, baseline: Baseline, *, problems_pa
 
 
 def _self_issues(board: Any, scoreboard_dir: Path, problems: Any, baseline: Baseline) -> list[str]:
-    from .runner import RefusedRun, select
+    from .contracts import RefusedRun
+    from .selection import select
 
     issues: list[str] = []
     if baseline.environment != board.environment:
@@ -695,7 +627,7 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
 
     from ..domain import FrozenClaim, schema_text
     from ..prompts import canonical_prompt, claim_signature
-    from .staged import CanonicalReview, CanonicalVerdict
+    from .contracts import CanonicalReview, CanonicalVerdict
 
     path = row_dir / "canonical.json"
     if not path.exists():
@@ -800,23 +732,3 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     return issues
 
 
-def check_command(args: Any) -> int:
-    from .commands import _refuse_missing
-
-    refusal = _refuse_missing(args.problems, args.baseline)
-    if refusal is not None:
-        print(refusal, file=sys.stderr)
-        return 2
-    issues = validate_scoreboard(args.scoreboard, problems_path=args.problems, baseline_path=args.baseline)
-    print(f"Scoreboard: {args.scoreboard}")
-    for issue in issues:
-        print("CONSISTENCY ERROR: " + issue)
-    if not issues:
-        board = json.loads((args.scoreboard / "scoreboard.json").read_text(encoding="utf-8"))
-        agg = board["aggregates"]
-        h = agg["headline"]
-        print(f"headline (tiers 2-3): {h['solved']}/{h['n']} solved, 95% {h['interval'][0]:.2f}-{h['interval'][1]:.2f}; floor: {agg['floor']}")
-        for t in ("0", "1", "2", "3"):
-            a = agg["tiers"][t]
-            print(f"tier {t}: n={a['n']} solved={a['solved']} refused={a['refused']} exhausted={a['exhausted']} graded={a['graded']} medians={a['medians']}")
-    return 0 if not issues else 1

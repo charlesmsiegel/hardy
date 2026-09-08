@@ -178,7 +178,7 @@ def test_baseline_refuses_unacknowledged_unsafe_execution(tmp_path, capsys):
 def test_check_refuses_missing_problems_or_baseline_instead_of_a_traceback(tmp_path, capsys):
     missing_problems = tmp_path / "problems.json"
     args = argparse.Namespace(scoreboard=tmp_path / "board", problems=missing_problems, baseline=tmp_path / "baseline.json")
-    code = scoreboard.check_command(args)
+    code = commands.check_command(args)
     assert code == 2
     err = capsys.readouterr().err
     assert "Refused:" in err and str(missing_problems) in err

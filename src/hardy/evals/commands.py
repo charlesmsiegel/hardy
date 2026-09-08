@@ -11,7 +11,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from ..domain import EnvironmentIdentity
+from .contracts import Condition, RefusedRun
+from .runner import _batch_runner, limits_for, run_set, source_revision
+from .identity import run_procedure_digest_of
+from .sweep import Baseline, environment_digest_of, host_info
 from ..lean import Elaboration, elaborate, environment_identity
 from . import sweep
 from .corpus import load_corpus, manifest_digest
@@ -367,7 +372,6 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     """
     from .outstanding import matching_boards
     from .outstanding import outstanding as compute_outstanding
-    from .runner import limits_for, run_procedure_digest_of
 
     refusal = _refuse_missing(args.problems, args.baseline)
     if refusal is not None:
@@ -484,7 +488,6 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "baseline":
         return run_baseline(args, config)
     if args.evals_command == "run":
-        from .runner import run_set_command
         return run_set_command(args, config)
     if args.evals_command == "corpus":
         from .corpus import check_issues, report
@@ -534,7 +537,6 @@ def main(args: argparse.Namespace, config: Any) -> int:
             print(line)
         return 0
     if args.evals_command == "check":
-        from .scoreboard import check_command
         return check_command(args)
     if args.evals_command == "todo":
         return run_todo(args, config)
@@ -543,3 +545,122 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "summary":
         return run_summary(args)
     raise AssertionError(args.evals_command)
+
+
+def check_command(args: Any) -> int:
+    from .scoreboard import validate_scoreboard
+
+    refusal = _refuse_missing(args.problems, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
+    issues = validate_scoreboard(args.scoreboard, problems_path=args.problems, baseline_path=args.baseline)
+    print(f"Scoreboard: {args.scoreboard}")
+    for issue in issues:
+        print("CONSISTENCY ERROR: " + issue)
+    if not issues:
+        board = json.loads((args.scoreboard / "scoreboard.json").read_text(encoding="utf-8"))
+        agg = board["aggregates"]
+        h = agg["headline"]
+        print(f"headline (tiers 2-3): {h['solved']}/{h['n']} solved, 95% {h['interval'][0]:.2f}-{h['interval'][1]:.2f}; floor: {agg['floor']}")
+        for t in ("0", "1", "2", "3"):
+            a = agg["tiers"][t]
+            print(f"tier {t}: n={a['n']} solved={a['solved']} refused={a['refused']} exhausted={a['exhausted']} graded={a['graded']} medians={a['medians']}")
+    return 0 if not issues else 1
+
+
+
+def run_set_command(args: argparse.Namespace, config: Any) -> int:
+    from ..lean import environment_identity
+    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
+    from ..runner import WARNING
+
+    if args.backend != "claude":
+        print(
+            "Refused: the evals runner drives the Claude backend only: the batch runner, the "
+            "canonical reader and staged tool-event counting are Claude-shaped; a Codex condition "
+            "would attribute Claude runs to Codex",
+            file=sys.stderr,
+        )
+        return 2
+
+    # `getattr`, not `args.workers`: a caller (or a test's hand-built
+    # Namespace) that predates this flag carries no `workers` attribute at
+    # all, and its absence must default the same way omitting the flag on
+    # `evals run` does -- the same reasoning `limits_for` already applies to
+    # `max_turns`/`wall_seconds`.
+    workers = getattr(args, "workers", 1)
+    if workers < 1:
+        print("--workers must be at least 1", file=sys.stderr)
+        return 2
+    refusal = _refuse_missing(args.problems, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
+    if not args.acknowledge_unsafe_execution:
+        print(WARNING, file=sys.stderr)
+        print("Re-run with --acknowledge-unsafe-execution to accept this for every run in the set.", file=sys.stderr)
+        return 2
+    print(WARNING, file=sys.stderr)
+    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
+        print(
+            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
+            "config.limits.active_seconds, proof_seconds and official_checks",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
+    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+        print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
+        return 2
+    limits = limits_for(args, config)
+    model = str(args.model or config.model)
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats)
+
+    problems = load_corpus(args.problems)
+    try:
+        only = selected_ids(args, problems)
+    except SelectionError as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    if only is None:
+        # Nobody named entries: default to what this exact model, mode and
+        # limits have not yet run against this environment -- not the whole
+        # corpus, which would also spend on candidates and retirees no human
+        # has checked. Recorded into `selection["only"]` below rather than
+        # left as `None`, so the scoreboard states exactly what ran and
+        # `select` picks it up through the path it already uses.
+        from .outstanding import outstanding as compute_outstanding
+
+        default_baseline = Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
+        default_key = (run_digest, environment_digest_of(environment, host_info()))
+        only = compute_outstanding(problems, default_baseline, args.scoreboards, key=default_key)["unevaluated_active"]
+        if not only:
+            print(
+                "Refused: every active entry has already been run under this condition; "
+                "name entries with --only to re-run them",
+                file=sys.stderr,
+            )
+            return 2
+    condition = Condition(
+        model=model, backend=args.backend, mode=args.mode,
+        staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
+        hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
+        selection={"only": only, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
+                   "twins": not args.no_twins},
+        run_procedure_digest=run_digest,
+    )
+    staged = None
+    if args.mode == "staged":
+        from .staged import staged_runner
+        staged = staged_runner(config, backend=args.backend)
+    try:
+        out = run_set(label=args.label, problems_path=args.problems, baseline_path=args.baseline, scoreboards_root=args.scoreboards,
+                      condition=condition, environment=environment, batch_runner=_batch_runner(config, condition.model), staged_runner=staged,
+                      now=lambda: datetime.now(UTC), report=lambda line: print(line, file=sys.stderr), workers=workers)
+    except RefusedRun as refused:
+        print(f"Refused: {refused}", file=sys.stderr)
+        return 2
+    print(f"Scoreboard: {out / 'scoreboard.json'}")
+    return 0

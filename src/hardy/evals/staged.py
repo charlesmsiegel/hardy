@@ -14,6 +14,7 @@ from pydantic import model_validator
 from ..domain import FrozenClaim, FrozenModel, RunPhase, schema_text
 from ..prompts import canonical_prompt, claim_signature
 from .problems import Entry
+from .contracts import CanonicalReview, CanonicalVerdict
 
 
 class ApprovingTerminal:
@@ -43,64 +44,8 @@ class ApprovingTerminal:
         self.manifest = manifest
 
 
-class CanonicalReview(FrozenModel):
-    equivalent: bool
-    canonical_entails_model: bool
-    model_entails_canonical: bool
-    divergences: tuple[str, ...] = ()
-    notes: str = ""
-
-    @property
-    def agrees(self) -> bool:
-        return self.equivalent and self.canonical_entails_model and self.model_entails_canonical and not self.divergences and not self.notes.strip()
 
 
-class CanonicalVerdict(FrozenModel):
-    schema_version: Literal[1] = 1
-    claim_sha256: str | None
-    entry_id: str
-    canonical_declaration: str
-    model_signature: str | None
-    reviewer_model: str
-    reviewer_backend: str
-    prompt_sha256: str | None
-    response_schema_sha256: str | None
-    outcome: Literal["agreed", "disputed", "unavailable"]
-    review: CanonicalReview | None = None
-    detail: str = ""
-    usage: dict[str, Any]
-
-    @model_validator(mode="after")
-    def outcome_must_follow_the_review(self) -> CanonicalVerdict:
-        """Refuse a verdict whose summary can disagree with its own evidence.
-
-        Mirrors `FaithfulnessVerdict.outcome_must_follow_the_review`
-        (`domain.py`): `_canonical_issues` loads this with
-        `model_validate_json`, so a `canonical.json` rewritten to say
-        `outcome: "agreed"` beside a disputed or absent review fails to parse
-        at all, and the validator reports it as a finding rather than
-        crediting a tampered outcome.
-        """
-        if self.outcome == "unavailable":
-            if self.review is not None:
-                raise ValueError("an unavailable verdict carries no review")
-            return self
-        if self.review is None:
-            raise ValueError(f"a {self.outcome} verdict requires the review it grades")
-        if self.review.agrees is not (self.outcome == "agreed"):
-            raise ValueError("verdict does not follow from the review it names")
-        # `unavailable` is the only outcome the no-formalization path
-        # (`compare_canonical`, no `formalization.json`) can produce, and
-        # that is the only place these four fields are ever left `None`. An
-        # `agreed` or `disputed` verdict binds a specific review to a
-        # specific claim, prompt and schema; leaving any of these `None`
-        # would let a reader trajectory copied from comparing a *different*
-        # formalization supply the agreeing review here, with nothing tying
-        # it back to this row's frozen statement.
-        missing = [name for name in ("claim_sha256", "model_signature", "prompt_sha256", "response_schema_sha256") if getattr(self, name) is None]
-        if missing:
-            raise ValueError(f"a {self.outcome} verdict requires " + ", ".join(missing))
-        return self
 
 
 def _sha(path: Path) -> str:

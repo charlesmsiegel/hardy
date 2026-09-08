@@ -16,6 +16,8 @@ from typing import Any, Literal
 from .. import __version__
 from ..domain import EnvironmentIdentity, FrozenModel
 from . import digests
+from .contracts import Condition, Scoreboard, RefusedRun
+from .selection import select
 from .corpus import load_corpus, manifest_digest
 from .problems import Entry, ProblemSet, sha256_of
 from .scoreboard import Aggregates, Row, active_ids, aggregate, batch_row, staged_row
@@ -32,113 +34,11 @@ StagedRunner = Callable[[Entry, Path, str], None]   # (entry, row_dir, model): w
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
-class RefusedRun(RuntimeError):
-    """A §3.1 gate: the run did not start, and this is why."""
 
 
-class Condition(FrozenModel):
-    model: str
-    backend: str
-    mode: Literal["batch", "staged"]
-    # Both always recorded: a twin still runs batch under a staged condition
-    # (#23), so a staged scoreboard's rows can be governed by either prompt
-    # set, and each hash must cover only the templates that governed it.
-    staged_prompt_set_sha256: str
-    batch_prompt_set_sha256: str
-    hardy_version: str
-    # The Git revision the run was made from, `-dirty` suffixed when the
-    # working tree carried uncommitted changes, `None` when it could not be
-    # identified (no `git`, no `.git`). Evals are run from a source checkout
-    # and no release bump occurs per commit, so `hardy_version` alone cannot
-    # distinguish two runs made from different commits of the same release
-    # (item 8). Defaulted so every existing `Condition(...)` call site --
-    # test fixtures included -- need not name it.
-    source_revision: str | None = None
-    limits: dict[str, float | int]
-    repeats: int
-    selection: dict[str, Any]
-    # Defaulted to None, not required: a scoreboard written before this gate
-    # existed carries no digest, and `evals pool` refuses such a board by name
-    # rather than crashing on it. Absence is staleness, not agreement -- the
-    # same rule `staleness` applies to a blank environment digest.
-    run_procedure_digest: str | None = None
 
 
-RUN_SOURCE_ROOT = Path(__file__).resolve().parents[1]
-
-# Excluded because no run path reaches them. Inclusion is the default: a
-# module added tomorrow counts without anyone remembering to list it, which
-# is the whole reason this is a denylist. An allowlist drawn from the obvious
-# imports omitted `closers` -- which decides whether a proof closes -- and
-# `usage`, which computes the very token counts a pool aggregates.
-#
-# The cost of getting this wrong runs in both directions. A module wrongly
-# excluded lets a run change while the key claims it did not. A module wrongly
-# *included* is quieter and was the more expensive mistake here: `summary.py`
-# only reads finished boards, so adding a column to its report moved the key
-# and orphaned every scoreboard on disk -- `evals todo` reported
-# `boards_counted: 0` for two models that plainly had boards, and topping them
-# up became a full re-baseline. The test that a downstream reader cannot reach
-# a run is `test_no_module_the_digest_covers_reaches_a_run_through_cli`'s
-# shape: nothing the digest covers may import it.
-RUN_SOURCE_EXCLUDED_FILES = frozenset({
-    "__main__.py",        # a console-script shim
-    "cas_driver.py",      # reached by no run path
-    "cli.py",             # argument parsing; the run hooks moved to wiring.py
-    "evals/viewer.py",    # the corpus review viewer
-    "evals/summary.py",   # reads finished boards; cannot reach a run
-})
-RUN_SOURCE_EXCLUDED_DIRS = ("tui/",)
-
-
-def run_source_paths() -> tuple[Path, ...]:
-    """Every module whose bytes can change what a run does, in a stable order."""
-    found = []
-    for path in RUN_SOURCE_ROOT.rglob("*.py"):
-        if "__pycache__" in path.parts:
-            continue
-        rel = path.relative_to(RUN_SOURCE_ROOT).as_posix()
-        if rel in RUN_SOURCE_EXCLUDED_FILES or rel.startswith(RUN_SOURCE_EXCLUDED_DIRS):
-            continue
-        found.append(path)
-    # Sorted on the POSIX-relative name, not the OS path: a Windows and a
-    # Linux checkout must hash the same modules in the same order.
-    return tuple(sorted(found, key=lambda p: p.relative_to(RUN_SOURCE_ROOT).as_posix()))
-
-
-def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | int], repeats: int) -> str:
-    """What a pooled row must share: the deciding source, the prompts, the model, its budgets and its repeats.
-
-    The mirror of `sweep.procedure_digest_of`, for the run rather than the
-    sweep, and for the same reason its docstring gives: `__version__` is fixed
-    at 0.1.0 across every checkout, so only hashing the deciding modules can
-    tell that two measurements came from the same code.
-
-    The prompt-set hashes stay separate keys rather than folding into
-    `source`, so a changed digest says which input moved. They cover template
-    *text* only -- never the `prompts/` code that renders it, which
-    `run_source_paths` picks up.
-
-    `repeats` is part of the key, not provenance beside it. The bar a pool
-    has to clear is that the combined result be indistinguishable from one
-    long sequential run made at a single moment, and one sequential run has
-    one `--repeats` setting: folding a board sampled once per entry into one
-    sampled three times per entry is an unbalanced design, where entries with
-    more samples pull the pooled rate towards their own.
-    """
-    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
-
-    return digests.procedure_digest({
-        "hardy_version": __version__,
-        "source": [digests.source_digest(p.read_bytes()) for p in run_source_paths()],
-        "staged_prompt_set_sha256": PROMPT_SET_SHA256,
-        "batch_prompt_set_sha256": BATCH_PROMPT_SET_SHA256,
-        "model": model,
-        "mode": mode,
-        "limits": limits,
-        "repeats": repeats,
-    })
-
+from .identity import RUN_SOURCE_ROOT, RUN_SOURCE_EXCLUDED_FILES, RUN_SOURCE_EXCLUDED_DIRS, run_source_paths, run_procedure_digest_of
 
 def _source_anchor() -> Path:
     """Where the walk for Hardy's own source checkout starts: the installed
@@ -197,67 +97,8 @@ def source_revision() -> str | None:
     return revision
 
 
-class Scoreboard(FrozenModel):
-    schema_version: Literal[1] = 1
-    label: str
-    condition: Condition
-    environment: EnvironmentIdentity
-    baseline_sha256: str
-    problems_sha256: str
-    rows: tuple[Row, ...]
-    aggregates: Aggregates
-    started_at: datetime
-    finished_at: datetime | None
-    interrupted: bool
-    # Recorded so a later `evals pool`/`evals todo` can recompute this board's
-    # own environment digest (`outstanding.environment_digest_of_board`) the
-    # same way `sweep.environment_digest_of` computes a baseline's -- over the
-    # environment and the host together, not a value stored precomputed.
-    # Defaulted so every existing `Scoreboard(...)` call site -- test
-    # fixtures included -- need not name it; a board written before this
-    # field existed reads back as `{}`, which will simply never match a real
-    # host and so never falsely pools with a live run.
-    host: dict[str, Any] = {}
 
 
-def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, tiers: list[int] | None, twins: bool) -> tuple[Entry, ...]:
-    # `only`'s own order, not the set's: a caller who names entries explicitly
-    # is choosing a run order, not just a subset (spec §3.2 "select"). Repeats
-    # are folded to their first occurrence -- `--only t,t` must not run `t`
-    # twice into the same row directory -- and a name the list does not carry
-    # is a gate this refuses before anything runs, not a selection silently
-    # narrowed by ignoring it.
-    if only is None:
-        ids = [entry.id for entry in problems.entries]
-    else:
-        seen: set[str] = set()
-        ids = []
-        for id_ in only:
-            if id_ not in seen:
-                seen.add(id_)
-                ids.append(id_)
-        known = {entry.id for entry in problems.entries}
-        unknown = [id_ for id_ in ids if id_ not in known]
-        if unknown:
-            raise RefusedRun("--only names entries not in the list: " + ", ".join(unknown))
-    if tiers is not None:
-        unbaselined = [id_ for id_ in ids if id_ not in baseline.entries]
-        if unbaselined:
-            # A KeyError here read as a crash; it is a selection the baseline
-            # cannot tier, which is a refusal naming what to sweep.
-            raise RefusedRun(
-                "--tiers needs a baseline row for: " + ", ".join(sorted(unbaselined))
-                + "; re-run `hardy evals baseline` for them"
-            )
-    chosen = []
-    for id_ in ids:
-        entry = problems.by_id(id_)
-        if tiers is not None and baseline.entries[entry.id].tier not in tiers:
-            continue
-        if entry.expected == "false" and not twins:
-            continue
-        chosen.append(entry)
-    return tuple(chosen)
 
 
 def _write(path: Path, board: Scoreboard) -> None:
@@ -520,98 +361,3 @@ def limits_for(args: argparse.Namespace, config: Any) -> dict[str, float | int]:
     }
 
 
-def run_set_command(args: argparse.Namespace, config: Any) -> int:
-    from ..lean import environment_identity
-    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
-    from ..runner import WARNING
-
-    if args.backend != "claude":
-        print(
-            "Refused: the evals runner drives the Claude backend only: the batch runner, the "
-            "canonical reader and staged tool-event counting are Claude-shaped; a Codex condition "
-            "would attribute Claude runs to Codex",
-            file=sys.stderr,
-        )
-        return 2
-    from .commands import SelectionError, _refuse_missing, selected_ids
-
-    # `getattr`, not `args.workers`: a caller (or a test's hand-built
-    # Namespace) that predates this flag carries no `workers` attribute at
-    # all, and its absence must default the same way omitting the flag on
-    # `evals run` does -- the same reasoning `limits_for` already applies to
-    # `max_turns`/`wall_seconds`.
-    workers = getattr(args, "workers", 1)
-    if workers < 1:
-        print("--workers must be at least 1", file=sys.stderr)
-        return 2
-    refusal = _refuse_missing(args.problems, args.baseline)
-    if refusal is not None:
-        print(refusal, file=sys.stderr)
-        return 2
-    if not args.acknowledge_unsafe_execution:
-        print(WARNING, file=sys.stderr)
-        print("Re-run with --acknowledge-unsafe-execution to accept this for every run in the set.", file=sys.stderr)
-        return 2
-    print(WARNING, file=sys.stderr)
-    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
-        print(
-            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
-            "config.limits.active_seconds, proof_seconds and official_checks",
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
-    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
-        print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
-        return 2
-    limits = limits_for(args, config)
-    model = str(args.model or config.model)
-    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats)
-
-    problems = load_corpus(args.problems)
-    try:
-        only = selected_ids(args, problems)
-    except SelectionError as error:
-        print(f"Refused: {error}", file=sys.stderr)
-        return 2
-    if only is None:
-        # Nobody named entries: default to what this exact model, mode and
-        # limits have not yet run against this environment -- not the whole
-        # corpus, which would also spend on candidates and retirees no human
-        # has checked. Recorded into `selection["only"]` below rather than
-        # left as `None`, so the scoreboard states exactly what ran and
-        # `select` picks it up through the path it already uses.
-        from .outstanding import outstanding as compute_outstanding
-
-        default_baseline = Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
-        default_key = (run_digest, environment_digest_of(environment, host_info()))
-        only = compute_outstanding(problems, default_baseline, args.scoreboards, key=default_key)["unevaluated_active"]
-        if not only:
-            print(
-                "Refused: every active entry has already been run under this condition; "
-                "name entries with --only to re-run them",
-                file=sys.stderr,
-            )
-            return 2
-    condition = Condition(
-        model=model, backend=args.backend, mode=args.mode,
-        staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
-        hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
-        selection={"only": only, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
-                   "twins": not args.no_twins},
-        run_procedure_digest=run_digest,
-    )
-    staged = None
-    if args.mode == "staged":
-        from .staged import staged_runner
-        staged = staged_runner(config, backend=args.backend)
-    try:
-        out = run_set(label=args.label, problems_path=args.problems, baseline_path=args.baseline, scoreboards_root=args.scoreboards,
-                      condition=condition, environment=environment, batch_runner=_batch_runner(config, condition.model), staged_runner=staged,
-                      now=lambda: datetime.now(UTC), report=lambda line: print(line, file=sys.stderr), workers=workers)
-    except RefusedRun as refused:
-        print(f"Refused: {refused}", file=sys.stderr)
-        return 2
-    print(f"Scoreboard: {out / 'scoreboard.json'}")
-    return 0
