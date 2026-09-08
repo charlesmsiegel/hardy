@@ -106,7 +106,7 @@ installer is cheap and safe.
    the Lean toolchain manager, which supplies `lake`, `lean`, and `elan`.
 4. **A shared Mathlib project** — a Lake project pinned to one Lean release
    and one Mathlib tag (the values in `scripts/lib/common.sh`, which
-   `hardy.installers` and the Windows installer repeat), with Mathlib's
+   `hardy.app.installers` and the Windows installer repeat), with Mathlib's
    prebuilt cache fetched (`lake exe cache get`). This is the long step:
    several gigabytes and typically 10–30 minutes. Every recorded run names the
    Lean version and commit, the Mathlib revision, and the manifest digest it
@@ -249,8 +249,15 @@ The internal packages ship together in `hardy-prover`; there are no separate
 capability installations. The console script now uses `hardy.app.cli:main`.
 `python -m hardy` and the legacy `python -m hardy.cli` launch the same commands;
 `python -m hardy.mcp_server` remains available to Codex clients through the
-`hardy.app.mcp` adapter. The wheel also includes the CAS driver, prompt templates,
-viewer HTML/CSS and acceptance JSON fixtures at their existing resource paths.
+`hardy.app.mcp` adapter. `python -m hardy.cas_driver` launches the helper in
+`hardy.algebra.driver`. These are entry-point shims; configuration, installation
+and doctor implementations live in `hardy.app`, and capability implementations
+are imported from their domain packages.
+
+The wheel includes `hardy/algebra/driver.py`, templates under `hardy/prompts/`
+and `hardy/documents/templates/`, `hardy/documents/export.css`, the viewer pages
+under `hardy/app/`, and `hardy/workflows/acceptance_problems.json`. These resource
+paths moved with their owners; the user-facing command spellings did not.
 
 For a packaging smoke check from a directory outside a checkout, run
 `hardy --help` and `python -m hardy prove --help`. These need no model or Lean

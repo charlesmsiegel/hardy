@@ -103,31 +103,45 @@ Hardy is one distribution and application. The construction layer knows concrete
 implementations; workflows coordinate bounded capabilities; evidence readers
 validate saved values without constructing a runtime. The implemented owners are:
 
+Paths below are relative to `src/hardy/`.
+
 | Boundary | Responsibility |
 | --- | --- |
-| `agents/contracts.py`, `workflows/contracts.py` | Conversation events, runtime interface, stream assembly and provenance; provider-independent proof submissions. Providers receive tools and dispatch callbacks, never an interactive session. |
-| `formal/syntax.py`, `formal/tools.py` | Pure Lean scanners and dependency analysis; one bounded Lean runtime used by both in-process and MCP tools. Execution and axiom policy still use the existing `lean`, `workspace`, `audit` and `verifier` modules. |
-| `documents/syntax.py`, `documents/batch.py` | Pure TeX checks and batch document rendering helpers. Existing `latex`, `completion` and `writeup` modules retain compilation, evidence checks and controlled rendering. |
-| `workflows/interactive/` | `SessionRecord` owns guarded persistence and detached snapshots; `FormalWorkspaceService` owns checked saves, audit freshness and automation disclosures; `AssumptionAdmission` owns evidence and approval/quarantine decisions; `DocumentService` owns compilation and publication state; `TurnCoordinator` owns serialized dispatch, cancellation, spend and compaction. |
-| `workflows/recorded.py` | Cross-artifact validation for saved staged and batch runs, separate from acceptance execution. |
-| `algebra/` | Backend differences, kernel protocol, persistent session state, fresh replay and exported-script execution. `cas_tools`, `cas_export` and the `cas_driver` helper retain their existing roles. |
-| `literature/` | Pure metadata, guarded paper library, acquisition client, archive admission and statement inventory. `paper_tools` and `bibliography` remain explicit capability adapters. |
-| `corpus/` | Statement schema, taxonomy, content identity, loading, mechanical checks and releases. This is application code; corpus data still follows the separate curation branch policy. |
-| `evals/` | Value contracts, selection and conservative source identity below execution; scoreboard validation and pooling import neither the runner nor commands. |
-| `app/` | CLI/MCP entry points, project construction and console approval adapters. The TUI imports the construction and terminal APIs directly. |
+| `agents/` | Provider adapters, conversation events, runtime interface, stream assembly, provenance, loop policy, compaction and usage. Providers receive tools and dispatch callbacks, never an interactive session. |
+| `formal/` | Lean syntax and dependency analysis, environment identity, execution and builds, retrieval, axiom policy and final verification. `formal/tools.py` supplies one bounded runtime to both in-process and MCP tools. |
+| `documents/` | Pure TeX syntax, completion checks, compilation, controlled writeups and export rendering. Templates live in `documents/templates/` and export styling in `documents/export.css`. |
+| `workflows/` | Staged proving in `prove.py`, batch execution in `batch.py`, approval and faithfulness, run storage/layout, and acceptance execution. `recorded.py` validates saved staged and batch artifacts without launching a run. |
+| `workflows/interactive/` | `session.py` coordinates `SessionRecord` for guarded persistence and detached snapshots; `FormalWorkspaceService` for checked saves, audit freshness and automation disclosures; `AssumptionAdmission` for evidence and approval/quarantine decisions; `DocumentService` for compilation and publication state; and `TurnCoordinator` for serialized dispatch, cancellation, spend and compaction. |
+| `algebra/` | Backend differences, kernel protocol, persistent session state, fresh replay, exported-script execution and bounded tools. `driver.py` implements the helper process; `tools.py` and `export.py` expose the capability operations. |
+| `literature/` | Metadata, guarded paper libraries, acquisition clients, archive admission, statement inventory, canonical bibliography and bounded paper tools. |
+| `corpus/` | Statement schema, taxonomy, content identity, loading, mechanical checks and releases. This is application code; repository-level corpus data still follows the separate curation branch policy. |
+| `evals/` | Experimental contracts, selection and conservative source identity below execution; sweeps, run execution, scoreboard validation and pooling. Validation and pooling import neither the runner nor command adapters. |
+| `app/` | CLI/MCP entry points, `tui/`, configuration, project construction, terminal approval, installation and doctor checks. `evals.py` adapts evaluation commands; `corpus_viewer.py` serves the packaged viewer HTML. The TUI imports construction and terminal APIs directly. |
+| `foundation/` | `values.py` supplies strict value primitives and tool results; `files.py`, `locking.py` and `paths.py` supply guarded filesystem operations and shared tooling paths. Process control and truncation also live here, without capability dependencies. |
+| `prompts/` | Prompt rendering, identity and packaged templates. Project-authored command templates remain inputs under each project's `.hardy/prompts/`. |
 
-`MathematicsSession` remains the caller-facing coordinator in `chat.py`. It still
-assembles shared-library discovery, Lean/probe callbacks, paper-module rendering
-and cross-capability reporting policy. Its collaborators receive named operations
-and values rather than the whole session. Existing locks and save/admission gates
-remain in force; moving a method grants no new write authority. Compatibility
-record mutation accessors remain for the coordinator and existing callers.
+Value contracts follow their consumer domains: `agents/contracts.py` owns turn
+and runtime contracts; `formal/contracts.py` owns frozen statements, environment
+identity and verification evidence; `documents/contracts.py` owns document and
+informal-review statuses. `workflows/contracts.py` owns run lifecycle, budgets,
+grades and proof submissions, and `workflows/batch_contracts.py` owns recorded
+batch outcomes. The former root `domain.py` and `models.py` no longer exist.
 
-Root imports such as `cas`, `arxiv`, `assume`, `workspace` and `latex` retain
-explicit compatibility exports. New domain code imports the owner directly.
-`python -m hardy.mcp_server` remains a launch shim for Codex clients, and
-`python -m hardy.cas_driver` remains the algebra helper invocation. No wildcard
-forwarders or plugin registry are involved.
+`MathematicsSession` remains the caller-facing coordinator in
+`workflows/interactive/session.py`. It assembles shared-library discovery,
+Lean/probe callbacks, paper-module rendering and cross-capability reporting
+policy. Its collaborators receive named operations and values rather than the
+whole session. Existing locks and save/admission gates remain in force; moving a
+method grants no new write authority. Compatibility record mutation accessors
+remain for the coordinator and existing callers.
+
+The package root contains only `__init__.py`, `__main__.py`, `cli.py`,
+`mcp_server.py` and `cas_driver.py`. The latter three retain the CLI, MCP and CAS
+entry-point spellings; implementation imports use their owning packages.
+`python -m hardy.mcp_server` launches `app/mcp.py`, and
+`python -m hardy.cas_driver` launches `algebra/driver.py`. Root-level capability
+facades such as `hardy.cas`, `hardy.arxiv`, `hardy.workspace` and `hardy.latex`
+have been removed. No plugin registry or new execution service is involved.
 
 `tests/unit/test_module_boundaries.py` resolves imports across the full source
 tree, including function-local imports, checks transitive dependencies and the
@@ -194,7 +208,7 @@ kept by Hardy, because nothing in the SDK bounds a stalled request, and the
 trajectory states which of the two enforced what.
 
 There is now a second transport where none of that is lost. The `api` backend
-calls the Messages API directly and runs the loop in `hardy/loop.py`: it counts
+calls the Messages API directly and runs the loop in `hardy/agents/loop.py`: it counts
 provider calls itself, measures its own wall clock, holds the conversation as a
 list rather than as a provider thread, and is asked before every provider call
 whether to make one at all — the decision point that token budgets and a
@@ -250,8 +264,8 @@ window what survives is decided by the provider's rules, invisibly, and
 record-integrity problem, not a convenience problem: the compaction decides
 what endures about which lemmas were proved, which axioms are standing, and
 which attempts failed and why, and Hardy neither chooses it nor writes it
-down. The positive half matters more and is what `hardy/summary.py` and
-`hardy/compaction.py` are between them: the first assembles what a session
+down. The positive half matters more and is what `hardy/workflows/interactive/summary.py` and
+`hardy/agents/compaction.py` are between them: the first assembles what a session
 amounts to, the second decides what leaves the context and rebuilds the
 conversation around it. A mathematical summary is largely mechanical — the naming registry, the
 approved assumptions and the audit verdicts are already in `session.json`, and
@@ -289,7 +303,7 @@ of issue #23. What the hook cannot do is decide what the surviving context
 contains.
 
 The mechanical half now exists on its own, ahead of any of that, as
-`hardy.summary` and `/status --full`: goal, standing assumptions with source,
+`hardy.workflows.interactive.summary` and `/status --full`: goal, standing assumptions with source,
 reason and approval date, every saved theorem under the verdict its own stored
 audit record gives it, what is still open, the refused tool calls with what Lean
 said, the naming registry, and what is outstanding. It is worth having before
@@ -663,8 +677,8 @@ interrupts the children the turn started -- excepting the two an export runs
 inside a session of its own, which keep only their own limits; a second press escalates from
 interrupt to kill, because an interrupt is a request and a child that ignores
 it would otherwise leave the user with nothing further to press. It is confined to two
-modules (`hardy/tui/select.py` and `hardy/tui/shell.py`); everything else in
-`hardy/tui` speaks only the plain `Ui` port, so the line-based fallback
+modules (`hardy/app/tui/select.py` and `hardy/app/tui/shell.py`); everything else in
+`hardy/app/tui` speaks only the plain `Ui` port, so the line-based fallback
 (`--plain`, `HARDY_PLAIN`, a non-TTY, or a terminal session that fails to
 start) needs none of it.
 
@@ -760,7 +774,7 @@ So the rule, as a standing constraint rather than an open question:
 write the record.**
 
 Closed permanently, to any extension mechanism Hardy ever grows: the axiom
-audit path (`audit.py` and the `#print axioms` probe that feeds it), the
+audit path (`formal/audit.py` and the `#print axioms` probe that feeds it), the
 `FinalVerifier` and the interactive save gate, `transcript.jsonl`, `session.json`
 and the run manifest, the faithfulness reader's isolation, and every decision
 about whether a save or a report is refused. The test for a proposed hook is

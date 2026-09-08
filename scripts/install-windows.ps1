@@ -621,7 +621,7 @@ function Move-LegacyConfig {
     if (Test-Path $ConfigPath) { return }
     $venvPython = Join-Path $Venv 'Scripts\python.exe'
     if (-not (Test-Path $venvPython)) { return }
-    $program = 'import sys; from pathlib import Path; from hardy.config import migrate_global; sys.exit(0 if migrate_global(destination=Path(sys.argv[1])) else 1)'
+    $program = 'import sys; from pathlib import Path; from hardy.app.config import migrate_global; sys.exit(0 if migrate_global(destination=Path(sys.argv[1])) else 1)'
     & $venvPython -c $program $ConfigPath 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-Detail "moved your settings from the older config location into $ConfigPath"

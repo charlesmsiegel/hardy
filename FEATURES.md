@@ -18,16 +18,24 @@ interactive surface's own live run is still to come.
   corpus content policy separated from evaluation measurement. Scoreboard
   validation and pooling import no run launcher or command adapter.
 - Interactive record, formal workspace, assumption admission, document and turn
-  owners with named collaborators and independent tests. `chat.py` remains the
-  coordinator for construction and cross-capability policy.
+  owners with named collaborators and independent tests.
+  `workflows/interactive/session.py` remains the coordinator for construction and
+  cross-capability policy.
 - Algebra backend/kernel/session/replay/script owners and literature
   metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
-  points, project construction and terminal approval adapters; the CLI/TUI and
+  points, `app/tui`, configuration, setup, project construction and terminal
+  approval adapters; the CLI/TUI and
   evaluation cycles are removed and checked by full-tree import tests.
 - One wheel and unchanged commands, formats, prompts and mathematical gates.
   Source moves invalidate measurement identities; previous evidence is not
   restamped. No execution sandbox is added. See
-  [DESIGN.md](DESIGN.md#internal-module-boundaries) for retained root modules.
+  [DESIGN.md](DESIGN.md#internal-module-boundaries) for the package and contract map.
+- Implementations live in `agents`, `algebra`, `app`, `corpus`, `documents`,
+  `evals`, `formal`, `foundation`, `literature`, `prompts` and `workflows`. The
+  package root retains package initialization and only the CLI, MCP and CAS
+  launch shims; former root implementation imports have been removed. Shared
+  primitives live in `foundation`, while formal, document and workflow values
+  have their own contract modules.
 
 ## Interactive exploration
 
@@ -789,10 +797,10 @@ Priority labels are sequencing hints:
   may decline it. On the subscription backends the SDK still owns that moment
   (issue #23).
 - **Now (implemented):** compaction Hardy owns, with a summary derived from the
-  workspace rather than narrated by a model. `hardy/summary.py` assembles the
+  workspace rather than narrated by a model. `hardy/workflows/interactive/summary.py` assembles the
   sections — Goal, Standing assumptions, Modules, Proved, Open, Not
   established, Failed attempts, Naming registry and Next steps — and
-  `hardy/compaction.py` decides what leaves the context and puts that summary
+  `hardy/agents/compaction.py` decides what leaves the context and puts that summary
   in front of what stays. One assembler for both, so the text `/status --full`
   prints is the text the model is handed. The goal, assumptions and registry come from
   `session.json`, what is proved and what is open from the stored audit
@@ -1187,7 +1195,7 @@ Priority labels are sequencing hints:
   sequence: the spacing is machine-wide rather than per-process, and two sessions
   citing at once cannot lose a citation between them.
 - **Now (implemented):** downloaded archives are treated as hostile. `fetch_source`
-  downloads a version's LaTeX bundle; `archives.py` unpacks it with member paths
+  downloads a version's LaTeX bundle; `literature/archives.py` unpacks it with member paths
   normalised (no `..`, no absolute path, no drive letter, no backslash, no NUL,
   bounded depth, no repeat and none passing through a file), every symlink,
   hardlink, device and FIFO refused rather than skipped, and file-count,
@@ -1326,7 +1334,7 @@ Priority labels are sequencing hints:
   It fused Lean's own `#find` until that was measured never to answer on the
   pinned toolchain — still running at 300 seconds where `exact?` took 22, so
   every call spent a full process timeout to learn nothing; the finding is
-  recorded in `hardy/declarations.py` beside the index that replaced it, which
+  recorded in `hardy/formal/declarations.py` beside the index that replaced it, which
   answers name questions instantly, offline, and without a Lean process.
   `search_declarations` answers from the same index, and an index miss says it
   is about the index rather than passing for Lean's word on Mathlib. The
@@ -1392,7 +1400,7 @@ Priority labels are sequencing hints:
 - **Now (implemented):** the Lean toolchain and Mathlib revision are pinned by
   identity — one Lean release and one Mathlib tag, held in
   `scripts/lib/common.sh`, `scripts/install-windows.ps1`, and
-  `hardy.installers`, with a test that keeps the three in agreement — and the
+  `hardy.app.installers`, with a test that keeps the three in agreement — and the
   installers write the shared project from those pins rather than letting
   `lake init` require whatever Mathlib's default branch holds. The TeX side was
   already a checksum-pinned Tectonic bundle. A result records what it actually
@@ -1605,7 +1613,7 @@ section that binds the manifest digest of the tree it stamped, refusing a
 version that does not follow the current head, then re-runs the check.
 
 `hardy evals corpus serve [--corpus] [--host] [--port]`
-(`src/hardy/evals/viewer.py`, `viewer.html`) is the authoring view of that
+(`src/hardy/app/corpus_viewer.py`, `src/hardy/app/viewer.html`) is the authoring view of that
 corpus: a local page listing every entry with its statement rendered by
 KaTeX, its MSC codes resolved to names, its arXiv class, its provenance, its
 A6 witness, and its review, filterable by reporting group, status, difficulty
@@ -1621,7 +1629,7 @@ connections only to the server itself, since the tree behind `--corpus` may
 be unpublished work.
 
 `hardy evals baseline [--problems] [--out] --acknowledge-unsafe-execution`
-(`src/hardy/evals/sweep.py`) refuses (exit 2, printing `runner.WARNING`) to
+(`src/hardy/evals/sweep.py`) refuses (exit 2, printing `workflows.batch.WARNING`) to
 sweep an unacknowledged problem file, the same unsafe-execution contract
 `evals run` and the staged terminal already enforce, since the sweep
 elaborates real Lean built from the file's own imports, binders and
@@ -1680,7 +1688,7 @@ every configured tactic was tried against and failed.
 
 `hardy evals run --label L [--mode batch|staged] [--backend] [--model]
 [--repeats N] [--only ids] [--tiers 2,3] [--no-twins] [--max-turns]
-[--wall-seconds] --acknowledge-unsafe-execution` (`src/hardy/evals/commands.py`
+[--wall-seconds] --acknowledge-unsafe-execution` (`src/hardy/app/evals.py`
 adapts the command to `src/hardy/evals/runner.py`)
 runs the
 selection through `batch` or `staged` and writes

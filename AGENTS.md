@@ -15,6 +15,28 @@ it writes `coverage.xml` and `htmlcov/index.html`, and fails below the floor in
 `pyproject.toml`. CI runs the same command on every pull request and keeps the
 report.
 
+## Source ownership
+
+Implementations live under `src/hardy/agents`, `algebra`, `app`, `corpus`,
+`documents`, `evals`, `formal`, `foundation`, `literature`, `prompts` and
+`workflows`. The package root has only `__init__.py`, `__main__.py` and the
+`cli.py`, `mcp_server.py`, `cas_driver.py` entry-point shims. Use canonical package
+imports; the former root implementation modules, including `domain.py` and
+`models.py`, have been removed.
+
+The interactive coordinator is `workflows/interactive/session.py`; record,
+formal save, admission, document and turn responsibilities have separate owners
+beside it. Collaborators receive named operations and snapshots, not the whole
+session. Application construction and terminal adapters live in `app/`, including
+`app/tui/`, `app/evals.py` and `app/corpus_viewer.py`.
+
+Shared primitives are in `foundation/values.py`, `files.py`, `locking.py` and
+`paths.py`; capability and run values live in `formal/contracts.py`,
+`documents/contracts.py`, `workflows/contracts.py` and
+`workflows/batch_contracts.py`. Keep dependency direction from application to
+workflow to capabilities to foundations. `corpus/` under the Python package is
+code; the repository-level corpus content still follows the branch rules below.
+
 ## Repository rules
 
 - Keep `README.md`, `DESIGN.md`, `FEATURES.md`, and `ARCHITECTURE.html` consistent.
@@ -97,10 +119,12 @@ corpus branch between a harvest and its release.
 Digest coupling makes some code edits expensive, and a rebase is exactly when
 they land:
 
-- Editing `sweep.py`, `audit.py`, `lean.py` or `evals/problems.py` moves
-  `procedure_digest` and makes the entire tier file non-reusable -- the next
-  sweep re-elaborates every entry.
-- Editing anything under `src/hardy/` that is not in `RUN_SOURCE_EXCLUDED_FILES`
+- Editing a deciding source listed in `src/hardy/evals/sweep.py` -- the sweep,
+  `formal/audit.py`, `formal/lean.py`, `formal/syntax.py`, `corpus/problems.py`
+  or `corpus/identity.py` -- moves `procedure_digest` and makes the entire tier
+  file non-reusable; the next sweep re-elaborates every entry.
+- Editing anything under `src/hardy/` that is not excluded by
+  `RUN_SOURCE_EXCLUDED_FILES` or `RUN_SOURCE_EXCLUDED_DIRS` in `evals/identity.py`
   moves `run_procedure_digest` and orphans every scoreboard on disk, so boards
   stop pooling and `evals todo` reports `boards_counted: 0`.
 

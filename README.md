@@ -35,13 +35,30 @@ hold itself to the same standard.
 
 ## Internal structure
 
-Hardy remains one distribution, with internal owners for agent contracts,
-formal tools and syntax, documents, literature, algebra, corpus content, and
-evaluation. `hardy.app` assembles the CLI and MCP adapters; the interactive
-coordinator delegates records, formal saves, assumption admission, documents,
-and turn lifecycle to `hardy.workflows.interactive`. Pure evidence readers do
-not import run launchers. See [the implemented module boundaries](DESIGN.md#internal-module-boundaries)
-and [the architecture map](ARCHITECTURE.html). These boundaries do not provide
+Hardy remains one distribution. Implementations live under their domain owners:
+
+```text
+src/hardy/
+  app/          CLI, TUI, MCP, configuration and machine setup
+  workflows/    interactive sessions, staged proving, batch runs and records
+  agents/       provider adapters, conversation events, loops and usage
+  formal/       Lean syntax, builds, retrieval, axiom policy and verification
+  documents/    TeX checks, compilation, writeups and exports
+  algebra/      CAS backends, kernels, sessions, replay and exports
+  literature/   paper acquisition, archives, inventory and bibliography
+  corpus/       statement schema, taxonomy, content identity and releases
+  evals/        sweeps, run selection, scoring, validation and pooling
+  foundation/   strict values, guarded files, paths, locks and processes
+  prompts/      prompt rendering and packaged templates
+```
+
+`workflows/interactive/session.py` coordinates record, formal workspace,
+assumption admission, document and turn owners. The package root contains only
+`__init__.py`, `__main__.py`, and the `cli.py`, `mcp_server.py`, and
+`cas_driver.py` compatibility entry points. Import implementations from their
+owning packages. Pure evidence readers do not import run launchers. See
+[the implemented module boundaries](DESIGN.md#internal-module-boundaries) and
+[the architecture map](ARCHITECTURE.html). These boundaries do not provide
 execution isolation.
 
 ## What this cannot establish
@@ -279,7 +296,7 @@ measurement rather than a guess: on the toolchain pinned here it still had not
 answered at 300 seconds — ten times the process budget — while `exact?`
 finished in 22 in the same environment, so Lean was healthy and `#find`
 specifically was never going to answer inside a fresh process. The measurement
-is recorded in `hardy/declarations.py` next to the index that replaced it.
+is recorded in `hardy/formal/declarations.py` next to the index that replaced it.
 
 All three surfaces read `#print axioms` through the same parser, so a proof
 standing on `sorryAx` or on an axiom nobody approved is reported as such rather
@@ -916,8 +933,9 @@ Mathlib installation. Adding `--cov` measures what that suite reaches, writes
 `coverage.xml` and `htmlcov/index.html`, and fails below the floor recorded in
 `pyproject.toml`; CI runs it on every pull request and keeps the report as an
 artifact. One number it reports is a measurement limit rather than a gap:
-`hardy/cas_driver.py` is the body of a helper process the suite starts with
-`subprocess`, so nothing in the harness observes it running.
+`hardy/algebra/driver.py` is the body of a helper process the suite starts
+through the `hardy.cas_driver` launch shim with `subprocess`, so the parent
+coverage measurement does not observe it running.
 
 ## Commands
 
