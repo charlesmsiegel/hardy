@@ -10,6 +10,16 @@ import pytest
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "hardy"
 
 
+def test_package_root_contains_only_bootstrap_and_launch_shims():
+    assert {path.name for path in SOURCE.glob('*.py')} == {
+        '__init__.py', '__main__.py', 'cli.py', 'mcp_server.py', 'cas_driver.py',
+    }
+    for name in ('cli.py', 'mcp_server.py', 'cas_driver.py'):
+        tree = ast.parse((SOURCE / name).read_text(encoding='utf-8'))
+        assert not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                       for node in ast.walk(tree)), name
+
+
 def _imports(module, tree, modules, *, package=False):
     """Resolve imports at every depth, including local and TYPE_CHECKING code."""
     context = module.split('.') if package else module.split('.')[:-1]

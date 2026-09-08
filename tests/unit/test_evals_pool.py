@@ -11,9 +11,9 @@ import pytest
 from test_evals_runner import ENTRIES, SOLVE, _batch_runner, _condition, _files
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
+from hardy.corpus.catalog import manifest_digest
+from hardy.corpus.problems import Entry
 from hardy.evals import outstanding, pool, runner
-from hardy.evals.corpus import manifest_digest
-from hardy.evals.problems import Entry
 from hardy.formal.contracts import EnvironmentIdentity
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)

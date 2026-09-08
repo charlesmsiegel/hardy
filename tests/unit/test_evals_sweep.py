@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from hardy.corpus.problems import Entry, ProblemSet
 from hardy.evals import sweep
-from hardy.evals.problems import Entry, ProblemSet
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.formal.lean import Elaboration, parse_lean_json
 from hardy.foundation.process import ProcessResult

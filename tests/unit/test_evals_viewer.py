@@ -12,8 +12,8 @@ import pytest
 from corpus_helpers import rebind_changelog, write_corpus
 
 from hardy.app.corpus_viewer import PAGE, ReviewRefused, payload, record_review, serve
-from hardy.evals.corpus import load_corpus
-from hardy.evals.problems import Entry
+from hardy.corpus.catalog import load_corpus
+from hardy.corpus.problems import Entry
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -391,7 +391,7 @@ def test_a_recorded_review_leaves_only_the_release_objection_standing(reviewable
     """Content changed, so the manifest no longer matches the changelog head:
     that objection is expected and is cleared by the release cut before a push.
     Anything else would mean the write produced a corpus the CLI rejects."""
-    from hardy.evals.corpus import check_issues
+    from hardy.corpus.catalog import check_issues
 
     assert check_issues(reviewable) == []
     record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")

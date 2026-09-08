@@ -11,9 +11,9 @@ from corpus_helpers import write_corpus
 from test_recorded_runs import FAKE_LEAN, _Runtime
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
+from hardy.corpus.catalog import load_corpus, manifest_digest
+from hardy.corpus.problems import Entry, sha256_of
 from hardy.evals import identity, runner, sweep
-from hardy.evals.corpus import load_corpus, manifest_digest
-from hardy.evals.problems import Entry, sha256_of
 from hardy.formal.contracts import EnvironmentIdentity
 
 HOST = sweep.host_info()
@@ -540,26 +540,26 @@ def test_twins_run_batch_even_under_staged_mode(tmp_path):
 
 def test_run_source_set_excludes_only_the_declared_paths():
     paths = {p.relative_to(runner.RUN_SOURCE_ROOT).as_posix() for p in runner.run_source_paths()}
-    assert "runner.py" in paths                # the prover loop
-    assert "closers.py" in paths               # decides whether a proof closes
-    assert "usage.py" in paths                 # computes the token counts we aggregate
+    assert "workflows/batch.py" in paths                # the prover loop
+    assert "formal/closers.py" in paths               # decides whether a proof closes
+    assert "agents/usage.py" in paths                 # computes the token counts we aggregate
     assert "prompts/__init__.py" in paths      # renders the templates
-    assert "evals/viewer.py" not in paths      # excluded: the review viewer
+    assert "app/corpus_viewer.py" not in paths      # excluded: the review viewer
     assert "evals/summary.py" not in paths     # excluded: reads finished boards
-    assert "summary.py" in paths               # the *chat* summary, which a run does reach
+    assert "workflows/interactive/summary.py" in paths               # the *chat* summary, which a run does reach
     assert "cli.py" not in paths               # excluded: argument parsing
-    assert not any(p.startswith("tui/") for p in paths)
+    assert not any(p.startswith("app/tui/") for p in paths)
     assert not any("__pycache__" in p for p in paths)
 
 
 def test_no_module_the_digest_covers_imports_a_downstream_reader_at_module_scope():
-    """`evals/viewer.py` and `evals/summary.py` are excluded because they only
+    """`app/corpus_viewer.py` and `evals/summary.py` are excluded because they only
     read what a finished run wrote. That holds only while nothing the digest
     covers imports them at module scope: a top-level import would put them on
     the run path, and then editing a report column would change what a run
     does while the key says the code did not move.
 
-    `evals/commands.py` imports both, but from inside the command handlers, so
+    `app/evals.py` imports both, but from inside the command handlers, so
     neither is reachable from a run. The distinction this checks is the
     indentation.
     """
@@ -660,7 +660,7 @@ def test_a_run_still_refuses_when_a_selected_entry_is_unbaselined(tmp_path):
 
 def test_tiers_against_an_unbaselined_entry_refuses_by_name(tmp_path):
     problems, baseline_path = _files(tmp_path, tiers={"t": 0})
-    from hardy.evals.corpus import load_corpus
+    from hardy.corpus.catalog import load_corpus
 
     baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     with pytest.raises(runner.RefusedRun) as caught:

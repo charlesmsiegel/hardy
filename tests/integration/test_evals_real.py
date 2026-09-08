@@ -8,8 +8,8 @@ import pytest
 
 from hardy.app import config as configuration
 from hardy.app.evals import make_elaborate
+from hardy.corpus.catalog import load_corpus
 from hardy.evals import sweep
-from hardy.evals.corpus import load_corpus
 
 pytestmark = pytest.mark.real_toolchain
 ROOT = Path(__file__).resolve().parents[2]

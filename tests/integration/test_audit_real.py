@@ -130,7 +130,7 @@ def _elaborate(source: str):
 
 
 def _witness_entry(witness: str):
-    from hardy.evals.problems import Entry
+    from hardy.corpus.problems import Entry
 
     return Entry(id='pos-nat', input='...', name='PosNat', binders='(n : Nat) (h : n > 0)',
                  conclusion='n ≥ 1', imports=('Init',), expected='true', source='textbook',

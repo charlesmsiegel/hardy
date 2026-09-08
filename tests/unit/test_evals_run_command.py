@@ -11,9 +11,10 @@ from corpus_helpers import write_corpus
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy.app import evals as runner
+from hardy.corpus import taxonomy
+from hardy.corpus.problems import Entry, ProblemSet, Review
 from hardy.evals import staged as staged_module
-from hardy.evals import sweep, taxonomy
-from hardy.evals.problems import Entry, ProblemSet, Review
+from hardy.evals import sweep
 from hardy.formal import lean as lean_module
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.workflows.batch import WARNING

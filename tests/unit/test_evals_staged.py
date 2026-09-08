@@ -13,9 +13,9 @@ from pydantic import ValidationError
 
 from hardy import prompts
 from hardy.app.config import Config
+from hardy.corpus.catalog import load_corpus, manifest_digest
+from hardy.corpus.problems import Entry, sha256_of
 from hardy.evals import runner, scoreboard, staged, sweep
-from hardy.evals.corpus import load_corpus, manifest_digest
-from hardy.evals.problems import Entry, sha256_of
 from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
 from hardy.workflows import acceptance
 from hardy.workflows.contracts import RunPhase

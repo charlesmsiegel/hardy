@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from hardy.corpus.catalog import load_corpus, manifest_digest
 from hardy.evals import sweep
-from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.scoreboard import validate_scoreboard
 
 ROOT = Path(__file__).parents[2]

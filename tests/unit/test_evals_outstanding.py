@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from hardy.evals import outstanding, sweep, taxonomy
-from hardy.evals.problems import Entry, ProblemSet, Review
+from hardy.corpus import taxonomy
+from hardy.corpus.problems import Entry, ProblemSet, Review
+from hardy.evals import outstanding, sweep
 from hardy.formal.contracts import EnvironmentIdentity
 
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="819816b2", mathlib_revision="v4.33.1", lake_manifest_sha256="m" * 64)

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hardy.evals import taxonomy
-from hardy.evals.problems import Audit, Entry, Occurrence, ProblemSet, Review, sha256_of
+from hardy.corpus import taxonomy
+from hardy.corpus.problems import Audit, Entry, Occurrence, ProblemSet, Review, sha256_of
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -90,7 +90,7 @@ def test_ids_and_names_are_unique():
 
 
 def test_the_committed_corpus_loads_and_has_fifteen_true_entries_and_five_twins():
-    from hardy.evals.corpus import load_corpus
+    from hardy.corpus.catalog import load_corpus
 
     problems = load_corpus(ROOT / "corpus")
     assert len(problems.true_entries) == 15 and len(problems.twins) == 5

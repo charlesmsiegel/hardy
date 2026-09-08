@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy.evals import taxonomy
-from hardy.evals.taxonomy import (
+from hardy.corpus import taxonomy
+from hardy.corpus.taxonomy import (
     UnknownCode,
     arxiv_classes,
     arxiv_of,
@@ -98,7 +98,7 @@ def test_the_vendored_table_is_the_whole_of_msc2020():
     """Nine hand-written codes meant a correct tag outside that handful came
     back as unknown. `scripts/vendor_msc2020.py` regenerates this from the
     official CSV, so the table is the classification rather than a sample."""
-    from hardy.evals.taxonomy import _codes, _mapping
+    from hardy.corpus.taxonomy import _codes, _mapping
 
     codes = _codes()
     assert len(codes) > 6000, len(codes)

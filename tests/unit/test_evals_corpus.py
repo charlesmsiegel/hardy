@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from corpus_helpers import copy_taxonomy
 
-from hardy.evals.corpus import (
+from hardy.corpus.catalog import (
     CorpusError,
     check_issues,
     corpus_version,

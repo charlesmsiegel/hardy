@@ -11,8 +11,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from hardy.evals.problems import Entry
-from hardy.evals.taxonomy import CORPUS
+from hardy.corpus.problems import Entry
+from hardy.corpus.taxonomy import CORPUS
 
 VERSION = "0.1.0"
 
@@ -46,7 +46,7 @@ def write_corpus(root: Path, entries: tuple[Entry, ...], *, version: str = VERSI
 
 def _changelog(root: Path, version: str) -> None:
     """Written last: the head binds the manifest digest of the content above."""
-    from hardy.evals.corpus import manifest_digest
+    from hardy.corpus.catalog import manifest_digest
 
     (root / "CHANGELOG.md").write_text(
         f"# Changelog\n\n## {version} - 2026-09-03 - manifest {manifest_digest(root)}\n"

@@ -22,7 +22,7 @@ PROBLEMS = {"schema_version": 1, "entries": [
 
 def _corpus(tmp_path, entries: list[dict] | None = None):
     """`load_corpus` reads a directory, so a fixture writes one."""
-    from hardy.evals.problems import Entry
+    from hardy.corpus.problems import Entry
 
     rows = entries if entries is not None else PROBLEMS["entries"]
     return write_corpus(tmp_path / "corpus", tuple(Entry.model_validate(row) for row in rows))
@@ -250,8 +250,8 @@ def _args(**kw) -> argparse.Namespace:
 
 
 def _problems():
-    from hardy.evals import taxonomy
-    from hardy.evals.problems import Entry, ProblemSet, Review
+    from hardy.corpus import taxonomy
+    from hardy.corpus.problems import Entry, ProblemSet, Review
 
     base = {
         "input": "True.", "conclusion": "True", "expected": "true", "source": "textbook",

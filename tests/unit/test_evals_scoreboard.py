@@ -22,8 +22,8 @@ from test_evals_runner import (
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 from test_recorded_runs import _batch
 
+from hardy.corpus.problems import Entry
 from hardy.evals import runner, scoreboard, sweep
-from hardy.evals.problems import Entry
 from hardy.formal.contracts import EnvironmentIdentity
 
 HOST = sweep.host_info()
@@ -287,8 +287,8 @@ def test_a_canonical_json_whose_outcome_does_not_follow_its_review_is_a_finding(
     """
     from test_evals_staged import DETERMINISTIC_IDENTITY, _solved_fixture
 
-    from hardy.evals.corpus import load_corpus, manifest_digest
-    from hardy.evals.problems import sha256_of
+    from hardy.corpus.catalog import load_corpus, manifest_digest
+    from hardy.corpus.problems import sha256_of
 
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
@@ -600,7 +600,7 @@ def test_the_headline_counts_only_reviewed_entries(tmp_path):
 
 
 def test_an_active_entry_does_reach_the_headline():
-    from hardy.evals import taxonomy
+    from hardy.corpus import taxonomy
 
     reviewed = TRUE.model_copy(update={"status": "active", "review": {
         "reviewer": "cms", "reviewed_at": "2026-09-03",

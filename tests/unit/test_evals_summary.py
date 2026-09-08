@@ -12,9 +12,9 @@ from test_evals_runner import _batch_runner, _condition
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 from test_recorded_runs import _Runtime
 
+from hardy.corpus.catalog import load_corpus
+from hardy.corpus.problems import Entry
 from hardy.evals import outstanding, runner, summary
-from hardy.evals.corpus import load_corpus
-from hardy.evals.problems import Entry
 from hardy.formal.contracts import EnvironmentIdentity
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
@@ -223,8 +223,8 @@ def _stub_environment_digest(monkeypatch):
 
 
 def _files(tmp_path: Path) -> tuple[Path, Path]:
+    from hardy.corpus.catalog import manifest_digest
     from hardy.evals import sweep
-    from hardy.evals.corpus import manifest_digest
 
     problems = write_corpus(tmp_path / "corpus", ENTRIES)
     host = sweep.host_info()
