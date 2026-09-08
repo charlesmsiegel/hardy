@@ -8,6 +8,27 @@ Mathlib, and a real Tectonic on a nontrivial theorem, with the runs recorded
 under `acceptance/recorded/` (see "First experiment acceptance test"); the
 interactive surface's own live run is still to come.
 
+## Internal ownership (implemented)
+
+- Provider-independent agent events, stream assembly and proof-submission
+  contracts; importing a provider does not load the interactive session.
+- One bounded formal-tool runtime shared by in-process tools and MCP, with
+  unchanged claim checks, budget timing and spill artifact names.
+- Pure Lean/TeX syntax and recorded evidence readers separated from execution;
+  corpus content policy separated from evaluation measurement. Scoreboard
+  validation and pooling import no run launcher or command adapter.
+- Interactive record, formal workspace, assumption admission, document and turn
+  owners with named collaborators and independent tests. `chat.py` remains the
+  coordinator for construction and cross-capability policy.
+- Algebra backend/kernel/session/replay/script owners and literature
+  metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
+  points, project construction and terminal approval adapters; the CLI/TUI and
+  evaluation cycles are removed and checked by full-tree import tests.
+- One wheel and unchanged commands, formats, prompts and mathematical gates.
+  Source moves invalidate measurement identities; previous evidence is not
+  restamped. No execution sandbox is added. See
+  [DESIGN.md](DESIGN.md#internal-module-boundaries) for retained root modules.
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation
@@ -1545,7 +1566,7 @@ deliverable.
 ## Evaluation set (evals/)
 
 **Now (implemented).** `corpus/` is a committed, classified corpus of twenty
-statements (`src/hardy/evals/corpus.py`, `problems.py`), sharded by MSC2020
+statements (`src/hardy/corpus/catalog.py`, `problems.py`), sharded by MSC2020
 2-digit class under `corpus/problems/<NN>.json` and loaded by `load_corpus`
 as one `ProblemSet`. The shard is *derived* from the entry's primary code and
 never stored, so the loader refuses an entry filed under a name that disagrees
@@ -1659,7 +1680,8 @@ every configured tactic was tried against and failed.
 
 `hardy evals run --label L [--mode batch|staged] [--backend] [--model]
 [--repeats N] [--only ids] [--tiers 2,3] [--no-twins] [--max-turns]
-[--wall-seconds] --acknowledge-unsafe-execution` (`src/hardy/evals/runner.py`)
+[--wall-seconds] --acknowledge-unsafe-execution` (`src/hardy/evals/commands.py`
+adapts the command to `src/hardy/evals/runner.py`)
 runs the
 selection through `batch` or `staged` and writes
 `evals/scoreboards/<label>/scoreboard.json` plus one run directory per row.

@@ -245,6 +245,26 @@ empty or ambiguous root falls back to `main`.
 
 ## Checking an installation
 
+The internal packages ship together in `hardy-prover`; there are no separate
+capability installations. The console script now uses `hardy.app.cli:main`.
+`python -m hardy` and the legacy `python -m hardy.cli` launch the same commands;
+`python -m hardy.mcp_server` remains available to Codex clients through the
+`hardy.app.mcp` adapter. The wheel also includes the CAS driver, prompt templates,
+viewer HTML/CSS and acceptance JSON fixtures at their existing resource paths.
+
+For a packaging smoke check from a directory outside a checkout, run
+`hardy --help` and `python -m hardy prove --help`. These need no model or Lean
+installation. Development verification uses `uv run --extra test pytest --cov`;
+the unchanged coverage floor includes all relocated modules. Real toolchain and
+live model tests remain separate, opt-in checks. Module boundaries add no
+execution isolation.
+
+CI also builds a wheel and runs `scripts/smoke_wheel.py` with a fresh environment
+from outside the checkout. It checks packaged resources, command help,
+deterministic workflow outcomes, the SymPy helper and real MCP stdio against a
+fake Lean service. MCP stays on the supported v1 API (`>=1.28,<2`); v2 removed
+the `FastMCP` import this transport uses.
+
 ```sh
 hardy doctor          # Python, lake, the Lean project, pdflatex, model, SDK, CLI, login
 hardy doctor --deep   # also compiles `import Mathlib` + `norm_num`, which is slow

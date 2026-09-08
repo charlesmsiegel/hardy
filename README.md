@@ -33,6 +33,17 @@ see #23 for an example.
 A tool that refuses to let a model claim more than its artifacts support should
 hold itself to the same standard.
 
+## Internal structure
+
+Hardy remains one distribution, with internal owners for agent contracts,
+formal tools and syntax, documents, literature, algebra, corpus content, and
+evaluation. `hardy.app` assembles the CLI and MCP adapters; the interactive
+coordinator delegates records, formal saves, assumption admission, documents,
+and turn lifecycle to `hardy.workflows.interactive`. Pure evidence readers do
+not import run launchers. See [the implemented module boundaries](DESIGN.md#internal-module-boundaries)
+and [the architecture map](ARCHITECTURE.html). These boundaries do not provide
+execution isolation.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

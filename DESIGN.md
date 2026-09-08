@@ -97,6 +97,46 @@ model runtime ───────────── tools and bounded context
       └──────────► writeup builder ───► human artifact
 ```
 
+### Internal module boundaries
+
+Hardy is one distribution and application. The construction layer knows concrete
+implementations; workflows coordinate bounded capabilities; evidence readers
+validate saved values without constructing a runtime. The implemented owners are:
+
+| Boundary | Responsibility |
+| --- | --- |
+| `agents/contracts.py`, `workflows/contracts.py` | Conversation events, runtime interface, stream assembly and provenance; provider-independent proof submissions. Providers receive tools and dispatch callbacks, never an interactive session. |
+| `formal/syntax.py`, `formal/tools.py` | Pure Lean scanners and dependency analysis; one bounded Lean runtime used by both in-process and MCP tools. Execution and axiom policy still use the existing `lean`, `workspace`, `audit` and `verifier` modules. |
+| `documents/syntax.py`, `documents/batch.py` | Pure TeX checks and batch document rendering helpers. Existing `latex`, `completion` and `writeup` modules retain compilation, evidence checks and controlled rendering. |
+| `workflows/interactive/` | `SessionRecord` owns guarded persistence and detached snapshots; `FormalWorkspaceService` owns checked saves, audit freshness and automation disclosures; `AssumptionAdmission` owns evidence and approval/quarantine decisions; `DocumentService` owns compilation and publication state; `TurnCoordinator` owns serialized dispatch, cancellation, spend and compaction. |
+| `workflows/recorded.py` | Cross-artifact validation for saved staged and batch runs, separate from acceptance execution. |
+| `algebra/` | Backend differences, kernel protocol, persistent session state, fresh replay and exported-script execution. `cas_tools`, `cas_export` and the `cas_driver` helper retain their existing roles. |
+| `literature/` | Pure metadata, guarded paper library, acquisition client, archive admission and statement inventory. `paper_tools` and `bibliography` remain explicit capability adapters. |
+| `corpus/` | Statement schema, taxonomy, content identity, loading, mechanical checks and releases. This is application code; corpus data still follows the separate curation branch policy. |
+| `evals/` | Value contracts, selection and conservative source identity below execution; scoreboard validation and pooling import neither the runner nor commands. |
+| `app/` | CLI/MCP entry points, project construction and console approval adapters. The TUI imports the construction and terminal APIs directly. |
+
+`MathematicsSession` remains the caller-facing coordinator in `chat.py`. It still
+assembles shared-library discovery, Lean/probe callbacks, paper-module rendering
+and cross-capability reporting policy. Its collaborators receive named operations
+and values rather than the whole session. Existing locks and save/admission gates
+remain in force; moving a method grants no new write authority. Compatibility
+record mutation accessors remain for the coordinator and existing callers.
+
+Root imports such as `cas`, `arxiv`, `assume`, `workspace` and `latex` retain
+explicit compatibility exports. New domain code imports the owner directly.
+`python -m hardy.mcp_server` remains a launch shim for Codex clients, and
+`python -m hardy.cas_driver` remains the algebra helper invocation. No wildcard
+forwarders or plugin registry are involved.
+
+`tests/unit/test_module_boundaries.py` resolves imports across the full source
+tree, including function-local imports, checks transitive dependencies and the
+removed evaluation/CLI cycles, and audits known dynamic helper launches. Source
+fingerprints include moved helpers conservatively, including the CAS driver;
+old sweeps and scoreboards must not be relabelled with new digests. Prompt text,
+serialized formats, grades and tool-budget policy are unchanged. These internal
+boundaries provide no confinement for Lean, TeX, CAS or helper processes.
+
 ### 1. Workflow and strategy
 
 The orchestrator owns phases, retries, budgets, and stopping rules. Search should
