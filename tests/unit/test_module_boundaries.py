@@ -53,3 +53,15 @@ def test_agent_import_fence_includes_local_imports(module):
         if isinstance(node, ast.ImportFrom) and node.module in {"chat", "cli", "hardy.chat", "hardy.cli"}:
             violations.append((node.lineno, node.module))
     assert not violations, violations
+
+
+def test_terminal_adapters_do_not_import_command_entry_point():
+    violations = []
+    for path in (SOURCE / "tui").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and (
+                node.module in {"cli", "hardy.cli"}
+                or node.module is None and any(n.name == "cli" for n in node.names)
+            ):
+                violations.append((path.name, node.lineno))
+    assert not violations, violations

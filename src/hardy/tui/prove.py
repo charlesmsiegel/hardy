@@ -25,7 +25,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from ..cli import ConsoleTerminal
+from ..app.terminal import ConsoleTerminal
 from .ports import BlockingUi, Choice
 
 APPROVALS = (
@@ -164,7 +164,7 @@ def run(
     first stage rather than returned at the end, because the run is exactly
     what there is to cancel.
     """
-    from ..cli import build_prove_workflow
+    from ..wiring import build_prove_workflow
     from ..workflow import ProveRequest
 
     workflow = build_prove_workflow(config, config.config_path, backend=backend)

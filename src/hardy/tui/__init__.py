@@ -28,7 +28,7 @@ def run_session(
     `session_factory` receives the approval callback and returns the session
     to run against it -- not a session directly, because the shell has to
     exist *before* the session does: the session needs a way to ask for
-    axiom approval, and that way (`cli.confirm_assumption`) runs through
+    axiom approval, and that way (`confirm_assumption`) runs through
     whichever `Ui` ends up live, real `Shell` or `PlainUi`.
 
     `reopen` is how `/project switch` opens another problem in this root
@@ -39,7 +39,8 @@ def run_session(
     if plain or not _is_interactive():
         return _run_plain(config, session_factory, reopen=reopen)
 
-    from .. import cli
+    from ..app.terminal import confirm_assumption
+
     from ..chat import SchemaError
     from ..layout import LayoutError
     from .handlers import build_registry, load_templates
@@ -51,7 +52,7 @@ def run_session(
         shell = Shell(
             config, None, build_registry(templates), reopen=reopen, notices=notices
         )
-        session = session_factory(cli.confirm_assumption(shell))
+        session = session_factory(confirm_assumption(shell))
         shell.attach(session)
         return shell.run()
     except (SchemaError, LayoutError):
@@ -86,14 +87,15 @@ def run_session(
 
 
 def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = None) -> int:
-    from .. import cli
+    from ..app.terminal import confirm_assumption
+
     from . import plain as plain_mode
     from .handlers import build_registry, load_templates
 
     ui_holder: dict[str, Any] = {}
 
     def confirm(proposal: dict[str, str]) -> bool:
-        return cli.confirm_assumption(ui_holder["ui"])(proposal)
+        return confirm_assumption(ui_holder["ui"])(proposal)
 
     templates, notices = load_templates(config)
     session = session_factory(confirm)

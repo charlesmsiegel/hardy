@@ -19,7 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy import cli, layout, search_tools
+from hardy.app import projects as cli
+from hardy import layout, search_tools
 from hardy import config as configuration
 from hardy.declarations import DeclarationIndex
 from hardy.domain import EnvironmentIdentity

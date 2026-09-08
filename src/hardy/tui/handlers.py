@@ -896,7 +896,8 @@ async def _offer_registration(ui: Ui, config, state_reopen: Any = None) -> None:
     keyboard, and the `Ui` port exists so a handler never has to know which
     application that is.
     """
-    from .. import cli
+    from ..app.terminal import confirm_assumption
+    from ..app.projects import offer_registration
 
     host = config.root / "lakefile.toml"
     if not host.is_file():
@@ -913,7 +914,7 @@ async def _offer_registration(ui: Ui, config, state_reopen: Any = None) -> None:
         question = f"Register {config.project}/lean with {host.name} so `lake build` sees it?"
         if not await ui.confirm(question):
             return
-    notice = cli.offer_registration(config, interactive=False, choice=True)
+    notice = offer_registration(config, interactive=False, choice=True)
     if notice:
         ui.write(f"  {notice}")
 
@@ -937,7 +938,7 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # make every caller of `reopen` produce one. `run_session`'s fallback
         # is the caller that proves the point -- it has a different `Ui`
         # entirely.
-        from .. import cli
+        from ..app.terminal import confirm_assumption
 
         # Armed here, on the event loop, before the work leaves for a thread.
         # An Escape typed behind the Enter that submitted this command is
@@ -950,7 +951,7 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
             arm()
         try:
             config, session = await asyncio.to_thread(
-                state.reopen, slug, cli.confirm_assumption(ui), state.config
+                state.reopen, slug, confirm_assumption(ui), state.config
             )
         except asyncio.CancelledError:
             # Cancelling the await does not stop the worker, and `Shell.run`'s
