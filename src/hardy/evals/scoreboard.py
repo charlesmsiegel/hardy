@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from ..workflows import recorded as acceptance
 from ..domain import EnvironmentIdentity, FormalStatus, FrozenModel, RunManifest, RunPhase
-from .problems import Entry
+from ..corpus.problems import Entry
 from .contracts import Row, TierAggregate, Totals, Aggregates, Outcome
 from .sweep import Baseline, baseline_entries_mismatch, staleness
 
@@ -268,7 +268,7 @@ def _read_board(scoreboard_dir: Path) -> tuple[Any | None, tuple[str, ...]]:
 
 
 def _corpus_and_baseline(problems_path: Path, baseline_path: Path):
-    from .corpus import load_corpus
+    from ..corpus.catalog import load_corpus
 
     return load_corpus(problems_path), Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
 
@@ -328,8 +328,8 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
 
 def _corpus_issues(board: Any, problems: Any, baseline: Baseline, *, problems_path: Path, baseline_path: Path) -> list[str]:
     """1 and 6: the board against the corpus, the baseline file and the denominators of today."""
-    from .corpus import manifest_digest
-    from .problems import sha256_of
+    from ..corpus.catalog import manifest_digest
+    from ..corpus.problems import sha256_of
 
     issues: list[str] = []
     # 1. bound to the committed list and tier file

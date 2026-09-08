@@ -13,7 +13,7 @@ from pydantic import model_validator
 
 from ..domain import FrozenClaim, FrozenModel, RunPhase, schema_text
 from ..prompts import canonical_prompt, claim_signature
-from .problems import Entry
+from ..corpus.problems import Entry
 from .contracts import CanonicalReview, CanonicalVerdict
 
 

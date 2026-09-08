@@ -28,11 +28,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from . import taxonomy
-from .corpus import (
+from ..corpus import taxonomy
+from ..corpus.catalog import (
     CorpusError, check_issues, corpus_version, load_corpus, load_sources, shard_path,
 )
-from .problems import Entry, Review
+from ..corpus.problems import Entry, Review
 from .sweep import witness_source
 
 PAGE = Path(__file__).resolve().parent / "viewer.html"

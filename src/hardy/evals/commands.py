@@ -19,8 +19,8 @@ from .identity import run_procedure_digest_of
 from .sweep import Baseline, environment_digest_of, host_info
 from ..lean import Elaboration, elaborate, environment_identity
 from . import sweep
-from .corpus import load_corpus, manifest_digest
-from .problems import ProblemSet
+from ..corpus.catalog import load_corpus, manifest_digest
+from ..corpus.problems import ProblemSet
 
 DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
@@ -490,15 +490,15 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "run":
         return run_set_command(args, config)
     if args.evals_command == "corpus":
-        from .corpus import check_issues, report
+        from ..corpus.catalog import check_issues, report
         if args.corpus_verb == "check":
-            from .corpus import release_issues
+            from ..corpus.catalog import release_issues
 
             issues = check_issues(args.corpus)
             if getattr(args, "since", None) is not None:
                 issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
             if getattr(args, "since_registry", None) is not None:
-                from .corpus import CorpusError, load_tombstones, registry_issues
+                from ..corpus.catalog import CorpusError, load_tombstones, registry_issues
 
                 # Both sides are gathered, not raised: CI always passes this
                 # option, so a malformed registry -- the very case the check
@@ -517,7 +517,7 @@ def main(args: argparse.Namespace, config: Any) -> int:
         if args.corpus_verb == "release":
             from datetime import date
 
-            from .corpus import CorpusError, release
+            from ..corpus.catalog import CorpusError, release
 
             try:
                 issues = release(args.corpus, args.version, args.note, today=date.today().isoformat())

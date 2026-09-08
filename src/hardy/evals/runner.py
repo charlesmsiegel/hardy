@@ -18,8 +18,8 @@ from ..domain import EnvironmentIdentity, FrozenModel
 from . import digests
 from .contracts import Condition, Scoreboard, RefusedRun
 from .selection import select
-from .corpus import load_corpus, manifest_digest
-from .problems import Entry, ProblemSet, sha256_of
+from ..corpus.catalog import load_corpus, manifest_digest
+from ..corpus.problems import Entry, ProblemSet, sha256_of
 from .scoreboard import Aggregates, Row, active_ids, aggregate, batch_row, staged_row
 from .sweep import Baseline, environment_digest_of, host_info, staleness
 

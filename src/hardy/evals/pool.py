@@ -36,9 +36,9 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     board, since the same entry run twice under one condition is a fact to
     report, not a tie to break silently by picking one.
     """
-    from .corpus import load_corpus, manifest_digest
+    from ..corpus.catalog import load_corpus, manifest_digest
     from .outstanding import environment_digest_of_board
-    from .problems import sha256_of
+    from ..corpus.problems import sha256_of
     from .contracts import Scoreboard
     from .scoreboard import active_ids, aggregate, scoreboard_self_issues
     from .sweep import Baseline

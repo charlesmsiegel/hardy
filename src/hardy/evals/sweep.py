@@ -19,7 +19,7 @@ from .. import audit
 from ..domain import EnvironmentIdentity, FrozenModel
 from ..lean import Elaboration
 from . import digests
-from .problems import Entry, ProblemSet
+from ..corpus.problems import Entry, ProblemSet
 
 SINGLES: tuple[str, ...] = (
     "simp", "simp_all", "omega", "decide", "norm_num", "ring", "field_simp", "linarith",
@@ -257,7 +257,8 @@ DECIDING_SOURCES = (
     # moves neither the corpus fields nor the fixed package version, so
     # without it here an incremental sweep would reuse rows the old assembly
     # produced.
-    str(Path(__file__).resolve().parent / "problems.py"),
+    str(Path(__file__).resolve().parents[1] / "corpus" / "problems.py"),
+    str(Path(__file__).resolve().parents[1] / "corpus" / "identity.py"),
 )
 
 

@@ -39,6 +39,12 @@ def test_in_process_formal_tools_do_not_load_transport():
     assert result.returncode == 0, result.stderr
 
 
+def test_corpus_import_does_not_load_measurement_or_model_code():
+    script = "import hardy.corpus.catalog; import sys; assert not any(name.startswith(('hardy.evals', 'hardy.claude_runtime', 'hardy.workflow')) for name in sys.modules)"
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("module", ["claude_runtime", "api_runtime", "codex_runtime", "staged", "loop"])
 def test_agent_import_fence_includes_local_imports(module):
     tree = ast.parse((SOURCE / f"{module}.py").read_text(encoding="utf-8"))

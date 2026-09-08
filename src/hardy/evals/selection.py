@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .contracts import RefusedRun
-from .problems import Entry, ProblemSet
+from ..corpus.problems import Entry, ProblemSet
 from .sweep import Baseline
 
 def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, tiers: list[int] | None, twins: bool) -> tuple[Entry, ...]:
