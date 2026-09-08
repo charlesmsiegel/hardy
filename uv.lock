@@ -398,7 +398,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'api'", specifier = ">=0.40" },
     { name = "claude-agent-sdk", specifier = ">=0.2" },
     { name = "jinja2", specifier = ">=3.1" },
-    { name = "mcp", specifier = ">=1.28" },
+    { name = "mcp", specifier = ">=1.28,<2" },
     { name = "openai-codex", marker = "extra == 'codex'", specifier = ">=0.144" },
     { name = "prompt-toolkit", specifier = ">=3.0.50,<3.1" },
     { name = "pydantic", specifier = ">=2.9" },
@@ -1313,8 +1313,8 @@ name = "uvicorn"
 version = "0.51.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
+    { name = "h11", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a2/65/b7c6c443ccc58678c91e1e973bbe2a878591538655d6e1d47f24ba1c51f3/uvicorn-0.51.0.tar.gz", hash = "sha256:f6f4b69b657c312f516dd2d268ab9ae6f254b11e4bac504f37b2ab58b24dd0b0", size = 94412, upload-time = "2026-07-08T10:59:05.962Z" }
 wheels = [

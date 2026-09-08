@@ -10,6 +10,115 @@ import pytest
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "hardy"
 
 
+def _imports(module, tree, modules, *, package=False):
+    """Resolve imports at every depth, including local and TYPE_CHECKING code."""
+    context = module.split('.') if package else module.split('.')[:-1]
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names if alias.name in modules)
+        elif isinstance(node, ast.ImportFrom):
+            prefix = context[:len(context) - node.level + 1] if node.level else []
+            base = '.'.join([*prefix, *([node.module] if node.module else [])])
+            if base in modules:
+                found.add(base)
+            found.update(f'{base}.{alias.name}' for alias in node.names
+                         if f'{base}.{alias.name}' in modules)
+    return found
+
+
+@pytest.fixture(scope='module')
+def import_graph():
+    paths = {}
+    for path in SOURCE.rglob('*.py'):
+        parts = list(path.relative_to(SOURCE.parent).with_suffix('').parts)
+        if parts[-1] == '__init__':
+            parts.pop()
+        paths['.'.join(parts)] = path
+    return {name: _imports(name, ast.parse(path.read_text(encoding='utf-8')), paths,
+                          package=path.name == '__init__.py')
+            for name, path in paths.items()}
+
+
+def _reachable(graph, start):
+    reached = set()
+    todo = list(graph[start])
+    while todo:
+        module = todo.pop()
+        if module not in reached:
+            reached.add(module)
+            todo.extend(graph[module] - reached)
+    return reached
+
+
+def test_import_resolver_catches_absolute_relative_and_local_aliases():
+    tree = ast.parse('''
+import hardy.chat as session
+def deferred():
+    from .. import runner
+    from ..app import cli as commands
+    from hardy import mcp_server
+''')
+    modules = {'hardy.chat', 'hardy.runner', 'hardy.app.cli', 'hardy.mcp_server'}
+    assert _imports('hardy.agents.example', tree, modules) == modules
+
+
+def test_full_tree_dependency_directions(import_graph):
+    providers = {'hardy.claude_runtime', 'hardy.api_runtime', 'hardy.codex_runtime',
+                 'hardy.staged', 'hardy.loop'}
+    launchers = {'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp'}
+    controllers = {'hardy.chat', 'hardy.workflow', 'hardy.runner', 'hardy.evals.runner'}
+    readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'}
+    capabilities = {name for name in import_graph if name.startswith(
+        ('hardy.formal.', 'hardy.documents.', 'hardy.algebra.', 'hardy.literature.', 'hardy.corpus.')
+    )} | {'hardy.cas_tools', 'hardy.cas_export', 'hardy.paper_tools'}
+    for module in providers | readers | capabilities:
+        forbidden = launchers | controllers
+        if module in readers:
+            forbidden |= providers | {'hardy.evals.commands', 'hardy.evals.staged'}
+        if module.startswith('hardy.corpus.'):
+            forbidden |= {name for name in import_graph if name.startswith('hardy.evals.')}
+        assert not (_reachable(import_graph, module) & forbidden), module
+    for module in import_graph:
+        if module.startswith('hardy.tui.') or module in {'hardy.app.projects', 'hardy.app.terminal'}:
+            assert not (_reachable(import_graph, module) & {'hardy.cli', 'hardy.app.cli'}), module
+
+
+def test_evaluation_and_cli_cycles_are_removed(import_graph):
+    for module in import_graph:
+        if module.startswith('hardy.evals.') or module in {'hardy.cli', 'hardy.app.cli'}:
+            assert module not in _reachable(import_graph, module), module
+
+
+def test_run_identity_keeps_relocated_owners_and_excludes_unreachable_cli(import_graph):
+    from hardy.evals.identity import RUN_SOURCE_ROOT, run_source_paths
+
+    included = {path.relative_to(RUN_SOURCE_ROOT).as_posix() for path in run_source_paths()}
+    for directory in ('agents', 'formal', 'documents', 'algebra', 'literature', 'corpus', 'workflows'):
+        for path in (SOURCE / directory).rglob('*.py'):
+            assert path.relative_to(SOURCE).as_posix() in included
+    assert 'cas_driver.py' in included
+    assert 'app/cli.py' not in included
+    assert not (_reachable(import_graph, 'hardy.evals.runner') & {'hardy.app.cli', 'hardy.cli'})
+
+
+def test_known_dynamic_launch_modules_still_exist():
+    launches = set()
+    for path in SOURCE.rglob('*.py'):
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            if isinstance(node, (ast.List, ast.Tuple)):
+                for index, value in enumerate(node.elts[:-1]):
+                    following = node.elts[index + 1]
+                    if (isinstance(value, ast.Constant) and value.value == '-m'
+                            and isinstance(following, ast.Constant)
+                            and isinstance(following.value, str)
+                            and following.value.startswith('hardy.')):
+                        launches.add(following.value)
+    assert launches == {'hardy.mcp_server', 'hardy.cas_driver'}
+    for module in launches:
+        assert (SOURCE.parent / Path(*module.split('.'))).with_suffix('.py').is_file()
+
+
 @pytest.mark.parametrize("module, forbidden", [
     ("completion", ("workspace", "latex")),
     ("workflows.recorded", ("workflow", "runner", "staged", "claude_runtime")),
