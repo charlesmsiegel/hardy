@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from hardy import cas as cas_module
+from hardy.algebra import kernel as cas_module
 from hardy.cas import CasError, CasSession
 
 

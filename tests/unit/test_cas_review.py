@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from hardy import cas
+from hardy.algebra import scripts
 from hardy.cas import CasError, CasSession, backend_for
 from hardy.cas_driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
 from hardy.cas_export import TRANSCRIPT_BEGIN, export_session
@@ -1445,7 +1446,7 @@ def test_a_platform_that_cannot_sweep_descendants_does_not_claim_verified(
     and a delayed child was still free to rewrite the published file after the
     readback and the manifest hash.
     """
-    monkeypatch.setattr(cas, "can_sweep_descendants", lambda: False)
+    monkeypatch.setattr(scripts, "can_sweep_descendants", lambda: False)
     sympy_session.execute("1 + 1")
     report = export_session(sympy_session, tmp_path / "cas")
     assert report.script_verdict == "unverified", report.model_dump_json(indent=2)

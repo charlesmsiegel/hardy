@@ -365,7 +365,7 @@ def test_a_wedged_feeder_does_not_take_the_main_thread_down_with_it(
         process.stdin = wedged
         time.sleep(30)
 
-    monkeypatch.setattr("hardy.cas._feed", never_returns)
+    monkeypatch.setattr("hardy.algebra.scripts._feed", never_returns)
     script = tmp_path / "session.py"
     script.write_text("import time\ntime.sleep(0.3)\n", encoding="utf-8")
 
