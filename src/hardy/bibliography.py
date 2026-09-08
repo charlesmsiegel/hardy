@@ -47,7 +47,7 @@ from typing import Literal
 
 from pydantic import field_validator
 
-from .arxiv import PaperRecord
+from .literature.metadata import PaperRecord
 from .domain import FrozenModel
 from .documents.syntax import typeset, unfinished_definition
 from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text

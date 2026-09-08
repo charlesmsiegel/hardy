@@ -35,8 +35,10 @@ from pathlib import Path
 from typing import Any
 
 from . import truncation
-from .archives import ArchiveError
-from .arxiv import ArxivClient, ArxivError, PaperLibrary, PaperRecord, parse_id
+from .literature.archives import ArchiveError
+from .literature.client import ArxivClient
+from .literature.library import PaperLibrary
+from .literature.metadata import ArxivError, PaperRecord, parse_id
 from .bibliography import Bibliography, BibliographyError
 from .layout import HARDY_DIR, global_dir
 from .models import ToolResult

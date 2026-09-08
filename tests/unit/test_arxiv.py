@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from hardy import arxiv
+from hardy.literature import library as library_module
 from hardy.layout import LayoutError
 from hardy.storage import FileLock
 
@@ -1143,7 +1144,7 @@ def test_nothing_changes_a_cache_key_without_holding_it(tmp_path: Path, monkeypa
     library.cache_query(key, _feed(), now=1_000_000.0)
     # The wait itself is not what is under test -- what is under test is what
     # happens when it runs out -- so it is shortened rather than waited out.
-    monkeypatch.setattr(arxiv, "LOCK_SECONDS", 0.2)
+    monkeypatch.setattr(library_module, "LOCK_SECONDS", 0.2)
     lock = library.query_lock(key)
     ready = tmp_path / "ready"
     child = subprocess.Popen(
