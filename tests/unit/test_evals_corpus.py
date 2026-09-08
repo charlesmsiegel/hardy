@@ -324,8 +324,8 @@ def test_the_version_gate_reads_the_selected_corpus_taxonomy(tmp_path):
 
 def test_the_shipped_corpus_is_clean_and_internally_consistent():
     problems = load_corpus(ROOT / "corpus")
-    assert len(problems.entries) == 20
-    assert sum(1 for e in problems.entries if e.expected == "false") == 5
+    assert len(problems.entries) == 43
+    assert sum(1 for e in problems.entries if e.expected == "false") == 12
     assert check_issues(ROOT / "corpus") == []
 
 
