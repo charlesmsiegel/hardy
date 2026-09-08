@@ -222,7 +222,7 @@ def test_a_directory_that_is_not_a_run_says_so(tmp_path) -> None:
 
 
 def test_accept_recorded_audits_directories_and_runs_nothing(tmp_path, capsys) -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     good = _verified(tmp_path)
     parser = cli.build_parser()
 

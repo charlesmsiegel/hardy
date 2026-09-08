@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 from hardy import config as configuration
-from hardy.cli import runtime_factory
+from hardy.app.cli import runtime_factory
 from hardy.lean import LeanTools
 from hardy.models import Request
 from hardy.runner import WARNING, run

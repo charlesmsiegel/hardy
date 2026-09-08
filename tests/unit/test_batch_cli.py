@@ -30,7 +30,7 @@ def _request(tmp_path, declaration):
 def test_batch_refuses_an_anonymous_example_before_spending_a_model_run(tmp_path) -> None:
     """Nothing can print an `example`'s axioms, so the run could only ever end
     `axioms_rejected` — after paying for every turn it took to get there."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
     parser = cli.build_parser()
     args = parser.parse_args(['batch', str(_request(tmp_path, 'example : True'))])
@@ -41,7 +41,7 @@ def test_batch_refuses_an_anonymous_example_before_spending_a_model_run(tmp_path
 
 def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None:
     """The guard must not refuse the shape `examples/true.json` actually uses."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
     models = importlib.import_module('hardy.models')
     reached = []
@@ -70,7 +70,7 @@ def test_a_tactic_with_a_comma_in_it_is_one_tactic() -> None:
     recorded two spurious failures and spent the model turn it existed to save,
     on a request whose tactic would have closed the theorem.
     """
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     parser = cli.build_parser()
 
     args = parser.parse_args(
@@ -81,7 +81,7 @@ def test_a_tactic_with_a_comma_in_it_is_one_tactic() -> None:
 
 
 def test_the_flag_repeats_for_several_tactics_and_keeps_their_order() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     parser = cli.build_parser()
 
     args = parser.parse_args(['batch', 'request.json', '--closers', 'omega', '--closers', 'aesop'])
@@ -90,7 +90,7 @@ def test_the_flag_repeats_for_several_tactics_and_keeps_their_order() -> None:
 
 
 def test_a_bare_flag_is_still_the_standard_ladder_and_no_flag_is_still_off() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     closers = importlib.import_module('hardy.closers')
     parser = cli.build_parser()
 
@@ -110,7 +110,7 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
     background -- the run written as a `runtime_error` at once, for a request
     that may yet finish and be billed for. A bound nothing can wait for is not
     a bound."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
     parser = cli.build_parser()
 

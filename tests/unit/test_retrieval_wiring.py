@@ -67,7 +67,7 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
     retrieval = importlib.import_module('hardy.retrieval')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.storage')
 
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
@@ -103,7 +103,7 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
 
 def test_a_run_without_a_retriever_says_so_instead_of_ranking_nothing(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.storage')
 
     server.configure_runtime(
@@ -124,7 +124,7 @@ def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
     retrieval = importlib.import_module('hardy.retrieval')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
     storage = importlib.import_module('hardy.storage')
 
@@ -163,7 +163,7 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
     retrieval = importlib.import_module('hardy.retrieval')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
     storage = importlib.import_module('hardy.storage')
 
@@ -199,7 +199,7 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
 def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     retrieval = importlib.import_module('hardy.retrieval')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
     storage = importlib.import_module('hardy.storage')
 

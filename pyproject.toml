@@ -38,7 +38,7 @@ codex = ["openai-codex>=0.144"]
 api = ["anthropic>=0.40"]
 
 [project.scripts]
-hardy = "hardy.cli:main"
+hardy = "hardy.app.cli:main"
 
 # The distribution is `hardy-prover` but the package is `hardy`, so the build
 # backend cannot find it by name alone.

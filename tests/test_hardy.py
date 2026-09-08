@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy import cli
 from hardy import config as configuration
+from hardy.app import cli
 from hardy.lean import LeanTools
 from hardy.models import Request
 from hardy.runner import run

@@ -52,7 +52,7 @@ def _run(cli, args, requests):
 
 
 def test_a_declared_file_reaches_the_request(tmp_path: Path) -> None:
-    cli = importlib.import_module("hardy.cli")
+    cli = importlib.import_module("hardy.app.cli")
     path = tmp_path / "assume.json"
     path.write_text(json.dumps(ONE), encoding="utf-8")
     requests: list = []
@@ -65,7 +65,7 @@ def test_a_declared_file_reaches_the_request(tmp_path: Path) -> None:
 
 
 def test_a_run_with_no_flag_declares_nothing(tmp_path: Path) -> None:
-    cli = importlib.import_module("hardy.cli")
+    cli = importlib.import_module("hardy.app.cli")
     requests: list = []
 
     _run(cli, _args(), requests)
@@ -74,7 +74,7 @@ def test_a_run_with_no_flag_declares_nothing(tmp_path: Path) -> None:
 
 
 def test_a_missing_file_is_refused_before_the_run(tmp_path: Path, capsys) -> None:
-    cli = importlib.import_module("hardy.cli")
+    cli = importlib.import_module("hardy.app.cli")
     requests: list = []
 
     code = _run(cli, _args(assume=tmp_path / "absent.json"), requests)
@@ -99,7 +99,7 @@ def test_a_malformed_declaration_is_refused_before_the_run(
 ) -> None:
     """Every field is load-bearing: a declaration with no source is an axiom
     whose provenance nobody wrote down."""
-    cli = importlib.import_module("hardy.cli")
+    cli = importlib.import_module("hardy.app.cli")
     path = tmp_path / "assume.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     requests: list = []
@@ -117,7 +117,7 @@ def test_a_statement_the_verifier_would_refuse_is_caught_at_the_invocation(
     source ran inside the verifier, so a malformed one was reported only after
     formalization, the faithfulness review and the whole proving loop -- and
     reported as `forbidden_hole`, for a declaration containing no hole."""
-    cli = importlib.import_module("hardy.cli")
+    cli = importlib.import_module("hardy.app.cli")
     path = tmp_path / "assume.json"
     path.write_text(
         json.dumps(
@@ -143,7 +143,7 @@ def test_a_statement_the_verifier_would_refuse_is_caught_at_the_invocation(
 
 
 def test_a_declaration_with_no_source_is_refused(tmp_path: Path, capsys) -> None:
-    cli = importlib.import_module("hardy.cli")
+    cli = importlib.import_module("hardy.app.cli")
     path = tmp_path / "assume.json"
     path.write_text(
         json.dumps({"assumptions": [{"name": "foo", "statement": "True", "source": "   "}]}),

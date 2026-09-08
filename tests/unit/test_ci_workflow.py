@@ -13,6 +13,13 @@ REQUIRED_BINDING_FILES = (
     'src/hardy/cli.py',
     'src/hardy/staged.py',
     'src/hardy/mcp_server.py',
+    'src/hardy/app/cli.py',
+    'src/hardy/app/mcp.py',
+    'src/hardy/app/projects.py',
+    'src/hardy/algebra/backends.py',
+    'src/hardy/algebra/kernel.py',
+    'src/hardy/algebra/scripts.py',
+    'src/hardy/workflows/interactive/turns.py',
 )
 
 

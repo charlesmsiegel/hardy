@@ -352,7 +352,7 @@ def test_the_flag_switches_the_context_off_without_a_subcommand(tmp_path: Path, 
     """`--no-project-context` sits beside `--plain` at the top level, because
     an invocation with no subcommand is the primary interactive experience and
     has to be able to ask for a clean condition too."""
-    from hardy import cli
+    from hardy.app import cli
 
     monkeypatch.chdir(tmp_path)
     for variable in ("HARDY_CONFIG", "HARDY_PROJECT_CONTEXT", "HARDY_ROOT"):

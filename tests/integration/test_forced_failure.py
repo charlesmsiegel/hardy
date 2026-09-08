@@ -47,7 +47,7 @@ def test_forced_budget_exhaustion_retains_honest_partial_artifacts(tmp_path) -> 
 
 
 def test_cli_forced_budget_path_never_requires_a_model_runtime(tmp_path) -> None:
-    from hardy.cli import run_accept
+    from hardy.app.cli import run_accept
     from hardy.config import write_setting
 
     config_path = tmp_path / 'config.toml'

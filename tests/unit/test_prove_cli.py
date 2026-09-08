@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 
 def test_prove_accepts_an_ordinary_language_claim_and_exact_model() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
 
     args = cli.build_parser().parse_args(
         ['prove', '--model', 'gpt-test', 'For every n, n plus zero is n.']
@@ -18,7 +18,7 @@ def test_prove_accepts_an_ordinary_language_claim_and_exact_model() -> None:
 
 
 def test_console_terminal_requires_exact_unsafe_ack_and_labels_elaboration() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     answers = iter(['almost', 'I UNDERSTAND'])
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: next(answers), output=output.append)
@@ -47,7 +47,7 @@ def test_console_terminal_requires_exact_unsafe_ack_and_labels_elaboration() -> 
 def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
     tmp_path,
 ) -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
     domain = importlib.import_module('hardy.domain')
     config_path = tmp_path / 'config.toml'
@@ -128,7 +128,7 @@ def test_staged_doctor_ignores_an_advisory_cas_failure(tmp_path, monkeypatch) ->
     `required=False`; the staged health calculation must honor that instead
     of failing every `hardy prove` run over an optional tool.
     """
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     doctor_module = importlib.import_module('hardy.doctor')
     config = _staged_config(tmp_path)
 
@@ -152,7 +152,7 @@ def test_the_staged_doctor_checks_the_backend_the_run_will_build(tmp_path, monke
     for interactive and batch work. Reading the wrong one blocks a usable
     staged run on a missing API key -- and, worse, reports a machine ready on
     credentials the run is not going to use."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     doctor_module = importlib.import_module('hardy.doctor')
     config = dataclasses.replace(_staged_config(tmp_path), backend='api')
     seen = {}
@@ -185,7 +185,7 @@ def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
     completed `cas_run` shows up in `trajectory.jsonl`, not only in the
     separate CAS cell log.
     """
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     storage_module = importlib.import_module('hardy.storage')
     config = _staged_config(tmp_path, cas_backend='sympy')
     workflow = cli.build_prove_workflow(config, tmp_path / 'config.toml')
@@ -226,7 +226,7 @@ def _verdict(domain, outcome, **overrides):
 
 def test_console_terminal_shows_the_divergences_and_says_the_run_stops() -> None:
     """A mismatch nobody is shown is a mismatch nobody can resolve."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.domain')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
@@ -253,7 +253,7 @@ def test_console_terminal_shows_the_divergences_and_says_the_run_stops() -> None
 def test_console_terminal_reports_an_agreement_too() -> None:
     """Otherwise a user cannot tell a checked run from one where the gate
     never ran: silence would look the same either way."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.domain')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
@@ -275,7 +275,7 @@ def test_console_terminal_reports_an_agreement_too() -> None:
 
 
 def test_console_terminal_says_why_a_review_could_not_be_obtained() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.domain')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
@@ -296,7 +296,7 @@ def test_console_terminal_says_why_a_review_could_not_be_obtained() -> None:
 
 
 def test_the_result_summary_says_whether_the_translation_was_read() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.domain')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
@@ -320,7 +320,7 @@ def test_an_unavailable_review_does_not_tell_the_user_to_restate_the_claim() -> 
     Sending the user to rewrite a claim no reader ever saw points them at
     something that was never the problem.
     """
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.domain')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
@@ -346,7 +346,7 @@ def test_the_reviewer_model_can_be_overridden_for_one_invocation(tmp_path) -> No
     cannot serve, halting every approved claim with no way to repair it, since
     `--model` sets the run's model and not the reviewer's.
     """
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
     domain = importlib.import_module('hardy.domain')
     config_path = tmp_path / 'config.toml'
@@ -385,7 +385,7 @@ def test_the_reviewer_model_can_be_overridden_for_one_invocation(tmp_path) -> No
 
 
 def test_prove_accepts_the_reviewer_model_flag() -> None:
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
 
     args = cli.build_parser().parse_args(
         ['prove', '--faithfulness-model', 'gpt-reviewer', 'Two equals two.']
@@ -398,7 +398,7 @@ def test_accept_takes_the_same_reviewer_override_as_prove() -> None:
     """`run_accept` builds the selected backend from the global config too, so
     a configured Claude reviewer would meet a `--backend codex` acceptance run
     and halt both problems as unavailable."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
 
     args = cli.build_parser().parse_args(
         ['accept', '--backend', 'codex', '--faithfulness-model', 'gpt-reviewer']
@@ -411,7 +411,7 @@ def test_a_lean_that_cannot_be_identified_is_a_recorded_setup_failure(tmp_path) 
     """Not a traceback: the identity probe runs before the workflow exists,
     and a `lake` that answers `--version` with nothing used to escape
     `run_prove` uncaught, leaving no manifest and no trajectory behind."""
-    cli = importlib.import_module('hardy.cli')
+    cli = importlib.import_module('hardy.app.cli')
     domain = importlib.import_module('hardy.domain')
     workflow_module = importlib.import_module('hardy.workflow')
     config = _staged_config(tmp_path)

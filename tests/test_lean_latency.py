@@ -326,7 +326,7 @@ def test_non_finite_bounds_are_refused_before_probing(tmp_path: Path, capsys, mo
     that every call is bounded; `--total-seconds nan` reaches `round()` and
     exits with a traceback instead of a usage error.
     """
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -352,7 +352,7 @@ def test_an_unusable_threshold_is_refused_before_probing(tmp_path: Path, capsys,
     A negative threshold warrants a pool that recovers nothing, NaN fails
     every comparison so nothing is ever warranted, and above 1 is unreachable.
     """
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -776,7 +776,7 @@ def test_a_command_that_cannot_be_executed_is_reported_not_raised(tmp_path: Path
     """`FileNotFoundError` alone missed it: a present-but-unexecutable command
     raises `PermissionError`, which escaped as a traceback past a probe that
     had already caught the same failure."""
-    from hardy import cli
+    from hardy.app import cli
     from hardy.latency import ToolchainProbe
 
     project = tmp_path / "lean_project"
@@ -956,7 +956,7 @@ def test_a_bad_import_is_refused_before_the_toolchain_probe(tmp_path: Path, caps
     """`import_probe` runs inside `measure_import_cost`, after the toolchain
     probe has already had a full deadline to stall in — so a malformed module
     name could cost 300s before being told it was malformed."""
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -972,7 +972,7 @@ def test_a_bad_import_is_refused_before_the_toolchain_probe(tmp_path: Path, caps
 def test_a_total_that_overflows_when_scaled_is_a_usage_error(tmp_path: Path, capsys, monkeypatch):
     """`1e308` is finite; `1e308 * 1000` is not, and `round(inf)` raised
     OverflowError where a usage error belonged."""
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -989,7 +989,7 @@ def test_half_an_observed_run_is_refused_before_probing(tmp_path: Path, capsys, 
     """One of the pair produced a report asking for the other and still exited
     0, so a script could not tell an unanswered verdict from a real one — and
     it only asked after paying for every probe."""
-    from hardy import cli
+    from hardy.app import cli
     from hardy.latency import ToolchainProbe
 
     project = tmp_path / "lean_project"
@@ -1060,7 +1060,7 @@ def test_an_absurd_call_count_is_refused_before_probing(tmp_path: Path, capsys, 
     """Python integers do not overflow, but the report renders ms as seconds
     and `10**308 * 12_000 / 1000` exceeds a float — so the command completed
     every expensive probe and exited with an OverflowError traceback."""
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1087,7 +1087,7 @@ def test_the_censored_median_is_labelled_by_what_it_was_taken_over():
 def test_repeats_below_one_is_refused_before_any_child_starts(tmp_path: Path, capsys, monkeypatch):
     """`measure_import_cost` rejects it only after the toolchain probe has
     already had a full deadline to stall in."""
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1103,7 +1103,7 @@ def test_repeats_below_one_is_refused_before_any_child_starts(tmp_path: Path, ca
 def test_the_unsandboxed_warning_precedes_every_child_process(tmp_path: Path, capsys, monkeypatch):
     """Elaborating a user-named module runs arbitrary code unisolated, and
     AGENTS.md forbids letting that pass unsaid."""
-    from hardy import cli
+    from hardy.app import cli
     from hardy.latency import ImportCost as Cost
     from hardy.latency import ToolchainProbe
 
@@ -1138,7 +1138,7 @@ def test_an_empty_lean_command_is_reported_not_dereferenced(tmp_path: Path, caps
     """`--lean-command "   "` parses to an empty tuple, and the launch-failure
     handler then reads `command[0]` and raises IndexError instead of naming
     the configuration problem."""
-    from hardy import cli
+    from hardy.app import cli
     from hardy.config import Config
     from hardy.domain import RunLimits
 
@@ -1172,7 +1172,7 @@ def test_a_run_that_exactly_affords_its_preludes_is_still_consistent():
 
 def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys, monkeypatch):
     """A cost measured against some other Mathlib is not the cost Hardy pays."""
-    from hardy import cli
+    from hardy.app import cli
     from hardy.config import Config
     from hardy.domain import RunLimits
     from hardy.latency import ImportCost as Cost
@@ -1223,7 +1223,7 @@ def _config_for(tmp_path: Path, project: Path):
 def test_invalid_observed_run_values_are_refused_before_any_probe_runs(tmp_path: Path, capsys, monkeypatch):
     """Rejecting a negative --calls after minutes of Mathlib imports, with a
     pydantic traceback, is a usage error reported the most expensive way."""
-    from hardy import cli
+    from hardy.app import cli
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1246,7 +1246,7 @@ def test_invalid_observed_run_values_are_refused_before_any_probe_runs(tmp_path:
 
 def test_a_missing_project_is_not_reported_as_a_missing_lean(tmp_path: Path, capsys):
     """The executable may be perfectly present; it is the directory that is gone."""
-    from hardy import cli
+    from hardy.app import cli
 
     args = cli.build_parser().parse_args(["latency"])
     config = _config_for(tmp_path, tmp_path / "deleted")
@@ -1257,7 +1257,7 @@ def test_a_missing_project_is_not_reported_as_a_missing_lean(tmp_path: Path, cap
 
 
 def test_a_project_path_that_is_a_file_is_refused_rather_than_raising(tmp_path: Path, capsys):
-    from hardy import cli
+    from hardy.app import cli
 
     regular = tmp_path / "lakefile.toml"
     regular.write_text("", encoding="utf-8")

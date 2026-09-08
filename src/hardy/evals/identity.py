@@ -25,8 +25,8 @@ RUN_SOURCE_ROOT = Path(__file__).resolve().parents[1]
 # shape: nothing the digest covers may import it.
 RUN_SOURCE_EXCLUDED_FILES = frozenset({
     "__main__.py",        # a console-script shim
-    "cas_driver.py",      # reached by no run path
-    "cli.py",             # argument parsing; the run hooks moved to wiring.py
+    "cli.py",
+    "app/cli.py",        # argument parsing; construction lives in wiring.py
     "evals/viewer.py",    # the corpus review viewer
     "evals/summary.py",   # reads finished boards; cannot reach a run
 })

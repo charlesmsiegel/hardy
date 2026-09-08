@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 from corpus_helpers import write_corpus
 
-from hardy import cli
+from hardy.app import cli
 from hardy.domain import EnvironmentIdentity
-from hardy.evals import commands, scoreboard
+from hardy.evals import commands
 
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="819816b2", mathlib_revision="v4.33.1", lake_manifest_sha256="m" * 64)
 PROBLEMS = {"schema_version": 1, "entries": [

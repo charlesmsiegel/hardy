@@ -8,6 +8,9 @@ on:
   pull_request:
     paths:
       - "src/hardy/cas*.py"
+      - "src/hardy/algebra/**"
+      - "src/hardy/app/**"
+      - "src/hardy/workflows/interactive/**"
       # Bindings that register or dispatch CAS tools, and the configuration
       # and domain inputs that shape CAS behavior. A regression here can
       # remove tools or route calls incorrectly without touching cas*.py.

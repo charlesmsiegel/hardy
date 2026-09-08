@@ -78,7 +78,7 @@ from hardy.acceptance import (
     refusal_issues,
     validate_recorded_run,
 )
-from hardy.cli import _find_run_dir, build_prove_workflow, runtime_factory
+from hardy.app.cli import _find_run_dir, build_prove_workflow, runtime_factory
 from hardy.domain import DocumentStatus, FaithfulnessStatus, FormalStatus, RunPhase
 from hardy.lean import LeanTools, elaborate, environment_identity
 from hardy.models import Request

@@ -16,8 +16,8 @@ import io
 
 import pytest
 
-from hardy import cli
 from hardy import config as configuration
+from hardy.app import cli
 
 
 def settings(tmp_path):

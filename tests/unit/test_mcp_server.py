@@ -8,6 +8,42 @@ NOW = datetime(2026, 7, 24, tzinfo=UTC)
 RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 
+@pytest.mark.parametrize('entry', ['direct', 'mcp'])
+def test_both_entries_preserve_identity_budget_and_spill_sequence(tmp_path, entry):
+    from hardy import domain, lean, process, storage
+    from hardy.app import mcp as server
+    from hardy.formal.tools import LeanToolRuntime
+
+    claim = _claim(domain)
+    store = storage.RunStore.create(tmp_path, entry, now=NOW, run_id=RUN_ID)
+    calls = []
+
+    class Service:
+        def check_proof(self, received, proof, allowed):
+            calls.append((received, proof, allowed))
+            return _check(lean, process, claim, 'x' * 10_000)
+
+    runtime = LeanToolRuntime(claim=claim, service=Service(), store=store,
+                              official_checks=1, observation_bytes=1024)
+    server.configure_runtime(runtime)
+    check = runtime.check_proof if entry == 'direct' else server.lean_check_proof
+    with pytest.raises(ValueError, match='Frozen Claim'):
+        check('0' * 64, 'by rfl')
+    assert runtime.remaining_official_checks == 1
+    assert calls == []
+    result = check(claim.content_hash, 'by rfl')
+    assert calls == [(claim, 'by rfl', ())]
+    assert result.observation_truncated
+    assert result.output_artifact == 'process/mcp-lean-0.json'
+    assert len(result.model_dump_json().encode('utf-8')) <= 1024
+    full = lean.LeanCheckResult.model_validate_json((store.path / result.output_artifact).read_text())
+    assert full.process.stdout == 'x' * 10_000
+    with pytest.raises(ValueError, match='budget'):
+        check(claim.content_hash, 'by rfl')
+    assert len(calls) == 1
+    assert runtime.remaining_official_checks == 0
+
+
 def _claim(domain):
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',
@@ -55,7 +91,7 @@ def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
 ) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     process = importlib.import_module('hardy.process')
     storage = importlib.import_module('hardy.storage')
     claim = _claim(domain)
@@ -92,7 +128,7 @@ def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
 def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     process = importlib.import_module('hardy.process')
     storage = importlib.import_module('hardy.storage')
     claim = _claim(domain)
@@ -122,7 +158,7 @@ def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> Non
 
 def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.storage')
     config = importlib.import_module('hardy.config')
     claim = _claim(domain).model_copy(update={'content_hash': '0' * 64})
@@ -147,7 +183,7 @@ def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) ->
 
 def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.storage')
     claim = _claim(domain)
     runtime = server.LeanToolRuntime(
@@ -168,7 +204,7 @@ def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) ->
 def test_declaration_search_observation_is_bounded(tmp_path) -> None:
     declarations = importlib.import_module('hardy.declarations')
     domain = importlib.import_module('hardy.domain')
-    server = importlib.import_module('hardy.mcp_server')
+    server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.storage')
     claim = _claim(domain)
 

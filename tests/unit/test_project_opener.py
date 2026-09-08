@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy.app import projects as cli
-from hardy import layout, search_tools
 from hardy import config as configuration
+from hardy import layout, search_tools
+from hardy.app import projects as cli
 from hardy.declarations import DeclarationIndex
 from hardy.domain import EnvironmentIdentity
 from hardy.retrieval import build_retriever
@@ -540,7 +540,7 @@ def test_a_cancel_for_one_switch_cannot_refuse_the_next(opener, live, root):
         opener.cancel()
         return FakeCas(kwargs["cwd"]), "fake 1.0"
 
-    import hardy.cli as module
+    import hardy.app.projects as module
     original = module.cas_tools.build_runtime
     module.cas_tools.build_runtime = build
     try:
