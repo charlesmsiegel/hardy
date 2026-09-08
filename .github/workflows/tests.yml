@@ -56,6 +56,20 @@ jobs:
           # first, which is the one that says what actually went wrong.
           if-no-files-found: warn
 
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build and exercise the installed wheel outside the checkout
+        run: |
+          set -euo pipefail
+          uv build --wheel
+          uv venv /tmp/hardy-wheel
+          uv pip install --python /tmp/hardy-wheel/bin/python dist/*.whl
+          cd /tmp
+          /tmp/hardy-wheel/bin/python "$GITHUB_WORKSPACE/scripts/smoke_wheel.py"
+
   # The whole axiom gate rests on two sentences of Lean's output. The hermetic
   # suite proves the parser reads them; only real Lean proves they are still
   # what Lean says. Those tests skip themselves without a toolchain, so before
