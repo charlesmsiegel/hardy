@@ -48,6 +48,12 @@ class SessionRecord:
     def local_snapshot(self) -> dict[str, Any]:
         return deepcopy(self.local)
 
+    def publish_writeup(self, signature: str, open_names: list[str], document_digest: str | None) -> None:
+        self.state["tex_signature"] = signature
+        self.state["tex_open"] = open_names
+        if document_digest is not None:
+            self.state["writeup_sha256"] = document_digest
+
     def publish_audit(self, records: dict[str, Any], signatures: dict[str, str]) -> None:
         self.state.setdefault("audit", {}).update({
             module: {**record, "signature": signatures.get(module, "")}
