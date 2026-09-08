@@ -1,0 +1,88 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "foundation",
+  "theory": "Foundation supplies host-level facts that domain owners depend on: owned paths, guarded files, descriptor-held locks, bounded children, and shared values. These mechanisms constrain persistence and resource lifetimes without deciding mathematical truth. Their guarantees are scoped to the host threat and concurrency models actually implemented.",
+  "instead_of": "A security sandbox is another possible reading, but these guards explicitly address repository layout defense and ordinary subprocess control, without isolating generated code from the host.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Additional guarded files and bounded tools fit; independent cancellation for simultaneous sessions does not, because tracked children and stop level are process-wide.",
+      "evidence": [
+        "src/hardy/foundation/process.py:225",
+        "src/hardy/foundation/process.py:259",
+        "src/hardy/foundation/process.py:270"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Directory identity, leaf names, descriptor lifetimes, lock faults versus contention, and child outcomes correspond to concrete OS resources.",
+      "evidence": [
+        "src/hardy/foundation/files.py:105",
+        "src/hardy/foundation/locking.py:55",
+        "src/hardy/foundation/locking.py:67"
+      ]
+    },
+    "abstraction": {
+      "step": 1,
+      "rationale": "WriteGuard renews ownership checks per operation, FileLock represents the OS mutex, and ProcessSpec/Result separate requests from bounded outcomes, without domain grading.",
+      "evidence": [
+        "src/hardy/foundation/files.py:102",
+        "src/hardy/foundation/locking.py:1",
+        "src/hardy/foundation/process.py:458"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Rejected stale-file locking is explained through actual races; tests distinguish timeout, overflow, and environment inheritance rather than only successful commands.",
+      "evidence": [
+        "src/hardy/foundation/locking.py:82",
+        "tests/unit/test_process.py:39",
+        "tests/unit/test_process.py:55",
+        "tests/unit/test_process.py:80"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "WriteGuard states the absent sandbox and concurrent-attacker TOCTOU limitation; process teardown costs are named so deadlines do not imply instantaneous termination.",
+      "evidence": [
+        "src/hardy/foundation/files.py:121",
+        "src/hardy/foundation/files.py:127",
+        "src/hardy/foundation/files.py:132",
+        "src/hardy/foundation/process.py:59"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Persist another file below an owned directory.",
+      "verdict": "extension",
+      "why": "Name it through WriteGuard and reuse directory/leaf checks.",
+      "evidence": [
+        "src/hardy/foundation/files.py:102",
+        "src/hardy/foundation/files.py:117"
+      ]
+    },
+    {
+      "requirement": "Run another helper with time, output, and environment bounds.",
+      "verdict": "extension",
+      "why": "Construct ProcessSpec and consume explicit ProcessResult timeout/overflow outcomes.",
+      "evidence": [
+        "src/hardy/foundation/process.py:458",
+        "tests/unit/test_process.py:39",
+        "tests/unit/test_process.py:80"
+      ]
+    },
+    {
+      "requirement": "Serve simultaneous sessions and cancel only one session's children.",
+      "verdict": "patch",
+      "why": "The global register and persistent global stop level target all tracked children; spawn/register operations need an owned cancellation scope.",
+      "evidence": [
+        "src/hardy/foundation/process.py:233",
+        "src/hardy/foundation/process.py:259",
+        "src/hardy/foundation/process.py:270"
+      ]
+    }
+  ]
+}

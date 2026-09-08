@@ -1,0 +1,82 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "app",
+  "theory": "The application translates operator choices and machine configuration into assembled mathematical workflows. Terminal rendering and asynchronous questions are ports, while wiring chooses concrete runtimes and tools. Setup failures are operator-visible states rather than proof outcomes.",
+  "instead_of": "Treating the CLI as the application core would combine construction and interaction; the Ui port and runtime factory instead support multiple surfaces over workflow owners.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 1,
+      "rationale": "Additional commands, another UI, and another runtime selection have clear homes in the registry, UI protocol, and composition factory.",
+      "evidence": [
+        "src/hardy/app/tui/handlers.py:1075",
+        "src/hardy/app/tui/ports.py:69",
+        "src/hardy/app/wiring.py:23"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Operator prompts, UI state, and runtime assembly correspond to distinct concerns; the UI explicitly represents event-loop responsiveness requirements.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:21",
+        "src/hardy/app/tui/ports.py:92",
+        "src/hardy/app/wiring.py:26"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "The UI seam is explicit, but State exposes config/session as Any and runtime construction forwards arbitrary context. Handler and factory requirements remain less discoverable than the Ui protocol.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:25",
+        "src/hardy/app/wiring.py:34"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Async prompts are justified by deadlock, reopening is supplied through composition, and a test fences prompt_toolkit imports.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:29",
+        "src/hardy/app/tui/ports.py:70",
+        "tests/tui/test_layering.py:9"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Wiring states SDK versus Hardy loop ownership and preserves unavailable setup identity as a recorded failure path.",
+      "evidence": [
+        "src/hardy/app/wiring.py:26",
+        "src/hardy/app/wiring.py:65"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add a project slash command.",
+      "verdict": "extension",
+      "why": "The registry accepts handlers and user templates while protecting built-ins.",
+      "evidence": [
+        "src/hardy/app/tui/handlers.py:1075",
+        "src/hardy/app/tui/handlers.py:1123"
+      ]
+    },
+    {
+      "requirement": "Offer operator questions through another asynchronous interface.",
+      "verdict": "extension",
+      "why": "Implement Ui's awaitable choice and confirmation operations without importing the terminal renderer into handlers.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:69",
+        "tests/tui/test_layering.py:9"
+      ]
+    },
+    {
+      "requirement": "Select a third runtime from configuration.",
+      "verdict": "extension",
+      "why": "Add an explicit composition-factory choice; the current branch is the intended construction home, although arbitrary context forwarding needs adapter tests.",
+      "evidence": [
+        "src/hardy/app/wiring.py:23",
+        "src/hardy/app/wiring.py:34"
+      ]
+    }
+  ]
+}

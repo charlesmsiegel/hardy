@@ -1,0 +1,15 @@
+{
+  "source_skills": "C:\\Users\\charl\\.codex\\skills",
+  "copies": "C:\\Users\\charl\\AppData\\Local\\Temp\\hardy-overview\\tools-with-exclusions",
+  "only_change": "EXCLUDE_DIRS union",
+  "extra_exclusions": [
+    ".lake",
+    ".venv",
+    ".venv-codex",
+    ".venv-refactor",
+    "docs",
+    "htmlcov"
+  ],
+  "repo": "C:\\Users\\charl\\github\\hardy",
+  "no_detectors_skipped": true
+}

@@ -1,0 +1,106 @@
+{
+  "schema": "code-overview/1",
+  "generated": "2026-09-08",
+  "scope_note": "Domain packages from the implemented refactor design; repository atlas includes supporting tests and tooling. Python health is scoped to the mapped domains; shell tooling is not graded by the Python specialist. Proposed scope was presented for optional clarification.",
+  "packages": [
+    {
+      "name": "agents",
+      "roots": [
+        "src/hardy/agents"
+      ],
+      "docs": "docs/packages/agents",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "algebra",
+      "roots": [
+        "src/hardy/algebra"
+      ],
+      "docs": "docs/packages/algebra",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "app",
+      "roots": [
+        "src/hardy/app"
+      ],
+      "docs": "docs/packages/app",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "corpus",
+      "roots": [
+        "src/hardy/corpus"
+      ],
+      "docs": "docs/packages/corpus",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "documents",
+      "roots": [
+        "src/hardy/documents"
+      ],
+      "docs": "docs/packages/documents",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "evals",
+      "roots": [
+        "src/hardy/evals"
+      ],
+      "docs": "docs/packages/evals",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "formal",
+      "roots": [
+        "src/hardy/formal"
+      ],
+      "docs": "docs/packages/formal",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "foundation",
+      "roots": [
+        "src/hardy/foundation"
+      ],
+      "docs": "docs/packages/foundation",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "literature",
+      "roots": [
+        "src/hardy/literature"
+      ],
+      "docs": "docs/packages/literature",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "prompts",
+      "roots": [
+        "src/hardy/prompts"
+      ],
+      "docs": "docs/packages/prompts",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    },
+    {
+      "name": "workflows",
+      "roots": [
+        "src/hardy/workflows"
+      ],
+      "docs": "docs/packages/workflows",
+      "language": "python",
+      "doctor": "python-code-doctor"
+    }
+  ]
+}

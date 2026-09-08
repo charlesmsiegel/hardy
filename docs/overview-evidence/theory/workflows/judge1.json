@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "workflows",
+  "theory": "A workflow coordinates capabilities while preserving the authority and identity of each intermediate artifact. Explicit staged transitions protect claim approval and independent checking, while interactive owners preserve durable state and bounded save decisions across conversation turns.",
+  "instead_of": "One permissive session loop would be simpler, but could let proof search, assumptions, document publication and completion claims advance without the required evidence.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Another explicit staged gate fits; distributed interactive ownership requires more than local locks and callback policies.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:578"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Approval, faithfulness, verification and compilation are separate real commitments.",
+      "evidence": [
+        "src/hardy/workflows/contracts.py:236"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Owners are meaningful and independently tested, but the interactive coordinator still assembles many policy callbacks and state-derived views.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:578"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The staged controller explains why illegal transitions and skipped verification must refuse.",
+      "evidence": [
+        "src/hardy/workflows/prove.py:115"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Grades preserve partial work, declared assumptions and reader limitations instead of projecting one success bit.",
+      "evidence": [
+        "src/hardy/workflows/contracts.py:236"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add an explicit review gate before proof search",
+      "verdict": "extension",
+      "why": "The staged controller already owns ordered transitions and terminal reasons.",
+      "evidence": [
+        "src/hardy/workflows/prove.py:115"
+      ]
+    },
+    {
+      "requirement": "Allow two processes to edit one interactive session concurrently",
+      "verdict": "patch",
+      "why": "Current record snapshots and process-local locks do not form a distributed transaction protocol.",
+      "evidence": [
+        "src/hardy/workflows/interactive/record.py:30"
+      ]
+    },
+    {
+      "requirement": "Save a partial proof while keeping its outstanding holes visible",
+      "verdict": "extension",
+      "why": "Formal grade and document obligations can represent incomplete work without changing the claim.",
+      "evidence": [
+        "src/hardy/workflows/contracts.py:236"
+      ]
+    }
+  ]
+}

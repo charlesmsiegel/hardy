@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "app",
+  "theory": "The application layer translates terminal inputs into configured workflow operations and owns concrete resources. Project switching preserves the pinned root environment while rebuilding problem-local state.",
+  "instead_of": "Constructing everything inside command handlers would conflate presentation, project identity, and kernel lifetime.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "A local command is an extension; authenticated concurrent clients require another ownership model.",
+      "evidence": [
+        "src/hardy/app/projects.py:181"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Root environment and active problem are explicit and different concepts.",
+      "evidence": [
+        "src/hardy/app/projects.py:181"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Factories are explicit, but rich terminal, plain terminal and CLI maintain separate interaction adapters.",
+      "evidence": [
+        "src/hardy/app/cli.py:959"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The opener explains why it takes live configuration rather than retaining launch-time configuration.",
+      "evidence": [
+        "src/hardy/app/projects.py:181"
+      ]
+    },
+    "honest_limits": {
+      "step": 0.5,
+      "rationale": "Setup refusal is explicit, but construction still relies on host executable and console semantics.",
+      "evidence": [
+        "src/hardy/app/wiring.py:44"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add a slash command for an existing session operation",
+      "verdict": "extension",
+      "why": "Classify it once and connect a terminal adapter.",
+      "evidence": [
+        "src/hardy/app/tui/dispatch.py:25"
+      ]
+    },
+    {
+      "requirement": "Serve multiple authenticated web users concurrently",
+      "verdict": "patch",
+      "why": "The opener owns one active local session and carries no tenant identity.",
+      "evidence": [
+        "src/hardy/app/projects.py:181"
+      ]
+    },
+    {
+      "requirement": "Change the model before switching problems",
+      "verdict": "extension",
+      "why": "The current configuration is an argument at the handoff.",
+      "evidence": [
+        "src/hardy/app/projects.py:181"
+      ]
+    }
+  ]
+}

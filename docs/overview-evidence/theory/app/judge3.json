@@ -1,0 +1,83 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "app",
+  "theory": "The application layer translates human commands and machine configuration into concrete Hardy runtimes, tools, and approval adapters. Terminal rendering, asynchronous questions, plain input, and project reopening are presentation and construction concerns around the mathematical workflows.",
+  "instead_of": "Make terminal widgets or command parsers own mathematical acceptance policy; the UI ports and construction functions instead pass decisions to the workflows and capabilities.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "A new UI operation fits the explicit ports, but introducing another backend requires coordinated authentication, setup probing, and runtime-factory choices; these choices are not one shared backend contract.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:50",
+        "src/hardy/app/config.py:79",
+        "src/hardy/app/setup.py:122",
+        "src/hardy/app/wiring.py:23"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Projects, environment discovery, installers, CLI/MCP entry points, and UI ports each describe a recognizable application concern.",
+      "evidence": [
+        "src/hardy/app/projects.py:181",
+        "src/hardy/app/setup.py:155",
+        "src/hardy/app/tui/ports.py:69"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "The UI operation boundary is clear, but State and the construction callback retain Any-typed session/configuration/reopen contracts; extending session interaction still relies on knowledge beyond the port declarations.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:22",
+        "src/hardy/app/wiring.py:23"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The code explains why construction is separated from argument parsing for run identity, why UI prompting is asynchronous, and why workers need an explicit cancellation hook.",
+      "evidence": [
+        "src/hardy/app/wiring.py:1",
+        "src/hardy/app/tui/ports.py:69",
+        "src/hardy/app/tui/ports.py:97"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Setup probes ask the selected transport rather than assuming its availability; optional reopen state is explicitly unsupported when no opener was supplied.",
+      "evidence": [
+        "src/hardy/app/setup.py:122",
+        "src/hardy/app/tui/ports.py:22"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add another terminal front end that supports the same questions and choices.",
+      "verdict": "extension",
+      "why": "Implement Ui and its blocking bridge while reusing command handlers.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:50",
+        "src/hardy/app/tui/ports.py:69"
+      ]
+    },
+    {
+      "requirement": "Let a long-running slash command publish its own cancellation operation.",
+      "verdict": "extension",
+      "why": "Ui.stopping exists for work that is not the interactive session’s current child process.",
+      "evidence": [
+        "src/hardy/app/tui/ports.py:97"
+      ]
+    },
+    {
+      "requirement": "Add an additional authenticated provider backend to every entry point.",
+      "verdict": "patch",
+      "why": "Factory selection, authentication naming, and setup probing each encode backend choices and must change together.",
+      "evidence": [
+        "src/hardy/app/wiring.py:23",
+        "src/hardy/app/config.py:79",
+        "src/hardy/app/setup.py:122"
+      ]
+    }
+  ]
+}

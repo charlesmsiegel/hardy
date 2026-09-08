@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "prompts",
+  "theory": "Harness instructions are named templates rendered under strict missing-variable rules and identified as explicit prompt sets. User slash templates are input expansion, not silently part of the harness instruction identity.",
+  "instead_of": "Embedding prompt prose across Python call sites would make text changes difficult to review and make recorded prompt identity incomplete.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "More templates fit naturally; backend-specific exact instruction identity still needs a richer recorded contract.",
+      "evidence": [
+        "src/hardy/prompts/__init__.py:234"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Named harness instructions and user-provided text have distinct experimental roles.",
+      "evidence": [
+        "src/hardy/prompts/user.py:158"
+      ]
+    },
+    "abstraction": {
+      "step": 1,
+      "rationale": "Jinja strict rendering and one package loader avoid reimplemented formatting at call sites.",
+      "evidence": [
+        "src/hardy/prompts/__init__.py:71"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Prompt-set membership is justified separately for staged, batch and user templates.",
+      "evidence": [
+        "src/hardy/prompts/__init__.py:234"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "The payload documents a conservative Codex schema-template asymmetry instead of claiming exact backend equivalence.",
+      "evidence": [
+        "src/hardy/prompts/__init__.py:234"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add a required field to the proof prompt",
+      "verdict": "extension",
+      "why": "Strict rendering fails any caller that omits it.",
+      "evidence": [
+        "src/hardy/prompts/__init__.py:71"
+      ]
+    },
+    {
+      "requirement": "Record exactly which structure instruction each backend received",
+      "verdict": "patch",
+      "why": "The existing payload explicitly includes a structure template the Codex SDK path does not append.",
+      "evidence": [
+        "src/hardy/prompts/__init__.py:234"
+      ]
+    },
+    {
+      "requirement": "Add a reusable user slash template",
+      "verdict": "extension",
+      "why": "User templates are a separate input-expansion layer.",
+      "evidence": [
+        "src/hardy/prompts/user.py:158"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "agents",
+  "theory": "Conversations consist of observations with different authority: deltas draw the interface, final replies settle the answer, and result events report spend. Adapters preserve those distinctions while the harness-owned loop can decline another model call.",
+  "instead_of": "A universal SDK conversation would hide the different control and isolation guarantees of hosted loops and the harness-owned loop.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Provider extension fits; durable resume and SDK-controlled budgets still need transport-specific changes.",
+      "evidence": [
+        "src/hardy/agents/loop.py:272"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Events, call identifiers and usage reports correspond to observable conversation facts.",
+      "evidence": [
+        "src/hardy/agents/contracts.py:14"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "The neutral loop is substitutable, but adapters retain distinct conversation and cancellation semantics.",
+      "evidence": [
+        "src/hardy/agents/loop.py:272"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The ledger explains why cumulative reports cannot simply be added.",
+      "evidence": [
+        "src/hardy/agents/usage.py:98"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Missing spend stays distinct from zero; cancellation does not unwind arbitrary tool work.",
+      "evidence": [
+        "src/hardy/agents/loop.py:272"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add a provider using the existing event vocabulary",
+      "verdict": "extension",
+      "why": "Implement the provider adapter and inject the dispatcher.",
+      "evidence": [
+        "src/hardy/agents/contracts.py:14"
+      ]
+    },
+    {
+      "requirement": "Persist the harness-owned conversation across process restarts",
+      "verdict": "patch",
+      "why": "Its message history is memory-owned, while SDK backends expose different resume identities.",
+      "evidence": [
+        "src/hardy/agents/loop.py:272"
+      ]
+    },
+    {
+      "requirement": "Record another optional spend counter",
+      "verdict": "extension",
+      "why": "Reporting coverage is already per field rather than inferred from a total.",
+      "evidence": [
+        "src/hardy/agents/usage.py:98"
+      ]
+    }
+  ]
+}

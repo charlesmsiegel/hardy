@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "foundation",
+  "theory": "The shared foundation provides strict value models and bounded child-process operations without owning mathematical policy. Process control models a child group and its reported output, while platform-specific limits determine how far cancellation can reach.",
+  "instead_of": "Each capability could spawn and decode its own processes, but then budgets, credential filtering, and cancellation would have inconsistent meanings.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Another bounded child fits; remote execution and Windows job-object lifetime need more than the current process-group model.",
+      "evidence": [
+        "src/hardy/foundation/process.py:119"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Timeout, overflow, interrupted state and partial output correspond to separate process observations.",
+      "evidence": [
+        "src/hardy/foundation/process.py:480"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Value primitives are narrow, but process-tree handling cannot have identical semantics on all supported hosts.",
+      "evidence": [
+        "src/hardy/foundation/process.py:119"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Signal handling explicitly explains delivery versus obedience and why descendants matter.",
+      "evidence": [
+        "src/hardy/foundation/process.py:119"
+      ]
+    },
+    "honest_limits": {
+      "step": 0.5,
+      "rationale": "The code documents Windows group limits, but callers still rely on stronger output and lifetime behavior than every host realizes.",
+      "evidence": [
+        "tests/unit/test_process.py:195"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add a tool invoked by one local bounded subprocess",
+      "verdict": "extension",
+      "why": "Reuse ProcessSpec and ProcessResult instead of another spawn wrapper.",
+      "evidence": [
+        "src/hardy/foundation/process.py:480"
+      ]
+    },
+    {
+      "requirement": "Guarantee descendant cleanup on Windows without a console",
+      "verdict": "patch",
+      "why": "The current group signaling does not establish a job-object ownership boundary.",
+      "evidence": [
+        "src/hardy/foundation/process.py:119"
+      ]
+    },
+    {
+      "requirement": "Run tools on a remote worker",
+      "verdict": "patch",
+      "why": "A local Popen child and its pipes do not model remote leases or lost connections.",
+      "evidence": [
+        "src/hardy/foundation/process.py:480"
+      ]
+    }
+  ]
+}

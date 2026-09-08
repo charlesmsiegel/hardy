@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>foundation — Code Health</title>
+<style>
+/* Design tokens are code-visualization's, verbatim. The three document types in
+   a code overview sit next to each other in one nav bar; sharing the palette is
+   what makes them read as one artifact rather than three tools' output. */
+:root{
+  --bg:#0d1420; --bg-grid:rgba(120,160,220,0.05); --surface:#141d2e; --surface-2:#1a2538;
+  --border:rgba(150,180,230,0.14); --border-strong:rgba(150,180,230,0.30);
+  --text:#dbe4f3; --text-dim:#8fa1bd; --text-faint:#5f7191;
+  --accent:#5aa7e8; --accent-dim:rgba(90,167,232,0.14);
+  --good:#59c98f; --good-dim:rgba(89,201,143,0.14);
+  --warn:#e0b25a; --warn-dim:rgba(224,178,90,0.14);
+  --bad:#e06a6a; --bad-dim:rgba(224,106,106,0.15);
+  --violet:#a08fd8;
+  --heat-lo:#27405e; --heat-hi:#e0703f;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f3f5f9; --bg-grid:rgba(40,70,120,0.055); --surface:#ffffff; --surface-2:#eef1f7;
+    --border:rgba(30,55,95,0.14); --border-strong:rgba(30,55,95,0.30);
+    --text:#1d2838; --text-dim:#51617a; --text-faint:#8593a8;
+    --accent:#1f6fbd; --accent-dim:rgba(31,111,189,0.10);
+    --good:#1f8f5c; --good-dim:rgba(31,143,92,0.10);
+    --warn:#a87418; --warn-dim:rgba(168,116,24,0.12);
+    --bad:#bd3f3f; --bad-dim:rgba(189,63,63,0.10);
+    --violet:#6a55b0;
+    --heat-lo:#c9d8ec; --heat-hi:#cf5a26;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--sans); background:var(--bg); color:var(--text);
+  background-image:linear-gradient(var(--bg-grid) 1px,transparent 1px),linear-gradient(90deg,var(--bg-grid) 1px,transparent 1px);
+  background-size:32px 32px; line-height:1.55; font-size:15px;
+}
+header.doc{padding:34px 28px 0; max-width:1280px; margin:0 auto}
+.doc-label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:8px}
+.doc-label::before{content:"";width:8px;height:8px;background:var(--accent);border-radius:2px;display:inline-block}
+h1.doc-title{font-size:30px;font-weight:700;letter-spacing:-.02em;margin-top:8px}
+.doc-sub{color:var(--text-dim);margin-top:6px;max-width:900px}
+.doc-meta{font-family:var(--mono);font-size:12px;color:var(--text-faint);margin-top:10px}
+main{max-width:1280px;margin:0 auto;padding:26px 28px 80px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- tabs: code-visualization's contract, so one shell serves all four
+   documents. code-overview forces this template on assemble.py and on
+   build_measurement.py, so the markup those two emit has to fit here. ------- */
+nav.tabs{
+  display:flex;gap:2px;flex-wrap:wrap;max-width:1280px;margin:18px auto 0;
+  padding:0 28px;border-bottom:1px solid var(--border);
+}
+/* summary.html is untabbed and leaves TABS_NAV empty; without this the bar
+   renders as a stray rule under the header. */
+nav.tabs:empty{display:none;border:none}
+nav.tabs button{
+  background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);
+  font-family:var(--sans);font-size:14px;padding:9px 14px;cursor:pointer;
+}
+nav.tabs button:hover{color:var(--text)}
+nav.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+nav.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+section.panel{display:none}
+section.panel.active{display:block}
+
+/* ---------- content primitives (shared with code-visualization) ---------- */
+h2{font-size:21px;font-weight:600;letter-spacing:-.01em;margin:30px 0 10px}
+h2:first-child{margin-top:0}
+h3{font-size:16px;font-weight:600;margin:22px 0 8px}
+p{margin:8px 0;max-width:940px;color:var(--text)}
+ul,ol{margin:8px 0 8px 22px;max-width:940px}
+li{margin:4px 0}
+a{color:var(--accent)}
+.dim{color:var(--text-dim)} .faint{color:var(--text-faint)}
+code,.mono{font-family:var(--mono);font-size:.92em}
+p code,li code,td code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:12px 0}
+.grid{display:grid;gap:14px;margin:12px 0}
+.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.grid.cols-3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.grid>*{min-width:0}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;min-width:130px}
+.kpi .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .l{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);margin-top:2px}
+.kpi.warn .n{color:var(--warn)} .kpi.bad .n{color:var(--bad)} .kpi.good .n{color:var(--good)} .kpi.accent .n{color:var(--accent)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);vertical-align:1px;white-space:nowrap}
+.badge.good{color:var(--good);background:var(--good-dim);border-color:transparent}
+.badge.warn{color:var(--warn);background:var(--warn-dim);border-color:transparent}
+.badge.bad{color:var(--bad);background:var(--bad-dim);border-color:transparent}
+.badge.accent{color:var(--accent);background:var(--accent-dim);border-color:transparent}
+.badge.neutral{color:var(--text-dim);background:var(--surface-2);border-color:transparent}
+.callout{border-left:3px solid var(--accent);background:var(--accent-dim);border-radius:0 8px 8px 0;padding:12px 16px;margin:12px 0;max-width:940px}
+.callout.warn{border-color:var(--warn);background:var(--warn-dim)}
+.callout.bad{border-color:var(--bad);background:var(--bad-dim)}
+.callout.good{border-color:var(--good);background:var(--good-dim)}
+details{border:1px solid var(--border);border-radius:8px;margin:10px 0;background:var(--surface)}
+details summary{cursor:pointer;padding:10px 16px;font-weight:500;color:var(--text-dim)}
+details[open] summary{border-bottom:1px solid var(--border);color:var(--text)}
+details .body{padding:12px 16px}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin:12px 0;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+thead th{background:var(--surface-2);text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);padding:9px 14px;border-bottom:1px solid var(--border-strong);white-space:nowrap}
+tbody td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface-2) 45%,transparent)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.bar{position:relative;background:var(--surface-2);border-radius:4px;height:14px;min-width:120px;overflow:hidden}
+.bar>i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+.bar.warn>i{background:var(--warn)} .bar.bad>i{background:var(--bad)} .bar.good>i{background:var(--good)}
+
+/* ---------- grade components ---------- */
+/* Grade colour is bound to the band, not to the score, so the letter and the
+   colour can never disagree — the two are read together at a glance. */
+.g-a{--grade:var(--good)} .g-b{--grade:var(--accent)} .g-c{--grade:var(--warn)}
+.g-d{--grade:var(--bad)} .g-f{--grade:var(--bad)} .g-none{--grade:var(--text-faint)}
+.gradecard{display:flex;flex-wrap:wrap;align-items:center;gap:26px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;padding:22px 26px;margin:16px 0;background-image:linear-gradient(110deg,color-mix(in srgb,var(--grade) 12%,transparent),transparent 55%)}
+.gradecard .letter{font-size:64px;font-weight:700;line-height:1;letter-spacing:-.04em;color:var(--grade);font-variant-numeric:tabular-nums;min-width:96px}
+.gradecard .score{font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-top:6px}
+.gradecard .what{flex:1 1 260px;min-width:0}
+.gradecard .what h2{margin:0 0 4px;font-size:19px}
+.catrow{display:grid;grid-template-columns:minmax(140px,1.4fr) minmax(90px,2fr) 54px 46px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.catrow:last-child{border-bottom:none}
+.catrow .cname{font-size:13.5px;overflow-wrap:anywhere}
+.catrow .cname small{display:block;font-family:var(--mono);font-size:10.5px;color:var(--text-faint);letter-spacing:.04em}
+.catrow .cscore{font-family:var(--mono);font-size:12.5px;text-align:right;color:var(--text-dim);font-variant-numeric:tabular-nums}
+.catrow .cgrade{font-family:var(--mono);font-weight:600;text-align:right;color:var(--grade)}
+.catrow .bar>i{background:var(--grade)}
+.catrow.ungraded .cname,.catrow.ungraded .cscore{color:var(--text-faint)}
+@media(max-width:560px){.catrow{grid-template-columns:1fr 54px 46px}.catrow .bar{grid-column:1/-1}}
+.doclinks{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));margin:16px 0}
+.doclink{display:block;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;text-decoration:none;color:var(--text)}
+.doclink:hover{border-color:var(--accent);background:var(--accent-dim)}
+.doclink .k{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.doclink .t{font-size:16px;font-weight:600;margin-top:4px}
+.doclink .d{color:var(--text-dim);font-size:13px;margin-top:4px}
+.doclink[aria-disabled="true"]{opacity:.5;pointer-events:none}
+.sev-high{color:var(--bad)} .sev-medium{color:var(--warn)} .sev-low{color:var(--text-dim)}
+/* The type token and the category name are short and identify the row; letting
+   them wrap mid-word to buy width for a long description makes the table harder
+   to scan, not easier. The description column is the one that should give. */
+td code.ftype{white-space:nowrap;overflow-wrap:normal}
+td.cat{white-space:nowrap}
+/* A file:line split across two lines is not a citation anyone can copy. The
+   wrapper scrolls if a path is genuinely too deep for the viewport. */
+td code.floc{white-space:nowrap;overflow-wrap:normal}
+footer.doc{max-width:1280px;margin:0 auto;padding:0 28px 34px;color:var(--text-faint);font-family:var(--mono);font-size:11.5px}
+footer.doc a{color:var(--text-dim)}
+@media(max-width:720px){header.doc,main,nav.tabs,footer.doc{padding-left:16px;padding-right:16px} h1.doc-title{font-size:24px} .gradecard .letter{font-size:48px;min-width:72px}}
+</style>
+</head>
+<body>
+<header class="doc">
+  <div class="doc-label">CODE HEALTH</div>
+  <h1 class="doc-title">foundation — Code Health</h1>
+  <p class="doc-sub">Graded health of the foundation package.</p>
+  <div class="doc-meta">generated 2026-09-08 · d1bcc7c · 7 files, 1406 lines · 42 findings, 19 candidates · code-doctor, python-code-doctor</div>
+</header>
+<!-- code-overview:nav --><style>
+.co-nav{position:sticky;top:0;z-index:60;max-width:1280px;margin:0 auto;padding:10px 28px;
+  font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;
+  background:color-mix(in srgb,var(--bg,#0d1420) 92%,transparent);
+  border-bottom:1px solid var(--border,rgba(150,180,230,0.14));
+  backdrop-filter:blur(8px);display:flex;flex-direction:column;gap:6px}
+.co-nav .co-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.co-nav a{color:var(--text-dim,#8fa1bd);text-decoration:none;padding:3px 9px;border-radius:999px;
+  border:1px solid transparent;white-space:nowrap}
+.co-nav a:hover{color:var(--accent,#1f6fbd);background:var(--accent-dim,rgba(31,111,189,0.10))}
+.co-nav a[aria-current]{color:var(--accent,#1f6fbd);
+  border-color:var(--accent,#1f6fbd);background:var(--accent-dim,rgba(31,111,189,0.10))}
+.co-nav .co-here{color:var(--text,#dbe4f3);font-weight:600;padding:3px 0}
+.co-nav .co-lbl{color:var(--text-faint,#5f7191);letter-spacing:.08em;text-transform:uppercase;
+  font-size:10.5px;padding-right:2px}
+.co-nav .co-sep{color:var(--text-faint,#5f7191);opacity:.6}
+@media(max-width:720px){.co-nav{padding-left:16px;padding-right:16px}}
+</style><nav class="co-nav" aria-label="code overview"><div class="co-row"><a href="../../health.html">⌂ Overall Health</a><span class="co-sep">/</span><span class="co-here">foundation</span></div><div class="co-row"><span class="co-lbl">foundation</span><a href="summary.html">Summary</a><a href="codemap.html">Code Map</a><a href="#" aria-current="page">Health</a><a href="measurement.html">Measurement</a><a href="theory.html">Theory</a></div><div class="co-row"><span class="co-lbl">Other packages · Health</span><a href="../agents/health.html">agents</a><a href="../algebra/health.html">algebra</a><a href="../app/health.html">app</a><a href="../corpus/health.html">corpus</a><a href="../documents/health.html">documents</a><a href="../evals/health.html">evals</a><a href="../formal/health.html">formal</a><a href="../literature/health.html">literature</a><a href="../prompts/health.html">prompts</a><a href="../workflows/health.html">workflows</a></div></nav><!-- /code-overview:nav -->
+
+<nav class="tabs" role="tablist"><button role="tab" data-tab="tab-grade" aria-selected="true" aria-controls="tab-grade">Grade</button>
+<button role="tab" data-tab="tab-findings" aria-selected="false" aria-controls="tab-findings">Findings</button>
+<button role="tab" data-tab="tab-candidates" aria-selected="false" aria-controls="tab-candidates">Candidates</button>
+<button role="tab" data-tab="tab-coverage" aria-selected="false" aria-controls="tab-coverage">Coverage</button></nav>
+<main><section class="panel active" id="tab-grade" role="tabpanel">
+<section class="gradecard g-f">
+  <div>
+    <div class="letter">F</div>
+    <div class="score">47.3 / 100</div>
+  </div>
+  <div class="what">
+    <h2>foundation</h2>
+    <p class="dim">src/hardy/foundation</p>
+    <div><span class="badge neutral">python</span> <span class="badge neutral">7 files · 1406 lines</span> <span class="badge warn">42 finding(s)</span></div>
+  </div>
+</section>
+
+<h2>Category scores</h2>
+<p class="dim">Each category is severity-weighted findings per 1000 lines, mapped through
+its own tolerance. A category scores 50 at the density named in its tooltip; ungraded
+means nothing measured it, which is not the same as clean.</p>
+<div class="card"><div class="catrow g-f" title="11 finding(s) · 24.18 weighted per KLOC · scores 50 at 6"><div class="cname">Correctness<small>weight 25% · 11 finding(s)</small></div><div class="bar"><i style="width:6.1%"></i></div><div class="cscore">6.1</div><div class="cgrade">F</div></div>
+<div class="catrow g-a" title="0 finding(s) · 0.00 weighted per KLOC · scores 50 at 2"><div class="cname">Security<small>weight 15% · 0 finding(s)</small></div><div class="bar"><i style="width:100.0%"></i></div><div class="cscore">100.0</div><div class="cgrade">A+</div></div>
+<div class="catrow g-b" title="1 finding(s) · 2.13 weighted per KLOC · scores 50 at 8"><div class="cname">Tests &amp; Safety Net<small>weight 15% · 1 finding(s)</small></div><div class="bar"><i style="width:83.1%"></i></div><div class="cscore">83.1</div><div class="cgrade">B</div></div>
+<div class="catrow g-f" title="10 finding(s) · 21.34 weighted per KLOC · scores 50 at 12"><div class="cname">Complexity<small>weight 15% · 10 finding(s)</small></div><div class="bar"><i style="width:29.2%"></i></div><div class="cscore">29.2</div><div class="cgrade">F</div></div>
+<div class="catrow g-d" title="3 finding(s) · 6.40 weighted per KLOC · scores 50 at 10"><div class="cname">Design &amp; Structure<small>weight 12% · 3 finding(s)</small></div><div class="bar"><i style="width:64.2%"></i></div><div class="cscore">64.2</div><div class="cgrade">D</div></div>
+<div class="catrow g-f" title="6 finding(s) · 42.67 weighted per KLOC · scores 50 at 10"><div class="cname">Duplication &amp; Dead Code<small>weight 10% · 6 finding(s)</small></div><div class="bar"><i style="width:5.2%"></i></div><div class="cscore">5.2</div><div class="cgrade">F</div></div>
+<div class="catrow g-c" title="11 finding(s) · 12.09 weighted per KLOC · scores 50 at 25"><div class="cname">Dependencies &amp; Hygiene<small>weight 8% · 11 finding(s)</small></div><div class="bar"><i style="width:71.5%"></i></div><div class="cscore">71.5</div><div class="cgrade">C-</div></div></div>
+
+
+
+</section>
+<section class="panel" id="tab-findings" role="tabpanel">
+<div class="kpis"><div class="kpi accent"><div class="n">42</div><div class="l">total</div></div><div class="kpi bad"><div class="n">9</div><div class="l">🔴 high</div></div><div class="kpi warn"><div class="n">15</div><div class="l">🟡 medium</div></div><div class="kpi "><div class="n">18</div><div class="l">🟢 low</div></div></div>
+<div class="tbl-wrap"><table><thead><tr><th>Severity</th><th>Type</th><th>Category</th><th>Location</th><th>Finding</th></tr></thead><tbody><tr><td class="sev-high">🔴 high</td><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td><code class="floc">.\src\hardy\foundation\files.py:6</code></td><td>Import &#x27;annotations&#x27; is never used</td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td><code class="floc">.\src\hardy\foundation\locking.py:6</code></td><td>Import &#x27;annotations&#x27; is never used</td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td><code class="floc">.\src\hardy\foundation\paths.py:2</code></td><td>Import &#x27;annotations&#x27; is never used</td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td><code class="floc">.\src\hardy\foundation\process.py:18</code></td><td>Import &#x27;annotations&#x27; is never used</td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">mutated_global</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:207</code></td><td>Module-level mutable &#x27;_RUNNING&#x27; is shared global state that is mutated at runtime<br><span class="faint">→ Encapsulate it in a class or pass it explicitly. Module-level mutable state makes execution order-dependent and hard to test.</span></td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">cyclomatic_complexity</code></td><td class="cat">Complexity</td><td><code class="floc">.\src\hardy\foundation\process.py:480</code></td><td><br><span class="faint">→ Extract methods or simplify conditionals</span></td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">cognitive_complexity</code></td><td class="cat">Complexity</td><td><code class="floc">.\src\hardy\foundation\process.py:480</code></td><td><br><span class="faint">→ Reduce nesting and boolean operations</span></td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td><code class="floc">.\src\hardy\foundation\truncation.py:25</code></td><td>Import &#x27;annotations&#x27; is never used</td></tr><tr><td class="sev-high">🔴 high</td><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td><code class="floc">.\src\hardy\foundation\values.py:6</code></td><td>Import &#x27;annotations&#x27; is never used</td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">feature_envy</code></td><td class="cat">Design &amp; Structure</td><td><code class="floc">.\src\hardy\foundation\files.py:91</code></td><td>Method accesses &#x27;handle&#x27; (4x) more than self (2x)<br><span class="faint">→ Consider moving method to handle&#x27;s class</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">feature_envy</code></td><td class="cat">Design &amp; Structure</td><td><code class="floc">.\src\hardy\foundation\files.py:91</code></td><td>Method accesses &#x27;handle&#x27; (3x) more than self (2x)<br><span class="faint">→ Consider moving method to handle&#x27;s class</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">shadows_builtin</code></td><td class="cat">Dependencies &amp; Hygiene</td><td><code class="floc">.\src\hardy\foundation\files.py:236</code></td><td>&#x27;open&#x27; shadows the Python builtin of the same name<br><span class="faint">→ Rename it (e.g. &#x27;open_&#x27; or a more descriptive name) so the builtin stays available and intent is clear.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">any_overuse</code></td><td class="cat">Dependencies &amp; Hygiene</td><td><code class="floc">.\src\hardy\foundation\files.py:236</code></td><td>Return annotation of public method &#x27;open&#x27; is &#x27;Any&#x27;, defeating static type checking<br><span class="faint">→ Replace &#x27;Any&#x27; with a specific type in &#x27;open&#x27;. If the type is genuinely unknown, document why and consider a TypeVar or Protocol instead.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">any_overuse</code></td><td class="cat">Dependencies &amp; Hygiene</td><td><code class="floc">.\src\hardy\foundation\files.py:346</code></td><td>Parameter &#x27;value&#x27; of public method &#x27;write_json&#x27; is annotated as &#x27;Any&#x27;, defeating static type checking<br><span class="faint">→ Replace &#x27;Any&#x27; with a specific type for &#x27;value&#x27; in &#x27;write_json&#x27;. Consider using a TypeVar, Union, or Protocol if the type is polymorphic.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">inconsistent_returns</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\files.py:497</code></td><td>_identity mixes &#x27;return &lt;value&gt;&#x27; with a bare &#x27;return&#x27;/&#x27;return None&#x27;<br><span class="faint">→ Return a consistent type on every path. If &#x27;no result&#x27; is meaningful, return None explicitly everywhere and document it.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">feature_envy</code></td><td class="cat">Design &amp; Structure</td><td><code class="floc">.\src\hardy\foundation\locking.py:67</code></td><td>Method accesses &#x27;os&#x27; (6x) more than self (2x)<br><span class="faint">→ Consider moving method to os&#x27;s class</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">untested_module</code></td><td class="cat">Tests &amp; Safety Net</td><td><code class="floc">.\src\hardy\foundation\paths.py:1</code></td><td>Module &#x27;src.hardy.foundation.paths&#x27; defines functions/classes but is not imported by any test file<br><span class="faint">→ Add at least a characterization test pinning current behavior before refactoring this module.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">global_rebind</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:259</code></td><td>Function &#x27;interrupt_children&#x27; reassigns module-level global &#x27;_STOP_LEVEL&#x27; via the &#x27;global&#x27; statement<br><span class="faint">→ Return the new value and assign it at the call site, or encapsulate the state in a class or closure.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">global_rebind</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:290</code></td><td>Function &#x27;stop_children&#x27; reassigns module-level global &#x27;_STOP_LEVEL&#x27; via the &#x27;global&#x27; statement<br><span class="faint">→ Return the new value and assign it at the call site, or encapsulate the state in a class or closure.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">global_rebind</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:315</code></td><td>Function &#x27;resume_children&#x27; reassigns module-level global &#x27;_STOP_LEVEL&#x27; via the &#x27;global&#x27; statement<br><span class="faint">→ Return the new value and assign it at the call site, or encapsulate the state in a class or closure.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">catches_baseexception</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:394</code></td><td>Catching BaseException also traps KeyboardInterrupt, SystemExit and GeneratorExit<br><span class="faint">→ Catch &#x27;Exception&#x27; (or a specific subclass) unless you truly need to intercept interpreter-level signals.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">function_length</code></td><td class="cat">Complexity</td><td><code class="floc">.\src\hardy\foundation\process.py:480</code></td><td><br><span class="faint">→ Break into smaller functions</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">assert_for_validation</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:508</code></td><td>assert is removed when Python runs with -O, so it must not be relied on for validation or security checks<br><span class="faint">→ Replace with an explicit check that raises, e.g. `if not cond: raise ValueError(...)`.</span></td></tr><tr><td class="sev-medium">🟡 medium</td><td><code class="ftype">assert_for_validation</code></td><td class="cat">Correctness</td><td><code class="floc">.\src\hardy\foundation\process.py:509</code></td><td>assert is removed when Python runs with -O, so it must not be relied on for validation or security checks<br><span class="faint">→ Replace with an explicit check that raises, e.g. `if not cond: raise ValueError(...)`.</span></td></tr><tr><td class="sev-low">🟢 low</td><td><code class="ftype">public_function_no_docstring</code></td><td class="cat">Dependencies &amp; Hygiene</td><td><code class="floc">.\src\hardy\foundation\locking.py:17</code></td><td>Public function &#x27;atomic_write_bytes&#x27; has no docstring<br><span class="faint">→ Add a one-line docstring to &#x27;atomic_write_bytes&#x27; stating what it does and why it exists (intent, not a restatement of the name).</span></td></tr></tbody></table></div>
+<details><summary>Findings by type</summary><div class="body"><div class="tbl-wrap"><table><thead><tr><th>Type</th><th>Category</th><th class="num">Count</th></tr></thead><tbody><tr><td><code class="ftype">unused_import</code></td><td class="cat">Duplication &amp; Dead Code</td><td class="num">6</td></tr><tr><td><code class="ftype">feature_envy</code></td><td class="cat">Design &amp; Structure</td><td class="num">3</td></tr><tr><td><code class="ftype">function_length</code></td><td class="cat">Complexity</td><td class="num">3</td></tr><tr><td><code class="ftype">global_rebind</code></td><td class="cat">Correctness</td><td class="num">3</td></tr><tr><td><code class="ftype">magic_number</code></td><td class="cat">Complexity</td><td class="num">3</td></tr><tr><td><code class="ftype">public_class_no_docstring</code></td><td class="cat">Dependencies &amp; Hygiene</td><td class="num">3</td></tr><tr><td><code class="ftype">public_function_no_docstring</code></td><td class="cat">Dependencies &amp; Hygiene</td><td class="num">3</td></tr><tr><td><code class="ftype">swallowed_exception</code></td><td class="cat">Correctness</td><td class="num">3</td></tr><tr><td><code class="ftype">any_overuse</code></td><td class="cat">Dependencies &amp; Hygiene</td><td class="num">2</td></tr><tr><td><code class="ftype">assert_for_validation</code></td><td class="cat">Correctness</td><td class="num">2</td></tr><tr><td><code class="ftype">data_class</code></td><td class="cat">Complexity</td><td class="num">2</td></tr><tr><td><code class="ftype">catches_baseexception</code></td><td class="cat">Correctness</td><td class="num">1</td></tr><tr><td><code class="ftype">cognitive_complexity</code></td><td class="cat">Complexity</td><td class="num">1</td></tr><tr><td><code class="ftype">cyclomatic_complexity</code></td><td class="cat">Complexity</td><td class="num">1</td></tr><tr><td><code class="ftype">inconsistent_returns</code></td><td class="cat">Correctness</td><td class="num">1</td></tr><tr><td><code class="ftype">missing_param_annotation</code></td><td class="cat">Dependencies &amp; Hygiene</td><td class="num">1</td></tr><tr><td><code class="ftype">missing_return_annotation</code></td><td class="cat">Dependencies &amp; Hygiene</td><td class="num">1</td></tr><tr><td><code class="ftype">mutated_global</code></td><td class="cat">Correctness</td><td class="num">1</td></tr><tr><td><code class="ftype">shadows_builtin</code></td><td class="cat">Dependencies &amp; Hygiene</td><td class="num">1</td></tr><tr><td><code class="ftype">untested_module</code></td><td class="cat">Tests &amp; Safety Net</td><td class="num">1</td></tr></tbody></table></div></div></details>
+
+
+</section>
+<section class="panel" id="tab-candidates" role="tabpanel">
+<div class="callout warn"><strong>These did not affect the grade.</strong> A candidate is an unverified lead, not a defect: it names what was observed and the ways healthy code produces the same observation, and it deliberately carries no fix. Confirm one before acting on it.</div><div class="tbl-wrap"><table><thead><tr><th>Type</th><th>Location</th><th>Observed · and what else produces it</th><th>Reported by</th></tr></thead><tbody><tr><td><code class="ftype">commented_out_code</code></td><td><code class="floc">.\src\hardy\foundation\files.py:378</code></td><td>Commented-out line that looks like code<div class="faint">Also caused by:<ul><li>a documentation example shown as a comment</li><li>the prefix is an operator, not a comment — `//` is floor division in Python, `--` is decrement in C and C++, `#` opens a preprocessor directive or a Rust attribute, `;` separates assembly instructions</li><li>deliberately disabled code with a nearby explanation</li></ul></div></td><td>code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\files.py:390</code></td><td>Function &#x27;read_text&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\files.py:407</code></td><td>Function &#x27;read_bytes&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\files.py:422</code></td><td>Function &#x27;files_under&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\locking.py:17</code></td><td>Function &#x27;atomic_write_bytes&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">commented_out_code</code></td><td><code class="floc">.\src\hardy\foundation\locking.py:203</code></td><td>Commented-out line that looks like code<div class="faint">Also caused by:<ul><li>a documentation example shown as a comment</li><li>the prefix is an operator, not a comment — `//` is floor division in Python, `--` is decrement in C and C++, `#` opens a preprocessor directive or a Rust attribute, `;` separates assembly instructions</li><li>deliberately disabled code with a nearby explanation</li></ul></div></td><td>code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\paths.py:18</code></td><td>Function &#x27;global_lean&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\paths.py:22</code></td><td>Function &#x27;global_build&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">commented_out_code</code></td><td><code class="floc">.\src\hardy\foundation\process.py:131</code></td><td>Commented-out line that looks like code<div class="faint">Also caused by:<ul><li>a documentation example shown as a comment</li><li>the prefix is an operator, not a comment — `//` is floor division in Python, `--` is decrement in C and C++, `#` opens a preprocessor directive or a Rust attribute, `;` separates assembly instructions</li><li>deliberately disabled code with a nearby explanation</li></ul></div></td><td>code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\process.py:259</code></td><td>Function &#x27;interrupt_children&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\process.py:290</code></td><td>Function &#x27;stop_children&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\process.py:315</code></td><td>Function &#x27;resume_children&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\process.py:327</code></td><td>Function &#x27;stopping&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\process.py:352</code></td><td>Function &#x27;run_guarded&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\process.py:480</code></td><td>Function &#x27;run_process&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\truncation.py:95</code></td><td>Function &#x27;truncate&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">commented_out_code</code></td><td><code class="floc">.\src\hardy\foundation\truncation.py:138</code></td><td>Commented-out line that looks like code<div class="faint">Also caused by:<ul><li>a documentation example shown as a comment</li><li>the prefix is an operator, not a comment — `//` is floor division in Python, `--` is decrement in C and C++, `#` opens a preprocessor directive or a Rust attribute, `;` separates assembly instructions</li><li>deliberately disabled code with a nearby explanation</li></ul></div></td><td>code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\values.py:15</code></td><td>Class &#x27;FrozenModel&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr><tr><td><code class="ftype">candidate</code></td><td><code class="floc">.\src\hardy\foundation\values.py:21</code></td><td>Function &#x27;schema_text&#x27; appears unused in this file<div class="faint">Also caused by:<ul></ul></div></td><td>python-code-doctor</td></tr></tbody></table></div>
+
+
+</section>
+<section class="panel" id="tab-coverage" role="tabpanel">
+<h3>Doctors that ran</h3><p><span class="badge accent">code-doctor</span> <span class="badge accent">python-code-doctor</span> </p><h3>Evidence completeness · code-doctor</h3><div class="tbl-wrap"><table><thead><tr><th>Evidence</th><th>Verdict</th><th>Detail</th></tr></thead><tbody><tr><td>categories_run</td><td>note</td><td>hygiene, secrets</td></tr><tr><td>categories_skipped</td><td>note</td><td></td></tr></tbody></table></div>
+<h2>Caveats</h2><div class="callout">4384 finding(s) in the report were about code outside <code>src/hardy/foundation</code> and are not counted here. That keeps the findings and the lines they are divided by describing the same code; if some of that code should be graded, add it to the package map.</div>
+
+</section>
+<script type="application/json" id="code-health-meta">{"schema":"code-health/1","scope":"package","package":"foundation","roots":["src/hardy/foundation"],"language":"python","doctor":"","generated":"2026-09-08","commit":"d1bcc7c","size":{"files":7,"loc":1406},"sized_extensions":[],"missing_roots":[],"score":47.3,"grade":"F","categories":[{"key":"correctness","label":"Correctness","weight":25.0,"half_life":6.0,"graded":true,"score":6.1,"grade":"F","density":24.18,"findings":{"high":1,"medium":7,"low":3,"total":11}},{"key":"security","label":"Security","weight":15.0,"half_life":2.0,"graded":true,"score":100.0,"grade":"A+","density":0.0,"findings":{"high":0,"medium":0,"low":0,"total":0}},{"key":"tests","label":"Tests & Safety Net","weight":15.0,"half_life":8.0,"graded":true,"score":83.1,"grade":"B","density":2.13,"findings":{"high":0,"medium":1,"low":0,"total":1}},{"key":"complexity","label":"Complexity","weight":15.0,"half_life":12.0,"graded":true,"score":29.2,"grade":"F","density":21.34,"findings":{"high":2,"medium":1,"low":7,"total":10}},{"key":"design","label":"Design & Structure","weight":12.0,"half_life":10.0,"graded":true,"score":64.2,"grade":"D","density":6.4,"findings":{"high":0,"medium":3,"low":0,"total":3}},{"key":"duplication","label":"Duplication & Dead Code","weight":10.0,"half_life":10.0,"graded":true,"score":5.2,"grade":"F","density":42.67,"findings":{"high":6,"medium":0,"low":0,"total":6}},{"key":"hygiene","label":"Dependencies & Hygiene","weight":8.0,"half_life":25.0,"graded":true,"score":71.5,"grade":"C-","density":12.09,"findings":{"high":0,"medium":3,"low":8,"total":11}}],"ungraded":[],"unmapped_types":[],"analyzer_errors":{},"analyzers_skipped":{},"findings_out_of_scope":4384,"duplicates_merged":0,"findings_total":42,"findings_by_severity":{"high":9,"medium":15,"low":18},"top_findings":[{"severity":"high","type":"unused_import","category":"duplication","file":".\\src\\hardy\\foundation\\files.py","line":6,"description":"Import 'annotations' is never used","suggestion":""},{"severity":"high","type":"unused_import","category":"duplication","file":".\\src\\hardy\\foundation\\locking.py","line":6,"description":"Import 'annotations' is never used","suggestion":""},{"severity":"high","type":"unused_import","category":"duplication","file":".\\src\\hardy\\foundation\\paths.py","line":2,"description":"Import 'annotations' is never used","suggestion":""},{"severity":"high","type":"unused_import","category":"duplication","file":".\\src\\hardy\\foundation\\process.py","line":18,"description":"Import 'annotations' is never used","suggestion":""},{"severity":"high","type":"mutated_global","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":207,"description":"Module-level mutable '_RUNNING' is shared global state that is mutated at runtime","suggestion":"Encapsulate it in a class or pass it explicitly. Module-level mutable state makes execution order-dependent and hard to test."},{"severity":"high","type":"cyclomatic_complexity","category":"complexity","file":".\\src\\hardy\\foundation\\process.py","line":480,"description":"","suggestion":"Extract methods or simplify conditionals"},{"severity":"high","type":"cognitive_complexity","category":"complexity","file":".\\src\\hardy\\foundation\\process.py","line":480,"description":"","suggestion":"Reduce nesting and boolean operations"},{"severity":"high","type":"unused_import","category":"duplication","file":".\\src\\hardy\\foundation\\truncation.py","line":25,"description":"Import 'annotations' is never used","suggestion":""},{"severity":"high","type":"unused_import","category":"duplication","file":".\\src\\hardy\\foundation\\values.py","line":6,"description":"Import 'annotations' is never used","suggestion":""},{"severity":"medium","type":"feature_envy","category":"design","file":".\\src\\hardy\\foundation\\files.py","line":91,"description":"Method accesses 'handle' (4x) more than self (2x)","suggestion":"Consider moving method to handle's class"},{"severity":"medium","type":"feature_envy","category":"design","file":".\\src\\hardy\\foundation\\files.py","line":91,"description":"Method accesses 'handle' (3x) more than self (2x)","suggestion":"Consider moving method to handle's class"},{"severity":"medium","type":"shadows_builtin","category":"hygiene","file":".\\src\\hardy\\foundation\\files.py","line":236,"description":"'open' shadows the Python builtin of the same name","suggestion":"Rename it (e.g. 'open_' or a more descriptive name) so the builtin stays available and intent is clear."},{"severity":"medium","type":"any_overuse","category":"hygiene","file":".\\src\\hardy\\foundation\\files.py","line":236,"description":"Return annotation of public method 'open' is 'Any', defeating static type checking","suggestion":"Replace 'Any' with a specific type in 'open'. If the type is genuinely unknown, document why and consider a TypeVar or Protocol instead."},{"severity":"medium","type":"any_overuse","category":"hygiene","file":".\\src\\hardy\\foundation\\files.py","line":346,"description":"Parameter 'value' of public method 'write_json' is annotated as 'Any', defeating static type checking","suggestion":"Replace 'Any' with a specific type for 'value' in 'write_json'. Consider using a TypeVar, Union, or Protocol if the type is polymorphic."},{"severity":"medium","type":"inconsistent_returns","category":"correctness","file":".\\src\\hardy\\foundation\\files.py","line":497,"description":"_identity mixes 'return <value>' with a bare 'return'/'return None'","suggestion":"Return a consistent type on every path. If 'no result' is meaningful, return None explicitly everywhere and document it."},{"severity":"medium","type":"feature_envy","category":"design","file":".\\src\\hardy\\foundation\\locking.py","line":67,"description":"Method accesses 'os' (6x) more than self (2x)","suggestion":"Consider moving method to os's class"},{"severity":"medium","type":"untested_module","category":"tests","file":".\\src\\hardy\\foundation\\paths.py","line":1,"description":"Module 'src.hardy.foundation.paths' defines functions/classes but is not imported by any test file","suggestion":"Add at least a characterization test pinning current behavior before refactoring this module."},{"severity":"medium","type":"global_rebind","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":259,"description":"Function 'interrupt_children' reassigns module-level global '_STOP_LEVEL' via the 'global' statement","suggestion":"Return the new value and assign it at the call site, or encapsulate the state in a class or closure."},{"severity":"medium","type":"global_rebind","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":290,"description":"Function 'stop_children' reassigns module-level global '_STOP_LEVEL' via the 'global' statement","suggestion":"Return the new value and assign it at the call site, or encapsulate the state in a class or closure."},{"severity":"medium","type":"global_rebind","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":315,"description":"Function 'resume_children' reassigns module-level global '_STOP_LEVEL' via the 'global' statement","suggestion":"Return the new value and assign it at the call site, or encapsulate the state in a class or closure."},{"severity":"medium","type":"catches_baseexception","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":394,"description":"Catching BaseException also traps KeyboardInterrupt, SystemExit and GeneratorExit","suggestion":"Catch 'Exception' (or a specific subclass) unless you truly need to intercept interpreter-level signals."},{"severity":"medium","type":"function_length","category":"complexity","file":".\\src\\hardy\\foundation\\process.py","line":480,"description":"","suggestion":"Break into smaller functions"},{"severity":"medium","type":"assert_for_validation","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":508,"description":"assert is removed when Python runs with -O, so it must not be relied on for validation or security checks","suggestion":"Replace with an explicit check that raises, e.g. `if not cond: raise ValueError(...)`."},{"severity":"medium","type":"assert_for_validation","category":"correctness","file":".\\src\\hardy\\foundation\\process.py","line":509,"description":"assert is removed when Python runs with -O, so it must not be relied on for validation or security checks","suggestion":"Replace with an explicit check that raises, e.g. `if not cond: raise ValueError(...)`."},{"severity":"low","type":"public_function_no_docstring","category":"hygiene","file":".\\src\\hardy\\foundation\\locking.py","line":17,"description":"Public function 'atomic_write_bytes' has no docstring","suggestion":"Add a one-line docstring to 'atomic_write_bytes' stating what it does and why it exists (intent, not a restatement of the name)."}],"doctors":["code-doctor","python-code-doctor"],"doctor_errors":{},"completeness":{"code-doctor":{"categories_run":["hygiene","secrets"],"categories_skipped":[]}},"candidates_total":19}</script></main>
+<footer class="doc">Generated by code-overview. The grade is a density of detectable problems, not a verdict on the design — read the code map beside it. Candidates are leads and are excluded from the score.</footer>
+<script>
+(function(){
+  const btns=[...document.querySelectorAll('nav.tabs button')];
+  function activate(id){
+    document.querySelectorAll('section.panel').forEach(p=>p.classList.toggle('active',p.id===id));
+    btns.forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===id?'true':'false'));
+    window.dispatchEvent(new CustomEvent('tab:shown',{detail:{id}}));
+  }
+  btns.forEach(b=>b.addEventListener('click',()=>activate(b.dataset.tab)));
+})();
+</script>
+</body>
+</html>

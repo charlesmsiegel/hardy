@@ -1,0 +1,237 @@
+{
+  "schema": "measurement-inventory/1",
+  "subject": "hardy",
+  "rows": [
+    {
+      "name": "Historical true-statement solve outcomes",
+      "importance": 2,
+      "importance_reason": "Informs model selection for a selected problem set.",
+      "credit": 0.25,
+      "credit_reason": "165 true-statement attempts across three different model boards; historical provenance only, not a pooled comparative estimate.",
+      "finding": "historical_scope",
+      "n": 165,
+      "n_total": 180,
+      "formula": "Per board: solved true rows / all true rows, with a Wilson interval; no cross-model pooling.",
+      "consumer": "src/hardy/evals/summary.py:66",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:173",
+        "src/hardy/evals/identity.py:99"
+      ],
+      "status": "measured"
+    },
+    {
+      "name": "Historical false-twin refusal outcomes",
+      "importance": 2,
+      "importance_reason": "Informs whether a model refuses deliberately false statements.",
+      "credit": 0.25,
+      "credit_reason": "15 false-twin attempts, five per model; older procedure identity prevents a current-code claim.",
+      "finding": "historical_scope",
+      "n": 15,
+      "n_total": 180,
+      "formula": "Per board: refused false rows / false rows; exhaustion and grading are distinct outcomes.",
+      "consumer": "src/hardy/evals/pool.py:108",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:173"
+      ],
+      "status": "measured"
+    },
+    {
+      "name": "Historical resource usage observations",
+      "importance": 2,
+      "importance_reason": "Informs run budgets and cost estimates.",
+      "credit": 0.25,
+      "credit_reason": "177 of 180 rows report cost and all 180 report wall time; observations are historical and heterogeneous by model.",
+      "finding": "historical_scope",
+      "n": 177,
+      "n_total": 180,
+      "formula": "Totals report sums alongside rows_with_cost/rows_with_wall; per-tier medians use solved rows only.",
+      "consumer": "src/hardy/evals/summary.py:66",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:158",
+        "src/hardy/agents/usage.py:1"
+      ],
+      "status": "measured"
+    },
+    {
+      "name": "Current reviewed headline solve rate",
+      "importance": 2,
+      "importance_reason": "Informs whether the harness solves reviewed statements beyond automation.",
+      "credit": 0,
+      "credit_reason": "Zero active statements among the 20 shipped entries, and no matching local procedure evidence.",
+      "finding": "no_active",
+      "n": null,
+      "n_total": 20,
+      "formula": "Solved active tier-2/3 rows / active tier-2/3 rows; no denominator yields null.",
+      "consumer": "src/hardy/evals/scoreboard.py:201",
+      "evidence": [
+        "src/hardy/corpus/problems.py:141",
+        "src/hardy/evals/scoreboard.py:217"
+      ],
+      "status": "not_measured"
+    },
+    {
+      "name": "Current automation floor",
+      "importance": 2,
+      "importance_reason": "Determines problem tiers and whether model success exceeds the tactic baseline.",
+      "credit": 0,
+      "credit_reason": "The available 1166-entry sweep has a stale procedure digest and describes a broader corpus than main.",
+      "finding": "historical_scope",
+      "n": null,
+      "n_total": 1166,
+      "formula": "Tier determined by current fixed single-tactic and tactic-chain attempts under recorded limits.",
+      "consumer": "src/hardy/evals/selection.py:1",
+      "evidence": [
+        "src/hardy/evals/sweep.py:251",
+        "src/hardy/formal/audit.py:1"
+      ],
+      "status": "not_measured"
+    },
+    {
+      "name": "Causal contribution of the harness",
+      "importance": 2,
+      "importance_reason": "Informs the stated experiment assessing Hardy against the same model without it.",
+      "credit": 0,
+      "credit_reason": "No reported paired control experiment in the inspected evidence.",
+      "finding": "no_control",
+      "n": null,
+      "n_total": null,
+      "formula": "Paired success and misleading-completion differences between harness and control arms.",
+      "consumer": "README.md:19",
+      "evidence": [
+        "src/hardy/evals/contracts.py:128",
+        "README.md:19"
+      ],
+      "status": "unmeasurable",
+      "unmeasurable_reason": "The inspected records provide no same-model paired control arm."
+    },
+    {
+      "name": "Faithfulness reviewer agreement with expert labels",
+      "importance": 2,
+      "importance_reason": "Informs whether the pre-proof translation gate can be trusted to detect drift.",
+      "credit": 0,
+      "credit_reason": "Mechanism and failure handling are tested; reviewer accuracy has no labelled calibration sample in the inspected evidence.",
+      "finding": "judge_calibration",
+      "n": null,
+      "n_total": null,
+      "formula": "Agreement and false-negative rate against held-out human-labelled request/statement pairs.",
+      "consumer": "src/hardy/workflows/faithfulness.py:146",
+      "evidence": [
+        "src/hardy/workflows/faithfulness.py:49"
+      ],
+      "status": "unmeasurable",
+      "unmeasurable_reason": "No held-out human-labelled calibration set was found in the inspected corpus and local records."
+    }
+  ],
+  "findings": [
+    {
+      "id": "historical_scope",
+      "severity": "high",
+      "title": "Available outcomes describe older source and corpus identities",
+      "detail": "Three local boards contain 180 rows in total, each over 60 selected statements. None matches its freshly computed run procedure digest. The local 1166-entry baseline also has an older procedure identity; main ships 20 candidate statements. These records establish historical observations, not performance of this checkout.",
+      "evidence": [
+        "src/hardy/evals/identity.py:99",
+        "src/hardy/evals/outstanding.py:31",
+        "src/hardy/evals/sweep.py:721"
+      ],
+      "blast_radius": "Model selection and deciding which statements still need a measured run."
+    },
+    {
+      "id": "no_active",
+      "severity": "high",
+      "title": "The shipped corpus has no reviewed headline denominator",
+      "detail": "All 20 statements on main are candidates. Corpus curation deliberately lives on a separate branch. A headline is correctly withheld until reviewed statements and matching evidence exist.",
+      "evidence": [
+        "src/hardy/corpus/problems.py:141",
+        "src/hardy/evals/scoreboard.py:201"
+      ],
+      "blast_radius": "Interpreting headline solve rates as mathematical coverage."
+    },
+    {
+      "id": "no_control",
+      "severity": "high",
+      "title": "The harness contribution has not been isolated",
+      "detail": "README explicitly says the same-model harness-versus-control experiment has not reported. The available model boards do not supply a paired control arm.",
+      "evidence": [
+        "README.md:19",
+        "src/hardy/evals/contracts.py:128"
+      ],
+      "blast_radius": "Claiming that the harness improves success or prevents misleading completion."
+    },
+    {
+      "id": "judge_calibration",
+      "severity": "high",
+      "title": "Faithfulness review reliability is unmeasured in the inspected evidence",
+      "detail": "The reviewer sees the original request and frozen statement in a separate context and fails closed. No held-out human-labelled calibration set for this gate was found in the inspected corpus or evaluation records; hermetic tests exercise decisions rather than measuring reviewer accuracy.",
+      "evidence": [
+        "src/hardy/workflows/faithfulness.py:1",
+        "src/hardy/workflows/faithfulness.py:49"
+      ],
+      "blast_radius": "Treating an agreeing heuristic reviewer as authority that the theorem matches the request."
+    }
+  ],
+  "not_audited": [
+    "The corpus/curation branch and external experiment archives were not switched into or inspected.",
+    "No paid model, live Lean, downloaded paper, or generated TeX execution was performed for this overview.",
+    "This inventory covers evaluation and pre-proof faithfulness decisions; it is not an exhaustive statistical audit of every capability."
+  ],
+  "observations": {
+    "boards": [
+      {
+        "label": "haiku-45-batch2",
+        "rows": 60,
+        "true_rows": 55,
+        "false_rows": 5,
+        "unique_ids": 60,
+        "outcomes": {
+          "solved": 34,
+          "unsolved": 21,
+          "refused": 3,
+          "exhausted": 2
+        },
+        "rows_with_cost": 57,
+        "rows_with_wall": 60,
+        "current_procedure_matches": false,
+        "recorded_procedure": "dabc6c7e8d117e654b6fc9ce803271066c803dadd241030880b1632792f61217",
+        "current_procedure": "1946b9a3aac88e5da468f78eae3e92ab42d497cd990465351fe2d6ed3b2cdfc3"
+      },
+      {
+        "label": "opus-5-batch1",
+        "rows": 60,
+        "true_rows": 55,
+        "false_rows": 5,
+        "unique_ids": 60,
+        "outcomes": {
+          "solved": 55,
+          "refused": 5
+        },
+        "rows_with_cost": 60,
+        "rows_with_wall": 60,
+        "current_procedure_matches": false,
+        "recorded_procedure": "cc58c0fce817589162ec4a522852c56bc6bc9840c922fca20c64f20a6270ca6d",
+        "current_procedure": "698c6646c882c3ca319d60c3742b4c6feb6ff12794bba71a99e69c3b9ef30d72"
+      },
+      {
+        "label": "sonnet-5-batch2",
+        "rows": 60,
+        "true_rows": 55,
+        "false_rows": 5,
+        "unique_ids": 60,
+        "outcomes": {
+          "solved": 55,
+          "refused": 5
+        },
+        "rows_with_cost": 60,
+        "rows_with_wall": 60,
+        "current_procedure_matches": false,
+        "recorded_procedure": "c1c933ab113bb9cf6e71ebb4c503bd72e4a22207e1f65f1dc3dffcda144f58b8",
+        "current_procedure": "940cd5a8e297dbff2f1ccf39421a3142311e338fe0d0a13482b2b1bf3ff50e41"
+      }
+    ],
+    "corpus_entries": 20,
+    "corpus_status": {
+      "candidate": 20
+    },
+    "baseline_entries": 1166,
+    "baseline_current": false
+  }
+}

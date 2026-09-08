@@ -1,0 +1,81 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "formal",
+  "theory": "Formal evidence is a statement checked by a particular Lean environment, with the exact source and axiom dependencies recoverable afterwards. Exploration, source scanning, premise ranking, and final reconstruction have different authority, and only the independently reconstructed kernel result supports verification.",
+  "instead_of": "Trust a model’s successful tool response or a source file’s exit code as a theorem verdict; final reconstruction and axiom evidence deliberately answer a narrower, checkable question.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 1,
+      "rationale": "The existing seams support another premise source, alternative bounded process execution, and explicitly declared assumptions without changing the meaning of the frozen claim.",
+      "evidence": [
+        "src/hardy/formal/retrieval.py:372",
+        "src/hardy/formal/verifier.py:92",
+        "src/hardy/formal/verifier.py:116"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "FrozenClaim, EnvironmentIdentity, VerificationEvidence, source-tree dependencies, and premise provenance name distinct parts of the formal problem.",
+      "evidence": [
+        "src/hardy/formal/contracts.py:30",
+        "src/hardy/formal/contracts.py:38",
+        "src/hardy/formal/contracts.py:111",
+        "src/hardy/formal/syntax.py:694"
+      ]
+    },
+    "abstraction": {
+      "step": 1,
+      "rationale": "One scanner is reused for source interpretation, premise sources implement a bounded protocol, and verification results validate their own evidence linkage.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:27",
+        "src/hardy/formal/retrieval.py:372",
+        "src/hardy/formal/verifier.py:67"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The verifier explains why source is rebuilt and axioms are audited; retrieval explains why cold and warm index costs are admitted conservatively rather than treated as free.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:1",
+        "src/hardy/formal/retrieval.py:402"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Retrieval declares rather than pretends to enforce scan-time bounds, and returned proof evidence records actual source, environment, and assumptions. This judgment covers the stated local Lean model, not a missing execution sandbox.",
+      "evidence": [
+        "src/hardy/formal/retrieval.py:402",
+        "src/hardy/formal/verifier.py:56"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add another source of ranked premises.",
+      "verdict": "extension",
+      "why": "PremiseSource already requires identity, query spelling, search results, and worst-case admission cost.",
+      "evidence": [
+        "src/hardy/formal/retrieval.py:372"
+      ]
+    },
+    {
+      "requirement": "Test or replace the bounded child execution mechanism used by final verification.",
+      "verdict": "extension",
+      "why": "FinalVerifier accepts the ProcessSpec-to-ProcessResult runner and preserves the evidence checks around it.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    },
+    {
+      "requirement": "Allow a proof to depend on a specifically approved external assumption.",
+      "verdict": "extension",
+      "why": "DeclaredAssumption and the permitted set are already inputs to verification, while the actual used axioms determine the result.",
+      "evidence": [
+        "src/hardy/formal/contracts.py:91",
+        "src/hardy/formal/verifier.py:116"
+      ]
+    }
+  ]
+}

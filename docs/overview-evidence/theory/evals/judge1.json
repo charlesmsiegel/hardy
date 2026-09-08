@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "evals",
+  "theory": "An evaluation is an identified procedure applied to an explicit selection, with rows reconstructed from recorded runs. Pooling combines compatible evidence instead of assuming all historical scores are interchangeable.",
+  "instead_of": "Trusting runner totals and pooling by model name would conceal procedure drift, changed environments, and duplicate samples.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Explicit selections fit; adaptive sampling requires new condition and denominator semantics.",
+      "evidence": [
+        "src/hardy/evals/runner.py:110"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Rows, conditions, baseline tiers and pooling identity describe different experimental facts.",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:306"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Contracts and readers separate concerns, while batch and staged outcomes need mode-specific reconstruction.",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:306"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The runner explains selected-entry staleness and pooling distinguishes it from current corpus identity.",
+      "evidence": [
+        "src/hardy/evals/runner.py:110"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Pooling reports counts and comparability limits rather than proving causal harness benefit.",
+      "evidence": [
+        "src/hardy/evals/pool.py:18"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Run an ordered list of selected entries",
+      "verdict": "extension",
+      "why": "Selection preserves explicit order and refuses unknown names.",
+      "evidence": [
+        "src/hardy/evals/selection.py:9"
+      ]
+    },
+    {
+      "requirement": "Spend extra repeats adaptively on hard entries",
+      "verdict": "patch",
+      "why": "The pooling key assumes a declared repeat structure rather than a changing sampling policy.",
+      "evidence": [
+        "src/hardy/evals/pool.py:18"
+      ]
+    },
+    {
+      "requirement": "Pool disjoint batches after corpus growth",
+      "verdict": "extension",
+      "why": "Board self-consistency is separate from present corpus aggregate identity.",
+      "evidence": [
+        "tests/unit/test_evals_pool.py:96"
+      ]
+    }
+  ]
+}

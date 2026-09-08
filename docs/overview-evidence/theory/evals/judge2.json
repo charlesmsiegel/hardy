@@ -1,0 +1,83 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "evals",
+  "theory": "An evaluation is a set of checkable run records under a named experimental condition, not a collection of model success claims. Rows are admitted and pooled when evidence and identities agree, and headline statistics use reviewed statements with explicit denominators. Missing costs and unresolved truth assumptions remain visible in aggregates.",
+  "instead_of": "A leaderboard averaging reported scores cannot explain artifact validation, stale-condition refusals, reviewed-only headlines, or separate cost coverage counts.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Selection and repeat budgets fit the condition model, but another staged backend needs a new trajectory-reading path because staged row accounting assumes Claude event names.",
+      "evidence": [
+        "src/hardy/evals/contracts.py:100",
+        "src/hardy/evals/scoreboard.py:110"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Conditions, rows, tiers, reviewed denominators, and coverage counts map clearly to experiments; absent costs are not represented as observed zero costs.",
+      "evidence": [
+        "src/hardy/evals/contracts.py:64",
+        "src/hardy/evals/scoreboard.py:201"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Shared Row/aggregate contracts provide a useful seam, but staged measurement directly interprets provider-specific tool event spellings instead of a normalized recorded-use contract.",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:108",
+        "src/hardy/evals/scoreboard.py:110",
+        "src/hardy/evals/scoreboard.py:113"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Identity exclusions explain both false reuse and unnecessary invalidation, repeats have a sampling justification, and tests show candidates running without entering headlines.",
+      "evidence": [
+        "src/hardy/evals/identity.py:11",
+        "src/hardy/evals/identity.py:64",
+        "tests/unit/test_evals_scoreboard.py:584"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Unreviewed statements are withheld from headlines, unwitnessed entries disclosed, totals carry observation counts, and empty Wilson samples return a full interval.",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:204",
+        "src/hardy/evals/scoreboard.py:230",
+        "src/hardy/evals/contracts.py:80",
+        "src/hardy/evals/scoreboard.py:145"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Increase repeats while keeping prior runs for comparison.",
+      "verdict": "extension",
+      "why": "The new repeats setting creates a distinct condition identity instead of silently pooling an unbalanced design.",
+      "evidence": [
+        "src/hardy/evals/contracts.py:119",
+        "src/hardy/evals/identity.py:64"
+      ]
+    },
+    {
+      "requirement": "Report another aggregate while retaining original rows.",
+      "verdict": "extension",
+      "why": "Extend aggregation over Row values with its explicit denominator; this is independent of launching providers.",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:158",
+        "src/hardy/evals/scoreboard.py:201"
+      ]
+    },
+    {
+      "requirement": "Evaluate a staged backend with non-Claude tool events.",
+      "verdict": "patch",
+      "why": "The adapter selects claude.tool_use and strips an MCP prefix; normalization or a new interpretation branch must precede comparable counts.",
+      "evidence": [
+        "src/hardy/evals/scoreboard.py:110",
+        "src/hardy/evals/scoreboard.py:113"
+      ]
+    }
+  ]
+}

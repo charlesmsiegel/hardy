@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "formal",
+  "theory": "Formal evidence consists of an unchanged frozen statement, a rebuilt Lean proof, and an axiom report read under an explicit policy. Search and lexical scanning provide bounded leads and gates; only kernel checking establishes formal proof.",
+  "instead_of": "Accepting successful elaboration or a plausible retrieved declaration would confuse compilation, search heuristics, and verification authority.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "A new retrieval source fits; a genuinely independent sandbox or another proof assistant needs new execution and evidence machinery.",
+      "evidence": [
+        "src/hardy/formal/retrieval.py:891"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Frozen claims and dependency reports map precisely to what Lean checks and what a theorem assumes.",
+      "evidence": [
+        "src/hardy/formal/contracts.py:38"
+      ]
+    },
+    "abstraction": {
+      "step": 1,
+      "rationale": "One axiom policy serves callers with different admission policies without equating their grades.",
+      "evidence": [
+        "src/hardy/formal/audit.py:101"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The verifier explains why neither model assertions nor an elaboration exit code can settle a result.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Retrieval preserves provenance and uncertainty; axiom policy does not turn missing reports into independence.",
+      "evidence": [
+        "src/hardy/formal/audit.py:101"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add a premise-retrieval source",
+      "verdict": "extension",
+      "why": "Implement PremiseSource while retaining rank provenance and metering.",
+      "evidence": [
+        "src/hardy/formal/retrieval.py:891"
+      ]
+    },
+    {
+      "requirement": "Verify in an independently confined process image",
+      "verdict": "patch",
+      "why": "Fresh reconstruction exists, but process confinement and a separate trusted environment require an additional authority boundary.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    },
+    {
+      "requirement": "Allow an explicitly declared mathematical assumption",
+      "verdict": "extension",
+      "why": "Axiom classification already separates sanctioned assumptions from holes and unapproved axioms.",
+      "evidence": [
+        "src/hardy/formal/audit.py:101"
+      ]
+    }
+  ]
+}

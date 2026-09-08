@@ -1,0 +1,60 @@
+{
+  "boards": [
+    {
+      "label": "haiku-45-batch2",
+      "rows": 60,
+      "true_rows": 55,
+      "false_rows": 5,
+      "unique_ids": 60,
+      "outcomes": {
+        "solved": 34,
+        "unsolved": 21,
+        "refused": 3,
+        "exhausted": 2
+      },
+      "rows_with_cost": 57,
+      "rows_with_wall": 60,
+      "current_procedure_matches": false,
+      "recorded_procedure": "dabc6c7e8d117e654b6fc9ce803271066c803dadd241030880b1632792f61217",
+      "current_procedure": "1946b9a3aac88e5da468f78eae3e92ab42d497cd990465351fe2d6ed3b2cdfc3"
+    },
+    {
+      "label": "opus-5-batch1",
+      "rows": 60,
+      "true_rows": 55,
+      "false_rows": 5,
+      "unique_ids": 60,
+      "outcomes": {
+        "solved": 55,
+        "refused": 5
+      },
+      "rows_with_cost": 60,
+      "rows_with_wall": 60,
+      "current_procedure_matches": false,
+      "recorded_procedure": "cc58c0fce817589162ec4a522852c56bc6bc9840c922fca20c64f20a6270ca6d",
+      "current_procedure": "698c6646c882c3ca319d60c3742b4c6feb6ff12794bba71a99e69c3b9ef30d72"
+    },
+    {
+      "label": "sonnet-5-batch2",
+      "rows": 60,
+      "true_rows": 55,
+      "false_rows": 5,
+      "unique_ids": 60,
+      "outcomes": {
+        "solved": 55,
+        "refused": 5
+      },
+      "rows_with_cost": 60,
+      "rows_with_wall": 60,
+      "current_procedure_matches": false,
+      "recorded_procedure": "c1c933ab113bb9cf6e71ebb4c503bd72e4a22207e1f65f1dc3dffcda144f58b8",
+      "current_procedure": "940cd5a8e297dbff2f1ccf39421a3142311e338fe0d0a13482b2b1bf3ff50e41"
+    }
+  ],
+  "corpus_entries": 20,
+  "corpus_status": {
+    "candidate": 20
+  },
+  "baseline_entries": 1166,
+  "baseline_current": false
+}

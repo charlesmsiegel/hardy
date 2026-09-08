@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "literature",
+  "theory": "A paper search returns leads; a fetched version becomes an immutable identified record whose source bytes can be inspected and cited. Statement inventory is separate from assumption admission, so reading a paper never automatically widens the proof trust base.",
+  "instead_of": "A freeform citation string or a current-title cache would be simpler, but would not identify what was actually fetched, read, or assumed.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Another source-bundle shape can extend admission; another repository of papers needs a less arXiv-specific identity contract.",
+      "evidence": [
+        "src/hardy/literature/client.py:103"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Search leads, fetched versions, read sources, citations and admitted assumptions remain distinct facts.",
+      "evidence": [
+        "src/hardy/literature/library.py:32"
+      ]
+    },
+    "abstraction": {
+      "step": 1,
+      "rationale": "Acquisition is separated from immutable storage and inventory; injected transport supports independent testing.",
+      "evidence": [
+        "src/hardy/literature/client.py:103"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "The client explains why search results are not automatically admitted to the library.",
+      "evidence": [
+        "src/hardy/literature/client.py:103"
+      ]
+    },
+    "honest_limits": {
+      "step": 0.5,
+      "rationale": "Archive integrity is enforceable, but lexical statement inventory and source identity cannot establish a paper claim is true.",
+      "evidence": [
+        "src/hardy/literature/statements.py:314"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Accept another bounded archive encoding of an arXiv version",
+      "verdict": "extension",
+      "why": "Extend archive admission while retaining path, type and quota checks.",
+      "evidence": [
+        "src/hardy/literature/archives.py:1"
+      ]
+    },
+    {
+      "requirement": "Use DOI-only publications with mutable publisher source revisions",
+      "verdict": "patch",
+      "why": "Paper identity and endpoints are currently arXiv-version shaped.",
+      "evidence": [
+        "src/hardy/literature/client.py:103"
+      ]
+    },
+    {
+      "requirement": "List more statement environment names",
+      "verdict": "extension",
+      "why": "Inventory already translates source environment structure into named Statement values.",
+      "evidence": [
+        "src/hardy/literature/statements.py:314"
+      ]
+    }
+  ]
+}

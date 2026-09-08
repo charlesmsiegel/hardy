@@ -1,0 +1,84 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "formal",
+  "theory": "Formal evidence concerns an exact Lean statement, its environment, and audited axiom dependencies. A workspace keeps source and compiled dependency identities aligned, while final verification independently reconstructs the frozen claim. Holes, approved assumptions, stale evidence, and ambiguous declaration names remain distinct outcomes.",
+  "instead_of": "A compiler wrapper could equate exit code zero with success; this package instead models what was checked and what it rests on, independently of the model thread.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 1,
+      "rationale": "Per-run assumptions, external dependency invalidation, and fresh process runners have explicit extension points that preserve exact-statement verification.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:100",
+        "src/hardy/formal/verifier.py:118",
+        "src/hardy/formal/workspace.py:88"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Frozen claims, environment identity, axiom reports, and dependency signatures express actual trust questions. Stale or ambiguous evidence cannot simply become clean grades.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:145",
+        "src/hardy/formal/audit.py:214"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Axiom classification and scanning have shared owners, but final verification imports concrete workflow RunStore and terminal/limit contracts, retaining knowledge of run recording within the capability boundary.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:30",
+        "src/hardy/formal/verifier.py:37",
+        "src/hardy/formal/verifier.py:117"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Comments connect absent reports, duplicated scanners, and external dependency edits to invalid evidence; verifier tests include raw strings that previously hid forbidden proof text.",
+      "evidence": [
+        "src/hardy/formal/audit.py:9",
+        "src/hardy/formal/verifier.py:30",
+        "src/hardy/formal/workspace.py:93",
+        "tests/unit/test_verifier.py:53"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "No reports is rejection, forbidden holes cannot become approved assumptions, and final verification checks the frozen identity against the current environment.",
+      "evidence": [
+        "src/hardy/formal/audit.py:115",
+        "src/hardy/formal/audit.py:124",
+        "src/hardy/formal/verifier.py:153"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Verify one run modulo named declarations without changing subsequent runs.",
+      "verdict": "extension",
+      "why": "verify accepts a per-run allowed set; constructor values remain defaults for callers supplying none.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:118",
+        "src/hardy/formal/verifier.py:122"
+      ]
+    },
+    {
+      "requirement": "Invalidate workspace modules after shared external Lean sources change.",
+      "verdict": "extension",
+      "why": "The external identity callback and environment rebinding feed dependency signatures.",
+      "evidence": [
+        "src/hardy/formal/workspace.py:88",
+        "src/hardy/formal/workspace.py:106"
+      ]
+    },
+    {
+      "requirement": "Use a different bounded process runner for final verification.",
+      "verdict": "extension",
+      "why": "Supply the ProcessSpec-to-ProcessResult runner; claim reconstruction and axiom classification remain the verifier responsibility.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:100",
+        "src/hardy/formal/verifier.py:143"
+      ]
+    }
+  ]
+}

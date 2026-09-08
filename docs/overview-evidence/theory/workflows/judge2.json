@@ -1,0 +1,86 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "workflows",
+  "theory": "Workflows coordinate evidence-producing capabilities and control when a claim advances from proposal to approved statement, checked proof, and reportable artifact. Interactive work maintains durable mathematical state separately from local conversation and usage state. Completion is a guarded transition with explicit assumptions and holes, rather than a model declaration.",
+  "instead_of": "A general agent loop could run all tools, but would not explain distinct approval, verification, document, persistence, and cancellation responsibilities or different interactive and unattended acceptance rules.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "Owner ports support alternate callbacks and tools, but a configurable staged pipeline requires changing the fixed RunPhase graph and sequential ProveWorkflow orchestration. The model describes particular workflows rather than arbitrary plans.",
+      "evidence": [
+        "src/hardy/workflows/prove.py:59",
+        "src/hardy/workflows/prove.py:98",
+        "src/hardy/workflows/prove.py:272"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Grades distinguish formal, faithfulness, informal, and document evidence; local and durable records have different portability; turn ownership represents dispatch/cancellation rather than mathematics.",
+      "evidence": [
+        "src/hardy/workflows/contracts.py:236",
+        "src/hardy/workflows/interactive/session.py:649",
+        "src/hardy/workflows/interactive/turns.py:1"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Extracted owners hold real responsibilities, but SessionRecord exposes mutable dictionaries and ProveWorkflow dependencies use Any/broad Callables. Invariants remain partly distributed caller conventions.",
+      "evidence": [
+        "src/hardy/workflows/interactive/record.py:38",
+        "src/hardy/workflows/prove.py:121",
+        "src/hardy/workflows/interactive/session.py:1857"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Lock order, local-state portability, and evidence-backed grades have concrete explanations. Direct owner tests show changed assumptions refused and snapshot edits unable to mutate durable values.",
+      "evidence": [
+        "src/hardy/workflows/interactive/turns.py:3",
+        "src/hardy/workflows/interactive/session.py:649",
+        "src/hardy/workflows/contracts.py:256",
+        "tests/unit/test_interactive_owners.py:6",
+        "tests/unit/test_interactive_owners.py:41"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Assumption probes explicitly remain heuristic; verified grades demand recomputable evidence; permitted assumptions are distinguished from those actually used.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:1156",
+        "src/hardy/workflows/contracts.py:244",
+        "src/hardy/workflows/contracts.py:255"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Persist turn events and usage through another narrow sink.",
+      "verdict": "extension",
+      "why": "TurnPersistence names event, usage, cursor, and thread callbacks without giving the coordinator an unrestricted session.",
+      "evidence": [
+        "src/hardy/workflows/interactive/turns.py:25"
+      ]
+    },
+    {
+      "requirement": "Add another formal-save refusal while preserving interactive compatibility methods.",
+      "verdict": "extension",
+      "why": "FormalWorkspaceService owns saving and receives policy through the coordinator delegation.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:1837",
+        "src/hardy/workflows/interactive/formal.py:266"
+      ]
+    },
+    {
+      "requirement": "Let operators assemble arbitrary pipelines with multiple independent verification and writeup stages.",
+      "verdict": "patch",
+      "why": "The phase graph and sequential run coordinator encode one staged lifecycle; configurable graphs require a new plan/state model instead of another optional branch.",
+      "evidence": [
+        "src/hardy/workflows/prove.py:59",
+        "src/hardy/workflows/prove.py:103",
+        "src/hardy/workflows/prove.py:272"
+      ]
+    }
+  ]
+}

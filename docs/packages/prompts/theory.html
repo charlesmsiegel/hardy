@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>prompts — Code Theory</title>
+<style>
+/* Design tokens are code-visualization's, verbatim. The three document types in
+   a code overview sit next to each other in one nav bar; sharing the palette is
+   what makes them read as one artifact rather than three tools' output. */
+:root{
+  --bg:#0d1420; --bg-grid:rgba(120,160,220,0.05); --surface:#141d2e; --surface-2:#1a2538;
+  --border:rgba(150,180,230,0.14); --border-strong:rgba(150,180,230,0.30);
+  --text:#dbe4f3; --text-dim:#8fa1bd; --text-faint:#5f7191;
+  --accent:#5aa7e8; --accent-dim:rgba(90,167,232,0.14);
+  --good:#59c98f; --good-dim:rgba(89,201,143,0.14);
+  --warn:#e0b25a; --warn-dim:rgba(224,178,90,0.14);
+  --bad:#e06a6a; --bad-dim:rgba(224,106,106,0.15);
+  --violet:#a08fd8;
+  --heat-lo:#27405e; --heat-hi:#e0703f;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f3f5f9; --bg-grid:rgba(40,70,120,0.055); --surface:#ffffff; --surface-2:#eef1f7;
+    --border:rgba(30,55,95,0.14); --border-strong:rgba(30,55,95,0.30);
+    --text:#1d2838; --text-dim:#51617a; --text-faint:#8593a8;
+    --accent:#1f6fbd; --accent-dim:rgba(31,111,189,0.10);
+    --good:#1f8f5c; --good-dim:rgba(31,143,92,0.10);
+    --warn:#a87418; --warn-dim:rgba(168,116,24,0.12);
+    --bad:#bd3f3f; --bad-dim:rgba(189,63,63,0.10);
+    --violet:#6a55b0;
+    --heat-lo:#c9d8ec; --heat-hi:#cf5a26;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--sans); background:var(--bg); color:var(--text);
+  background-image:linear-gradient(var(--bg-grid) 1px,transparent 1px),linear-gradient(90deg,var(--bg-grid) 1px,transparent 1px);
+  background-size:32px 32px; line-height:1.55; font-size:15px;
+}
+header.doc{padding:34px 28px 0; max-width:1280px; margin:0 auto}
+.doc-label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:8px}
+.doc-label::before{content:"";width:8px;height:8px;background:var(--accent);border-radius:2px;display:inline-block}
+h1.doc-title{font-size:30px;font-weight:700;letter-spacing:-.02em;margin-top:8px}
+.doc-sub{color:var(--text-dim);margin-top:6px;max-width:900px}
+.doc-meta{font-family:var(--mono);font-size:12px;color:var(--text-faint);margin-top:10px}
+main{max-width:1280px;margin:0 auto;padding:26px 28px 80px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- tabs: code-visualization's contract, so one shell serves all four
+   documents. code-overview forces this template on assemble.py and on
+   build_measurement.py, so the markup those two emit has to fit here. ------- */
+nav.tabs{
+  display:flex;gap:2px;flex-wrap:wrap;max-width:1280px;margin:18px auto 0;
+  padding:0 28px;border-bottom:1px solid var(--border);
+}
+/* summary.html is untabbed and leaves TABS_NAV empty; without this the bar
+   renders as a stray rule under the header. */
+nav.tabs:empty{display:none;border:none}
+nav.tabs button{
+  background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);
+  font-family:var(--sans);font-size:14px;padding:9px 14px;cursor:pointer;
+}
+nav.tabs button:hover{color:var(--text)}
+nav.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+nav.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+section.panel{display:none}
+section.panel.active{display:block}
+
+/* ---------- content primitives (shared with code-visualization) ---------- */
+h2{font-size:21px;font-weight:600;letter-spacing:-.01em;margin:30px 0 10px}
+h2:first-child{margin-top:0}
+h3{font-size:16px;font-weight:600;margin:22px 0 8px}
+p{margin:8px 0;max-width:940px;color:var(--text)}
+ul,ol{margin:8px 0 8px 22px;max-width:940px}
+li{margin:4px 0}
+a{color:var(--accent)}
+.dim{color:var(--text-dim)} .faint{color:var(--text-faint)}
+code,.mono{font-family:var(--mono);font-size:.92em}
+p code,li code,td code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;overflow-wrap:anywhere}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:12px 0}
+.grid{display:grid;gap:14px;margin:12px 0}
+.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.grid.cols-3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.grid>*{min-width:0}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;min-width:130px}
+.kpi .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .l{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);margin-top:2px}
+.kpi.warn .n{color:var(--warn)} .kpi.bad .n{color:var(--bad)} .kpi.good .n{color:var(--good)} .kpi.accent .n{color:var(--accent)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);vertical-align:1px;white-space:nowrap}
+.badge.good{color:var(--good);background:var(--good-dim);border-color:transparent}
+.badge.warn{color:var(--warn);background:var(--warn-dim);border-color:transparent}
+.badge.bad{color:var(--bad);background:var(--bad-dim);border-color:transparent}
+.badge.accent{color:var(--accent);background:var(--accent-dim);border-color:transparent}
+.badge.neutral{color:var(--text-dim);background:var(--surface-2);border-color:transparent}
+.callout{border-left:3px solid var(--accent);background:var(--accent-dim);border-radius:0 8px 8px 0;padding:12px 16px;margin:12px 0;max-width:940px}
+.callout.warn{border-color:var(--warn);background:var(--warn-dim)}
+.callout.bad{border-color:var(--bad);background:var(--bad-dim)}
+.callout.good{border-color:var(--good);background:var(--good-dim)}
+details{border:1px solid var(--border);border-radius:8px;margin:10px 0;background:var(--surface)}
+details summary{cursor:pointer;padding:10px 16px;font-weight:500;color:var(--text-dim)}
+details[open] summary{border-bottom:1px solid var(--border);color:var(--text)}
+details .body{padding:12px 16px}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin:12px 0;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+thead th{background:var(--surface-2);text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);padding:9px 14px;border-bottom:1px solid var(--border-strong);white-space:nowrap}
+tbody td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface-2) 45%,transparent)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.bar{position:relative;background:var(--surface-2);border-radius:4px;height:14px;min-width:120px;overflow:hidden}
+.bar>i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+.bar.warn>i{background:var(--warn)} .bar.bad>i{background:var(--bad)} .bar.good>i{background:var(--good)}
+
+/* ---------- grade components ---------- */
+/* Grade colour is bound to the band, not to the score, so the letter and the
+   colour can never disagree — the two are read together at a glance. */
+.g-a{--grade:var(--good)} .g-b{--grade:var(--accent)} .g-c{--grade:var(--warn)}
+.g-d{--grade:var(--bad)} .g-f{--grade:var(--bad)} .g-none{--grade:var(--text-faint)}
+.gradecard{display:flex;flex-wrap:wrap;align-items:center;gap:26px;background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;padding:22px 26px;margin:16px 0;background-image:linear-gradient(110deg,color-mix(in srgb,var(--grade) 12%,transparent),transparent 55%)}
+.gradecard .letter{font-size:64px;font-weight:700;line-height:1;letter-spacing:-.04em;color:var(--grade);font-variant-numeric:tabular-nums;min-width:96px}
+.gradecard .score{font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-top:6px}
+.gradecard .what{flex:1 1 260px;min-width:0}
+.gradecard .what h2{margin:0 0 4px;font-size:19px}
+.catrow{display:grid;grid-template-columns:minmax(140px,1.4fr) minmax(90px,2fr) 54px 46px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.catrow:last-child{border-bottom:none}
+.catrow .cname{font-size:13.5px;overflow-wrap:anywhere}
+.catrow .cname small{display:block;font-family:var(--mono);font-size:10.5px;color:var(--text-faint);letter-spacing:.04em}
+.catrow .cscore{font-family:var(--mono);font-size:12.5px;text-align:right;color:var(--text-dim);font-variant-numeric:tabular-nums}
+.catrow .cgrade{font-family:var(--mono);font-weight:600;text-align:right;color:var(--grade)}
+.catrow .bar>i{background:var(--grade)}
+.catrow.ungraded .cname,.catrow.ungraded .cscore{color:var(--text-faint)}
+@media(max-width:560px){.catrow{grid-template-columns:1fr 54px 46px}.catrow .bar{grid-column:1/-1}}
+.doclinks{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));margin:16px 0}
+.doclink{display:block;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;text-decoration:none;color:var(--text)}
+.doclink:hover{border-color:var(--accent);background:var(--accent-dim)}
+.doclink .k{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.doclink .t{font-size:16px;font-weight:600;margin-top:4px}
+.doclink .d{color:var(--text-dim);font-size:13px;margin-top:4px}
+.doclink[aria-disabled="true"]{opacity:.5;pointer-events:none}
+.sev-high{color:var(--bad)} .sev-medium{color:var(--warn)} .sev-low{color:var(--text-dim)}
+/* The type token and the category name are short and identify the row; letting
+   them wrap mid-word to buy width for a long description makes the table harder
+   to scan, not easier. The description column is the one that should give. */
+td code.ftype{white-space:nowrap;overflow-wrap:normal}
+td.cat{white-space:nowrap}
+/* A file:line split across two lines is not a citation anyone can copy. The
+   wrapper scrolls if a path is genuinely too deep for the viewport. */
+td code.floc{white-space:nowrap;overflow-wrap:normal}
+footer.doc{max-width:1280px;margin:0 auto;padding:0 28px 34px;color:var(--text-faint);font-family:var(--mono);font-size:11.5px}
+footer.doc a{color:var(--text-dim)}
+@media(max-width:720px){header.doc,main,nav.tabs,footer.doc{padding-left:16px;padding-right:16px} h1.doc-title{font-size:24px} .gradecard .letter{font-size:48px;min-width:72px}}
+</style>
+</head>
+<body>
+<header class="doc">
+  <div class="doc-label">CODE THEORY</div>
+  <h1 class="doc-title">prompts — Code Theory</h1>
+  <p class="doc-sub">Does the prompts package express a coherent theory?</p>
+  <div class="doc-meta">generated 2026-09-08 · d1bcc7c · 3 judges · GPT-6 / Codex; three independent agents; runtime revision not exposed</div>
+</header>
+<!-- code-overview:nav --><style>
+.co-nav{position:sticky;top:0;z-index:60;max-width:1280px;margin:0 auto;padding:10px 28px;
+  font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;
+  background:color-mix(in srgb,var(--bg,#0d1420) 92%,transparent);
+  border-bottom:1px solid var(--border,rgba(150,180,230,0.14));
+  backdrop-filter:blur(8px);display:flex;flex-direction:column;gap:6px}
+.co-nav .co-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.co-nav a{color:var(--text-dim,#8fa1bd);text-decoration:none;padding:3px 9px;border-radius:999px;
+  border:1px solid transparent;white-space:nowrap}
+.co-nav a:hover{color:var(--accent,#1f6fbd);background:var(--accent-dim,rgba(31,111,189,0.10))}
+.co-nav a[aria-current]{color:var(--accent,#1f6fbd);
+  border-color:var(--accent,#1f6fbd);background:var(--accent-dim,rgba(31,111,189,0.10))}
+.co-nav .co-here{color:var(--text,#dbe4f3);font-weight:600;padding:3px 0}
+.co-nav .co-lbl{color:var(--text-faint,#5f7191);letter-spacing:.08em;text-transform:uppercase;
+  font-size:10.5px;padding-right:2px}
+.co-nav .co-sep{color:var(--text-faint,#5f7191);opacity:.6}
+@media(max-width:720px){.co-nav{padding-left:16px;padding-right:16px}}
+</style><nav class="co-nav" aria-label="code overview"><div class="co-row"><a href="../../theory.html">⌂ Overall Theory</a><span class="co-sep">/</span><span class="co-here">prompts</span></div><div class="co-row"><span class="co-lbl">prompts</span><a href="summary.html">Summary</a><a href="codemap.html">Code Map</a><a href="health.html">Health</a><a href="measurement.html">Measurement</a><a href="#" aria-current="page">Theory</a></div><div class="co-row"><span class="co-lbl">Other packages · Theory</span><a href="../agents/theory.html">agents</a><a href="../algebra/theory.html">algebra</a><a href="../app/theory.html">app</a><a href="../corpus/theory.html">corpus</a><a href="../documents/theory.html">documents</a><a href="../evals/theory.html">evals</a><a href="../formal/theory.html">formal</a><a href="../foundation/theory.html">foundation</a><a href="../literature/theory.html">literature</a><a href="../workflows/theory.html">workflows</a></div></nav><!-- /code-overview:nav -->
+
+<nav class="tabs" role="tablist"><button role="tab" data-tab="tab-grade" aria-selected="true" aria-controls="tab-grade">Grade</button>
+<button role="tab" data-tab="tab-theory" aria-selected="false" aria-controls="tab-theory">Theory</button>
+<button role="tab" data-tab="tab-dimensions" aria-selected="false" aria-controls="tab-dimensions">Dimensions</button>
+<button role="tab" data-tab="tab-disagreement" aria-selected="false" aria-controls="tab-disagreement">Disagreement</button></nav>
+<main><section class="panel active" id="tab-grade" role="tabpanel">
+<section class="gradecard g-b"><div><div class="letter">B</div><div class="score">85.0 / 100</div></div><div class="what"><h2>Theory</h2><p class="dim">How well this unit&#39;s code expresses a coherent theory of the problem it solves, in Peter Naur&#39;s sense: can the model be mapped to the world, justified, and can it absorb the next requirement.</p></div></section><div class="callout warn"><strong>This is a reading, not a measurement.</strong> The other grades in this document set rest on something outside the grader — a detector's findings, an inventory with citations. This one is a judgment, and a model auditing abstractions is partly <em>circular</em>: the weakness that produces repetition-with-variants also evaluates whether the repetition was warranted. Three independent judges narrow that; they do not close it. Compare the rows and the evidence, not this letter — and letters from different models are not comparable at all.</div><div class="kpis"><div class="kpi accent"><div class="n">3</div><div class="l">independent judges</div></div><div class="kpi"><div class="n">2</div><div class="l">files</div></div><div class="kpi"><div class="n">520</div><div class="l">lines</div></div></div>
+
+</section>
+<section class="panel" id="tab-theory" role="tabpanel">
+<p>The theory is the deliverable; the grade is a byproduct of having tried to state it. Each judge wrote independently — where they describe the same system differently, that difference is the finding.</p><div class="card"><h3>Judge 1</h3><p><strong>Theory: </strong>Harness instructions are named templates rendered under strict missing-variable rules and identified as explicit prompt sets. User slash templates are input expansion, not silently part of the harness instruction identity.</p><p class="dim"><strong>Instead of: </strong>Embedding prompt prose across Python call sites would make text changes difficult to review and make recorded prompt identity incomplete.</p><div class="tbl-wrap"><table><thead><tr><th>Plausible next requirement</th><th>Lands as</th><th>Why</th></tr></thead><tbody><tr><td>Add a required field to the proof prompt</td><td><span class="badge good">extension</span></td><td>Strict rendering fails any caller that omits it.<br><code class="floc">src/hardy/prompts/__init__.py:71</code></td></tr><tr><td>Record exactly which structure instruction each backend received</td><td><span class="badge warn">patch</span></td><td>The existing payload explicitly includes a structure template the Codex SDK path does not append.<br><code class="floc">src/hardy/prompts/__init__.py:234</code></td></tr><tr><td>Add a reusable user slash template</td><td><span class="badge good">extension</span></td><td>User templates are a separate input-expansion layer.<br><code class="floc">src/hardy/prompts/user.py:158</code></td></tr></tbody></table></div></div><div class="card"><h3>Judge 2</h3><p><strong>Theory: </strong>Prompts are versioned instruction artifacts whose variables must be complete and whose identities cover the experiment actually seeing them. User slash templates are separately treated as expanded user input. A recorded instruction condition therefore remains meaningful without promoting local prose to system policy.</p><p class="dim"><strong>Instead of: </strong>A bag of string constants could deliver immediate text, but would not model missing-variable refusal, packaged resources, or separate staged, batch, and user-input identities.</p><div class="tbl-wrap"><table><thead><tr><th>Plausible next requirement</th><th>Lands as</th><th>Why</th></tr></thead><tbody><tr><td>Add a project slash template with two positional arguments.</td><td><span class="badge good">extension</span></td><td>Positional placeholders, missing-argument refusal, and recording expanded prose already exist.<br><code class="floc">src/hardy/prompts/user.py:18</code> <code class="floc">src/hardy/prompts/user.py:49</code> <code class="floc">src/hardy/prompts/user.py:61</code></td></tr><tr><td>Add another required proof-prompt variable.</td><td><span class="badge good">extension</span></td><td>Extend renderer/template together; StrictUndefined makes a missing supplying call fail visibly.<br><code class="floc">src/hardy/prompts/__init__.py:58</code> <code class="floc">src/hardy/prompts/__init__.py:171</code> <code class="floc">tests/unit/test_prompts.py:95</code></td></tr><tr><td>A/B test two installed instruction revisions in one long-lived process.</td><td><span class="badge warn">patch</span></td><td>Caching, no-auto-reload resources, and imported rendered/hash constants bind one set per process; per-run prompt bundles need a new ownership boundary.<br><code class="floc">src/hardy/prompts/__init__.py:53</code> <code class="floc">src/hardy/prompts/__init__.py:61</code> <code class="floc">src/hardy/prompts/__init__.py:81</code> <code class="floc">src/hardy/prompts/__init__.py:159</code></td></tr></tbody></table></div></div><div class="card"><h3>Judge 3</h3><p><strong>Theory: </strong>Prompts are packaged, strictly rendered instruction assets whose exact source participates in experimental identity, while user slash templates expand into recorded user input. Template source, rendered claim-specific text, and backend response contracts are related but distinct identities.</p><p class="dim"><strong>Instead of: </strong>Treat prompts as incidental string literals or let a malformed user template change built-in command behavior; that would hide instruction changes and make failures dependent on call-site formatting.</p><div class="tbl-wrap"><table><thead><tr><th>Plausible next requirement</th><th>Lands as</th><th>Why</th></tr></thead><tbody><tr><td>Add another required field to a prompt template.</td><td><span class="badge good">extension</span></td><td>StrictUndefined makes missing renderer input an explicit PromptError at the shared renderer.<br><code class="floc">src/hardy/prompts/__init__.py:59</code> <code class="floc">src/hardy/prompts/__init__.py:71</code></td></tr><tr><td>Add a project-specific slash command with positional arguments.</td><td><span class="badge good">extension</span></td><td>The user template loader and placeholder expander already model that operation without modifying built-ins.<br><code class="floc">src/hardy/prompts/user.py:158</code> <code class="floc">src/hardy/prompts/user.py:210</code></td></tr><tr><td>Record a prompt hash matching exactly the structure instructions sent by each backend.</td><td><span class="badge warn">patch</span></td><td>The source explicitly states the Codex/backend asymmetry and the need for a per-backend identity plus manifest schema change.<br><code class="floc">src/hardy/prompts/__init__.py:256</code></td></tr></tbody></table></div></div>
+
+</section>
+<section class="panel" id="tab-dimensions" role="tabpanel">
+<p>The rows the letter was computed from. A step below <em>holds</em> must cite the evidence that lowered it — dispute the rows, not the grade.</p><div class="tbl-wrap"><table><thead><tr><th>Dimension</th><th class="num">Weight</th><th>Median step</th><th>Spread</th><th>Why</th><th>Evidence</th></tr></thead><tbody><tr><td><strong>Absorption</strong><br><span class="faint">Take 3-5 plausible next requirements. Does each land as a natural extension, or need a patch bolted alongside?</span></td><td class="num">30</td><td>partial<br><span class="faint">partial, partial, partial</span></td><td>0 rung(s)</td><td>More templates fit naturally; backend-specific exact instruction identity still needs a richer recorded contract.<br>New templates and commands fit, but comparing alternate instruction revisions within one process requires revisiting cached resources and import-time rendered/hash constants. The present model binds an immutable installed set to process lifetime.<br>Adding staged templates and user commands fits the loader, but obtaining an exact backend-specific prompt identity requires the separately acknowledged hash/manifest change.</td><td><code class="floc">src/hardy/prompts/__init__.py:159</code><br><code class="floc">src/hardy/prompts/__init__.py:234</code><br><code class="floc">src/hardy/prompts/__init__.py:53</code><br><code class="floc">src/hardy/prompts/__init__.py:61</code><br><code class="floc">src/hardy/prompts/__init__.py:81</code><br><code class="floc">src/hardy/prompts/user.py:210</code><br></td></tr><tr><td><strong>World-mapping</strong><br><span class="faint">Can each part be mapped to an aspect of the problem, and each aspect located in the code — including where the model stops?</span></td><td class="num">25</td><td>holds<br><span class="faint">holds, holds, holds</span></td><td>0 rung(s)</td><td>Named harness instructions and user-provided text have distinct experimental roles.<br>Templates, strict rendering, frozen signatures, and experiment-specific hashes identify the instructions received; user expansion records actual supplied text.<br>Source loading, strict rendering, staged/batch payload identities, and user-command expansion map to the different ways instructions reach a model.</td><td><code class="floc">src/hardy/prompts/__init__.py:142</code><br><code class="floc">src/hardy/prompts/__init__.py:62</code><br><code class="floc">src/hardy/prompts/__init__.py:71</code><br><code class="floc">src/hardy/prompts/user.py:158</code><br><code class="floc">src/hardy/prompts/user.py:18</code><br></td></tr><tr><td><strong>Abstraction</strong><br><span class="faint">Do the abstractions carry domain names, make unwritten cases expressible, and reduce what must be held in mind?</span></td><td class="num">20</td><td>holds<br><span class="faint">holds, holds, holds</span></td><td>0 rung(s)</td><td>Jinja strict rendering and one package loader avoid reimplemented formatting at call sites.<br>Jinja/importlib.resources handle mechanics while semantic functions assemble proof/review inputs. User positional substitution has its own grammar because ordinary LaTeX dollars must survive.<br>A resource loader and one Jinja environment support installed package assets, while template expansion exposes a deliberately smaller user-facing language.</td><td><code class="floc">src/hardy/prompts/__init__.py:171</code><br><code class="floc">src/hardy/prompts/__init__.py:37</code><br><code class="floc">src/hardy/prompts/__init__.py:71</code><br><code class="floc">src/hardy/prompts/user.py:158</code><br><code class="floc">src/hardy/prompts/user.py:49</code><br></td></tr><tr><td><strong>Justification</strong><br><span class="faint">Is it recoverable why each part is what it is, and what was rejected?</span></td><td class="num">15</td><td>holds<br><span class="faint">holds, holds, holds</span></td><td>0 rung(s)</td><td>Prompt-set membership is justified separately for staged, batch and user templates.<br>Missing variables are justified by lost theorem identity; independent review excludes the formalizer&#x27;s explanation, and tests check separate batch/staged hashes.<br>The code explains why hashes cover raw template source, why unrelated interactive prompts stay out of staged identity, and why cached installed resources are assumed stable.</td><td><code class="floc">src/hardy/prompts/__init__.py:175</code><br><code class="floc">src/hardy/prompts/__init__.py:234</code><br><code class="floc">src/hardy/prompts/__init__.py:37</code><br><code class="floc">src/hardy/prompts/__init__.py:5</code><br><code class="floc">tests/unit/test_prompts.py:207</code><br><code class="floc">tests/unit/test_prompts.py:95</code><br></td></tr><tr><td><strong>Honest limits</strong><br><span class="faint">Are assumptions no test pins down named? Is duplication honest rather than papered over? Is there reinvention where something existing served?</span></td><td class="num">10</td><td>holds<br><span class="faint">holds, holds, holds</span></td><td>0 rung(s)</td><td>The payload documents a conservative Codex schema-template asymmetry instead of claiming exact backend equivalence.<br>The loader states its immutable-installed-template assumption; user templates explain why they are outside experiment hashes and state size/symlink limits.<br>The Codex structure-instruction hash asymmetry is explicitly recorded; user templates reject missing arguments, reserved names, links, and unreadable input instead of silently fabricating instructions.</td><td><code class="floc">src/hardy/prompts/__init__.py:234</code><br><code class="floc">src/hardy/prompts/__init__.py:256</code><br><code class="floc">src/hardy/prompts/__init__.py:53</code><br><code class="floc">src/hardy/prompts/user.py:158</code><br><code class="floc">src/hardy/prompts/user.py:210</code><br><code class="floc">src/hardy/prompts/user.py:39</code><br><code class="floc">src/hardy/prompts/user.py:53</code><br><code class="floc">src/hardy/prompts/user.py:9</code><br></td></tr></tbody></table></div>
+
+</section>
+<section class="panel" id="tab-disagreement" role="tabpanel">
+<p class="dim">The three judges agreed within one rung on every dimension. That is weak evidence the code reads consistently — it is not evidence the grade is right.</p>
+
+</section>
+<script type="application/json" id="theory-meta">{"schema":"theory/1","scope":"package","package":"prompts","generated":"2026-09-08","commit":"d1bcc7c","model":"GPT-6 / Codex; three independent agents; runtime revision not exposed","panel_size":3,"score":85.0,"grade":"B","exempt":false,"exempt_reason":"","size":{"files":2,"loc":520},"theory":"Harness instructions are named templates rendered under strict missing-variable rules and identified as explicit prompt sets. User slash templates are input expansion, not silently part of the harness instruction identity.","dimensions":[{"key":"absorption","label":"Absorption","question":"Take 3-5 plausible next requirements. Does each land as a natural extension, or need a patch bolted alongside?","weight":30.0,"step":0.5,"step_label":"partial","rung":2,"spread":0,"disputed":false,"steps":[0.5,0.5,0.5],"rationales":["More templates fit naturally; backend-specific exact instruction identity still needs a richer recorded contract.","New templates and commands fit, but comparing alternate instruction revisions within one process requires revisiting cached resources and import-time rendered/hash constants. The present model binds an immutable installed set to process lifetime.","Adding staged templates and user commands fits the loader, but obtaining an exact backend-specific prompt identity requires the separately acknowledged hash/manifest change."],"evidence":["src/hardy/prompts/__init__.py:159","src/hardy/prompts/__init__.py:234","src/hardy/prompts/__init__.py:53","src/hardy/prompts/__init__.py:61","src/hardy/prompts/__init__.py:81","src/hardy/prompts/user.py:210"]},{"key":"world_mapping","label":"World-mapping","question":"Can each part be mapped to an aspect of the problem, and each aspect located in the code \u2014 including where the model stops?","weight":25.0,"step":1,"step_label":"holds","rung":3,"spread":0,"disputed":false,"steps":[1,1,1],"rationales":["Named harness instructions and user-provided text have distinct experimental roles.","Templates, strict rendering, frozen signatures, and experiment-specific hashes identify the instructions received; user expansion records actual supplied text.","Source loading, strict rendering, staged/batch payload identities, and user-command expansion map to the different ways instructions reach a model."],"evidence":["src/hardy/prompts/__init__.py:142","src/hardy/prompts/__init__.py:62","src/hardy/prompts/__init__.py:71","src/hardy/prompts/user.py:158","src/hardy/prompts/user.py:18"]},{"key":"abstraction","label":"Abstraction","question":"Do the abstractions carry domain names, make unwritten cases expressible, and reduce what must be held in mind?","weight":20.0,"step":1,"step_label":"holds","rung":3,"spread":0,"disputed":false,"steps":[1,1,1],"rationales":["Jinja strict rendering and one package loader avoid reimplemented formatting at call sites.","Jinja/importlib.resources handle mechanics while semantic functions assemble proof/review inputs. User positional substitution has its own grammar because ordinary LaTeX dollars must survive.","A resource loader and one Jinja environment support installed package assets, while template expansion exposes a deliberately smaller user-facing language."],"evidence":["src/hardy/prompts/__init__.py:171","src/hardy/prompts/__init__.py:37","src/hardy/prompts/__init__.py:71","src/hardy/prompts/user.py:158","src/hardy/prompts/user.py:49"]},{"key":"justification","label":"Justification","question":"Is it recoverable why each part is what it is, and what was rejected?","weight":15.0,"step":1,"step_label":"holds","rung":3,"spread":0,"disputed":false,"steps":[1,1,1],"rationales":["Prompt-set membership is justified separately for staged, batch and user templates.","Missing variables are justified by lost theorem identity; independent review excludes the formalizer's explanation, and tests check separate batch/staged hashes.","The code explains why hashes cover raw template source, why unrelated interactive prompts stay out of staged identity, and why cached installed resources are assumed stable."],"evidence":["src/hardy/prompts/__init__.py:175","src/hardy/prompts/__init__.py:234","src/hardy/prompts/__init__.py:37","src/hardy/prompts/__init__.py:5","tests/unit/test_prompts.py:207","tests/unit/test_prompts.py:95"]},{"key":"honest_limits","label":"Honest limits","question":"Are assumptions no test pins down named? Is duplication honest rather than papered over? Is there reinvention where something existing served?","weight":10.0,"step":1,"step_label":"holds","rung":3,"spread":0,"disputed":false,"steps":[1,1,1],"rationales":["The payload documents a conservative Codex schema-template asymmetry instead of claiming exact backend equivalence.","The loader states its immutable-installed-template assumption; user templates explain why they are outside experiment hashes and state size/symlink limits.","The Codex structure-instruction hash asymmetry is explicitly recorded; user templates reject missing arguments, reserved names, links, and unreadable input instead of silently fabricating instructions."],"evidence":["src/hardy/prompts/__init__.py:234","src/hardy/prompts/__init__.py:256","src/hardy/prompts/__init__.py:53","src/hardy/prompts/user.py:158","src/hardy/prompts/user.py:210","src/hardy/prompts/user.py:39","src/hardy/prompts/user.py:53","src/hardy/prompts/user.py:9"]}],"disputed":[],"verdicts":[{"schema":"theory-verdict/1","unit":"prompts","theory":"Harness instructions are named templates rendered under strict missing-variable rules and identified as explicit prompt sets. User slash templates are input expansion, not silently part of the harness instruction identity.","instead_of":"Embedding prompt prose across Python call sites would make text changes difficult to review and make recorded prompt identity incomplete.","trivial":false,"trivial_reason":"","dimensions":{"absorption":{"step":0.5,"rationale":"More templates fit naturally; backend-specific exact instruction identity still needs a richer recorded contract.","evidence":["src/hardy/prompts/__init__.py:234"]},"world_mapping":{"step":1,"rationale":"Named harness instructions and user-provided text have distinct experimental roles.","evidence":["src/hardy/prompts/user.py:158"]},"abstraction":{"step":1,"rationale":"Jinja strict rendering and one package loader avoid reimplemented formatting at call sites.","evidence":["src/hardy/prompts/__init__.py:71"]},"justification":{"step":1,"rationale":"Prompt-set membership is justified separately for staged, batch and user templates.","evidence":["src/hardy/prompts/__init__.py:234"]},"honest_limits":{"step":1,"rationale":"The payload documents a conservative Codex schema-template asymmetry instead of claiming exact backend equivalence.","evidence":["src/hardy/prompts/__init__.py:234"]}},"rehearsals":[{"requirement":"Add a required field to the proof prompt","verdict":"extension","why":"Strict rendering fails any caller that omits it.","evidence":["src/hardy/prompts/__init__.py:71"]},{"requirement":"Record exactly which structure instruction each backend received","verdict":"patch","why":"The existing payload explicitly includes a structure template the Codex SDK path does not append.","evidence":["src/hardy/prompts/__init__.py:234"]},{"requirement":"Add a reusable user slash template","verdict":"extension","why":"User templates are a separate input-expansion layer.","evidence":["src/hardy/prompts/user.py:158"]}]},{"schema":"theory-verdict/1","unit":"prompts","theory":"Prompts are versioned instruction artifacts whose variables must be complete and whose identities cover the experiment actually seeing them. User slash templates are separately treated as expanded user input. A recorded instruction condition therefore remains meaningful without promoting local prose to system policy.","instead_of":"A bag of string constants could deliver immediate text, but would not model missing-variable refusal, packaged resources, or separate staged, batch, and user-input identities.","trivial":false,"trivial_reason":"","dimensions":{"absorption":{"step":0.5,"rationale":"New templates and commands fit, but comparing alternate instruction revisions within one process requires revisiting cached resources and import-time rendered/hash constants. The present model binds an immutable installed set to process lifetime.","evidence":["src/hardy/prompts/__init__.py:53","src/hardy/prompts/__init__.py:61","src/hardy/prompts/__init__.py:81","src/hardy/prompts/__init__.py:159"]},"world_mapping":{"step":1,"rationale":"Templates, strict rendering, frozen signatures, and experiment-specific hashes identify the instructions received; user expansion records actual supplied text.","evidence":["src/hardy/prompts/__init__.py:71","src/hardy/prompts/__init__.py:142","src/hardy/prompts/user.py:18"]},"abstraction":{"step":1,"rationale":"Jinja/importlib.resources handle mechanics while semantic functions assemble proof/review inputs. User positional substitution has its own grammar because ordinary LaTeX dollars must survive.","evidence":["src/hardy/prompts/__init__.py:37","src/hardy/prompts/__init__.py:171","src/hardy/prompts/user.py:49"]},"justification":{"step":1,"rationale":"Missing variables are justified by lost theorem identity; independent review excludes the formalizer's explanation, and tests check separate batch/staged hashes.","evidence":["src/hardy/prompts/__init__.py:5","src/hardy/prompts/__init__.py:175","tests/unit/test_prompts.py:95","tests/unit/test_prompts.py:207"]},"honest_limits":{"step":1,"rationale":"The loader states its immutable-installed-template assumption; user templates explain why they are outside experiment hashes and state size/symlink limits.","evidence":["src/hardy/prompts/__init__.py:53","src/hardy/prompts/user.py:9","src/hardy/prompts/user.py:39","src/hardy/prompts/user.py:53"]}},"rehearsals":[{"requirement":"Add a project slash template with two positional arguments.","verdict":"extension","why":"Positional placeholders, missing-argument refusal, and recording expanded prose already exist.","evidence":["src/hardy/prompts/user.py:18","src/hardy/prompts/user.py:49","src/hardy/prompts/user.py:61"]},{"requirement":"Add another required proof-prompt variable.","verdict":"extension","why":"Extend renderer/template together; StrictUndefined makes a missing supplying call fail visibly.","evidence":["src/hardy/prompts/__init__.py:58","src/hardy/prompts/__init__.py:171","tests/unit/test_prompts.py:95"]},{"requirement":"A/B test two installed instruction revisions in one long-lived process.","verdict":"patch","why":"Caching, no-auto-reload resources, and imported rendered/hash constants bind one set per process; per-run prompt bundles need a new ownership boundary.","evidence":["src/hardy/prompts/__init__.py:53","src/hardy/prompts/__init__.py:61","src/hardy/prompts/__init__.py:81","src/hardy/prompts/__init__.py:159"]}]},{"schema":"theory-verdict/1","unit":"prompts","theory":"Prompts are packaged, strictly rendered instruction assets whose exact source participates in experimental identity, while user slash templates expand into recorded user input. Template source, rendered claim-specific text, and backend response contracts are related but distinct identities.","instead_of":"Treat prompts as incidental string literals or let a malformed user template change built-in command behavior; that would hide instruction changes and make failures dependent on call-site formatting.","trivial":false,"trivial_reason":"","dimensions":{"absorption":{"step":0.5,"rationale":"Adding staged templates and user commands fits the loader, but obtaining an exact backend-specific prompt identity requires the separately acknowledged hash/manifest change.","evidence":["src/hardy/prompts/__init__.py:234","src/hardy/prompts/user.py:210"]},"world_mapping":{"step":1,"rationale":"Source loading, strict rendering, staged/batch payload identities, and user-command expansion map to the different ways instructions reach a model.","evidence":["src/hardy/prompts/__init__.py:62","src/hardy/prompts/__init__.py:71","src/hardy/prompts/user.py:158"]},"abstraction":{"step":1,"rationale":"A resource loader and one Jinja environment support installed package assets, while template expansion exposes a deliberately smaller user-facing language.","evidence":["src/hardy/prompts/__init__.py:37","src/hardy/prompts/user.py:158"]},"justification":{"step":1,"rationale":"The code explains why hashes cover raw template source, why unrelated interactive prompts stay out of staged identity, and why cached installed resources are assumed stable.","evidence":["src/hardy/prompts/__init__.py:37","src/hardy/prompts/__init__.py:234"]},"honest_limits":{"step":1,"rationale":"The Codex structure-instruction hash asymmetry is explicitly recorded; user templates reject missing arguments, reserved names, links, and unreadable input instead of silently fabricating instructions.","evidence":["src/hardy/prompts/__init__.py:256","src/hardy/prompts/user.py:158","src/hardy/prompts/user.py:210"]}},"rehearsals":[{"requirement":"Add another required field to a prompt template.","verdict":"extension","why":"StrictUndefined makes missing renderer input an explicit PromptError at the shared renderer.","evidence":["src/hardy/prompts/__init__.py:59","src/hardy/prompts/__init__.py:71"]},{"requirement":"Add a project-specific slash command with positional arguments.","verdict":"extension","why":"The user template loader and placeholder expander already model that operation without modifying built-ins.","evidence":["src/hardy/prompts/user.py:158","src/hardy/prompts/user.py:210"]},{"requirement":"Record a prompt hash matching exactly the structure instructions sent by each backend.","verdict":"patch","why":"The source explicitly states the Codex/backend asymmetry and the need for a per-backend identity plus manifest schema change.","evidence":["src/hardy/prompts/__init__.py:256"]}]}]}</script></main>
+<footer class="doc">Generated by code-overview. This grade is a judgment, not a measurement — read the Dimensions tab's evidence rather than the letter, and do not compare letters across models.</footer>
+<script>
+(function(){
+  const btns=[...document.querySelectorAll('nav.tabs button')];
+  function activate(id){
+    document.querySelectorAll('section.panel').forEach(p=>p.classList.toggle('active',p.id===id));
+    btns.forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===id?'true':'false'));
+    window.dispatchEvent(new CustomEvent('tab:shown',{detail:{id}}));
+  }
+  btns.forEach(b=>b.addEventListener('click',()=>activate(b.dataset.tab)));
+})();
+</script>
+</body>
+</html>

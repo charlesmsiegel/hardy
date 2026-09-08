@@ -1,0 +1,91 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "hardy",
+  "theory": "Hardy models mathematical assistance as accountable artifacts: original claim, approved statement, kernel evidence, and honestly labelled exposition remain distinguishable. Capabilities own evidence production, workflows own admission and sequencing, and application surfaces assemble them. Reproducibility rests on exact source, environment, instruction, and artifact identities rather than a model success claim.",
+  "instead_of": "An autonomous theorem-proving chatbot is another coherent reading, but would make model progress central; this system makes proof authority, human faithfulness review, provenance, and artifact obligations the central distinctions.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "New text/tool providers, document obligations, and curated statements have clear homes. Concurrent hosted sessions with separate cancellation and hostile-code isolation require changes to process-global stop ownership and host-execution assumptions.",
+      "evidence": [
+        "src/hardy/agents/loop.py:203",
+        "src/hardy/documents/completion.py:511",
+        "src/hardy/foundation/process.py:259",
+        "src/hardy/foundation/files.py:127"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Grade dimensions preserve distinct mathematical evidence, corpus review identifies what a human approved, and axiom classification distinguishes holes from sanctioned assumptions.",
+      "evidence": [
+        "src/hardy/workflows/contracts.py:236",
+        "src/hardy/corpus/problems.py:58",
+        "src/hardy/formal/audit.py:101"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Domain owners and import tests materially reduce coupling, but final verification still imports concrete workflow storage and interactive state remains a mutable dictionary contract. Package boundaries are stronger than type-level boundaries.",
+      "evidence": [
+        "tests/unit/test_module_boundaries.py:78",
+        "src/hardy/formal/verifier.py:37",
+        "src/hardy/workflows/interactive/record.py:38"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Rejected alternatives are explained by observable failures: missing axiom evidence, stale-file locks, and unreviewed headlines. Regression tests attack these distinctions and mechanically fence root bootstrap ownership.",
+      "evidence": [
+        "src/hardy/formal/audit.py:9",
+        "src/hardy/foundation/locking.py:82",
+        "tests/unit/test_evals_scoreboard.py:584",
+        "tests/unit/test_module_boundaries.py:13"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Absent sandbox, filesystem race scope, restricted TeX scanning, heuristic assumption probes, and incomplete cost coverage are stated where claims are made. This is honesty about the current model, not proof of untested behavior.",
+      "evidence": [
+        "src/hardy/foundation/files.py:127",
+        "src/hardy/foundation/files.py:132",
+        "src/hardy/documents/completion.py:41",
+        "src/hardy/workflows/interactive/session.py:1156",
+        "src/hardy/evals/contracts.py:80"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Introduce another provider for existing text-and-tool interaction.",
+      "verdict": "extension",
+      "why": "Implement Provider and add wiring; evidence-producing domains need not learn the transport.",
+      "evidence": [
+        "src/hardy/agents/loop.py:203",
+        "src/hardy/app/wiring.py:23",
+        "tests/unit/test_module_boundaries.py:78"
+      ]
+    },
+    {
+      "requirement": "Require another mechanically detectable paper-completion condition.",
+      "verdict": "extension",
+      "why": "Add an obligation and consume it through workflow gates while formal truth stays separately graded.",
+      "evidence": [
+        "src/hardy/documents/completion.py:511",
+        "src/hardy/workflows/contracts.py:236",
+        "src/hardy/workflows/interactive/session.py:1845"
+      ]
+    },
+    {
+      "requirement": "Host independent concurrent sessions with per-session cancellation and hostile-code isolation.",
+      "verdict": "patch",
+      "why": "Cancellation targets a process-wide register and generated code runs as ordinary host processes; scoped execution and isolation must become new owners.",
+      "evidence": [
+        "src/hardy/foundation/process.py:259",
+        "src/hardy/foundation/process.py:270",
+        "src/hardy/foundation/files.py:127"
+      ]
+    }
+  ]
+}

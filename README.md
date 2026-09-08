@@ -61,6 +61,10 @@ owning packages. Pure evidence readers do not import run launchers. See
 [the architecture map](ARCHITECTURE.html). These boundaries do not provide
 execution isolation.
 
+The [package overview](docs/summary.html) links code maps, detector-based health
+reports, measurement audits, and independent theory reviews for every domain.
+Its grades describe different kinds of evidence; they are not correctness guarantees.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

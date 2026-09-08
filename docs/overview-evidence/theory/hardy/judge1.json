@@ -1,0 +1,71 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "hardy",
+  "theory": "Hardy is an evidence-producing theorem-proving harness in which models propose, Lean checks, and the harness preserves what each artifact actually establishes. Its local layered design separates mathematical content, experimental measurements, runtime control, and human-readable claims.",
+  "instead_of": "A proof chatbot could optimize for fluent completion and trust its own transcript; Hardy instead keeps explicit authority and identity boundaries even when that preserves partial or refused work.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "New local capabilities and checks fit the design; distributed execution and independent confinement require new ownership boundaries.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:578"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Mathematical statements, formal evidence, documentary claims and experimental conditions map to separate domain concepts.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "Package contracts and owners reduce coupling, but interactive coordination and mode-specific execution still need substantial shared context.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:578"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Verification and pooling explain their rejected shortcuts rather than relying on convention.",
+      "evidence": [
+        "src/hardy/evals/pool.py:18"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Partial, modulo, unreported and unverified states prevent mechanism from being presented as measured success.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add another bounded retrieval source to proof search",
+      "verdict": "extension",
+      "why": "The formal retrieval boundary already carries per-source provenance and budgets.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    },
+    {
+      "requirement": "Run untrusted generated artifacts under a genuinely independent sandbox",
+      "verdict": "patch",
+      "why": "Current child-process control and fresh reconstruction do not create confinement or an independent trusted image.",
+      "evidence": [
+        "src/hardy/formal/verifier.py:92"
+      ]
+    },
+    {
+      "requirement": "Coordinate multiple remote workers editing one durable project",
+      "verdict": "patch",
+      "why": "Interactive records and capability lifetimes are designed around local ownership.",
+      "evidence": [
+        "src/hardy/workflows/interactive/session.py:578"
+      ]
+    }
+  ]
+}

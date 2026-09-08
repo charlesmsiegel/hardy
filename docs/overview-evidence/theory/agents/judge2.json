@@ -1,0 +1,81 @@
+{
+  "schema": "theory-verdict/1",
+  "unit": "agents",
+  "theory": "A model conversation is an ordered exchange of provider turns and tool effects under explicit budgets. The loop owns sequencing and cancellation decisions, while transports preserve opaque continuation state that only their provider understands. Public records preserve reproducible conversation events without publishing that private state.",
+  "instead_of": "A generic SDK wrapper is another reading, but it misses the provider-independent tool adjacency, pre-call gates, and continuation ordering that the loop itself owns.",
+  "trivial": false,
+  "trivial_reason": "",
+  "dimensions": {
+    "absorption": {
+      "step": 0.5,
+      "rationale": "New transports and pre-call policies fit existing ports; multimodal user input lacks a neutral representation beside text and tool calls, so image-bearing conversations require message and adapter changes.",
+      "evidence": [
+        "src/hardy/agents/loop.py:86",
+        "src/hardy/agents/loop.py:104",
+        "src/hardy/agents/loop.py:216"
+      ]
+    },
+    "world_mapping": {
+      "step": 1,
+      "rationale": "Messages, call/result adjacency, and budgeted exchanges map directly to the interaction being recorded. Opaque continuation is distinguished from the public conversation.",
+      "evidence": [
+        "src/hardy/agents/loop.py:72",
+        "src/hardy/agents/loop.py:92"
+      ]
+    },
+    "abstraction": {
+      "step": 0.5,
+      "rationale": "The loop/transport split is real, but arbitrary role strings and independently optional call/result fields leave legal message shape as a procedural invariant rather than a constrained message algebra.",
+      "evidence": [
+        "src/hardy/agents/loop.py:79",
+        "src/hardy/agents/loop.py:86"
+      ]
+    },
+    "justification": {
+      "step": 1,
+      "rationale": "Comments explain failures from regrouping provider blocks and why timeout belongs inside transport; tests reconstruct public block-order evidence.",
+      "evidence": [
+        "src/hardy/agents/loop.py:97",
+        "src/hardy/agents/loop.py:203",
+        "tests/unit/test_loop.py:1038"
+      ]
+    },
+    "honest_limits": {
+      "step": 1,
+      "rationale": "Cancellation explicitly does not unwind a running Lean check, and provider continuation remains opaque rather than being misrepresented as public evidence.",
+      "evidence": [
+        "src/hardy/agents/loop.py:272",
+        "src/hardy/agents/loop.py:92"
+      ]
+    }
+  },
+  "rehearsals": [
+    {
+      "requirement": "Add another text-and-tool provider.",
+      "verdict": "extension",
+      "why": "Implement Provider.complete and translate neutral messages; sequencing and dispatch remain in the loop.",
+      "evidence": [
+        "src/hardy/agents/loop.py:203",
+        "src/hardy/agents/loop.py:281"
+      ]
+    },
+    {
+      "requirement": "Require another approval decision before each model call.",
+      "verdict": "extension",
+      "why": "before_turn is an explicit decision point over the current messages.",
+      "evidence": [
+        "src/hardy/agents/loop.py:291",
+        "src/hardy/agents/loop.py:417"
+      ]
+    },
+    {
+      "requirement": "Allow image-bearing user turns with portable transcript replay.",
+      "verdict": "patch",
+      "why": "Message models public input as text; opaque assistant blocks are continuation state, so attachments require a new public representation and serializer/adapter changes.",
+      "evidence": [
+        "src/hardy/agents/loop.py:86",
+        "src/hardy/agents/loop.py:97"
+      ]
+    }
+  ]
+}
