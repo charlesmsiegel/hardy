@@ -55,21 +55,24 @@ class SessionRecord:
 
     def publish_writeup(self, signature: str, open_names: list[str], document_digest: str | None) -> None:
         self.state["tex_signature"] = signature
-        self.state["tex_open"] = open_names
+        self.state["tex_open"] = list(open_names)
         if document_digest is not None:
             self.state["writeup_sha256"] = document_digest
 
+    def publish_automation(self, records: dict[str, Any]) -> None:
+        self.state["automation"] = deepcopy(records)
+
     def publish_audit(self, records: dict[str, Any], signatures: dict[str, str]) -> None:
-        self.state.setdefault("audit", {}).update({
+        self.state.setdefault("audit", {}).update(deepcopy({
             module: {**record, "signature": signatures.get(module, "")}
             for module, record in records.items()
-        })
+        }))
 
     def admit_assumption(self, assumption: dict[str, Any], mapping: dict[str, str]) -> bool:
         if any(item["formal_name"] == assumption["formal_name"] for item in self.state["assumptions"]):
             return False
-        self.state["assumptions"].append(assumption)
-        self.state["names"].append(mapping)
+        self.state["assumptions"].append(deepcopy(assumption))
+        self.state["names"].append(deepcopy(mapping))
         return True
 
     def revoke_assumption(self, assumption: dict[str, Any], mapping: dict[str, str]) -> None:
@@ -83,7 +86,7 @@ class SessionRecord:
                 return
 
     def quarantine(self, proposal: dict[str, Any]) -> None:
-        self.state.setdefault("quarantine", []).append(proposal)
+        self.state.setdefault("quarantine", []).append(deepcopy(proposal))
 
     def _read_state(self) -> dict[str, Any]:
         """The record, refusing anything this version does not read.
