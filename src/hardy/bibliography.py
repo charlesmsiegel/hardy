@@ -49,7 +49,7 @@ from pydantic import field_validator
 
 from .arxiv import PaperRecord
 from .domain import FrozenModel
-from .latex import typeset, unfinished_definition
+from .documents.syntax import typeset, unfinished_definition
 from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text
 from .storage import FileLock, LockTimeout, LockUnavailable
 

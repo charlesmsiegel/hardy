@@ -36,7 +36,7 @@ from .storage import RunStore
 # strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
-from .workspace import strip_comments
+from .formal.syntax import strip_comments
 
 # Lean's own foundations. Everything else is an assumption someone made. Kept
 # as a name here because readers and tests reach for it; `hardy.audit` owns the

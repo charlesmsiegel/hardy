@@ -11,7 +11,7 @@ import tomllib
 from pathlib import Path
 
 from .layout import LayoutError, files_under, resolve_named_child
-from .workspace import WorkspacePathError, module_name, safe_relative
+from .formal.syntax import WorkspacePathError, module_name, safe_relative
 
 #: What Hardy's own template puts in a fresh `lean/`, and so the root to
 #: declare when a problem has no sources yet. An empty `roots` array is a

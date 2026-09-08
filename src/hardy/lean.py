@@ -26,7 +26,7 @@ from .layout import WriteGuard
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
 from .truncation import truncate
-from .workspace import QUALIFIED_NAME, declared_name, strip_comments
+from .formal.syntax import QUALIFIED_NAME, declared_name, strip_comments
 
 if TYPE_CHECKING:
     from .modules import ModuleIndex

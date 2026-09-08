@@ -18,7 +18,7 @@ from __future__ import annotations
 from difflib import get_close_matches
 from pathlib import Path
 
-from .workspace import parse_imports
+from .formal.syntax import parse_imports
 
 # `lakefile.lean` sits beside the index files, opens with `import Lake`, and is
 # not a module index. Read as one it contributes the module `Lake`, which no

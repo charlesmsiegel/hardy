@@ -62,7 +62,7 @@ from .lean import (
     DeclarationSearch,
     LeanDiagnostic,
 )
-from .workspace import ANY_NAME, QUALIFIED_NAME, WRAPPER, parse_imports, strip_comments
+from .formal.syntax import ANY_NAME, QUALIFIED_NAME, WRAPPER, parse_imports, strip_comments
 
 # One declaration head. The keyword list is Lean's surface grammar for named
 # declarations; `example` is deliberately absent (anonymous by construction)

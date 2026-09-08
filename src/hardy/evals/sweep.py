@@ -251,6 +251,7 @@ DECIDING_SOURCES = (
     str(Path(__file__).resolve()),
     str(Path(__file__).resolve().parents[1] / "audit.py"),
     str(Path(__file__).resolve().parents[1] / "lean.py"),
+    str(Path(__file__).resolve().parents[1] / "formal" / "syntax.py"),
     # `sweep_entry` builds stage A, stage B and the A3 negation out of
     # `Entry.declaration/proposition/negation`. A correction to that assembly
     # moves neither the corpus fields nor the fixed package version, so
