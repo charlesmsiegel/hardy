@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from .agents.contracts import ChatRuntime, final_text, provenance
 from . import assume as assume_module
 from . import audit, compaction, completion, ingest, process, refute
 from . import summary as summary_module
@@ -151,6 +152,7 @@ from .workflows.interactive.documents import DocumentService, DocumentPolicy, Fo
 from .workflows.interactive.record import SchemaError, SessionRecord
 from .workflows.interactive.formal import FormalWorkspaceService, SavePolicy
 from .workflows.interactive.admission import AssumptionAdmission, AdmissionOperations
+from .workflows.interactive.turns import TurnCoordinator, TurnPersistence, _digest
 
 CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -202,47 +204,10 @@ def _reportability(owed: Sequence[completion.Obligation]) -> str:
 SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT
 
 
-class ChatRuntime(Protocol):
-    model: str
-    def stream(self, text: str) -> Iterator[TurnEvent]: ...
-    def ask(self, text: str) -> str: ...
-    def cancel(self) -> None: ...
 
 
-def final_text(events: Iterable[TurnEvent]) -> str:
-    """Drain a turn and keep the reply it settled on.
-
-    The one place a blocking caller turns a stream back into the string it
-    used to get. It reads the `reply` event and never the `text` deltas: the
-    deltas are for drawing, and assembling the answer from them as well would
-    return every word twice.
-    """
-    reply = ""
-    for event in events:
-        if event.kind == "reply":
-            reply = event.text
-    return reply
 
 
-def provenance(runtime: Any) -> dict[str, Any]:
-    """What produced a turn: the model alone does not identify the provider.
-
-    The same `claude-opus-5` answered by Anthropic and by an OpenAI-compatible
-    gateway are different experimental conditions, and a transcript that records
-    only the identity cannot tell them apart afterwards.
-
-    `output_limit` is here for the same reason and only where a runtime states
-    one: a cap on how much a turn may write changes where a reply truncates and
-    how much room a run has to reach a submission, so two values of it are two
-    conditions. Absent, rather than `null`, on a backend that imposes none of
-    its own -- a key that is present and empty would claim a measurement about
-    a transport that made none.
-    """
-    stated = {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
-    limit = getattr(runtime, "output_limit", None)
-    if limit is not None:
-        stated["output_limit"] = limit
-    return stated
 
 
 def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
@@ -642,46 +607,6 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
     return source, tactics
 
 
-def _digest(messages: Sequence[Message]) -> str:
-    """A digest over a run of conversation messages, in order.
-
-    The point of recording one is that a compaction says what it dropped in
-    terms an auditor can check. Counts cannot: two different conversations of
-    the same length agree on every number in the entry. `Message.as_dict` is
-    the serialisation the transcript already uses for the messages it carries,
-    so the same reconstruction that would be compared against the record is
-    the one this digests.
-    """
-    running = hashlib.sha256()
-    for message in messages:
-        running.update(json.dumps(message.as_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8"))
-        # And the reasoning blocks, which `as_dict` deliberately leaves out --
-        # a transcript is a record of what was said, and these are opaque
-        # provider state. They are still *sent*, though: `as_messages` puts
-        # them back in the turn they belong to, so two contexts differing only
-        # in them are two different requests, and a digest that could not tell
-        # them apart could not answer the question it exists for. Hashed
-        # through `loop.reasoning_digest` -- the same contribution the
-        # `thinking` event records -- so nothing here transcribes what it will
-        # not publish and a reader holding the transcript can still recompute
-        # what this covered.
-        # The block *order* when the transport kept it -- two turns differing
-        # only in the arrangement of their text and calls are two different
-        # requests, and the fields above group by kind and cannot tell them
-        # apart. Through `block_order`, which is what the assistant event
-        # records: hashing the provider objects instead put the representation
-        # of public text and tool blocks into a digest no reader could
-        # reproduce from the transcript. Where there are no blocks the
-        # reasoning still contributes on its own, since it is sent and
-        # `as_dict` leaves it out.
-        carried = block_order(message.blocks) if message.blocks else tuple(
-            reasoning_digest(block) for block in message.reasoning
-        )
-        for entry in carried:
-            running.update(entry.encode("utf-8"))
-            running.update(b"\x1f")
-        running.update(b"\x1e")
-    return running.hexdigest()
 
 
 class MathematicsSession:
@@ -827,19 +752,20 @@ class MathematicsSession:
         # The SDK may call several tools at once, each on its own thread, but
         # these run Lean, rewrite session.json, and stop to ask a human for
         # approval. None of that is safe to interleave.
-        self._gate = threading.Lock()
+        self.turns = TurnCoordinator()
+        self._gate = self.turns._gate
         # Set for the rest of a turn once it is cancelled, and cleared when the
         # next one starts. Read by `_dispatch` on the SDK's own tool threads,
         # which is why it is an Event rather than a bare bool.
-        self._cancelled = threading.Event()
+        self._cancelled = self.turns._cancelled
         # Whether the exchange in flight has had a `result` out of the provider
         # yet. An Event for the same reason `_cancelled` is one: it is set on
         # the runtime's thread and read on whichever thread drained the turn.
-        self._reported = threading.Event()
+        self._reported = self.turns._reported
         # Held across reading `_reported` and folding, so the runtime's worker
         # and the thread that drained the turn make one decision about who
         # records the exchange rather than two guesses.
-        self._spend = threading.Lock()
+        self._spend = self.turns._spend
         # `session.json` is written from more than one thread -- a tool call
         # under the gate above, and `_observed` remembering the provider thread
         # on the runtime's own thread -- and `WriteGuard.write_json` replaces a
@@ -856,7 +782,7 @@ class MathematicsSession:
         # file, so a save of a *different* source has not been shown to fix
         # anything and must still count against the streak.
         self._checked_green = self.formal._checked_green
-        self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
+
         # Whether a *completed* `inspect_declarations` batch has run since the
         # last axiom request. `_searched_since_request`, below, carries what it
         # found. `_inspect_attempts_since_request` counts every call, whether
@@ -979,37 +905,7 @@ class MathematicsSession:
         return runtime
 
     def _observed(self, event: dict[str, Any]) -> None:
-        """What the runtime reports, recorded and acted on.
-
-        `_stream`'s teardown remembers the provider thread for a turn somebody
-        drained. This covers one nobody did -- `stream` supports that, and the
-        runtime's worker is eager, so the turn really happens. Left to the
-        generator alone, reopening the workspace would start from nothing while
-        the artifacts on disk implied a conversation that had already taken
-        place.
-        """
-        offset = self._record(event)
-        if event.get("type") != "result":
-            return
-        self._remember_thread()
-        if not self._from_the_turn_in_flight():
-            # A report the consumer already gave up waiting for. It is kept in
-            # the transcript -- it happened -- but folding it would corrupt the
-            # ledger rather than improve it: every figure in it is
-            # session-to-date, and a *later* turn has since reported a larger
-            # one, so this smaller figure is not new spend but an older view of
-            # spend already counted. Differencing against it would read as a
-            # counter restart and add the whole thing a second time. The
-            # exchange it belongs to is in the ledger already, recorded as
-            # unreported by its own teardown.
-            #
-            # The cursor still advances past it. Skipping is a decision, and a
-            # replay after a crash must make the same one rather than folding
-            # what this deliberately did not.
-            self._skip_spend(offset)
-            return
-        self._reported.set()
-        self._remember_spend(event, offset)
+        return self.turns._observed(event, self._turn_persistence())
 
     def _from_the_turn_in_flight(self) -> bool:
         """Whether this report belongs to the turn the session is running now.
@@ -2181,9 +2077,7 @@ class MathematicsSession:
         # reads this to decide whether the session has done *anything* at all,
         # and a session that got three axioms approved and wrote nothing else
         # must not read as having made no tool call.
-        counts = self._tool_tally.setdefault(name, [0, 0])
-        counts[0] += 1
-        counts[1] += int(ok)
+        return self.turns._tally(name, ok)
 
     def _streak_key(self, path: str) -> str:
         return self.formal._streak_key(path)
@@ -2922,133 +2816,10 @@ class MathematicsSession:
             "transcript": list(self._recorded()),
         }
     def _record_overflow(self, plan: compaction.Plan) -> None:
-        """Say that a request the window has no room for is going out anyway.
-
-        There is no compaction to perform -- summarising nothing and keeping
-        everything is not one -- and that is not the same fact as a request
-        that fits. It is still sent: `estimate_tokens` bounds from above, one
-        token per UTF-8 byte, so over the estimate is not necessarily over the
-        endpoint's own count, and refusing on Hardy's arithmetic would end
-        sessions the provider would have answered. What this buys is that a
-        rejection has an entry to be read against.
-        """
-        if not plan.overflow:
-            return
-        self._record({
-            "type": "overflow",
-            "estimated_tokens": {"before": plan.before, "available": plan.available},
-            "context_window": self.context_window,
-            "why": "the request is over the window and no legal cut is above the kept tail",
-        })
+        return self.turns._record_overflow(plan, self.context_window, self._turn_persistence())
 
     def compact(self, messages: list[Message]) -> list[Message] | None:
-        """Hardy's compaction, for a loop Hardy owns.
-
-        Returns None when nothing needs doing, which is most turns. When
-        something does, the conversation becomes the summary plus a tail cut
-        at a point a conversation may legally resume from -- `loop`'s rule,
-        which never separates a tool result from the call it answers.
-
-        The event goes into `transcript.jsonl` before the new conversation is
-        handed back, and it carries what was summarised, where the kept
-        messages start, and what the summary said. A compaction that left no
-        trace would be exactly the invisible loss this exists to prevent.
-        """
-        # Asked twice, cheaply first. This runs before *every* provider call,
-        # and assembling the facts scans the Lean tree, the stored audits and
-        # the whole of `transcript.jsonl` -- so rendering a summary to find out
-        # that a short conversation needs none made an ordinary turn re-read an
-        # ever-growing record, which is quadratic over a session and felt as
-        # latency in the terminal. The first pass costs an arithmetic sweep of
-        # the messages.
-        overhead = self._request_overhead()
-        first = compaction.plan(
-            messages,
-            context_window=self.context_window,
-            reserve_tokens=compaction.RESERVE_TOKENS,
-            keep_tokens=compaction.RECENT_TOKENS,
-            overhead_tokens=overhead,
-            output_tokens=self._output_cap(),
-        )
-        if not first.needed:
-            # Reported from here as well as below, because this is where the
-            # uncuttable case actually leaves: a request the window has no room
-            # for, with no legal cut above the tail, is `needed=False` on this
-            # pass and never reaches the summary. Handled only after the
-            # summary was built, the branch could not be arrived at at all for
-            # the one case it was written for.
-            self._record_overflow(first)
-            return None
-        # Now it is worth the read. Rendered before the plan is settled, not
-        # after: the summary is prepended to whatever the plan keeps, so what
-        # it costs has to be charged against the same budget the kept tail is.
-        # Costed by rendering it once and measuring, rather than by an
-        # allowance -- a workspace with fifty registered names has a summary an
-        # allowance would badly misjudge.
-        summarised = self._summary()
-        outcome = compaction.plan(
-            messages,
-            context_window=self.context_window,
-            reserve_tokens=compaction.RESERVE_TOKENS,
-            keep_tokens=compaction.RECENT_TOKENS,
-            summary_tokens=compaction.estimate_tokens([Message("user", text=compaction.rendered(summarised))]),
-            overhead_tokens=overhead,
-            output_tokens=self._output_cap(),
-        )
-        if not outcome.needed:
-            # A request the window has no room for, with nothing above the
-            # tail that may legally be cut. There is no compaction to perform,
-            # and that is not the same fact as a conversation that fits: left
-            # to `needed` alone, the record showed nothing at all where an
-            # oversized request was about to go out. It still goes --
-            # `estimate_tokens` bounds from above, so over the estimate is not
-            # necessarily over the endpoint's own count -- and if the provider
-            # refuses it, this is the entry that says why.
-            self._record_overflow(outcome)
-            return None
-        self._record({
-            "type": "compaction",
-            # Counts of *conversation messages*, which are not transcript
-            # events: one assistant turn can produce an assistant event, a
-            # tool_use, a tool_result, a result and an obligation, and Hardy's
-            # own steering events have no message at all. So these locate the
-            # cut in the list the loop holds -- which ends with the process --
-            # and nothing more. The digests below are what an auditor can
-            # actually check a reconstruction against.
-            "summarized_messages": outcome.cut,
-            "kept_from": outcome.cut,
-            "kept_messages": len(messages) - outcome.cut,
-            # What was dropped and what was kept, each as a digest over the
-            # messages themselves. A count cannot identify a conversation and
-            # an index into a list nobody else has cannot be followed, so a
-            # reader with a candidate reconstruction had no way to tell whether
-            # it was the context later calls actually ran on. These say so.
-            "summarized_digest": _digest(messages[: outcome.cut]),
-            "kept_digest": _digest(messages[outcome.cut :]),
-            # And where in `transcript.jsonl` this happened, so the event
-            # locates itself in the record rather than only in the run.
-            "transcript_length": self._transcript_end(),
-            # `after` counts the summary as well as the kept tail, because
-            # both are sent, and `fits` compares it against the window rather
-            # than against the conversation it replaced -- compacting is still
-            # the best move available when it does not fit, and saying so beats
-            # a record that implies it was enough.
-            "estimated_tokens": {
-                "before": outcome.before,
-                "after": outcome.after,
-                "available": outcome.available,
-                "fits": outcome.fits,
-            },
-            # The window the cut was planned against, not only what was left
-            # of it. `available` is the window less the reserve and the
-            # request's own overhead, so two records with different windows can
-            # show the same `available` -- and a transcript that does not state
-            # the window cannot say which endpoint's limit the cuts were for.
-            "context_window": self.context_window,
-            "sections": {section.title: list(section.shown) for section in summarised.sections},
-            "text": compaction.rendered(summarised),
-        })
-        return compaction.compacted(messages, outcome.cut, summarised)
+        return self.turns.compact(messages, context_window=self.context_window, request_overhead=self._request_overhead, output_cap=self._output_cap, summary=self._summary, persistence=self._turn_persistence())
 
     def _output_cap(self) -> int:
         """What the runtime says it may write, charged against the same window.
@@ -5406,62 +5177,27 @@ class MathematicsSession:
         except ValueError:
             return str(path)
 
+    @property
+    def _tool_tally(self) -> dict[str, list[int]]:
+        return self.turns._tool_tally
+
+    @_tool_tally.setter
+    def _tool_tally(self, value: dict[str, list[int]]) -> None:
+        self.turns._tool_tally = value
+
+    def _turn_persistence(self) -> TurnPersistence:
+        return TurnPersistence(
+            event=self._record,
+            remember_thread=self._remember_thread,
+            current_turn=self._from_the_turn_in_flight,
+            read_usage=lambda: self.record.usage,
+            publish_usage=self.record.publish_usage,
+            mark_read=self._mark_ledger_read,
+            end=self._transcript_end,
+        )
+
     def stream(self, text: str) -> Iterator[TurnEvent]:
-        """One exchange, as it arrives. The SDK decides how many tools to call.
-
-        Hardy no longer counts the turns — see issue #23. What it still does is
-        run every tool the model asks for, and write down what happened.
-
-        The events are for whoever is drawing the turn. What lands in
-        `transcript.jsonl` is unchanged and still comes from `observe` and
-        `_dispatch`: the record holds whole blocks and tool results, because a
-        transcript of ten thousand token deltas would be worse evidence, not
-        better.
-        """
-        # Deliberately not a generator itself, and neither is the runtime's
-        # `stream`. A generator body does not run until it is first iterated,
-        # which would make the record of the turn wait on a consumer that may
-        # never come -- and the whole point of `record_abandonment` is that a
-        # turn nobody waited for still leaves a trace.
-        #
-        # It also decides where the per-turn reset below happens. The terminal
-        # iterates on a worker thread, so a lazy body would clear the flag
-        # *after* an Esc pressed in the same input batch as the Enter that
-        # started the turn, wiping a cancellation the transcript had already
-        # recorded. Starting a turn belongs on the thread that sequenced it;
-        # only the waiting belongs on the worker.
-        # Computed before the `user` event: the block reports the tally and
-        # the workspace as they stood when the turn started, and it must
-        # appear in the transcript ahead of the text it is prepended to, or a
-        # reader replaying the record would see the model's context before
-        # the human line that is supposed to have come first.
-        block = self._steering_block()
-        if block:
-            self._record({"type": "steering", "text": block})
-        self._record({"type": "user", "message": {"role": "user", "content": text}})
-        # Cleared here rather than in `cancel`: a turn cancelled during the
-        # previous exchange must not silently disarm this one's tool gate.
-        self._cancelled.clear()
-        # A new turn is a new chance; the tally is not reset, the streak is --
-        # and with it, which sources a `check_lean` this turn has vouched for.
-        self._save_streak.clear()
-        self._checked_green.clear()
-        # Same reasoning, and the same thread: what the last exchange reported
-        # says nothing about whether this one will.
-        with self._spend:
-            self._reported.clear()
-        # And the same for the children. A stop stays in force after `cancel`
-        # so that a tool call already past the gate cannot spawn its child a
-        # moment later and outlive the press that was spent on it -- which
-        # means something has to lift it, or this turn's first child would be
-        # killed on sight by the last turn's Esc.
-        self.resume_work()
-        # Sent to the model as one string ahead of what the person typed,
-        # rather than as a separate message: the runtime's history is a
-        # sequence of turns, and a block that arrived as its own turn would
-        # read back as something one of the parties said, not as the
-        # workspace's own arithmetic addressed to whoever reads next.
-        return self._stream(self.runtime.stream(f"{block}\n\n{text}" if block else text))
+        return self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_block, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
 
     def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
         # An explicit `yield`, not `yield from`. A consumer that unwinds --
@@ -5470,48 +5206,7 @@ class MathematicsSession:
         # interrupts the model and then waits on its worker, all while this
         # session's tool gate is still open and the provider can dispatch one
         # more call. Yielding here means the gate shuts before any of that.
-        iterator = iter(events)
-        tail: Iterator[TurnEvent] | None = None
-        try:
-            while True:
-                if tail is None:
-                    try:
-                        event = next(iterator)
-                    except StopIteration:
-                        # The model has stopped talking; Hardy has not. What it
-                        # says here is read off the artifacts, so a turn that
-                        # ended "proved it" over a workspace with no Lean in it
-                        # is contradicted in front of the user, in the same
-                        # breath, every time.
-                        tail = iter(self._closing_notice())
-                        continue
-                else:
-                    try:
-                        event = next(tail)
-                    except StopIteration:
-                        return
-                try:
-                    yield event
-                except BaseException:
-                    self._cancelled.set()
-                    raise
-        finally:
-            close = getattr(iterator, "close", None)
-            if close is not None:
-                close()
-            # Even a failed exchange belongs to a provider thread, and that turn
-            # and its tool calls are only reachable again by resuming it.
-            self._remember_thread()
-            # And it belongs in the ledger. A transport failure, or Hardy's own
-            # wall clock firing after the request went out, ends the exchange
-            # with no `result` at all -- but the provider may well have billed
-            # for what it did before that. Counted with everything about it
-            # unreported, because the alternative is a session that burned
-            # tokens and still says `Nothing spent yet.` Final: the runtime's
-            # worker can outlive the wait `_consume` gives it, but a report
-            # arriving after this is stale rather than late -- `_observed`
-            # says why it cannot be folded in afterwards.
-            self._remember_spend({}, self._transcript_end(), unreported=True)
+        return self.turns._stream(events, persistence=self._turn_persistence(), closing_notice=self._closing_notice)
 
     def _closing_notice(self) -> list[TurnEvent]:
         """What the workspace owes, said by Hardy rather than by the model.
@@ -5565,135 +5260,25 @@ class MathematicsSession:
         return final_text(self.stream(text))
 
     def cancel(self, reason: str = "user_cancelled") -> int:
-        """Stop the turn and the work it has already started. Any thread.
-
-        The model stops, no *further* tool call runs, and every child process
-        this session has in flight is asked to stop — a Lean elaboration, a
-        Tectonic compile, the cell a CAS kernel is grinding on. Returns how
-        many were asked, so a caller can say what it actually reached.
-
-        Idempotent in the part that records the cancellation, deliberately not
-        in the part that signals: `_cancelled` is what stops a *second*
-        transcript entry and a second teardown of the runtime, and the children
-        are asked once because that is all the first press has to do. A second
-        press escalates, and goes through `escalate` rather than back through
-        here.
-
-        What this still cannot promise is that a file a tool call already wrote
-        will be unwritten. An interrupted child leaves whatever it had already
-        put on disk, which is why `_dispatch` refuses new calls rather than
-        trying to undo finished ones.
-        """
-        if self._cancelled.is_set():
-            return 0
-        self._cancelled.set()
-        self._record({"type": "turn", "status": "cancelled", "reason": reason})
-        cancel = getattr(self.runtime, "cancel", None)
-        if cancel is not None:
-            cancel()
-        return self.interrupt_work()
+        return self.turns.cancel(reason, runtime=self.runtime, interrupt_work=self.interrupt_work, persistence=self._turn_persistence())
 
     def resume_work(self) -> None:
-        """Lift a stop, so new work is allowed to run. Any thread.
-
-        A stop stays in force after `cancel` so that work admitted a moment
-        earlier cannot start its child after the press and outlive it. That
-        makes lifting it somebody's job, and the job belongs to whatever is
-        about to start work: a turn does it here, and the terminal does it
-        before running a command, because a command is not a turn and an Esc
-        pressed during one would otherwise still be in force over the next.
-        """
-        process.resume_children()
-        if self.cas is not None:
-            self.cas.session.resume()
+        return self.turns.resume_work(self.cas.session if self.cas is not None else None)
 
     def interrupt_work(self) -> int:
-        """Ask the children in flight to stop. Returns how many.
-
-        The CAS kernel is asked through its own session rather than through
-        `process`: it is persistent, and only the session knows whether a cell
-        is actually in flight and how to read what comes back. Every other
-        child registers itself with `process.tracked` -- `run_process` does it
-        for Lean and Tectonic, and the interactive LaTeX check does it around
-        the `Popen` it drives itself.
-
-        Two children are still out of reach, both inside `cas_export`: the
-        script it runs to check the export, and the fresh kernel it replays in.
-        They belong to a `CasSession` built for the export and discarded with
-        it, so an export is still bounded only by its own limits.
-
-        The register is per *process*, not per session, so this reaches every
-        tracked child running anywhere in this interpreter. Hardy runs one
-        session per process, which is why that is the same set in practice —
-        and the register is the only place a child started five call frames
-        down inside a tool is reachable from at all, short of threading a
-        cancellation token through every signature between here and there.
-        """
-        stopped = process.interrupt_children()
-        if self.cas is not None and self.cas.session.interrupt():
-            stopped += 1
-        return stopped
+        return self.turns.interrupt_work(self.cas.session if self.cas is not None else None)
 
     def escalate(self) -> int:
-        """Stop waiting for the interrupts to be taken. Returns how many.
-
-        The second press. An interrupt is a request; a child sitting in a loop
-        that never checks for signals will not take it, and this is the way out
-        of waiting on one. It costs what the timeout costs — a killed CAS
-        kernel takes its namespace with it — which is why it is deliberately
-        not what the first press does.
-        """
-        stopped = process.stop_children()
-        if self.cas is not None and self.cas.session.escalate():
-            stopped += 1
-        return stopped
+        return self.turns.escalate(self.cas.session if self.cas is not None else None)
 
     def record_abandonment(self, reason: str) -> None:
-        """Write down that a turn was walked away from.
-
-        The terminal shows a notice, but a notice dies with the session and
-        `transcript.jsonl` is what replay and evaluation read. Without this, a
-        turn the user abandoned is indistinguishable from one they waited for.
-        """
-        self._record({"type": "turn", "status": "abandoned", "reason": reason})
+        return self.turns.record_abandonment(reason, self._turn_persistence())
 
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """The single door every tool call goes through, whoever asked for it.
-
-        Recorded here rather than by the caller: the SDK reports that it *asked*
-        for a tool, but only Hardy knows what running it produced, and a
-        trajectory without the results is not an account of what happened.
-        """
-        # Checked before the gate, not inside it: a cancelled turn's queued
-        # tool calls must not first wait behind the Lean check that is still
-        # finishing. Refusing is all cancellation can do here — a call already
-        # past this point owns a subprocess and its workspace writes, and
-        # interrupting it halfway would leave worse behind than letting it end.
-        if self._cancelled.is_set():
-            return self._refuse_cancelled(name, arguments)
-        with self._gate:
-            # Checked again, now that the gate is held. The SDK may launch
-            # several calls at once: one of them can pass the check above,
-            # block here behind a Lean run that takes minutes, and reach this
-            # line long after the turn was cancelled. Without the second look
-            # it would then start fresh work and write to the workspace, which
-            # is exactly what `cancel` promises will not happen.
-            if self._cancelled.is_set():
-                return self._refuse_cancelled(name, arguments)
-            try:
-                result = self._tool(name, arguments)
-            except (KeyError, TypeError, ValueError) as error:
-                result = ToolResult(False, f"invalid tool call: {error}")
-            self._tally(name, result.ok)
-            self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
-            return result
+        return self.turns._dispatch(name, arguments, tool=self._tool, persistence=self._turn_persistence())
 
     def _refuse_cancelled(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Still recorded: a trajectory that simply omitted the call would not
-        show that the model asked for it."""
-        result = ToolResult(False, "the turn was cancelled before this tool call was made")
-        self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
-        return result
+        return self.turns._refuse_cancelled(name, arguments, self._turn_persistence())
 
     def _transcript_identity(self, length: int | None = None) -> dict[str, Any]:
         return self.record._transcript_identity(length)
@@ -5723,40 +5308,7 @@ class MathematicsSession:
         return self.record._recorded(start)
 
     def _remember_spend(self, event: dict[str, Any], offset: int, *, unreported: bool = False) -> None:
-        """Add one exchange's reported cost and tokens to the running total.
-
-        Written after every exchange rather than at the end of the session: a
-        session that is killed, or that ends by the window closing, still spent
-        what it spent, and a total that only survives a clean exit is a total
-        nobody can rely on.
-
-        Exactly one record per exchange, made by whichever of two threads gets
-        there. The runtime's worker brings the provider's report; the thread
-        that drained the turn brings the news that there was not going to be
-        one, having waited only as long as `_consume`'s teardown allows. The
-        `_reported` flag is what stops the second adding a turn the first
-        already added, and it is read and set under `_spend` so the two make
-        one decision rather than two guesses.
-
-        An exchange recorded as unreported stays that way. A report that turns
-        up afterwards is not folded into it -- see `_observed` for why a stale
-        session-to-date figure is worse than no figure -- so there is no
-        provisional state here for a later report to settle, and none to
-        persist for a reopen to reconstruct.
-
-        `self.usage` is immutable, so each assignment publishes a whole new
-        total rather than a half-updated one to the thread that draws it.
-        """
-        with self._spend:
-            if unreported:
-                if self._reported.is_set():
-                    return
-                self._reported.set()
-            self.usage = self.usage.record(event)
-            self.local[USAGE_KEY] = self.usage.as_dict()
-            self._mark_ledger_read(offset)
+        return self.turns._remember_spend(event, offset, unreported=unreported, persistence=self._turn_persistence())
 
     def _skip_spend(self, offset: int) -> None:
-        """Account for a result the ledger deliberately did not fold."""
-        with self._spend:
-            self._mark_ledger_read(offset)
+        return self.turns._skip_spend(offset, self._turn_persistence())

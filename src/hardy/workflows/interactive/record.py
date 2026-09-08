@@ -48,6 +48,11 @@ class SessionRecord:
     def local_snapshot(self) -> dict[str, Any]:
         return deepcopy(self.local)
 
+    def publish_usage(self, usage: Usage, offset: int) -> None:
+        self.usage = usage
+        self.local[USAGE_KEY] = usage.as_dict()
+        self._mark_ledger_read(offset)
+
     def publish_writeup(self, signature: str, open_names: list[str], document_digest: str | None) -> None:
         self.state["tex_signature"] = signature
         self.state["tex_open"] = open_names

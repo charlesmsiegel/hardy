@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from hardy import chat as hardy_chat
+from hardy.workflows.interactive import documents as interactive_documents
 
 UNREGISTERED = "import Mathlib\n\ntheorem Nobody : True := by exact True.intro\n"
 GREEN = "import Mathlib\n\nlemma fine : True := by exact True.intro\n"
@@ -293,14 +294,14 @@ def test_one_unreadable_tex_file_does_not_hide_the_others(session, monkeypatch) 
     (session.tex_root / "orphan.tex").write_text("x", encoding="utf-8")
     (session.tex_root / "unreadable.tex").write_text("x", encoding="utf-8")
 
-    real_read_text = hardy_chat.read_text
+    real_read_text = interactive_documents.read_text
 
     def flaky(base, relative, **kwargs):
         if str(relative) == "unreadable.tex":
             raise OSError("permission denied")
         return real_read_text(base, relative, **kwargs)
 
-    monkeypatch.setattr(hardy_chat, "read_text", flaky)
+    monkeypatch.setattr(interactive_documents, "read_text", flaky)
 
     unreached = session._unreached_tex()
 
