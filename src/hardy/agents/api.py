@@ -31,8 +31,8 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from hardy.agents.contracts import TurnEvent, final_text
+from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
 from hardy.foundation.values import ToolResult
-from hardy.loop import AgentLoop, Message, ProviderTurn, ToolCall
 
 BACKEND = "anthropic-api"
 

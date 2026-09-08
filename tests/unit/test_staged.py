@@ -8,7 +8,7 @@ def test_close_shuts_down_the_staged_cas_kernel(cas_session) -> None:
     subprocess, its pipes, and its drain threads until the whole Hardy
     process exits.
     """
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
     cas_tools = importlib.import_module('hardy.algebra.tools')
 
     session = cas_session()
@@ -50,7 +50,7 @@ class _RecordingRuntime:
 
 
 def _staged(tmp_path, cas_runtime=None):
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
     storage = importlib.import_module('hardy.workflows.storage')
     from datetime import UTC, datetime
     from uuid import UUID
@@ -334,7 +334,7 @@ def test_a_cancelled_runtime_refuses_to_open_a_new_turn():
 
     import pytest
 
-    from hardy.staged import ClaudeStagedRuntime, StagedThread
+    from hardy.agents.staged import ClaudeStagedRuntime, StagedThread
 
     runtime = ClaudeStagedRuntime(
         store=SimpleNamespace(append=lambda *a, **k: None),
@@ -362,7 +362,7 @@ def test_a_turn_is_opened_under_the_lock_that_arms_cancellation():
 
     from pydantic import BaseModel
 
-    from hardy.staged import ClaudeStagedRuntime, StagedThread
+    from hardy.agents.staged import ClaudeStagedRuntime, StagedThread
 
     class Empty(BaseModel):
         pass
@@ -391,7 +391,7 @@ def test_a_runtime_that_cannot_stream_still_answers_a_stage():
 
     from pydantic import BaseModel
 
-    from hardy.staged import ClaudeStagedRuntime, StagedThread
+    from hardy.agents.staged import ClaudeStagedRuntime, StagedThread
 
     class Empty(BaseModel):
         pass
@@ -416,7 +416,7 @@ def test_cancellation_is_armed_under_that_same_lock():
     could be submitted between the check and the arming and outlive both."""
     from types import SimpleNamespace
 
-    from hardy.staged import ClaudeStagedRuntime, StagedThread
+    from hardy.agents.staged import ClaudeStagedRuntime, StagedThread
 
     runtime = ClaudeStagedRuntime(
         store=SimpleNamespace(append=lambda *a, **k: None),
@@ -468,7 +468,7 @@ def test_cancelling_a_staged_run_asks_its_cas_kernel_to_stop() -> None:
     and `cancel` waited out `cas_cell_seconds`, a minute by default, while the
     terminal told the user the press had reached what was running.
     """
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
 
     session = _CountingCasSession()
     runtime = staged.ClaudeStagedRuntime(
@@ -494,7 +494,7 @@ def test_the_second_press_escalates_the_staged_cas_kernel() -> None:
     this kernel either -- and the terminal says the second press kills what did
     not take the hint.
     """
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
 
     session = _CountingCasSession()
     runtime = staged.ClaudeStagedRuntime(
@@ -510,7 +510,7 @@ def test_the_second_press_escalates_the_staged_cas_kernel() -> None:
 def test_a_staged_run_without_cas_is_not_an_error_to_cancel() -> None:
     """`cas_runtime` is optional: a run that never discovered one has nothing
     to ask, and cancellation must not raise over its absence."""
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
 
     runtime = staged.ClaudeStagedRuntime(
         store=None, lean_runtime_factory=lambda claim, allowed=(): None, cas_runtime=None

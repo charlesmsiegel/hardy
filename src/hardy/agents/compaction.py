@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hardy import summary as summary_module
-from hardy.loop import Message, first_legal_cut
+from hardy.agents.loop import Message, first_legal_cut
 from hardy.prompts import COMPACTION_PREAMBLE
 
 #: The window a conversation is compacted to fit, and how much of it is held

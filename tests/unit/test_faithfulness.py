@@ -547,8 +547,8 @@ def test_every_backend_accepts_the_keywords_the_gate_calls_start_with() -> None:
     """
     import inspect
 
-    codex_runtime = importlib.import_module('hardy.codex_runtime')
-    staged = importlib.import_module('hardy.staged')
+    codex_runtime = importlib.import_module('hardy.agents.codex')
+    staged = importlib.import_module('hardy.agents.staged')
 
     # Exactly what `review_translation` passes, kept in one place.
     required = {'model', 'run_dir', 'claim', 'isolated', 'phase', 'wall_seconds'}

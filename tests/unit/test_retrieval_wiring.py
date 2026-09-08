@@ -125,7 +125,7 @@ def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
     lean = importlib.import_module('hardy.formal.lean')
     retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
     storage = importlib.import_module('hardy.workflows.storage')
 
     assert 'rank_premises' in {spec['function']['name'] for spec in staged.TOOLS}
@@ -164,7 +164,7 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
     lean = importlib.import_module('hardy.formal.lean')
     retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
     storage = importlib.import_module('hardy.workflows.storage')
 
     store = storage.RunStore.create(tmp_path, 'prove', now=NOW, run_id=RUN_ID)
@@ -200,7 +200,7 @@ def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_pat
     domain = importlib.import_module('hardy.workflows.contracts')
     retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
-    staged = importlib.import_module('hardy.staged')
+    staged = importlib.import_module('hardy.agents.staged')
     storage = importlib.import_module('hardy.workflows.storage')
 
     runtime = server.LeanToolRuntime(

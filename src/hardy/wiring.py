@@ -14,8 +14,9 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from hardy import claude_runtime, doctor
 from hardy import config as configuration
+from hardy import doctor
+from hardy.agents import claude as claude_runtime
 from hardy.algebra import tools as cas_tools
 
 
@@ -32,7 +33,7 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
 
     def make(model: str | None = None, **context: Any) -> Any:
         if backend == "api":
-            from hardy.api_runtime import ApiRuntime
+            from hardy.agents.api import ApiRuntime
 
             return ApiRuntime(model or default_model, **context)
         return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
@@ -102,10 +103,10 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
         if backend == "codex":
             from openai_codex import Codex
 
-            from hardy.codex_runtime import CodexRuntime
+            from hardy.agents.codex import CodexRuntime
 
             return CodexRuntime(client=Codex(), store=store, config_path=config_path)
-        from hardy.staged import ClaudeStagedRuntime
+        from hardy.agents.staged import ClaudeStagedRuntime
         from hardy.workflows.contracts import RunPhase
 
         def observe_cas(event: dict[str, Any]) -> None:

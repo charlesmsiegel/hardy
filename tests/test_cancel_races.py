@@ -18,8 +18,8 @@ import types
 from pathlib import Path
 
 from hardy.agents.contracts import TurnEvent
+from hardy.agents.staged import ClaudeStagedRuntime
 from hardy.chat import MathematicsSession
-from hardy.staged import ClaudeStagedRuntime
 
 
 class Runtime:

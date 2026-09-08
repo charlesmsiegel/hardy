@@ -34,10 +34,10 @@ from prompt_toolkit.layout.mouse_handlers import MouseHandlers
 from prompt_toolkit.layout.screen import Screen, WritePosition
 from prompt_toolkit.output.vt100 import Vt100_Output
 
+from hardy.agents.usage import Usage
 from hardy.tui import handlers, shell
 from hardy.tui.commands import Command
 from hardy.tui.ports import Choice
-from hardy.usage import Usage
 
 from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested

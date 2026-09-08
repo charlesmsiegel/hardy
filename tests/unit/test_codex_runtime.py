@@ -70,7 +70,7 @@ def _claim(domain):
 
 
 def _runtime(tmp_path, events):
-    runtime_module = importlib.import_module('hardy.codex_runtime')
+    runtime_module = importlib.import_module('hardy.agents.codex')
     storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'codex', now=NOW, run_id=RUN_ID)
     client = FakeClient(events)
@@ -265,7 +265,7 @@ def test_a_bounded_turn_that_never_answers_is_interrupted_and_reported(
 def test_the_codex_ledger_counts_turns_and_states_no_figures(tmp_path) -> None:
     """This SDK reports no cost or token counts Hardy reads, so the manifest
     must say the run spent something unstated rather than nothing."""
-    runtime_module = importlib.import_module('hardy.codex_runtime')
+    runtime_module = importlib.import_module('hardy.agents.codex')
     storage = importlib.import_module('hardy.workflows.storage')
     domain = importlib.import_module('hardy.workflows.contracts')
     store = storage.RunStore.create(

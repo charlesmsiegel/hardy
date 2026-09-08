@@ -63,7 +63,7 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
             )
 
         def run_proof(self, thread, prompt):
-            return importlib.import_module("hardy.codex_runtime").ProofSubmission(
+            return importlib.import_module("hardy.agents.codex").ProofSubmission(
                 proof_body="by rfl", informal_proof="Reflexivity."
             )
 

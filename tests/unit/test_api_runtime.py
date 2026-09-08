@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from hardy.api_runtime import (
+from hardy.agents.api import (
     AnthropicProvider,
     ApiRuntime,
     _usage,
@@ -21,8 +21,8 @@ from hardy.api_runtime import (
     redacted,
     tool_schema,
 )
+from hardy.agents.loop import Message, ToolCall
 from hardy.foundation.values import ToolResult
-from hardy.loop import Message, ToolCall
 
 
 class Block:
@@ -338,7 +338,7 @@ def test_the_client_is_built_without_retries(monkeypatch: pytest.MonkeyPatch) ->
     """Every retry is handed the same timeout -- the whole remaining budget --
     so a request with five minutes left could spend that three times over,
     plus backoff, while the trajectory claimed Hardy kept the bound."""
-    import hardy.api_runtime as module
+    import hardy.agents.api as module
 
     seen: dict[str, object] = {}
 

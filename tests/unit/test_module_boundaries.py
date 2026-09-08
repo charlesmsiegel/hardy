@@ -64,8 +64,8 @@ def deferred():
 
 
 def test_full_tree_dependency_directions(import_graph):
-    providers = {'hardy.claude_runtime', 'hardy.api_runtime', 'hardy.codex_runtime',
-                 'hardy.staged', 'hardy.loop'}
+    providers = {'hardy.agents.claude', 'hardy.agents.api', 'hardy.agents.codex',
+                 'hardy.agents.staged', 'hardy.agents.loop'}
     launchers = {'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp'}
     controllers = {'hardy.chat', 'hardy.workflow', 'hardy.runner', 'hardy.evals.runner'}
     readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'}
@@ -149,7 +149,7 @@ def test_in_process_formal_tools_do_not_load_transport():
 
 
 def test_corpus_import_does_not_load_measurement_or_model_code():
-    script = "import hardy.corpus.catalog; import sys; assert not any(name.startswith(('hardy.evals', 'hardy.claude_runtime', 'hardy.workflow')) for name in sys.modules)"
+    script = "import hardy.corpus.catalog; import sys; assert not any(name.startswith(('hardy.evals', 'hardy.agents.claude', 'hardy.workflow')) for name in sys.modules)"
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
 

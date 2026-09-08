@@ -15,9 +15,9 @@ import pytest
 from test_chat import FakeChatRuntime, session
 from workspace_helpers import events
 
-from hardy import compaction
+from hardy.agents import compaction
+from hardy.agents.loop import Message, ToolCall
 from hardy.chat import MathematicsSession, _digest
-from hardy.loop import Message, ToolCall
 
 
 @pytest.fixture

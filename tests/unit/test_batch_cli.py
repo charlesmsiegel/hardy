@@ -50,7 +50,7 @@ def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None
         reached.append(request.declaration)
         return models.RunResult(
             'verified', 'kernel verified', 'not assessed', 'by trivial', '', {'status': 'clean'}, 1,
-            importlib.import_module('hardy.usage').Usage().summary(),
+            importlib.import_module('hardy.agents.usage').Usage().summary(),
         )
 
     monkeypatch.setattr(cli, 'run', fake_run)
@@ -137,7 +137,7 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
         seen.update(kwargs)
         return models.RunResult(
             'verified', 'kernel verified', 'not assessed', 'by trivial', '', {'status': 'clean'}, 1,
-            importlib.import_module('hardy.usage').Usage().summary(),
+            importlib.import_module('hardy.agents.usage').Usage().summary(),
         )
 
     monkeypatch.setattr(cli, 'run', fake_run)

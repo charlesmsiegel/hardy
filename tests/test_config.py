@@ -624,7 +624,7 @@ def test_a_committed_project_config_may_not_switch_the_context_off(tmp_path: Pat
 def test_the_context_window_defaults_to_the_planners_own_figure(tmp_path: Path, monkeypatch):
     """One number, in one place. A default that drifted from the constant the
     compactor plans against would cut sessions to a window nothing used."""
-    from hardy import compaction
+    from hardy.agents import compaction
 
     monkeypatch.chdir(tmp_path)
     assert config.load(tmp_path / "missing.toml").context_window == compaction.CONTEXT_WINDOW
@@ -666,7 +666,7 @@ def test_the_window_floor_is_the_transports_own_output_cap():
     """Stated in `config` rather than imported from `api_runtime`, which pulls
     in the whole chat stack to read one number. Pinned here so neither can move
     without the other."""
-    from hardy import api_runtime
+    from hardy.agents import api as api_runtime
 
     assert config.MINIMUM_CONTEXT_WINDOW == api_runtime.DEFAULT_MAX_TOKENS
 

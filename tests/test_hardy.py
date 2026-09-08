@@ -482,7 +482,7 @@ def test_a_proof_accepted_inside_the_budget_still_counts(proof_request: Request,
 
 def test_reaching_the_turn_bound_is_a_limit_not_a_provider_failure(proof_request: Request, lean: LeanTools, tmp_path: Path):
     """`--max-turns N` arriving as requested is an expected partial result."""
-    from hardy.claude_runtime import TurnLimitReached
+    from hardy.agents.claude import TurnLimitReached
 
     class Bounded(FakeRuntime):
         def ask(self, text: str) -> str:

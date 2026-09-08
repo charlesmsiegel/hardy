@@ -43,7 +43,7 @@ def probe_codex(
     """Ask the Codex SDK whether a ChatGPT subscription is signed in."""
     from importlib import metadata
 
-    from hardy.codex_runtime import load_sdk
+    from hardy.agents.codex import load_sdk
 
     version = sdk_version or metadata.version("openai-codex")
     factory = client_factory or load_sdk().Codex
@@ -61,7 +61,7 @@ def ensure_codex_login(
     confirmer: Callable[[str], bool],
     client_factory: Callable[[], Any] | None = None,
 ) -> bool:
-    from hardy.codex_runtime import load_sdk
+    from hardy.agents.codex import load_sdk
 
     factory = client_factory or load_sdk().Codex
     client = factory()

@@ -123,7 +123,7 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
     # routing a run through it anyway would make that digest defeatable --
     # an edit to `cli.py` would change what a run does without moving the key
     # every pooled row is supposed to share.
-    from hardy.staged import ClaudeStagedRuntime
+    from hardy.agents.staged import ClaudeStagedRuntime
     from hardy.wiring import build_prove_workflow
     from hardy.workflow import ProveRequest
 

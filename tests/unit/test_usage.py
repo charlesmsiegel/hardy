@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from hardy.usage import Usage
+from hardy.agents.usage import Usage
 
 
 def _ledger(**fields) -> Usage:

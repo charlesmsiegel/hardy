@@ -1191,7 +1191,7 @@ def test_a_batch_run_records_the_window_it_was_planned_against(tmp_path) -> None
 
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     limits = trajectory['limits']
-    assert limits['context_window'] == importlib.import_module('hardy.compaction').CONTEXT_WINDOW
+    assert limits['context_window'] == importlib.import_module('hardy.agents.compaction').CONTEXT_WINDOW
     # And who did the compacting, in the same terms `turns_enforced_by` uses:
     # a backend whose SDK owns the loop has nowhere to put a compactor, and
     # the record says that rather than leaving it to be assumed.
@@ -1233,7 +1233,7 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
     of facts: an unattended run has no naming registry and no approved
     assumptions, but it has the claim it was given and every failed attempt in
     Lean's own words."""
-    compaction = importlib.import_module('hardy.compaction')
+    compaction = importlib.import_module('hardy.agents.compaction')
     runner = importlib.import_module('hardy.runner')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')
@@ -1295,7 +1295,7 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
     a batch writes no workspace file for a partial development -- so prose
     alone would leave the model writing candidates that cannot type-check, with
     no way back to the skeleton the record says Hardy is holding."""
-    compaction = importlib.import_module('hardy.compaction')
+    compaction = importlib.import_module('hardy.agents.compaction')
     runner = importlib.import_module('hardy.runner')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.formal.lean')

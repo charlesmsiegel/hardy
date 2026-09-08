@@ -8,9 +8,9 @@ of them needs a model.
 
 from __future__ import annotations
 
-from hardy import compaction
 from hardy import summary as summary_module
-from hardy.loop import Message, ToolCall
+from hardy.agents import compaction
+from hardy.agents.loop import Message, ToolCall
 
 
 def _summary(**overrides) -> summary_module.Summary:

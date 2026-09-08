@@ -5,9 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from hardy import summary
+from hardy.agents.usage import Usage
 from hardy.tui import handlers
 from hardy.tui.ports import State
-from hardy.usage import Usage
 
 
 def session(**overrides):

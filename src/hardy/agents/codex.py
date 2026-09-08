@@ -23,9 +23,9 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from hardy.agents.usage import Usage
 from hardy.formal.contracts import FrozenClaim
 from hardy.prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS
-from hardy.usage import Usage
 from hardy.workflows.contracts import ProofSubmission, RunPhase
 from hardy.workflows.storage import RunStore
 

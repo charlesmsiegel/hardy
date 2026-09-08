@@ -152,7 +152,7 @@ def _scripted_controller(
     reviews=None,
 ):
     config_module = importlib.import_module('hardy.config')
-    codex_runtime = importlib.import_module('hardy.codex_runtime')
+    codex_runtime = importlib.import_module('hardy.agents.codex')
     domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
@@ -351,7 +351,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
             prompts.append(('proof', prompt))
             proof_count = len([item for item in prompts if item[0] == 'proof'])
             body = 'by exact True.intro' if proof_count == 1 else 'by rfl'
-            return importlib.import_module('hardy.codex_runtime').ProofSubmission(
+            return importlib.import_module('hardy.agents.codex').ProofSubmission(
                 proof_body=body,
                 informal_proof='Reflexivity.',
             )

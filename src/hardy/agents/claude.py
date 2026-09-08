@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from hardy.agents.contracts import TurnEvent, final_text
+from hardy.agents.loop import TurnLimitReached
 from hardy.foundation.values import ToolResult
-from hardy.loop import TurnLimitReached
 
 SERVER = "hardy"
 

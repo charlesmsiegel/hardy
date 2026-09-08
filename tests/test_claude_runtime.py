@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from hardy import claude_runtime
+from hardy.agents import claude as claude_runtime
 
 
 class ResultMessage:

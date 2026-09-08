@@ -13,10 +13,13 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from hardy import compaction, ingest
+from hardy import ingest
 from hardy import summary as summary_module
+from hardy.agents import compaction
 from hardy.agents.contracts import ChatRuntime, TurnEvent, final_text, provenance
+from hardy.agents.loop import Message
 from hardy.agents.parsing import json_object
+from hardy.agents.usage import Usage
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -64,7 +67,6 @@ from hardy.literature.bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
 from hardy.literature.bibliography import is_generated as is_generated_bibliography
 from hardy.literature.tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
 from hardy.literature.tools import build_runtime as build_paper_runtime
-from hardy.loop import Message
 from hardy.project_context import (
     PROJECT_CONTEXT_EVENT,
     PROJECT_CONTEXT_KEY,
@@ -77,7 +79,6 @@ from hardy.prompts import (
     chat_cas_prompt,
     chat_project_context_prompt,
 )
-from hardy.usage import Usage
 from hardy.workflows.contracts import RunLimits
 from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
 from hardy.workflows.interactive.documents import (

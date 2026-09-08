@@ -354,7 +354,7 @@ class RunManifest(BaseModel):
     # the rule that `user_approved` names an independent reader's agreement --
     # a version-3 manifest's approval was the human's alone, which is exactly
     # the weaker claim this version stopped accepting. 5 gave `usage` the
-    # shape `hardy.usage.Usage.summary` writes -- a figure the provider never
+    # shape `hardy.agents.usage.Usage.summary` writes -- a figure the provider never
     # stated is `None`, and `reported` says how many exchanges each figure
     # covers -- where version 4 typed it as a map of integers and every
     # staged run left it empty, which read as a run that had spent nothing.

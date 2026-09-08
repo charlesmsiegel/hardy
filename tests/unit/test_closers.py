@@ -277,7 +277,7 @@ def test_a_run_the_ladder_finishes_never_needs_the_providers_credentials(
     of the artifacts the run had earned. The runtime is still constructed --
     the record names the backend a run was configured for even when it spoke
     to nobody -- but nothing that never happens may fail."""
-    from hardy.api_runtime import ApiRuntime
+    from hardy.agents.api import ApiRuntime
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 

@@ -18,7 +18,7 @@ from test_chat import FakeChatRuntime, session
 
 from hardy import chat
 from hardy.agents.contracts import TurnEvent
-from hardy.usage import Usage
+from hardy.agents.usage import Usage
 
 REPORT = {
     "input_tokens": 10,
