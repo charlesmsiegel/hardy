@@ -10,8 +10,8 @@ RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 @pytest.mark.parametrize('entry', ['direct', 'mcp'])
 def test_both_entries_preserve_identity_budget_and_spill_sequence(tmp_path, entry):
-    from hardy import lean
     from hardy.app import mcp as server
+    from hardy.formal import lean
     from hardy.formal.tools import LeanToolRuntime
     from hardy.foundation import process
     from hardy.workflows import contracts as domain
@@ -93,7 +93,7 @@ def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
     tmp_path,
 ) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     server = importlib.import_module('hardy.app.mcp')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
@@ -130,7 +130,7 @@ def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
 
 def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     server = importlib.import_module('hardy.app.mcp')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
@@ -205,7 +205,7 @@ def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) ->
 
 
 def test_declaration_search_observation_is_bounded(tmp_path) -> None:
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
     domain = importlib.import_module('hardy.workflows.contracts')
     server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.workflows.storage')

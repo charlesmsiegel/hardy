@@ -38,7 +38,7 @@ def _claim(domain):
 
 def test_render_theorem_uses_only_the_frozen_statement_and_proof_term() -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
 
     source = lean.render_theorem(_claim(domain), 'by\n  rfl')
 
@@ -46,7 +46,7 @@ def test_render_theorem_uses_only_the_frozen_statement_and_proof_term() -> None:
 
 
 def test_parse_lean_json_returns_locations_and_open_goals() -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
 
     diagnostics, open_goals = lean.parse_lean_json(
         DIAGNOSTICS.read_text(encoding='utf-8')
@@ -60,7 +60,7 @@ def test_parse_lean_json_returns_locations_and_open_goals() -> None:
 
 
 def test_unstructured_lean_output_is_preserved_as_information() -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
 
     diagnostics, open_goals = lean.parse_lean_json('native tool message\n')
 
@@ -71,7 +71,7 @@ def test_unstructured_lean_output_is_preserved_as_information() -> None:
 
 def test_check_proof_invokes_pinned_lean_with_canonical_source(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
     lake = tmp_path / 'lake.exe'
     lean_project = tmp_path / 'lean_project'
@@ -109,7 +109,7 @@ def test_check_proof_invokes_pinned_lean_with_canonical_source(tmp_path) -> None
 
 def test_scratch_source_is_bounded_before_lean_runs(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     service = lean.LeanService(
         lake=tmp_path / 'lake.exe',
         lean_project=tmp_path,
@@ -124,7 +124,7 @@ def test_scratch_source_is_bounded_before_lean_runs(tmp_path) -> None:
 
 def test_scratch_check_uses_the_fixed_import(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
     observed = {}
 
@@ -157,7 +157,7 @@ def test_scratch_check_uses_the_fixed_import(tmp_path) -> None:
 
 def test_inspect_declarations_returns_resolved_signatures(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
     message = json.dumps(
         {
@@ -197,7 +197,7 @@ def test_inspect_declarations_returns_resolved_signatures(tmp_path) -> None:
 
 def _inspecting_service(tmp_path, runner):
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     return lean.LeanService(
         lake=tmp_path / 'lake.exe',
         lean_project=tmp_path,
@@ -358,7 +358,7 @@ def test_a_long_lean_observation_still_keeps_its_tail() -> None:
     while a file read keeps the top. Routing both through one helper is only
     safe if the helper does not quietly make them agree.
     """
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process_module = importlib.import_module('hardy.foundation.process')
     tools = lean.LeanTools(
         lean.Request.from_dict(
@@ -378,7 +378,7 @@ def test_a_long_lean_observation_still_keeps_its_tail() -> None:
 
 
 def test_a_lean_observation_that_fits_is_not_marked_truncated() -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process_module = importlib.import_module('hardy.foundation.process')
     tools = lean.LeanTools(
         lean.Request.from_dict(
@@ -397,7 +397,7 @@ def test_a_truncated_lean_observation_does_not_start_mid_line() -> None:
     """A goal state cut in half at the front reads as a goal Lean did not
     state. The character slice this replaced could land anywhere.
     """
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process_module = importlib.import_module('hardy.foundation.process')
     tools = lean.LeanTools(
         lean.Request.from_dict(

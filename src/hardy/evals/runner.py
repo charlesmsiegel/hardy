@@ -287,7 +287,7 @@ def _batch_runner(config: Any, model: str) -> BatchRunner:
     # digest -- which is to say the digest is defeatable, and the pooling key
     # stops meaning "the same code produced these rows".
     from hardy.formal.contracts import Request
-    from hardy.lean import LeanTools
+    from hardy.formal.lean import LeanTools
     from hardy.runner import run
     from hardy.wiring import runtime_factory
 

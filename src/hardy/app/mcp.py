@@ -23,11 +23,11 @@ from mcp.server.fastmcp import FastMCP
 from hardy.cas_export import ExportReport, export_session
 from hardy.cas_tools import CasCellResult, CasStateResult, CasToolRuntime, build_runtime
 from hardy.config import load as load_config
-from hardy.declarations import DeclarationIndex
 from hardy.formal.contracts import FrozenClaim, freeze_claim
+from hardy.formal.declarations import DeclarationIndex
+from hardy.formal.lean import DeclarationInspection, DeclarationSearch, LeanCheckResult, LeanService
+from hardy.formal.retrieval import PremiseRanking, build_retriever
 from hardy.formal.tools import LeanToolRuntime
-from hardy.lean import DeclarationInspection, DeclarationSearch, LeanCheckResult, LeanService
-from hardy.retrieval import PremiseRanking, build_retriever
 from hardy.workflows.storage import RunStore
 
 mcp = FastMCP("Hardy Lean Tools", json_response=True)

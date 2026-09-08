@@ -10,8 +10,8 @@ from test_chat import FakeChatRuntime, call, factory
 from workspace_helpers import events, results
 
 from hardy.chat import MathematicsSession
+from hardy.formal.workspace import LeanWorkspace
 from hardy.foundation.files import LayoutError
-from hardy.workspace import LeanWorkspace
 
 
 def workspace(tmp_path: Path, compiled: list[str], failing: set[str] | None = None) -> LeanWorkspace:

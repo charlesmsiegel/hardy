@@ -20,7 +20,7 @@ from hardy.evals.identity import run_procedure_digest_of
 from hardy.evals.runner import _batch_runner, limits_for, run_set, source_revision
 from hardy.evals.sweep import Baseline, environment_digest_of
 from hardy.formal.contracts import EnvironmentIdentity
-from hardy.lean import Elaboration, elaborate, environment_identity
+from hardy.formal.lean import Elaboration, elaborate, environment_identity
 
 DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
@@ -570,7 +570,7 @@ def check_command(args: Any) -> int:
 
 
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
-    from hardy.lean import environment_identity
+    from hardy.formal.lean import environment_identity
     from hardy.prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
     from hardy.runner import WARNING
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import lakefile
+from hardy.formal import lakefile
 
 
 def write(path: Path, text: str) -> Path:

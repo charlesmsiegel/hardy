@@ -13,10 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from hardy import audit
-from hardy.foundation.values import ToolResult
-from hardy.lean import LeanTools
-from hardy.workspace import (
+from hardy.formal import audit
+from hardy.formal.lean import LeanTools
+from hardy.formal.workspace import (
     IDENTIFIER,
     QUALIFIED_NAME,
     BuildFailure,
@@ -31,6 +30,7 @@ from hardy.workspace import (
     safe_relative,
     unreadable_assumptions,
 )
+from hardy.foundation.values import ToolResult
 
 # The head of a saved theorem's statement as `statements` reports it: the
 # keyword, then the declared name, then the signature an anonymous `example`

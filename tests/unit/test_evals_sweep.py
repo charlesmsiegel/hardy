@@ -11,8 +11,8 @@ from pydantic import ValidationError
 from hardy.evals import sweep
 from hardy.evals.problems import Entry, ProblemSet
 from hardy.formal.contracts import EnvironmentIdentity
+from hardy.formal.lean import Elaboration, parse_lean_json
 from hardy.foundation.process import ProcessResult
-from hardy.lean import Elaboration, parse_lean_json
 
 
 def _elaboration(lines: list[dict], *, returncode=0, timed_out=False, duration_ms=1500) -> Elaboration:

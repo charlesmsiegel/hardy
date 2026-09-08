@@ -18,9 +18,9 @@ from uuid import UUID
 
 from hardy.documents.contracts import DocumentStatus
 from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
+from hardy.formal.verifier import VerificationResult
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
-from hardy.verifier import VerificationResult
 from hardy.workflows.contracts import Grades, RunLimits
 from hardy.workflows.storage import ArtifactIdentity, RunStore
 

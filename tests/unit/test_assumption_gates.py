@@ -157,7 +157,7 @@ def test_an_error_lean_could_not_place_counts_against_the_declaration(
 ) -> None:
     """"No error on that line" must mean the tactic closed the goal, not that
     Hardy could not tell where the error was."""
-    from hardy.lean import LeanDiagnostic, LeanToolResult
+    from hardy.formal.lean import LeanDiagnostic, LeanToolResult
 
     def unplaced(source: str, timeout: float | None = None):
         return LeanToolResult(
@@ -181,7 +181,7 @@ def test_an_error_before_the_probes_is_refused_not_credited_as_a_proof(
     """`import Mathlib` failing on line 1 leaves every probe line without an
     error of its own, which used to read as every probe having closed the
     goal -- Lean never reached any of them."""
-    from hardy.lean import LeanDiagnostic, LeanToolResult
+    from hardy.formal.lean import LeanDiagnostic, LeanToolResult
 
     def stray(source: str, timeout: float | None = None):
         return LeanToolResult(
@@ -304,7 +304,7 @@ def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
     """Every conclusion the probe draws is from which line an error landed on.
     With no errors to place, "no error on line 5" would read as "`trivial`
     closed the goal" -- an unusable answer turned into a confident refusal."""
-    from hardy.lean import LeanToolResult
+    from hardy.formal.lean import LeanToolResult
 
     def mute(source: str, timeout: float | None = None):
         return LeanToolResult(False, "something went wrong", source, diagnostics=())
@@ -498,7 +498,7 @@ def test_an_error_before_the_probes_is_not_read_as_the_probe_closing_the_goal(
     """`import Mathlib` failing on line 1 leaves every `example` line without
     an error of its own, which used to read as the probe having closed the
     goal -- Lean never reached it."""
-    from hardy.lean import LeanDiagnostic, LeanToolResult
+    from hardy.formal.lean import LeanDiagnostic, LeanToolResult
 
     def stray(source: str, timeout: float | None = None):
         return LeanToolResult(

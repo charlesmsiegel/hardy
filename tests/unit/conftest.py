@@ -219,7 +219,7 @@ def fake_lean(session, monkeypatch):
     `timed_out`, `interrupted` and `diagnostics`, and the base result carries
     none of them.
     """
-    from hardy.lean import LeanDiagnostic, LeanToolResult
+    from hardy.formal.lean import LeanDiagnostic, LeanToolResult
 
     class Fake:
         closes_with: str | None = None

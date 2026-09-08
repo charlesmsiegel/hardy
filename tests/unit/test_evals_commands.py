@@ -190,7 +190,7 @@ def test_baseline_reports_a_toolchain_that_cannot_be_identified_instead_of_a_tra
 
     # commands.py imports environment_identity by name at module scope, unlike
     # runner.py's per-call local import, so the patch target is the commands
-    # module's own binding, not hardy.lean's.
+    # module's own binding, not hardy.formal.lean's.
     monkeypatch.setattr(commands, "environment_identity", boom)
     problems = _corpus(tmp_path)
     out = tmp_path / "baseline.json"

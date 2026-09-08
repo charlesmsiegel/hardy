@@ -41,13 +41,13 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
-    from hardy import lean as lean_module
-    from hardy import retrieval
-    from hardy.declarations import DeclarationIndex
+    from hardy.formal import lean as lean_module
+    from hardy.formal import retrieval
+    from hardy.formal.declarations import DeclarationIndex
+    from hardy.formal.lean import LeanService
     from hardy.formal.tools import LeanToolRuntime
-    from hardy.lean import LeanService
+    from hardy.formal.verifier import FinalVerifier
     from hardy.prompts import PROMPT_SET_SHA256
-    from hardy.verifier import FinalVerifier
     from hardy.workflow import ProveWorkflow
     from hardy.writeup import RunIdentities, build_writeup, tectonic_version
 

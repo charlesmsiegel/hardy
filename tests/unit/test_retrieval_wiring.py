@@ -65,8 +65,8 @@ def _retriever(retrieval, results, seconds=300):
 
 def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
-    retrieval = importlib.import_module('hardy.retrieval')
+    lean = importlib.import_module('hardy.formal.lean')
+    retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.workflows.storage')
 
@@ -122,8 +122,8 @@ def test_a_run_without_a_retriever_says_so_instead_of_ranking_nothing(tmp_path) 
 
 def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
-    retrieval = importlib.import_module('hardy.retrieval')
+    lean = importlib.import_module('hardy.formal.lean')
+    retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
     storage = importlib.import_module('hardy.workflows.storage')
@@ -161,8 +161,8 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
     answered, for a result that shaped the proof.
     """
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
-    retrieval = importlib.import_module('hardy.retrieval')
+    lean = importlib.import_module('hardy.formal.lean')
+    retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
     storage = importlib.import_module('hardy.workflows.storage')
@@ -198,7 +198,7 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
 
 def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    retrieval = importlib.import_module('hardy.retrieval')
+    retrieval = importlib.import_module('hardy.formal.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
     storage = importlib.import_module('hardy.workflows.storage')

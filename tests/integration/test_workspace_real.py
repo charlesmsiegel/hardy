@@ -15,8 +15,8 @@ import pytest
 
 from hardy.config import load
 from hardy.formal.contracts import Request
-from hardy.lean import LeanTools
-from hardy.workspace import LeanWorkspace
+from hardy.formal.lean import LeanTools
+from hardy.formal.workspace import LeanWorkspace
 
 
 def _workspace(tmp_path: Path) -> LeanWorkspace:

@@ -45,9 +45,9 @@ from pathlib import Path
 from pydantic import NonNegativeInt
 
 from hardy.formal.contracts import EnvironmentIdentity
+from hardy.formal.lean import DECLARATION_NAME, LEAN_COMMIT, LEAN_VERSION, Elaboration, elaborate
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
-from hardy.lean import DECLARATION_NAME, LEAN_COMMIT, LEAN_VERSION, Elaboration, elaborate
 
 # How many probes a measurement takes when the caller does not say. The first
 # elaboration also warms the operating system's page cache, so a single sample
@@ -70,7 +70,7 @@ DEFAULT_THRESHOLD = 0.25
 MINIMUM_SAMPLES = 3
 
 
-# `LEAN_VERSION` and `LEAN_COMMIT` are `hardy.lean`'s: the staged path now asks
+# `LEAN_VERSION` and `LEAN_COMMIT` are `hardy.formal.lean`'s: the staged path now asks
 # the compiler the same question this probe does, and two parsers of one
 # format would drift apart on exactly the builds one of them had been fixed
 # for.

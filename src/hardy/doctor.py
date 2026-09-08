@@ -10,8 +10,8 @@ from pathlib import Path
 
 from hardy.config import DEFAULT_CAS_BACKEND, Config
 from hardy.formal.contracts import Request
+from hardy.formal.lean import LeanTools
 from hardy.foundation.process import run_guarded
-from hardy.lean import LeanTools
 
 MATHLIB_PROBE = "import Mathlib\n\nexample : 2 + 2 = 4 := by norm_num\n"
 LAKEFILES = ("lakefile.toml", "lakefile.lean")

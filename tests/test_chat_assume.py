@@ -232,7 +232,7 @@ def test_a_statement_lean_proves_outright_is_refused_as_a_theorem(sourced, monke
 
 
 def test_a_statement_whose_negation_lean_proves_is_refused(sourced, monkeypatch) -> None:
-    from hardy import refute
+    from hardy.formal import refute
 
     monkeypatch.setattr(
         sourced, "_refutation_probe", lambda statement: refute.Verdict(True, tactic="decide")
@@ -251,7 +251,7 @@ def test_a_refutation_that_could_not_be_run_does_not_block_the_request(
 ) -> None:
     """A machine whose Lean will not start must not be one where nothing can
     be assumed. The caveat travels to the human instead."""
-    from hardy import refute
+    from hardy.formal import refute
 
     shown: list[dict] = []
     sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True

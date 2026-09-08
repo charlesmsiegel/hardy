@@ -88,7 +88,7 @@ def _forge_modulo(run_dir, manifest, *, axiom="falsum", statement="False", decla
     import json
 
     domain = importlib.import_module("hardy.workflows.contracts")
-    verifier = importlib.import_module("hardy.verifier")
+    verifier = importlib.import_module("hardy.formal.verifier")
 
     main = run_dir / "lean" / "Main.lean"
     main.write_text(f"axiom {axiom} : {statement}\n\n" + main.read_text(encoding="utf-8"),

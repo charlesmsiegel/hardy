@@ -17,7 +17,7 @@ one tactic is still a lemma.
 
 from __future__ import annotations
 
-from hardy.lean import LeanDiagnostic, LeanToolResult
+from hardy.formal.lean import LeanDiagnostic, LeanToolResult
 
 SOURCE = "import Mathlib\n\ntheorem vacuous : True := by exact True.intro\n"
 
@@ -356,7 +356,7 @@ def test_the_probe_runs_without_the_workspace_on_the_lean_path(session, monkeypa
 
     def capture(source, *, env=None, audit=(), timeout=None):
         seen["env"] = env
-        from hardy.lean import LeanToolResult
+        from hardy.formal.lean import LeanToolResult
 
         return LeanToolResult(True, "", source, diagnostics=())
 

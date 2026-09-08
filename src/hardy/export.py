@@ -43,7 +43,7 @@ from typing import Any
 
 # The key-name rule a trajectory is already written under. Imported rather than
 # restated so one list decides what counts as a credential for both.
-from hardy.audit import DeclarationStatus, declaration_status
+from hardy.formal.audit import DeclarationStatus, declaration_status
 from hardy.foundation.truncation import truncate
 from hardy.workflows.storage import SECRET_KEY
 from hardy.workflows.storage import _redact as redact_payload

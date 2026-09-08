@@ -73,7 +73,7 @@ def test_verifier_rejects_holes_and_declarations_before_running_lean(
 ) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
     final = verifier.FinalVerifier(
@@ -98,7 +98,7 @@ def test_verifier_runs_fresh_lean_and_accepts_only_the_standard_axiom_allowlist(
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
     observed = {}
@@ -154,7 +154,7 @@ def test_verifier_rejects_a_changed_signature_hash_without_running_lean(
 ) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     changed = claim.model_copy(
         update={
@@ -181,7 +181,7 @@ def test_verifier_rejects_top_level_declarations_in_frozen_signature_fields(
 ) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     original = _claim(domain)
     injected_proposition = (
         'True := by trivial\n'
@@ -241,7 +241,7 @@ def test_verifier_fails_closed_for_process_and_axiom_failures(
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
     stdout = (
@@ -277,7 +277,7 @@ def test_verifier_fails_closed_for_process_and_axiom_failures(
 
 def test_verification_result_rejects_a_verified_record_with_no_evidence(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
 
     with pytest.raises(ValidationError, match='evidence'):
         verifier.VerificationResult(
@@ -319,7 +319,7 @@ def test_verification_result_rejects_a_verified_record_with_no_evidence(tmp_path
 
 def test_rejected_verification_result_rejects_evidence(tmp_path) -> None:
     domain = importlib.import_module('hardy.workflows.contracts')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     evidence = domain.VerificationEvidence(
         claim_sha256='a' * 64,
         source_sha256='s' * 64,
@@ -343,7 +343,7 @@ def test_accepted_proof_carries_evidence_that_re_derives_its_digest(tmp_path) ->
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
     message = json.dumps(
@@ -382,7 +382,7 @@ def _verify_reporting(tmp_path, name, report, proof='by rfl'):
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',
         domains=(),

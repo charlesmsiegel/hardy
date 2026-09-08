@@ -30,15 +30,15 @@ from hardy.formal.contracts import (
     FrozenClaim,
     VerificationEvidence,
 )
+from hardy.formal.lean import LeanCheckResult
+from hardy.formal.lean import scannable as scannable
 from hardy.formal.syntax import declared_name as declared_name
+from hardy.formal.verifier import ALLOWED_AXIOMS as ALLOWED_AXIOMS
+from hardy.formal.verifier import FORBIDDEN_TOKEN as FORBIDDEN_TOKEN
+from hardy.formal.verifier import VerificationResult, verification_source
 from hardy.foundation.process import ProcessResult
 from hardy.foundation.values import FrozenModel
-from hardy.lean import LeanCheckResult
-from hardy.lean import scannable as scannable
 from hardy.prompts import PROMPT_SET_SHA256
-from hardy.verifier import ALLOWED_AXIOMS as ALLOWED_AXIOMS
-from hardy.verifier import FORBIDDEN_TOKEN as FORBIDDEN_TOKEN
-from hardy.verifier import VerificationResult, verification_source
 from hardy.workflow import ProveRequest, ProveWorkflow
 from hardy.workflows.contracts import (
     FaithfulnessReview,

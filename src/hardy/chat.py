@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hardy import assume as assume_module
-from hardy import audit, compaction, completion, ingest, refute
+from hardy import compaction, completion, ingest
 from hardy import summary as summary_module
 from hardy.agents.contracts import ChatRuntime, TurnEvent, final_text, provenance
 from hardy.agents.parsing import json_object
@@ -24,54 +24,12 @@ from hardy.bibliography import is_generated as is_generated_bibliography
 from hardy.cas import CasError
 from hardy.cas_export import export_session
 from hardy.cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from hardy.formal import audit, refute
 from hardy.formal.contracts import Request
-from hardy.foundation import process
-from hardy.foundation.files import (
-    LayoutError,
-    WriteGuard,
-    files_under,
-    guard_for,
-    read_bytes,
-    read_text,
-)
-from hardy.foundation.paths import HARDY_DIR, global_build, global_lean
-from hardy.foundation.truncation import truncate
-from hardy.foundation.values import ToolResult
-from hardy.latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
-from hardy.lean import DECLARATION_NAME, LeanTools
-from hardy.loop import Message
-from hardy.modules import ModuleIndex
-from hardy.paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
-from hardy.paper_tools import build_runtime as build_paper_runtime
-from hardy.project_context import (
-    PROJECT_CONTEXT_EVENT,
-    PROJECT_CONTEXT_KEY,
-    ProjectContext,
-    read_project_context,
-)
-from hardy.prompts import (
-    ASSUME_REVIEW_PROMPT,
-    CHAT_SYSTEM_PROMPT,
-    chat_cas_prompt,
-    chat_project_context_prompt,
-)
-from hardy.search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
-from hardy.usage import Usage
-from hardy.workflows.contracts import RunLimits
-from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
-from hardy.workflows.interactive.documents import (
-    DocumentPolicy,
-    DocumentService,
-    FormalDocumentFacts,
-)
-from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
-from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
-from hardy.workflows.interactive.record import SchemaError as SchemaError
-from hardy.workflows.interactive.record import SessionRecord
-from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
-from hardy.workflows.interactive.turns import _digest as _digest
-from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT, Layout
-from hardy.workspace import (
+from hardy.formal.lean import DECLARATION_NAME, LeanTools
+from hardy.formal.modules import ModuleIndex
+from hardy.formal.search import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
+from hardy.formal.workspace import (
     BuildFailure,
     ImportCycle,
     LeanWorkspace,
@@ -89,6 +47,49 @@ from hardy.workspace import (
     strip_comments,
     unreadable_assumptions,
 )
+from hardy.foundation import process
+from hardy.foundation.files import (
+    LayoutError,
+    WriteGuard,
+    files_under,
+    guard_for,
+    read_bytes,
+    read_text,
+)
+from hardy.foundation.paths import HARDY_DIR, global_build, global_lean
+from hardy.foundation.truncation import truncate
+from hardy.foundation.values import ToolResult
+from hardy.latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
+from hardy.loop import Message
+from hardy.paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
+from hardy.paper_tools import build_runtime as build_paper_runtime
+from hardy.project_context import (
+    PROJECT_CONTEXT_EVENT,
+    PROJECT_CONTEXT_KEY,
+    ProjectContext,
+    read_project_context,
+)
+from hardy.prompts import (
+    ASSUME_REVIEW_PROMPT,
+    CHAT_SYSTEM_PROMPT,
+    chat_cas_prompt,
+    chat_project_context_prompt,
+)
+from hardy.usage import Usage
+from hardy.workflows.contracts import RunLimits
+from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
+from hardy.workflows.interactive.documents import (
+    DocumentPolicy,
+    DocumentService,
+    FormalDocumentFacts,
+)
+from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
+from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
+from hardy.workflows.interactive.record import SchemaError as SchemaError
+from hardy.workflows.interactive.record import SessionRecord
+from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
+from hardy.workflows.interactive.turns import _digest as _digest
+from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT, Layout
 from hardy.writeup import escape_tex_text
 
 # Where the two artifact trees live inside a workspace, and the path a tool

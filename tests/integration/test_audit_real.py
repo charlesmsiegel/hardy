@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy.audit import classify, parse
+from hardy.formal.audit import classify, parse
 from hardy.formal.contracts import Request
-from hardy.lean import LeanTools
+from hardy.formal.lean import LeanTools
 
 ROOT = Path(__file__).parents[2]
 LEAN_PROJECT = ROOT / 'lean_project'
@@ -119,7 +119,7 @@ def _elaborate(source: str):
     everywhere, CI included, and a skipped test reads as coverage while proving
     nothing. `Nat`, `∃`, `True`, `trivial` and `decide` are all core.
     """
-    from hardy.lean import elaborate
+    from hardy.formal.lean import elaborate
 
     lake = shutil.which('lake')
     if lake is None:

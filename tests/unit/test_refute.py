@@ -14,8 +14,8 @@ that is not clearly an answer has to become a caveat rather than a verdict.
 
 from __future__ import annotations
 
-from hardy import refute
-from hardy.lean import LeanDiagnostic, LeanToolResult, scratch_source
+from hardy.formal import refute
+from hardy.formal.lean import LeanDiagnostic, LeanToolResult, scratch_source
 
 
 def _result(source: str, *, failing: set[int], ok: bool = False, output: str = "") -> LeanToolResult:

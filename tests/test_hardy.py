@@ -11,7 +11,7 @@ import pytest
 from hardy import config as configuration
 from hardy.app import cli
 from hardy.formal.contracts import Request
-from hardy.lean import LeanTools
+from hardy.formal.lean import LeanTools
 from hardy.runner import run
 
 
@@ -166,7 +166,7 @@ def test_a_decorated_declaration_is_not_anonymous():
 
 def test_a_guillemet_declaration_name_is_not_anonymous():
     """The interactive workspace declares and audits `theorem «first result»`,
-    and `hardy.audit` reads a report for it. Only `batch` could not: the head
+    and `hardy.formal.audit` reads a report for it. Only `batch` could not: the head
     grammar refused guillemets, so this was rejected as an anonymous example."""
     request = Request.from_dict(
         {"declaration": "theorem «first result» : True", "informal_claim": "x"}

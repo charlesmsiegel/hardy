@@ -30,7 +30,7 @@ from hardy.foundation.values import FrozenModel, ToolResult
 from hardy.workflows.contracts import RunLimits
 
 if TYPE_CHECKING:
-    from hardy.modules import ModuleIndex
+    from hardy.formal.modules import ModuleIndex
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
 #: A Lean escaped identifier, `«like this»`. Its contents are a *name*, not
@@ -105,7 +105,7 @@ def translate_missing_modules(output: str, modules: ModuleIndex | None) -> str:
 # identifier, and a proof that could never verify.
 #
 # Guillemets included, which this once refused. `theorem «first result»` is a
-# name the interactive workspace declares and audits, and `hardy.audit` reads a
+# name the interactive workspace declares and audits, and `hardy.formal.audit` reads a
 # report for it; only `batch` could not, rejecting the request as anonymous
 # before a single model turn. Refusing here bought nothing but the asymmetry.
 DECLARATION_NAME = re.compile(QUALIFIED_NAME)

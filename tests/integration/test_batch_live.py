@@ -32,7 +32,7 @@ import pytest
 from hardy import config as configuration
 from hardy.app.cli import runtime_factory
 from hardy.formal.contracts import Request
-from hardy.lean import LeanTools
+from hardy.formal.lean import LeanTools
 from hardy.runner import WARNING, run
 
 

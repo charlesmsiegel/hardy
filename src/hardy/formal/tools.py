@@ -9,10 +9,10 @@ from collections.abc import Sequence
 from pathlib import PurePosixPath
 from typing import Any
 
-from hardy.declarations import DeclarationIndex, search_result
 from hardy.formal.contracts import FrozenClaim
-from hardy.lean import DeclarationInspection, DeclarationSearch, LeanCheckResult
-from hardy.retrieval import PremiseRanking, PremiseRetriever
+from hardy.formal.declarations import DeclarationIndex, search_result
+from hardy.formal.lean import DeclarationInspection, DeclarationSearch, LeanCheckResult
+from hardy.formal.retrieval import PremiseRanking, PremiseRetriever
 from hardy.workflows.storage import RunStore
 
 

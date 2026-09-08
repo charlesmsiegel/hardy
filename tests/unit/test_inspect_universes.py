@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import importlib
 
-lean = importlib.import_module("hardy.lean")
+lean = importlib.import_module("hardy.formal.lean")
 
 
 def _service(messages: list[str]):

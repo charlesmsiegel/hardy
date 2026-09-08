@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import importlib
 
-search_tools = importlib.import_module("hardy.search_tools")
+search_tools = importlib.import_module("hardy.formal.search")
 
 
 class Answer:

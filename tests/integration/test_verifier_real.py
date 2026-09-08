@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 
 from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
-from hardy.verifier import FinalVerifier
+from hardy.formal.verifier import FinalVerifier
 from hardy.workflows.storage import RunStore
 
 

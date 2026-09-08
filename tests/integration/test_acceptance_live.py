@@ -69,7 +69,6 @@ from typing import Any
 
 import pytest
 
-from hardy import audit
 from hardy import config as configuration
 from hardy.acceptance import (
     BATCH_SEARCH,
@@ -80,13 +79,19 @@ from hardy.acceptance import (
 )
 from hardy.app.cli import _find_run_dir, build_prove_workflow, runtime_factory
 from hardy.documents.contracts import DocumentStatus
+from hardy.formal import audit
 from hardy.formal.contracts import FormalStatus, Request
-from hardy.lean import LeanTools, elaborate, environment_identity
+from hardy.formal.lean import LeanTools, elaborate, environment_identity
+from hardy.formal.verifier import (
+    ALLOWED_AXIOMS,
+    FORBIDDEN_TOKEN,
+    VerificationResult,
+    axiom_report_line,
+)
+from hardy.formal.workspace import strip_comments
 from hardy.runner import WARNING, run
-from hardy.verifier import ALLOWED_AXIOMS, FORBIDDEN_TOKEN, VerificationResult, axiom_report_line
 from hardy.workflow import ProveRequest
 from hardy.workflows.contracts import FaithfulnessStatus, RunPhase
-from hardy.workspace import strip_comments
 from hardy.writeup import tectonic_version
 
 pytestmark = [pytest.mark.live, pytest.mark.real_toolchain]

@@ -94,7 +94,7 @@ def _scripted_batch(output: Path, script, *, declaration: str, informal_claim: s
     import sys
 
     from hardy import runner as hardy_runner
-    from hardy.lean import LeanTools
+    from hardy.formal.lean import LeanTools
     from hardy.workflows import batch_contracts as models
 
     payload = {"declaration": declaration, "informal_claim": informal_claim}
@@ -496,9 +496,9 @@ def test_the_batch_runner_checks_proofs_with_the_recorded_toolchains_command(mon
     command, or its checks could pass under a toolchain the experiment was
     never actually measured against (item 2).
     """
-    from hardy import lean as lean_module
     from hardy import runner as hardy_runner
     from hardy.app import cli as cli_module
+    from hardy.formal import lean as lean_module
 
     seen: dict = {}
 

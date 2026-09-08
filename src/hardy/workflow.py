@@ -28,10 +28,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
-from hardy import refute
 from hardy.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
 from hardy.faithfulness import dispute_gaps, review_translation
+from hardy.formal import refute
 from hardy.formal.contracts import (
     DeclaredAssumption,
     EnvironmentIdentity,
@@ -40,10 +40,10 @@ from hardy.formal.contracts import (
     FrozenClaim,
     freeze_claim,
 )
+from hardy.formal.lean import LeanCheckResult
+from hardy.formal.verifier import VerificationResult
 from hardy.foundation.values import FrozenModel
-from hardy.lean import LeanCheckResult
 from hardy.prompts import FORMALIZATION_PROMPT, PROMPT_SET_SHA256, proof_prompt, writeup_prompt
-from hardy.verifier import VerificationResult
 from hardy.workflows.contracts import (
     FaithfulnessOutcome,
     FaithfulnessStatus,

@@ -30,9 +30,9 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
     """A workflow whose verifier reports `used` and whose Lean answers probes."""
     config_module = importlib.import_module("hardy.config")
     domain = importlib.import_module("hardy.workflows.contracts")
-    lean_module = importlib.import_module("hardy.lean")
+    lean_module = importlib.import_module("hardy.formal.lean")
     process = importlib.import_module("hardy.foundation.process")
-    verifier_module = importlib.import_module("hardy.verifier")
+    verifier_module = importlib.import_module("hardy.formal.verifier")
     workflow = importlib.import_module("hardy.workflow")
     writeup = importlib.import_module("hardy.writeup")
     environment = _environment(domain)
@@ -101,7 +101,7 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
             # stay green through a change to it.
             source = lean_module.scratch_source(source)
             probes.append(source)
-            refute = importlib.import_module("hardy.refute")
+            refute = importlib.import_module("hardy.formal.refute")
             if unreadable:
                 return lean_module.LeanCheckResult(
                     success=False,

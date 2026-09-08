@@ -53,7 +53,7 @@ def _lean(stdout: str = VERSION_LINE, *, returncode: int = 0, timed_out: bool = 
 
 
 def test_the_identity_names_the_mathlib_the_manifest_resolved(tmp_path) -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     run, _ = _lean()
 
     identity = lean.environment_identity(_project(tmp_path), runner=run)
@@ -66,7 +66,7 @@ def test_the_identity_names_the_lean_the_command_actually_reports(tmp_path) -> N
     """Not a constant. Two machines on different Lean releases must freeze
     different identities, or a claim proved on one is reported as verified
     by the other."""
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     run, asked = _lean(
         'Lean (version 4.29.0-rc2, aarch64-apple-darwin, commit abcdef0123456789, Release)\n'
     )
@@ -90,7 +90,7 @@ def test_the_manifest_digest_is_taken_over_the_bytes_on_disk(tmp_path) -> None:
     hash of the same file, so a digest taken over anything but those exact
     bytes would report every pinned environment as unpinned.
     """
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     project = _project(tmp_path)
     run, _ = _lean()
 
@@ -101,14 +101,14 @@ def test_the_manifest_digest_is_taken_over_the_bytes_on_disk(tmp_path) -> None:
 
 
 def test_no_project_is_an_error_naming_what_is_missing() -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
 
     with pytest.raises(ValueError, match='lean_project'):
         lean.environment_identity(None)
 
 
 def test_a_project_without_a_manifest_names_the_file_it_wanted(tmp_path) -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
 
     with pytest.raises(ValueError, match='lake-manifest.json'):
         lean.environment_identity(tmp_path)
@@ -117,7 +117,7 @@ def test_a_project_without_a_manifest_names_the_file_it_wanted(tmp_path) -> None
 def test_a_lean_that_names_no_version_is_refused_rather_than_guessed(tmp_path) -> None:
     """Half an identity is worse than none: a version with an invented commit
     cannot be caught, where a refusal names the command that would not answer."""
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     run, _ = _lean('Lake version 5.0.0\n')
 
     with pytest.raises(ValueError, match='named no Lean version and commit'):
@@ -125,7 +125,7 @@ def test_a_lean_that_names_no_version_is_refused_rather_than_guessed(tmp_path) -
 
 
 def test_a_lean_that_cannot_be_run_says_so(tmp_path) -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
 
     def run(spec):
         raise FileNotFoundError(spec.argv[0])
@@ -137,7 +137,7 @@ def test_a_lean_that_cannot_be_run_says_so(tmp_path) -> None:
 
 
 def test_a_lean_that_fails_reports_its_exit_code(tmp_path) -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     run, _ = _lean('', returncode=1)
 
     with pytest.raises(ValueError, match='exited 1'):
@@ -145,7 +145,7 @@ def test_a_lean_that_fails_reports_its_exit_code(tmp_path) -> None:
 
 
 def test_a_lean_that_hangs_reports_the_timeout(tmp_path) -> None:
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     run, _ = _lean('', timed_out=True)
 
     with pytest.raises(ValueError, match='timed out'):

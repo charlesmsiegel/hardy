@@ -36,7 +36,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from hardy import audit as audit_module
+from hardy.formal import audit as audit_module
 
 #: How much of a refusal's text is worth keeping in a summary line. Long enough
 #: to say what Lean objected to, short enough that a dozen of them still read.

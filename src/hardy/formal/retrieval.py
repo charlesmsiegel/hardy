@@ -59,10 +59,10 @@ from urllib.parse import urlencode
 
 from pydantic import model_validator
 
-from hardy.declarations import INDEX_ALGORITHM, DeclarationIndex
 from hardy.formal.contracts import EnvironmentIdentity
+from hardy.formal.declarations import INDEX_ALGORITHM, DeclarationIndex
+from hardy.formal.lean import DECLARATION_NAME, DeclarationRecord
 from hardy.foundation.values import FrozenModel
-from hardy.lean import DECLARATION_NAME, DeclarationRecord
 from hardy.workflows.contracts import RunLimits
 
 # Loogle's public instance. The endpoint is configurable because a project that

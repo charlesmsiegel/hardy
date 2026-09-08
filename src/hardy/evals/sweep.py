@@ -15,12 +15,12 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from hardy import audit
 from hardy.corpus.problems import Entry, ProblemSet
 from hardy.evals import digests
+from hardy.formal import audit
 from hardy.formal.contracts import EnvironmentIdentity
+from hardy.formal.lean import Elaboration
 from hardy.foundation.values import FrozenModel
-from hardy.lean import Elaboration
 
 SINGLES: tuple[str, ...] = (
     "simp", "simp_all", "omega", "decide", "norm_num", "ring", "field_simp", "linarith",
@@ -250,8 +250,8 @@ def environment_digest_of(environment: EnvironmentIdentity, host: dict[str, Any]
 # and the elaboration wrapper that decides what counts as success.
 DECIDING_SOURCES = (
     str(Path(__file__).resolve()),
-    str(Path(__file__).resolve().parents[1] / "audit.py"),
-    str(Path(__file__).resolve().parents[1] / "lean.py"),
+    str(Path(__file__).resolve().parents[1] / "formal" / "audit.py"),
+    str(Path(__file__).resolve().parents[1] / "formal" / "lean.py"),
     str(Path(__file__).resolve().parents[1] / "formal" / "syntax.py"),
     # `sweep_entry` builds stage A, stage B and the A3 negation out of
     # `Entry.declaration/proposition/negation`. A correction to that assembly

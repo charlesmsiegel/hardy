@@ -27,12 +27,12 @@ from pathlib import Path
 from typing import Any
 
 from hardy.config import Config
-from hardy.declarations import DeclarationIndex, search_result
+from hardy.formal.declarations import DeclarationIndex, search_result
+from hardy.formal.lean import DeclarationInspection, LeanService, environment_identity
+from hardy.formal.modules import ModuleIndex
+from hardy.formal.retrieval import PremiseRetriever, build_retriever
 from hardy.foundation.values import ToolResult
-from hardy.lean import DeclarationInspection, LeanService, environment_identity
-from hardy.modules import ModuleIndex
 from hardy.prompts import CONCEPT_HINT, SPELLINGS_HINT
-from hardy.retrieval import PremiseRetriever, build_retriever
 from hardy.workflows.contracts import RunLimits
 
 SEARCH_TOOLS: list[dict[str, Any]] = [

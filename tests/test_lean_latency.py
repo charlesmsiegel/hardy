@@ -13,8 +13,14 @@ from pathlib import Path
 
 import pytest
 
+from hardy.formal.latency import (
+    ImportCost,
+    WarmPoolEstimate,
+    describe,
+    import_probe,
+    measure_import_cost,
+)
 from hardy.foundation.process import ProcessResult, ProcessSpec
-from hardy.latency import ImportCost, WarmPoolEstimate, describe, import_probe, measure_import_cost
 
 
 def runner_for(durations: list[int], *, returncode: int = 0, stdout: str = ""):
@@ -212,7 +218,7 @@ def test_the_mathlib_revision_is_qualified_when_the_command_may_look_elsewhere()
     revision on disk is the revision elaborated. A bare `lean` or a wrapper may
     import an entirely different Mathlib, and reading the manifest then
     attributes the latency to a toolchain that did not produce it."""
-    from hardy.latency import manifest_binds
+    from hardy.formal.latency import manifest_binds
 
     assert manifest_binds(("lake", "env", "lean")) is True
     assert manifest_binds(("/usr/bin/lake", "env", "/usr/bin/lean")) is True
@@ -255,7 +261,7 @@ def test_the_identity_names_the_lean_that_was_actually_invoked(tmp_path: Path):
     evidence than one admitting it does not know. (`lean.environment_identity`
     now asks the compiler too; this probe keeps its own reason-carrying shape.)
     """
-    from hardy.latency import probe_toolchain
+    from hardy.formal.latency import probe_toolchain
 
     manifest = tmp_path / "lake-manifest.json"
     manifest.write_text(
@@ -288,7 +294,7 @@ def test_the_identity_names_the_lean_that_was_actually_invoked(tmp_path: Path):
 
 def test_an_unidentifiable_toolchain_yields_no_identity_rather_than_half_of_one(tmp_path: Path):
     """Never partially invented: absent provenance can be caught, false cannot."""
-    from hardy.latency import probe_toolchain
+    from hardy.formal.latency import probe_toolchain
 
     def run(spec: ProcessSpec) -> ProcessResult:
         return ProcessResult(
@@ -708,7 +714,7 @@ def test_the_host_that_produced_the_durations_is_recorded(tmp_path: Path):
     machine was — and the same Lean and Mathlib give a 12s prelude on a
     workstation and 40s on a small runner, which are opposite verdicts from
     provenance that looks identical."""
-    from hardy.latency import machine_identity
+    from hardy.formal.latency import machine_identity
 
     cost = measure_import_cost(
         ("Mathlib",), argv=("lean", "--json"), cwd=tmp_path,
@@ -723,7 +729,7 @@ def test_the_cpu_model_distinguishes_hosts_the_architecture_cannot(monkeypatch):
     speed — enough to reverse the verdict, and identical provenance without
     the model. `platform.processor()` returns `x86_64` on Linux, the same
     string as `machine()`, so it adds nothing exactly where it is needed."""
-    from hardy import latency as latency_module
+    from hardy.formal import latency as latency_module
 
     monkeypatch.setattr(latency_module.platform, "processor", lambda: "x86_64")
     monkeypatch.setattr(latency_module.platform, "machine", lambda: "x86_64")
@@ -740,7 +746,7 @@ def test_the_cpu_model_distinguishes_hosts_the_architecture_cannot(monkeypatch):
 def test_an_unidentifiable_cpu_is_admitted_not_faked(monkeypatch, tmp_path: Path):
     """Repeating the architecture as if it were a model would be worse than
     saying nothing, because only the second can be caught."""
-    from hardy import latency as latency_module
+    from hardy.formal import latency as latency_module
 
     monkeypatch.setattr(latency_module.platform, "processor", lambda: "x86_64")
     monkeypatch.setattr(latency_module.platform, "machine", lambda: "x86_64")
@@ -771,7 +777,7 @@ def test_a_command_that_cannot_be_executed_is_reported_not_raised(tmp_path: Path
     raises `PermissionError`, which escaped as a traceback past a probe that
     had already caught the same failure."""
     from hardy.app import cli
-    from hardy.latency import ToolchainProbe
+    from hardy.formal.latency import ToolchainProbe
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -936,7 +942,7 @@ def test_a_measurement_that_mostly_failed_is_not_a_steady_state():
 def test_a_withheld_verdict_exits_nonzero():
     """Shell automation cannot tell rejected evidence from a real verdict
     if both exit 0, which is the confusion this command exists to prevent."""
-    from hardy.latency import report
+    from hardy.formal.latency import report
 
     clean = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     assert report(clean, calls=10, total_ms=150_000) == 0
@@ -984,7 +990,7 @@ def test_half_an_observed_run_is_refused_before_probing(tmp_path: Path, capsys, 
     0, so a script could not tell an unanswered verdict from a real one — and
     it only asked after paying for every probe."""
     from hardy.app import cli
-    from hardy.latency import ToolchainProbe
+    from hardy.formal.latency import ToolchainProbe
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1033,7 +1039,7 @@ def test_too_few_probes_withholds_the_verdict_rather_than_footnoting_it():
     """A caution alone left the control flow intact: the report called its own
     prelude possibly-overstated and then declared a pool warranted from it,
     which is the report arguing with itself."""
-    from hardy.latency import report
+    from hardy.formal.latency import report
 
     cost = ImportCost(imports=("Mathlib",), samples_ms=(30_000,))
     text = "\n".join(describe(cost, calls=10, total_ms=400_000))
@@ -1098,8 +1104,8 @@ def test_the_unsandboxed_warning_precedes_every_child_process(tmp_path: Path, ca
     """Elaborating a user-named module runs arbitrary code unisolated, and
     AGENTS.md forbids letting that pass unsaid."""
     from hardy.app import cli
-    from hardy.latency import ImportCost as Cost
-    from hardy.latency import ToolchainProbe
+    from hardy.formal.latency import ImportCost as Cost
+    from hardy.formal.latency import ToolchainProbe
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1168,7 +1174,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
     """A cost measured against some other Mathlib is not the cost Hardy pays."""
     from hardy.app import cli
     from hardy.config import Config
-    from hardy.latency import ImportCost as Cost
+    from hardy.formal.latency import ImportCost as Cost
     from hardy.workflows.contracts import RunLimits
 
     project = tmp_path / "lean_project"

@@ -23,17 +23,22 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from hardy import audit
 from hardy.documents.contracts import DocumentStatus
+from hardy.formal import audit
 from hardy.formal.contracts import (
     DeclaredAssumption,
     FormalStatus,
     FrozenClaim,
     VerificationEvidence,
 )
+from hardy.formal.lean import DECLARATION_HEAD, LeanTools, scannable
 from hardy.formal.syntax import declared_name
-from hardy.lean import DECLARATION_HEAD, LeanTools, scannable
-from hardy.verifier import ALLOWED_AXIOMS, FORBIDDEN_TOKEN, VerificationResult, axiom_report_line
+from hardy.formal.verifier import (
+    ALLOWED_AXIOMS,
+    FORBIDDEN_TOKEN,
+    VerificationResult,
+    axiom_report_line,
+)
 from hardy.workflows.contracts import (
     FaithfulnessStatus,
     FaithfulnessVerdict,
@@ -1185,7 +1190,7 @@ def _verified_batch_issues(
     writeup: str,
 ) -> list[str]:
     from hardy.formal.contracts import Request
-    from hardy.lean import LeanTools
+    from hardy.formal.lean import LeanTools
 
     issues: list[str] = []
     proof = result.get("proof")

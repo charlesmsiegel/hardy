@@ -17,7 +17,7 @@ import os
 
 import pytest
 
-from hardy.retrieval import LoogleSource, RetrievalTransportError
+from hardy.formal.retrieval import LoogleSource, RetrievalTransportError
 
 
 @pytest.mark.live

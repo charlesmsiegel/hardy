@@ -8,7 +8,7 @@ flattened to `Mathlib.GroupTheory.Sylow`.
 
 from __future__ import annotations
 
-from hardy.lean import translate_missing_modules
+from hardy.formal.lean import translate_missing_modules
 
 
 class FakeIndex:

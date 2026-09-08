@@ -310,7 +310,7 @@ async def test_a_failed_registration_still_hands_back_the_problem_it_opened(ui, 
     session whose computer algebra kernel is shut, and ended the plain session
     outright -- it has no catch around a command at all.
     """
-    from hardy import lakefile
+    from hardy.formal import lakefile
 
     (root / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
     monkeypatch.setattr(

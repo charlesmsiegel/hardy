@@ -14,7 +14,7 @@ from hardy.formal.contracts import (
     VerificationEvidence,
     freeze_claim,
 )
-from hardy.verifier import VerificationResult
+from hardy.formal.verifier import VerificationResult
 from hardy.workflows.contracts import (
     FaithfulnessOutcome,
     FaithfulnessReview,

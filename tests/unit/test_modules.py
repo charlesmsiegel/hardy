@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hardy.modules import ModuleIndex
+from hardy.formal.modules import ModuleIndex
 
 
 def _project(root: Path) -> Path:

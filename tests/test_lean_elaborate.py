@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from hardy.formal.contracts import Request
+from hardy.formal.lean import LeanTools, elaborate
 from hardy.foundation.process import ProcessResult, ProcessSpec
-from hardy.lean import LeanTools, elaborate
 
 
 def recorder(seen: list[ProcessSpec]):

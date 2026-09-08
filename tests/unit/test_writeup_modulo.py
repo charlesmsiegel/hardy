@@ -69,7 +69,7 @@ def _pieces(domain, writeup, assumed=()):
 
 def _render(assumed=(), declared=()):
     domain = importlib.import_module("hardy.workflows.contracts")
-    verifier = importlib.import_module("hardy.verifier")
+    verifier = importlib.import_module("hardy.formal.verifier")
     writeup = importlib.import_module("hardy.writeup")
     claim, grades, content, evidence = _pieces(domain, writeup, assumed)
     verification = verifier.VerificationResult(

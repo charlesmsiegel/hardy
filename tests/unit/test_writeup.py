@@ -97,7 +97,7 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
-    verifier = importlib.import_module('hardy.verifier')
+    verifier = importlib.import_module('hardy.formal.verifier')
     writeup = importlib.import_module('hardy.writeup')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'writeup', now=NOW, run_id=RUN_ID)

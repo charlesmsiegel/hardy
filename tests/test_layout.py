@@ -713,9 +713,9 @@ GUARDED_MODULES = (
     "cas.py",
     "cas_export.py",
     "tui/shell.py",
-    "workspace.py",
+    "formal/workspace.py",
     "latex.py",
-    "lean.py",
+    "formal/lean.py",
 )
 
 #: Receivers that ARE a `WriteGuard`, spelled out. Not a suffix test on the

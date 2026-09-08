@@ -92,7 +92,7 @@ def _rewrite(run_dir, manifest):
 
 def test_verified_grade_names_evidence_that_re_derives_from_the_run(tmp_path) -> None:
     from hardy.formal.contracts import VerificationEvidence
-    from hardy.verifier import VerificationResult
+    from hardy.formal.verifier import VerificationResult
 
     result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
     evidence = result.manifest.grades.verification_evidence
@@ -163,7 +163,7 @@ def test_audit_reports_a_tampered_verification_record_instead_of_crashing(
 def test_audit_rejects_verification_evidence_admitting_an_unexpected_axiom(
     tmp_path,
 ) -> None:
-    from hardy.verifier import VerificationResult
+    from hardy.formal.verifier import VerificationResult
 
     result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
     forged_manifest = _rewrite(result.run_dir, _forge(result.manifest, axioms=('sorryAx',)))

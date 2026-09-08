@@ -154,9 +154,9 @@ def _scripted_controller(
     config_module = importlib.import_module('hardy.config')
     codex_runtime = importlib.import_module('hardy.codex_runtime')
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
-    verifier_module = importlib.import_module('hardy.verifier')
+    verifier_module = importlib.import_module('hardy.formal.verifier')
     workflow = importlib.import_module('hardy.workflow')
     writeup = importlib.import_module('hardy.writeup')
     proposals = list(proposals or [_proposal(domain)])
@@ -318,9 +318,9 @@ def _scripted_controller(
 def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_path) -> None:
     config_module = importlib.import_module('hardy.config')
     domain = importlib.import_module('hardy.workflows.contracts')
-    lean = importlib.import_module('hardy.lean')
+    lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
-    verifier_module = importlib.import_module('hardy.verifier')
+    verifier_module = importlib.import_module('hardy.formal.verifier')
     workflow = importlib.import_module('hardy.workflow')
     writeup = importlib.import_module('hardy.writeup')
     environment = _environment(domain)
@@ -929,7 +929,7 @@ def test_an_exhausted_budget_does_not_buy_one_more_provider_call(tmp_path) -> No
 
         def check_proof(self, claim, proof, allowed=()):
             clock.value += 2_000.0
-            return _lean_result(domain, importlib.import_module('hardy.lean'),
+            return _lean_result(domain, importlib.import_module('hardy.formal.lean'),
                                 importlib.import_module('hardy.foundation.process'), True)
 
     workflow, _, controller, state = _scripted_controller(
@@ -963,7 +963,7 @@ def test_the_reader_is_given_the_budget_that_is_actually_left(tmp_path) -> None:
     class SlowLean:
         def check_proof(self, claim, proof, allowed=()):
             clock.value += 1_000.0
-            return _lean_result(domain, importlib.import_module('hardy.lean'),
+            return _lean_result(domain, importlib.import_module('hardy.formal.lean'),
                                 importlib.import_module('hardy.foundation.process'), True)
 
     workflow, _, controller, state = _scripted_controller(

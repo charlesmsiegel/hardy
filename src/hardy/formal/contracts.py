@@ -137,7 +137,7 @@ class VerificationEvidence(FrozenModel):
 
 # What a request's declaration may open with. Attributes and modifiers come
 # before the keyword in ordinary Lean, and this is the earliest of the three
-# places that had to be taught so -- the head grammar in `hardy.lean` never saw
+# places that had to be taught so -- the head grammar in `hardy.formal.lean` never saw
 # a decorated declaration, because this refused it first.
 DECLARATION_KEYWORD = re.compile(
     r"^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"

@@ -19,7 +19,7 @@ import pytest
 from hardy.acceptance import validate_recorded_run
 from hardy.documents.contracts import DocumentStatus
 from hardy.formal.contracts import FormalStatus
-from hardy.verifier import ALLOWED_AXIOMS
+from hardy.formal.verifier import ALLOWED_AXIOMS
 from hardy.workflows.contracts import RunManifest, RunPhase
 
 ROOT = Path(__file__).parents[2]

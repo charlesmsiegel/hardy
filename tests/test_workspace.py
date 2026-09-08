@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from hardy.workspace import (
+from hardy.formal.workspace import (
     ImportCycle,
     WorkspacePathError,
     assumptions,

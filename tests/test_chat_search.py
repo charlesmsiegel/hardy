@@ -87,7 +87,7 @@ def test_the_module_search_description_does_not_tell_the_model_to_narrow_a_mathl
     what it returned did exactly what the tool told it to and exactly what
     the system prompt forbids. The description read here must scope the
     tool to confirming a path, not to narrowing a Mathlib import."""
-    from hardy.search_tools import SEARCH_TOOLS
+    from hardy.formal.search import SEARCH_TOOLS
 
     description = next(
         spec["function"]["description"]

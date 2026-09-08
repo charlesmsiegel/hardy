@@ -91,7 +91,7 @@ def test_the_flag_repeats_for_several_tactics_and_keeps_their_order() -> None:
 
 def test_a_bare_flag_is_still_the_standard_ladder_and_no_flag_is_still_off() -> None:
     cli = importlib.import_module('hardy.app.cli')
-    closers = importlib.import_module('hardy.closers')
+    closers = importlib.import_module('hardy.formal.closers')
     parser = cli.build_parser()
 
     bare = parser.parse_args(['batch', 'request.json', '--closers'])

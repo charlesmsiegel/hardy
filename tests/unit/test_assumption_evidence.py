@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 
+from hardy.formal.lean import LeanDiagnostic, LeanToolResult
 from hardy.foundation.values import ToolResult
-from hardy.lean import LeanDiagnostic, LeanToolResult
 
 
 class Search:

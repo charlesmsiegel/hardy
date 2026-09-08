@@ -26,9 +26,9 @@ from hardy.formal.contracts import (
     FrozenClaim,
     freeze_claim,
 )
+from hardy.formal.lean import LeanCheckResult
 from hardy.formal.tools import LeanToolRuntime
 from hardy.foundation.process import ProcessResult
-from hardy.lean import LeanCheckResult
 from hardy.workflows.storage import RunStore
 
 

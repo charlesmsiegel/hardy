@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from hardy.audit import (
+from hardy.formal.audit import (
     AxiomReport,
     Verdict,
     classify,

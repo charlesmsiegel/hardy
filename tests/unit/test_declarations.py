@@ -32,7 +32,7 @@ def _write(root, relative, source):
 
 
 def _index(tmp_path):
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
     return declarations.DeclarationIndex(tmp_path)
 
 
@@ -168,7 +168,7 @@ def test_two_threads_arriving_cold_pay_for_one_scan_between_them(tmp_path, monke
     import threading
     import time
 
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
     root = _package(tmp_path)
     _write(root, 'Mathlib/Once.lean', 'theorem only_one : True := trivial\n')
     index = declarations.DeclarationIndex(tmp_path)
@@ -411,7 +411,7 @@ def test_the_miss_diagnostic_names_the_inspection_tool_this_surface_offers(tmp_p
     `inspect_declarations` -- a model following the recovery instruction there
     would make an unknown-tool call precisely when it needs help. Each surface
     hands in its own tool name."""
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
 
     missed = declarations.search_result(
         declarations.DeclarationIndex(tmp_path),
@@ -591,7 +591,7 @@ def test_a_project_with_no_packages_is_an_empty_index(tmp_path) -> None:
     assert index.count() == 0
     assert index.search('anything', 5) == ()
 
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
     assert declarations.DeclarationIndex(None).search('anything', 5) == ()
 
 
@@ -626,7 +626,7 @@ def test_search_result_keeps_the_bounds_the_find_backend_enforced(tmp_path) -> N
     model one error either way."""
     import pytest
 
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
     index = declarations.DeclarationIndex(tmp_path)
 
     for query in ('', 'x' * 513, 'two\nlines', 'carriage\rreturn'):
@@ -644,7 +644,7 @@ def test_search_result_reports_truncation_and_never_a_timeout(tmp_path) -> None:
         'Mathlib/O.lean',
         ''.join(f'theorem match_{index} : True := trivial\n' for index in range(5)),
     )
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
 
     search = declarations.search_result(declarations.DeclarationIndex(tmp_path), 'match_', 3)
 
@@ -665,7 +665,7 @@ def test_an_empty_search_result_says_what_a_miss_is_evidence_of(tmp_path) -> Non
     keeps an honest empty answer from overclaiming in the same direction."""
     root = _package(tmp_path)
     _write(root, 'Mathlib/P.lean', 'theorem unrelated : True := trivial\n')
-    declarations = importlib.import_module('hardy.declarations')
+    declarations = importlib.import_module('hardy.formal.declarations')
 
     search = declarations.search_result(declarations.DeclarationIndex(tmp_path), 'IsSympleGroup')
 

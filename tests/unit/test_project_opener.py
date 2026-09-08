@@ -20,11 +20,11 @@ from pathlib import Path
 import pytest
 
 from hardy import config as configuration
-from hardy import search_tools
 from hardy.app import projects as cli
-from hardy.declarations import DeclarationIndex
+from hardy.formal import search as search_tools
 from hardy.formal.contracts import EnvironmentIdentity
-from hardy.retrieval import build_retriever
+from hardy.formal.declarations import DeclarationIndex
+from hardy.formal.retrieval import build_retriever
 from hardy.workflows import layout
 
 

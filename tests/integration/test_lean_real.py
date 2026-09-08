@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, FrozenClaim
-from hardy.lean import LeanService
+from hardy.formal.lean import LeanService
 
 
 def _hardy_config(**overrides):
@@ -108,7 +108,7 @@ REAL_SYLOW = (
 def _closed_by(statement: str) -> list[str]:
     """Which vacuity tactics close `statement` stripped, read as `_vacuity_probe` reads them."""
     from hardy.chat import _strip_hypotheses, _vacuity_source
-    from hardy.workspace import normalise_lean
+    from hardy.formal.workspace import normalise_lean
 
     stripped = _strip_hypotheses(normalise_lean(statement).strip())
     assert stripped is not None

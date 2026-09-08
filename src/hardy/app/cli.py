@@ -13,16 +13,18 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from hardy import cas_tools, doctor, latency, search_tools
+from hardy import cas_tools, doctor
 from hardy import config as configuration
 from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
 from hardy.app.terminal import ConsoleTerminal
 from hardy.cas import CasError
 from hardy.cas_export import export_session
 from hardy.chat import MathematicsSession, SchemaError
-from hardy.closers import CLOSERS
+from hardy.formal import latency
+from hardy.formal import search as search_tools
+from hardy.formal.closers import CLOSERS
 from hardy.formal.contracts import Request
-from hardy.lean import LeanTools
+from hardy.formal.lean import LeanTools
 from hardy.runner import WARNING, run
 from hardy.wiring import build_prove_workflow, runtime_factory
 from hardy.workflows import layout
@@ -553,7 +555,7 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
     # the source the kernel reads. Run here so a malformed file costs nothing:
     # inside the verifier they land after formalization, the faithfulness read
     # and the whole proving loop.
-    from hardy.verifier import declaration_violation
+    from hardy.formal.verifier import declaration_violation
 
     for item in declared:
         violation = declaration_violation(item)

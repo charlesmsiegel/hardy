@@ -77,7 +77,7 @@ def _config(tmp_path: Path, project: Path | None, **overrides):
 
 
 def test_a_configured_project_yields_a_runtime_that_can_search(tmp_path) -> None:
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
 
     runtime, detail = search_tools.build_runtime(_config(tmp_path, _project(tmp_path)))
 
@@ -94,7 +94,7 @@ def test_declaration_search_answers_from_the_sources_without_lean(tmp_path) -> N
     sources on disk. A miss carries the sentence saying what a miss means, so
     an empty answer cannot read as Lean's word on Mathlib.
     """
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
     project = _project(tmp_path)
     package = project / '.lake' / 'packages' / 'mathlib' / 'Mathlib'
     package.mkdir(parents=True)
@@ -122,7 +122,7 @@ def test_no_lake_project_yields_no_runtime_and_the_reason_why(tmp_path) -> None:
     model told no Lake project is configured can say so to the user, which is
     the outcome that gets it fixed.
     """
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
 
     runtime, detail = search_tools.build_runtime(_config(tmp_path, None))
 
@@ -133,7 +133,7 @@ def test_no_lake_project_yields_no_runtime_and_the_reason_why(tmp_path) -> None:
 def test_a_project_without_a_manifest_is_a_reason_and_not_a_crash(tmp_path) -> None:
     bare = tmp_path / 'bare'
     bare.mkdir()
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
 
     runtime, detail = search_tools.build_runtime(_config(tmp_path, bare))
 
@@ -142,8 +142,8 @@ def test_a_project_without_a_manifest_is_a_reason_and_not_a_crash(tmp_path) -> N
 
 
 def test_a_ranking_comes_back_as_json_a_model_can_read(tmp_path, monkeypatch) -> None:
-    search_tools = importlib.import_module('hardy.search_tools')
-    retrieval = importlib.import_module('hardy.retrieval')
+    search_tools = importlib.import_module('hardy.formal.search')
+    retrieval = importlib.import_module('hardy.formal.retrieval')
     runtime, _ = search_tools.build_runtime(_config(tmp_path, _project(tmp_path)))
 
     goal = '⊢ _ + _ = _ + _'
@@ -190,7 +190,7 @@ def test_a_lean_command_that_is_not_the_configured_lake_yields_no_runtime(tmp_pa
     the configuration where a name found in one Lean does not elaborate in
     the other.
     """
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
     config = _config(
         tmp_path,
         _project(tmp_path),
@@ -212,7 +212,7 @@ def test_a_lake_elsewhere_on_disk_is_caught_even_though_the_names_agree(tmp_path
     exercises `os.path.samefile` finding them unequal rather than merely
     `shutil.which` finding nothing to compare.
     """
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
     elsewhere = tmp_path / 'pinned' / 'lake'
     elsewhere.parent.mkdir()
     elsewhere.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
@@ -232,7 +232,7 @@ def test_a_relative_lake_resolves_where_the_child_will_run_it(tmp_path) -> None:
     difference that does not exist -- whenever Hardy was started anywhere but
     inside the project."""
     configuration = importlib.import_module('hardy.config')
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
     project = _project(tmp_path)
     lake = project / 'bin' / 'lake'
     lake.parent.mkdir(parents=True, exist_ok=True)
@@ -263,7 +263,7 @@ def test_a_relative_lake_resolves_where_the_child_will_run_it(tmp_path) -> None:
 def test_a_bad_goal_is_refused_as_an_answer_rather_than_an_exception(tmp_path) -> None:
     """The dispatchers catch `ValueError`, but a refusal the model can read
     beats a generic `invalid tool call`."""
-    search_tools = importlib.import_module('hardy.search_tools')
+    search_tools = importlib.import_module('hardy.formal.search')
     runtime, _ = search_tools.build_runtime(_config(tmp_path, _project(tmp_path)))
 
     result = runtime.rank_premises('', limit=5)

@@ -45,7 +45,7 @@ class _Runtime:
 
 def _batch(tmp_path: Path, script, *, wall_seconds: float = 300.0, name: str = 'run') -> Path:
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -256,7 +256,7 @@ def test_a_submission_accepted_after_the_deadline_is_read_as_discarded(tmp_path)
 
     acceptance = importlib.import_module('hardy.acceptance')
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -552,7 +552,7 @@ def _with_closers(
     tactics: tuple[str, ...] | None = None,
 ) -> Path:
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -836,7 +836,7 @@ def test_a_closer_solve_relabelled_as_the_no_closer_condition_is_refused(tmp_pat
     branch returned before the decline check, leaving the signature of a closer
     solve inside a record certified as the no-closer experimental condition."""
     acceptance = importlib.import_module('hardy.acceptance')
-    closers = importlib.import_module('hardy.closers')
+    closers = importlib.import_module('hardy.formal.closers')
     output = _with_closers(tmp_path)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     trajectory['closers'] = dict(closers.DISABLED)
@@ -1012,7 +1012,7 @@ def test_a_closer_that_landed_late_is_not_a_record_at_odds_with_itself(tmp_path)
 
     acceptance = importlib.import_module('hardy.acceptance')
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -1129,7 +1129,7 @@ def test_a_zero_budget_run_does_not_blame_closers_that_never_ran(tmp_path) -> No
     reads as evidence that the provider was deliberately unasked."""
     acceptance = importlib.import_module('hardy.acceptance')
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -1202,7 +1202,7 @@ def test_a_batch_run_records_the_window_it_was_planned_against(tmp_path) -> None
 def test_a_batch_on_a_loop_hardy_owns_is_given_the_compactor(tmp_path) -> None:
     runner = importlib.import_module('hardy.runner')
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -1236,7 +1236,7 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
     compaction = importlib.import_module('hardy.compaction')
     runner = importlib.import_module('hardy.runner')
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
@@ -1298,7 +1298,7 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
     compaction = importlib.import_module('hardy.compaction')
     runner = importlib.import_module('hardy.runner')
     models = importlib.import_module('hardy.workflows.batch_contracts')
-    lean_module = importlib.import_module('hardy.lean')
+    lean_module = importlib.import_module('hardy.formal.lean')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
     )
