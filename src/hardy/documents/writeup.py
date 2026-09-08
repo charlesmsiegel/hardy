@@ -250,7 +250,7 @@ def _render(
     document_status: DocumentStatus,
     declared: Sequence[DeclaredAssumption] = (),
 ) -> str:
-    template = files("hardy").joinpath("templates/paper.tex").read_text(encoding="utf-8")
+    template = files("hardy.documents").joinpath("templates/paper.tex").read_text(encoding="utf-8")
     binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
     signature = (
         f"theorem {claim.proposal.theorem_name}{binders} : "

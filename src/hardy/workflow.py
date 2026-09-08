@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 
 from hardy.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
+from hardy.documents.writeup import DocumentResult, WriteupContent
 from hardy.faithfulness import dispute_gaps, review_translation
 from hardy.formal import refute
 from hardy.formal.contracts import (
@@ -54,7 +55,6 @@ from hardy.workflows.contracts import (
     TerminalReason,
 )
 from hardy.workflows.storage import RunStore
-from hardy.writeup import DocumentResult, WriteupContent
 
 ALLOWED = {
     RunPhase.SETUP: {RunPhase.FORMALIZING},

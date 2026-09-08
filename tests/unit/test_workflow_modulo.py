@@ -34,7 +34,7 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
     process = importlib.import_module("hardy.foundation.process")
     verifier_module = importlib.import_module("hardy.formal.verifier")
     workflow = importlib.import_module("hardy.workflow")
-    writeup = importlib.import_module("hardy.writeup")
+    writeup = importlib.import_module("hardy.documents.writeup")
     environment = _environment(domain)
     probes: list[str] = []
     # What each thread was opened with. Recorded rather than defaulted away:

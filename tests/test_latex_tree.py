@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.latex import LatexTools, reached_fragments, unreached_fragments
+from hardy.documents.latex import LatexTools, reached_fragments, unreached_fragments
 from hardy.workflows import layout
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))

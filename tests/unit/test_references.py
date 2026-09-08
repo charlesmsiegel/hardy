@@ -8,7 +8,7 @@ is not refused merely because a first pass had no `.aux` to read -- is
 
 from __future__ import annotations
 
-from hardy import references
+from hardy.documents import references
 
 UNDEFINED_REFERENCE = (
     "LaTeX Warning: Reference `thm:main' on page 1 undefined on input line 12.\n"

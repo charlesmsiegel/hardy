@@ -158,7 +158,7 @@ def _scripted_controller(
     process = importlib.import_module('hardy.foundation.process')
     verifier_module = importlib.import_module('hardy.formal.verifier')
     workflow = importlib.import_module('hardy.workflow')
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     proposals = list(proposals or [_proposal(domain)])
     elaborations = list(elaborations or [True] * len(proposals))
     proof_results = list(proof_results or [True])
@@ -322,7 +322,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
     process = importlib.import_module('hardy.foundation.process')
     verifier_module = importlib.import_module('hardy.formal.verifier')
     workflow = importlib.import_module('hardy.workflow')
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     environment = _environment(domain)
     starts = []
     prompts = []

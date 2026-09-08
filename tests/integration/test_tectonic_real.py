@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from hardy.documents.contracts import DocumentStatus, InformalStatus
+from hardy.documents.writeup import RunIdentities, WriteupContent, build_writeup
 from hardy.formal.contracts import (
     EnvironmentIdentity,
     FormalizationProposal,
@@ -23,7 +24,6 @@ from hardy.workflows.contracts import (
     Grades,
 )
 from hardy.workflows.storage import RunStore
-from hardy.writeup import RunIdentities, WriteupContent, build_writeup
 
 
 def _agreed_review(claim_hash):

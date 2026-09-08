@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from hardy import references
+from hardy.documents import references
 from hardy.documents.syntax import _CONDITIONAL as _CONDITIONAL
 from hardy.documents.syntax import _IFFALSE as _IFFALSE
 from hardy.documents.syntax import _LET as _LET

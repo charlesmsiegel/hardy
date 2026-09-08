@@ -34,7 +34,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from hardy import completion
+from hardy.documents import completion
 
 #: What a paper calls something it asserts. Deliberately wider than
 #: `completion.theorem_environments`, which asks what a *writeup* reports:

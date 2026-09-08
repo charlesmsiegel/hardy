@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 
-completion = importlib.import_module("hardy.completion")
+completion = importlib.import_module("hardy.documents.completion")
 
 STATEMENT = "theorem hardyOne : (n : Nat) -> n = n"
 REGISTRY = [{"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}]

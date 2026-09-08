@@ -70,7 +70,7 @@ def _pieces(domain, writeup, assumed=()):
 def _render(assumed=(), declared=()):
     domain = importlib.import_module("hardy.workflows.contracts")
     verifier = importlib.import_module("hardy.formal.verifier")
-    writeup = importlib.import_module("hardy.writeup")
+    writeup = importlib.import_module("hardy.documents.writeup")
     claim, grades, content, evidence = _pieces(domain, writeup, assumed)
     verification = verifier.VerificationResult(
         verified=True,
@@ -148,7 +148,7 @@ def test_the_document_states_what_was_assumed_not_only_its_name() -> None:
 
     # As TeX renders it: an underscore in a Lean name is escaped, and what
     # matters is what the reader sees on the page.
-    from hardy.writeup import escape_tex_text
+    from hardy.documents.writeup import escape_tex_text
 
     assert escape_tex_text("Papers.perelman.no_local_collapsing") in rendered
     assert "n = n" in rendered, "the statement that was assumed"

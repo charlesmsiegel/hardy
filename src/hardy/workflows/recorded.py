@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from hardy.documents.contracts import DocumentStatus
+from hardy.documents.writeup import dropped_glyphs, host_paths
 from hardy.formal import audit
 from hardy.formal.contracts import (
     DeclaredAssumption,
@@ -46,7 +47,6 @@ from hardy.workflows.contracts import (
     RunManifest,
     RunPhase,
 )
-from hardy.writeup import dropped_glyphs, host_paths
 
 #: The formal grades that carry verification evidence and are audited as
 #: verified runs. `verified_modulo` is one of them: a wider trust base is a

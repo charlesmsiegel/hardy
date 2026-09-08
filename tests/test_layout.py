@@ -714,7 +714,7 @@ GUARDED_MODULES = (
     "cas_export.py",
     "tui/shell.py",
     "formal/workspace.py",
-    "latex.py",
+    "documents/latex.py",
     "formal/lean.py",
 )
 
@@ -786,7 +786,7 @@ UNGUARDED = {
     # function: they live in `latex._publish`, which has no exemption, so
     # reverting either of them to `shutil.copyfile` fails this ratchet rather
     # than passing it.
-    ("latex.py", "check"): "test_a_symlink_in_the_writeup_tree_is_refused_rather_than_skipped",
+    ("documents/latex.py", "check"): "test_a_symlink_in_the_writeup_tree_is_refused_rather_than_skipped",
 }
 
 
@@ -849,15 +849,15 @@ def test_the_exemption_is_keyed_to_one_module_and_one_function():
     sweep. They live in `latex._publish` now, which no exemption covers.
     """
     assert all(isinstance(key, tuple) and len(key) == 2 for key in UNGUARDED)
-    assert ("latex.py", "check") in UNGUARDED
+    assert ("documents/latex.py", "check") in UNGUARDED
     package = Path(layout.__file__).parents[1]
     publishing = {
         (function, call)
-        for function, _, call in _write_calls((package / "latex.py").read_text(encoding="utf-8"))
+        for function, _, call in _write_calls((package / "documents/latex.py").read_text(encoding="utf-8"))
         if function == "_publish"
     }
     assert publishing, "the writes that leave the scratch tree must be their own function"
-    assert not any(("latex.py", function) in UNGUARDED for function, _ in publishing)
+    assert not any(("documents/latex.py", function) in UNGUARDED for function, _ in publishing)
 
 
 def test_the_ratchet_sees_the_writes_it_missed(tmp_path: Path):

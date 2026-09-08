@@ -221,7 +221,7 @@ def export_openable() -> frozenset[str]:
     Imported lazily rather than at module scope: `export` reads a package
     resource at import, and a summary must not pay for a stylesheet.
     """
-    from hardy.export import OPENABLE
+    from hardy.documents.export import OPENABLE
 
     return OPENABLE
 

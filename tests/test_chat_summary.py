@@ -6,7 +6,7 @@ from pathlib import Path
 
 from test_chat import FakeChatRuntime, call, session
 
-from hardy import export
+from hardy.documents import export
 
 BASIC = "import Mathlib\ntheorem hardyBasic : True := by exact True.intro\n"
 BROKEN = "import Mathlib\ntheorem hardyBroken : True := by exact\n"

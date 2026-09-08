@@ -806,13 +806,13 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     one command that puts them together in the order a reader needs, with each
     result under its own stored verdict rather than under whatever the
     conversation claimed. What it must never do is flatten those apart -- see
-    `hardy.export`.
+    `hardy.documents.export`.
 
     `safe_in_flight` stays False, the default: a running turn is writing the
     Lean tree, the record and the transcript this reads, and an export taken
     across a save would describe a workspace that never existed.
     """
-    from hardy import export as export_module
+    from hardy.documents import export as export_module
 
     session = state.session
     gather = getattr(session, "export_material", None)

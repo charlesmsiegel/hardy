@@ -41,6 +41,7 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
+    from hardy.documents.writeup import RunIdentities, build_writeup, tectonic_version
     from hardy.formal import lean as lean_module
     from hardy.formal import retrieval
     from hardy.formal.declarations import DeclarationIndex
@@ -49,7 +50,6 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     from hardy.formal.verifier import FinalVerifier
     from hardy.prompts import PROMPT_SET_SHA256
     from hardy.workflow import ProveWorkflow
-    from hardy.writeup import RunIdentities, build_writeup, tectonic_version
 
     # Identified by the Lean the verifier will run -- `config.lake env lean`,
     # exactly as `FinalVerifier` spells it -- so the identity the claim is

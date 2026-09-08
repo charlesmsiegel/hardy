@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hardy import assume as assume_module
-from hardy import compaction, completion, ingest
+from hardy import compaction, ingest
 from hardy import summary as summary_module
 from hardy.agents.contracts import ChatRuntime, TurnEvent, final_text, provenance
 from hardy.agents.parsing import json_object
@@ -24,6 +24,9 @@ from hardy.bibliography import is_generated as is_generated_bibliography
 from hardy.cas import CasError
 from hardy.cas_export import export_session
 from hardy.cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from hardy.documents import completion
+from hardy.documents.latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
+from hardy.documents.writeup import escape_tex_text
 from hardy.formal import audit, refute
 from hardy.formal.contracts import Request
 from hardy.formal.lean import DECLARATION_NAME, LeanTools
@@ -59,7 +62,6 @@ from hardy.foundation.files import (
 from hardy.foundation.paths import HARDY_DIR, global_build, global_lean
 from hardy.foundation.truncation import truncate
 from hardy.foundation.values import ToolResult
-from hardy.latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
 from hardy.loop import Message
 from hardy.paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
 from hardy.paper_tools import build_runtime as build_paper_runtime
@@ -90,7 +92,6 @@ from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
 from hardy.workflows.interactive.turns import _digest as _digest
 from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT, Layout
-from hardy.writeup import escape_tex_text
 
 # Where the two artifact trees live inside a workspace, and the path a tool
 # call gets when it names neither -- the one file most sessions ever need.

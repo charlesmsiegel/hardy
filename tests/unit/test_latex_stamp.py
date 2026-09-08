@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hardy.latex import LatexTools, stamped
+from hardy.documents.latex import LatexTools, stamped
 
 COMMAND = (sys.executable, str(Path(__file__).parents[1] / "fake_latex.py"))
 DOCUMENT = "\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}\n"

@@ -824,7 +824,7 @@ def test_an_assumed_constant_is_exported_as_the_opaque_it_is(sourced) -> None:
     """`kind='constant'` is written into the module as `opaque`, and the two
     are not the same trust. The export printed `axiom` under a comment
     reading "the declaration the results above rest on, exactly"."""
-    from hardy import export
+    from hardy.documents import export
 
     assert _assume(
         sourced, kind="constant", formal_name="RicciFlow", lean_statement="Type"
@@ -910,7 +910,7 @@ def test_the_appendix_owes_the_declaration_lean_was_actually_given(sourced) -> N
     reachable finished state was one whose published appendix misstated what
     the work rests on -- understating the trust base, since an opaque
     constant is the stronger thing to have asserted."""
-    from hardy import completion
+    from hardy.documents import completion
 
     assert _assume(
         sourced, kind="constant", formal_name="widget", lean_statement="Type"

@@ -125,7 +125,7 @@ async def test_a_destination_that_cannot_be_reserved_is_a_line_not_a_traceback(
     can refuse. The TTY shell happens to catch a handler's exception; the plain
     session does not, so this refusal ended the whole session rather than
     printing the diagnostic the handler was written to print."""
-    from hardy import export as export_module
+    from hardy.documents import export as export_module
 
     def refuses(*_arguments, **_keywords):
         raise ValueError("every name this second is taken")

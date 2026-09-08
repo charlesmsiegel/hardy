@@ -14,9 +14,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hardy import latex
+from hardy.documents import latex
+from hardy.documents.latex import LatexTools
 from hardy.foundation.process import GuardedResult
-from hardy.latex import LatexTools
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
 PREAMBLE = "\\documentclass{article}\n\\begin{document}\n"

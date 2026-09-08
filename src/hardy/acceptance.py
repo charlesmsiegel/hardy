@@ -24,6 +24,7 @@ from typing import Literal
 from uuid import uuid4
 
 from hardy.config import Config
+from hardy.documents.writeup import RunIdentities, WriteupContent, build_writeup
 from hardy.formal.contracts import (
     EnvironmentIdentity,
     FormalizationProposal,
@@ -80,7 +81,6 @@ from hardy.workflows.recorded import refusal_issues as refusal_issues
 from hardy.workflows.recorded import validate_batch_consistency as validate_batch_consistency
 from hardy.workflows.recorded import validate_recorded_run as validate_recorded_run
 from hardy.workflows.recorded import validate_run_consistency as validate_run_consistency
-from hardy.writeup import RunIdentities, WriteupContent, build_writeup
 
 
 class DeterministicRun(FrozenModel):

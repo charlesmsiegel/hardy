@@ -79,6 +79,7 @@ from hardy.acceptance import (
 )
 from hardy.app.cli import _find_run_dir, build_prove_workflow, runtime_factory
 from hardy.documents.contracts import DocumentStatus
+from hardy.documents.writeup import tectonic_version
 from hardy.formal import audit
 from hardy.formal.contracts import FormalStatus, Request
 from hardy.formal.lean import LeanTools, elaborate, environment_identity
@@ -92,7 +93,6 @@ from hardy.formal.workspace import strip_comments
 from hardy.runner import WARNING, run
 from hardy.workflow import ProveRequest
 from hardy.workflows.contracts import FaithfulnessStatus, RunPhase
-from hardy.writeup import tectonic_version
 
 pytestmark = [pytest.mark.live, pytest.mark.real_toolchain]
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 
-completion = importlib.import_module("hardy.completion")
+completion = importlib.import_module("hardy.documents.completion")
 
 THEOREM_STYLE = (
     "\\newtheorem{theorem}{Theorem}\n"

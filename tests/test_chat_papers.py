@@ -590,7 +590,7 @@ def test_a_publish_that_fails_partway_through_a_deletion_unstamps_the_writeup(
             raise OSError("no space left on device")
         original()
 
-    monkeypatch.setattr("hardy.latex._publish", _explode)
+    monkeypatch.setattr("hardy.documents.latex._publish", _explode)
     monkeypatch.setattr(session, "_save_state", _save_state)
     with pytest.raises(OSError):
         session._tool("delete_file", {"path": "spare.tex"})

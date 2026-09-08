@@ -93,7 +93,7 @@ def smoke(directory):
     from hardy.workflows.recorded import validate_run_consistency
 
     assert Path(hardy.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), hardy.__file__
-    for resource in ('templates/paper.tex', 'export.css', 'evals/viewer.html',
+    for resource in ('documents/templates/paper.tex', 'documents/export.css', 'evals/viewer.html',
                      'evals/bibliography.html', 'acceptance_problems.json',
                      'prompts/chat.md.j2', 'prompts/staged/base.md.j2', 'cas_driver.py'):
         assert files('hardy').joinpath(resource).read_bytes(), resource

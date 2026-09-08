@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from hardy import export
+from hardy.documents import export
 
 
 def audit_record(name: str, axioms: list[str], *, assumed: list[str] = ()):
@@ -404,13 +404,13 @@ def test_a_pasted_authorization_header_loses_its_credential_not_its_scheme():
 
 
 def test_a_short_bearer_token_is_removed_too():
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     assert "abc12345" not in redact("Authorization: Bearer abc12345")
 
 
 def test_ordinary_prose_about_a_bearer_survives():
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     assert redact("the bearer of bad news") == "the bearer of bad news"
 
@@ -423,7 +423,7 @@ def test_a_bearer_token_is_removed_whole_and_not_up_to_its_first_base64_characte
     the head of the token and left the rest of it on the page, which reads as
     a redaction having happened and is worse than none.
     """
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     for token in ("abc+123/==", "eyJhbGci.eyJzdWIi.dBjftJeZ4-x_A~9s"):
         # No `Authorization:` in front of it: that key would be redacted by the
@@ -439,7 +439,7 @@ def test_a_bearer_token_is_removed_whole_and_not_up_to_its_first_base64_characte
 def test_the_wider_alphabet_does_not_start_eating_prose():
     """`+`, `/` and `=` do not appear in the middle of an English word, so the
     words after "bearer" are still words and still have no digit in them."""
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     assert redact("the bearer bond matured") == "the bearer bond matured"
     assert redact("the bearer of bad news") == "the bearer of bad news"
@@ -1067,7 +1067,7 @@ def test_an_unquoted_credential_is_removed_past_its_first_space():
     passphrase under a `[REDACTED]` that told the reader it had been handled --
     the worst of both, since the page looked filtered.
     """
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     cleaned = redact("password: correct horse battery staple")
     for word in ("correct", "horse", "battery", "staple"):
@@ -1083,14 +1083,14 @@ def test_widening_the_value_did_not_eat_the_scheme_word():
     not start with a space, so this only became reachable when the value was
     widened.
     """
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     assert redact("Authorization: Basic zzz") == "Authorization: Basic [REDACTED-KEY]"
 
 
 def test_a_quoted_value_still_stops_at_its_closing_quote():
     """Otherwise the wider unquoted rule would take the rest of a JSON line."""
-    from hardy.export import redact
+    from hardy.documents.export import redact
 
     cleaned = redact('{"api_key": "abc", "user": "bob"}')
     assert "abc" not in cleaned

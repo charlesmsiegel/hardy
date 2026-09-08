@@ -65,7 +65,7 @@ def _identities(writeup, tmp_path):
 
 
 def test_escape_tex_text_covers_every_special_character() -> None:
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
 
     escaped = writeup.escape_tex_text(chr(92) + '{}$&#%_~^')
 
@@ -98,7 +98,7 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.formal.verifier')
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'writeup', now=NOW, run_id=RUN_ID)
     evidence = domain.VerificationEvidence(
@@ -186,7 +186,7 @@ def test_tex_failure_preserves_mathematical_grades_and_marks_saved_source(tmp_pa
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'failed', now=NOW, run_id=RUN_ID)
     grades = domain.Grades(
@@ -246,7 +246,7 @@ def test_the_paper_discloses_a_reader_whose_isolation_was_not_established(
     exists to prevent, made where it is least correctable.
     """
     domain = importlib.import_module('hardy.workflows.contracts')
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     unconfined = _agreed_review(domain).model_copy(
         update={'reviewer_backend': 'codex', 'reviewer_isolation': None}
     )
@@ -283,7 +283,7 @@ def _spoken(stdout: str, returncode: int = 0):
 def test_the_tectonic_version_is_asked_of_the_binary(tmp_path) -> None:
     """It was a literal beside a genuinely pinned bundle digest, so every
     document named 0.16.9 whatever release compiled it (issue #81)."""
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     domain = importlib.import_module('hardy.workflows.contracts')
 
     version = writeup.tectonic_version(
@@ -297,7 +297,7 @@ def test_a_tectonic_that_cannot_be_asked_is_recorded_as_unidentified(tmp_path) -
     """`unrecorded` with the reason, never a guess: a document that says its
     compiler was not identified can be acted on; a wrong version cannot be
     caught."""
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     domain = importlib.import_module('hardy.workflows.contracts')
 
     def missing(spec):
@@ -320,7 +320,7 @@ def test_a_compile_that_dropped_glyphs_is_a_failed_document(tmp_path) -> None:
     """Tectonic exits 0 and writes a PDF after logging "Missing character";
     the page then lacks the ∀ or the ℚ of the exact Lean statement, which is
     not this document compiled."""
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
@@ -365,7 +365,7 @@ def test_a_compile_that_read_a_host_font_is_a_failed_document(tmp_path) -> None:
     """Tectonic warns "build may not be reproducible" when a file came from
     outside the bundle. A document set in a host's fonts is not the pinned
     bundle's document, whatever digest the manifest records for it."""
-    writeup = importlib.import_module('hardy.writeup')
+    writeup = importlib.import_module('hardy.documents.writeup')
     domain = importlib.import_module('hardy.workflows.contracts')
     process = importlib.import_module('hardy.foundation.process')
     storage = importlib.import_module('hardy.workflows.storage')
