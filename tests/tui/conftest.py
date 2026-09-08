@@ -4,10 +4,20 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input import DummyInput
+from prompt_toolkit.output import DummyOutput
 
 from hardy import config as configuration
 from hardy.models import TurnEvent
 from hardy.tui.ports import Choice
+
+
+@pytest.fixture(autouse=True)
+def headless_terminal():
+    """Shell unit tests own their terminal; no real console is required."""
+    with create_app_session(input=DummyInput(), output=DummyOutput()):
+        yield
 
 
 class ScriptedUi:

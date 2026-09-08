@@ -237,6 +237,8 @@ def test_the_plain_fallback_keeps_the_problem_the_shell_had_switched_to(settings
     over the kernel built for it -- the one the switch shut. Falling back on it
     lands the user in the problem they left, with a dead kernel.
     """
+    monkeypatch.delenv("HARDY_PLAIN", raising=False)
+    monkeypatch.setenv("TERM", "xterm")
     switched = dataclasses.replace(settings, project="burnside")
     reopened: list[str] = []
 

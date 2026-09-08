@@ -124,7 +124,7 @@ def test_the_cancel_row_is_still_a_judgement_rather_than_an_abandonment(ui):
 
 
 def test_the_unsafe_execution_warning_is_the_same_one_the_command_line_gives(ui):
-    from hardy.cli import ConsoleTerminal
+    from hardy.app.cli import ConsoleTerminal
 
     said: list[str] = []
     ConsoleTerminal(input_fn=lambda prompt: "", output=said.append).acknowledge_unsafe_execution()
@@ -386,7 +386,6 @@ async def test_ctrl_c_reaches_an_inline_plain_run(settings, monkeypatch):
     the main task rather than raising, and a task blocked in synchronous code
     does not learn it was cancelled until that code returns -- so the press did
     nothing while the run went on spending."""
-    import os
     import signal
 
     from hardy.tui import prove
@@ -399,7 +398,7 @@ async def test_ctrl_c_reaches_an_inline_plain_run(settings, monkeypatch):
     def run(config, claim, terminal, *, backend="claude", ready=None):
         ready(recorder)
         # What the terminal's user does: one Ctrl+C, delivered for real.
-        os.kill(os.getpid(), signal.SIGINT)
+        signal.raise_signal(signal.SIGINT)
         refused.append(recorder.abandoned)
         return SimpleNamespace(phase=SimpleNamespace(value="cancelled"))
 
@@ -499,10 +498,9 @@ async def test_one_press_before_the_run_starts_is_not_an_escalation(settings, mo
     monkeypatch.setattr("hardy.tui.handlers.process.resume_children", lambda: None)
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
-        import os
         import signal
 
-        os.kill(os.getpid(), signal.SIGINT)   # one press, while the build runs
+        signal.raise_signal(signal.SIGINT)   # one press, while the build runs
 
     monkeypatch.setattr(prove, "run", run)
 
@@ -564,15 +562,14 @@ async def test_a_second_press_does_not_interrupt_the_finalization_the_first_one_
     finalized: list[str] = []
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
-        import os
         import signal
 
         try:
-            os.kill(os.getpid(), signal.SIGINT)      # the first press
+            signal.raise_signal(signal.SIGINT)      # the first press
         except KeyboardInterrupt:
             # Standing in for the workflow's own cancellation path, which
             # finalizes the run from inside this handler.
-            os.kill(os.getpid(), signal.SIGINT)      # the second, mid-teardown
+            signal.raise_signal(signal.SIGINT)      # the second, mid-teardown
             finalized.append("manifest written")
             return None
         finalized.append("never interrupted at all")

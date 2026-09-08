@@ -64,17 +64,17 @@ async def test_a_tool_thread_can_ask_and_get_an_answer(settings):
 
     `session.send` runs on the executor thread `_run_turn` submits it to
     (Task 10's `loop.run_in_executor`), which is a genuine worker thread, not
-    a simulated one -- so this reaches `cli.confirm_assumption`'s `from_thread`
+    a simulated one -- so this reaches `terminal.confirm_assumption`'s `from_thread`
     call exactly the way a real tool call would.
     """
-    from hardy.app import cli
+    from hardy.app import terminal
 
     answers: list[bool] = []
     buffer = StringIO()
 
     class Session(Streams):
         def send(self, text: str) -> str:
-            confirm = cli.confirm_assumption(the_shell)
+            confirm = terminal.confirm_assumption(the_shell)
             answers.append(confirm(PROPOSAL))
             return "done"
 
@@ -147,7 +147,7 @@ def test_from_thread_refuses_before_the_app_is_running(settings):
 
 
 def test_the_approval_declines_by_default(settings):
-    from hardy.app import cli
+    from hardy.app import terminal
 
     class Ui:
         def __init__(self):
@@ -168,7 +168,7 @@ def test_the_approval_declines_by_default(settings):
     class Holder:
         from_thread = Ui()
 
-    assert cli.confirm_assumption(Holder())(PROPOSAL) is False
+    assert terminal.confirm_assumption(Holder())(PROPOSAL) is False
 
 
 def test_the_prompt_shows_previous_and_searched_when_the_proposal_carries_them(settings):
@@ -177,7 +177,7 @@ def test_the_prompt_shows_previous_and_searched_when_the_proposal_carries_them(s
     human deciding whether to approve is owed both, not only the six lines
     the prompt showed before they existed.
     """
-    from hardy.app import cli
+    from hardy.app import terminal
 
     class Ui:
         def __init__(self):
@@ -199,7 +199,7 @@ def test_the_prompt_shows_previous_and_searched_when_the_proposal_carries_them(s
         from_thread = Ui()
 
     proposal = dict(PROPOSAL, previous="a weaker True", searched=["foo ✓", "bar ✗"])
-    cli.confirm_assumption(Holder())(proposal)
+    terminal.confirm_assumption(Holder())(proposal)
 
     written = Holder.from_thread.written
     assert any("Previously requested as: a weaker True" in line for line in written)
@@ -207,7 +207,7 @@ def test_the_prompt_shows_previous_and_searched_when_the_proposal_carries_them(s
 
 
 def test_the_prompt_omits_previous_and_searched_when_the_proposal_lacks_them(settings):
-    from hardy.app import cli
+    from hardy.app import terminal
 
     class Ui:
         def __init__(self):
@@ -228,7 +228,7 @@ def test_the_prompt_omits_previous_and_searched_when_the_proposal_lacks_them(set
     class Holder:
         from_thread = Ui()
 
-    cli.confirm_assumption(Holder())(PROPOSAL)
+    terminal.confirm_assumption(Holder())(PROPOSAL)
 
     written = Holder.from_thread.written
     assert not any("Previously requested as" in line for line in written)
@@ -250,14 +250,14 @@ async def test_an_escaped_prompt_from_a_tool_thread_also_declines(settings):
     selector's cancel, and the selector was left open with nothing ever
     answering it, hanging the test outright.
     """
-    from hardy.app import cli
+    from hardy.app import terminal
 
     buffer = StringIO()
     answers: list[bool] = []
 
     class Session(Streams):
         def send(self, text: str) -> str:
-            answers.append(cli.confirm_assumption(the_shell)(PROPOSAL))
+            answers.append(terminal.confirm_assumption(the_shell)(PROPOSAL))
             return "done"
 
         def switch_model(self, model): ...
@@ -291,7 +291,7 @@ async def test_axiom_prompt_from_a_tool_thread_does_not_paint_under_the_spinner(
     opened from a tool thread while the spinner is still ticking is exactly
     the hazard `assert_no_outer_render_during_nested` exists to catch.
     """
-    from hardy.app import cli
+    from hardy.app import terminal
 
     buffer = StringIO()
     answers: list[bool] = []
@@ -300,7 +300,7 @@ async def test_axiom_prompt_from_a_tool_thread_does_not_paint_under_the_spinner(
     class Session(Streams):
         def send(self, text: str) -> str:
             release.wait(timeout=5)
-            answers.append(cli.confirm_assumption(the_shell)(PROPOSAL))
+            answers.append(terminal.confirm_assumption(the_shell)(PROPOSAL))
             return "done"
 
         def switch_model(self, model): ...
@@ -421,7 +421,7 @@ def test_confirm_assumption_declines_when_the_prompt_itself_raises(settings):
     """Every non-approval path must return `False`, including a bug in the
     prompting path -- a broken gate must not be able to fail open.
     """
-    from hardy.app import cli
+    from hardy.app import terminal
 
     class Ui:
         def write(self, text, *, style="system"):
@@ -439,4 +439,4 @@ def test_confirm_assumption_declines_when_the_prompt_itself_raises(settings):
     class Holder:
         from_thread = Ui()
 
-    assert cli.confirm_assumption(Holder())(PROPOSAL) is False
+    assert terminal.confirm_assumption(Holder())(PROPOSAL) is False
