@@ -10,9 +10,12 @@ RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 @pytest.mark.parametrize('entry', ['direct', 'mcp'])
 def test_both_entries_preserve_identity_budget_and_spill_sequence(tmp_path, entry):
-    from hardy import domain, lean, process, storage
+    from hardy import lean
     from hardy.app import mcp as server
     from hardy.formal.tools import LeanToolRuntime
+    from hardy.foundation import process
+    from hardy.workflows import contracts as domain
+    from hardy.workflows import storage
 
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, entry, now=NOW, run_id=RUN_ID)
@@ -89,11 +92,11 @@ def _check(lean, process, claim, proof_body):
 def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
     tmp_path,
 ) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     server = importlib.import_module('hardy.app.mcp')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
 
@@ -126,11 +129,11 @@ def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
 
 
 def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     server = importlib.import_module('hardy.app.mcp')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
 
@@ -157,9 +160,9 @@ def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> Non
 
 
 def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     server = importlib.import_module('hardy.app.mcp')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     config = importlib.import_module('hardy.config')
     claim = _claim(domain).model_copy(update={'content_hash': '0' * 64})
     run_dir = tmp_path / 'run'
@@ -182,9 +185,9 @@ def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) ->
 
 
 def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     server = importlib.import_module('hardy.app.mcp')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     claim = _claim(domain)
     runtime = server.LeanToolRuntime(
         claim=claim,
@@ -203,9 +206,9 @@ def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) ->
 
 def test_declaration_search_observation_is_bounded(tmp_path) -> None:
     declarations = importlib.import_module('hardy.declarations')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     server = importlib.import_module('hardy.app.mcp')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     claim = _claim(domain)
 
     package = tmp_path / 'project' / '.lake' / 'packages' / 'mathlib' / 'Mathlib'

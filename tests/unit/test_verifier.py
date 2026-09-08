@@ -71,8 +71,8 @@ def _process_result(process, spec, *, stdout='', returncode=0, timed_out=False, 
 def test_verifier_rejects_holes_and_declarations_before_running_lean(
     tmp_path, proof_body
 ) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -95,9 +95,9 @@ def test_verifier_rejects_holes_and_declarations_before_running_lean(
 def test_verifier_runs_fresh_lean_and_accepts_only_the_standard_axiom_allowlist(
     tmp_path,
 ) -> None:
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -152,8 +152,8 @@ def test_verifier_runs_fresh_lean_and_accepts_only_the_standard_axiom_allowlist(
 def test_verifier_rejects_a_changed_signature_hash_without_running_lean(
     tmp_path,
 ) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     claim = _claim(domain)
     changed = claim.model_copy(
@@ -179,8 +179,8 @@ def test_verifier_rejects_a_changed_signature_hash_without_running_lean(
 def test_verifier_rejects_top_level_declarations_in_frozen_signature_fields(
     tmp_path,
 ) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     original = _claim(domain)
     injected_proposition = (
@@ -238,9 +238,9 @@ def test_verifier_rejects_top_level_declarations_in_frozen_signature_fields(
 def test_verifier_fails_closed_for_process_and_axiom_failures(
     tmp_path, returncode, timed_out, overflow, message, expected_reason
 ) -> None:
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -276,7 +276,7 @@ def test_verifier_fails_closed_for_process_and_axiom_failures(
 
 
 def test_verification_result_rejects_a_verified_record_with_no_evidence(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     verifier = importlib.import_module('hardy.verifier')
 
     with pytest.raises(ValidationError, match='evidence'):
@@ -318,7 +318,7 @@ def test_verification_result_rejects_a_verified_record_with_no_evidence(tmp_path
 
 
 def test_rejected_verification_result_rejects_evidence(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     verifier = importlib.import_module('hardy.verifier')
     evidence = domain.VerificationEvidence(
         claim_sha256='a' * 64,
@@ -340,9 +340,9 @@ def test_rejected_verification_result_rejects_evidence(tmp_path) -> None:
 
 
 def test_accepted_proof_carries_evidence_that_re_derives_its_digest(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -379,9 +379,9 @@ def test_accepted_proof_carries_evidence_that_re_derives_its_digest(tmp_path) ->
 
 def _verify_reporting(tmp_path, name, report, proof='by rfl'):
     """Verify a claim named `name` against one Lean information message."""
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',

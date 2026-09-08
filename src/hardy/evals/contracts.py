@@ -10,7 +10,8 @@ from typing import Any, Literal
 
 from pydantic import model_validator
 
-from ..domain import EnvironmentIdentity, FrozenModel
+from hardy.formal.contracts import EnvironmentIdentity
+from hardy.foundation.values import FrozenModel
 
 Outcome = Literal["solved", "solved_other", "unsolved", "refused", "exhausted", "graded", "invalid"]
 

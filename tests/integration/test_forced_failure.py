@@ -2,13 +2,14 @@ import json
 from types import SimpleNamespace
 
 from hardy.acceptance import run_deterministic_experiment
-from hardy.domain import FormalStatus, RunLimits, TerminalReason
+from hardy.formal.contracts import FormalStatus
+from hardy.workflows.contracts import RunLimits, TerminalReason
 
 
 def _config(runs_root, limits=None):
     """Hardy's resolved settings, with only what a deterministic run needs."""
     from hardy.config import Config
-    from hardy.domain import RunLimits as _RunLimits
+    from hardy.workflows.contracts import RunLimits as _RunLimits
 
     return Config(
         model='deterministic-no-model',

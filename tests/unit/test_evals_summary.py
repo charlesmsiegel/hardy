@@ -12,10 +12,10 @@ from test_evals_runner import _batch_runner, _condition
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 from test_recorded_runs import _Runtime
 
-from hardy.domain import EnvironmentIdentity
 from hardy.evals import outstanding, runner, summary
 from hardy.evals.corpus import load_corpus
 from hardy.evals.problems import Entry
+from hardy.formal.contracts import EnvironmentIdentity
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 SOLVE = [("submit_proof", {"proof": "by exact True.intro"})]

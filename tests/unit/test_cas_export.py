@@ -10,7 +10,7 @@ import pytest
 
 from hardy.cas import CasError, CellOutcome
 from hardy.cas_export import export_session
-from hardy.layout import LayoutError
+from hardy.foundation.files import LayoutError
 
 
 def test_export_writes_a_script_a_notebook_and_a_manifest(tmp_path, cas_session) -> None:

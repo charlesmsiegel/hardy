@@ -11,12 +11,13 @@ from corpus_helpers import write_corpus
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy import lean as lean_module
-from hardy.domain import EnvironmentIdentity, RunLimits
 from hardy.evals import commands as runner
 from hardy.evals import staged as staged_module
 from hardy.evals import sweep, taxonomy
 from hardy.evals.problems import Entry, ProblemSet, Review
+from hardy.formal.contracts import EnvironmentIdentity
 from hardy.runner import WARNING
+from hardy.workflows.contracts import RunLimits
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 

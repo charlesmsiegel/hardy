@@ -6,22 +6,23 @@ from uuid import UUID
 
 import pytest
 
-from hardy.domain import (
-    DocumentStatus,
+from hardy.documents.contracts import DocumentStatus, InformalStatus
+from hardy.formal.contracts import (
     EnvironmentIdentity,
+    FormalizationProposal,
+    FormalStatus,
+    VerificationEvidence,
+    freeze_claim,
+)
+from hardy.verifier import VerificationResult
+from hardy.workflows.contracts import (
     FaithfulnessOutcome,
     FaithfulnessReview,
     FaithfulnessStatus,
     FaithfulnessVerdict,
-    FormalizationProposal,
-    FormalStatus,
     Grades,
-    InformalStatus,
-    VerificationEvidence,
-    freeze_claim,
 )
-from hardy.storage import RunStore
-from hardy.verifier import VerificationResult
+from hardy.workflows.storage import RunStore
 from hardy.writeup import RunIdentities, WriteupContent, build_writeup
 
 
@@ -42,7 +43,7 @@ def _agreed_review(claim_hash):
 def _hardy_config(**overrides):
     """Hardy's resolved settings, with only the fields a test varies."""
     from hardy.config import Config
-    from hardy.domain import RunLimits
+    from hardy.workflows.contracts import RunLimits
 
     values = dict(
         model='test-model',

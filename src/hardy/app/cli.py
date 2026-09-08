@@ -13,21 +13,19 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from .. import cas_tools, doctor, latency, layout, search_tools
-from .. import config as configuration
-from ..cas import CasError
-from ..cas_export import export_session
-from ..chat import MathematicsSession, SchemaError
-from ..closers import CLOSERS
-from ..lean import LeanTools
-from ..models import Request
-from ..runner import WARNING, run
-from ..wiring import (  # re-exported: importers name `hardy.cli`
-    build_prove_workflow,
-    runtime_factory,
-)
-from .projects import ProjectOpener, offer_registration, prepare_layout
-from .terminal import ConsoleTerminal
+from hardy import cas_tools, doctor, latency, search_tools
+from hardy import config as configuration
+from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
+from hardy.app.terminal import ConsoleTerminal
+from hardy.cas import CasError
+from hardy.cas_export import export_session
+from hardy.chat import MathematicsSession, SchemaError
+from hardy.closers import CLOSERS
+from hardy.formal.contracts import Request
+from hardy.lean import LeanTools
+from hardy.runner import WARNING, run
+from hardy.wiring import build_prove_workflow, runtime_factory
+from hardy.workflows import layout
 
 
 def choose_project(present: list[str], ask: Callable[[str], str] = input) -> str | None:
@@ -107,7 +105,7 @@ def _chat(
     parser: argparse.ArgumentParser | None = None,
     args: argparse.Namespace | None = None,
 ) -> int:
-    from ..tui import run_session
+    from hardy.tui import run_session
 
     def _report(error: Exception) -> None:
         # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
@@ -414,9 +412,9 @@ def _confirm(prompt: str) -> bool:
 
 def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _confirm) -> int:
     """Discover the pinned toolchain, offer to install what is missing, record it."""
-    from ..installers import download_file, install_elan, install_tectonic, prepare_mathlib
-    from ..process import run_process
-    from ..setup import backend_probe, discover_environment
+    from hardy.foundation.process import run_process
+    from hardy.installers import download_file, install_elan, install_tectonic, prepare_mathlib
+    from hardy.setup import backend_probe, discover_environment
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
     # The probe for the backend this machine is configured to use. Left to the
@@ -493,7 +491,7 @@ def run_prove(
     workflow_factory: Callable[..., Any] = build_prove_workflow,
     input_fn: Callable[[str], str] = input,
 ) -> int:
-    from ..workflow import ProveRequest
+    from hardy.workflow import ProveRequest
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
     # Flags outrank the config file, the way every other setting resolves.
@@ -514,7 +512,7 @@ def run_prove(
         return 2
     # Through `tui.prove`, which `/prove` uses too: the run directory a claim
     # lands in must not depend on which surface asked for it.
-    from ..tui.prove import problem_slug
+    from hardy.tui.prove import problem_slug
 
     slug = problem_slug(claim)
     terminal = ConsoleTerminal(input_fn=input_fn)
@@ -541,7 +539,7 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
     believe an assumed result. A declaration with no provenance is an axiom
     somebody could have invented.
     """
-    from ..domain import DeclaredAssumption
+    from hardy.formal.contracts import DeclaredAssumption
 
     if path is None:
         return ()
@@ -555,7 +553,7 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
     # the source the kernel reads. Run here so a malformed file costs nothing:
     # inside the verifier they land after formalization, the faithfulness read
     # and the whole proving loop.
-    from ..verifier import declaration_violation
+    from hardy.verifier import declaration_violation
 
     for item in declared:
         violation = declaration_violation(item)
@@ -565,19 +563,15 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
 
 
 def run_accept(args: argparse.Namespace) -> int:
-    from ..acceptance import run_deterministic_experiment, validate_run_consistency
-    from ..domain import (
-        DocumentStatus,
-        FaithfulnessStatus,
-        FormalStatus,
-        RunPhase,
-        TerminalReason,
-    )
-    from ..workflow import ProveRequest
+    from hardy.acceptance import run_deterministic_experiment, validate_run_consistency
+    from hardy.documents.contracts import DocumentStatus
+    from hardy.formal.contracts import FormalStatus
+    from hardy.workflow import ProveRequest
+    from hardy.workflows.contracts import FaithfulnessStatus, RunPhase, TerminalReason
 
     recorded = getattr(args, "recorded", None)
     if recorded:
-        from ..acceptance import validate_recorded_run
+        from hardy.acceptance import validate_recorded_run
 
         all_passed = True
         for run_dir in recorded:
@@ -953,7 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    from ..evals.commands import add_parser as add_evals_parser
+    from hardy.evals.commands import add_parser as add_evals_parser
 
     add_evals_parser(subparsers)
     return parser
@@ -974,7 +968,7 @@ def main() -> int:
     if args.command == "setup":
         return run_setup(args)
     if args.command == "evals":
-        from ..evals.commands import main as evals_main
+        from hardy.evals.commands import main as evals_main
 
         return evals_main(args, config)
     if args.command == "batch":

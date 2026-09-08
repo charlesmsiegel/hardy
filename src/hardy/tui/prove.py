@@ -25,8 +25,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from ..app.terminal import ConsoleTerminal
-from .ports import BlockingUi, Choice
+from hardy.app.terminal import ConsoleTerminal
+from hardy.tui.ports import BlockingUi, Choice
 
 APPROVALS = (
     Choice("approve", "Approve", "the statement says what I meant"),
@@ -164,8 +164,8 @@ def run(
     first stage rather than returned at the end, because the run is exactly
     what there is to cancel.
     """
-    from ..wiring import build_prove_workflow
-    from ..workflow import ProveRequest
+    from hardy.wiring import build_prove_workflow
+    from hardy.workflow import ProveRequest
 
     workflow = build_prove_workflow(config, config.config_path, backend=backend)
     # The terminal asks the workflow whether the run is still wanted. Attached

@@ -36,12 +36,12 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     board, since the same entry run twice under one condition is a fact to
     report, not a tie to break silently by picking one.
     """
-    from ..corpus.catalog import load_corpus, manifest_digest
-    from ..corpus.problems import sha256_of
-    from .contracts import Scoreboard
-    from .outstanding import environment_digest_of_board
-    from .scoreboard import active_ids, aggregate, scoreboard_self_issues
-    from .sweep import Baseline
+    from hardy.corpus.catalog import load_corpus, manifest_digest
+    from hardy.corpus.problems import sha256_of
+    from hardy.evals.contracts import Scoreboard
+    from hardy.evals.outstanding import environment_digest_of_board
+    from hardy.evals.scoreboard import active_ids, aggregate, scoreboard_self_issues
+    from hardy.evals.sweep import Baseline
 
     problems = load_corpus(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))

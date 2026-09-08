@@ -47,11 +47,12 @@ from typing import Literal
 
 from pydantic import field_validator
 
-from .documents.syntax import typeset, unfinished_definition
-from .domain import FrozenModel
-from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text
-from .literature.metadata import PaperRecord
-from .storage import FileLock, LockTimeout, LockUnavailable
+from hardy.documents.syntax import typeset, unfinished_definition
+from hardy.foundation.files import LayoutError, WriteGuard, read_text
+from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
+from hardy.foundation.values import FrozenModel
+from hardy.literature.metadata import PaperRecord
+from hardy.workflows.layout import LOCAL_DIR
 
 #: The canonical store, beside the session record: versioned, hand-readable,
 #: and never the file LaTeX reads.

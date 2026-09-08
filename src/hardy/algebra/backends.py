@@ -8,12 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Literal
 
-from .contracts import (
-    HEADER_BYTES,
-    SENTINEL_BEGIN,
-    SENTINEL_END,
-    BackendName,
-)
+from hardy.algebra.contracts import HEADER_BYTES, SENTINEL_BEGIN, SENTINEL_END, BackendName
 
 
 def _source_offset(source: str, lineno: int, col_offset: int) -> int:

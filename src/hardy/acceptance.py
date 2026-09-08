@@ -23,137 +23,64 @@ from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 
-from .config import Config
-from .domain import (
+from hardy.config import Config
+from hardy.formal.contracts import (
     EnvironmentIdentity,
-    FaithfulnessReview,
     FormalizationProposal,
     FrozenClaim,
-    FrozenModel,
-    RunManifest,
-    TerminalReason,
     VerificationEvidence,
 )
-from .formal.syntax import declared_name as declared_name
-from .lean import LeanCheckResult
-from .lean import scannable as scannable
-from .process import ProcessResult
-from .prompts import PROMPT_SET_SHA256
-from .verifier import (
-    ALLOWED_AXIOMS as ALLOWED_AXIOMS,
+from hardy.formal.syntax import declared_name as declared_name
+from hardy.foundation.process import ProcessResult
+from hardy.foundation.values import FrozenModel
+from hardy.lean import LeanCheckResult
+from hardy.lean import scannable as scannable
+from hardy.prompts import PROMPT_SET_SHA256
+from hardy.verifier import ALLOWED_AXIOMS as ALLOWED_AXIOMS
+from hardy.verifier import FORBIDDEN_TOKEN as FORBIDDEN_TOKEN
+from hardy.verifier import VerificationResult, verification_source
+from hardy.workflow import ProveRequest, ProveWorkflow
+from hardy.workflows.contracts import (
+    FaithfulnessReview,
+    ProofSubmission,
+    RunManifest,
+    TerminalReason,
 )
-from .verifier import (
-    FORBIDDEN_TOKEN as FORBIDDEN_TOKEN,
-)
-from .verifier import (
-    VerificationResult,
-    verification_source,
-)
-from .workflow import ProveRequest, ProveWorkflow
-from .workflows.contracts import ProofSubmission
-from .workflows.recorded import (
-    ASSUMPTIONS_FILE as ASSUMPTIONS_FILE,
-)
-from .workflows.recorded import (
-    BATCH_FAILURES as BATCH_FAILURES,
-)
-from .workflows.recorded import (
-    BATCH_SEARCH as BATCH_SEARCH,
-)
-from .workflows.recorded import (
-    IDENTITY_FIELDS as IDENTITY_FIELDS,
-)
-from .workflows.recorded import (
-    REFUSALS as REFUSALS,
-)
-from .workflows.recorded import (
-    STAGED_SEARCH as STAGED_SEARCH,
-)
-from .workflows.recorded import (
-    USAGE_FIELDS as USAGE_FIELDS,
-)
-from .workflows.recorded import (
-    VERIFIED_GRADES as VERIFIED_GRADES,
-)
-from .workflows.recorded import (
-    _attempt_issues as _attempt_issues,
-)
-from .workflows.recorded import (
-    _axiom_line as _axiom_line,
-)
-from .workflows.recorded import (
-    _closer_issues as _closer_issues,
-)
-from .workflows.recorded import (
-    _declaration_issues as _declaration_issues,
-)
-from .workflows.recorded import (
-    _declared as _declared,
-)
-from .workflows.recorded import (
-    _declared_names as _declared_names,
-)
-from .workflows.recorded import (
-    _discarded as _discarded,
-)
-from .workflows.recorded import (
-    _faithfulness_issues as _faithfulness_issues,
-)
-from .workflows.recorded import (
-    _lean_source_issues as _lean_source_issues,
-)
-from .workflows.recorded import (
-    _live_staged_issues as _live_staged_issues,
-)
-from .workflows.recorded import (
-    _proof_argument as _proof_argument,
-)
-from .workflows.recorded import (
-    _read_json as _read_json,
-)
-from .workflows.recorded import (
-    _renderable as _renderable,
-)
-from .workflows.recorded import (
-    _sketch_issues as _sketch_issues,
-)
-from .workflows.recorded import (
-    _sketch_source as _sketch_source,
-)
-from .workflows.recorded import (
-    _toolchain_issues as _toolchain_issues,
-)
-from .workflows.recorded import (
-    _usage_issues as _usage_issues,
-)
-from .workflows.recorded import (
-    _verification_record_issues as _verification_record_issues,
-)
-from .workflows.recorded import (
-    _verified_batch_issues as _verified_batch_issues,
-)
-from .workflows.recorded import (
-    _verified_run_issues as _verified_run_issues,
-)
-from .workflows.recorded import (
-    grades_agree as grades_agree,
-)
-from .workflows.recorded import (
-    permitted_axioms as permitted_axioms,
-)
-from .workflows.recorded import (
-    refusal_issues as refusal_issues,
-)
-from .workflows.recorded import (
-    validate_batch_consistency as validate_batch_consistency,
-)
-from .workflows.recorded import (
-    validate_recorded_run as validate_recorded_run,
-)
-from .workflows.recorded import (
-    validate_run_consistency as validate_run_consistency,
-)
-from .writeup import RunIdentities, WriteupContent, build_writeup
+from hardy.workflows.recorded import ASSUMPTIONS_FILE as ASSUMPTIONS_FILE
+from hardy.workflows.recorded import BATCH_FAILURES as BATCH_FAILURES
+from hardy.workflows.recorded import BATCH_SEARCH as BATCH_SEARCH
+from hardy.workflows.recorded import IDENTITY_FIELDS as IDENTITY_FIELDS
+from hardy.workflows.recorded import REFUSALS as REFUSALS
+from hardy.workflows.recorded import STAGED_SEARCH as STAGED_SEARCH
+from hardy.workflows.recorded import USAGE_FIELDS as USAGE_FIELDS
+from hardy.workflows.recorded import VERIFIED_GRADES as VERIFIED_GRADES
+from hardy.workflows.recorded import _attempt_issues as _attempt_issues
+from hardy.workflows.recorded import _axiom_line as _axiom_line
+from hardy.workflows.recorded import _closer_issues as _closer_issues
+from hardy.workflows.recorded import _declaration_issues as _declaration_issues
+from hardy.workflows.recorded import _declared as _declared
+from hardy.workflows.recorded import _declared_names as _declared_names
+from hardy.workflows.recorded import _discarded as _discarded
+from hardy.workflows.recorded import _faithfulness_issues as _faithfulness_issues
+from hardy.workflows.recorded import _lean_source_issues as _lean_source_issues
+from hardy.workflows.recorded import _live_staged_issues as _live_staged_issues
+from hardy.workflows.recorded import _proof_argument as _proof_argument
+from hardy.workflows.recorded import _read_json as _read_json
+from hardy.workflows.recorded import _renderable as _renderable
+from hardy.workflows.recorded import _sketch_issues as _sketch_issues
+from hardy.workflows.recorded import _sketch_source as _sketch_source
+from hardy.workflows.recorded import _toolchain_issues as _toolchain_issues
+from hardy.workflows.recorded import _usage_issues as _usage_issues
+from hardy.workflows.recorded import _verification_record_issues as _verification_record_issues
+from hardy.workflows.recorded import _verified_batch_issues as _verified_batch_issues
+from hardy.workflows.recorded import _verified_run_issues as _verified_run_issues
+from hardy.workflows.recorded import grades_agree as grades_agree
+from hardy.workflows.recorded import permitted_axioms as permitted_axioms
+from hardy.workflows.recorded import refusal_issues as refusal_issues
+from hardy.workflows.recorded import validate_batch_consistency as validate_batch_consistency
+from hardy.workflows.recorded import validate_recorded_run as validate_recorded_run
+from hardy.workflows.recorded import validate_run_consistency as validate_run_consistency
+from hardy.writeup import RunIdentities, WriteupContent, build_writeup
 
 
 class DeterministicRun(FrozenModel):

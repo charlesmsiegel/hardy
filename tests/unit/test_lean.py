@@ -37,7 +37,7 @@ def _claim(domain):
 
 
 def test_render_theorem_uses_only_the_frozen_statement_and_proof_term() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
 
     source = lean.render_theorem(_claim(domain), 'by\n  rfl')
@@ -70,9 +70,9 @@ def test_unstructured_lean_output_is_preserved_as_information() -> None:
 
 
 def test_check_proof_invokes_pinned_lean_with_canonical_source(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     lake = tmp_path / 'lake.exe'
     lean_project = tmp_path / 'lean_project'
     lean_project.mkdir()
@@ -108,7 +108,7 @@ def test_check_proof_invokes_pinned_lean_with_canonical_source(tmp_path) -> None
 
 
 def test_scratch_source_is_bounded_before_lean_runs(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     service = lean.LeanService(
         lake=tmp_path / 'lake.exe',
@@ -123,9 +123,9 @@ def test_scratch_source_is_bounded_before_lean_runs(tmp_path) -> None:
 
 
 def test_scratch_check_uses_the_fixed_import(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     observed = {}
 
     def runner(spec):
@@ -156,9 +156,9 @@ def test_scratch_check_uses_the_fixed_import(tmp_path) -> None:
 
 
 def test_inspect_declarations_returns_resolved_signatures(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     message = json.dumps(
         {
             'data': 'Nat.add_comm (n m : Nat) : n + m = m + n',
@@ -196,7 +196,7 @@ def test_inspect_declarations_returns_resolved_signatures(tmp_path) -> None:
 
 
 def _inspecting_service(tmp_path, runner):
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     return lean.LeanService(
         lake=tmp_path / 'lake.exe',
@@ -211,7 +211,7 @@ def test_an_inspection_lean_was_stopped_on_says_so(tmp_path) -> None:
     """Every name came back `unavailable` with nothing to distinguish
     "Lean said no" from "Lean was killed". A live session read the second
     as the first, about `IsCyclic` and `Subgroup.center`."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
 
     def runner(spec):
         return process.ProcessResult(
@@ -228,7 +228,7 @@ def test_an_inspection_lean_was_stopped_on_says_so(tmp_path) -> None:
 
 def test_an_inspection_that_answered_with_unknown_names_is_a_success(tmp_path) -> None:
     """`#check Nope` is an error to Lean, but the batch *answered*."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     message = json.dumps({
         'data': "unknown identifier 'Nope'", 'fileName': 'Inspect.lean',
         'pos': {'line': 3, 'column': 7}, 'severity': 'error',
@@ -248,7 +248,7 @@ def test_an_inspection_that_answered_with_unknown_names_is_a_success(tmp_path) -
 
 
 def test_an_inspection_that_failed_silently_is_not_a_success(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
 
     def runner(spec):
         return process.ProcessResult(
@@ -265,7 +265,7 @@ def test_an_inspection_with_an_error_before_the_check_lines_is_not_a_success(tmp
     """`import Mathlib` on line 1 failing leaves every name `unavailable`, and
     that error has nothing to do with any of the names asked about -- crediting
     it as an answer is the bug this guards against."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     message = json.dumps({
         'data': "unknown module Mathlib", 'fileName': 'Inspect.lean',
         'pos': {'line': 1, 'column': 0}, 'severity': 'error',
@@ -284,7 +284,7 @@ def test_an_inspection_with_an_error_before_the_check_lines_is_not_a_success(tmp
 
 
 def test_an_inspection_with_an_error_on_the_check_line_is_a_success(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     message = json.dumps({
         'data': "unknown identifier 'Nope'", 'fileName': 'Inspect.lean',
         'pos': {'line': 3, 'column': 7}, 'severity': 'error',
@@ -304,7 +304,7 @@ def test_an_inspection_with_an_error_on_the_check_line_is_a_success(tmp_path) ->
 def test_an_inspection_that_overflowed_is_not_a_success(tmp_path) -> None:
     """Whatever diagnostics survived an overflowed process are not the whole
     batch, even if every one that came through landed on a `#check` line."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     message = json.dumps({
         'data': "unknown identifier 'Nope'", 'fileName': 'Inspect.lean',
         'pos': {'line': 3, 'column': 7}, 'severity': 'error',
@@ -359,7 +359,7 @@ def test_a_long_lean_observation_still_keeps_its_tail() -> None:
     safe if the helper does not quietly make them agree.
     """
     lean = importlib.import_module('hardy.lean')
-    process_module = importlib.import_module('hardy.process')
+    process_module = importlib.import_module('hardy.foundation.process')
     tools = lean.LeanTools(
         lean.Request.from_dict(
             {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -379,7 +379,7 @@ def test_a_long_lean_observation_still_keeps_its_tail() -> None:
 
 def test_a_lean_observation_that_fits_is_not_marked_truncated() -> None:
     lean = importlib.import_module('hardy.lean')
-    process_module = importlib.import_module('hardy.process')
+    process_module = importlib.import_module('hardy.foundation.process')
     tools = lean.LeanTools(
         lean.Request.from_dict(
             {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -398,7 +398,7 @@ def test_a_truncated_lean_observation_does_not_start_mid_line() -> None:
     state. The character slice this replaced could land anywhere.
     """
     lean = importlib.import_module('hardy.lean')
-    process_module = importlib.import_module('hardy.process')
+    process_module = importlib.import_module('hardy.foundation.process')
     tools = lean.LeanTools(
         lean.Request.from_dict(
             {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}

@@ -24,7 +24,7 @@ from hardy.algebra import scripts
 from hardy.cas import CasError, CasSession, backend_for
 from hardy.cas_driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
 from hardy.cas_export import TRANSCRIPT_BEGIN, export_session
-from hardy.domain import RunLimits
+from hardy.workflows.contracts import RunLimits
 
 
 @pytest.fixture

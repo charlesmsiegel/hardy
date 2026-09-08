@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy import doctor, process
+from hardy import doctor
 from hardy.config import Config
+from hardy.foundation import process
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake tools are POSIX shell scripts")
 

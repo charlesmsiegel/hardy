@@ -19,7 +19,7 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 
 from hardy.chat import MathematicsSession
-from hardy.models import ToolResult
+from hardy.foundation.values import ToolResult
 
 
 class FakeSearch:

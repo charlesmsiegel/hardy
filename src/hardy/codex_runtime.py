@@ -23,11 +23,11 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from .domain import FrozenClaim, RunPhase
-from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS
-from .storage import RunStore
-from .usage import Usage
-from .workflows.contracts import ProofSubmission
+from hardy.formal.contracts import FrozenClaim
+from hardy.prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS
+from hardy.usage import Usage
+from hardy.workflows.contracts import ProofSubmission, RunPhase
+from hardy.workflows.storage import RunStore
 
 T = TypeVar("T", bound=BaseModel)
 

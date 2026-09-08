@@ -13,7 +13,7 @@ import importlib
 
 def test_a_modulo_grade_is_audited_like_a_verified_one() -> None:
     acceptance = importlib.import_module("hardy.acceptance")
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
 
     assert domain.FormalStatus.VERIFIED_MODULO in acceptance.VERIFIED_GRADES
     assert domain.FormalStatus.KERNEL_VERIFIED in acceptance.VERIFIED_GRADES
@@ -47,7 +47,7 @@ def test_a_recorded_run_predating_a_grade_field_still_reconciles(tmp_path) -> No
     that never disagreed -- so both sides are read through the same model, and
     a real difference in any grade still fails."""
     acceptance = importlib.import_module("hardy.acceptance")
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     grades = domain.Grades(formal=domain.FormalStatus.PARTIAL, known_gaps=("one",))
     recorded = grades.model_dump(mode="json")
     recorded.pop("assumed")
@@ -87,7 +87,7 @@ def _forge_modulo(run_dir, manifest, *, axiom="falsum", statement="False", decla
     import hashlib
     import json
 
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     verifier = importlib.import_module("hardy.verifier")
 
     main = run_dir / "lean" / "Main.lean"

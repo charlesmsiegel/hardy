@@ -11,10 +11,10 @@ import pytest
 from test_evals_runner import ENTRIES, SOLVE, _batch_runner, _condition, _files
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
-from hardy.domain import EnvironmentIdentity
 from hardy.evals import outstanding, pool, runner
 from hardy.evals.corpus import manifest_digest
 from hardy.evals.problems import Entry
+from hardy.formal.contracts import EnvironmentIdentity
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 # The entry harvested after the boards below were run: the corpus and the

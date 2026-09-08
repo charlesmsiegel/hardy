@@ -17,7 +17,7 @@ import pytest
 from test_chat import FakeChatRuntime, session
 
 from hardy import chat
-from hardy.models import TurnEvent
+from hardy.agents.contracts import TurnEvent
 from hardy.usage import Usage
 
 REPORT = {

@@ -43,10 +43,10 @@ from typing import Any
 
 # The key-name rule a trajectory is already written under. Imported rather than
 # restated so one list decides what counts as a credential for both.
-from .audit import DeclarationStatus, declaration_status
-from .storage import SECRET_KEY
-from .storage import _redact as redact_payload
-from .truncation import truncate
+from hardy.audit import DeclarationStatus, declaration_status
+from hardy.foundation.truncation import truncate
+from hardy.workflows.storage import SECRET_KEY
+from hardy.workflows.storage import _redact as redact_payload
 
 #: Token shapes worth removing from free text. Deliberately narrow: a pattern
 #: broad enough to catch "anything that looks random" would eat the sha256

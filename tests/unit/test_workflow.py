@@ -153,9 +153,9 @@ def _scripted_controller(
 ):
     config_module = importlib.import_module('hardy.config')
     codex_runtime = importlib.import_module('hardy.codex_runtime')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     verifier_module = importlib.import_module('hardy.verifier')
     workflow = importlib.import_module('hardy.workflow')
     writeup = importlib.import_module('hardy.writeup')
@@ -317,9 +317,9 @@ def _scripted_controller(
 
 def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_path) -> None:
     config_module = importlib.import_module('hardy.config')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     verifier_module = importlib.import_module('hardy.verifier')
     workflow = importlib.import_module('hardy.workflow')
     writeup = importlib.import_module('hardy.writeup')
@@ -406,7 +406,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
         )
 
     controller = workflow.ProveWorkflow(
-        config=_config(config_module, importlib.import_module('hardy.domain'), tmp_path),
+        config=_config(config_module, importlib.import_module('hardy.workflows.contracts'), tmp_path),
         environment=environment,
         doctor=lambda _: SimpleNamespace(healthy=True),
         lean=SimpleNamespace(
@@ -477,7 +477,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
 
 
 def test_transition_table_is_exact_and_never_skips_user_approval() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow = importlib.import_module('hardy.workflow')
 
     expected = {
@@ -501,7 +501,7 @@ def test_transition_table_is_exact_and_never_skips_user_approval() -> None:
 def test_revision_feedback_is_used_and_cancellation_finalizes(tmp_path) -> None:
     workflow, domain, controller, state = _scripted_controller(
         tmp_path,
-        proposals=[_proposal(domain := importlib.import_module('hardy.domain'))] * 2,
+        proposals=[_proposal(domain := importlib.import_module('hardy.workflows.contracts'))] * 2,
     )
     terminal = Terminal(
         decisions=('revise', 'cancel'), revisions=('Use an explicit Nat domain.',)
@@ -539,7 +539,7 @@ def test_ctrl_c_while_formalizing_still_reaches_the_runtime(tmp_path) -> None:
 
 
 def test_invalid_proposals_exhaust_budget_without_starting_proof(tmp_path) -> None:
-    domain_module = importlib.import_module('hardy.domain')
+    domain_module = importlib.import_module('hardy.workflows.contracts')
     limits = domain_module.RunLimits(formalization_proposals=2)
     workflow, domain, controller, state = _scripted_controller(
         tmp_path,
@@ -589,7 +589,7 @@ def test_setup_and_runtime_failures_finalize_without_false_progress(tmp_path) ->
 
 
 def test_budget_exhaustion_keeps_last_attempt_and_honest_partial_pdf(tmp_path) -> None:
-    domain_module = importlib.import_module('hardy.domain')
+    domain_module = importlib.import_module('hardy.workflows.contracts')
     limits = domain_module.RunLimits(official_checks=2)
     workflow, domain, controller, state = _scripted_controller(
         tmp_path,
@@ -661,7 +661,7 @@ def test_a_disputed_translation_stops_the_run_before_any_proof_search(tmp_path) 
     reader will not accept stops here — before the proving budget is spent,
     and before any downstream signal can read green on the wrong theorem.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, state = _scripted_controller(
         tmp_path,
         reviews=[
@@ -700,7 +700,7 @@ def test_a_disputed_translation_stops_the_run_before_any_proof_search(tmp_path) 
 
 
 def test_a_disputed_run_records_the_verdict_beside_the_claim_it_read(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(
         tmp_path,
         reviews=[_review(domain, agrees=False, divergences=('the quantifier moved',))],
@@ -776,7 +776,7 @@ def test_a_verified_run_carries_the_review_that_let_it_start(tmp_path) -> None:
 def test_the_reviewer_model_can_be_configured_away_from_the_run_model(tmp_path) -> None:
     """Independent context is the default; independent weights are a setting."""
     config_module = importlib.import_module('hardy.config')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(tmp_path)
     controller._config = dataclasses.replace(
         _config(config_module, domain, tmp_path), faithfulness_model='a-second-model'
@@ -871,7 +871,7 @@ def test_an_honest_gate_halt_passes_the_repositorys_own_consistency_audit(
     told apart from the many where its absence is correct.
     """
     acceptance = importlib.import_module('hardy.acceptance')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(
         tmp_path,
         reviews=[_review(domain, agrees=False, divergences=('the quantifier moved',))],
@@ -891,7 +891,7 @@ def test_a_reader_that_never_answered_is_not_a_refused_translation(tmp_path) -> 
     """Two different facts, and automation reading `terminal_reason` acts on
     them differently: one says the translation was read and refused, the other
     that nobody read it."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(
         tmp_path, reviews=[ConnectionError('the provider closed the connection')]
     )
@@ -914,7 +914,7 @@ def test_an_exhausted_budget_does_not_buy_one_more_provider_call(tmp_path) -> No
     provider time the run did not have, and reported the result as a
     translation nobody read rather than as the budget running out.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     class Clock:
         value = 0.0
@@ -930,7 +930,7 @@ def test_an_exhausted_budget_does_not_buy_one_more_provider_call(tmp_path) -> No
         def check_proof(self, claim, proof, allowed=()):
             clock.value += 2_000.0
             return _lean_result(domain, importlib.import_module('hardy.lean'),
-                                importlib.import_module('hardy.process'), True)
+                                importlib.import_module('hardy.foundation.process'), True)
 
     workflow, _, controller, state = _scripted_controller(
         tmp_path, limits=domain.RunLimits(active_seconds=1_800), monotonic=clock.now
@@ -950,7 +950,7 @@ def test_an_exhausted_budget_does_not_buy_one_more_provider_call(tmp_path) -> No
 
 
 def test_the_reader_is_given_the_budget_that_is_actually_left(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     class Clock:
         value = 0.0
@@ -964,7 +964,7 @@ def test_the_reader_is_given_the_budget_that_is_actually_left(tmp_path) -> None:
         def check_proof(self, claim, proof, allowed=()):
             clock.value += 1_000.0
             return _lean_result(domain, importlib.import_module('hardy.lean'),
-                                importlib.import_module('hardy.process'), True)
+                                importlib.import_module('hardy.foundation.process'), True)
 
     workflow, _, controller, state = _scripted_controller(
         tmp_path, limits=domain.RunLimits(active_seconds=1_800), monotonic=clock.now
@@ -1268,7 +1268,7 @@ def test_a_cancelled_formalization_turn_is_not_malformed_model_output(tmp_path) 
     """An interrupted exchange comes back empty, and an empty answer is what
     "no structured response" means -- so a press during the last allowed
     proposal was graded as the model returning nonsense."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, state = _scripted_controller(
         tmp_path,
         limits=domain.RunLimits(formalization_proposals=1),
@@ -1322,7 +1322,7 @@ def test_a_press_while_the_disagreement_is_being_shown_still_records_the_dispute
     the reader's own provider turn completes the exchange with an empty reply,
     which parses as UNAVAILABLE and would blame the reader for the press.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(
         tmp_path,
         reviews=[_review(domain, agrees=False, divergences=('the quantifier moved',))],
@@ -1363,7 +1363,7 @@ def test_a_press_while_the_formalization_is_being_shown_does_not_open_the_select
     nothing is lost by honouring the press, because an abandoned run at the
     approval stage is a user cancellation however it is reached.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(tmp_path)
 
     asked = []
@@ -1435,7 +1435,7 @@ def test_a_press_between_the_approval_and_the_reader_buys_no_faithfulness_turn(
     budget computation just before the read asks `_monotonic` again, and that
     is where this presses.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     ticks = {"count": 0, "approved": False, "controller": None}
 
@@ -1483,7 +1483,7 @@ def test_a_press_before_the_writeup_buys_no_writeup_turn(tmp_path, monkeypatch) 
     verifier or the terminal would be caught there and prove nothing about this
     guard.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, state = _scripted_controller(tmp_path)
 
     real_grades = workflow.Grades

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import __version__
-from . import digests
+from hardy import __version__
+from hardy.evals import digests
 
 RUN_SOURCE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,7 +68,7 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
     sampled three times per entry is an unbalanced design, where entries with
     more samples pull the pooled rate towards their own.
     """
-    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
+    from hardy.prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
 
     return digests.procedure_digest({
         "hardy_version": __version__,

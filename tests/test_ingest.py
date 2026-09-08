@@ -19,8 +19,9 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 from workspace_helpers import events
 
-from hardy import ingest, process
+from hardy import ingest
 from hardy.chat import MathematicsSession
+from hardy.foundation import process
 
 CLEAN = "import Mathlib\n\nlemma pileFact : True := by exact True.intro\n"
 HOLED = "import Mathlib\n\nlemma pileHole : True := by sorry\n"

@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hardy.domain import EnvironmentIdentity
 from hardy.evals import sweep
 from hardy.evals.problems import Entry, ProblemSet
+from hardy.formal.contracts import EnvironmentIdentity
+from hardy.foundation.process import ProcessResult
 from hardy.lean import Elaboration, parse_lean_json
-from hardy.process import ProcessResult
 
 
 def _elaboration(lines: list[dict], *, returncode=0, timed_out=False, duration_ms=1500) -> Elaboration:

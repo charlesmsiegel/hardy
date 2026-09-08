@@ -21,8 +21,8 @@ from hardy.api_runtime import (
     redacted,
     tool_schema,
 )
+from hardy.foundation.values import ToolResult
 from hardy.loop import Message, ToolCall
-from hardy.models import ToolResult
 
 
 class Block:
@@ -511,8 +511,8 @@ def test_a_batch_run_spends_no_turn_after_its_submission_is_accepted(tmp_path, m
     import sys
     from pathlib import Path
 
+    from hardy.formal.contracts import Request
     from hardy.lean import LeanTools
-    from hardy.models import Request
     from hardy.runner import run
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
@@ -558,8 +558,8 @@ def test_the_gate_lets_a_run_with_nothing_yet_carry_on(tmp_path, monkeypatch: py
     import sys
     from pathlib import Path
 
+    from hardy.formal.contracts import Request
     from hardy.lean import LeanTools
-    from hardy.models import Request
     from hardy.runner import run
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")

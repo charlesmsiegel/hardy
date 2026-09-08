@@ -49,7 +49,7 @@ def _claim(domain):
 
 
 def test_versioned_proof_prompt_freezes_the_statement_and_names_every_tool() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     prompts = importlib.import_module('hardy.prompts')
     claim = _claim(domain)
 
@@ -270,7 +270,7 @@ def test_the_faithfulness_prompt_asks_for_entailment_and_quotes_its_material():
     from datetime import UTC, datetime
 
     prompts = _importlib.import_module("hardy.prompts")
-    domain = _importlib.import_module("hardy.domain")
+    domain = _importlib.import_module("hardy.workflows.contracts")
     claim = domain.freeze_claim(
         "Every prime above two is odd.",
         domain.FormalizationProposal(

@@ -59,9 +59,11 @@ from urllib.parse import urlencode
 
 from pydantic import model_validator
 
-from .declarations import INDEX_ALGORITHM, DeclarationIndex
-from .domain import EnvironmentIdentity, FrozenModel, RunLimits
-from .lean import DECLARATION_NAME, DeclarationRecord
+from hardy.declarations import INDEX_ALGORITHM, DeclarationIndex
+from hardy.formal.contracts import EnvironmentIdentity
+from hardy.foundation.values import FrozenModel
+from hardy.lean import DECLARATION_NAME, DeclarationRecord
+from hardy.workflows.contracts import RunLimits
 
 # Loogle's public instance. The endpoint is configurable because a project that
 # cares about reproducibility will want to run its own against a pinned Mathlib.

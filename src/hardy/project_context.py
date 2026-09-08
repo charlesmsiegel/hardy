@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .layout import LayoutError, guard_for
+from hardy.foundation.files import LayoutError, guard_for
 
 #: Read in this order, and the first that exists wins outright. `HARDY.md`
 #: REPLACES `AGENTS.md` rather than merging with it, so precedence is never a

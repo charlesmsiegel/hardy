@@ -68,7 +68,7 @@ def _pieces(domain, writeup, assumed=()):
 
 
 def _render(assumed=(), declared=()):
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     verifier = importlib.import_module("hardy.verifier")
     writeup = importlib.import_module("hardy.writeup")
     claim, grades, content, evidence = _pieces(domain, writeup, assumed)
@@ -134,7 +134,7 @@ def test_the_document_states_what_was_assumed_not_only_its_name() -> None:
     """A reader holding the PDF sees `Papers.perelman.no_local_collapsing` and
     cannot tell what was assumed or on whose authority. AGENTS.md: partial
     results are valid only when their assumptions are explicit."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     declared = (
         domain.DeclaredAssumption(
             name="Papers.perelman.no_local_collapsing",
@@ -168,7 +168,7 @@ def test_every_item_the_document_writes_is_inside_a_list() -> None:
     r"""`\item` outside a list environment is a fatal LaTeX error, so a
     document that emits one has no PDF at all -- and the assumptions block
     is exactly where a reader goes to check what the result rests on."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     declared = (
         domain.DeclaredAssumption(
             name="Papers.a.one",
@@ -202,7 +202,7 @@ def test_a_described_assumption_breaks_its_line_once() -> None:
     r"""The provenance goes on its own line under the statement, which is one
     `\\`. Four backslashes are two line breaks in a row, and LaTeX refuses
     the second with "there's no line here to end"."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     declared = (
         domain.DeclaredAssumption(
             name="Papers.a.one",

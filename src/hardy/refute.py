@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .formal.syntax import normalise_lean
+from hardy.formal.syntax import normalise_lean
 
 #: What is tried against the negation. Ordered cheapest first, though they all
 #: run in one elaboration: `decide` settles a false closed arithmetic claim,

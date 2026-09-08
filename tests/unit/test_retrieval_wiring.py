@@ -55,7 +55,7 @@ class _Source:
 
 
 def _retriever(retrieval, results, seconds=300):
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     return retrieval.PremiseRetriever(
         sources=[_Source(retrieval, results)],
         limits=domain.RunLimits(retrieval_seconds=seconds),
@@ -64,11 +64,11 @@ def _retriever(retrieval, results, seconds=300):
 
 
 def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     retrieval = importlib.import_module('hardy.retrieval')
     server = importlib.import_module('hardy.app.mcp')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
 
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
     server.configure_runtime(
@@ -102,9 +102,9 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
 
 
 def test_a_run_without_a_retriever_says_so_instead_of_ranking_nothing(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     server = importlib.import_module('hardy.app.mcp')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
 
     server.configure_runtime(
         server.LeanToolRuntime(
@@ -121,12 +121,12 @@ def test_a_run_without_a_retriever_says_so_instead_of_ranking_nothing(tmp_path) 
 
 
 def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     retrieval = importlib.import_module('hardy.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
 
     assert 'rank_premises' in {spec['function']['name'] for spec in staged.TOOLS}
 
@@ -160,12 +160,12 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
     this the trajectory would show retrieval being asked and never what it
     answered, for a result that shaped the proof.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.lean')
     retrieval = importlib.import_module('hardy.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
 
     store = storage.RunStore.create(tmp_path, 'prove', now=NOW, run_id=RUN_ID)
     runtime = server.LeanToolRuntime(
@@ -197,11 +197,11 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
 
 
 def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     retrieval = importlib.import_module('hardy.retrieval')
     server = importlib.import_module('hardy.app.mcp')
     staged = importlib.import_module('hardy.staged')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
 
     runtime = server.LeanToolRuntime(
         claim=_claim(domain),

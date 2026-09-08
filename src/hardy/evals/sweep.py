@@ -15,11 +15,12 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from .. import audit
-from ..corpus.problems import Entry, ProblemSet
-from ..domain import EnvironmentIdentity, FrozenModel
-from ..lean import Elaboration
-from . import digests
+from hardy import audit
+from hardy.corpus.problems import Entry, ProblemSet
+from hardy.evals import digests
+from hardy.formal.contracts import EnvironmentIdentity
+from hardy.foundation.values import FrozenModel
+from hardy.lean import Elaboration
 
 SINGLES: tuple[str, ...] = (
     "simp", "simp_all", "omega", "decide", "norm_num", "ring", "field_simp", "linarith",
@@ -286,7 +287,7 @@ def procedure_digest_of(wall_backstop_seconds: float) -> str:
     `timed_out` and `closed`, which moves tiers, and `run_baseline` varies it
     with `config.lean_timeout` rather than holding it constant.
     """
-    from .. import __version__
+    from hardy import __version__
 
     return digests.procedure_digest({
         "hardy_version": __version__,

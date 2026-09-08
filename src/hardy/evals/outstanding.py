@@ -9,8 +9,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..domain import EnvironmentIdentity
-from . import sweep
+from hardy.evals import sweep
+from hardy.formal.contracts import EnvironmentIdentity
 
 
 def environment_digest_of_board(board: dict[str, Any]) -> str:

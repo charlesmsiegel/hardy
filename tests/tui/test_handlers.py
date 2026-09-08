@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from hardy import completion, doctor
 from hardy.cas import CasError
-from hardy.models import ToolResult
+from hardy.foundation.values import ToolResult
 from hardy.tui import handlers
 from hardy.tui.ports import State
 from hardy.usage import Usage

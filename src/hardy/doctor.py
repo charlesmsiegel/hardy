@@ -8,10 +8,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import DEFAULT_CAS_BACKEND, Config
-from .lean import LeanTools
-from .models import Request
-from .process import run_guarded
+from hardy.config import DEFAULT_CAS_BACKEND, Config
+from hardy.formal.contracts import Request
+from hardy.foundation.process import run_guarded
+from hardy.lean import LeanTools
 
 MATHLIB_PROBE = "import Mathlib\n\nexample : 2 + 2 = 4 := by norm_num\n"
 LAKEFILES = ("lakefile.toml", "lakefile.lean")
@@ -68,7 +68,7 @@ def _toolchain_pin_check(config: Config) -> Check:
     ran against. What is not supported is not knowing -- so a project on a
     different Lean or Mathlib is named here beside what Hardy pins.
     """
-    from .installers import LEAN_TOOLCHAIN, MATHLIB_REVISION
+    from hardy.installers import LEAN_TOOLCHAIN, MATHLIB_REVISION
 
     project = config.lean_project
     if project is None or not project.is_dir():
@@ -134,7 +134,7 @@ def _codex_checks() -> list[Check]:
     # at the first request instead. `setup.probe_codex` already asks the SDK
     # whether an account is present; this is that answer, named so the staged
     # workflow can see it.
-    from .setup import probe_codex
+    from hardy.setup import probe_codex
 
     try:
         authenticated, detail = probe_codex()
@@ -231,7 +231,7 @@ def _cas_check(config: Config) -> Check:
     """
     import tempfile
 
-    from .cas_tools import build_runtime
+    from hardy.cas_tools import build_runtime
 
     required = config.cas_backend != DEFAULT_CAS_BACKEND
     with tempfile.TemporaryDirectory(prefix="hardy-cas-") as directory:

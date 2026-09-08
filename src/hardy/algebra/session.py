@@ -12,12 +12,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from ..domain import RunLimits
-from ..layout import WriteGuard
-from ..process import (
-    INTERRUPT_GRACE_SECONDS,
-)
-from .contracts import (
+from hardy.algebra.contracts import (
     _ASKED,
     _INSISTED,
     DESYNCHRONISED,
@@ -34,7 +29,10 @@ from .contracts import (
     reproduces,
     unobservable,
 )
-from .kernel import _Kernel
+from hardy.algebra.kernel import _Kernel
+from hardy.foundation.files import WriteGuard
+from hardy.foundation.process import INTERRUPT_GRACE_SECONDS
+from hardy.workflows.contracts import RunLimits
 
 
 class CasSession:

@@ -13,11 +13,12 @@ from pydantic import ValidationError
 
 from hardy import acceptance, prompts
 from hardy.config import Config
-from hardy.domain import EnvironmentIdentity, FormalizationProposal, RunPhase, freeze_claim
 from hardy.evals import runner, scoreboard, staged, sweep
 from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
-from hardy.storage import RunStore
+from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
+from hardy.workflows.contracts import RunPhase
+from hardy.workflows.storage import RunStore
 
 ENTRY = Entry(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 HOST = sweep.host_info()

@@ -79,12 +79,13 @@ from hardy.acceptance import (
     validate_recorded_run,
 )
 from hardy.app.cli import _find_run_dir, build_prove_workflow, runtime_factory
-from hardy.domain import DocumentStatus, FaithfulnessStatus, FormalStatus, RunPhase
+from hardy.documents.contracts import DocumentStatus
+from hardy.formal.contracts import FormalStatus, Request
 from hardy.lean import LeanTools, elaborate, environment_identity
-from hardy.models import Request
 from hardy.runner import WARNING, run
 from hardy.verifier import ALLOWED_AXIOMS, FORBIDDEN_TOKEN, VerificationResult, axiom_report_line
 from hardy.workflow import ProveRequest
+from hardy.workflows.contracts import FaithfulnessStatus, RunPhase
 from hardy.workspace import strip_comments
 from hardy.writeup import tectonic_version
 

@@ -22,9 +22,9 @@ from test_evals_runner import (
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 from test_recorded_runs import _batch
 
-from hardy.domain import EnvironmentIdentity
 from hardy.evals import runner, scoreboard, sweep
 from hardy.evals.problems import Entry
+from hardy.formal.contracts import EnvironmentIdentity
 
 HOST = sweep.host_info()
 

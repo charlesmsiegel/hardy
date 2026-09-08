@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 from hardy.audit import classify, parse
+from hardy.formal.contracts import Request
 from hardy.lean import LeanTools
-from hardy.models import Request
 
 ROOT = Path(__file__).parents[2]
 LEAN_PROJECT = ROOT / 'lean_project'

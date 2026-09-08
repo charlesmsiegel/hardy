@@ -16,7 +16,7 @@ import pytest
 
 from hardy.cas import CasSession, backend_for
 from hardy.cas_export import TRANSCRIPT_BEGIN, TRANSCRIPT_END, export_session
-from hardy.domain import RunLimits
+from hardy.workflows.contracts import RunLimits
 
 
 @pytest.fixture

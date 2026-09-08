@@ -11,16 +11,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .. import __version__
-from ..corpus.catalog import load_corpus, manifest_digest
-from ..corpus.problems import ProblemSet
-from ..domain import EnvironmentIdentity
-from ..lean import Elaboration, elaborate, environment_identity
-from . import sweep
-from .contracts import Condition, RefusedRun
-from .identity import run_procedure_digest_of
-from .runner import _batch_runner, limits_for, run_set, source_revision
-from .sweep import Baseline, environment_digest_of
+from hardy import __version__
+from hardy.corpus.catalog import load_corpus, manifest_digest
+from hardy.corpus.problems import ProblemSet
+from hardy.evals import sweep
+from hardy.evals.contracts import Condition, RefusedRun
+from hardy.evals.identity import run_procedure_digest_of
+from hardy.evals.runner import _batch_runner, limits_for, run_set, source_revision
+from hardy.evals.sweep import Baseline, environment_digest_of
+from hardy.formal.contracts import EnvironmentIdentity
+from hardy.lean import Elaboration, elaborate, environment_identity
 
 DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
@@ -245,7 +245,7 @@ def _identity(config: Any) -> EnvironmentIdentity:
 
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
-    from ..runner import WARNING
+    from hardy.runner import WARNING
 
     # `getattr`, not `args.workers`: a caller (or a test's hand-built
     # Namespace) that predates this flag carries no `workers` attribute, and
@@ -304,7 +304,7 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         # does not yet cover, not the whole corpus's candidates and retirees
         # too. Needs no run digest -- a sweep is Lean-only, gated by the
         # corpus and the toolchain, not by which model a run would use.
-        from .outstanding import unbaselined_active
+        from hardy.evals.outstanding import unbaselined_active
 
         default = unbaselined_active(problems, prior)
         if not default:
@@ -370,8 +370,8 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     JSON on stdout and nothing else there, so a control agent can parse it
     without combing prose off the same stream; commentary goes to stderr.
     """
-    from .outstanding import matching_boards
-    from .outstanding import outstanding as compute_outstanding
+    from hardy.evals.outstanding import matching_boards
+    from hardy.evals.outstanding import outstanding as compute_outstanding
 
     refusal = _refuse_missing(args.problems, args.baseline)
     if refusal is not None:
@@ -420,8 +420,8 @@ def run_pool(args: argparse.Namespace) -> int:
     Writes only its own output (`--out`, default
     `evals/pools/<first label>/pool.json`) and never touches a scoreboard.
     """
-    from .pool import PoolRefused
-    from .pool import pool as pool_boards
+    from hardy.evals.pool import PoolRefused
+    from hardy.evals.pool import pool as pool_boards
 
     refusal = _refuse_missing(args.corpus, args.baseline)
     if refusal is not None:
@@ -468,8 +468,8 @@ def run_summary(args: argparse.Namespace) -> int:
     pooling key, claim the same `(id, repeat)` twice, or fail their own
     audit; see `summary.build` and `summary.SummaryRefused`.
     """
-    from .summary import SummaryRefused
-    from .summary import write as write_summary
+    from hardy.evals.summary import SummaryRefused
+    from hardy.evals.summary import write as write_summary
 
     refusal = _refuse_missing(args.corpus, args.baseline)
     if refusal is not None:
@@ -490,15 +490,15 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "run":
         return run_set_command(args, config)
     if args.evals_command == "corpus":
-        from ..corpus.catalog import check_issues, report
+        from hardy.corpus.catalog import check_issues, report
         if args.corpus_verb == "check":
-            from ..corpus.catalog import release_issues
+            from hardy.corpus.catalog import release_issues
 
             issues = check_issues(args.corpus)
             if getattr(args, "since", None) is not None:
                 issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
             if getattr(args, "since_registry", None) is not None:
-                from ..corpus.catalog import CorpusError, load_tombstones, registry_issues
+                from hardy.corpus.catalog import CorpusError, load_tombstones, registry_issues
 
                 # Both sides are gathered, not raised: CI always passes this
                 # option, so a malformed registry -- the very case the check
@@ -517,7 +517,7 @@ def main(args: argparse.Namespace, config: Any) -> int:
         if args.corpus_verb == "release":
             from datetime import date
 
-            from ..corpus.catalog import CorpusError, release
+            from hardy.corpus.catalog import CorpusError, release
 
             try:
                 issues = release(args.corpus, args.version, args.note, today=date.today().isoformat())
@@ -529,7 +529,7 @@ def main(args: argparse.Namespace, config: Any) -> int:
             print(f"corpus {args.version} written to {args.corpus / 'CHANGELOG.md'}")
             return 1 if issues else 0
         if args.corpus_verb == "serve":
-            from .viewer import serve
+            from hardy.evals.viewer import serve
 
             serve(args.corpus, host=args.host, port=args.port, baseline=args.baseline)
             return 0
@@ -548,7 +548,7 @@ def main(args: argparse.Namespace, config: Any) -> int:
 
 
 def check_command(args: Any) -> int:
-    from .scoreboard import validate_scoreboard
+    from hardy.evals.scoreboard import validate_scoreboard
 
     refusal = _refuse_missing(args.problems, args.baseline)
     if refusal is not None:
@@ -570,9 +570,9 @@ def check_command(args: Any) -> int:
 
 
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
-    from ..lean import environment_identity
-    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
-    from ..runner import WARNING
+    from hardy.lean import environment_identity
+    from hardy.prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
+    from hardy.runner import WARNING
 
     if args.backend != "claude":
         print(
@@ -630,7 +630,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         # has checked. Recorded into `selection["only"]` below rather than
         # left as `None`, so the scoreboard states exactly what ran and
         # `select` picks it up through the path it already uses.
-        from .outstanding import outstanding as compute_outstanding
+        from hardy.evals.outstanding import outstanding as compute_outstanding
 
         default_baseline = Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
         default_key = (run_digest, environment_digest_of(environment, host_info()))
@@ -652,7 +652,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
     )
     staged = None
     if args.mode == "staged":
-        from .staged import staged_runner
+        from hardy.evals.staged import staged_runner
         staged = staged_runner(config, backend=args.backend)
     try:
         out = run_set(label=args.label, problems_path=args.problems, baseline_path=args.baseline, scoreboards_root=args.scoreboards,

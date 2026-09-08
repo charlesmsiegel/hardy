@@ -14,8 +14,8 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import cas_tools, claude_runtime, doctor
-from . import config as configuration
+from hardy import cas_tools, claude_runtime, doctor
+from hardy import config as configuration
 
 
 def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND) -> Callable[..., Any]:
@@ -31,7 +31,7 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
 
     def make(model: str | None = None, **context: Any) -> Any:
         if backend == "api":
-            from .api_runtime import ApiRuntime
+            from hardy.api_runtime import ApiRuntime
 
             return ApiRuntime(model or default_model, **context)
         return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
@@ -41,15 +41,15 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
-    from . import lean as lean_module
-    from . import retrieval
-    from .declarations import DeclarationIndex
-    from .formal.tools import LeanToolRuntime
-    from .lean import LeanService
-    from .prompts import PROMPT_SET_SHA256
-    from .verifier import FinalVerifier
-    from .workflow import ProveWorkflow
-    from .writeup import RunIdentities, build_writeup, tectonic_version
+    from hardy import lean as lean_module
+    from hardy import retrieval
+    from hardy.declarations import DeclarationIndex
+    from hardy.formal.tools import LeanToolRuntime
+    from hardy.lean import LeanService
+    from hardy.prompts import PROMPT_SET_SHA256
+    from hardy.verifier import FinalVerifier
+    from hardy.workflow import ProveWorkflow
+    from hardy.writeup import RunIdentities, build_writeup, tectonic_version
 
     # Identified by the Lean the verifier will run -- `config.lake env lean`,
     # exactly as `FinalVerifier` spells it -- so the identity the claim is
@@ -101,11 +101,11 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
         if backend == "codex":
             from openai_codex import Codex
 
-            from .codex_runtime import CodexRuntime
+            from hardy.codex_runtime import CodexRuntime
 
             return CodexRuntime(client=Codex(), store=store, config_path=config_path)
-        from .domain import RunPhase
-        from .staged import ClaudeStagedRuntime
+        from hardy.staged import ClaudeStagedRuntime
+        from hardy.workflows.contracts import RunPhase
 
         def observe_cas(event: dict[str, Any]) -> None:
             # `cas_run` (and `cas_reset`) publish a completed cell record here;
@@ -186,7 +186,7 @@ def _unidentified_workflow(config: configuration.Config, reason: str):
     manifest that names no environment -- rather than one that names a
     compiler nobody identified.
     """
-    from .workflow import ProveWorkflow
+    from hardy.workflow import ProveWorkflow
 
     def unusable(_: configuration.Config) -> Any:
         return SimpleNamespace(healthy=False, authenticated=True, detail=reason)

@@ -71,7 +71,7 @@ def _claim(domain):
 
 def _runtime(tmp_path, events):
     runtime_module = importlib.import_module('hardy.codex_runtime')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'codex', now=NOW, run_id=RUN_ID)
     client = FakeClient(events)
     runtime = runtime_module.CodexRuntime(
@@ -87,7 +87,7 @@ def _events(name):
 
 
 def test_start_scopes_a_new_codex_thread_to_the_claim_and_required_mcp(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     _, runtime, client, store = _runtime(
         tmp_path, _events('formalization-events.json')
     )
@@ -114,7 +114,7 @@ def test_start_scopes_a_new_codex_thread_to_the_claim_and_required_mcp(tmp_path)
 
 
 def test_structured_turn_replays_normalized_events_usage_and_timing(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     runtime_module, runtime, client, store = _runtime(
         tmp_path, _events('formalization-events.json')
     )
@@ -201,7 +201,7 @@ def test_the_faithfulness_reader_starts_isolated_and_bounded(tmp_path) -> None:
     runtime_module, runtime, client, store = _runtime(
         tmp_path, _events('formalization-events.json')
     )
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     thread = runtime.start(
         model='gpt-test',
@@ -233,7 +233,7 @@ def test_a_bounded_turn_that_never_answers_is_interrupted_and_reported(
     """This SDK's `turn` takes no timeout and `stream()` blocks, so the
     deadline is built from the interrupt the SDK does offer."""
     runtime_module, runtime, client, store = _runtime(tmp_path, [])
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     class StallingHandle:
         def __init__(self):
@@ -266,8 +266,8 @@ def test_the_codex_ledger_counts_turns_and_states_no_figures(tmp_path) -> None:
     """This SDK reports no cost or token counts Hardy reads, so the manifest
     must say the run spent something unstated rather than nothing."""
     runtime_module = importlib.import_module('hardy.codex_runtime')
-    storage = importlib.import_module('hardy.storage')
-    domain = importlib.import_module('hardy.domain')
+    storage = importlib.import_module('hardy.workflows.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
     store = storage.RunStore.create(
         tmp_path, 'codex', now=datetime(2026, 7, 24, tzinfo=UTC), run_id=UUID(int=7)
     )

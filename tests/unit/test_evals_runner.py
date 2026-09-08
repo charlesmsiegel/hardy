@@ -11,10 +11,10 @@ from corpus_helpers import write_corpus
 from test_recorded_runs import FAKE_LEAN, _Runtime
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
-from hardy.domain import EnvironmentIdentity
 from hardy.evals import identity, runner, sweep
 from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
+from hardy.formal.contracts import EnvironmentIdentity
 
 HOST = sweep.host_info()
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
@@ -93,9 +93,9 @@ def _scripted_batch(output: Path, script, *, declaration: str, informal_claim: s
     """
     import sys
 
-    from hardy import models
     from hardy import runner as hardy_runner
     from hardy.lean import LeanTools
+    from hardy.workflows import batch_contracts as models
 
     payload = {"declaration": declaration, "informal_claim": informal_claim}
     if imports is not None:

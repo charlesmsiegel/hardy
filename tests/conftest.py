@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hardy import process
+from hardy.foundation import process
 
 
 @pytest.fixture(autouse=True)

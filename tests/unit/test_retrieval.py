@@ -63,7 +63,7 @@ def _unpinned(retrieval, name='loogle'):
 
 
 def _retriever(retrieval, sources, seconds=300, clock=None):
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     return retrieval.PremiseRetriever(
         sources=sources,
         limits=domain.RunLimits(retrieval_seconds=seconds),
@@ -859,7 +859,7 @@ def test_the_budget_is_scoped_to_the_retriever_and_says_so() -> None:
     here.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     readings = iter([0.0, 4.0])
     lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
 
@@ -897,7 +897,7 @@ def test_the_index_source_searches_the_sources_the_run_is_frozen_under(tmp_path)
     -- where `#find`, measured on the pinned toolchain, never answered at all.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     package = tmp_path / '.lake' / 'packages' / 'mathlib' / 'Mathlib'
     package.mkdir(parents=True)
     (package / 'Simple.lean').write_text(
@@ -928,7 +928,7 @@ def test_the_index_source_extracts_only_the_constants_a_name_index_can_use() -> 
     actually ran rather than one it cannot parse.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     source = _index_source(retrieval, domain, None)
 
@@ -959,7 +959,7 @@ def test_a_pure_shape_query_is_this_source_refusing_and_loogle_answering(tmp_pat
     against the source while Loogle still shapes the ranking.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     index_source = _index_source(retrieval, domain, tmp_path)
     loogle = FakeSource(_unpinned(retrieval), [_record('Nat.add_comm')])
 
@@ -986,7 +986,7 @@ def test_the_index_source_is_pinned_only_when_the_manifest_is_the_frozen_one(
     this replaces: no compiler runs, so the corpus is the text alone.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     manifest = b'{"packages": [{"name": "mathlib", "rev": "81a5d257"}]}'
     (tmp_path / 'lake-manifest.json').write_bytes(manifest)
 
@@ -1012,7 +1012,7 @@ def test_the_index_source_declares_its_cold_bound_until_the_read_has_happened(
     figure for both either overcharges every later call or lets the first one
     overrun the budget after passing the check meant to stop it."""
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     source = _index_source(retrieval, domain, tmp_path)
 
@@ -1048,7 +1048,7 @@ def test_two_rankings_at_once_cannot_each_spend_the_whole_budget() -> None:
     staged transport gates its dispatch; the MCP server does not.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     import threading
 
     started = threading.Barrier(2, timeout=5)
@@ -1254,7 +1254,7 @@ def test_the_default_source_set_puts_the_pinned_local_index_first() -> None:
     deliberately absent: measured on the pinned toolchain it never answered
     while costing a full process timeout per ranking."""
     retrieval = importlib.import_module('hardy.retrieval')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     class Service:
         lean_project = None
@@ -1272,7 +1272,7 @@ def test_a_caller_can_share_one_index_between_search_and_ranking() -> None:
     once per surface."""
     retrieval = importlib.import_module('hardy.retrieval')
     declarations = importlib.import_module('hardy.declarations')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     class Service:
         lean_project = None
@@ -1285,7 +1285,7 @@ def test_a_caller_can_share_one_index_between_search_and_ranking() -> None:
 
 
 def test_the_retrieval_budget_is_a_run_limit_like_every_other() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     assert domain.RunLimits().retrieval_seconds > 0
     assert domain.RunLimits(retrieval_seconds=1).retrieval_seconds == 1

@@ -4,13 +4,13 @@ from importlib.resources import files
 from pathlib import Path
 
 from hardy.acceptance import run_deterministic_experiment, validate_run_consistency
-from hardy.domain import FormalStatus, FrozenClaim
+from hardy.formal.contracts import FormalStatus, FrozenClaim
 
 
 def _config(runs_root, limits=None):
     """Hardy's resolved settings, with only what a deterministic run needs."""
     from hardy.config import Config
-    from hardy.domain import RunLimits as _RunLimits
+    from hardy.workflows.contracts import RunLimits as _RunLimits
 
     return Config(
         model='deterministic-no-model',
@@ -62,7 +62,8 @@ def _forge(manifest, **evidence_overrides):
     Every check the domain models can make passes: the digest is a real hash of
     a real evidence record. Only the run directory says otherwise.
     """
-    from hardy.domain import Grades, VerificationEvidence
+    from hardy.formal.contracts import VerificationEvidence
+    from hardy.workflows.contracts import Grades
 
     evidence = manifest.grades.verification_evidence
     forged = VerificationEvidence(
@@ -90,7 +91,7 @@ def _rewrite(run_dir, manifest):
 
 
 def test_verified_grade_names_evidence_that_re_derives_from_the_run(tmp_path) -> None:
-    from hardy.domain import VerificationEvidence
+    from hardy.formal.contracts import VerificationEvidence
     from hardy.verifier import VerificationResult
 
     result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
@@ -226,7 +227,7 @@ def test_the_release_audit_checks_the_faithfulness_verdict_against_the_claim(
     so their agreeing establishes little on its own. What is checkable is the
     claim the verdict says it read, against the frozen claim on disk.
     """
-    from hardy.domain import FaithfulnessVerdict, Grades
+    from hardy.workflows.contracts import FaithfulnessVerdict, Grades
 
     result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
     verdict = result.manifest.grades.faithfulness_review

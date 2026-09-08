@@ -31,7 +31,7 @@ def _environment(domain):
 
 
 def test_freeze_claim_has_a_deterministic_canonical_hash() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     first = domain.freeze_claim(
         'Two equals two.', _proposal(domain), _environment(domain), APPROVED_AT

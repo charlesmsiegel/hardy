@@ -7,7 +7,7 @@ difference between them -- a file read keeps its head, Lean keeps its tail.
 
 from __future__ import annotations
 
-from hardy.truncation import DEFAULT_BYTE_LIMIT, DEFAULT_LINE_LIMIT, truncate
+from hardy.foundation.truncation import DEFAULT_BYTE_LIMIT, DEFAULT_LINE_LIMIT, truncate
 
 LINES = "".join(f"line {index}\n" for index in range(1, 5001))
 

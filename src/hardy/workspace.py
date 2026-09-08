@@ -16,77 +16,30 @@ import tempfile
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
-from .domain import FrozenModel
-from .formal.syntax import (
-    ANY_NAME as ANY_NAME,
-)
-from .formal.syntax import (
-    ASSUMPTION as ASSUMPTION,
-)
-from .formal.syntax import (
-    AXIOM_KEYWORD as AXIOM_KEYWORD,
-)
-from .formal.syntax import (
-    BINDERS as BINDERS,
-)
-from .formal.syntax import (
-    CLOSERS as CLOSERS,
-)
-from .formal.syntax import (
-    COMMAND as COMMAND,
-)
-from .formal.syntax import (
-    COMPONENT as COMPONENT,
-)
-from .formal.syntax import (
-    DECLARATION as DECLARATION,
-)
-from .formal.syntax import (
-    END as END,
-)
-from .formal.syntax import (
-    ESCAPED as ESCAPED,
-)
-from .formal.syntax import (
-    HEADER_KEYWORDS as HEADER_KEYWORDS,
-)
-from .formal.syntax import (
-    IDENTIFIER as IDENTIFIER,
-)
-from .formal.syntax import (
-    IMPORT_PREFIX as IMPORT_PREFIX,
-)
-from .formal.syntax import (
-    MODULE as MODULE,
-)
-from .formal.syntax import (
-    NAMESPACE as NAMESPACE,
-)
-from .formal.syntax import (
-    OPENERS as OPENERS,
-)
-from .formal.syntax import (
-    OPENS_PROOF as OPENS_PROOF,
-)
-from .formal.syntax import (
-    PRIVATE as PRIVATE,
-)
-from .formal.syntax import (
-    PROOF as PROOF,
-)
-from .formal.syntax import (
-    QUALIFIED as QUALIFIED,
-)
-from .formal.syntax import (
-    QUALIFIED_NAME as QUALIFIED_NAME,
-)
-from .formal.syntax import (
-    SECTION as SECTION,
-)
-from .formal.syntax import (
-    WRAPPER as WRAPPER,
-)
-from .formal.syntax import (
+from hardy.formal.syntax import ANY_NAME as ANY_NAME
+from hardy.formal.syntax import ASSUMPTION as ASSUMPTION
+from hardy.formal.syntax import AXIOM_KEYWORD as AXIOM_KEYWORD
+from hardy.formal.syntax import BINDERS as BINDERS
+from hardy.formal.syntax import CLOSERS as CLOSERS
+from hardy.formal.syntax import COMMAND as COMMAND
+from hardy.formal.syntax import COMPONENT as COMPONENT
+from hardy.formal.syntax import DECLARATION as DECLARATION
+from hardy.formal.syntax import END as END
+from hardy.formal.syntax import ESCAPED as ESCAPED
+from hardy.formal.syntax import HEADER_KEYWORDS as HEADER_KEYWORDS
+from hardy.formal.syntax import IDENTIFIER as IDENTIFIER
+from hardy.formal.syntax import IMPORT_PREFIX as IMPORT_PREFIX
+from hardy.formal.syntax import MODULE as MODULE
+from hardy.formal.syntax import NAMESPACE as NAMESPACE
+from hardy.formal.syntax import OPENERS as OPENERS
+from hardy.formal.syntax import OPENS_PROOF as OPENS_PROOF
+from hardy.formal.syntax import PRIVATE as PRIVATE
+from hardy.formal.syntax import PROOF as PROOF
+from hardy.formal.syntax import QUALIFIED as QUALIFIED
+from hardy.formal.syntax import QUALIFIED_NAME as QUALIFIED_NAME
+from hardy.formal.syntax import SECTION as SECTION
+from hardy.formal.syntax import WRAPPER as WRAPPER
+from hardy.formal.syntax import (
     Compile,
     _olean_module,
     _olean_relative,
@@ -96,61 +49,26 @@ from .formal.syntax import (
     module_name,
     module_path,
 )
-from .formal.syntax import (
-    ImportCycle as ImportCycle,
-)
-from .formal.syntax import (
-    WorkspacePathError as WorkspacePathError,
-)
-from .formal.syntax import (
-    _raw_string_opener as _raw_string_opener,
-)
-from .formal.syntax import (
-    _scan as _scan,
-)
-from .formal.syntax import (
-    _scope_prefixes as _scope_prefixes,
-)
-from .formal.syntax import (
-    _statement_end as _statement_end,
-)
-from .formal.syntax import (
-    _word_at as _word_at,
-)
-from .formal.syntax import (
-    assumptions as assumptions,
-)
-from .formal.syntax import (
-    declarations as declarations,
-)
-from .formal.syntax import (
-    declared_name as declared_name,
-)
-from .formal.syntax import (
-    dependents as dependents,
-)
-from .formal.syntax import (
-    name_aliases as name_aliases,
-)
-from .formal.syntax import (
-    normalise_lean as normalise_lean,
-)
-from .formal.syntax import (
-    parse_imports as parse_imports,
-)
-from .formal.syntax import (
-    safe_relative as safe_relative,
-)
-from .formal.syntax import (
-    statements as statements,
-)
-from .formal.syntax import (
-    strip_comments as strip_comments,
-)
-from .formal.syntax import (
-    unreadable_assumptions as unreadable_assumptions,
-)
-from .layout import WriteGuard, files_under, guard_for, read_text
+from hardy.formal.syntax import ImportCycle as ImportCycle
+from hardy.formal.syntax import WorkspacePathError as WorkspacePathError
+from hardy.formal.syntax import _raw_string_opener as _raw_string_opener
+from hardy.formal.syntax import _scan as _scan
+from hardy.formal.syntax import _scope_prefixes as _scope_prefixes
+from hardy.formal.syntax import _statement_end as _statement_end
+from hardy.formal.syntax import _word_at as _word_at
+from hardy.formal.syntax import assumptions as assumptions
+from hardy.formal.syntax import declarations as declarations
+from hardy.formal.syntax import declared_name as declared_name
+from hardy.formal.syntax import dependents as dependents
+from hardy.formal.syntax import name_aliases as name_aliases
+from hardy.formal.syntax import normalise_lean as normalise_lean
+from hardy.formal.syntax import parse_imports as parse_imports
+from hardy.formal.syntax import safe_relative as safe_relative
+from hardy.formal.syntax import statements as statements
+from hardy.formal.syntax import strip_comments as strip_comments
+from hardy.formal.syntax import unreadable_assumptions as unreadable_assumptions
+from hardy.foundation.files import WriteGuard, files_under, guard_for, read_text
+from hardy.foundation.values import FrozenModel
 
 
 class BuildFailure(FrozenModel):

@@ -10,9 +10,9 @@ import asyncio
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from . import banner, dispatch, stream, transcript
-from .handlers import build_registry, load_templates
-from .ports import Choice, State
+from hardy.tui import banner, dispatch, stream, transcript
+from hardy.tui.handlers import build_registry, load_templates
+from hardy.tui.ports import Choice, State
 
 WIDTH = 80
 

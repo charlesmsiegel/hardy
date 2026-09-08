@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from ..corpus.problems import Entry
-from ..domain import FrozenClaim, RunPhase, schema_text
-from ..prompts import canonical_prompt, claim_signature
-from .contracts import CanonicalReview, CanonicalVerdict
+from hardy.corpus.problems import Entry
+from hardy.evals.contracts import CanonicalReview, CanonicalVerdict
+from hardy.formal.contracts import FrozenClaim
+from hardy.foundation.values import schema_text
+from hardy.prompts import canonical_prompt, claim_signature
+from hardy.workflows.contracts import RunPhase
 
 
 class ApprovingTerminal:
@@ -121,9 +123,9 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
     # routing a run through it anyway would make that digest defeatable --
     # an edit to `cli.py` would change what a run does without moving the key
     # every pooled row is supposed to share.
-    from ..staged import ClaudeStagedRuntime
-    from ..wiring import build_prove_workflow
-    from ..workflow import ProveRequest
+    from hardy.staged import ClaudeStagedRuntime
+    from hardy.wiring import build_prove_workflow
+    from hardy.workflow import ProveRequest
 
     def run_one(entry: Entry, row_dir: Path, model: str) -> None:
         scoped = dataclasses.replace(config, runs_root=row_dir)

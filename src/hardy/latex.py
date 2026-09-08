@@ -7,20 +7,12 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from . import references
-from .documents.syntax import (
-    _CONDITIONAL as _CONDITIONAL,
-)
-from .documents.syntax import (
-    _IFFALSE as _IFFALSE,
-)
-from .documents.syntax import (
-    _LET as _LET,
-)
-from .documents.syntax import (
-    _MACRO_DEF as _MACRO_DEF,
-)
-from .documents.syntax import (
+from hardy import references
+from hardy.documents.syntax import _CONDITIONAL as _CONDITIONAL
+from hardy.documents.syntax import _IFFALSE as _IFFALSE
+from hardy.documents.syntax import _LET as _LET
+from hardy.documents.syntax import _MACRO_DEF as _MACRO_DEF
+from hardy.documents.syntax import (
     ARTIFACTS,
     BODY,
     MAX_AUX_BYTES,
@@ -33,57 +25,25 @@ from .documents.syntax import (
     stamped,
     unreached_fragments,
 )
-from .documents.syntax import (
-    BEGIN_DOCUMENT as BEGIN_DOCUMENT,
-)
-from .documents.syntax import (
-    INCLUSION as INCLUSION,
-)
-from .documents.syntax import (
-    INLINE_VERBATIM as INLINE_VERBATIM,
-)
-from .documents.syntax import (
-    VERBATIM_ENVIRONMENT as VERBATIM_ENVIRONMENT,
-)
-from .documents.syntax import (
-    _drop_iffalse as _drop_iffalse,
-)
-from .documents.syntax import (
-    _drop_macro_bodies as _drop_macro_bodies,
-)
-from .documents.syntax import (
-    _executed_line as _executed_line,
-)
-from .documents.syntax import (
-    _macro_bodies as _macro_bodies,
-)
-from .documents.syntax import (
-    _MacroState as _MacroState,
-)
-from .documents.syntax import (
-    _normalise_include as _normalise_include,
-)
-from .documents.syntax import (
-    _skip_balanced as _skip_balanced,
-)
-from .documents.syntax import (
-    _skip_command as _skip_command,
-)
-from .documents.syntax import (
-    compiles_document as compiles_document,
-)
-from .documents.syntax import (
-    typeset as typeset,
-)
-from .documents.syntax import (
-    uncommented as uncommented,
-)
-from .documents.syntax import (
-    unfinished_definition as unfinished_definition,
-)
-from .layout import LayoutError, WriteGuard, files_under, guard_for, read_bytes
-from .models import ToolResult
-from .process import GuardedResult, run_guarded
+from hardy.documents.syntax import BEGIN_DOCUMENT as BEGIN_DOCUMENT
+from hardy.documents.syntax import INCLUSION as INCLUSION
+from hardy.documents.syntax import INLINE_VERBATIM as INLINE_VERBATIM
+from hardy.documents.syntax import VERBATIM_ENVIRONMENT as VERBATIM_ENVIRONMENT
+from hardy.documents.syntax import _drop_iffalse as _drop_iffalse
+from hardy.documents.syntax import _drop_macro_bodies as _drop_macro_bodies
+from hardy.documents.syntax import _executed_line as _executed_line
+from hardy.documents.syntax import _macro_bodies as _macro_bodies
+from hardy.documents.syntax import _MacroState as _MacroState
+from hardy.documents.syntax import _normalise_include as _normalise_include
+from hardy.documents.syntax import _skip_balanced as _skip_balanced
+from hardy.documents.syntax import _skip_command as _skip_command
+from hardy.documents.syntax import compiles_document as compiles_document
+from hardy.documents.syntax import typeset as typeset
+from hardy.documents.syntax import uncommented as uncommented
+from hardy.documents.syntax import unfinished_definition as unfinished_definition
+from hardy.foundation.files import LayoutError, WriteGuard, files_under, guard_for, read_bytes
+from hardy.foundation.process import GuardedResult, run_guarded
+from hardy.foundation.values import ToolResult
 
 
 def _tail(text: str, limit: int) -> str:

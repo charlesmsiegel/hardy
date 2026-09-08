@@ -20,11 +20,12 @@ from pathlib import Path
 import pytest
 
 from hardy import config as configuration
-from hardy import layout, search_tools
+from hardy import search_tools
 from hardy.app import projects as cli
 from hardy.declarations import DeclarationIndex
-from hardy.domain import EnvironmentIdentity
+from hardy.formal.contracts import EnvironmentIdentity
 from hardy.retrieval import build_retriever
+from hardy.workflows import layout
 
 
 class _FakeLeanService:

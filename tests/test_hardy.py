@@ -10,8 +10,8 @@ import pytest
 
 from hardy import config as configuration
 from hardy.app import cli
+from hardy.formal.contracts import Request
 from hardy.lean import LeanTools
-from hardy.models import Request
 from hardy.runner import run
 
 

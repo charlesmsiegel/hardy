@@ -36,9 +36,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from . import summary as summary_module
-from .loop import Message, first_legal_cut
-from .prompts import COMPACTION_PREAMBLE
+from hardy import summary as summary_module
+from hardy.loop import Message, first_legal_cut
+from hardy.prompts import COMPACTION_PREAMBLE
 
 #: The window a conversation is compacted to fit, and how much of it is held
 #: back. Pi's numbers, and Pi's reasoning: the reserve is what the next request

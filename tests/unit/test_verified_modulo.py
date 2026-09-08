@@ -93,7 +93,7 @@ def _verifier(verifier, domain, claim, tmp_path, runner, allowed=()):
 
 
 def test_verified_modulo_is_its_own_grade() -> None:
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
 
     assert domain.FormalStatus.VERIFIED_MODULO.value == "verified_modulo"
     assert domain.FormalStatus.VERIFIED_MODULO is not domain.FormalStatus.KERNEL_VERIFIED
@@ -102,7 +102,7 @@ def test_verified_modulo_is_its_own_grade() -> None:
 def test_a_kernel_verified_grade_may_not_carry_assumptions(tmp_path) -> None:
     """The whole distinction: `kernel_verified` means Lean's own axioms and
     nothing else, so a grade naming an assumption cannot wear it."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     claim = _claim(domain)
     evidence = domain.VerificationEvidence(
         claim_sha256=claim.content_hash,
@@ -125,7 +125,7 @@ def test_a_kernel_verified_grade_may_not_carry_assumptions(tmp_path) -> None:
 def test_a_verified_modulo_grade_must_name_what_it_stands_on() -> None:
     """Otherwise it is `kernel_verified` under a name that reads worse, and a
     reader has no idea what the result rests on."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     claim = _claim(domain)
     evidence = domain.VerificationEvidence(
         claim_sha256=claim.content_hash,
@@ -148,7 +148,7 @@ def test_a_verified_modulo_grade_must_name_what_it_stands_on() -> None:
 def test_the_manifest_lists_the_assumptions_exactly(tmp_path) -> None:
     """Not a count, not a summary: every name, so a downstream reader can
     check each one against the paper it came from."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     claim = _claim(domain)
     evidence = domain.VerificationEvidence(
         claim_sha256=claim.content_hash,
@@ -191,9 +191,9 @@ def test_a_declared_assumption_is_rendered_into_the_verified_source(tmp_path) ->
     """The proof has to be able to use it, and the independent verifier
     rebuilds from the claim rather than from the run's workspace -- so what
     the run declared has to be in the file it elaborates."""
-    domain = importlib.import_module("hardy.domain")
-    process = importlib.import_module("hardy.process")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    process = importlib.import_module("hardy.foundation.process")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -217,9 +217,9 @@ def test_a_declared_assumption_is_rendered_into_the_verified_source(tmp_path) ->
 
 
 def test_a_proof_using_exactly_the_declared_assumptions_is_verified_modulo(tmp_path) -> None:
-    domain = importlib.import_module("hardy.domain")
-    process = importlib.import_module("hardy.process")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    process = importlib.import_module("hardy.foundation.process")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -242,9 +242,9 @@ def test_a_proof_using_exactly_the_declared_assumptions_is_verified_modulo(tmp_p
 def test_a_proof_that_used_none_of_them_is_kernel_verified(tmp_path) -> None:
     """Declaring an assumption permits it; it does not spend it. A proof that
     turned out not to need the paper is graded on what it used."""
-    domain = importlib.import_module("hardy.domain")
-    process = importlib.import_module("hardy.process")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    process = importlib.import_module("hardy.foundation.process")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -263,9 +263,9 @@ def test_a_proof_that_used_none_of_them_is_kernel_verified(tmp_path) -> None:
 
 
 def test_an_axiom_nobody_declared_is_still_refused(tmp_path) -> None:
-    domain = importlib.import_module("hardy.domain")
-    process = importlib.import_module("hardy.process")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    process = importlib.import_module("hardy.foundation.process")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -286,9 +286,9 @@ def test_an_axiom_nobody_declared_is_still_refused(tmp_path) -> None:
 
 def test_a_hole_is_refused_however_much_was_declared(tmp_path) -> None:
     """`sorryAx` is not an assumption and no declaration may launder one."""
-    domain = importlib.import_module("hardy.domain")
-    process = importlib.import_module("hardy.process")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    process = importlib.import_module("hardy.foundation.process")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -328,8 +328,8 @@ def test_a_declared_statement_that_is_not_a_type_never_reaches_lean(
 ) -> None:
     """The declaration file is written by Hardy into the source the kernel
     checks, so what goes in it is not the run's to choose freely."""
-    domain = importlib.import_module("hardy.domain")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -353,9 +353,9 @@ def test_a_comment_in_a_declared_statement_is_not_an_injection(tmp_path) -> None
     """`strip_comments` exists so a *mention* is not a use. Refusing this
     would be a false positive on an ordinary statement, and a gate whose
     first refusal is of honest input is a gate people learn to work around."""
-    domain = importlib.import_module("hardy.domain")
-    process = importlib.import_module("hardy.process")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    process = importlib.import_module("hardy.foundation.process")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -380,8 +380,8 @@ def test_a_comment_in_a_declared_statement_is_not_an_injection(tmp_path) -> None
 
 
 def test_a_declared_name_that_is_not_an_identifier_never_reaches_lean(tmp_path) -> None:
-    domain = importlib.import_module("hardy.domain")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -404,8 +404,8 @@ def test_a_declared_name_that_is_not_an_identifier_never_reaches_lean(tmp_path) 
 def test_a_declared_assumption_may_not_shadow_the_theorem_being_proved(tmp_path) -> None:
     """Assuming the goal is not a proof of it, and this is the one shape that
     would make every run trivially succeed."""
-    domain = importlib.import_module("hardy.domain")
-    storage = importlib.import_module("hardy.storage")
+    domain = importlib.import_module("hardy.workflows.contracts")
+    storage = importlib.import_module("hardy.workflows.storage")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
     store = _store(storage, tmp_path)
@@ -430,7 +430,7 @@ def test_the_verified_source_is_a_file_lean_will_parse(tmp_path) -> None:
     is `invalid 'import' command`. Rendering the declarations before the
     imports made every `--assume` run fail final verification with a parse
     error, so `verified_modulo` could not be produced at all."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     verifier = importlib.import_module("hardy.verifier")
     claim = _claim(domain)
 
@@ -452,7 +452,7 @@ def test_a_declared_assumption_is_in_scope_for_the_loop_that_writes_the_proof(
     does. Without the declarations a proof citing one got `unknown identifier`
     from every check, so no proof using a declared assumption could ever be
     submitted -- the feature was unusable from both ends."""
-    domain = importlib.import_module("hardy.domain")
+    domain = importlib.import_module("hardy.workflows.contracts")
     lean = importlib.import_module("hardy.lean")
     claim = _claim(domain)
 

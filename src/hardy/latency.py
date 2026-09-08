@@ -44,9 +44,10 @@ from pathlib import Path
 
 from pydantic import NonNegativeInt
 
-from .domain import EnvironmentIdentity, FrozenModel
-from .lean import DECLARATION_NAME, LEAN_COMMIT, LEAN_VERSION, Elaboration, elaborate
-from .process import ProcessResult, ProcessSpec, run_process
+from hardy.formal.contracts import EnvironmentIdentity
+from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
+from hardy.foundation.values import FrozenModel
+from hardy.lean import DECLARATION_NAME, LEAN_COMMIT, LEAN_VERSION, Elaboration, elaborate
 
 # How many probes a measurement takes when the caller does not say. The first
 # elaboration also warms the operating system's page cache, so a single sample

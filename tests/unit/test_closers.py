@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from hardy import closers
+from hardy.formal.contracts import Request
 from hardy.lean import LeanTools
-from hardy.models import Request
 from hardy.runner import run
 
 

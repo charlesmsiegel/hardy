@@ -28,37 +28,33 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
-from . import refute
-from .config import Config
-from .domain import (
+from hardy import refute
+from hardy.config import Config
+from hardy.documents.contracts import DocumentStatus, InformalStatus
+from hardy.faithfulness import dispute_gaps, review_translation
+from hardy.formal.contracts import (
     DeclaredAssumption,
-    DocumentStatus,
     EnvironmentIdentity,
-    FaithfulnessOutcome,
-    FaithfulnessStatus,
-    FaithfulnessVerdict,
     FormalizationProposal,
     FormalStatus,
     FrozenClaim,
-    FrozenModel,
+    freeze_claim,
+)
+from hardy.foundation.values import FrozenModel
+from hardy.lean import LeanCheckResult
+from hardy.prompts import FORMALIZATION_PROMPT, PROMPT_SET_SHA256, proof_prompt, writeup_prompt
+from hardy.verifier import VerificationResult
+from hardy.workflows.contracts import (
+    FaithfulnessOutcome,
+    FaithfulnessStatus,
+    FaithfulnessVerdict,
     Grades,
-    InformalStatus,
     RunManifest,
     RunPhase,
     TerminalReason,
-    freeze_claim,
 )
-from .faithfulness import dispute_gaps, review_translation
-from .lean import LeanCheckResult
-from .prompts import (
-    FORMALIZATION_PROMPT,
-    PROMPT_SET_SHA256,
-    proof_prompt,
-    writeup_prompt,
-)
-from .storage import RunStore
-from .verifier import VerificationResult
-from .writeup import DocumentResult, WriteupContent
+from hardy.workflows.storage import RunStore
+from hardy.writeup import DocumentResult, WriteupContent
 
 ALLOWED = {
     RunPhase.SETUP: {RunPhase.FORMALIZING},

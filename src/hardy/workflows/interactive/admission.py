@@ -13,14 +13,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from ... import assume as assume_module
-from ... import refute
-from ...arxiv import ArxivError
-from ...bibliography import BibliographyError
-from ...layout import LayoutError
-from ...models import ToolResult
-from ...storage import LockTimeout
-from ...workspace import ANY_NAME, COMMAND, module_name, safe_relative, unreadable_assumptions
+from hardy import assume as assume_module
+from hardy import refute
+from hardy.arxiv import ArxivError
+from hardy.bibliography import BibliographyError
+from hardy.foundation.files import LayoutError
+from hardy.foundation.locking import LockTimeout
+from hardy.foundation.values import ToolResult
+from hardy.workspace import ANY_NAME, COMMAND, module_name, safe_relative, unreadable_assumptions
 
 
 @dataclass(frozen=True)

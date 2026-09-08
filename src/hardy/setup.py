@@ -15,9 +15,9 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Literal
 
-from .config import Config
-from .domain import FrozenModel
-from .process import ProcessResult, ProcessSpec, run_process
+from hardy.config import Config
+from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
+from hardy.foundation.values import FrozenModel
 
 
 class ToolStatus(FrozenModel):
@@ -43,7 +43,7 @@ def probe_codex(
     """Ask the Codex SDK whether a ChatGPT subscription is signed in."""
     from importlib import metadata
 
-    from .codex_runtime import load_sdk
+    from hardy.codex_runtime import load_sdk
 
     version = sdk_version or metadata.version("openai-codex")
     factory = client_factory or load_sdk().Codex
@@ -61,7 +61,7 @@ def ensure_codex_login(
     confirmer: Callable[[str], bool],
     client_factory: Callable[[], Any] | None = None,
 ) -> bool:
-    from .codex_runtime import load_sdk
+    from hardy.codex_runtime import load_sdk
 
     factory = client_factory or load_sdk().Codex
     client = factory()
@@ -211,7 +211,7 @@ def discover_environment(
 
 def _cas_status(config: Config) -> ToolStatus:
     """Start the kernel and ask its version: found is not the same as working."""
-    from .cas_tools import build_runtime
+    from hardy.cas_tools import build_runtime
 
     with tempfile.TemporaryDirectory(prefix="hardy-cas-") as directory:
         runtime, detail = build_runtime(

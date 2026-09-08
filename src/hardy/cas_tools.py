@@ -20,9 +20,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .cas import CasError, CasSession, CellRecord, backend_for
-from .domain import FrozenModel, RunLimits
-from .prompts import cas_spill_note
+from hardy.cas import CasError, CasSession, CellRecord, backend_for
+from hardy.foundation.values import FrozenModel
+from hardy.prompts import cas_spill_note
+from hardy.workflows.contracts import RunLimits
 
 SOURCE_LIMIT_BYTES = 64 * 1024
 

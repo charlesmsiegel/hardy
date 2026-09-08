@@ -22,7 +22,7 @@ def test_executable_discovery_prefers_explicit_then_path_then_common(tmp_path) -
 
 def test_environment_report_requires_successful_smoke_tests(tmp_path) -> None:
     config_module = importlib.import_module('hardy.config')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     setup = importlib.import_module('hardy.setup')
     elan = _touch(tmp_path / 'bin' / 'elan.exe')
     lake = _touch(tmp_path / 'bin' / 'lake.exe')

@@ -33,7 +33,7 @@ def _project(tmp_path: Path) -> Path:
 
 def _lean(stdout: str = VERSION_LINE, *, returncode: int = 0, timed_out: bool = False):
     """A runner standing in for `lake env lean --version`, recording what it was asked."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     asked = []
 
     def run(spec):

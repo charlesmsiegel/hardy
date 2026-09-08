@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..config import DEFAULT_BACKEND, authentication
-from ..runner import WARNING
+from hardy.config import DEFAULT_BACKEND, authentication
+from hardy.runner import WARNING
 
 
 def status_line(config: Any) -> str:

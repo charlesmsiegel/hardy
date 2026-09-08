@@ -66,7 +66,7 @@ def test_verified_archive_extracts_only_the_expected_executable(
 
 def test_elan_install_uses_a_fixed_user_scope_winget_command(tmp_path) -> None:
     installers = importlib.import_module('hardy.installers')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     winget = tmp_path / 'winget.exe'
     winget.write_bytes(b'fixture')
     calls = []
@@ -110,7 +110,7 @@ def test_elan_install_uses_a_fixed_user_scope_winget_command(tmp_path) -> None:
 
 def test_mathlib_setup_runs_only_checked_in_lake_commands(tmp_path) -> None:
     installers = importlib.import_module('hardy.installers')
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     lake = tmp_path / 'lake.exe'
     lake.write_bytes(b'fixture')
     calls = []

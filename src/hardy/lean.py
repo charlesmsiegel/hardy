@@ -21,15 +21,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
-from .formal.syntax import QUALIFIED_NAME, declared_name, strip_comments
-from .layout import WriteGuard
-from .models import Request, ToolResult
-from .process import ProcessResult, ProcessSpec, run_process
-from .truncation import truncate
+from hardy.formal.contracts import EnvironmentIdentity, FrozenClaim, Request
+from hardy.formal.syntax import QUALIFIED_NAME, declared_name, strip_comments
+from hardy.foundation.files import WriteGuard
+from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
+from hardy.foundation.truncation import truncate
+from hardy.foundation.values import FrozenModel, ToolResult
+from hardy.workflows.contracts import RunLimits
 
 if TYPE_CHECKING:
-    from .modules import ModuleIndex
+    from hardy.modules import ModuleIndex
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
 #: A Lean escaped identifier, `«like this»`. Its contents are a *name*, not

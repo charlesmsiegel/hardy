@@ -12,7 +12,7 @@ EMITTER = Path(__file__).parents[1] / 'fixtures' / 'process' / 'emit.py'
 
 
 def test_process_captures_stdout_and_stderr_separately(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(
             sys.executable,
@@ -37,7 +37,7 @@ def test_process_captures_stdout_and_stderr_separately(tmp_path) -> None:
 
 
 def test_timeout_returns_an_explicit_result(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--sleep', '5'),
         cwd=tmp_path,
@@ -53,7 +53,7 @@ def test_timeout_returns_an_explicit_result(tmp_path) -> None:
 
 
 def test_output_overflow_terminates_the_process_early(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(
             sys.executable,
@@ -81,7 +81,7 @@ def test_provider_credentials_are_not_inherited(
     tmp_path,
     monkeypatch,
 ) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     monkeypatch.setenv('OPENAI_API_KEY', 'do-not-forward')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--env', 'OPENAI_API_KEY'),
@@ -97,7 +97,7 @@ def test_provider_credentials_are_not_inherited(
 
 
 def test_explicit_child_environment_values_are_available(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--env', 'HARDY_VISIBLE'),
         cwd=tmp_path,
@@ -133,7 +133,7 @@ def _press_escape(process) -> int:
 
 
 def test_an_interrupt_stops_a_child_long_before_its_timeout(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--sleep', '30'),
         cwd=tmp_path,
@@ -153,7 +153,7 @@ def test_an_interrupt_stops_a_child_long_before_its_timeout(tmp_path) -> None:
 
 
 def test_a_child_that_ignores_the_interrupt_is_still_stopped(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     ready = tmp_path / 'deaf'
     spec = process.ProcessSpec(
         argv=(
@@ -193,7 +193,7 @@ def test_a_child_that_ignores_the_interrupt_is_still_stopped(tmp_path) -> None:
 
 
 def test_output_survives_an_interrupt(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     ready = tmp_path / 'said-it'
     spec = process.ProcessSpec(
         argv=(
@@ -225,7 +225,7 @@ def test_output_survives_an_interrupt(tmp_path) -> None:
 
 
 def test_a_run_nobody_stopped_is_not_reported_as_interrupted(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--stdout', 'done'),
         cwd=tmp_path,
@@ -240,7 +240,7 @@ def test_a_run_nobody_stopped_is_not_reported_as_interrupted(tmp_path) -> None:
 
 
 def test_the_register_empties_when_a_run_finishes(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--stdout', 'done'),
         cwd=tmp_path,
@@ -256,7 +256,7 @@ def test_the_register_empties_when_a_run_finishes(tmp_path) -> None:
 
 
 def test_stop_children_terminates_a_child_that_refused_the_interrupt(tmp_path) -> None:
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     ready = tmp_path / 'deaf'
     spec = process.ProcessSpec(
         argv=(
@@ -300,7 +300,7 @@ def test_a_child_that_starts_after_the_press_is_stopped_too(tmp_path) -> None:
     its full timeout with the press already spent. The stop stays in force so
     it is caught on arrival instead.
     """
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--sleep', '30'),
         cwd=tmp_path,
@@ -321,7 +321,7 @@ def test_a_child_that_starts_after_the_press_is_stopped_too(tmp_path) -> None:
 def test_the_next_turn_is_allowed_to_run(tmp_path) -> None:
     """The other half: a stop that outlived the turn it belonged to would kill
     the next turn's first child on sight."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--stdout', 'done'),
         cwd=tmp_path,
@@ -342,7 +342,7 @@ def test_a_press_that_reaches_nothing_does_not_discard_a_finished_run(tmp_path) 
     """A press landing after the child exited but before its registration is
     dropped used to mark the run interrupted anyway -- throwing away a Lean
     check that had passed, and reporting that it never finished."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     done = tmp_path / 'finished'
     spec = process.ProcessSpec(
         argv=(sys.executable, str(EMITTER), '--stdout', 'done', '--ready', str(done)),
@@ -377,7 +377,7 @@ def test_a_late_arrival_that_already_finished_keeps_its_result(tmp_path) -> None
     """The stop stays in force so a child registering after the press is caught
     on arrival -- but a fast one that finished before it registered produced a
     real result, and marking that would discard a Lean check that passed."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     process.interrupt_children()  # a stop already in force
 
     child = subprocess.Popen(
@@ -396,7 +396,7 @@ def test_a_late_arrival_that_already_finished_keeps_its_result(tmp_path) -> None
 
 def test_run_guarded_stops_a_child_that_ignores_the_interrupt(tmp_path) -> None:
     """The shared ladder, used by LaTeX, the Lake probe, and doctor alike."""
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     ready = tmp_path / 'deaf'
 
     def press_escape() -> None:
@@ -440,7 +440,7 @@ def test_a_stop_reaches_the_work_a_wrapper_left_behind(tmp_path) -> None:
     in its initial wait and never walked the ladder -- and the run went on to
     its full timeout despite having been stopped twice.
     """
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     ready = tmp_path / 'grandchild'
 
     def press_escape() -> None:
@@ -485,7 +485,7 @@ def test_a_guarded_run_does_not_leave_its_group_behind_when_the_caller_is_interr
     reach it. Unwinding without killing that group leaves the probe running
     out its limit after Hardy has exited.
     """
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
     if not hasattr(os, 'killpg'):  # pragma: no cover - POSIX-only assertion
         pytest.skip('process groups are addressed differently on Windows')
     seen: dict[str, subprocess.Popen] = {}

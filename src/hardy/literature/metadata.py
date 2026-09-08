@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from ..domain import FrozenModel
+from hardy.foundation.values import FrozenModel
 
 ENDPOINT = "https://export.arxiv.org/api/query"
 #: Where a paper's source bundle comes from. A different service from the

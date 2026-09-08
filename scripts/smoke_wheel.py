@@ -20,11 +20,16 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 import hardy
-from hardy.domain import EnvironmentIdentity, FormalizationProposal, FrozenClaim, freeze_claim
+from hardy.formal.contracts import (
+    EnvironmentIdentity,
+    FormalizationProposal,
+    FrozenClaim,
+    freeze_claim,
+)
 from hardy.formal.tools import LeanToolRuntime
+from hardy.foundation.process import ProcessResult
 from hardy.lean import LeanCheckResult
-from hardy.process import ProcessResult
-from hardy.storage import RunStore
+from hardy.workflows.storage import RunStore
 
 
 class FakeLean:
@@ -84,7 +89,7 @@ def smoke(directory):
     from hardy.algebra.backends import SympyBackend
     from hardy.algebra.session import CasSession
     from hardy.config import Config
-    from hardy.domain import RunLimits
+    from hardy.workflows.contracts import RunLimits
     from hardy.workflows.recorded import validate_run_consistency
 
     assert Path(hardy.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), hardy.__file__

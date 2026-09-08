@@ -13,8 +13,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from ..prompts.user import Template
-from .ports import State, Ui
+from hardy.prompts.user import Template
+from hardy.tui.ports import State, Ui
 
 
 @dataclass(frozen=True)

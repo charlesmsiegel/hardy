@@ -14,9 +14,9 @@ from typing import Literal
 
 from pydantic import Field, ValidationError
 
-from ..domain import FrozenModel
-from . import taxonomy
-from .problems import Entry, ProblemSet
+from hardy.corpus import taxonomy
+from hardy.corpus.problems import Entry, ProblemSet
+from hardy.foundation.values import FrozenModel
 
 DEFAULT_CORPUS = Path("corpus")
 

@@ -17,14 +17,11 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import model_validator
 
-from . import audit
-from .domain import (
+from hardy import audit
+from hardy.formal.contracts import (
     DeclaredAssumption,
     EnvironmentIdentity,
     FrozenClaim,
-    FrozenModel,
-    RunLimits,
-    TerminalReason,
     VerificationEvidence,
     freeze_claim,
 )
@@ -33,10 +30,12 @@ from .domain import (
 # strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
-from .formal.syntax import strip_comments
-from .lean import LeanDiagnostic, elaborate, render_theorem, scannable
-from .process import ProcessResult, ProcessSpec, run_process
-from .storage import RunStore
+from hardy.formal.syntax import strip_comments
+from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
+from hardy.foundation.values import FrozenModel
+from hardy.lean import LeanDiagnostic, elaborate, render_theorem, scannable
+from hardy.workflows.contracts import RunLimits, TerminalReason
+from hardy.workflows.storage import RunStore
 
 # Lean's own foundations. Everything else is an assumption someone made. Kept
 # as a name here because readers and tests reach for it; `hardy.audit` owns the

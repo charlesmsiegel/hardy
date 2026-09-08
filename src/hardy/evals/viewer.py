@@ -28,8 +28,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..corpus import taxonomy
-from ..corpus.catalog import (
+from hardy.corpus import taxonomy
+from hardy.corpus.catalog import (
     CorpusError,
     check_issues,
     corpus_version,
@@ -37,8 +37,8 @@ from ..corpus.catalog import (
     load_sources,
     shard_path,
 )
-from ..corpus.problems import Entry, Review
-from .sweep import witness_source
+from hardy.corpus.problems import Entry, Review
+from hardy.evals.sweep import witness_source
 
 PAGE = Path(__file__).resolve().parent / "viewer.html"
 BIBLIOGRAPHY = Path(__file__).resolve().parent / "bibliography.html"

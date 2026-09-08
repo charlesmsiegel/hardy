@@ -10,9 +10,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from ..layout import LayoutError, guard_for, read_bytes, read_text
-from ..storage import FileLock
-from .metadata import (
+from hardy.foundation.files import LayoutError, guard_for, read_bytes, read_text
+from hardy.foundation.locking import FileLock
+from hardy.literature.metadata import (
     LOCK_SECONDS,
     QUERY_TTL_SECONDS,
     SOURCE_ARCHIVE,
@@ -346,7 +346,7 @@ class PaperLibrary:
         can do to the filesystem -- not a sandbox, and not a licence to run
         what it contains.
         """
-        from . import archives  # local: `archives` is only needed by this path
+        from hardy.literature import archives  # local: `archives` is only needed by this path
 
         if not identifier.versioned:
             raise ArxivError("a source may only be admitted under a versioned identifier")

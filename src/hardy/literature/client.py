@@ -9,9 +9,9 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from ..storage import FileLock
-from .library import PaperLibrary
-from .metadata import (
+from hardy.foundation.locking import FileLock
+from hardy.literature.library import PaperLibrary
+from hardy.literature.metadata import (
     DEFAULT_TIMEOUT_SECONDS,
     ENDPOINT,
     MAX_ARCHIVE_BYTES,

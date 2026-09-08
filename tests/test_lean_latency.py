@@ -13,14 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy.latency import (
-    ImportCost,
-    WarmPoolEstimate,
-    describe,
-    import_probe,
-    measure_import_cost,
-)
-from hardy.process import ProcessResult, ProcessSpec
+from hardy.foundation.process import ProcessResult, ProcessSpec
+from hardy.latency import ImportCost, WarmPoolEstimate, describe, import_probe, measure_import_cost
 
 
 def runner_for(durations: list[int], *, returncode: int = 0, stdout: str = ""):
@@ -184,7 +178,7 @@ def test_the_report_states_the_assumption_it_cannot_check():
 
 
 def _identity():
-    from hardy.domain import EnvironmentIdentity
+    from hardy.formal.contracts import EnvironmentIdentity
 
     return EnvironmentIdentity(
         lean_version="4.32.0",
@@ -1140,7 +1134,7 @@ def test_an_empty_lean_command_is_reported_not_dereferenced(tmp_path: Path, caps
     the configuration problem."""
     from hardy.app import cli
     from hardy.config import Config
-    from hardy.domain import RunLimits
+    from hardy.workflows.contracts import RunLimits
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1174,8 +1168,8 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
     """A cost measured against some other Mathlib is not the cost Hardy pays."""
     from hardy.app import cli
     from hardy.config import Config
-    from hardy.domain import RunLimits
     from hardy.latency import ImportCost as Cost
+    from hardy.workflows.contracts import RunLimits
 
     project = tmp_path / "lean_project"
     project.mkdir()
@@ -1206,7 +1200,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
 
 def _config_for(tmp_path: Path, project: Path):
     from hardy.config import Config
-    from hardy.domain import RunLimits
+    from hardy.workflows.contracts import RunLimits
 
     return Config(
         model="test-model",

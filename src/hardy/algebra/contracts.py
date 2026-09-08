@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import model_validator
 
-from ..domain import FrozenModel
+from hardy.foundation.values import FrozenModel
 
 HEADER_BYTES = 10
 # A cell is bracketed by two markers, not trailed by one. A pipe preserves

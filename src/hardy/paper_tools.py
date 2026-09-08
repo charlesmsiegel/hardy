@@ -34,15 +34,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import truncation
-from .bibliography import Bibliography, BibliographyError
-from .layout import HARDY_DIR, global_dir
-from .literature.archives import ArchiveError
-from .literature.client import ArxivClient
-from .literature.library import PaperLibrary
-from .literature.metadata import ArxivError, PaperRecord, parse_id
-from .models import ToolResult
-from .storage import LockTimeout
+from hardy.bibliography import Bibliography, BibliographyError
+from hardy.foundation import truncation
+from hardy.foundation.locking import LockTimeout
+from hardy.foundation.paths import HARDY_DIR, global_dir
+from hardy.foundation.values import ToolResult
+from hardy.literature.archives import ArchiveError
+from hardy.literature.client import ArxivClient
+from hardy.literature.library import PaperLibrary
+from hardy.literature.metadata import ArxivError, PaperRecord, parse_id
 
 #: Where a machine keeps the papers it has fetched. Under the tooling
 #: directory because it is a cache of third-party bytes shared by every

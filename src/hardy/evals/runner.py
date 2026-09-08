@@ -12,19 +12,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..corpus.catalog import load_corpus, manifest_digest
-from ..corpus.problems import Entry, sha256_of
-from ..corpus.problems import ProblemSet as ProblemSet
-from ..domain import EnvironmentIdentity
-from .contracts import Condition, RefusedRun, Scoreboard
-from .identity import RUN_SOURCE_EXCLUDED_DIRS as RUN_SOURCE_EXCLUDED_DIRS
-from .identity import RUN_SOURCE_EXCLUDED_FILES as RUN_SOURCE_EXCLUDED_FILES
-from .identity import RUN_SOURCE_ROOT as RUN_SOURCE_ROOT
-from .identity import run_procedure_digest_of as run_procedure_digest_of
-from .identity import run_source_paths as run_source_paths
-from .scoreboard import Row, active_ids, aggregate, batch_row, staged_row
-from .selection import select
-from .sweep import Baseline, host_info, staleness
+from hardy.corpus.catalog import load_corpus, manifest_digest
+from hardy.corpus.problems import Entry, sha256_of
+from hardy.corpus.problems import ProblemSet as ProblemSet
+from hardy.evals.contracts import Condition, RefusedRun, Scoreboard
+from hardy.evals.identity import RUN_SOURCE_EXCLUDED_DIRS as RUN_SOURCE_EXCLUDED_DIRS
+from hardy.evals.identity import RUN_SOURCE_EXCLUDED_FILES as RUN_SOURCE_EXCLUDED_FILES
+from hardy.evals.identity import RUN_SOURCE_ROOT as RUN_SOURCE_ROOT
+from hardy.evals.identity import run_procedure_digest_of as run_procedure_digest_of
+from hardy.evals.identity import run_source_paths as run_source_paths
+from hardy.evals.scoreboard import Row, active_ids, aggregate, batch_row, staged_row
+from hardy.evals.selection import select
+from hardy.evals.sweep import Baseline, host_info, staleness
+from hardy.formal.contracts import EnvironmentIdentity
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
 StagedRunner = Callable[[Entry, Path, str], None]   # (entry, row_dir, model): writes the nested run and canonical.json
@@ -286,10 +286,10 @@ def _batch_runner(config: Any, model: str) -> BatchRunner:
     # re-export, editing `cli.py` changes what a run does without moving the
     # digest -- which is to say the digest is defeatable, and the pooling key
     # stops meaning "the same code produced these rows".
-    from ..lean import LeanTools
-    from ..models import Request
-    from ..runner import run
-    from ..wiring import runtime_factory
+    from hardy.formal.contracts import Request
+    from hardy.lean import LeanTools
+    from hardy.runner import run
+    from hardy.wiring import runtime_factory
 
     def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
         request = Request.from_dict({"declaration": entry.declaration(), "informal_claim": entry.input, "imports": list(entry.imports)})

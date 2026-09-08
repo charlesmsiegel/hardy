@@ -9,26 +9,21 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import audit, compaction
-from . import closers as closer_ladder
-from . import summary as summary_module
-from .agents.contracts import provenance
-from .documents.batch import (
-    SKETCH_HEADING as SKETCH_HEADING,
-)
-from .documents.batch import (
-    describe_toolchain,
-    sketch_section,
-)
-from .documents.batch import (
-    longest_run as longest_run,
-)
-from .latency import manifest_binds
-from .lean import LeanToolResult, LeanTools, environment_identity
-from .loop import TurnLimitReached
-from .models import Request, RunResult, ToolResult
-from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
-from .usage import Usage
+from hardy import audit, compaction
+from hardy import closers as closer_ladder
+from hardy import summary as summary_module
+from hardy.agents.contracts import provenance
+from hardy.documents.batch import SKETCH_HEADING as SKETCH_HEADING
+from hardy.documents.batch import describe_toolchain, sketch_section
+from hardy.documents.batch import longest_run as longest_run
+from hardy.formal.contracts import Request
+from hardy.foundation.values import ToolResult
+from hardy.latency import manifest_binds
+from hardy.lean import LeanToolResult, LeanTools, environment_identity
+from hardy.loop import TurnLimitReached
+from hardy.prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
+from hardy.usage import Usage
+from hardy.workflows.batch_contracts import RunResult
 
 WARNING = "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
 

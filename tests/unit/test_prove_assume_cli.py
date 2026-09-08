@@ -38,12 +38,12 @@ def _run(cli, args, requests):
     class Workflow:
         def run(self, request, terminal):
             requests.append(request)
-            return importlib.import_module("hardy.domain").RunManifest(
+            return importlib.import_module("hardy.workflows.contracts").RunManifest(
                 run_id=importlib.import_module("uuid").uuid4(),
                 created_at=importlib.import_module("datetime").datetime.now(
                     importlib.import_module("datetime").UTC
                 ),
-                phase=importlib.import_module("hardy.domain").RunPhase.COMPLETED,
+                phase=importlib.import_module("hardy.workflows.contracts").RunPhase.COMPLETED,
                 model="test-model",
                 prompt_set_sha256="a" * 64,
             )

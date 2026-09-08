@@ -17,8 +17,8 @@ import time
 import types
 from pathlib import Path
 
+from hardy.agents.contracts import TurnEvent
 from hardy.chat import MathematicsSession
-from hardy.models import TurnEvent
 from hardy.staged import ClaudeStagedRuntime
 
 

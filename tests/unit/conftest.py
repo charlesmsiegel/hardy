@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from hardy.cas import CasSession, SympyBackend, _SentinelBackend
-from hardy.domain import RunLimits
+from hardy.workflows.contracts import RunLimits
 
 FAKE_CAS = Path(__file__).parents[1] / "fake_cas.py"
 FAKE_CAS_SCRIPT = Path(__file__).parents[1] / "fake_cas_script.py"

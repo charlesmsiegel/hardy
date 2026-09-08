@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import layout
+from hardy.workflows import layout
 
 # `Path.symlink_to` raises `OSError` on Windows unless Developer Mode (or an
 # elevated process) is on -- these tests are about a Linux-clone attack in
@@ -829,7 +829,7 @@ def test_every_file_write_in_a_problem_goes_through_the_guard():
     someone either routes it through a guard named in `GUARD_BINDINGS` or adds
     it to `UNGUARDED` with the test that demonstrates where it can land.
     """
-    package = Path(layout.__file__).parent
+    package = Path(layout.__file__).parents[1]
     for module in GUARDED_MODULES:
         for function, receiver, call in _write_calls((package / module).read_text(encoding="utf-8")):
             guarded = receiver in GUARD_BINDINGS
@@ -850,7 +850,7 @@ def test_the_exemption_is_keyed_to_one_module_and_one_function():
     """
     assert all(isinstance(key, tuple) and len(key) == 2 for key in UNGUARDED)
     assert ("latex.py", "check") in UNGUARDED
-    package = Path(layout.__file__).parent
+    package = Path(layout.__file__).parents[1]
     publishing = {
         (function, call)
         for function, _, call in _write_calls((package / "latex.py").read_text(encoding="utf-8"))

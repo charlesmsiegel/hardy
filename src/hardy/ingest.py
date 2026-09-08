@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .formal.syntax import COMMAND, HEADER_KEYWORDS, IMPORT_PREFIX, strip_comments
+from hardy.formal.syntax import COMMAND, HEADER_KEYWORDS, IMPORT_PREFIX, strip_comments
 
 # The four Lean verdicts #112 asks a first pass for, plus the two ways a file
 # can refuse to be read at all. String constants rather than an Enum because

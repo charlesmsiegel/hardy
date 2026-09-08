@@ -30,16 +30,16 @@ from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Any
 
-from .domain import (
+from hardy.formal.contracts import FrozenClaim
+from hardy.foundation.values import schema_text
+from hardy.prompts import faithfulness_prompt
+from hardy.workflows.contracts import (
     FaithfulnessOutcome,
     FaithfulnessReview,
     FaithfulnessVerdict,
-    FrozenClaim,
     RunPhase,
-    schema_text,
 )
-from .prompts import faithfulness_prompt
-from .storage import RunStore
+from hardy.workflows.storage import RunStore
 
 ARTIFACT = PurePosixPath("faithfulness.json")
 PROMPT_ARTIFACT = PurePosixPath("faithfulness-prompt.md")

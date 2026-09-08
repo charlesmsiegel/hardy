@@ -9,7 +9,7 @@ from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 
 from hardy import config as configuration
-from hardy.models import TurnEvent
+from hardy.agents.contracts import TurnEvent
 from hardy.tui.ports import Choice
 
 

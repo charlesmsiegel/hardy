@@ -7,14 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from hardy.evals import taxonomy
-from hardy.evals.problems import (
-    Audit,
-    Entry,
-    Occurrence,
-    ProblemSet,
-    Review,
-    sha256_of,
-)
+from hardy.evals.problems import Audit, Entry, Occurrence, ProblemSet, Review, sha256_of
 
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -1,9 +1,9 @@
 """Selection policy shared by experiment execution and recorded validation."""
 from __future__ import annotations
 
-from ..corpus.problems import Entry, ProblemSet
-from .contracts import RefusedRun
-from .sweep import Baseline
+from hardy.corpus.problems import Entry, ProblemSet
+from hardy.evals.contracts import RefusedRun
+from hardy.evals.sweep import Baseline
 
 
 def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, tiers: list[int] | None, twins: bool) -> tuple[Entry, ...]:

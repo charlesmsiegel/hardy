@@ -20,10 +20,10 @@ from pathlib import Path
 import pytest
 
 from hardy import arxiv
-from hardy.layout import LayoutError
+from hardy.foundation.files import LayoutError
+from hardy.foundation.locking import FileLock
 from hardy.literature import client as client_module
 from hardy.literature import library as library_module
-from hardy.storage import FileLock
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -1105,7 +1105,7 @@ def test_a_conditional_drop_waits_for_the_key_it_is_comparing(tmp_path: Path):
             textwrap.dedent(
                 f"""
                 import pathlib, time
-                from hardy.storage import FileLock
+                from hardy.workflows.storage import FileLock
                 with FileLock(pathlib.Path({str(lock)!r})):
                     pathlib.Path({str(ready)!r}).write_text("held")
                     time.sleep(1.0)
@@ -1155,7 +1155,7 @@ def test_nothing_changes_a_cache_key_without_holding_it(tmp_path: Path, monkeypa
             textwrap.dedent(
                 f"""
                 import pathlib, time
-                from hardy.storage import FileLock
+                from hardy.workflows.storage import FileLock
                 with FileLock(pathlib.Path({str(lock)!r})):
                     pathlib.Path({str(ready)!r}).write_text("held")
                     time.sleep(30)

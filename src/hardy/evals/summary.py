@@ -21,10 +21,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..corpus import taxonomy
-from .pool import PoolRefused
-from .pool import _wall_seconds_note as wall_seconds_note
-from .pool import pool as pool_boards
+from hardy.corpus import taxonomy
+from hardy.evals.pool import PoolRefused
+from hardy.evals.pool import _wall_seconds_note as wall_seconds_note
+from hardy.evals.pool import pool as pool_boards
 
 
 class SummaryRefused(ValueError):
@@ -356,7 +356,7 @@ def write(scoreboards_root: Path, *, problems_path: Path, baseline_path: Path, o
     """Build, render and write the report; the only function that touches disk
     for its own output. Never touches a scoreboard.
     """
-    from ..corpus.catalog import load_corpus
+    from hardy.corpus.catalog import load_corpus
 
     data = build(scoreboards_root, problems_path=problems_path, baseline_path=baseline_path)
     problems = load_corpus(problems_path)

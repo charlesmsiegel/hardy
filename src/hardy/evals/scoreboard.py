@@ -8,12 +8,13 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ..corpus.problems import Entry
-from ..domain import EnvironmentIdentity, FormalStatus, RunManifest, RunPhase
-from ..workflows import recorded as acceptance
-from .contracts import Aggregates, Row, TierAggregate, Totals
-from .contracts import Outcome as Outcome
-from .sweep import Baseline, baseline_entries_mismatch, staleness
+from hardy.corpus.problems import Entry
+from hardy.evals.contracts import Aggregates, Row, TierAggregate, Totals
+from hardy.evals.contracts import Outcome as Outcome
+from hardy.evals.sweep import Baseline, baseline_entries_mismatch, staleness
+from hardy.formal.contracts import EnvironmentIdentity, FormalStatus
+from hardy.workflows import recorded as acceptance
+from hardy.workflows.contracts import RunManifest, RunPhase
 
 # The two backends `_condition_issues` knows how to tell apart in a staged
 # trajectory's provider event kinds (item 5). Not open-ended: `run_set_command`
@@ -119,7 +120,7 @@ def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, 
     # file as a consistency finding (item 5). A row whose `canonical.json`
     # cannot be parsed this way is simply `"unavailable"`; `_canonical_issues`
     # is what names the file as the finding.
-    from .contracts import CanonicalVerdict
+    from hardy.evals.contracts import CanonicalVerdict
 
     canonical_path = row_dir / "canonical.json"
     try:
@@ -248,7 +249,7 @@ def active_ids(problems) -> set[str]:
 
 def _read_board(scoreboard_dir: Path) -> tuple[Any | None, tuple[str, ...]]:
     """The committed board, or the findings that stop anything from reading it."""
-    from .contracts import Scoreboard
+    from hardy.evals.contracts import Scoreboard
 
     board_path = scoreboard_dir / "scoreboard.json"
     if not board_path.exists():
@@ -260,7 +261,7 @@ def _read_board(scoreboard_dir: Path) -> tuple[Any | None, tuple[str, ...]]:
 
 
 def _corpus_and_baseline(problems_path: Path, baseline_path: Path):
-    from ..corpus.catalog import load_corpus
+    from hardy.corpus.catalog import load_corpus
 
     return load_corpus(problems_path), Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
 
@@ -320,8 +321,8 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
 
 def _corpus_issues(board: Any, problems: Any, baseline: Baseline, *, problems_path: Path, baseline_path: Path) -> list[str]:
     """1 and 6: the board against the corpus, the baseline file and the denominators of today."""
-    from ..corpus.catalog import manifest_digest
-    from ..corpus.problems import sha256_of
+    from hardy.corpus.catalog import manifest_digest
+    from hardy.corpus.problems import sha256_of
 
     issues: list[str] = []
     # 1. bound to the committed list and tier file
@@ -338,8 +339,8 @@ def _corpus_issues(board: Any, problems: Any, baseline: Baseline, *, problems_pa
 
 
 def _self_issues(board: Any, scoreboard_dir: Path, problems: Any, baseline: Baseline) -> list[str]:
-    from .contracts import RefusedRun
-    from .selection import select
+    from hardy.evals.contracts import RefusedRun
+    from hardy.evals.selection import select
 
     issues: list[str] = []
     if baseline.environment != board.environment:
@@ -617,9 +618,10 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     """
     import hashlib
 
-    from ..domain import FrozenClaim, schema_text
-    from ..prompts import canonical_prompt, claim_signature
-    from .contracts import CanonicalReview, CanonicalVerdict
+    from hardy.evals.contracts import CanonicalReview, CanonicalVerdict
+    from hardy.formal.contracts import FrozenClaim
+    from hardy.foundation.values import schema_text
+    from hardy.prompts import canonical_prompt, claim_signature
 
     path = row_dir / "canonical.json"
     if not path.exists():
@@ -689,7 +691,7 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     if verdict.outcome in ("agreed", "disputed"):
         from pydantic import ValidationError
 
-        from ..models import json_object
+        from hardy.agents.parsing import json_object
 
         trajectory_path = row_dir / "canonical-trajectory.jsonl"
         if not trajectory_path.exists():

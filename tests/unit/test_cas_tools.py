@@ -6,7 +6,7 @@ import json
 
 from hardy.cas import CasSession, backend_for
 from hardy.cas_tools import CAS_TOOL_NAMES, CasToolRuntime, build_runtime
-from hardy.domain import RunLimits
+from hardy.workflows.contracts import RunLimits
 
 
 def make_runtime(session, spilled: dict, observation_bytes: int = 32 * 1024) -> CasToolRuntime:

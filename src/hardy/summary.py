@@ -36,7 +36,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import audit as audit_module
+from hardy import audit as audit_module
 
 #: How much of a refusal's text is worth keeping in a summary line. Long enough
 #: to say what Lean objected to, short enough that a dozen of them still read.
@@ -221,7 +221,7 @@ def export_openable() -> frozenset[str]:
     Imported lazily rather than at module scope: `export` reads a package
     resource at import, and a summary must not pay for a stylesheet.
     """
-    from .export import OPENABLE
+    from hardy.export import OPENABLE
 
     return OPENABLE
 

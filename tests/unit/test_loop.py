@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from hardy.foundation.values import ToolResult
 from hardy.loop import (
     AgentLoop,
     Message,
@@ -26,7 +27,6 @@ from hardy.loop import (
     first_legal_cut,
     reasoning_digest,
 )
-from hardy.models import ToolResult
 
 
 class ScriptedProvider:

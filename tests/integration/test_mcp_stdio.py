@@ -11,8 +11,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from hardy.config import write_setting
-from hardy.domain import EnvironmentIdentity, FormalizationProposal, freeze_claim
-from hardy.storage import RunStore
+from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
+from hardy.workflows.storage import RunStore
 
 ROOT = Path(__file__).parents[2]
 NOW = datetime(2026, 7, 24, tzinfo=UTC)

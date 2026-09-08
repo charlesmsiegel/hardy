@@ -51,7 +51,7 @@ class _RecordingRuntime:
 
 def _staged(tmp_path, cas_runtime=None):
     staged = importlib.import_module('hardy.staged')
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -98,7 +98,7 @@ def test_an_isolated_thread_is_offered_no_tools_at_all(tmp_path, cas_session) ->
 
 def test_an_isolated_thread_gets_no_lean_tools_even_with_a_claim(tmp_path) -> None:
     staged, store, runtime = _staged(tmp_path)
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     claim = domain.freeze_claim(
         'Two equals two.',
         domain.FormalizationProposal(
@@ -137,7 +137,7 @@ def test_provider_events_are_filed_under_the_phase_the_thread_ran_in(tmp_path) -
     """
     import json
 
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     staged, store, runtime = _staged(tmp_path)
 
     runtime.start(
@@ -182,7 +182,7 @@ def test_a_cancelled_reader_seals_its_record_in_its_own_phase(tmp_path) -> None:
     """
     import json
 
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     staged, store, runtime = _staged(tmp_path)
 
     thread = runtime.start(
@@ -241,7 +241,7 @@ def test_a_stage_deadline_reaches_the_runtime_that_enforces_it(tmp_path) -> None
 def test_the_appended_schema_is_the_shared_rendering(tmp_path) -> None:
     """The gate persists this exact text as the contract the reader answered,
     so the runtime must not render its own equivalent serialization."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     staged, store, runtime = _staged(tmp_path)
 
     class _Asking:

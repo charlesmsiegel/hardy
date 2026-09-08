@@ -8,15 +8,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from ..domain import FrozenModel
-from ..process import (
-    child_creation,
-    child_environment,
-    kill_group,
-)
-from .contracts import (
-    CasError,
-)
+from hardy.algebra.contracts import CasError
+from hardy.foundation.process import child_creation, child_environment, kill_group
+from hardy.foundation.values import FrozenModel
 
 
 class ScriptRun(FrozenModel):

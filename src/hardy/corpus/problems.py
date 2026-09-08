@@ -16,9 +16,9 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
-from ..domain import FrozenModel
-from . import identity as digests
-from . import taxonomy
+from hardy.corpus import identity as digests
+from hardy.corpus import taxonomy
+from hardy.foundation.values import FrozenModel
 
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_'.]*$")

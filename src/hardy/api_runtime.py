@@ -30,9 +30,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from .agents.contracts import final_text
-from .loop import AgentLoop, Message, ProviderTurn, ToolCall
-from .models import ToolResult, TurnEvent
+from hardy.agents.contracts import TurnEvent, final_text
+from hardy.foundation.values import ToolResult
+from hardy.loop import AgentLoop, Message, ProviderTurn, ToolCall
 
 BACKEND = "anthropic-api"
 

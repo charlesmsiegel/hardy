@@ -9,17 +9,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..process import (
+from hardy.algebra.contracts import INTERRUPTED, TIMED_OUT
+from hardy.foundation.process import (
     INTERRUPT_GRACE_SECONDS,
     child_creation,
     child_environment,
     kill_group,
     signal_interrupt,
     terminate_group,
-)
-from .contracts import (
-    INTERRUPTED,
-    TIMED_OUT,
 )
 
 

@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 from hardy import config as configuration
-from hardy import layout
 from hardy.tui import dispatch, handlers
 from hardy.tui.ports import State
+from hardy.workflows import layout
 
 
 def _settings(root: Path, slug: str) -> configuration.Config:

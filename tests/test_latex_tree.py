@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy import layout
 from hardy.latex import LatexTools, reached_fragments, unreached_fragments
+from hardy.workflows import layout
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
 ROOT = "\\documentclass{article}\n\\begin{document}\\input{sections/one}\\end{document}\n"
@@ -131,7 +131,7 @@ def test_a_latex_compile_can_be_interrupted(tmp_path: Path):
     import threading
     import time
 
-    from hardy import process
+    from hardy.foundation import process
 
     ready = tmp_path / "tex-started"
     source = (
@@ -168,7 +168,7 @@ def test_a_latex_compile_that_refuses_the_interrupt_is_still_stopped(tmp_path: P
     import threading
     import time
 
-    from hardy import process
+    from hardy.foundation import process
 
     ready = tmp_path / "tex-deaf"
     source = (
@@ -203,7 +203,7 @@ def test_a_latex_compile_deaf_to_sigterm_is_killed(tmp_path: Path):
     import threading
     import time
 
-    from hardy import process
+    from hardy.foundation import process
 
     ready = tmp_path / "tex-stubborn"
     source = (
@@ -238,7 +238,7 @@ def test_a_second_escape_does_not_wait_out_the_first_presss_grace(tmp_path: Path
     import threading
     import time
 
-    from hardy import process
+    from hardy.foundation import process
 
     ready = tmp_path / "tex-stubborn"
     source = (

@@ -20,7 +20,7 @@ from workspace_helpers import events
 
 from hardy import project_context
 from hardy.chat import MathematicsSession
-from hardy.models import Request
+from hardy.formal.contracts import Request
 from hardy.runner import run
 
 SAID = [{"role": "assistant", "content": "Understood."}]

@@ -6,15 +6,15 @@ from uuid import UUID
 
 import pytest
 
-from hardy.domain import EnvironmentIdentity, FormalizationProposal, freeze_claim
-from hardy.storage import RunStore
+from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
 from hardy.verifier import FinalVerifier
+from hardy.workflows.storage import RunStore
 
 
 def _hardy_config(**overrides):
     """Hardy's resolved settings, with only the fields a test varies."""
     from hardy.config import Config
-    from hardy.domain import RunLimits
+    from hardy.workflows.contracts import RunLimits
 
     values = dict(
         model='test-model',

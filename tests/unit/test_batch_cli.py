@@ -43,7 +43,7 @@ def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None
     """The guard must not refuse the shape `examples/true.json` actually uses."""
     cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     reached = []
 
     def fake_run(request, *_args, **_kwargs):
@@ -130,7 +130,7 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
     # And a finite one still reaches the run, carrying the configured window
     # with it -- which is the other half of this: a batch aimed at a smaller
     # gateway used to keep appending messages until the endpoint refused.
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     seen = {}
 
     def fake_run(request, *_args, **kwargs):

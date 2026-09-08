@@ -23,28 +23,25 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .. import audit
-from ..domain import (
+from hardy import audit
+from hardy.documents.contracts import DocumentStatus
+from hardy.formal.contracts import (
     DeclaredAssumption,
-    DocumentStatus,
-    FaithfulnessStatus,
-    FaithfulnessVerdict,
     FormalStatus,
     FrozenClaim,
+    VerificationEvidence,
+)
+from hardy.formal.syntax import declared_name
+from hardy.lean import DECLARATION_HEAD, LeanTools, scannable
+from hardy.verifier import ALLOWED_AXIOMS, FORBIDDEN_TOKEN, VerificationResult, axiom_report_line
+from hardy.workflows.contracts import (
+    FaithfulnessStatus,
+    FaithfulnessVerdict,
     Grades,
     RunManifest,
     RunPhase,
-    VerificationEvidence,
 )
-from ..formal.syntax import declared_name
-from ..lean import DECLARATION_HEAD, LeanTools, scannable
-from ..verifier import (
-    ALLOWED_AXIOMS,
-    FORBIDDEN_TOKEN,
-    VerificationResult,
-    axiom_report_line,
-)
-from ..writeup import dropped_glyphs, host_paths
+from hardy.writeup import dropped_glyphs, host_paths
 
 #: The formal grades that carry verification evidence and are audited as
 #: verified runs. `verified_modulo` is one of them: a wider trust base is a
@@ -823,7 +820,7 @@ def _sketch_issues(
     # accepted, an honest timeout was refused for "accepting a sketch no record
     # carries" -- the record was right and the audit was wrong.
     accepted = accepted_events
-    from ..documents.batch import SKETCH_HEADING, sketch_section
+    from hardy.documents.batch import SKETCH_HEADING, sketch_section
 
     carried = SKETCH_HEADING in writeup
     if reason == "verified":
@@ -1075,7 +1072,7 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         issues.append("toolchain identity differs between result.json and trajectory.json")
     # The human-facing copy too. Nothing hashes a batch writeup, so a stale or
     # edited one could name another Lean beside a record that names this one.
-    from ..documents.batch import describe_toolchain
+    from hardy.documents.batch import describe_toolchain
 
     if describe_toolchain(trajectory.get("toolchain")) not in writeup:
         issues.append("writeup.md names a different toolchain from the record")
@@ -1187,8 +1184,8 @@ def _verified_batch_issues(
     proof_path: Path,
     writeup: str,
 ) -> list[str]:
-    from ..lean import LeanTools
-    from ..models import Request
+    from hardy.formal.contracts import Request
+    from hardy.lean import LeanTools
 
     issues: list[str] = []
     proof = result.get("proof")

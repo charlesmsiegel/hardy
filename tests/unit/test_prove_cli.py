@@ -49,7 +49,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
 ) -> None:
     cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     config_path = tmp_path / 'config.toml'
     config_module.write_setting(config_path, 'runs_root', str(tmp_path / 'runs'))
     seen = []
@@ -186,7 +186,7 @@ def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
     separate CAS cell log.
     """
     cli = importlib.import_module('hardy.app.cli')
-    storage_module = importlib.import_module('hardy.storage')
+    storage_module = importlib.import_module('hardy.workflows.storage')
     config = _staged_config(tmp_path, cas_backend='sympy')
     workflow = cli.build_prove_workflow(config, tmp_path / 'config.toml')
 
@@ -227,7 +227,7 @@ def _verdict(domain, outcome, **overrides):
 def test_console_terminal_shows_the_divergences_and_says_the_run_stops() -> None:
     """A mismatch nobody is shown is a mismatch nobody can resolve."""
     cli = importlib.import_module('hardy.app.cli')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
 
@@ -254,7 +254,7 @@ def test_console_terminal_reports_an_agreement_too() -> None:
     """Otherwise a user cannot tell a checked run from one where the gate
     never ran: silence would look the same either way."""
     cli = importlib.import_module('hardy.app.cli')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
 
@@ -276,7 +276,7 @@ def test_console_terminal_reports_an_agreement_too() -> None:
 
 def test_console_terminal_says_why_a_review_could_not_be_obtained() -> None:
     cli = importlib.import_module('hardy.app.cli')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
 
@@ -297,7 +297,7 @@ def test_console_terminal_says_why_a_review_could_not_be_obtained() -> None:
 
 def test_the_result_summary_says_whether_the_translation_was_read() -> None:
     cli = importlib.import_module('hardy.app.cli')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
 
@@ -321,7 +321,7 @@ def test_an_unavailable_review_does_not_tell_the_user_to_restate_the_claim() -> 
     something that was never the problem.
     """
     cli = importlib.import_module('hardy.app.cli')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     output = []
     terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
 
@@ -348,7 +348,7 @@ def test_the_reviewer_model_can_be_overridden_for_one_invocation(tmp_path) -> No
     """
     cli = importlib.import_module('hardy.app.cli')
     config_module = importlib.import_module('hardy.config')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     config_path = tmp_path / 'config.toml'
     config_module.write_setting(config_path, 'runs_root', str(tmp_path / 'runs'))
     config_module.write_setting(config_path, 'faithfulness_model', 'claude-reviewer')
@@ -412,7 +412,7 @@ def test_a_lean_that_cannot_be_identified_is_a_recorded_setup_failure(tmp_path) 
     and a `lake` that answers `--version` with nothing used to escape
     `run_prove` uncaught, leaving no manifest and no trajectory behind."""
     cli = importlib.import_module('hardy.app.cli')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     workflow_module = importlib.import_module('hardy.workflow')
     config = _staged_config(tmp_path)
     config.lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')

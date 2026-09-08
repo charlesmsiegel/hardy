@@ -25,8 +25,8 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from .documents.syntax import INCLUSION, ROOT_DOCUMENT, uncommented
-from .formal.syntax import COMMAND, normalise_lean, strip_comments
+from hardy.documents.syntax import INCLUSION, ROOT_DOCUMENT, uncommented
+from hardy.formal.syntax import COMMAND, normalise_lean, strip_comments
 
 # Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
 # these TeX is free to eat an underscore, break a caret, or swallow a brace,

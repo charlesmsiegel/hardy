@@ -10,10 +10,11 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from .. import cas_tools, lakefile, layout, search_tools
-from .. import config as configuration
-from ..chat import MathematicsSession
-from ..wiring import runtime_factory
+from hardy import cas_tools, lakefile, search_tools
+from hardy import config as configuration
+from hardy.chat import MathematicsSession
+from hardy.wiring import runtime_factory
+from hardy.workflows import layout
 
 
 def prepare_layout(config: configuration.Config) -> None:

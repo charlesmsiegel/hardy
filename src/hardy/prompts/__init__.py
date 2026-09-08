@@ -21,7 +21,7 @@ from jinja2 import Environment, StrictUndefined, TemplateNotFound
 from jinja2 import UndefinedError as _UndefinedError
 from jinja2.loaders import BaseLoader
 
-from ..domain import FrozenClaim
+from hardy.formal.contracts import FrozenClaim
 
 # Bumped whenever a staged template changes. The hash below identifies the text
 # exactly; this names the revision a human can talk about.

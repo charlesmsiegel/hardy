@@ -436,7 +436,7 @@ def test_a_notice_does_not_contradict_a_report_it_accepted(tmp_path: Path):
 def test_the_reply_is_drawn_before_the_notice_that_contradicts_it(tmp_path: Path):
     """A backend that reports no partial text holds its whole reply for
     `finish`, which used to print the claim underneath the warning about it."""
-    from hardy.models import TurnEvent
+    from hardy.agents.contracts import TurnEvent
     from hardy.tui import stream
 
     painter = stream.TurnPainter(80)

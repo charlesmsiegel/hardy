@@ -12,7 +12,7 @@ RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 
 def test_write_text_returns_content_addressed_artifact(tmp_path) -> None:
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'odd-sum', now=NOW, run_id=RUN_ID)
 
     artifact = store.write_text(PurePosixPath('request.md'), 'hello\n')
@@ -28,7 +28,7 @@ def test_write_text_returns_content_addressed_artifact(tmp_path) -> None:
     [PurePosixPath('../escape.txt'), PurePosixPath('nested\\escape.txt')],
 )
 def test_artifact_paths_cannot_escape_the_run_directory(tmp_path, relative_path) -> None:
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'demo', now=NOW, run_id=RUN_ID)
 
     with pytest.raises(ValueError, match='relative artifact path'):
@@ -36,8 +36,8 @@ def test_artifact_paths_cannot_escape_the_run_directory(tmp_path, relative_path)
 
 
 def test_trajectory_events_are_ordered_and_redacted(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'demo', now=NOW, run_id=RUN_ID)
 
     event = store.append(
@@ -61,8 +61,8 @@ def test_trajectory_events_are_ordered_and_redacted(tmp_path) -> None:
 
 
 def test_reopened_store_continues_the_trajectory_sequence(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'demo', now=NOW, run_id=RUN_ID)
     store.append('first', {}, phase=domain.RunPhase.SETUP)
     store.append('second', {}, phase=domain.RunPhase.FORMALIZING)
@@ -75,8 +75,8 @@ def test_reopened_store_continues_the_trajectory_sequence(tmp_path) -> None:
 
 
 def test_reopen_rejects_a_noncontiguous_trajectory(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'demo', now=NOW, run_id=RUN_ID)
     store.append('first', {}, phase=domain.RunPhase.SETUP)
     event = json.loads(store.trajectory_path.read_text(encoding='utf-8'))
@@ -88,8 +88,8 @@ def test_reopen_rejects_a_noncontiguous_trajectory(tmp_path) -> None:
 
 
 def test_finalize_writes_a_parseable_incomplete_manifest(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
     store = storage.RunStore.create(tmp_path, 'demo', now=NOW, run_id=RUN_ID)
     manifest = domain.RunManifest(
         run_id=RUN_ID,

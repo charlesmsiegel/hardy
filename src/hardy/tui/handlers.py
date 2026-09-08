@@ -17,15 +17,17 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from .. import catalog, doctor, layout, process
-from .. import config as configuration
-from ..cas import CasError
-from ..cas_export import export_session
-from ..config import DEFAULT_BACKEND, authentication
-from ..prompts import user as user_prompts
-from .banner import status_line
-from .commands import Command, canonical, from_template
-from .ports import Choice, State, Ui
+from hardy import catalog, doctor
+from hardy import config as configuration
+from hardy.cas import CasError
+from hardy.cas_export import export_session
+from hardy.config import DEFAULT_BACKEND, authentication
+from hardy.foundation import process
+from hardy.prompts import user as user_prompts
+from hardy.tui.banner import status_line
+from hardy.tui.commands import Command, canonical, from_template
+from hardy.tui.ports import Choice, State, Ui
+from hardy.workflows import layout
 
 
 def _live(state: State) -> list[Command]:
@@ -627,7 +629,7 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     threads, and starting one on top of a running turn would put two of each in
     the same process arguing over the same toolchain.
     """
-    from . import prove as staged
+    from hardy.tui import prove as staged
 
     claim = argument.strip()
     if not claim:
@@ -810,7 +812,7 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     Lean tree, the record and the transcript this reads, and an export taken
     across a save would describe a workspace that never existed.
     """
-    from .. import export as export_module
+    from hardy import export as export_module
 
     session = state.session
     gather = getattr(session, "export_material", None)
@@ -896,7 +898,7 @@ async def _offer_registration(ui: Ui, config, state_reopen: Any = None) -> None:
     keyboard, and the `Ui` port exists so a handler never has to know which
     application that is.
     """
-    from ..app.projects import offer_registration
+    from hardy.app.projects import offer_registration
 
     host = config.root / "lakefile.toml"
     if not host.is_file():
@@ -937,7 +939,7 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # make every caller of `reopen` produce one. `run_session`'s fallback
         # is the caller that proves the point -- it has a different `Ui`
         # entirely.
-        from ..app.terminal import confirm_assumption
+        from hardy.app.terminal import confirm_assumption
 
         # Armed here, on the event loop, before the work leaves for a thread.
         # An Escape typed behind the Enter that submitted this command is

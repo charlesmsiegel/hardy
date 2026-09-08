@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config, layout
+from hardy import config
+from hardy.workflows import layout
 
 
 @pytest.fixture(autouse=True)

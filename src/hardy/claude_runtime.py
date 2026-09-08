@@ -26,9 +26,9 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from .agents.contracts import final_text
-from .loop import TurnLimitReached
-from .models import ToolResult, TurnEvent
+from hardy.agents.contracts import TurnEvent, final_text
+from hardy.foundation.values import ToolResult
+from hardy.loop import TurnLimitReached
 
 SERVER = "hardy"
 

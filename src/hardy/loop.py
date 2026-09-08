@@ -34,7 +34,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
 
-from .models import ToolResult, TurnEvent
+from hardy.agents.contracts import TurnEvent
+from hardy.foundation.values import ToolResult
 
 T = TypeVar("T")
 

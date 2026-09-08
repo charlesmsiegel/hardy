@@ -94,9 +94,9 @@ def test_escape_tex_text_covers_every_special_character() -> None:
 
 
 def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     verifier = importlib.import_module('hardy.verifier')
     writeup = importlib.import_module('hardy.writeup')
     claim = _claim(domain)
@@ -183,9 +183,9 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
 
 
 def test_tex_failure_preserves_mathematical_grades_and_marks_saved_source(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     writeup = importlib.import_module('hardy.writeup')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'failed', now=NOW, run_id=RUN_ID)
@@ -245,7 +245,7 @@ def test_the_paper_discloses_a_reader_whose_isolation_was_not_established(
     read the run's own artifacts would be exactly the overclaim this gate
     exists to prevent, made where it is least correctable.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     writeup = importlib.import_module('hardy.writeup')
     unconfined = _agreed_review(domain).model_copy(
         update={'reviewer_backend': 'codex', 'reviewer_isolation': None}
@@ -263,7 +263,7 @@ def test_the_paper_discloses_a_reader_whose_isolation_was_not_established(
 
 
 def _spoken(stdout: str, returncode: int = 0):
-    process = importlib.import_module('hardy.process')
+    process = importlib.import_module('hardy.foundation.process')
 
     def run(spec):
         return process.ProcessResult(
@@ -284,7 +284,7 @@ def test_the_tectonic_version_is_asked_of_the_binary(tmp_path) -> None:
     """It was a literal beside a genuinely pinned bundle digest, so every
     document named 0.16.9 whatever release compiled it (issue #81)."""
     writeup = importlib.import_module('hardy.writeup')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     version = writeup.tectonic_version(
         tmp_path / 'tectonic', domain.RunLimits(), runner=_spoken('Tectonic 0.15.0\n')
@@ -298,7 +298,7 @@ def test_a_tectonic_that_cannot_be_asked_is_recorded_as_unidentified(tmp_path) -
     compiler was not identified can be acted on; a wrong version cannot be
     caught."""
     writeup = importlib.import_module('hardy.writeup')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     def missing(spec):
         raise FileNotFoundError(spec.argv[0])
@@ -321,9 +321,9 @@ def test_a_compile_that_dropped_glyphs_is_a_failed_document(tmp_path) -> None:
     the page then lacks the ∀ or the ℚ of the exact Lean statement, which is
     not this document compiled."""
     writeup = importlib.import_module('hardy.writeup')
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -366,9 +366,9 @@ def test_a_compile_that_read_a_host_font_is_a_failed_document(tmp_path) -> None:
     outside the bundle. A document set in a host's fonts is not the pinned
     bundle's document, whatever digest the manifest records for it."""
     writeup = importlib.import_module('hardy.writeup')
-    domain = importlib.import_module('hardy.domain')
-    process = importlib.import_module('hardy.process')
-    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
     from datetime import UTC, datetime
     from uuid import UUID
 

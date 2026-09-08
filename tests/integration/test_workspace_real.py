@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from hardy.config import load
+from hardy.formal.contracts import Request
 from hardy.lean import LeanTools
-from hardy.models import Request
 from hardy.workspace import LeanWorkspace
 
 

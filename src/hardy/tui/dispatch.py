@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..prompts.user import TemplateError, expand
-from .commands import Command, resolve
+from hardy.prompts.user import TemplateError, expand
+from hardy.tui.commands import Command, resolve
 
 
 @dataclass(frozen=True)

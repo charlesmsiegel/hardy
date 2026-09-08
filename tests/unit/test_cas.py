@@ -26,8 +26,8 @@ from hardy.cas import (
     run_exported_script,
 )
 from hardy.cas_export import export_session
-from hardy.domain import RunLimits
-from hardy.layout import LayoutError
+from hardy.foundation.files import LayoutError
+from hardy.workflows.contracts import RunLimits
 
 
 def test_state_carries_between_cells(tmp_path, cas_session) -> None:

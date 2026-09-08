@@ -52,7 +52,7 @@ def test_formal_owner_refuses_changed_assumption_without_a_session():
 
 
 def test_document_owner_never_publishes_after_source_write_refusal(tmp_path):
-    from hardy.models import ToolResult
+    from hardy.foundation.values import ToolResult
     from hardy.workflows.interactive.documents import DocumentPolicy, DocumentService
 
     published = []
@@ -83,7 +83,7 @@ def test_document_owner_never_publishes_after_source_write_refusal(tmp_path):
 def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_path):
     from types import SimpleNamespace
 
-    from hardy.models import ToolResult
+    from hardy.foundation.values import ToolResult
     from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
 
     record = SessionRecord(tmp_path)
@@ -125,7 +125,7 @@ def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_pat
 
 
 def test_turn_owner_records_cancelled_tool_without_running_it(tmp_path):
-    from hardy.models import ToolResult
+    from hardy.foundation.values import ToolResult
     from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
 
     record = SessionRecord(tmp_path)

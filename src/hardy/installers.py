@@ -18,8 +18,8 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
-from .domain import FrozenModel
-from .process import ProcessResult, ProcessSpec
+from hardy.foundation.process import ProcessResult, ProcessSpec
+from hardy.foundation.values import FrozenModel
 
 ELAN_VERSION = "4.2.1"
 # The Lean and Mathlib every installer pins the shared project to, by identity

@@ -202,7 +202,7 @@ def expand(template: Template, argument: str) -> str:
 
 def directory(root: Path) -> Path:
     """Where `root`'s templates live. One place, named once."""
-    from ..layout import HARDY_DIR
+    from hardy.foundation.paths import HARDY_DIR
 
     return root / HARDY_DIR / DIRECTORY
 

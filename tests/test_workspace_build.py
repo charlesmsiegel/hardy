@@ -10,7 +10,7 @@ from test_chat import FakeChatRuntime, call, factory
 from workspace_helpers import events, results
 
 from hardy.chat import MathematicsSession
-from hardy.layout import LayoutError
+from hardy.foundation.files import LayoutError
 from hardy.workspace import LeanWorkspace
 
 

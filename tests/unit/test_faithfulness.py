@@ -77,7 +77,7 @@ class _Runtime:
 
 
 def _store(tmp_path):
-    storage = importlib.import_module('hardy.storage')
+    storage = importlib.import_module('hardy.workflows.storage')
     return storage.RunStore.create(tmp_path, 'gate', now=NOW, run_id=RUN_ID)
 
 
@@ -99,7 +99,7 @@ def test_the_reader_is_asked_about_the_claim_and_the_lean_and_nothing_else(tmp_p
     the translation through the account that produced it, which is exactly the
     shared context this gate is built to defeat.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     claim = _claim(domain)
     runtime = _Runtime(_review(domain))
@@ -123,7 +123,7 @@ def test_the_reader_is_asked_about_the_claim_and_the_lean_and_nothing_else(tmp_p
 
 
 def test_the_reader_runs_on_its_own_thread_with_no_tools_at_all(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     runtime = _Runtime(_review(domain))
 
@@ -147,7 +147,7 @@ def test_the_reader_runs_on_its_own_thread_with_no_tools_at_all(tmp_path) -> Non
 
 
 def test_an_agreement_is_recorded_as_an_artifact_and_in_the_trajectory(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     claim = _claim(domain)
     store = _store(tmp_path)
@@ -184,7 +184,7 @@ def test_a_listed_divergence_disputes_the_translation_however_the_flags_read(tmp
     reader answering "yes, and also here is what is wrong with it" is not an
     agreement, and reading it as one is how a gate becomes decorative.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 
@@ -208,7 +208,7 @@ def test_a_listed_divergence_disputes_the_translation_however_the_flags_read(tmp
 
 
 def test_a_failed_entailment_disputes_the_translation_with_no_list(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     verdict = faithfulness.review_translation(
@@ -228,7 +228,7 @@ def test_a_failed_entailment_disputes_the_translation_with_no_list(tmp_path) -> 
 def test_a_reader_that_cannot_be_read_is_not_a_pass(tmp_path) -> None:
     """Fail-closed. An unobtainable review is a different fact from a refusal
     and gets the same treatment, because neither one is an agreement."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 
@@ -249,7 +249,7 @@ def test_a_reader_that_cannot_be_read_is_not_a_pass(tmp_path) -> None:
 
 
 def test_a_verdict_cannot_claim_an_agreement_its_review_did_not_give() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     pytest = importlib.import_module('pytest')
     validation_error = importlib.import_module('pydantic').ValidationError
 
@@ -264,7 +264,7 @@ def test_a_verdict_cannot_claim_an_agreement_its_review_did_not_give() -> None:
 
 
 def test_an_unavailable_verdict_must_say_why_and_carry_no_answer() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     pytest = importlib.import_module('pytest')
     validation_error = importlib.import_module('pydantic').ValidationError
 
@@ -294,7 +294,7 @@ def test_a_transport_failure_is_recorded_as_an_unavailable_review(tmp_path) -> N
     faithfulness gap — fail-closed, since nothing proceeded to proving, but a
     record that never said an approved claim had been left unread.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 
@@ -317,7 +317,7 @@ def test_cancellation_still_cancels_rather_than_reading_as_unavailable(tmp_path)
     Swallowing it would turn a Ctrl+C into a halted-for-faithfulness verdict,
     which says something about the translation that nobody established.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     pytest = importlib.import_module('pytest')
 
@@ -337,7 +337,7 @@ def test_the_question_asked_is_kept_and_its_hash_is_recomputable(tmp_path) -> No
     the release audit cannot check and a reader cannot recompute."""
     import hashlib
 
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 
@@ -355,7 +355,7 @@ def test_the_question_asked_is_kept_and_its_hash_is_recomputable(tmp_path) -> No
 
 
 def test_the_question_is_kept_even_when_no_answer_ever_comes(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 
@@ -373,7 +373,7 @@ def test_the_question_is_kept_even_when_no_answer_ever_comes(tmp_path) -> None:
 def test_the_verdict_names_the_runtime_that_produced_it(tmp_path) -> None:
     """A model name does not say what ran it, and a halted run never reaches
     the writeup where `RunIdentities` would otherwise record the backend."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     verdict = faithfulness.review_translation(
@@ -395,7 +395,7 @@ def test_the_quoting_fence_cannot_be_closed_by_what_it_quotes(tmp_path) -> None:
     valid Lean. Closing the fence early would put whatever followed where the
     reader reads instructions.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     prompts = importlib.import_module('hardy.prompts')
     hostile = _claim(domain)
     attack = hostile.proposal.model_copy(
@@ -428,7 +428,7 @@ def test_the_fence_is_the_same_question_every_time(tmp_path) -> None:
     """Derived, not random: `prompt_sha256` must identify the question that was
     asked, and a fresh marker per run would hash the same claim differently
     every time."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     prompts = importlib.import_module('hardy.prompts')
     claim = _claim(domain)
 
@@ -443,7 +443,7 @@ def test_the_read_is_bounded_by_the_budget_it_is_given(tmp_path) -> None:
     the entire point of the gate, would never be written at all. The proving
     loop re-checks its budget every attempt; this stage has no next attempt.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     runtime = _Runtime(_review(domain))
 
@@ -460,7 +460,7 @@ def test_the_read_is_bounded_by_the_budget_it_is_given(tmp_path) -> None:
 
 
 def test_a_stalled_reader_becomes_an_unavailable_verdict(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 
@@ -481,7 +481,7 @@ def test_a_stalled_reader_becomes_an_unavailable_verdict(tmp_path) -> None:
 def test_the_verdict_says_what_the_readers_isolation_was_worth(tmp_path) -> None:
     """A backend that cannot confine its reader reports nothing, and the record
     says so — which is a different verdict from the same words."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     class _Unconfined(_Runtime):
@@ -516,7 +516,7 @@ def test_the_kept_prompt_is_byte_for_byte_what_was_sent(tmp_path) -> None:
     """
     import hashlib
 
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     runtime = _Runtime(_review(domain))
     store = _store(tmp_path)
@@ -569,7 +569,7 @@ def test_the_verdict_covers_the_schema_the_answer_had_to_satisfy(tmp_path) -> No
     """
     import hashlib
 
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     store = _store(tmp_path)
@@ -606,7 +606,7 @@ def test_a_failed_reader_is_stopped_before_its_verdict_is_returned(tmp_path) -> 
     append after `trajectory.jsonl` was hashed, leaving a manifest that does
     not describe the directory it names.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     class _Cancellable(_Runtime):
@@ -633,7 +633,7 @@ def test_a_failed_reader_is_stopped_before_its_verdict_is_returned(tmp_path) -> 
 
 def test_a_reader_that_never_started_has_no_thread_to_stop(tmp_path) -> None:
     """`start` itself can fail, and the handler must not invent a thread."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     class _Unstartable(_Runtime):
@@ -665,7 +665,7 @@ def test_a_runtime_that_will_not_cancel_still_yields_its_verdict(tmp_path) -> No
     """Best-effort: the verdict is decided before this runs, and a runtime that
     cannot be cancelled must not turn a recorded unavailable review into an
     unrecorded crash."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     class _Stubborn(_Runtime):
@@ -693,7 +693,7 @@ def test_a_reservation_written_in_the_notes_is_not_an_agreement(tmp_path) -> Non
     over a hole the reader actually reported, on its way to proving. An
     agreement is silent; anything worth writing is a divergence.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     verdict = faithfulness.review_translation(
@@ -714,7 +714,7 @@ def test_whitespace_in_the_notes_is_still_an_agreement(tmp_path) -> None:
     """The rule is about substance, not formatting: a reader that answers with
     an empty line has said nothing, and halting on that would be a false halt
     with no finding behind it."""
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
     verdict = faithfulness.review_translation(
@@ -735,7 +735,7 @@ def test_the_gate_and_the_staged_runtime_render_one_schema(tmp_path) -> None:
     one not — the recorded identity would describe a serialization nobody was
     sent, which is exactly what hashing it was for.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     faithfulness = importlib.import_module('hardy.faithfulness')
     store = _store(tmp_path)
 

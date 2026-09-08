@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.storage import FileLock, LockTimeout, LockUnavailable
+from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 
 
 def test_a_lock_is_taken_and_released(tmp_path: Path):
@@ -134,7 +134,7 @@ def test_a_symlink_is_refused_even_where_the_open_flag_does_not_exist(
     is not the one the suite ordinarily runs on -- and a guard that only
     works where a second guard already covers it is not a guard.
     """
-    monkeypatch.setattr("hardy.storage._NOFOLLOW", 0)
+    monkeypatch.setattr("hardy.foundation.locking._NOFOLLOW", 0)
     outside = tmp_path / "outside"
     outside.write_text("mine", encoding="utf-8")
     path = tmp_path / "x.lock"
@@ -200,7 +200,7 @@ def test_a_lock_held_by_another_process_is_seen_across_the_process_boundary(
             textwrap.dedent(
                 f"""
                 import pathlib, time
-                from hardy.storage import FileLock
+                from hardy.workflows.storage import FileLock
                 with FileLock(pathlib.Path({str(path)!r})):
                     pathlib.Path({str(ready)!r}).write_text("held")
                     time.sleep(5)
@@ -240,7 +240,7 @@ def test_the_descriptor_is_closed_even_when_the_unlock_fails(
     def _refuse(handle: int) -> None:
         raise OSError("unlock refused")
 
-    monkeypatch.setattr("hardy.storage._unlock", _refuse)
+    monkeypatch.setattr("hardy.foundation.locking._unlock", _refuse)
     lock = FileLock(path)
     lock.__enter__()
     with pytest.raises(OSError, match="unlock refused"):

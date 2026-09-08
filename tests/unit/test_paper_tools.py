@@ -359,7 +359,7 @@ def test_the_session_builds_its_paper_runtime_on_the_configured_budget(tmp_path:
     from test_chat import FakeChatRuntime, factory
 
     from hardy.chat import MathematicsSession
-    from hardy.domain import RunLimits
+    from hardy.workflows.contracts import RunLimits
 
     workspace = tmp_path / "problem"
     workspace.mkdir()

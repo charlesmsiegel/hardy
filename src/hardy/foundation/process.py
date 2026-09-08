@@ -29,7 +29,7 @@ from pathlib import Path
 
 from pydantic import Field
 
-from .domain import FrozenModel
+from hardy.foundation.values import FrozenModel
 
 # The child gets the variables a toolchain needs to find itself, and nothing
 # else; credentials in the parent environment are not inherited by accident.

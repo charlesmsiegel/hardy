@@ -17,12 +17,12 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy import config as configuration
-from hardy import layout
 from hardy.tui import dispatch, run_session
 from hardy.tui.handlers import build_registry
 from hardy.tui.plain import run as run_plain
 from hardy.tui.ports import State
 from hardy.tui.shell import Shell
+from hardy.workflows import layout
 
 from .conftest import Streams
 

@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import compaction, layout
-from .domain import RunLimits
+from hardy import compaction
+from hardy.workflows import layout
+from hardy.workflows.contracts import RunLimits
 
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_LEAN_COMMAND = "lake env lean"

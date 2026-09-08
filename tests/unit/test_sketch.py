@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
+from hardy.formal.contracts import Request
+from hardy.foundation.process import ProcessResult
 from hardy.lean import LeanTools
-from hardy.models import Request
-from hardy.process import ProcessResult
 from hardy.runner import run
 
 

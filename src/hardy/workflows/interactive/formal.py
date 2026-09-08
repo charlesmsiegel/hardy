@@ -13,10 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ... import audit
-from ...lean import LeanTools
-from ...models import ToolResult
-from ...workspace import (
+from hardy import audit
+from hardy.foundation.values import ToolResult
+from hardy.lean import LeanTools
+from hardy.workspace import (
     IDENTIFIER,
     QUALIFIED_NAME,
     BuildFailure,

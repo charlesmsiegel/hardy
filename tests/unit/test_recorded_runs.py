@@ -44,7 +44,7 @@ class _Runtime:
 
 
 def _batch(tmp_path: Path, script, *, wall_seconds: float = 300.0, name: str = 'run') -> Path:
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
@@ -255,7 +255,7 @@ def test_a_submission_accepted_after_the_deadline_is_read_as_discarded(tmp_path)
     import time
 
     acceptance = importlib.import_module('hardy.acceptance')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
@@ -359,7 +359,7 @@ def test_a_staged_manifest_cannot_state_fewer_exchanges_than_the_provider_report
     """The manifest is covered by no hash of its own; the provider's result
     events in the trajectory are what its spend is held to."""
     acceptance = importlib.import_module('hardy.acceptance')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -422,7 +422,7 @@ def test_a_failure_reason_needs_the_event_that_caused_it(tmp_path) -> None:
 
 
 def _staged_record(tmp_path, kinds_with_phase, log_text: str | None = None):
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     from datetime import UTC, datetime
     from uuid import UUID
 
@@ -519,7 +519,7 @@ def test_a_credited_review_with_no_reader_result_is_refused(tmp_path) -> None:
     """The comparison of sessions has nothing to compare when the reader left
     no result event, and silence must not pass as independence."""
     acceptance = importlib.import_module('hardy.acceptance')
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     run_dir, manifest = _staged_record(tmp_path, [('claude.result', 'proving', 'one')])
     review = domain.FaithfulnessVerdict(
@@ -551,7 +551,7 @@ def _with_closers(
     name: str = 'ladder',
     tactics: tuple[str, ...] | None = None,
 ) -> Path:
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
@@ -1011,7 +1011,7 @@ def test_a_closer_that_landed_late_is_not_a_record_at_odds_with_itself(tmp_path)
     import time
 
     acceptance = importlib.import_module('hardy.acceptance')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
@@ -1128,7 +1128,7 @@ def test_a_zero_budget_run_does_not_blame_closers_that_never_ran(tmp_path) -> No
     block saying they were disabled -- a false sentence, and one the audit
     reads as evidence that the provider was deliberately unasked."""
     acceptance = importlib.import_module('hardy.acceptance')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     runner = importlib.import_module('hardy.runner')
     request = models.Request.from_dict(
@@ -1201,7 +1201,7 @@ def test_a_batch_run_records_the_window_it_was_planned_against(tmp_path) -> None
 
 def test_a_batch_on_a_loop_hardy_owns_is_given_the_compactor(tmp_path) -> None:
     runner = importlib.import_module('hardy.runner')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -1235,7 +1235,7 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
     Lean's own words."""
     compaction = importlib.import_module('hardy.compaction')
     runner = importlib.import_module('hardy.runner')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
@@ -1297,7 +1297,7 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
     no way back to the skeleton the record says Hardy is holding."""
     compaction = importlib.import_module('hardy.compaction')
     runner = importlib.import_module('hardy.runner')
-    models = importlib.import_module('hardy.models')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
     lean_module = importlib.import_module('hardy.lean')
     request = models.Request.from_dict(
         {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}

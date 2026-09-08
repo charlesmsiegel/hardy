@@ -16,17 +16,13 @@ from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
-from .domain import (
-    DeclaredAssumption,
-    DocumentStatus,
-    FrozenClaim,
-    FrozenModel,
-    Grades,
-    RunLimits,
-)
-from .process import ProcessResult, ProcessSpec, run_process
-from .storage import ArtifactIdentity, RunStore
-from .verifier import VerificationResult
+from hardy.documents.contracts import DocumentStatus
+from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
+from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
+from hardy.foundation.values import FrozenModel
+from hardy.verifier import VerificationResult
+from hardy.workflows.contracts import Grades, RunLimits
+from hardy.workflows.storage import ArtifactIdentity, RunStore
 
 BACKSLASH = chr(92)
 

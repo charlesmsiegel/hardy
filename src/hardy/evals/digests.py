@@ -10,10 +10,10 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from ..corpus.identity import _digest
-from ..corpus.identity import fixture_set_digest as fixture_set_digest
-from ..corpus.identity import prompt_digest as prompt_digest
-from ..corpus.identity import statement_digest as statement_digest
+from hardy.corpus.identity import _digest
+from hardy.corpus.identity import fixture_set_digest as fixture_set_digest
+from hardy.corpus.identity import prompt_digest as prompt_digest
+from hardy.corpus.identity import statement_digest as statement_digest
 
 
 def environment_digest(environment: dict[str, Any]) -> str:

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 
 def test_default_limits_match_approved_design() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     limits = domain.RunLimits()
 
@@ -31,7 +31,7 @@ def test_default_limits_match_approved_design() -> None:
 
 
 def test_run_limits_are_frozen() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     limits = domain.RunLimits()
 
     with pytest.raises(ValidationError, match='frozen'):
@@ -39,21 +39,21 @@ def test_run_limits_are_frozen() -> None:
 
 
 def test_verified_grade_requires_final_verification_evidence() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     with pytest.raises(ValidationError, match='verification'):
         domain.Grades(formal=domain.FormalStatus.KERNEL_VERIFIED)
 
 
 def test_domain_models_reject_unknown_fields() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     with pytest.raises(ValidationError, match='extra'):
         domain.RunLimits(surprise=1)
 
 
 def test_formalization_proposal_keeps_interpretation_explicit() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     proposal = domain.FormalizationProposal(
         restatement='Every natural number has the stated property.',
@@ -91,7 +91,7 @@ def _agreed_review(domain, claim_hash='a' * 64, model='reviewer-model'):
 
 
 def test_document_failure_does_not_change_mathematical_grades() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     grades = domain.Grades(
         formal=domain.FormalStatus.PARTIAL,
@@ -107,7 +107,7 @@ def test_document_failure_does_not_change_mathematical_grades() -> None:
 
 
 def test_frozen_claim_records_statement_and_environment_identity() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',
         domains=(),
@@ -146,7 +146,7 @@ def test_a_manifest_version_identifies_one_shape_including_its_nested_ones() -> 
     Version 2 was itself bumped for a nested addition, `grades.
     verification_evidence`, which is the precedent this follows.
     """
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     written = domain.RunManifest(
         run_id=UUID(int=1),
@@ -163,7 +163,7 @@ def test_a_manifest_version_identifies_one_shape_including_its_nested_ones() -> 
 
 
 def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     manifest = domain.RunManifest(
         run_id=UUID(int=1),
@@ -201,7 +201,7 @@ def _evidence(domain, **overrides):
 
 
 def test_verification_evidence_digest_is_derived_from_every_component() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     evidence = _evidence(domain)
 
     assert re.fullmatch(r'[0-9a-f]{64}', evidence.digest)
@@ -218,7 +218,7 @@ def test_verification_evidence_digest_is_derived_from_every_component() -> None:
 
 
 def test_verified_grade_rejects_a_hash_with_no_evidence_behind_it() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     with pytest.raises(ValidationError, match='verification'):
         domain.Grades(
@@ -228,7 +228,7 @@ def test_verified_grade_rejects_a_hash_with_no_evidence_behind_it() -> None:
 
 
 def test_verified_grade_rejects_a_digest_that_does_not_derive_from_its_evidence() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     with pytest.raises(ValidationError, match='does not match its evidence'):
         domain.Grades(
@@ -239,7 +239,7 @@ def test_verified_grade_rejects_a_digest_that_does_not_derive_from_its_evidence(
 
 
 def test_verified_grade_accepts_a_digest_derived_from_its_evidence() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     evidence = _evidence(domain)
 
     grades = domain.Grades(
@@ -255,7 +255,7 @@ def test_verified_grade_accepts_a_digest_derived_from_its_evidence() -> None:
 
 
 def test_unverified_grade_rejects_verification_evidence() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     evidence = _evidence(domain)
 
     with pytest.raises(ValidationError, match='verification'):
@@ -267,7 +267,7 @@ def test_unverified_grade_rejects_verification_evidence() -> None:
 
 
 def test_unverified_grade_rejects_a_bare_verification_hash() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
 
     with pytest.raises(ValidationError, match='verification'):
         domain.Grades(
@@ -277,7 +277,7 @@ def test_unverified_grade_rejects_a_bare_verification_hash() -> None:
 
 
 def test_manifest_read_back_rejects_a_verified_grade_with_fabricated_evidence() -> None:
-    domain = importlib.import_module('hardy.domain')
+    domain = importlib.import_module('hardy.workflows.contracts')
     evidence = _evidence(domain)
     manifest = domain.RunManifest(
         run_id=UUID(int=1),

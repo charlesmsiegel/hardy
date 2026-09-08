@@ -24,8 +24,8 @@ from hardy.bibliography import (
     hand_written_bibliography,
     is_generated,
 )
+from hardy.foundation.locking import FileLock
 from hardy.latex import typeset
-from hardy.storage import FileLock
 
 
 def _record(
