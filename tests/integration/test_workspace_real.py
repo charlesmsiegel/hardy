@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.config import load
+from hardy.app.config import load
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
 from hardy.formal.workspace import LeanWorkspace

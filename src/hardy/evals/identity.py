@@ -27,10 +27,10 @@ RUN_SOURCE_EXCLUDED_FILES = frozenset({
     "__main__.py",        # a console-script shim
     "cli.py",
     "app/cli.py",        # argument parsing; construction lives in wiring.py
-    "evals/viewer.py",    # the corpus review viewer
+    "app/corpus_viewer.py",    # the corpus review viewer
     "evals/summary.py",   # reads finished boards; cannot reach a run
 })
-RUN_SOURCE_EXCLUDED_DIRS = ("tui/",)
+RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/",)
 
 
 def run_source_paths() -> tuple[Path, ...]:

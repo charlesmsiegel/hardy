@@ -7,7 +7,7 @@ handing over events makes appear on screen.
 from __future__ import annotations
 
 from hardy.agents.contracts import TurnEvent
-from hardy.tui import plain
+from hardy.app.tui import plain
 
 
 class StreamingSession:

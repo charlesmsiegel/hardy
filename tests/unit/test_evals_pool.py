@@ -208,7 +208,7 @@ def test_the_default_output_is_a_named_pool_directory_holding_pool_json(tmp_path
     """
     import argparse
 
-    from hardy.evals import commands
+    from hardy.app import evals as commands
 
     board = _board(tmp_path / "boards" / "a", ids=["t"], run_digest="r", env_digest="e")
     assert board.exists()

@@ -192,7 +192,7 @@ def test_the_deterministic_fixture_is_not_mistaken_for_a_recorded_run(tmp_path) 
     """The no-model fixture is self-consistent and is not evidence: it opened
     no provider thread and elaborated nothing. A recorded run owes both."""
     acceptance = importlib.import_module('hardy.workflows.acceptance')
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     config = config_module.Config(
         model='deterministic-no-model',
         lean_command=('lake', 'env', 'lean'),

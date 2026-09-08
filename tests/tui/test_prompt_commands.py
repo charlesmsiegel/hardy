@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 
+from hardy.app.tui import dispatch, handlers
+from hardy.app.tui.ports import State
 from hardy.prompts import user as templates
-from hardy.tui import dispatch, handlers
-from hardy.tui.ports import State
 
 
 def registry(*items: templates.Template):
@@ -43,7 +43,7 @@ def test_a_template_is_refused_while_a_turn_runs_exactly_as_a_message_is():
 
 
 def test_completion_and_ghost_text_reach_a_template_like_any_other_command():
-    from hardy.tui.commands import complete, suggest
+    from hardy.app.tui.commands import complete, suggest
 
     audit = templates.parse("audit", "Audit the workspace.")
     assert suggest("/aud", registry(audit)) == "it"
@@ -81,7 +81,7 @@ def test_the_transcript_records_the_expansion_rather_than_the_name(tmp_path, set
     import dataclasses
     import json
 
-    from hardy.tui import plain
+    from hardy.app.tui import plain
 
     directory = templates.directory(tmp_path)
     directory.mkdir(parents=True)

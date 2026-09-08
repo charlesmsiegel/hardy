@@ -471,7 +471,7 @@ def test_the_batch_runner_uses_the_conditions_selected_model_not_configs(monkeyp
     actually be produced by it -- not by whatever `config.model` happens to
     be, which under an override is a different model entirely (item 1).
     """
-    from hardy import wiring
+    from hardy.app import wiring
     from hardy.workflows import batch as hardy_runner
 
     seen: dict = {}

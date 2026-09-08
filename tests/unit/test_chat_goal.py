@@ -11,7 +11,7 @@ is never asked to approve an axiom with the goal off-screen.
 
 from __future__ import annotations
 
-from hardy.tui import handlers
+from hardy.app.tui import handlers
 
 
 def _request(**overrides):

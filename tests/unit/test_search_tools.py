@@ -60,7 +60,7 @@ def _config(tmp_path: Path, project: Path | None, **overrides):
     stub, so a test that does not care about the toolchain match still gets
     one that resolves and agrees.
     """
-    configuration = importlib.import_module('hardy.config')
+    configuration = importlib.import_module('hardy.app.config')
     lake = _lake(tmp_path)
     fields = dict(
         model=None,
@@ -231,7 +231,7 @@ def test_a_relative_lake_resolves_where_the_child_will_run_it(tmp_path) -> None:
     against Hardy's own process directory instead refused search over a
     difference that does not exist -- whenever Hardy was started anywhere but
     inside the project."""
-    configuration = importlib.import_module('hardy.config')
+    configuration = importlib.import_module('hardy.app.config')
     search_tools = importlib.import_module('hardy.formal.search')
     project = _project(tmp_path)
     lake = project / 'bin' / 'lake'

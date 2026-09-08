@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from hardy.tui import commands
-from hardy.tui.ports import State
+from hardy.app.tui import commands
+from hardy.app.tui.ports import State
 
 
 async def _noop(ui, argument, state) -> State:

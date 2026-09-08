@@ -11,7 +11,7 @@ import pytest
 from corpus_helpers import write_corpus
 
 from hardy.app import cli
-from hardy.evals import commands
+from hardy.app import evals as commands
 from hardy.formal.contracts import EnvironmentIdentity
 
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="819816b2", mathlib_revision="v4.33.1", lake_manifest_sha256="m" * 64)

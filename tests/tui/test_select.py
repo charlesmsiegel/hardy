@@ -13,8 +13,8 @@ from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.vt100 import Vt100_Output
 from prompt_toolkit.widgets import Frame, TextArea
 
-from hardy.tui import select
-from hardy.tui.ports import Choice
+from hardy.app.tui import select
+from hardy.app.tui.ports import Choice
 
 from .nested_render import assert_no_outer_render_during_nested
 

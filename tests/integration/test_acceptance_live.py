@@ -69,7 +69,7 @@ from typing import Any
 
 import pytest
 
-from hardy import config as configuration
+from hardy.app import config as configuration
 from hardy.app.cli import _find_run_dir, build_prove_workflow, runtime_factory
 from hardy.documents.contracts import DocumentStatus
 from hardy.documents.writeup import tectonic_version

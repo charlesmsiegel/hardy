@@ -75,12 +75,12 @@ def test_full_tree_dependency_directions(import_graph):
     for module in providers | readers | capabilities:
         forbidden = launchers | controllers
         if module in readers:
-            forbidden |= providers | {'hardy.evals.commands', 'hardy.evals.staged'}
+            forbidden |= providers | {'hardy.app.evals', 'hardy.evals.staged'}
         if module.startswith('hardy.corpus.'):
             forbidden |= {name for name in import_graph if name.startswith('hardy.evals.')}
         assert not (_reachable(import_graph, module) & forbidden), module
     for module in import_graph:
-        if module.startswith('hardy.tui.') or module in {'hardy.app.projects', 'hardy.app.terminal'}:
+        if module.startswith('hardy.app.tui.') or module in {'hardy.app.projects', 'hardy.app.terminal'}:
             assert not (_reachable(import_graph, module) & {'hardy.cli', 'hardy.app.cli'}), module
 
 
@@ -94,7 +94,7 @@ def test_run_identity_keeps_relocated_owners_and_excludes_unreachable_cli(import
     from hardy.evals.identity import RUN_SOURCE_ROOT, run_source_paths
 
     included = {path.relative_to(RUN_SOURCE_ROOT).as_posix() for path in run_source_paths()}
-    for directory in ('agents', 'formal', 'documents', 'algebra', 'literature', 'corpus', 'workflows'):
+    for directory in ('foundation', 'agents', 'formal', 'documents', 'algebra', 'literature', 'corpus', 'workflows'):
         for path in (SOURCE / directory).rglob('*.py'):
             assert path.relative_to(SOURCE).as_posix() in included
     assert 'cas_driver.py' in included
@@ -166,7 +166,7 @@ def test_agent_import_fence_includes_local_imports(module):
 
 def test_terminal_adapters_do_not_import_command_entry_point():
     violations = []
-    for path in (SOURCE / "tui").glob("*.py"):
+    for path in (SOURCE / "app" / "tui").glob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and (
                 node.module in {"cli", "hardy.cli"}

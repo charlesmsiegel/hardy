@@ -124,7 +124,7 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
     # an edit to `cli.py` would change what a run does without moving the key
     # every pooled row is supposed to share.
     from hardy.agents.staged import ClaudeStagedRuntime
-    from hardy.wiring import build_prove_workflow
+    from hardy.app.wiring import build_prove_workflow
     from hardy.workflows.prove import ProveRequest
 
     def run_one(entry: Entry, row_dir: Path, model: str) -> None:

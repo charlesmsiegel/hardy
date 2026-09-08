@@ -12,7 +12,7 @@ from corpus_helpers import write_corpus
 from pydantic import ValidationError
 
 from hardy import prompts
-from hardy.config import Config
+from hardy.app.config import Config
 from hardy.evals import runner, scoreboard, staged, sweep
 from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of

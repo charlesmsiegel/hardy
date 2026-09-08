@@ -3,8 +3,8 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from hardy import config as configuration
-from hardy.tui import banner
+from hardy.app import config as configuration
+from hardy.app.tui import banner
 from hardy.workflows import batch as runner
 
 

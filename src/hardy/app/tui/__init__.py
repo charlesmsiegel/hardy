@@ -40,9 +40,9 @@ def run_session(
         return _run_plain(config, session_factory, reopen=reopen)
 
     from hardy.app.terminal import confirm_assumption
+    from hardy.app.tui.handlers import build_registry, load_templates
+    from hardy.app.tui.shell import Shell
     from hardy.foundation.files import LayoutError
-    from hardy.tui.handlers import build_registry, load_templates
-    from hardy.tui.shell import Shell
     from hardy.workflows.interactive.session import SchemaError
 
     shell = None
@@ -87,8 +87,8 @@ def run_session(
 
 def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = None) -> int:
     from hardy.app.terminal import confirm_assumption
-    from hardy.tui import plain as plain_mode
-    from hardy.tui.handlers import build_registry, load_templates
+    from hardy.app.tui import plain as plain_mode
+    from hardy.app.tui.handlers import build_registry, load_templates
 
     ui_holder: dict[str, Any] = {}
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from hardy.tui.ports import Choice
+from hardy.app.tui.ports import Choice
 from hardy.workflows.batch import WARNING
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hardy.tui.stream import LineWriter, TurnPainter, tool_finished, tool_started
+from hardy.app.tui.stream import LineWriter, TurnPainter, tool_finished, tool_started
 
 
 def drain(writer: LineWriter, deltas: list[str]) -> list[str]:

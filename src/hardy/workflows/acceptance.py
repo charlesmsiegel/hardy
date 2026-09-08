@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 
-from hardy.config import Config
+from hardy.app.config import Config
 from hardy.documents.writeup import RunIdentities, WriteupContent, build_writeup
 from hardy.formal.contracts import (
     EnvironmentIdentity,

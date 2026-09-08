@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from hardy.tui import ports
+from hardy.app.tui import ports
 
 
 def test_choice_carries_a_value_label_and_optional_note():

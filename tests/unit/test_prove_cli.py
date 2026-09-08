@@ -48,7 +48,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
     tmp_path,
 ) -> None:
     cli = importlib.import_module('hardy.app.cli')
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     domain = importlib.import_module('hardy.workflows.contracts')
     config_path = tmp_path / 'config.toml'
     config_module.write_setting(config_path, 'runs_root', str(tmp_path / 'runs'))
@@ -88,7 +88,7 @@ def _staged_config(tmp_path, **overrides):
     manifest and `lake` is a stub that answers `--version` the way real Lean
     does -- enough to build the staged workflow hermetically.
     """
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     lean_project = tmp_path / 'lean'
     lean_project.mkdir(exist_ok=True)
     manifest = lean_project / 'lake-manifest.json'
@@ -129,7 +129,7 @@ def test_staged_doctor_ignores_an_advisory_cas_failure(tmp_path, monkeypatch) ->
     of failing every `hardy prove` run over an optional tool.
     """
     cli = importlib.import_module('hardy.app.cli')
-    doctor_module = importlib.import_module('hardy.doctor')
+    doctor_module = importlib.import_module('hardy.app.doctor')
     config = _staged_config(tmp_path)
 
     def fake_checks(value, *, deep=False, backend=None):
@@ -153,7 +153,7 @@ def test_the_staged_doctor_checks_the_backend_the_run_will_build(tmp_path, monke
     staged run on a missing API key -- and, worse, reports a machine ready on
     credentials the run is not going to use."""
     cli = importlib.import_module('hardy.app.cli')
-    doctor_module = importlib.import_module('hardy.doctor')
+    doctor_module = importlib.import_module('hardy.app.doctor')
     config = dataclasses.replace(_staged_config(tmp_path), backend='api')
     seen = {}
 
@@ -170,7 +170,7 @@ def test_the_staged_doctor_checks_the_backend_the_run_will_build(tmp_path, monke
 
 
 def test_doctor_asked_for_a_backend_checks_that_one(tmp_path):
-    doctor_module = importlib.import_module('hardy.doctor')
+    doctor_module = importlib.import_module('hardy.app.doctor')
     config = dataclasses.replace(_staged_config(tmp_path), backend='api')
 
     names = [check.name for check in doctor_module.run_checks(config, backend='claude')]
@@ -347,7 +347,7 @@ def test_the_reviewer_model_can_be_overridden_for_one_invocation(tmp_path) -> No
     `--model` sets the run's model and not the reviewer's.
     """
     cli = importlib.import_module('hardy.app.cli')
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     domain = importlib.import_module('hardy.workflows.contracts')
     config_path = tmp_path / 'config.toml'
     config_module.write_setting(config_path, 'runs_root', str(tmp_path / 'runs'))

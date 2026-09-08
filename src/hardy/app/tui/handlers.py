@@ -17,16 +17,16 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
-from hardy import catalog, doctor
-from hardy import config as configuration
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
-from hardy.config import DEFAULT_BACKEND, authentication
+from hardy.app import catalog, doctor
+from hardy.app import config as configuration
+from hardy.app.config import DEFAULT_BACKEND, authentication
+from hardy.app.tui.banner import status_line
+from hardy.app.tui.commands import Command, canonical, from_template
+from hardy.app.tui.ports import Choice, State, Ui
 from hardy.foundation import process
 from hardy.prompts import user as user_prompts
-from hardy.tui.banner import status_line
-from hardy.tui.commands import Command, canonical, from_template
-from hardy.tui.ports import Choice, State, Ui
 from hardy.workflows import layout
 
 
@@ -629,7 +629,7 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     threads, and starting one on top of a running turn would put two of each in
     the same process arguing over the same toolchain.
     """
-    from hardy.tui import prove as staged
+    from hardy.app.tui import prove as staged
 
     claim = argument.strip()
     if not claim:

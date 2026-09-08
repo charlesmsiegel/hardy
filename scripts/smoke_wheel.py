@@ -87,14 +87,14 @@ async def transport(directory, claim):
 def smoke(directory):
     from hardy.algebra.backends import SympyBackend
     from hardy.algebra.session import CasSession
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.workflows.acceptance import run_deterministic_experiment
     from hardy.workflows.contracts import RunLimits
     from hardy.workflows.recorded import validate_run_consistency
 
     assert Path(hardy.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), hardy.__file__
-    for resource in ('documents/templates/paper.tex', 'documents/export.css', 'evals/viewer.html',
-                     'evals/bibliography.html', 'workflows/acceptance_problems.json',
+    for resource in ('documents/templates/paper.tex', 'documents/export.css', 'app/viewer.html',
+                     'app/bibliography.html', 'workflows/acceptance_problems.json',
                      'prompts/chat.md.j2', 'prompts/staged/base.md.j2', 'cas_driver.py'):
         assert files('hardy').joinpath(resource).read_bytes(), resource
     for module in ('hardy', 'hardy.cli', 'hardy.app.cli'):

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config
+from hardy.app import config
 from hardy.workflows import layout
 
 

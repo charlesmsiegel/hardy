@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from hardy.tui import handlers
-from hardy.tui.commands import canonical
+from hardy.app.tui import handlers
+from hardy.app.tui.commands import canonical
 
 
 class Ui:

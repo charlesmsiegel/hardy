@@ -26,7 +26,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from hardy.config import Config
+from hardy.app.config import Config
 from hardy.formal.declarations import DeclarationIndex, search_result
 from hardy.formal.lean import DeclarationInspection, LeanService, environment_identity
 from hardy.formal.modules import ModuleIndex

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from hardy.config import DEFAULT_BACKEND, authentication
+from hardy.app.config import DEFAULT_BACKEND, authentication
 from hardy.workflows.batch import WARNING
 
 

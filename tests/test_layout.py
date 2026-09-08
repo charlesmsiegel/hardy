@@ -712,7 +712,7 @@ GUARDED_MODULES = (
     "workflows/interactive/session.py",
     "algebra/cas.py",
     "algebra/export.py",
-    "tui/shell.py",
+    "app/tui/shell.py",
     "formal/workspace.py",
     "documents/latex.py",
     "formal/lean.py",

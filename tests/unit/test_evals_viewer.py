@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 from corpus_helpers import rebind_changelog, write_corpus
 
+from hardy.app.corpus_viewer import PAGE, ReviewRefused, payload, record_review, serve
 from hardy.evals.corpus import load_corpus
 from hardy.evals.problems import Entry
-from hardy.evals.viewer import PAGE, ReviewRefused, payload, record_review, serve
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -444,7 +444,7 @@ def test_the_review_route_refuses_with_the_reason_and_writes_nothing(reviewing):
 
 # --- Citations: AMS alpha labels and the per-source locator conventions ---
 
-from hardy.evals.viewer import cite_locator, format_ams  # noqa: E402
+from hardy.app.corpus_viewer import cite_locator, format_ams  # noqa: E402
 
 AM = {"citation_key": "AM69", "authors": ["M. F. Atiyah", "I. G. Macdonald"],
       "title": "Introduction to commutative algebra", "publisher": "Addison-Wesley Publishing Co.",

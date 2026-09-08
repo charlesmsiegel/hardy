@@ -16,7 +16,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 
-from hardy.tui.ports import Choice
+from hardy.app.tui.ports import Choice
 
 # 1-9 only. An accelerator that fires on each keypress can never read a
 # two-digit row, because `1` would have selected row 1 before `0` arrived.

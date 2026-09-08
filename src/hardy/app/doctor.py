@@ -8,7 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from hardy.config import DEFAULT_CAS_BACKEND, Config
+from hardy.app.config import DEFAULT_CAS_BACKEND, Config
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
 from hardy.foundation.process import run_guarded
@@ -68,7 +68,7 @@ def _toolchain_pin_check(config: Config) -> Check:
     ran against. What is not supported is not knowing -- so a project on a
     different Lean or Mathlib is named here beside what Hardy pins.
     """
-    from hardy.installers import LEAN_TOOLCHAIN, MATHLIB_REVISION
+    from hardy.app.installers import LEAN_TOOLCHAIN, MATHLIB_REVISION
 
     project = config.lean_project
     if project is None or not project.is_dir():
@@ -134,7 +134,7 @@ def _codex_checks() -> list[Check]:
     # at the first request instead. `setup.probe_codex` already asks the SDK
     # whether an account is present; this is that answer, named so the staged
     # workflow can see it.
-    from hardy.setup import probe_codex
+    from hardy.app.setup import probe_codex
 
     try:
         authenticated, detail = probe_codex()

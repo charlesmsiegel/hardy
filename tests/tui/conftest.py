@@ -8,9 +8,9 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 
-from hardy import config as configuration
 from hardy.agents.contracts import TurnEvent
-from hardy.tui.ports import Choice
+from hardy.app import config as configuration
+from hardy.app.tui.ports import Choice
 
 
 @pytest.fixture(autouse=True)

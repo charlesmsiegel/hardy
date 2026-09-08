@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from hardy.tui import handlers
-from hardy.tui.ports import State
-from hardy.tui.prove import UiTerminal, problem_slug
+from hardy.app.tui import handlers
+from hardy.app.tui.ports import State
+from hardy.app.tui.prove import UiTerminal, problem_slug
 
 
 class Recorder:
@@ -35,7 +35,7 @@ class Recorder:
 
 @pytest.fixture
 def staged(monkeypatch):
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
 
@@ -83,7 +83,7 @@ async def test_an_empty_claim_is_refused_rather_than_run(ui, settings, staged):
 
 
 async def test_a_failed_run_reports_rather_than_ending_the_session(ui, settings, monkeypatch):
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     def explode(*args, **kwargs):
         raise RuntimeError("no Lean here")
@@ -95,7 +95,7 @@ async def test_a_failed_run_reports_rather_than_ending_the_session(ui, settings,
 
 
 async def test_prove_is_refused_while_a_turn_is_running(settings):
-    from hardy.tui import dispatch
+    from hardy.app.tui import dispatch
 
     registry = handlers.build_registry()
     outcome = dispatch.classify("/prove x", registry, turn_running=True)
@@ -150,7 +150,7 @@ async def test_cancelling_prove_stops_the_staged_workflow_itself(ui, settings, m
     is waiting for, and only Lean and LaTeX ever hear about the Esc."""
     import asyncio
 
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
     started = asyncio.Event()
@@ -163,7 +163,7 @@ async def test_cancelling_prove_stops_the_staged_workflow_itself(ui, settings, m
     monkeypatch.setattr(prove, "run", run)
     interrupted: list[int] = []
     monkeypatch.setattr(
-        "hardy.tui.handlers.process.interrupt_children", lambda: interrupted.append(1)
+        "hardy.app.tui.handlers.process.interrupt_children", lambda: interrupted.append(1)
     )
     with pytest.raises(asyncio.CancelledError):
         await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
@@ -176,14 +176,14 @@ async def test_a_workflow_too_old_to_be_cancelled_does_not_break_the_press(
 ):
     import asyncio
 
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
         ready(SimpleNamespace())              # no `cancel`
         raise asyncio.CancelledError
 
     monkeypatch.setattr(prove, "run", run)
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: None)
     with pytest.raises(asyncio.CancelledError):
         await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
 
@@ -192,12 +192,12 @@ async def test_esc_reaches_the_staged_run_rather_than_only_the_session(ui, setti
     """Esc against a command calls `_stop_command`, which reaches the SESSION's
     children -- right for `/cas`, whose cell is a child, and wrong for a staged
     run, whose provider call is not. The handler has to publish its own stop."""
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
     interrupted: list[int] = []
     monkeypatch.setattr(
-        "hardy.tui.handlers.process.interrupt_children", lambda: interrupted.append(1)
+        "hardy.app.tui.handlers.process.interrupt_children", lambda: interrupted.append(1)
     )
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
@@ -217,10 +217,10 @@ async def test_esc_reaches_the_staged_run_rather_than_only_the_session(ui, setti
 async def test_esc_during_the_workflow_build_still_stops_the_run(ui, settings, monkeypatch):
     """Building the workflow identifies Lean and Tectonic, so a press very
     plausibly lands before anything is published. The run must not then start."""
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: None)
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
         # Pressed while the builder was still working: nothing is published yet.
@@ -234,7 +234,7 @@ async def test_esc_during_the_workflow_build_still_stops_the_run(ui, settings, m
 
 
 async def test_the_stopper_is_cleared_even_when_the_run_fails(ui, settings, monkeypatch):
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     monkeypatch.setattr(prove, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no")))
     await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
@@ -247,8 +247,8 @@ async def test_prove_can_actually_be_used_in_a_plain_session(settings, monkeypat
     prompt in every plain session, because the fake never touched the terminal.
     This one drives the real facade, which is the thing that broke.
     """
-    from hardy.tui import prove
-    from hardy.tui.plain import PlainUi
+    from hardy.app.tui import prove
+    from hardy.app.tui.plain import PlainUi
 
     said: list[str] = []
     # "1" is the Approve row. The plain selector asks for a number, and an
@@ -279,8 +279,8 @@ async def test_the_plain_session_runs_the_workflow_inline(settings, monkeypatch)
     handled it since long before `/prove`."""
     import threading
 
-    from hardy.tui import prove
-    from hardy.tui.plain import PlainUi
+    from hardy.app.tui import prove
+    from hardy.app.tui.plain import PlainUi
 
     where: list[str] = []
 
@@ -297,7 +297,7 @@ async def test_the_plain_session_runs_the_workflow_inline(settings, monkeypatch)
 async def test_the_real_shell_still_uses_a_worker(ui, settings, monkeypatch):
     import threading
 
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     where: list[str] = []
 
@@ -315,10 +315,10 @@ async def test_the_press_refuses_further_stages_before_it_returns(ui, settings, 
     waits for the tool gate and the provider worker, which is minutes. Deferring
     both let the worker pass its next check and open one more billable stage
     after the terminal had said the run was stopping."""
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: None)
 
     # Observed rather than asserted in place: `handle_prove` catches `Exception`
     # to keep a failed run from ending the session, so an `assert` inside this
@@ -388,11 +388,11 @@ async def test_ctrl_c_reaches_an_inline_plain_run(settings, monkeypatch):
     nothing while the run went on spending."""
     import signal
 
-    from hardy.tui import prove
-    from hardy.tui.plain import PlainUi
+    from hardy.app.tui import prove
+    from hardy.app.tui.plain import PlainUi
 
     recorder = Recorder()
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: None)
     refused: list[int] = []
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
@@ -416,7 +416,7 @@ async def test_ctrl_c_reaches_an_inline_plain_run(settings, monkeypatch):
 def test_the_press_guard_restores_the_previous_handler():
     import signal
 
-    from hardy.tui.handlers import _pressing
+    from hardy.app.tui.handlers import _pressing
 
     before = signal.getsignal(signal.SIGINT)
     with _pressing(lambda: True):
@@ -429,15 +429,15 @@ async def test_a_second_press_kills_what_the_first_only_asked(ui, settings, monk
     reaching any escalation and the documented second Esc never happened -- the
     user could press it all day while a Lean child that ignores interrupts ran
     out its timeout."""
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
     asked: list[str] = []
     monkeypatch.setattr(
-        "hardy.tui.handlers.process.interrupt_children", lambda: asked.append("asked") or 1
+        "hardy.app.tui.handlers.process.interrupt_children", lambda: asked.append("asked") or 1
     )
     monkeypatch.setattr(
-        "hardy.tui.handlers.process.stop_children", lambda: asked.append("killed") or 1
+        "hardy.app.tui.handlers.process.stop_children", lambda: asked.append("killed") or 1
     )
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
@@ -463,11 +463,11 @@ async def test_a_press_before_the_workflow_exists_does_not_end_the_session(
     still being identified -- there is nothing to finalize, and
     `KeyboardInterrupt` is not an `Exception`, so it went on to end the whole
     session: a press meant to stop one command took the conversation with it."""
-    from hardy.tui import prove
-    from hardy.tui.plain import PlainUi
+    from hardy.app.tui import prove
+    from hardy.app.tui.plain import PlainUi
 
     said: list[str] = []
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: None)
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
         raise KeyboardInterrupt          # the press, while the build is going
@@ -487,15 +487,15 @@ async def test_one_press_before_the_run_starts_is_not_an_escalation(settings, mo
     """`_pressing`'s handler presses before it raises, so pressing again in the
     handler counted a single Ctrl+C as the documented SECOND press -- one
     interrupt killed the identification child instead of asking it to stop."""
-    from hardy.tui import prove
-    from hardy.tui.plain import PlainUi
+    from hardy.app.tui import prove
+    from hardy.app.tui.plain import PlainUi
 
     killed: list[str] = []
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: 1)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: 1)
     monkeypatch.setattr(
-        "hardy.tui.handlers.process.stop_children", lambda: killed.append("killed") or 1
+        "hardy.app.tui.handlers.process.stop_children", lambda: killed.append("killed") or 1
     )
-    monkeypatch.setattr("hardy.tui.handlers.process.resume_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.resume_children", lambda: None)
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
         import signal
@@ -519,13 +519,13 @@ async def test_a_cancelled_run_does_not_leave_later_commands_stopped(
     """`interrupt_children` sets a process-wide stop level cleared only when a
     model turn starts, so a cancelled `/prove` left every later `/doctor`,
     `/import` or `/prove` killing its own first child on sight."""
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     recorder = Recorder()
     lifted: list[str] = []
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: 1)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: 1)
     monkeypatch.setattr(
-        "hardy.tui.handlers.process.resume_children", lambda: lifted.append("lifted")
+        "hardy.app.tui.handlers.process.resume_children", lambda: lifted.append("lifted")
     )
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
@@ -552,12 +552,12 @@ async def test_a_second_press_does_not_interrupt_the_finalization_the_first_one_
     manifest describing it. `stop` still escalates on every press; only the
     raise is once.
     """
-    from hardy.tui import prove
-    from hardy.tui.plain import PlainUi
+    from hardy.app.tui import prove
+    from hardy.app.tui.plain import PlainUi
 
-    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: 1)
-    monkeypatch.setattr("hardy.tui.handlers.process.stop_children", lambda: 1)
-    monkeypatch.setattr("hardy.tui.handlers.process.resume_children", lambda: None)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.interrupt_children", lambda: 1)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.stop_children", lambda: 1)
+    monkeypatch.setattr("hardy.app.tui.handlers.process.resume_children", lambda: None)
 
     finalized: list[str] = []
 
@@ -598,7 +598,7 @@ def test_the_revision_prompt_refuses_before_it_asks_when_the_run_is_abandoned():
 
     import pytest
 
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     asked: list[str] = []
 
@@ -634,7 +634,7 @@ def test_a_revision_answered_after_the_run_was_abandoned_is_not_acted_on():
 
     import pytest
 
-    from hardy.tui import prove
+    from hardy.app.tui import prove
 
     flag = threading.Event()
 

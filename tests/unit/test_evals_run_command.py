@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from corpus_helpers import write_corpus
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
-from hardy.evals import commands as runner
+from hardy.app import evals as runner
 from hardy.evals import staged as staged_module
 from hardy.evals import sweep, taxonomy
 from hardy.evals.problems import Entry, ProblemSet, Review
@@ -242,7 +242,7 @@ def _parse(*argv: str) -> argparse.Namespace:
     """The real CLI parser, so a flag `run` has and `todo` does not is a test
     failure rather than a silent default.
     """
-    from hardy.evals import commands
+    from hardy.app import evals as commands
 
     parser = argparse.ArgumentParser()
     commands.add_parser(parser.add_subparsers(dest="command", required=True))
@@ -278,7 +278,7 @@ def test_todo_refuses_batch_budgets_under_staged_exactly_as_run_does(capsys, tmp
     """A run with these flags would not launch (`run_set_command` refuses
     them), so reporting a key for it would be reporting a key no run uses.
     """
-    from hardy.evals import commands
+    from hardy.app import evals as commands
 
     problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
     args = _parse("evals", "todo", "--mode", "staged", "--max-turns", "40")

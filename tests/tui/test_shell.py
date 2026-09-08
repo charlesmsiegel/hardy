@@ -35,9 +35,9 @@ from prompt_toolkit.layout.screen import Screen, WritePosition
 from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy.agents.usage import Usage
-from hardy.tui import handlers, shell
-from hardy.tui.commands import Command
-from hardy.tui.ports import Choice
+from hardy.app.tui import handlers, shell
+from hardy.app.tui.commands import Command
+from hardy.app.tui.ports import Choice
 
 from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested
@@ -700,9 +700,9 @@ async def test_a_command_that_finishes_after_a_switch_does_not_revert_it(setting
     computer algebra kernel the opener had already closed."""
     import dataclasses as dc
 
-    from hardy.tui import dispatch
-    from hardy.tui.commands import Command
-    from hardy.tui.ports import State
+    from hardy.app.tui import dispatch
+    from hardy.app.tui.commands import Command
+    from hardy.app.tui.ports import State
 
     built = shell.Shell(settings, SimpleNamespace(), handlers.build_registry())
     switched = State(config=dc.replace(settings, project="burnside"), session="new")
@@ -723,8 +723,8 @@ async def test_a_command_that_finishes_after_a_switch_does_not_revert_it(setting
 
 
 async def test_a_command_that_finishes_normally_still_installs_its_state(settings):
-    from hardy.tui import dispatch
-    from hardy.tui.commands import Command
+    from hardy.app.tui import dispatch
+    from hardy.app.tui.commands import Command
 
     built = shell.Shell(settings, SimpleNamespace(), handlers.build_registry())
 
@@ -774,8 +774,8 @@ async def test_a_goal_that_cannot_be_saved_is_a_line_not_a_traceback(ui, setting
     user is told is true of the session as well as of the file."""
     from types import SimpleNamespace
 
-    from hardy.tui import handlers
-    from hardy.tui.ports import State
+    from hardy.app.tui import handlers
+    from hardy.app.tui.ports import State
 
     def refuse(_text):
         raise OSError("read-only file system")

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config as configuration
+from hardy.app import config as configuration
+from hardy.app.evals import make_elaborate
 from hardy.evals import sweep
-from hardy.evals.commands import make_elaborate
 from hardy.evals.corpus import load_corpus
 
 pytestmark = pytest.mark.real_toolchain

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy import doctor
-from hardy.config import Config
+from hardy.app import doctor
+from hardy.app.config import Config
 from hardy.foundation import process
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake tools are POSIX shell scripts")
@@ -150,7 +150,7 @@ def test_the_suite_does_not_depend_on_a_claude_cli_being_installed(tmp_path: Pat
 
 
 def test_a_project_on_hardys_pins_is_reported_as_pinned(tmp_path: Path) -> None:
-    from hardy import installers
+    from hardy.app import installers
 
     project = tmp_path / "lean"
     project.mkdir()
@@ -268,11 +268,11 @@ def test_the_codex_backend_gets_its_own_checks(tmp_path: Path, project: Path) ->
 def test_the_codex_backend_is_asked_whether_it_is_signed_in(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An installed SDK is not a signed-in one, and the staged workflow reads
     authentication off a check whose name carries "login"."""
-    from hardy import doctor as doctor_module
+    from hardy.app import doctor as doctor_module
 
     monkeypatch.setattr(doctor_module, "_codex_checks", doctor_module._codex_checks)
     monkeypatch.setitem(sys.modules, "openai_codex", types.ModuleType("openai_codex"))
-    monkeypatch.setattr("hardy.setup.probe_codex", lambda: (False, "openai-codex 1.0"))
+    monkeypatch.setattr("hardy.app.setup.probe_codex", lambda: (False, "openai-codex 1.0"))
 
     checks = doctor.run_checks(configuration(tmp_path, lean_project=project), backend="codex")
 

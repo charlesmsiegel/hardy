@@ -9,7 +9,7 @@ from hardy.workflows.acceptance import run_deterministic_experiment, validate_ru
 
 def _config(runs_root, limits=None):
     """Hardy's resolved settings, with only what a deterministic run needs."""
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.workflows.contracts import RunLimits as _RunLimits
 
     return Config(

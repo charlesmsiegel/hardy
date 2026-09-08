@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hardy.tui import transcript
+from hardy.app.tui import transcript
 
 
 def test_a_user_turn_is_marked_with_an_angle_bracket():

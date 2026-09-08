@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from hardy.tui import plain
+from hardy.app.tui import plain
 from hardy.workflows import batch as runner
 
 from .conftest import Streams
@@ -127,8 +127,8 @@ def test_a_mistyped_choice_is_asked_again_rather_than_read_as_a_cancellation():
     """Blank cancels, because the prompt says so. A typo is neither an answer
     nor a cancellation -- and once an abandoned selector began cancelling the
     run, collapsing the two discarded a staged `/prove` over one keystroke."""
-    from hardy.tui.plain import PlainUi
-    from hardy.tui.ports import Choice
+    from hardy.app.tui.plain import PlainUi
+    from hardy.app.tui.ports import Choice
 
     said: list[str] = []
     answers = iter(["x", "9", "2"])
@@ -141,8 +141,8 @@ def test_a_mistyped_choice_is_asked_again_rather_than_read_as_a_cancellation():
 
 
 def test_a_blank_choice_still_cancels():
-    from hardy.tui.plain import PlainUi
-    from hardy.tui.ports import Choice
+    from hardy.app.tui.plain import PlainUi
+    from hardy.app.tui.ports import Choice
 
     ui = PlainUi(lambda line: None, lambda prompt: "")
     assert ui.choose_now("Pick", [Choice("a", "A")]) is None

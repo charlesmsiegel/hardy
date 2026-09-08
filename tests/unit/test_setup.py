@@ -10,7 +10,7 @@ def _touch(path: Path) -> Path:
 
 
 def test_executable_discovery_prefers_explicit_then_path_then_common(tmp_path) -> None:
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     explicit = _touch(tmp_path / 'explicit' / 'tool.exe')
     on_path = _touch(tmp_path / 'path' / 'tool.exe')
     common = _touch(tmp_path / 'common' / 'tool.exe')
@@ -21,9 +21,9 @@ def test_executable_discovery_prefers_explicit_then_path_then_common(tmp_path) -
 
 
 def test_environment_report_requires_successful_smoke_tests(tmp_path) -> None:
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     process = importlib.import_module('hardy.foundation.process')
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     elan = _touch(tmp_path / 'bin' / 'elan.exe')
     lake = _touch(tmp_path / 'bin' / 'lake.exe')
     tectonic = _touch(tmp_path / 'bin' / 'tectonic.exe')
@@ -80,7 +80,7 @@ def test_environment_report_requires_successful_smoke_tests(tmp_path) -> None:
 
 
 def test_codex_probe_retains_only_auth_state_and_sdk_version() -> None:
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     closed = []
 
     class FakeCodex:
@@ -104,7 +104,7 @@ def test_codex_probe_retains_only_auth_state_and_sdk_version() -> None:
 
 
 def test_codex_login_does_not_wait_before_user_confirmation() -> None:
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     waited = []
 
     class Login:
@@ -131,7 +131,7 @@ def test_codex_login_does_not_wait_before_user_confirmation() -> None:
 
 
 def test_confirmed_codex_login_waits_for_sdk_success() -> None:
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     waited = []
 
     class Login:
@@ -166,7 +166,7 @@ def test_the_setup_probe_follows_the_configured_backend(monkeypatch) -> None:
     machine passed without the key the `api` runtime needs and failed at its
     first request instead.
     """
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
 
     assert setup.backend_probe('claude') is setup.probe_claude
     assert setup.backend_probe('api') is setup.probe_api
@@ -187,7 +187,7 @@ def test_the_api_probe_asks_for_the_sdk_and_the_key_and_prints_neither(monkeypat
     import sys
     from types import SimpleNamespace
 
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     monkeypatch.setitem(sys.modules, 'anthropic', SimpleNamespace(__version__='0.40.0'))
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key')
 
@@ -213,7 +213,7 @@ def test_the_api_probe_imports_the_sdk_rather_than_reading_its_metadata(monkeypa
     ready and left the failure for the first provider turn."""
     import builtins
 
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key')
     real_import = builtins.__import__
 
@@ -232,7 +232,7 @@ def test_the_api_probe_imports_the_sdk_rather_than_reading_its_metadata(monkeypa
 
 
 def test_the_api_probe_reports_an_absent_sdk_rather_than_raising() -> None:
-    setup = importlib.import_module('hardy.setup')
+    setup = importlib.import_module('hardy.app.setup')
     try:
         import anthropic  # noqa: F401
     except ImportError:

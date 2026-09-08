@@ -4,7 +4,7 @@ import zipfile
 
 
 def test_declined_install_never_downloads_or_runs_anything(tmp_path) -> None:
-    installers = importlib.import_module('hardy.installers')
+    installers = importlib.import_module('hardy.app.installers')
     actions = []
 
     outcome = installers.install_tectonic(
@@ -19,7 +19,7 @@ def test_declined_install_never_downloads_or_runs_anything(tmp_path) -> None:
 
 
 def test_checksum_mismatch_never_admits_the_download(tmp_path) -> None:
-    installers = importlib.import_module('hardy.installers')
+    installers = importlib.import_module('hardy.app.installers')
 
     def write_bad_archive(_url, target):
         target.write_bytes(b'not the pinned release')
@@ -41,7 +41,7 @@ def test_verified_archive_extracts_only_the_expected_executable(
     tmp_path,
     monkeypatch,
 ) -> None:
-    installers = importlib.import_module('hardy.installers')
+    installers = importlib.import_module('hardy.app.installers')
 
     def write_archive(_url, target):
         with zipfile.ZipFile(target, 'w') as archive:
@@ -65,7 +65,7 @@ def test_verified_archive_extracts_only_the_expected_executable(
 
 
 def test_elan_install_uses_a_fixed_user_scope_winget_command(tmp_path) -> None:
-    installers = importlib.import_module('hardy.installers')
+    installers = importlib.import_module('hardy.app.installers')
     process = importlib.import_module('hardy.foundation.process')
     winget = tmp_path / 'winget.exe'
     winget.write_bytes(b'fixture')
@@ -109,7 +109,7 @@ def test_elan_install_uses_a_fixed_user_scope_winget_command(tmp_path) -> None:
 
 
 def test_mathlib_setup_runs_only_checked_in_lake_commands(tmp_path) -> None:
-    installers = importlib.import_module('hardy.installers')
+    installers = importlib.import_module('hardy.app.installers')
     process = importlib.import_module('hardy.foundation.process')
     lake = tmp_path / 'lake.exe'
     lake.write_bytes(b'fixture')
@@ -143,7 +143,7 @@ def test_mathlib_setup_runs_only_checked_in_lake_commands(tmp_path) -> None:
 
 
 def test_downloader_streams_to_the_requested_staging_path(tmp_path) -> None:
-    installers = importlib.import_module('hardy.installers')
+    installers = importlib.import_module('hardy.app.installers')
     target = tmp_path / 'staged.bin'
 
     installers.download_file(

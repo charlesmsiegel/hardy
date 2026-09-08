@@ -429,7 +429,7 @@ def interactive_config(tmp_path: Path, answers: list[str], **environment: str) -
 def test_an_unattended_install_writes_only_settings_the_parser_accepts(tmp_path: Path):
     """A generated config with an unknown key makes every later Hardy
     invocation fail with "unknown settings" — including the install-time doctor."""
-    from hardy import config as configuration
+    from hardy.app import config as configuration
 
     written = written_config(tmp_path, HARDY_MODEL="claude-opus-5", ANTHROPIC_API_KEY="sk-ant", OPENAI_API_KEY="sk-oai")
     assert 'model = "claude-opus-5"' in written
@@ -1237,7 +1237,7 @@ def test_every_installer_pins_the_same_lean_and_mathlib_as_hardy_records() -> No
     and the Python `installers` module `hardy doctor` compares a project
     against. A pin bumped in one and not the others would install one
     environment and report drift against another (issue #81)."""
-    from hardy import installers
+    from hardy.app import installers
 
     common = (SCRIPTS / "lib" / "common.sh").read_text(encoding="utf-8")
     windows = (SCRIPTS / "install-windows.ps1").read_text(encoding="utf-8")

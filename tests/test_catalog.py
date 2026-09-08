@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hardy import catalog
+from hardy.app import catalog
 
 
 def test_the_catalog_lists_claude_models_only():

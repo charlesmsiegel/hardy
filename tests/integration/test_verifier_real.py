@@ -13,7 +13,7 @@ from hardy.workflows.storage import RunStore
 
 def _hardy_config(**overrides):
     """Hardy's resolved settings, with only the fields a test varies."""
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.workflows.contracts import RunLimits
 
     values = dict(

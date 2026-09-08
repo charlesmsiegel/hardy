@@ -41,7 +41,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy.agents.contracts import TurnEvent
-from hardy.tui import handlers, shell
+from hardy.app.tui import handlers, shell
 
 from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested

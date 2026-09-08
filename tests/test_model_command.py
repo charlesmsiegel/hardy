@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from tui.conftest import ScriptedUi
 
-from hardy import catalog
-from hardy import config as configuration
-from hardy.tui import handlers
-from hardy.tui.ports import State
+from hardy.app import catalog
+from hardy.app import config as configuration
+from hardy.app.tui import handlers
+from hardy.app.tui.ports import State
 
 
 @pytest.fixture(autouse=True)

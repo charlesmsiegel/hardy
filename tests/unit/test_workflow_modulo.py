@@ -28,7 +28,7 @@ def _assumption(domain, **overrides):
 
 def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
     """A workflow whose verifier reports `used` and whose Lean answers probes."""
-    config_module = importlib.import_module("hardy.config")
+    config_module = importlib.import_module("hardy.app.config")
     domain = importlib.import_module("hardy.workflows.contracts")
     lean_module = importlib.import_module("hardy.formal.lean")
     process = importlib.import_module("hardy.foundation.process")

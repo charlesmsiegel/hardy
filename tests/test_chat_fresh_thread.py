@@ -163,8 +163,8 @@ def test_the_flag_is_per_run_and_top_level(tmp_path, monkeypatch):
     invocation with no subcommand is the primary interactive experience. A
     flag only: "always start fresh" is not a coherent standing preference, so
     there is deliberately no config key and no `HARDY_*` variable for it."""
-    from hardy import config as configuration
     from hardy.app import cli
+    from hardy.app import config as configuration
 
     parser = cli.build_parser()
     assert parser.parse_args([]).fresh_thread is False

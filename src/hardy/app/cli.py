@@ -13,19 +13,19 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from hardy import config as configuration
-from hardy import doctor
 from hardy.algebra import tools as cas_tools
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
+from hardy.app import config as configuration
+from hardy.app import doctor
 from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
 from hardy.app.terminal import ConsoleTerminal
+from hardy.app.wiring import build_prove_workflow, runtime_factory
 from hardy.formal import latency
 from hardy.formal import search as search_tools
 from hardy.formal.closers import CLOSERS
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
-from hardy.wiring import build_prove_workflow, runtime_factory
 from hardy.workflows import layout
 from hardy.workflows.batch import WARNING, run
 from hardy.workflows.interactive.session import MathematicsSession, SchemaError
@@ -108,7 +108,7 @@ def _chat(
     parser: argparse.ArgumentParser | None = None,
     args: argparse.Namespace | None = None,
 ) -> int:
-    from hardy.tui import run_session
+    from hardy.app.tui import run_session
 
     def _report(error: Exception) -> None:
         # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
@@ -415,9 +415,9 @@ def _confirm(prompt: str) -> bool:
 
 def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _confirm) -> int:
     """Discover the pinned toolchain, offer to install what is missing, record it."""
+    from hardy.app.installers import download_file, install_elan, install_tectonic, prepare_mathlib
+    from hardy.app.setup import backend_probe, discover_environment
     from hardy.foundation.process import run_process
-    from hardy.installers import download_file, install_elan, install_tectonic, prepare_mathlib
-    from hardy.setup import backend_probe, discover_environment
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
     # The probe for the backend this machine is configured to use. Left to the
@@ -515,7 +515,7 @@ def run_prove(
         return 2
     # Through `tui.prove`, which `/prove` uses too: the run directory a claim
     # lands in must not depend on which surface asked for it.
-    from hardy.tui.prove import problem_slug
+    from hardy.app.tui.prove import problem_slug
 
     slug = problem_slug(claim)
     terminal = ConsoleTerminal(input_fn=input_fn)
@@ -950,7 +950,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    from hardy.evals.commands import add_parser as add_evals_parser
+    from hardy.app.evals import add_parser as add_evals_parser
 
     add_evals_parser(subparsers)
     return parser
@@ -971,7 +971,7 @@ def main() -> int:
     if args.command == "setup":
         return run_setup(args)
     if args.command == "evals":
-        from hardy.evals.commands import main as evals_main
+        from hardy.app.evals import main as evals_main
 
         return evals_main(args, config)
     if args.command == "batch":

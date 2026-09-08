@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config as configuration
+from hardy.app import config as configuration
 from hardy.app import projects as cli
 from hardy.formal import search as search_tools
 from hardy.formal.contracts import EnvironmentIdentity

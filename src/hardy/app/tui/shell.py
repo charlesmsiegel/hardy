@@ -50,10 +50,10 @@ from prompt_toolkit.shortcuts import PromptSession
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
+from hardy.app.tui import banner, dispatch, select, stream, transcript
+from hardy.app.tui.commands import Command, canonical, complete, resolve, suggest
+from hardy.app.tui.ports import Choice, State
 from hardy.foundation.files import LayoutError, WriteGuard
-from hardy.tui import banner, dispatch, select, stream, transcript
-from hardy.tui.commands import Command, canonical, complete, resolve, suggest
-from hardy.tui.ports import Choice, State
 from hardy.workflows.layout import INPUT_HISTORY
 
 # Posted to a turn's queue when nothing further is coming. An object of its

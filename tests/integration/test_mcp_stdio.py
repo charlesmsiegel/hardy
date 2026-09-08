@@ -10,7 +10,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from hardy.config import write_setting
+from hardy.app.config import write_setting
 from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
 from hardy.workflows.storage import RunStore
 

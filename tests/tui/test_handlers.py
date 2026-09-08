@@ -4,13 +4,13 @@ import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
-from hardy import doctor
 from hardy.agents.usage import Usage
 from hardy.algebra.cas import CasError
+from hardy.app import doctor
+from hardy.app.tui import handlers
+from hardy.app.tui.ports import State
 from hardy.documents import completion
 from hardy.foundation.values import ToolResult
-from hardy.tui import handlers
-from hardy.tui.ports import State
 
 
 def test_the_registry_holds_the_specified_commands():

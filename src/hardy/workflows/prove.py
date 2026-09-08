@@ -28,7 +28,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
-from hardy.config import Config
+from hardy.app.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
 from hardy.documents.writeup import DocumentResult, WriteupContent
 from hardy.formal import refute

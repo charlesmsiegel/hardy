@@ -16,8 +16,8 @@ import io
 
 import pytest
 
-from hardy import config as configuration
 from hardy.app import cli
+from hardy.app import config as configuration
 
 
 def settings(tmp_path):
@@ -170,7 +170,7 @@ def test_the_fallback_rebuild_does_not_discard_the_fresh_conversation_again(tmp_
     running under is the one the first build established."""
     from types import SimpleNamespace
 
-    import hardy.tui
+    import hardy.app.tui
 
     def fallback_run_session(config, factory, *, plain=False, reopen=None):
         factory(lambda proposal: False)
@@ -179,7 +179,7 @@ def test_the_fallback_rebuild_does_not_discard_the_fresh_conversation_again(tmp_
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
     monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
-    monkeypatch.setattr(hardy.tui, "run_session", fallback_run_session)
+    monkeypatch.setattr(hardy.app.tui, "run_session", fallback_run_session)
 
     FakeMathematicsSession.instances = []
     code = cli._chat(settings(tmp_path), plain=True, args=SimpleNamespace(fresh_thread=True))
@@ -197,7 +197,7 @@ def test_a_build_that_raised_leaves_the_fresh_ask_pending(tmp_path, monkeypatch)
     for."""
     from types import SimpleNamespace
 
-    import hardy.tui
+    import hardy.app.tui
 
     class ExplodingOnce(FakeMathematicsSession):
         exploded = False
@@ -216,7 +216,7 @@ def test_a_build_that_raised_leaves_the_fresh_ask_pending(tmp_path, monkeypatch)
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
     monkeypatch.setattr(cli, "MathematicsSession", ExplodingOnce)
-    monkeypatch.setattr(hardy.tui, "run_session", fallback_run_session)
+    monkeypatch.setattr(hardy.app.tui, "run_session", fallback_run_session)
 
     FakeMathematicsSession.instances = []
     code = cli._chat(settings(tmp_path), plain=True, args=SimpleNamespace(fresh_thread=True))

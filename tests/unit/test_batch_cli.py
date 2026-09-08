@@ -31,7 +31,7 @@ def test_batch_refuses_an_anonymous_example_before_spending_a_model_run(tmp_path
     """Nothing can print an `example`'s axioms, so the run could only ever end
     `axioms_rejected` — after paying for every turn it took to get there."""
     cli = importlib.import_module('hardy.app.cli')
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     parser = cli.build_parser()
     args = parser.parse_args(['batch', str(_request(tmp_path, 'example : True'))])
 
@@ -42,7 +42,7 @@ def test_batch_refuses_an_anonymous_example_before_spending_a_model_run(tmp_path
 def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None:
     """The guard must not refuse the shape `examples/true.json` actually uses."""
     cli = importlib.import_module('hardy.app.cli')
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     models = importlib.import_module('hardy.workflows.batch_contracts')
     reached = []
 
@@ -111,7 +111,7 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
     that may yet finish and be billed for. A bound nothing can wait for is not
     a bound."""
     cli = importlib.import_module('hardy.app.cli')
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     parser = cli.build_parser()
 
     # `1e20` is finite and still above `threading.TIMEOUT_MAX`, where

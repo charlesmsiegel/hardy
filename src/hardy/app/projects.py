@@ -10,11 +10,11 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from hardy import config as configuration
 from hardy.algebra import tools as cas_tools
+from hardy.app import config as configuration
+from hardy.app.wiring import runtime_factory
 from hardy.formal import lakefile
 from hardy.formal import search as search_tools
-from hardy.wiring import runtime_factory
 from hardy.workflows import layout
 from hardy.workflows.interactive.session import MathematicsSession
 

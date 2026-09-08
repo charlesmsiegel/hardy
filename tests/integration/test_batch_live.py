@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config as configuration
+from hardy.app import config as configuration
 from hardy.app.cli import runtime_factory
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools

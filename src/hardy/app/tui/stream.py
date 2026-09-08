@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from hardy.tui import transcript
+from hardy.app.tui import transcript
 
 INDENT = "  "
 

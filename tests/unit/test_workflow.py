@@ -151,7 +151,7 @@ def _scripted_controller(
     cancel_quietly_at=None,
     reviews=None,
 ):
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     codex_runtime = importlib.import_module('hardy.agents.codex')
     domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.formal.lean')
@@ -316,7 +316,7 @@ def _scripted_controller(
 
 
 def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_path) -> None:
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     domain = importlib.import_module('hardy.workflows.contracts')
     lean = importlib.import_module('hardy.formal.lean')
     process = importlib.import_module('hardy.foundation.process')
@@ -775,7 +775,7 @@ def test_a_verified_run_carries_the_review_that_let_it_start(tmp_path) -> None:
 
 def test_the_reviewer_model_can_be_configured_away_from_the_run_model(tmp_path) -> None:
     """Independent context is the default; independent weights are a setting."""
-    config_module = importlib.import_module('hardy.config')
+    config_module = importlib.import_module('hardy.app.config')
     domain = importlib.import_module('hardy.workflows.contracts')
     workflow, _, controller, _ = _scripted_controller(tmp_path)
     controller._config = dataclasses.replace(

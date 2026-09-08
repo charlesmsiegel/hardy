@@ -163,7 +163,7 @@ def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) ->
     domain = importlib.import_module('hardy.workflows.contracts')
     server = importlib.import_module('hardy.app.mcp')
     storage = importlib.import_module('hardy.workflows.storage')
-    config = importlib.import_module('hardy.config')
+    config = importlib.import_module('hardy.app.config')
     claim = _claim(domain).model_copy(update={'content_hash': '0' * 64})
     run_dir = tmp_path / 'run'
     run_dir.mkdir()

@@ -8,7 +8,7 @@ from hardy.workflows.contracts import RunLimits, TerminalReason
 
 def _config(runs_root, limits=None):
     """Hardy's resolved settings, with only what a deterministic run needs."""
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.workflows.contracts import RunLimits as _RunLimits
 
     return Config(
@@ -49,7 +49,7 @@ def test_forced_budget_exhaustion_retains_honest_partial_artifacts(tmp_path) -> 
 
 def test_cli_forced_budget_path_never_requires_a_model_runtime(tmp_path) -> None:
     from hardy.app.cli import run_accept
-    from hardy.config import write_setting
+    from hardy.app.config import write_setting
 
     config_path = tmp_path / 'config.toml'
     write_setting(config_path, 'runs_root', str(tmp_path / 'runs'))

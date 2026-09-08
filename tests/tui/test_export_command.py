@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from hardy.tui import handlers
-from hardy.tui.ports import State
+from hardy.app.tui import handlers
+from hardy.app.tui.ports import State
 
 
 def session(**overrides):
@@ -93,7 +93,7 @@ async def test_a_path_that_cannot_be_written_is_a_line_rather_than_a_lost_sessio
 
 
 async def test_export_is_refused_while_a_turn_is_running(settings):
-    from hardy.tui import dispatch
+    from hardy.app.tui import dispatch
 
     outcome = dispatch.classify("/export", handlers.build_registry(), turn_running=True)
     assert outcome.kind == "refused"

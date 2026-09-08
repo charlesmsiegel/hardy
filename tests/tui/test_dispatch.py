@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hardy.tui import dispatch, handlers
+from hardy.app.tui import dispatch, handlers
 
 
 def registry():

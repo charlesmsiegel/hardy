@@ -529,7 +529,7 @@ def main(args: argparse.Namespace, config: Any) -> int:
             print(f"corpus {args.version} written to {args.corpus / 'CHANGELOG.md'}")
             return 1 if issues else 0
         if args.corpus_verb == "serve":
-            from hardy.evals.viewer import serve
+            from hardy.app.corpus_viewer import serve
 
             serve(args.corpus, host=args.host, port=args.port, baseline=args.baseline)
             return 0

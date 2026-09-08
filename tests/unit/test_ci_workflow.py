@@ -9,9 +9,9 @@ WORKFLOWS = ROOT / '.github' / 'workflows'
 # of them can remove tools or route calls incorrectly, but only `cas*.py`
 # and the CAS tests were in the original path filter.
 REQUIRED_BINDING_FILES = (
-    'src/hardy/chat.py',
+    'src/hardy/workflows/interactive/session.py',
     'src/hardy/cli.py',
-    'src/hardy/staged.py',
+    'src/hardy/agents/staged.py',
     'src/hardy/mcp_server.py',
     'src/hardy/app/cli.py',
     'src/hardy/app/mcp.py',

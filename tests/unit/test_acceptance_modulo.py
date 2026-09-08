@@ -62,7 +62,7 @@ def test_a_recorded_run_predating_a_grade_field_still_reconciles(tmp_path) -> No
 
 def _deterministic(tmp_path):
     acceptance = importlib.import_module("hardy.workflows.acceptance")
-    config_module = importlib.import_module("hardy.config")
+    config_module = importlib.import_module("hardy.app.config")
     config = config_module.Config(
         model="deterministic-no-model",
         lean_command=("lake", "env", "lean"),

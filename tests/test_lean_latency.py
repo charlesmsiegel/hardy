@@ -1139,7 +1139,7 @@ def test_an_empty_lean_command_is_reported_not_dereferenced(tmp_path: Path, caps
     handler then reads `command[0]` and raises IndexError instead of naming
     the configuration problem."""
     from hardy.app import cli
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.workflows.contracts import RunLimits
 
     project = tmp_path / "lean_project"
@@ -1173,7 +1173,7 @@ def test_a_run_that_exactly_affords_its_preludes_is_still_consistent():
 def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys, monkeypatch):
     """A cost measured against some other Mathlib is not the cost Hardy pays."""
     from hardy.app import cli
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.formal.latency import ImportCost as Cost
     from hardy.workflows.contracts import RunLimits
 
@@ -1205,7 +1205,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
 
 
 def _config_for(tmp_path: Path, project: Path):
-    from hardy.config import Config
+    from hardy.app.config import Config
     from hardy.workflows.contracts import RunLimits
 
     return Config(

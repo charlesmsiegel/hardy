@@ -17,8 +17,8 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
+from hardy.app.tui import run_session
 from hardy.foundation.files import LayoutError
-from hardy.tui import run_session
 from hardy.workflows import batch as runner
 from hardy.workflows.interactive import session as chat
 
@@ -55,12 +55,12 @@ def test_a_dumb_terminal_falls_back(settings, monkeypatch, capsys):
 
 def test_a_shell_that_will_not_start_falls_back_rather_than_failing(settings, monkeypatch, capsys):
     """Never end a session over rendering."""
-    monkeypatch.setattr("hardy.tui._is_interactive", lambda: True)
+    monkeypatch.setattr("hardy.app.tui._is_interactive", lambda: True)
 
     def explode(*args, **kwargs):
         raise RuntimeError("no console")
 
-    monkeypatch.setattr("hardy.tui.shell.Shell", explode)
+    monkeypatch.setattr("hardy.app.tui.shell.Shell", explode)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
     assert run_session(settings, lambda confirm: FakeSession()) == 0
     captured = capsys.readouterr()
@@ -79,7 +79,7 @@ def test_a_schema_error_is_not_treated_as_a_rendering_problem(settings, monkeypa
     by a stack trace. It must propagate untouched instead, for `_chat` to
     report once, cleanly.
     """
-    monkeypatch.setattr("hardy.tui._is_interactive", lambda: True)
+    monkeypatch.setattr("hardy.app.tui._is_interactive", lambda: True)
 
     def explode(confirm):
         raise chat.SchemaError("session.json is schema version 1; this Hardy reads version 2 only")
@@ -100,7 +100,7 @@ def test_a_write_guard_refusal_is_not_treated_as_a_rendering_problem_either(sett
     the plain session, so "Falling back to the plain session" would be both a
     wrong diagnosis and a second attempt at the same refused write.
     """
-    monkeypatch.setattr("hardy.tui._is_interactive", lambda: True)
+    monkeypatch.setattr("hardy.app.tui._is_interactive", lambda: True)
 
     def explode(confirm):
         raise LayoutError("transcript.jsonl is a symlink to ../../victim.sh")
@@ -137,7 +137,7 @@ def test_the_banner_appears_on_the_interactive_shell_path(settings, monkeypatch)
     disclosure, `AGENTS.md`) -- it must not get lost when the interactive
     path is wired to the real `Shell` instead of the old REPL loop.
     """
-    monkeypatch.setattr("hardy.tui._is_interactive", lambda: True)
+    monkeypatch.setattr("hardy.app.tui._is_interactive", lambda: True)
     buffer = StringIO()
     with create_pipe_input() as pipe:
         output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))

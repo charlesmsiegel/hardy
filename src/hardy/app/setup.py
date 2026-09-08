@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Literal
 
-from hardy.config import Config
+from hardy.app.config import Config
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
 

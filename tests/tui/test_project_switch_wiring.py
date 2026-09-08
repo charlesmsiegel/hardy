@@ -16,12 +16,12 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
-from hardy import config as configuration
-from hardy.tui import dispatch, run_session
-from hardy.tui.handlers import build_registry
-from hardy.tui.plain import run as run_plain
-from hardy.tui.ports import State
-from hardy.tui.shell import Shell
+from hardy.app import config as configuration
+from hardy.app.tui import dispatch, run_session
+from hardy.app.tui.handlers import build_registry
+from hardy.app.tui.plain import run as run_plain
+from hardy.app.tui.ports import State
+from hardy.app.tui.shell import Shell
 from hardy.workflows import layout
 
 from .conftest import Streams
@@ -256,12 +256,12 @@ def test_the_plain_fallback_keeps_the_problem_the_shell_had_switched_to(settings
         def run(self):
             raise RuntimeError("the terminal could not be drawn")
 
-    import hardy.tui.shell as shell_module
+    import hardy.app.tui.shell as shell_module
 
     monkeypatch.setattr(shell_module, "Shell", Switched)
     plain_calls: list = []
     monkeypatch.setattr(
-        "hardy.tui.plain.run",
+        "hardy.app.tui.plain.run",
         lambda config, session, **kwargs: plain_calls.append((config, session)) or 0,
     )
     monkeypatch.setattr("sys.stdin", _Tty())

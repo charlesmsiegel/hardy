@@ -14,10 +14,10 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from hardy import config as configuration
-from hardy import doctor
 from hardy.agents import claude as claude_runtime
 from hardy.algebra import tools as cas_tools
+from hardy.app import config as configuration
+from hardy.app import doctor
 
 
 def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND) -> Callable[..., Any]:

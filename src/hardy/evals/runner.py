@@ -286,9 +286,9 @@ def _batch_runner(config: Any, model: str) -> BatchRunner:
     # re-export, editing `cli.py` changes what a run does without moving the
     # digest -- which is to say the digest is defeatable, and the pooling key
     # stops meaning "the same code produced these rows".
+    from hardy.app.wiring import runtime_factory
     from hardy.formal.contracts import Request
     from hardy.formal.lean import LeanTools
-    from hardy.wiring import runtime_factory
     from hardy.workflows.batch import run
 
     def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
