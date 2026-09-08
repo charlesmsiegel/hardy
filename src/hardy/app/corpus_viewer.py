@@ -89,8 +89,11 @@ def cite_locator(style: str, locator: list[int] | tuple[int, ...]) -> str:
     Each source records a `locator_style` in `sources.json`, because the same
     triple means different things in different books: Atiyah-Macdonald numbers
     body items `chapter.n`, Dummit-Foote numbers within sections, Matsumura's
-    sections run across chapters. Anything unrecognised falls back to the bare
-    dotted triple rather than guessing.
+    sections run across chapters. A competition paper numbers nothing like any
+    of them -- one exam is one source, and its items are `A1` through `B6` --
+    so it has a style of its own rather than a triple nobody can read.
+    Anything unrecognised falls back to the bare dotted triple rather than
+    guessing.
     """
     parts = [int(p) for p in locator]
     dotted = ".".join(str(p) for p in parts)
@@ -109,6 +112,8 @@ def cite_locator(style: str, locator: list[int] | tuple[int, ...]) -> str:
         return f"Ex. {b}.{n - 100}" if n >= 100 else f"Thm. {b}.{n}"
     if style == "section-theorem":       # (ch, sec, n) = Theorem ch.sec.n; n >= 100 is Exercise ch.sec.(n-100)
         return f"Ex. {a}.{b}.{n - 100}" if n >= 100 else f"{a}.{b}.{n}"
+    if style == "competition-problem":   # (session, 0, n) = problem A n / B n of one exam
+        return {1: f"A{n}", 2: f"B{n}"}.get(a, dotted) if b == 0 else dotted
     if style == "paragraph":             # (ch, para, n); para 99 = end-of-chapter exercises
         if b == 99:
             return f"Ex. {a}.{n}"

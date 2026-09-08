@@ -111,10 +111,20 @@ Both are separate files and both are checked.
 The citation fields are the AMS book fields (`authors`, `title`, `edition`,
 `note`, `series`, `volume`, `publisher`, `address`, `year`), taken from the
 book's own title and copyright pages, not from memory. `locator_style` is one
-of `chapter-item`, `section-item`, `numbered-section`, `paragraph` — see
-`SCHEMA.md` for what each makes of a triple — and decides how the viewer
-prints `[AM69, 1.11]`. Pick the style that matches how the book is actually
-cited, and write the prose convention beside it.
+of `chapter-item`, `section-item`, `numbered-section`, `section-theorem`,
+`paragraph`, `competition-problem` — `cite_locator` in
+`src/hardy/app/corpus_viewer.py` says what each makes of a triple — and decides
+how the viewer prints `[AM69, 1.11]`. Pick the style that matches how the
+source is actually cited, and write the prose convention beside it.
+
+A **competition paper is one source per sitting**, not one source per contest:
+its problems are numbered `A1`–`B6` within a single year, and nothing outside
+that year is in scope for a locator. So a Putnam harvest registers
+`putnam-2024`, `putnam-2023`, … separately, each with
+`locator_style: "competition-problem"` and locators `(1, 0, n)` for `An` and
+`(2, 0, n)` for `Bn`. The citation then reads `[Putnam 2024, A1]`, and the
+lexicographic order on locators is the order the problems were sat, which is
+what the antecedent rule needs.
 
 **Every new id** goes in `corpus/tombstones.json` under `issued`, with today's
 date. The registry is append-only: never remove a key, never change a date. An

@@ -466,6 +466,8 @@ AM = {"citation_key": "AM69", "authors": ["M. F. Atiyah", "I. G. Macdonald"],
     ("paragraph", [5, 12, 0], "5.12"),
     ("section-theorem", [4, 5, 1], "4.5.1"),
     ("section-theorem", [4, 5, 103], "Ex. 4.5.3"),
+    ("competition-problem", [1, 0, 1], "A1"),
+    ("competition-problem", [2, 0, 6], "B6"),
 ])
 def test_a_locator_renders_the_way_the_book_is_cited(style, locator, text):
     assert cite_locator(style, locator) == text
@@ -474,6 +476,11 @@ def test_a_locator_renders_the_way_the_book_is_cited(style, locator, text):
 def test_an_unknown_style_or_shape_falls_back_to_the_bare_locator():
     assert cite_locator("nonsense", [1, 2, 3]) == "1.2.3"
     assert cite_locator("chapter-item", [4]) == "4"
+    # A competition paper has exactly two sessions and no sub-numbering, so a
+    # triple naming neither is provenance nobody can check: print it as it
+    # stands rather than inventing a session letter for it.
+    assert cite_locator("competition-problem", [3, 0, 1]) == "3.0.1"
+    assert cite_locator("competition-problem", [1, 7, 1]) == "1.7.1"
 
 
 def test_a_source_renders_as_an_ams_alpha_bibliography_entry():
