@@ -171,15 +171,12 @@ interactive surface's own live run is still to come.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
   its exact formal/informal statements, reason, and source identity. Existing local
   Lean modules remain available through ordinary imports in the launch project.
-- **Known limit — an approval binds a name, not the statement behind it.** The
-  audit matches the axiom names Lean reports against the names a human approved.
-  The `lean_statement` shown at approval time is what the *model* said the
-  declaration says; Hardy does not ask Lean for the imported declaration's actual
-  type and compare. So a request that misdescribes an imported axiom can obtain
-  approval for something other than what the human read, and an approval survives
-  a later change to the type under that name. Binding approval to the type Lean
-  reports — and re-checking it — is the drift detection the design calls for and
-  this does not yet do.
+- **Now (implemented):** an assumption approval binds the declaration name to the
+  complete signature Lean reports from `#check`, the exact approval-probe source
+  digest, and the active toolchain identity. The human sees this identity in the
+  approval payload. A name-only legacy approval or an identity from another
+  toolchain authorizes nothing, so a later audit fails closed instead of preserving
+  a `verified_modulo` result across type/environment drift.
 - **Now (implemented):** a *verified modulo* result must say so in the document. An
   approved axiom the saved tree actually rests on — declared in a workspace file, or
   found by the audit through an import — owes an `\appendix` entry in both languages:
@@ -187,9 +184,7 @@ interactive surface's own live run is still to come.
   `axiom Name : statement` line Lean was given, quoted verbatim. Until it has one, no
   report is accepted and no new `theorem` may be added. An approval nobody used owes
   nothing, so the appendix lists what the work rests on rather than everything anyone
-  once asked about. What the appendix cannot fix is the limit above it: the Lean line
-  it quotes is the one Hardy was given, which for an imported axiom is still what the
-  *model* said that declaration says.
+  once asked about.
 - **Now (implemented):** `request_assumption` settles several things before any human
   is asked. When a search runtime exists, the request is refused outright unless
   `inspect_declarations` has actually been *tried* since the last request — three
@@ -1861,3 +1856,11 @@ then a commit of the scoreboard directory).
 - **Now (implemented) — Acceptance:** `hardy accept` cross-checks a run's manifest,
   trajectory, Lean source and document against each other, and its deterministic
   path needs no model, network, or toolchain.
+
+## Research Claims
+
+- **Now (implemented):** `/claim`, `/claims`, `/frontier`, and `/prove C1` create,
+  inspect, derive the explicit mathematical frontier, and bridge an exact Claim revision
+  into the existing staged proving pipeline. Model tools can register, explicitly revise,
+  and add exact-revision dependencies. State and audited proof evidence live in the
+  guarded session record and survive restart; a revision never inherits another's proof.

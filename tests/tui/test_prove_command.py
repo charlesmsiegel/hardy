@@ -61,6 +61,20 @@ async def test_prove_runs_the_staged_workflow_on_the_typed_claim(ui, settings, s
     assert str(settings.runs_root) in ui.text
 
 
+async def test_prove_can_select_an_exact_historical_claim_revision(ui, settings, staged):
+    from hardy.workflows.interactive.claims import ClaimService
+
+    session = SimpleNamespace()
+    session.state = {}
+    session.claims = ClaimService(session.state, lambda: None, lambda event: None)
+    session.claims.create("the original statement")
+    session.claims.revise("C1", "the changed statement")
+
+    await handlers.handle_prove(ui, "C1@r1", State(config=settings, session=session))
+
+    assert staged.requests[0].text == "the original statement"
+
+
 async def test_prove_runs_on_the_sessions_live_model(ui, settings, staged):
     """`/model` moves `State.config`; a staged run must follow it."""
     import dataclasses

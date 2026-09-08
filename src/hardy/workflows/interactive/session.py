@@ -75,6 +75,7 @@ from hardy.workflows import ingest
 from hardy.workflows.contracts import RunLimits
 from hardy.workflows.interactive import summary as summary_module
 from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
+from hardy.workflows.interactive.claims import ClaimRef, ClaimRole, ClaimService
 from hardy.workflows.interactive.context import (
     PROJECT_CONTEXT_EVENT,
     PROJECT_CONTEXT_KEY,
@@ -145,6 +146,9 @@ RECOVERED_KEY = "usage_recovered_turns"
 
 
 CHAT_TOOLS: list[dict[str, Any]] = [
+    {"type": "function", "function": {"name": "register_claim", "description": "Record a substantive mathematical commitment as a durable Claim.", "parameters": {"type": "object", "properties": {"informal_statement": {"type": "string"}, "title": {"type": "string"}, "role": {"type": "string", "enum": ["target", "lemma", "reduction"]}}, "required": ["informal_statement"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "revise_claim", "description": "Explicitly create a new immutable Claim revision.", "parameters": {"type": "object", "properties": {"claim_id": {"type": "string"}, "informal_statement": {"type": "string"}}, "required": ["claim_id", "informal_statement"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "add_claim_dependency", "description": "Bind exact Claim revisions.", "parameters": {"type": "object", "properties": {"claim_id": {"type": "string"}, "revision": {"type": "integer"}, "depends_on_claim_id": {"type": "string"}, "depends_on_revision": {"type": "integer"}}, "required": ["claim_id", "revision", "depends_on_claim_id", "depends_on_revision"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "save_lean", "description": "Check and save one Lean file in the workspace tree, defaulting to Main.lean. Every file importing it is rebuilt and the save is refused whole if any of them breaks. Completed saved work must contain no sorry or admit.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_latex", "description": "Compile a candidate LaTeX file against the saved document tree without keeping it. `path` defaults to writeup.tex, the root document.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -750,6 +754,7 @@ class MathematicsSession:
         # remembers.
         self.state = self._read_state()
         self.local = self._read_local()
+        self.claims = ClaimService(self.state, self._save_state, self._record)
         # What the project itself says it is for, read before the runtime is
         # built because the system prompt embeds it. One file at the root and
         # no ancestor of it; absent, unreadable or switched off, and nothing
@@ -1272,6 +1277,29 @@ class MathematicsSession:
                 "",
             )
         return None, ""
+
+    def _assumption_declaration_identity(self, name: str, statement: str) -> dict[str, str] | None:
+        """Bind approval to the signature Lean reports under this environment."""
+        source = f"import Mathlib\n\naxiom {name} : {statement}\n#check {name}\n"
+        try:
+            result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
+        except Exception:  # noqa: BLE001 - an unavailable identity refuses approval
+            return None
+        if not result.ok or getattr(result, "timed_out", False) or getattr(result, "interrupted", False):
+            return None
+        reported = next(
+            (item.message for item in result.diagnostics if item.message.startswith(name)), None
+        )
+        if reported is None:
+            return None
+        return {
+            "declaration_name": name,
+            "lean_reported_type": reported,
+            "defining_source": "Hardy assumption approval probe",
+            "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "toolchain_identity": self._toolchain,
+            "environment_identity": self._environment,
+        }
 
     def _vacuity_probe(self, statement: str) -> str:
         """Whether the conclusion holds with the hypotheses gone. A warning or "".
@@ -1840,7 +1868,25 @@ class MathematicsSession:
         return f"\n\n{_reportability(owed)}\n{completion.describe(owed)}"
 
     def _approved_assumptions(self) -> set[str]:
-        return {item["formal_name"] for item in self.state["assumptions"]}
+        """Approvals whose Lean-reported identity is current.
+
+        Older name-only approvals deliberately authorize nothing.  Likewise an
+        approval made under another toolchain cannot keep a verified-modulo
+        audit current merely because the declaration retained its spelling.
+        Source-level statement drift is independently rejected by the existing
+        save gate; this closes the imported/name-only half of that trust gap.
+        """
+        return {
+            item["formal_name"]
+            for item in self.state["assumptions"]
+            if item.get("declaration_identity", {}).get("declaration_name")
+            == item["formal_name"]
+            and item.get("declaration_identity", {}).get("toolchain_identity")
+            == self._toolchain
+            and item.get("declaration_identity", {}).get("environment_identity")
+            == self._environment
+            and item.get("declaration_identity", {}).get("lean_reported_type")
+        }
 
     def _audit_tree(
         self, space: LeanWorkspace, modules: Sequence[str]
@@ -3587,6 +3633,26 @@ class MathematicsSession:
         return ToolResult(False, f"not a workspace file: {path!r}")
 
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        if name == "register_claim":
+            try:
+                revision = self.claims.create(str(arguments["informal_statement"]), title=str(arguments.get("title") or "") or None, role=ClaimRole(str(arguments.get("role") or "target")), provenance="model-proposed")
+                return ToolResult(True, f"registered {revision.claim_id}@r1; revisions are explicit and immutable")
+            except ValueError as error:
+                return ToolResult(False, str(error))
+        if name == "revise_claim":
+            try:
+                revision = self.claims.revise(str(arguments["claim_id"]), str(arguments["informal_statement"]), provenance="model-proposed")
+                return ToolResult(True, f"created {revision.claim_id}@r{revision.revision}; prior evidence was not inherited")
+            except ValueError as error:
+                return ToolResult(False, str(error))
+        if name == "add_claim_dependency":
+            try:
+                owner = ClaimRef(claim_id=str(arguments["claim_id"]).upper(), revision=int(arguments["revision"]))
+                dependency = ClaimRef(claim_id=str(arguments["depends_on_claim_id"]).upper(), revision=int(arguments["depends_on_revision"]))
+                self.claims.add_dependency(owner, dependency)
+                return ToolResult(True, f"recorded exact dependency {owner} -> {dependency}")
+            except ValueError as error:
+                return ToolResult(False, str(error))
         if name == "check_lean":
             path = str(arguments.get("path") or DEFAULT_LEAN_PATH)
             source = str(arguments["source"])
@@ -3686,6 +3752,7 @@ class MathematicsSession:
             paper_statements=self._paper_statements,
             cite=self.papers.bibliography.cite,
             write_module=self._write_papers_module,
+            declaration_identity=self._assumption_declaration_identity,
         )
 
     @property

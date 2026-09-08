@@ -49,6 +49,9 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
             blocking.write(
                 f"  Lean: {keyword} {proposal['formal_name']} : {proposal['lean_statement']}"
             )
+            identity = proposal.get("declaration_identity") or {}
+            if identity.get("lean_reported_type"):
+                blocking.write(f"  Lean reported: {identity['lean_reported_type']}")
             blocking.write(f"  Source: {proposal['source']}")
             blocking.write(f"  Reason: {proposal['reason']}")
             blocking.write(f"  Checked: {proposal.get('checked', 'not checked')}")
@@ -181,4 +184,3 @@ class ConsoleTerminal:
             self._output(f"Known gap: {gap}")
         if manifest.terminal_reason is not None:
             self._output(f"Terminal reason: {manifest.terminal_reason.value}")
-

@@ -1321,3 +1321,13 @@ artifacts support.
   came from stays readable after everything it drew on has moved.
 - **[rpg-bookbinder](https://github.com/charlesmsiegel/rpg-bookbinder)** — state
   lives in files, not in a shared prompt.
+
+## Research Claims v1
+
+A Research Claim is Hardy's durable identity for a mathematical commitment. `/claim new
+<statement>` creates `C1@r1`; `/claim revise C1 <statement>` creates an immutable new
+revision without moving prior proof evidence or exact-revision dependencies. `/claims`
+and `/frontier` read the persisted mathematical state. `/prove C1` sends that exact
+revision's informal statement through the existing staged approval, independent
+faithfulness, frozen-statement, proof, and audit pipeline. Only its validated manifest
+can make the revision kernel verified or verified modulo; conversation cannot.

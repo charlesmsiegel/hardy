@@ -370,3 +370,38 @@ def test_a_long_search_history_is_truncated_to_the_last_20_for_the_human(
     assert searched[0] == "25 names inspected; last 20:"
     assert len(searched) == 21
     assert searched[1:] == [f"N{index} ✓" for index in range(5, 25)]
+
+
+def test_name_only_and_changed_toolchain_approvals_authorize_nothing(session):
+    session.state["assumptions"] = [
+        {"formal_name": "A.foo", "lean_statement": "P"},
+        {
+            "formal_name": "A.bar",
+            "lean_statement": "Q",
+            "declaration_identity": {
+                "declaration_name": "A.bar",
+                "lean_reported_type": "A.bar : Q",
+                "toolchain_identity": "an older environment",
+                "environment_identity": "an older environment",
+            },
+        },
+    ]
+
+    assert session._approved_assumptions() == set()
+
+
+def test_lean_reported_identity_under_current_toolchain_authorizes_assumption(session):
+    session.state["assumptions"] = [
+        {
+            "formal_name": "A.foo",
+            "lean_statement": "P",
+            "declaration_identity": {
+                "declaration_name": "A.foo",
+                "lean_reported_type": "A.foo : P",
+                "toolchain_identity": session._toolchain,
+                "environment_identity": session._environment,
+            },
+        }
+    ]
+
+    assert session._approved_assumptions() == {"A.foo"}

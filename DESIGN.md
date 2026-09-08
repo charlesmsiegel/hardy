@@ -835,3 +835,22 @@ true.
 
 The complete feature inventory is in [FEATURES.md](FEATURES.md), and the visual
 map is [ARCHITECTURE.html](ARCHITECTURE.html).
+
+## Research Claims v1
+
+A Claim is Hardy's stable identity for a mathematical commitment, not a Lean file or
+declaration. Its revisions are immutable mathematical objects: changing a hypothesis,
+conclusion, or intended meaning creates `Ck@r(n+1)`, while the old revision and its proof
+remain inspectable. Dependencies name exact revisions; a newer dependency revision is
+never silently substituted.
+
+Claims summarize the existing verifier rather than becoming another verifier. An
+audited staged-run manifest binds its frozen statement hash and exact used assumptions
+to one revision. A clean audit yields `kernel_verified`; an audit using only explicitly
+approved assumptions yields `verified_modulo`; failed, rejected, timed-out, partial, and
+cancelled runs leave the Claim open. `session.json.research_claims` is a version-1 ledger
+embedded in the existing version-2 atomic session record. Absence means an empty ledger,
+preserving legacy workspaces. `/frontier` reads only durable explicit edges and statuses.
+
+V1 deliberately does not equate Claims with files, infer edges from prose, draw a graph,
+model computations/examples, or build publication and stale-prose machinery.

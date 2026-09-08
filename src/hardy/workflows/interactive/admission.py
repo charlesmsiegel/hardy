@@ -48,6 +48,7 @@ class AdmissionOperations:
     paper_statements: Callable[[str], Any]
     cite: Callable[[Any], Any]
     write_module: Callable[..., str | ToolResult]
+    declaration_identity: Callable[[str, str], dict[str, str] | None]
 
 class AssumptionAdmission:
     def __init__(self):
@@ -139,6 +140,16 @@ class AssumptionAdmission:
             refusal, caveat = operations.probe(declaration)
             if refusal is not None:
                 return ToolResult(False, refusal)
+            identity = operations.declaration_identity(
+                proposal["formal_name"], proposal["lean_statement"].strip()
+            )
+            if identity is None:
+                return ToolResult(
+                    False,
+                    "Lean did not report the declaration's actual type; the assumption "
+                    "cannot be approved by name or model-authored text alone.",
+                )
+            proposal["declaration_identity"] = identity
             # Carried to the prompt rather than swallowed: a human approving an
             # unchecked statement is owed the word "unchecked", and one whose
             # hypotheses turn out to be doing no work is owed that too. Only run
@@ -398,6 +409,13 @@ class AssumptionAdmission:
                 "proved or refuted about it. It asserts that something with this type "
                 "exists, which is trust beyond assuming a statement."
             )
+        identity = operations.declaration_identity(qualified, statement)
+        if identity is None:
+            return ToolResult(
+                False,
+                "Lean did not report the declaration's actual type; the paper assumption "
+                "cannot be approved by name or authored text alone.",
+            )
         reached, agreed, divergences = operations.faithfulness(request, record, wanted, qualified)
         if not reached:
             # Refused, and nothing recorded against the name. Hardy did not
@@ -437,6 +455,7 @@ class AssumptionAdmission:
             "paper_title": record.title,
             "cite_key": entry.key,
             "kind": kind,
+            "declaration_identity": identity,
             # The keyword the file will actually carry, so the one line a
             # person reads before deciding is the declaration Hardy writes.
             # It printed `axiom` for what it mints as `opaque`, which is the
@@ -614,5 +633,3 @@ class AssumptionAdmission:
                 f"no universe parameters."
             )
         return None
-
-

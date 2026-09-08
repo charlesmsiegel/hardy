@@ -428,6 +428,13 @@ declared_only = [
     for line in code.splitlines()
     if line.strip() and not line.strip().startswith(("import ", "#"))
 ]
+# An assumption-identity probe declares one axiom and asks Lean to print the
+# declaration it just elaborated. Preserve the supplied type in the stand-in's
+# answer so drift tests exercise the same identity boundary as real `#check`.
+identity = re.search(r"(?m)^axiom\s+(\S+)\s*:\s*(.+)\n#check\s+\1\s*$", code)
+if identity and not HOLE.search(code):
+    print(f"{identity.group(1)} : {identity.group(2).strip()}")
+    raise SystemExit(0)
 #
 # Behind the hole check, not in front of it: `axiom foo : (sorry : Prop)` is a
 # hole wearing a declaration's clothes, and a bypass that ran first would have

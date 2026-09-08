@@ -28,6 +28,47 @@ from hardy.app.tui.ports import Choice, State, Ui
 from hardy.foundation import process
 from hardy.prompts import user as user_prompts
 from hardy.workflows import layout
+from hardy.workflows.contracts import RunManifest
+from hardy.workflows.interactive.claims import ClaimRef
+
+
+async def handle_claim(ui: Ui, argument: str, state: State) -> State:
+    claims = getattr(state.session, "claims", None)
+    if claims is None:
+        ui.write("No claim ledger is available in this session.", style="error")
+        return state
+    action, _, rest = argument.strip().partition(" ")
+    try:
+        if action.lower() == "new" and rest.strip():
+            revision = claims.create(rest)
+            ui.write(f"Created {revision.claim_id}@r1 — {revision.title}")
+        elif action.lower() == "revise":
+            claim_id, _, statement = rest.strip().partition(" ")
+            if not claim_id or not statement:
+                raise ValueError("Usage: /claim revise C1 <new informal statement>")
+            revision = claims.revise(claim_id, statement)
+            ui.write(f"Created {revision.claim_id}@r{revision.revision}; earlier evidence remains on earlier revisions.")
+        elif action.lower() == "new":
+            raise ValueError("Usage: /claim new <informal statement>")
+        elif action:
+            ui.write(claims.render_claim(action.split("@", 1)[0]))
+        else:
+            raise ValueError("Usage: /claim new <statement> · /claim revise C1 <statement> · /claim C1")
+    except ValueError as error:
+        ui.write(str(error), style="error")
+    return state
+
+
+async def handle_claims(ui: Ui, argument: str, state: State) -> State:
+    claims = getattr(state.session, "claims", None)
+    ui.write(claims.render_list() if claims is not None else "No claim ledger is available.", style="normal")
+    return state
+
+
+async def handle_frontier(ui: Ui, argument: str, state: State) -> State:
+    claims = getattr(state.session, "claims", None)
+    ui.write(claims.render_frontier() if claims is not None else "No claim ledger is available.", style="normal")
+    return state
 
 
 def _live(state: State) -> list[Command]:
@@ -625,6 +666,17 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     from hardy.app.tui import prove as staged
 
     claim = argument.strip()
+    claim_ref = None
+    claims = getattr(state.session, "claims", None)
+    if claims is not None and claim.upper().startswith("C"):
+        try:
+            claim_id, separator, requested = claim.partition("@r")
+            selected = claims.get(claim_id, int(requested) if separator else None)
+        except ValueError:
+            selected = None
+        if selected is not None:
+            claim_ref = ClaimRef(claim_id=selected.claim_id, revision=selected.revision)
+            claim = selected.informal_statement
     if not claim:
         typed = await ui.ask_line("State the theorem in ordinary language: ")
         claim = (typed or "").strip()
@@ -787,8 +839,14 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     ui.write(f"Artifacts: {state.config.runs_root}")
     if getattr(manifest, "phase", None) is not None and manifest.phase.value != "completed":
         ui.write(f"  The run ended in {manifest.phase.value}, not completed.")
-    ui.write("  Nothing from this run is in your workspace: a staged run writes")
-    ui.write("  its own directory, and this conversation is unchanged.")
+    ui.write("  The staged artifacts remain in their run directory:")
+    if claim_ref is not None and isinstance(manifest, RunManifest):
+        try:
+            attached = claims.attach_run(claim_ref, manifest)
+            ui.write(f"  Evidence attached to {claim_ref}; status is {attached.status.value}.")
+        except ValueError as error:
+            ui.write(f"  Claim evidence was refused: {error}", style="error")
+    ui.write("  Claim evidence is attached to the workspace only after an audited success.")
     return state
 
 
@@ -1082,6 +1140,9 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
             argument_hint="[state|reset|export|expr]",
         ),
         Command("goal", "state what this session is for", handle_goal, argument_hint="[text]"),
+        Command("claim", "create, revise, or inspect a research claim", handle_claim, argument_hint="[new|revise|C1]"),
+        Command("claims", "list durable research claims", handle_claims),
+        Command("frontier", "show open claims and exact dependencies", handle_frontier),
         Command(
             "assume", "list a paper's statements, or assume the ones you name", handle_assume,
             argument_hint="<paper-id> [ref ...]",

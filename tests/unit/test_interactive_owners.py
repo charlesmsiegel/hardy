@@ -108,6 +108,14 @@ def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_pat
         paper_statements=lambda paper: None,
         cite=lambda paper: None,
         write_module=lambda *args, **kwargs: ToolResult(False, "save refused"),
+        declaration_identity=lambda name, statement: {
+            "declaration_name": name,
+            "lean_reported_type": f"{name} : {statement}",
+            "defining_source": "test",
+            "source_sha256": "0" * 64,
+            "toolchain_identity": "test",
+            "environment_identity": "test",
+        },
     )
     request = {
         "formal_name": "witness", "lean_statement": "Nat",
