@@ -6,6 +6,7 @@ trusted cell below in a temporary directory; this is not an isolation test.
 from __future__ import annotations
 
 import json
+import runpy
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -45,7 +46,10 @@ def serve(directory):
         claim=claim, service=FakeLean(), store=RunStore(directory, UUID(int=0)),
         official_checks=1, observation_bytes=1024,
     ))
-    server.mcp.run(transport='stdio')
+    # Supply only the service construction, then execute the retained launcher.
+    # The shim must reach the same server globals and transport as app.mcp.
+    server.load_runtime = lambda _: None
+    runpy.run_module('hardy.mcp_server', run_name='__main__')
 
 
 async def transport(directory, claim):
