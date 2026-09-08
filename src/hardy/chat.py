@@ -9,11 +9,9 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import Any
 
 from .agents.contracts import ChatRuntime, final_text, provenance
 from . import assume as assume_module
@@ -21,16 +19,12 @@ from . import audit, compaction, completion, ingest, process, refute
 from . import summary as summary_module
 from .arxiv import ArxivError
 from .bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
-from .bibliography import STORE as STORE_BIBLIOGRAPHY
-from .bibliography import BibliographyError, hand_written_bibliography
 from .bibliography import is_generated as is_generated_bibliography
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .domain import RunLimits
-from .latex import ARTIFACTS as LATEX_ARTIFACTS
-from .latex import OUTPUTS as LATEX_OUTPUTS
-from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented, unreached_fragments
+from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
 from .layout import (
     HARDY_DIR,
     LOCAL_DIR,
@@ -48,7 +42,7 @@ from .layout import (
     read_text,
 )
 from .lean import DECLARATION_NAME, LeanTools
-from .loop import Message, block_order, reasoning_digest
+from .loop import Message
 from .models import Request, ToolResult, TurnEvent, json_object
 from .modules import ModuleIndex
 from .paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
@@ -66,12 +60,9 @@ from .prompts import (
     chat_project_context_prompt,
 )
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
-from .storage import LockTimeout
 from .truncation import truncate
 from .usage import Usage
 from .workspace import (
-    ANY_NAME,
-    COMMAND,
     IDENTIFIER,
     QUALIFIED_NAME,
     BuildFailure,
@@ -92,6 +83,11 @@ from .workspace import (
     unreadable_assumptions,
 )
 from .writeup import escape_tex_text
+from .workflows.interactive.admission import AssumptionAdmission, AdmissionOperations
+from .workflows.interactive.documents import DocumentService, DocumentPolicy, FormalDocumentFacts, WriteupNotSaved
+from .workflows.interactive.formal import FormalWorkspaceService, SavePolicy
+from .workflows.interactive.record import SchemaError, SessionRecord
+from .workflows.interactive.turns import TurnCoordinator, TurnPersistence, _digest
 
 # Where the two artifact trees live inside a workspace, and the path a tool
 # call gets when it names neither -- the one file most sessions ever need.
@@ -101,9 +97,6 @@ BUILD_DIR_TEX = ".build/tex"
 TEX_DIR = "tex"
 DEFAULT_LEAN_PATH = "Main.lean"
 DEFAULT_TEX_PATH = ROOT_DOCUMENT
-
-# What LaTeX wrote down about the labels it actually created, in its own .aux.
-NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 
 # The manifest key that exists for Hardy and not for the model. The listing
 # reports each verdict checked against the tree in front of it, and handing back
@@ -145,14 +138,6 @@ THREAD_KEY = "provider_session"
 #: yet -- `.local/` is gitignored, so that is true of every clone there is.
 RECOVERED_KEY = "usage_recovered_turns"
 
-
-from .workflows.interactive.documents import DocumentService, DocumentPolicy, FormalDocumentFacts, WriteupNotSaved
-
-
-from .workflows.interactive.record import SchemaError, SessionRecord
-from .workflows.interactive.formal import FormalWorkspaceService, SavePolicy
-from .workflows.interactive.admission import AssumptionAdmission, AdmissionOperations
-from .workflows.interactive.turns import TurnCoordinator, TurnPersistence, _digest
 
 CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -202,12 +187,6 @@ def _reportability(owed: Sequence[completion.Obligation]) -> str:
 # The text lives in prompts/chat.md.j2. Kept under the old name because it is
 # what a reader of _build expects to see, and what the tests reach for.
 SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT
-
-
-
-
-
-
 
 
 def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
@@ -265,22 +244,6 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
 # and telling the human the statement is unchecked -- is the outcome the probe
 # exists to avoid.
 PROBE_SECONDS = 600.0
-
-# The head of a saved theorem's statement as `statements` reports it: the
-# keyword, then the declared name, then the signature an anonymous `example`
-# can carry verbatim. The name is `QUALIFIED_NAME` -- the same alphabet the
-# declaration scan reads, where any component may be a `«...»` quotation
-# carrying whitespace -- because a whitespace split read `«obvious` as the
-# name of `theorem «obvious result» : True`, and a guillemet-only alternative
-# still misread the qualified `theorem Foo.«obvious result» : True`. An
-# explicit universe binder (`theorem vacuous.{u} ...`) is captured apart from
-# both: it belongs to neither the name nor the signature -- `example` cannot
-# carry one, so the probe redeclares its names with a `universe` command.
-THEOREM_HEAD = re.compile(rf"^theorem\s+({QUALIFIED_NAME})(\.\{{[^}}]*\}})?\s*(.*)$")
-# What may name a universe in that binder: `IDENTIFIER`, exactly. A binder
-# this cannot read would put an unparseable `universe` command on the probe
-# file's own lines, and a parse error there takes every verdict with it.
-UNIVERSE_NAME = re.compile(rf"^{IDENTIFIER}$")
 
 # Shown in `checked` when `_strip_hypotheses` refuses a statement that had
 # hypotheses to strip. Distinct wording from every vacuity warning, so a
@@ -605,8 +568,6 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
     source = f"import Mathlib\n\n{examples}\n"
 
     return source, tactics
-
-
 
 
 class MathematicsSession:
@@ -1399,251 +1360,13 @@ class MathematicsSession:
         return ""
 
     def _automation_probe(self, proposed: Mapping[str, str]) -> dict[str, str] | None:
-        """Which of these saved statements one `PROBES` tactic closes outright.
-
-        The same ladder `_assumption_probe` runs against a proposed axiom,
-        asked of theorems being saved -- because the handwave migrates: a live
-        run, refused an axiom for Sylow III, saved
-
-            theorem sylow_count_congruence ... :
-                ∃ (n_p : ℕ), n_p ∣ Nat.card G ∧ n_p ≡ 1 [MOD p] := by aesop
-
-        `n_p = 1` satisfies both conjuncts, the comment claimed Sylow, and the
-        banner counted it machine-checked without a word. The answer here is a
-        *disclosure*, never a refusal: plenty of legitimate scaffolding is
-        `simp`-closable, and a lemma that falls to one tactic is still a
-        lemma. What must not happen is the provenance banner counting it on
-        the same terms as a theorem with content, silently.
-
-        `proposed` maps each theorem's name to its statement as `statements`
-        reports it -- `theorem NAME binders : type`, whitespace-normalised to
-        one line, which is what keeps the line arithmetic below sound. Each
-        becomes one `example` per tactic, rewritten to carry no name so the
-        goal is real, plus one `sorry` sentinel: `sorry` closes any goal a
-        statement that elaborates can pose (a warning, never an error), so an
-        error on the sentinel line means the *statement* does not elaborate
-        here -- section `variable`s left behind, a workspace-local definition
-        -- and the five probe errors above it are about the statement, not the
-        tactics. Without the sentinel that shape was recorded as "closed by
-        nothing", which is a clean bill of health the probe never issued.
-
-        `import Mathlib` alone, exactly as the assumption probe imports: the
-        workspace's own modules are deliberately absent, because the theorem
-        under question is already declared in one of them and `exact?` would
-        close every statement by citing it -- the same self-citation
-        `_assumption_probe` dodges by declaring the axiom last, which no
-        ordering can dodge once the declaration lives in an import. The cost
-        is stated rather than hidden: a statement that does not elaborate
-        outside its workspace cannot be probed at all, and is reported as
-        exactly that. A filter, not a decision procedure, in the sense
-        `PROBES` documents.
-
-        Returns each name mapped to the tactic that closed it, "" when every
-        tactic was tried and failed, or None when the statement did not
-        elaborate here; the whole answer is None when Lean could not be asked
-        at all, and then nothing is stored, so the next save asks again.
-        Every conclusion is drawn from which line an error landed on, so the
-        reading rules are `_assumption_probe`'s -- an unplaced error, or one
-        outside the `example` lines, means Lean never reached the probes --
-        plus one of this probe's own: output that overflowed the process
-        limit was cut before the later lines' diagnostics were written, and
-        the silence of a line nobody heard from is not a tactic succeeding.
-        """
-        ordered = sorted(proposed)
-        block = (*self.PROBES, "sorry")
-        lines: list[str] = []
-        signed: list[str] = []
-        verdicts: dict[str, str | None] = {}
-        universes: set[str] = set()
-        for name in ordered:
-            if "\n" in proposed[name] or "\r" in proposed[name]:
-                # `normalise_lean` preserves a newline inside a string
-                # literal, and every conclusion below is drawn from which
-                # line an error landed on -- an example spanning several
-                # physical lines would attribute its neighbours' errors to
-                # the wrong tactic. Recorded as unanswered rather than
-                # guessed at.
-                verdicts[name] = None
-                continue
-            found = THEOREM_HEAD.match(proposed[name])
-            if found is None or not found.group(3).strip():
-                # No proposition to probe. A tree holding it could not have
-                # built, so nothing real is lost by leaving it unanswered.
-                continue
-            binder = found.group(2)
-            bound = [part.strip() for part in binder[2:-1].split(",")] if binder else []
-            if bound and not all(UNIVERSE_NAME.match(part) for part in bound):
-                # A binder the `universe` command below could not redeclare.
-                # Emitting it anyway puts a parse error on the probe file's
-                # own lines, which takes every statement's verdict with it.
-                verdicts[name] = None
-                continue
-            universes.update(bound)
-            signed.append(name)
-            lines.extend(f"example {found.group(3).strip()} := by {tactic}" for tactic in block)
-        if not lines:
-            return verdicts
-        preamble = "import Mathlib\n\n"
-        first = 3
-        if universes:
-            # One command redeclares every statement's universe names:
-            # `example` cannot carry a `.{u}` binder of its own, and without
-            # this a universe-polymorphic theorem's examples referenced names
-            # nothing bound. File-global on purpose -- universes have no
-            # scope to collide in -- and it costs the line arithmetic exactly
-            # one line, accounted for in `first`.
-            preamble += f"universe {' '.join(sorted(universes))}\n"
-            first = 4
-        source = preamble + "\n".join(lines) + "\n"
-        try:
-            result = self._probe_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
-        except Exception:  # noqa: BLE001 - an unrunnable probe withholds a disclosure, never a save
-            return None
-        if (
-            getattr(result, "timed_out", False)
-            or getattr(result, "interrupted", False)
-            or getattr(result, "output_overflow", False)
-        ):
-            return None
-        errors = [item for item in result.diagnostics if item.severity == "error"]
-        if not result.ok and not errors:
-            return None
-        if any(
-            item.line is None or item.line < first or item.line >= first + len(lines)
-            for item in errors
-        ):
-            return None
-        placed = {item.line for item in errors}
-        for position, name in enumerate(signed):
-            start = first + position * len(block)
-            if start + len(block) - 1 in placed:
-                # The sentinel errored: the statement itself does not
-                # elaborate here, and the probe lines above it failed for
-                # that reason rather than because any tactic was tried.
-                verdicts[name] = None
-                continue
-            verdicts[name] = next(
-                # The lines for one statement are in `PROBES` order, so the
-                # first clean line is the earliest tactic -- and the order is
-                # part of the message, exactly as it is for an axiom.
-                (
-                    tactic
-                    for offset, tactic in enumerate(self.PROBES)
-                    if start + offset not in placed
-                ),
-                "",
-            )
-        return verdicts
+        return self.formal._automation_probe(proposed, probes=self.PROBES, probe_seconds=PROBE_SECONDS, run_source=self._probe_lean_source)
 
     def _refresh_automation(self) -> str:
-        """Probe every saved theorem whose verdict is missing or expired, and
-        record what came back. A note for the save's result, or "".
-
-        Called after a save commits and before its state is written, so the
-        verdicts land in the same `_save_state` the audit records do. Keyed by
-        theorem name with the exact statement the verdict was established
-        against and the toolchain it was established under, because those are
-        what expire it: `_automation_closed` ignores a record either has moved
-        out from under, and an expired record lands back in `needed` here. A
-        record still current is not re-asked -- the answer depends on nothing
-        but the statement and the environment, and `import Mathlib` costs the
-        same tens of seconds every time.
-
-        Over the whole tree rather than only the file just saved, for the
-        price of the same single elaboration: a statement can move without its
-        file being saved -- edited on disk, or its name taken over by another
-        module's declaration while a shared-name obligation stands -- and
-        probing only the saved file left that record expired until its own
-        file happened to be saved again.
-
-        A verdict of None -- the statement does not elaborate outside its
-        workspace -- is stored as `"tactic": None`, which is a different fact
-        from "": nothing closed it because nothing could be tried. It is
-        named in the note once, and not re-asked while the statement stands,
-        because the answer will not change until the statement does.
-
-        The note is appended to the save's own result: the model that just
-        saved a flagged theorem is the one that can still strengthen the
-        statement, and telling it only through the banner tells it a compile
-        too late.
-        """
-        current = self._theorem_statements()
-        stored = self.state.setdefault("automation", {})
-        for name in [found for found in stored if found not in current]:
-            del stored[name]
-        environment = self._probe_environment()
-        needed = {
-            name: text
-            for name, text in current.items()
-            if stored.get(name, {}).get("statement") != text
-            or stored.get(name, {}).get("environment") != environment
-        }
-        if not needed:
-            return ""
-        probed = self._automation_probe(needed)
-        if probed is None:
-            return (
-                "\n\nautomation probe: Lean could not be asked whether a single tactic "
-                "closes these statements outright; nothing was recorded, and the next "
-                "save will ask again."
-            )
-        for name, tactic in probed.items():
-            stored[name] = {
-                "statement": needed[name],
-                "tactic": tactic,
-                "environment": environment,
-            }
-        notes = []
-        flagged = {name: tactic for name, tactic in probed.items() if tactic}
-        if flagged:
-            listed = ", ".join(
-                f"`{name}` (by `{tactic}`)" for name, tactic in sorted(flagged.items())
-            )
-            notes.append(
-                f"automation probe: a single automation call closes {listed} outright. "
-                "Saved all the same -- this is a disclosure, not a refusal -- but the "
-                "writeup banner, /status and read_workspace will all say so, because a "
-                "statement one tactic closes may assert far less than its name or the "
-                "prose around it suggests. If that is not what you meant to prove, "
-                "strengthen the statement."
-            )
-        unreached = sorted(name for name, tactic in probed.items() if tactic is None)
-        if unreached:
-            names = ", ".join(f"`{name}`" for name in unreached)
-            notes.append(
-                f"automation probe: {names} could not be probed in isolation "
-                "(section variables, a local definition, or a multi-line string "
-                "literal), so whether one tactic closes it was not established in "
-                "either direction."
-            )
-        return "".join(f"\n\n{note}" for note in notes)
+        return self.formal._refresh_automation(current=self._theorem_statements(), stored=self.record.snapshot().get("automation", {}), environment=self._probe_environment(), probe=self._automation_probe, publish=self.record.publish_automation)
 
     def _automation_closed(self, sources: dict[str, str] | None = None) -> dict[str, str]:
-        """Saved theorems one automation call closes: name to the tactic.
-
-        Read from the recorded probe verdicts, and only while the statement a
-        verdict was established against is still the statement saved and the
-        toolchain is still the one it was asked under -- a record that
-        outlives its inputs is the exact failure `_obligations`' "never
-        stored" rule exists to prevent, so the expiry is checked here on every
-        read rather than trusted to cleanup. The environment check is the
-        audit's rule: what standard automation closes moves with Mathlib and
-        the toolchain, and a verdict from another environment is not current.
-        A theorem no probe has covered yet is simply absent, the same terms
-        `state["audit"]` gives a module no save has covered.
-        """
-        stored = self.state.get("automation", {})
-        if not stored:
-            return {}
-        current = self._theorem_statements(sources)
-        environment = self._probe_environment()
-        return {
-            name: str(record.get("tactic"))
-            for name, record in stored.items()
-            if record.get("tactic")
-            and current.get(name) == record.get("statement")
-            and record.get("environment") == environment
-        }
+        return self.formal._automation_closed(stored=self.record.snapshot().get("automation", {}), current=lambda: self._theorem_statements(sources), environment=self._probe_environment)
 
     def automation_closed(self) -> dict[str, str]:
         """The same answer, for `/status`: which saved theorems fall to one
@@ -2176,32 +1899,7 @@ class MathematicsSession:
     def _still_current(
         self, module: str, record: dict[str, Any], signatures: dict[str, str]
     ) -> dict[str, Any]:
-        """An audit verdict as it stands against the tree in front of us.
-
-        The axioms a declaration rests on are a fact about everything that went
-        into building it: the toolchain and project, the module's own source,
-        the workspace modules it imports, and the oleans behind the imports it
-        takes from outside. Any of those can move without a save -- a file
-        edited on disk, a local Lake project rebuilt, a different Lean -- and a
-        stored verdict would otherwise sit in `session.json` and be handed to
-        the model as the module's current audit until some later save happened
-        to cover it again.
-
-        So the check is the build signature, not the toolchain alone: it already
-        folds in all of that, and it is recursive, so a change beneath a module
-        expires the verdict above it too. A verdict written before verdicts
-        carried a signature has none to match, and is treated the same way:
-        unknown is not current. What it said is kept for reference rather than
-        deleted -- it is the *status* that must not read as a pass.
-        """
-        if record.get("signature") and record["signature"] == signatures.get(module):
-            return record
-        return {
-            **record,
-            "status": "not established",
-            "reason": "the module's Lean toolchain, source, or dependencies have changed since this was established; save it again",
-            "stale": True,
-        }
+        return self.formal._still_current(module, record, signatures)
 
     def _probe_groups(
         self,
@@ -2571,39 +2269,7 @@ class MathematicsSession:
     def _current_audit(
         self, sources: dict[str, str] | None = None
     ) -> dict[str, dict[str, Any]]:
-        """The stored verdicts, each measured against the tree in front of us.
-
-        `session.json` keeps a verdict for reference after the module beneath
-        it has moved; `_still_current` is what says whether it still describes
-        anything, and every existing reader of the audit -- `_open_theorems`,
-        `_settled_declarations`, `_audit_gaps` -- goes through it. `/status
-        --full` and `/export` must too, and the first version of both did not:
-        they read `state["audit"]` raw, so a theorem whose toolchain had moved
-        was rendered "kernel-verified" on the same page that reports its audit
-        as no longer established. A disclosure that contradicts the obligation
-        beside it is worse than none.
-
-        A signature that cannot be computed -- a tree that does not order --
-        expires everything rather than passing it through. `_audit_gaps`
-        reports the cycle; nothing here may grade a workspace it cannot read.
-        """
-        stored = self.state.get("audit", {})
-        try:
-            signatures = self.lean_workspace.current_signatures(sources)
-        except ImportCycle as error:
-            return {
-                module: {
-                    **record,
-                    "status": "not established",
-                    "reason": f"the workspace does not order: {error}",
-                    "stale": True,
-                }
-                for module, record in stored.items()
-            }
-        return {
-            module: self._still_current(module, record, signatures)
-            for module, record in stored.items()
-        }
+        return self.formal._current_audit(sources, stored=self.record.snapshot().get("audit", {}))
 
     def summary(self) -> summary_module.Summary:
         """This session, read off the workspace rather than remembered (#100).
