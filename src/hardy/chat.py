@@ -13,10 +13,10 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .agents.contracts import ChatRuntime, final_text, provenance
 from . import assume as assume_module
 from . import audit, compaction, completion, ingest, process, refute
 from . import summary as summary_module
+from .agents.contracts import ChatRuntime, final_text, provenance
 from .arxiv import ArxivError
 from .bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
 from .bibliography import is_generated as is_generated_bibliography
@@ -62,9 +62,15 @@ from .prompts import (
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from .truncation import truncate
 from .usage import Usage
+from .workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
+from .workflows.interactive.documents import DocumentPolicy, DocumentService, FormalDocumentFacts
+from .workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
+from .workflows.interactive.formal import FormalWorkspaceService, SavePolicy
+from .workflows.interactive.record import SchemaError as SchemaError
+from .workflows.interactive.record import SessionRecord
+from .workflows.interactive.turns import TurnCoordinator, TurnPersistence
+from .workflows.interactive.turns import _digest as _digest
 from .workspace import (
-    IDENTIFIER,
-    QUALIFIED_NAME,
     BuildFailure,
     ImportCycle,
     LeanWorkspace,
@@ -83,11 +89,6 @@ from .workspace import (
     unreadable_assumptions,
 )
 from .writeup import escape_tex_text
-from .workflows.interactive.admission import AssumptionAdmission, AdmissionOperations
-from .workflows.interactive.documents import DocumentService, DocumentPolicy, FormalDocumentFacts, WriteupNotSaved
-from .workflows.interactive.formal import FormalWorkspaceService, SavePolicy
-from .workflows.interactive.record import SchemaError, SessionRecord
-from .workflows.interactive.turns import TurnCoordinator, TurnPersistence, _digest
 
 # Where the two artifact trees live inside a workspace, and the path a tool
 # call gets when it names neither -- the one file most sessions ever need.

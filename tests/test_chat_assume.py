@@ -19,8 +19,8 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 
 from hardy import arxiv
-from hardy import assume as assume_module
 from hardy.chat import CHAT_TOOLS, MathematicsSession
+from hardy.literature import statements as assume_module
 
 FEED = (
     b'<?xml version="1.0" encoding="UTF-8"?>'
@@ -565,7 +565,7 @@ def test_a_paper_whose_inclusions_nest_deeply_is_refused_not_crashed(sourced) ->
     """A bundle of 1200 files each `\\input`ing the next is well inside every
     quota. The walk recursed per inclusion and raised `RecursionError`, which
     is a `RuntimeError` and escaped the tool dispatcher entirely."""
-    from hardy import assume as assume_module
+    from hardy.literature import statements as assume_module
 
     files = {"main.tex": "\\documentclass{article}\\begin{document}\\input{f0}\\end{document}"}
     for index in range(1200):

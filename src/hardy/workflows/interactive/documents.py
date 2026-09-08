@@ -15,11 +15,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from ... import completion
-from ...bibliography import (BibliographyError, STORE as STORE_BIBLIOGRAPHY,
-    hand_written_bibliography, is_generated as is_generated_bibliography)
-from ...latex import (LatexTools, ROOT_DOCUMENT, ARTIFACTS as LATEX_ARTIFACTS,
-    OUTPUTS as LATEX_OUTPUTS, compiles_document, unreached_fragments)
-from ...layout import files_under, guard_for, read_text, read_bytes, LayoutError
+from ...bibliography import STORE as STORE_BIBLIOGRAPHY
+from ...bibliography import BibliographyError, hand_written_bibliography
+from ...bibliography import is_generated as is_generated_bibliography
+from ...latex import ARTIFACTS as LATEX_ARTIFACTS
+from ...latex import OUTPUTS as LATEX_OUTPUTS
+from ...latex import ROOT_DOCUMENT, LatexTools, compiles_document, unreached_fragments
+from ...layout import LayoutError, files_under, guard_for, read_bytes, read_text
 from ...models import ToolResult
 from ...storage import LockTimeout
 

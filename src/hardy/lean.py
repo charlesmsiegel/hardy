@@ -22,11 +22,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
+from .formal.syntax import QUALIFIED_NAME, declared_name, strip_comments
 from .layout import WriteGuard
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
 from .truncation import truncate
-from .formal.syntax import QUALIFIED_NAME, declared_name, strip_comments
 
 if TYPE_CHECKING:
     from .modules import ModuleIndex

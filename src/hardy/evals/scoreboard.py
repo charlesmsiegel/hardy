@@ -4,15 +4,15 @@ from __future__ import annotations
 import json
 import math
 import statistics
-import sys
 from collections import Counter
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any
 
-from ..workflows import recorded as acceptance
-from ..domain import EnvironmentIdentity, FormalStatus, FrozenModel, RunManifest, RunPhase
 from ..corpus.problems import Entry
-from .contracts import Row, TierAggregate, Totals, Aggregates, Outcome
+from ..domain import EnvironmentIdentity, FormalStatus, RunManifest, RunPhase
+from ..workflows import recorded as acceptance
+from .contracts import Aggregates, Row, TierAggregate, Totals
+from .contracts import Outcome as Outcome
 from .sweep import Baseline, baseline_entries_mismatch, staleness
 
 # The two backends `_condition_issues` knows how to tell apart in a staged
@@ -28,8 +28,6 @@ EXHAUSTION = frozenset({"turn_limit", "wall_clock_limit"})
 #: developed its proof as a sketch report fewer Lean calls than it made.
 LEAN_CALLS = frozenset({"check_proof", "submit_proof", "sketch_proof"})
 MEDIAN_FIELDS = ("exchanges", "turns", "cost_usd", "wall_seconds", "search_calls", "lean_checks")
-
-
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -153,10 +151,6 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
-
-
-
-
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 
 
@@ -176,8 +170,6 @@ def _totals(rows: list[Row]) -> Totals:
         # wall clock must be read against.
         workers=max(seen_workers) if seen_workers else None,
     )
-
-
 
 
 def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:

@@ -15,6 +15,7 @@ from ..lean import DeclarationInspection, DeclarationSearch, LeanCheckResult
 from ..retrieval import PremiseRanking, PremiseRetriever
 from ..storage import RunStore
 
+
 class LeanToolRuntime:
     def __init__(
         self,

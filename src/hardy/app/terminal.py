@@ -11,6 +11,7 @@ from typing import Any
 from ..runner import WARNING
 from ..tui.ports import Choice
 
+
 def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
     """The axiom gate, reached from an SDK tool thread.
 

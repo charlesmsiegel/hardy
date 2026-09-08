@@ -21,17 +21,17 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from .agents.contracts import final_text
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
-from .agents.contracts import final_text
 from .claude_runtime import ClaudeAgentRuntime
-from .workflows.contracts import ProofSubmission
 from .domain import FrozenClaim, RunPhase, schema_text
 from .models import ToolResult, json_object
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from .storage import RunStore
 from .usage import Usage
+from .workflows.contracts import ProofSubmission
 
 T = TypeVar("T", bound=BaseModel)
 

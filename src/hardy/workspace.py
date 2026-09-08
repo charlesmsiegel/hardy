@@ -11,67 +11,146 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import tempfile
-from bisect import bisect_right
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
 from .domain import FrozenModel
-from .layout import WriteGuard, files_under, guard_for, read_text
-
 from .formal.syntax import (
-    IDENTIFIER,
-    ESCAPED,
-    ANY_NAME,
-    QUALIFIED,
-    QUALIFIED_NAME,
-    COMPONENT,
-    MODULE,
-    IMPORT_PREFIX,
-    HEADER_KEYWORDS,
-    WRAPPER,
-    DECLARATION,
-    PRIVATE,
-    NAMESPACE,
-    SECTION,
-    END,
+    ANY_NAME as ANY_NAME,
+)
+from .formal.syntax import (
+    ASSUMPTION as ASSUMPTION,
+)
+from .formal.syntax import (
+    AXIOM_KEYWORD as AXIOM_KEYWORD,
+)
+from .formal.syntax import (
+    BINDERS as BINDERS,
+)
+from .formal.syntax import (
+    CLOSERS as CLOSERS,
+)
+from .formal.syntax import (
+    COMMAND as COMMAND,
+)
+from .formal.syntax import (
+    COMPONENT as COMPONENT,
+)
+from .formal.syntax import (
+    DECLARATION as DECLARATION,
+)
+from .formal.syntax import (
+    END as END,
+)
+from .formal.syntax import (
+    ESCAPED as ESCAPED,
+)
+from .formal.syntax import (
+    HEADER_KEYWORDS as HEADER_KEYWORDS,
+)
+from .formal.syntax import (
+    IDENTIFIER as IDENTIFIER,
+)
+from .formal.syntax import (
+    IMPORT_PREFIX as IMPORT_PREFIX,
+)
+from .formal.syntax import (
+    MODULE as MODULE,
+)
+from .formal.syntax import (
+    NAMESPACE as NAMESPACE,
+)
+from .formal.syntax import (
+    OPENERS as OPENERS,
+)
+from .formal.syntax import (
+    OPENS_PROOF as OPENS_PROOF,
+)
+from .formal.syntax import (
+    PRIVATE as PRIVATE,
+)
+from .formal.syntax import (
+    PROOF as PROOF,
+)
+from .formal.syntax import (
+    QUALIFIED as QUALIFIED,
+)
+from .formal.syntax import (
+    QUALIFIED_NAME as QUALIFIED_NAME,
+)
+from .formal.syntax import (
+    SECTION as SECTION,
+)
+from .formal.syntax import (
+    WRAPPER as WRAPPER,
+)
+from .formal.syntax import (
     Compile,
-    WorkspacePathError,
-    ImportCycle,
-    safe_relative,
+    _olean_module,
+    _olean_relative,
+    build_order,
+    external_imports,
+    internal_imports,
     module_name,
     module_path,
-    _olean_relative,
-    _olean_module,
-    declared_name,
-    _scope_prefixes,
-    _raw_string_opener,
-    strip_comments,
-    normalise_lean,
-    ASSUMPTION,
-    AXIOM_KEYWORD,
-    COMMAND,
-    assumptions,
-    unreadable_assumptions,
-    parse_imports,
-    external_imports,
-    declarations,
-    _scan,
-    CLOSERS,
-    OPENERS,
-    PROOF,
-    BINDERS,
-    OPENS_PROOF,
-    statements,
-    _statement_end,
-    _word_at,
-    name_aliases,
-    internal_imports,
-    build_order,
-    dependents,
 )
+from .formal.syntax import (
+    ImportCycle as ImportCycle,
+)
+from .formal.syntax import (
+    WorkspacePathError as WorkspacePathError,
+)
+from .formal.syntax import (
+    _raw_string_opener as _raw_string_opener,
+)
+from .formal.syntax import (
+    _scan as _scan,
+)
+from .formal.syntax import (
+    _scope_prefixes as _scope_prefixes,
+)
+from .formal.syntax import (
+    _statement_end as _statement_end,
+)
+from .formal.syntax import (
+    _word_at as _word_at,
+)
+from .formal.syntax import (
+    assumptions as assumptions,
+)
+from .formal.syntax import (
+    declarations as declarations,
+)
+from .formal.syntax import (
+    declared_name as declared_name,
+)
+from .formal.syntax import (
+    dependents as dependents,
+)
+from .formal.syntax import (
+    name_aliases as name_aliases,
+)
+from .formal.syntax import (
+    normalise_lean as normalise_lean,
+)
+from .formal.syntax import (
+    parse_imports as parse_imports,
+)
+from .formal.syntax import (
+    safe_relative as safe_relative,
+)
+from .formal.syntax import (
+    statements as statements,
+)
+from .formal.syntax import (
+    strip_comments as strip_comments,
+)
+from .formal.syntax import (
+    unreadable_assumptions as unreadable_assumptions,
+)
+from .layout import WriteGuard, files_under, guard_for, read_text
 
 
 class BuildFailure(FrozenModel):

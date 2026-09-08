@@ -15,6 +15,7 @@ from .. import config as configuration
 from ..chat import MathematicsSession
 from ..wiring import runtime_factory
 
+
 def prepare_layout(config: configuration.Config) -> None:
     """Make the project's directories and ignore rules exist before anything writes.
 
@@ -411,7 +412,6 @@ class ProjectOpener:
         self.cas = cas
         self._remember(config)
         return config, session
-
 
 
     def _remember(self, config: configuration.Config) -> None:

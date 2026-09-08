@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 
-from hardy import chat as hardy_chat
 from hardy.workflows.interactive import documents as interactive_documents
 
 UNREGISTERED = "import Mathlib\n\ntheorem Nobody : True := by exact True.intro\n"

@@ -30,7 +30,12 @@ from pydantic import ValidationError
 
 from ..corpus import taxonomy
 from ..corpus.catalog import (
-    CorpusError, check_issues, corpus_version, load_corpus, load_sources, shard_path,
+    CorpusError,
+    check_issues,
+    corpus_version,
+    load_corpus,
+    load_sources,
+    shard_path,
 )
 from ..corpus.problems import Entry, Review
 from .sweep import witness_source

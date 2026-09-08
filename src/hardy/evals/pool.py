@@ -37,9 +37,9 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     report, not a tie to break silently by picking one.
     """
     from ..corpus.catalog import load_corpus, manifest_digest
-    from .outstanding import environment_digest_of_board
     from ..corpus.problems import sha256_of
     from .contracts import Scoreboard
+    from .outstanding import environment_digest_of_board
     from .scoreboard import active_ids, aggregate, scoreboard_self_issues
     from .sweep import Baseline
 

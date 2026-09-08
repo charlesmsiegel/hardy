@@ -16,10 +16,10 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .. import audit
+from ..corpus.problems import Entry, ProblemSet
 from ..domain import EnvironmentIdentity, FrozenModel
 from ..lean import Elaboration
 from . import digests
-from ..corpus.problems import Entry, ProblemSet
 
 SINGLES: tuple[str, ...] = (
     "simp", "simp_all", "omega", "decide", "norm_num", "ring", "field_simp", "linarith",

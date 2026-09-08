@@ -5,6 +5,7 @@ from pydantic import field_validator
 
 from ..domain import FrozenModel
 
+
 class ProofSubmission(FrozenModel):
     proof_body: str
     informal_proof: str

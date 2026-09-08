@@ -40,7 +40,6 @@ def run_session(
         return _run_plain(config, session_factory, reopen=reopen)
 
     from ..app.terminal import confirm_assumption
-
     from ..chat import SchemaError
     from ..layout import LayoutError
     from .handlers import build_registry, load_templates
@@ -88,7 +87,6 @@ def run_session(
 
 def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = None) -> int:
     from ..app.terminal import confirm_assumption
-
     from . import plain as plain_mode
     from .handlers import build_registry, load_templates
 

@@ -12,7 +12,7 @@ from test_recorded_runs import FAKE_LEAN, _Runtime
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy.domain import EnvironmentIdentity
-from hardy.evals import runner, sweep, identity
+from hardy.evals import identity, runner, sweep
 from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
 
@@ -496,9 +496,9 @@ def test_the_batch_runner_checks_proofs_with_the_recorded_toolchains_command(mon
     command, or its checks could pass under a toolchain the experiment was
     never actually measured against (item 2).
     """
-    from hardy import cli as cli_module
     from hardy import lean as lean_module
     from hardy import runner as hardy_runner
+    from hardy.app import cli as cli_module
 
     seen: dict = {}
 

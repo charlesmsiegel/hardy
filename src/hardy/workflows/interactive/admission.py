@@ -22,6 +22,7 @@ from ...models import ToolResult
 from ...storage import LockTimeout
 from ...workspace import ANY_NAME, COMMAND, module_name, safe_relative, unreadable_assumptions
 
+
 @dataclass(frozen=True)
 class AdmissionOperations:
     shape: Callable[[str, str], str | None]

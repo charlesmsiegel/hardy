@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from ..domain import EnvironmentIdentity
-from .contracts import Condition, RefusedRun
-from .runner import _batch_runner, limits_for, run_set, source_revision
-from .identity import run_procedure_digest_of
-from .sweep import Baseline, environment_digest_of, host_info
-from ..lean import Elaboration, elaborate, environment_identity
-from . import sweep
 from ..corpus.catalog import load_corpus, manifest_digest
 from ..corpus.problems import ProblemSet
+from ..domain import EnvironmentIdentity
+from ..lean import Elaboration, elaborate, environment_identity
+from . import sweep
+from .contracts import Condition, RefusedRun
+from .identity import run_procedure_digest_of
+from .runner import _batch_runner, limits_for, run_set, source_revision
+from .sweep import Baseline, environment_digest_of
 
 DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
@@ -567,7 +567,6 @@ def check_command(args: Any) -> int:
             a = agg["tiers"][t]
             print(f"tier {t}: n={a['n']} solved={a['solved']} refused={a['refused']} exhausted={a['exhausted']} graded={a['graded']} medians={a['medians']}")
     return 0 if not issues else 1
-
 
 
 def run_set_command(args: argparse.Namespace, config: Any) -> int:

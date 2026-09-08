@@ -5,23 +5,26 @@ import argparse
 import json
 import re
 import subprocess
-import sys
 import threading
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from .. import __version__
-from ..domain import EnvironmentIdentity, FrozenModel
-from . import digests
-from .contracts import Condition, Scoreboard, RefusedRun
-from .selection import select
 from ..corpus.catalog import load_corpus, manifest_digest
-from ..corpus.problems import Entry, ProblemSet, sha256_of
-from .scoreboard import Aggregates, Row, active_ids, aggregate, batch_row, staged_row
-from .sweep import Baseline, environment_digest_of, host_info, staleness
+from ..corpus.problems import Entry, sha256_of
+from ..corpus.problems import ProblemSet as ProblemSet
+from ..domain import EnvironmentIdentity
+from .contracts import Condition, RefusedRun, Scoreboard
+from .identity import RUN_SOURCE_EXCLUDED_DIRS as RUN_SOURCE_EXCLUDED_DIRS
+from .identity import RUN_SOURCE_EXCLUDED_FILES as RUN_SOURCE_EXCLUDED_FILES
+from .identity import RUN_SOURCE_ROOT as RUN_SOURCE_ROOT
+from .identity import run_procedure_digest_of as run_procedure_digest_of
+from .identity import run_source_paths as run_source_paths
+from .scoreboard import Row, active_ids, aggregate, batch_row, staged_row
+from .selection import select
+from .sweep import Baseline, host_info, staleness
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
 StagedRunner = Callable[[Entry, Path, str], None]   # (entry, row_dir, model): writes the nested run and canonical.json
@@ -35,10 +38,6 @@ LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 
-
-
-
-from .identity import RUN_SOURCE_ROOT, RUN_SOURCE_EXCLUDED_FILES, RUN_SOURCE_EXCLUDED_DIRS, run_source_paths, run_procedure_digest_of
 
 def _source_anchor() -> Path:
     """Where the walk for Hardy's own source checkout starts: the installed
@@ -95,10 +94,6 @@ def source_revision() -> str | None:
     if status.returncode == 0 and status.stdout.strip():
         revision += "-dirty"
     return revision
-
-
-
-
 
 
 def _write(path: Path, board: Scoreboard) -> None:

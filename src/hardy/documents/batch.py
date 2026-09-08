@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 def describe_toolchain(toolchain: dict[str, Any] | None) -> str:
     """The toolchain block of `writeup.md`, in words a reader can quote."""
     if not toolchain:

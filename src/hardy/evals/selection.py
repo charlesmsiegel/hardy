@@ -1,9 +1,10 @@
 """Selection policy shared by experiment execution and recorded validation."""
 from __future__ import annotations
 
-from .contracts import RefusedRun
 from ..corpus.problems import Entry, ProblemSet
+from .contracts import RefusedRun
 from .sweep import Baseline
+
 
 def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, tiers: list[int] | None, twins: bool) -> tuple[Entry, ...]:
     # `only`'s own order, not the set's: a caller who names entries explicitly

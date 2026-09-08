@@ -18,47 +18,33 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
-from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
-from types import SimpleNamespace
-from typing import Any, Literal
-from uuid import uuid4
+from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError
 
 from .. import audit
-from .contracts import ProofSubmission
-from ..config import Config
 from ..domain import (
     DeclaredAssumption,
     DocumentStatus,
-    EnvironmentIdentity,
-    FaithfulnessReview,
     FaithfulnessStatus,
     FaithfulnessVerdict,
-    FormalizationProposal,
     FormalStatus,
     FrozenClaim,
-    FrozenModel,
     Grades,
     RunManifest,
     RunPhase,
-    TerminalReason,
     VerificationEvidence,
 )
-from ..lean import DECLARATION_HEAD, LeanCheckResult, LeanTools, scannable
-from ..process import ProcessResult
-from ..prompts import PROMPT_SET_SHA256
+from ..formal.syntax import declared_name
+from ..lean import DECLARATION_HEAD, LeanTools, scannable
 from ..verifier import (
     ALLOWED_AXIOMS,
     FORBIDDEN_TOKEN,
     VerificationResult,
     axiom_report_line,
-    verification_source,
 )
-from ..formal.syntax import declared_name
-from ..writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs, host_paths
+from ..writeup import dropped_glyphs, host_paths
 
 #: The formal grades that carry verification evidence and are audited as
 #: verified runs. `verified_modulo` is one of them: a wider trust base is a

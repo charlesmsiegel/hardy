@@ -14,11 +14,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from ... import compaction, process
+from ... import summary as summary_module
 from ...agents.contracts import ChatRuntime
 from ...loop import Message, block_order, reasoning_digest
 from ...models import ToolResult, TurnEvent
 from ...usage import Usage
-from ... import summary as summary_module
+
 
 @dataclass(frozen=True)
 class TurnPersistence:

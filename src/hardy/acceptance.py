@@ -16,87 +16,137 @@ compile that produced no PDF.
 from __future__ import annotations
 
 import hashlib
-import json
-from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
-from pydantic import ValidationError
-
-from . import audit
-from .workflows.contracts import ProofSubmission
 from .config import Config
 from .domain import (
-    DeclaredAssumption,
-    DocumentStatus,
     EnvironmentIdentity,
     FaithfulnessReview,
-    FaithfulnessStatus,
-    FaithfulnessVerdict,
     FormalizationProposal,
-    FormalStatus,
     FrozenClaim,
     FrozenModel,
-    Grades,
     RunManifest,
-    RunPhase,
     TerminalReason,
     VerificationEvidence,
 )
-from .lean import DECLARATION_HEAD, LeanCheckResult, LeanTools, scannable
+from .formal.syntax import declared_name as declared_name
+from .lean import LeanCheckResult
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
 from .verifier import (
-    ALLOWED_AXIOMS,
-    FORBIDDEN_TOKEN,
     VerificationResult,
-    axiom_report_line,
     verification_source,
 )
 from .workflow import ProveRequest, ProveWorkflow
-from .formal.syntax import declared_name
-from .writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs, host_paths
-
+from .workflows.contracts import ProofSubmission
 from .workflows.recorded import (
-    VERIFIED_GRADES,
-    grades_agree,
-    ASSUMPTIONS_FILE,
-    _declared,
-    _declared_names,
-    _declaration_issues,
-    permitted_axioms,
-    _verification_record_issues,
-    _verified_run_issues,
-    _lean_source_issues,
-    _faithfulness_issues,
-    validate_run_consistency,
-    USAGE_FIELDS,
-    IDENTITY_FIELDS,
-    BATCH_FAILURES,
-    REFUSALS,
-    BATCH_SEARCH,
-    STAGED_SEARCH,
-    _read_json,
-    refusal_issues,
-    _closer_issues,
-    _attempt_issues,
-    _sketch_source,
-    _sketch_issues,
-    _renderable,
-    _toolchain_issues,
-    _usage_issues,
-    _proof_argument,
-    _discarded,
-    _axiom_line,
-    validate_batch_consistency,
-    _verified_batch_issues,
-    _live_staged_issues,
-    validate_recorded_run,
+    ASSUMPTIONS_FILE as ASSUMPTIONS_FILE,
 )
+from .workflows.recorded import (
+    BATCH_FAILURES as BATCH_FAILURES,
+)
+from .workflows.recorded import (
+    BATCH_SEARCH as BATCH_SEARCH,
+)
+from .workflows.recorded import (
+    IDENTITY_FIELDS as IDENTITY_FIELDS,
+)
+from .workflows.recorded import (
+    REFUSALS as REFUSALS,
+)
+from .workflows.recorded import (
+    STAGED_SEARCH as STAGED_SEARCH,
+)
+from .workflows.recorded import (
+    USAGE_FIELDS as USAGE_FIELDS,
+)
+from .workflows.recorded import (
+    VERIFIED_GRADES as VERIFIED_GRADES,
+)
+from .workflows.recorded import (
+    _attempt_issues as _attempt_issues,
+)
+from .workflows.recorded import (
+    _axiom_line as _axiom_line,
+)
+from .workflows.recorded import (
+    _closer_issues as _closer_issues,
+)
+from .workflows.recorded import (
+    _declaration_issues as _declaration_issues,
+)
+from .workflows.recorded import (
+    _declared as _declared,
+)
+from .workflows.recorded import (
+    _declared_names as _declared_names,
+)
+from .workflows.recorded import (
+    _discarded as _discarded,
+)
+from .workflows.recorded import (
+    _faithfulness_issues as _faithfulness_issues,
+)
+from .workflows.recorded import (
+    _lean_source_issues as _lean_source_issues,
+)
+from .workflows.recorded import (
+    _live_staged_issues as _live_staged_issues,
+)
+from .workflows.recorded import (
+    _proof_argument as _proof_argument,
+)
+from .workflows.recorded import (
+    _read_json as _read_json,
+)
+from .workflows.recorded import (
+    _renderable as _renderable,
+)
+from .workflows.recorded import (
+    _sketch_issues as _sketch_issues,
+)
+from .workflows.recorded import (
+    _sketch_source as _sketch_source,
+)
+from .workflows.recorded import (
+    _toolchain_issues as _toolchain_issues,
+)
+from .workflows.recorded import (
+    _usage_issues as _usage_issues,
+)
+from .workflows.recorded import (
+    _verification_record_issues as _verification_record_issues,
+)
+from .workflows.recorded import (
+    _verified_batch_issues as _verified_batch_issues,
+)
+from .workflows.recorded import (
+    _verified_run_issues as _verified_run_issues,
+)
+from .workflows.recorded import (
+    grades_agree as grades_agree,
+)
+from .workflows.recorded import (
+    permitted_axioms as permitted_axioms,
+)
+from .workflows.recorded import (
+    refusal_issues as refusal_issues,
+)
+from .workflows.recorded import (
+    validate_batch_consistency as validate_batch_consistency,
+)
+from .workflows.recorded import (
+    validate_recorded_run as validate_recorded_run,
+)
+from .workflows.recorded import (
+    validate_run_consistency as validate_run_consistency,
+)
+from .writeup import RunIdentities, WriteupContent, build_writeup
 
 
 class DeterministicRun(FrozenModel):

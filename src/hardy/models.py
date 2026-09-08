@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-
-from .agents.contracts import TurnEvent  # compatibility for existing event consumers
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+from .agents.contracts import TurnEvent as TurnEvent  # compatibility for existing event consumers
 
 # What a request's declaration may open with. Attributes and modifiers come
 # before the keyword in ordinary Lean, and this is the earliest of the three
@@ -47,8 +47,6 @@ class ToolResult:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-
 
 
 @dataclass

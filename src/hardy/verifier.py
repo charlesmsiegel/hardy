@@ -28,15 +28,15 @@ from .domain import (
     VerificationEvidence,
     freeze_claim,
 )
-from .lean import LeanDiagnostic, elaborate, render_theorem, scannable
-from .process import ProcessResult, ProcessSpec, run_process
-from .storage import RunStore
 
 # One scanner, not a second copy. The copy that lived here missed Lean's raw
 # strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
 from .formal.syntax import strip_comments
+from .lean import LeanDiagnostic, elaborate, render_theorem, scannable
+from .process import ProcessResult, ProcessSpec, run_process
+from .storage import RunStore
 
 # Lean's own foundations. Everything else is an assumption someone made. Kept
 # as a name here because readers and tests reach for it; `hardy.audit` owns the

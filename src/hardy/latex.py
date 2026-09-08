@@ -1,51 +1,89 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from . import references
+from .documents.syntax import (
+    _CONDITIONAL as _CONDITIONAL,
+)
+from .documents.syntax import (
+    _IFFALSE as _IFFALSE,
+)
+from .documents.syntax import (
+    _LET as _LET,
+)
+from .documents.syntax import (
+    _MACRO_DEF as _MACRO_DEF,
+)
+from .documents.syntax import (
+    ARTIFACTS,
+    BODY,
+    MAX_AUX_BYTES,
+    MAX_LOG_BYTES,
+    MAX_PASSES,
+    OUTPUTS,
+    ROOT_DOCUMENT,
+    _executed,
+    reached_fragments,
+    stamped,
+    unreached_fragments,
+)
+from .documents.syntax import (
+    BEGIN_DOCUMENT as BEGIN_DOCUMENT,
+)
+from .documents.syntax import (
+    INCLUSION as INCLUSION,
+)
+from .documents.syntax import (
+    INLINE_VERBATIM as INLINE_VERBATIM,
+)
+from .documents.syntax import (
+    VERBATIM_ENVIRONMENT as VERBATIM_ENVIRONMENT,
+)
+from .documents.syntax import (
+    _drop_iffalse as _drop_iffalse,
+)
+from .documents.syntax import (
+    _drop_macro_bodies as _drop_macro_bodies,
+)
+from .documents.syntax import (
+    _executed_line as _executed_line,
+)
+from .documents.syntax import (
+    _macro_bodies as _macro_bodies,
+)
+from .documents.syntax import (
+    _MacroState as _MacroState,
+)
+from .documents.syntax import (
+    _normalise_include as _normalise_include,
+)
+from .documents.syntax import (
+    _skip_balanced as _skip_balanced,
+)
+from .documents.syntax import (
+    _skip_command as _skip_command,
+)
+from .documents.syntax import (
+    compiles_document as compiles_document,
+)
+from .documents.syntax import (
+    typeset as typeset,
+)
+from .documents.syntax import (
+    uncommented as uncommented,
+)
+from .documents.syntax import (
+    unfinished_definition as unfinished_definition,
+)
 from .layout import LayoutError, WriteGuard, files_under, guard_for, read_bytes
 from .models import ToolResult
 from .process import GuardedResult, run_guarded
-
-from .documents.syntax import (
-    ROOT_DOCUMENT,
-    MAX_PASSES,
-    MAX_LOG_BYTES,
-    MAX_AUX_BYTES,
-    BEGIN_DOCUMENT,
-    stamped,
-    OUTPUTS,
-    ARTIFACTS,
-    BODY,
-    INCLUSION,
-    compiles_document,
-    uncommented,
-    _normalise_include,
-    _IFFALSE,
-    _CONDITIONAL,
-    _MACRO_DEF,
-    _LET,
-    _skip_command,
-    _skip_balanced,
-    _drop_iffalse,
-    _macro_bodies,
-    _drop_macro_bodies,
-    VERBATIM_ENVIRONMENT,
-    INLINE_VERBATIM,
-    _MacroState,
-    _executed_line,
-    unfinished_definition,
-    typeset,
-    _executed,
-    unreached_fragments,
-    reached_fragments,
-)
 
 
 def _tail(text: str, limit: int) -> str:

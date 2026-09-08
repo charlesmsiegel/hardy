@@ -12,22 +12,22 @@ from typing import Any
 
 from ..layout import LayoutError, guard_for, read_bytes, read_text
 from ..storage import FileLock
-
 from .metadata import (
     LOCK_SECONDS,
     QUERY_TTL_SECONDS,
+    SOURCE_ARCHIVE,
+    SOURCE_DIR,
+    SOURCE_MANIFEST,
     ArxivError,
     ArxivId,
     PaperRecord,
-    digest,
     SourceFile,
     SourceManifest,
-    SOURCE_DIR,
-    SOURCE_MANIFEST,
-    SOURCE_ARCHIVE,
     _coherent,
     _entries,
+    digest,
 )
+
 
 class PaperLibrary:
     """The records on disk, and the rules that keep them immutable.

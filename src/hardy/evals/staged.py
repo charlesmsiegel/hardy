@@ -9,11 +9,9 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import model_validator
-
-from ..domain import FrozenClaim, FrozenModel, RunPhase, schema_text
-from ..prompts import canonical_prompt, claim_signature
 from ..corpus.problems import Entry
+from ..domain import FrozenClaim, RunPhase, schema_text
+from ..prompts import canonical_prompt, claim_signature
 from .contracts import CanonicalReview, CanonicalVerdict
 
 
@@ -42,10 +40,6 @@ class ApprovingTerminal:
 
     def show_result(self, manifest: Any) -> None:
         self.manifest = manifest
-
-
-
-
 
 
 def _sha(path: Path) -> str:

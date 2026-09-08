@@ -8,11 +8,12 @@ an import cycle with `problems.py`.
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
 
-
-from ..corpus.identity import _digest, statement_digest, fixture_set_digest, prompt_digest
+from ..corpus.identity import _digest
+from ..corpus.identity import fixture_set_digest as fixture_set_digest
+from ..corpus.identity import prompt_digest as prompt_digest
+from ..corpus.identity import statement_digest as statement_digest
 
 
 def environment_digest(environment: dict[str, Any]) -> str:

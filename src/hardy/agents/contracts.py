@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
+
 @dataclass(frozen=True)
 class TurnEvent:
     """One thing that happened while a turn was in flight.

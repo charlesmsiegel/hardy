@@ -20,8 +20,9 @@ from pathlib import Path
 import pytest
 
 from hardy import arxiv
-from hardy.literature import library as library_module
 from hardy.layout import LayoutError
+from hardy.literature import client as client_module
+from hardy.literature import library as library_module
 from hardy.storage import FileLock
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
@@ -395,7 +396,7 @@ def test_a_response_that_fails_mid_body_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
-    monkeypatch.setattr(arxiv.urllib.request, "urlopen", lambda *a, **k: Collapsing())
+    monkeypatch.setattr(client_module.urllib.request, "urlopen", lambda *a, **k: Collapsing())
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -419,7 +420,7 @@ def test_a_chunked_response_cut_short_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
-    monkeypatch.setattr(arxiv.urllib.request, "urlopen", lambda *a, **k: Truncated())
+    monkeypatch.setattr(client_module.urllib.request, "urlopen", lambda *a, **k: Truncated())
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -428,7 +429,7 @@ def test_a_connection_that_never_opens_is_an_arxiv_error(monkeypatch):
     def refuse(*args, **kwargs):
         raise OSError("network unreachable")
 
-    monkeypatch.setattr(arxiv.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(client_module.urllib.request, "urlopen", refuse)
     with pytest.raises(arxiv.ArxivError, match="could not be reached"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 

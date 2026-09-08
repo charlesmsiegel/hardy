@@ -35,12 +35,12 @@ from pathlib import Path
 from typing import Any
 
 from . import truncation
+from .bibliography import Bibliography, BibliographyError
+from .layout import HARDY_DIR, global_dir
 from .literature.archives import ArchiveError
 from .literature.client import ArxivClient
 from .literature.library import PaperLibrary
 from .literature.metadata import ArxivError, PaperRecord, parse_id
-from .bibliography import Bibliography, BibliographyError
-from .layout import HARDY_DIR, global_dir
 from .models import ToolResult
 from .storage import LockTimeout
 

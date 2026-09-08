@@ -10,12 +10,12 @@ import hashlib
 import json
 import threading
 import time
-from copy import deepcopy
 from collections.abc import Iterator
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from ...layout import RECORD, TRANSCRIPT, LOCAL_DIR, LOCAL_STATE, WriteGuard
+from ...layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT, WriteGuard
 from ...usage import Usage
 
 USAGE_KEY = "usage"

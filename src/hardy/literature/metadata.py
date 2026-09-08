@@ -282,19 +282,11 @@ SOURCE_MANIFEST = "source.json"
 SOURCE_ARCHIVE = "archive.bin"
 
 
-
-
 #: `(url, timeout)`, plus a keyword `limit` for a caller that accepts more
 #: than an API response. Passed as a keyword and only when it differs from the
 #: default, so a double written for the API alone -- `lambda url, timeout:
 #: ...` -- still satisfies the protocol for every call that does not need one.
 Transport = Callable[..., bytes]
-
-
-
-
-
-
 
 
 def _coherent(identifier: ArxivId, record: PaperRecord) -> None:

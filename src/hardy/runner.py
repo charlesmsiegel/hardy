@@ -13,9 +13,19 @@ from . import audit, compaction
 from . import closers as closer_ladder
 from . import summary as summary_module
 from .agents.contracts import provenance
-from .loop import TurnLimitReached
+from .documents.batch import (
+    SKETCH_HEADING as SKETCH_HEADING,
+)
+from .documents.batch import (
+    describe_toolchain,
+    sketch_section,
+)
+from .documents.batch import (
+    longest_run as longest_run,
+)
 from .latency import manifest_binds
 from .lean import LeanToolResult, LeanTools, environment_identity
+from .loop import TurnLimitReached
 from .models import Request, RunResult, ToolResult
 from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
 from .usage import Usage
@@ -116,12 +126,6 @@ def identify_toolchain(lean: LeanTools) -> dict[str, Any]:
     return identity.model_dump(mode="json")
 
 
-from .documents.batch import (
-    describe_toolchain,
-    SKETCH_HEADING,
-    longest_run,
-    sketch_section,
-)
 
 
 def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float, context_window: int, compacted: bool) -> dict[str, Any]:

@@ -10,27 +10,27 @@ from collections.abc import Callable
 from typing import Any
 
 from ..storage import FileLock
-
+from .library import PaperLibrary
 from .metadata import (
-    ENDPOINT,
-    SOURCE_ENDPOINT,
-    MIN_INTERVAL_SECONDS,
-    MAX_RESPONSE_BYTES,
-    MAX_ARCHIVE_BYTES,
-    READ_CHUNK_BYTES,
     DEFAULT_TIMEOUT_SECONDS,
+    ENDPOINT,
+    MAX_ARCHIVE_BYTES,
+    MAX_RESPONSE_BYTES,
     MAX_RESULTS,
+    MIN_INTERVAL_SECONDS,
+    READ_CHUNK_BYTES,
+    SOURCE_ENDPOINT,
     USER_AGENT,
     ArxivError,
-    parse_id,
     PaperRecord,
     SourceManifest,
     Transport,
-    _stamp,
-    _key,
     _entries,
+    _key,
+    _stamp,
+    parse_id,
 )
-from .library import PaperLibrary
+
 
 def _http(url: str, timeout: float, limit: int | None = None) -> bytes:
     """Read a whole response under one deadline, size-bounded.

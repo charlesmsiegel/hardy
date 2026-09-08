@@ -10,8 +10,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from .layout import LayoutError, files_under, resolve_named_child
 from .formal.syntax import WorkspacePathError, module_name, safe_relative
+from .layout import LayoutError, files_under, resolve_named_child
 
 #: What Hardy's own template puts in a fresh `lean/`, and so the root to
 #: declare when a problem has no sources yet. An empty `roots` array is a

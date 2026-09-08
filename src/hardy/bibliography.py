@@ -47,10 +47,10 @@ from typing import Literal
 
 from pydantic import field_validator
 
-from .literature.metadata import PaperRecord
-from .domain import FrozenModel
 from .documents.syntax import typeset, unfinished_definition
+from .domain import FrozenModel
 from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text
+from .literature.metadata import PaperRecord
 from .storage import FileLock, LockTimeout, LockUnavailable
 
 #: The canonical store, beside the session record: versioned, hand-readable,

@@ -45,8 +45,6 @@ def load_sdk():
     return openai_codex
 
 
-
-
 @dataclass(slots=True)
 class AgentThread:
     sdk_thread: Any

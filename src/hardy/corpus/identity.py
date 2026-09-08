@@ -5,6 +5,7 @@ import hashlib
 import json
 from typing import Any
 
+
 def _digest(kind: str, parts: list[Any]) -> str:
     payload = json.dumps([kind, *parts], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

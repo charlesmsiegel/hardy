@@ -16,9 +16,21 @@ from typing import Any
 from ... import audit
 from ...lean import LeanTools
 from ...models import ToolResult
-from ...workspace import (LeanWorkspace, WorkspacePathError, ImportCycle, BuildFailure,
-    safe_relative, module_name, dependents, declarations, assumptions,
-    unreadable_assumptions, internal_imports, QUALIFIED_NAME, IDENTIFIER)
+from ...workspace import (
+    IDENTIFIER,
+    QUALIFIED_NAME,
+    BuildFailure,
+    ImportCycle,
+    LeanWorkspace,
+    WorkspacePathError,
+    assumptions,
+    declarations,
+    dependents,
+    internal_imports,
+    module_name,
+    safe_relative,
+    unreadable_assumptions,
+)
 
 # The head of a saved theorem's statement as `statements` reports it: the
 # keyword, then the declared name, then the signature an anonymous `example`
@@ -479,7 +491,6 @@ class FormalWorkspaceService:
         return run_source(source)
 
 
-
     def _automation_probe(self, proposed: Mapping[str, str], *, probes: tuple[str, ...], probe_seconds: float, run_source: Callable[..., ToolResult]) -> dict[str, str] | None:
         """Which of these saved statements one `PROBES` tactic closes outright.
 
@@ -618,7 +629,6 @@ class FormalWorkspaceService:
         return verdicts
 
 
-
     def _refresh_automation(self, *, current: dict[str, str], stored: dict[str, Any], environment: str, probe: Callable[[Mapping[str, str]], dict[str, str] | None], publish: Callable[[dict[str, Any]], None]) -> str:
         """Probe every saved theorem whose verdict is missing or expired, and
         record what came back. A note for the save's result, or "".
@@ -702,7 +712,6 @@ class FormalWorkspaceService:
         return "".join(f"\n\n{note}" for note in notes)
 
 
-
     def _automation_closed(self, *, stored: Mapping[str, Any], current: Callable[[], dict[str, str]], environment: Callable[[], str]) -> dict[str, str]:
         """Saved theorems one automation call closes: name to the tactic.
 
@@ -728,7 +737,6 @@ class FormalWorkspaceService:
             and current.get(name) == record.get("statement")
             and record.get("environment") == environment
         }
-
 
 
     def _still_current(
@@ -760,7 +768,6 @@ class FormalWorkspaceService:
             "reason": "the module's Lean toolchain, source, or dependencies have changed since this was established; save it again",
             "stale": True,
         }
-
 
 
     def _current_audit(

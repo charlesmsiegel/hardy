@@ -896,7 +896,6 @@ async def _offer_registration(ui: Ui, config, state_reopen: Any = None) -> None:
     keyboard, and the `Ui` port exists so a handler never has to know which
     application that is.
     """
-    from ..app.terminal import confirm_assumption
     from ..app.projects import offer_registration
 
     host = config.root / "lakefile.toml"
