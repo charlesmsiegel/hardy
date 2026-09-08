@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.3.0",
+  "entries": [
+    {
+      "id": "putnam-2020-a2",
+      "input": "Let $k$ be a nonnegative integer. Prove that $\\sum_{j=0}^{k} 2^{k-j} \\binom{k+j}{j} = 4^{k}$.",
+      "name": "Putnam2020A2",
+      "binders": "(k : ℕ)",
+      "conclusion": "∑ j ∈ Finset.range (k + 1), 2 ^ (k - j) * Nat.choose (k + j) j = 4 ^ k",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 A2",
+      "msc": [
+        "05A19",
+        "11B65"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    },
+    {
+      "id": "putnam-2020-a2-twin",
+      "input": "Let $k$ be a nonnegative integer. Prove that $\\sum_{j=0}^{k-1} 2^{k-j} \\binom{k+j}{j} = 4^{k}$.",
+      "name": "Putnam2020A2Twin",
+      "binders": "(k : ℕ)",
+      "conclusion": "∑ j ∈ Finset.range k, 2 ^ (k - j) * Nat.choose (k + j) j = 4 ^ k",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2020-a2",
+      "source": "competition",
+      "title": "Putnam 2020 A2, top term dropped",
+      "msc": [
+        "05A19"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2020-a2`: the sum stops one term short, dropping $\\binom{2k}{k}$. The identity then fails for every $k$ -- at $k = 1$ the left side is $2$ and the right is $4$ -- but an off-by-one in a summation bound is the error a model is likeliest to wave through, which is what this measures. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    }
+  ]
+}

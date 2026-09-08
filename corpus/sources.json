@@ -1,1 +1,117 @@
-{"schema_version": 1, "sources": {}}
+{
+  "schema_version": 1,
+  "sources": {
+    "putnam-2018": {
+      "citation_key": "Putnam 2018",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 79th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 1, 2018",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2018,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2019": {
+      "citation_key": "Putnam 2019",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 80th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 7, 2019",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2019,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2020": {
+      "citation_key": "Putnam 2020",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 81st William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat February 20, 2021",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2020,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2021": {
+      "citation_key": "Putnam 2021",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 82nd William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 4, 2021",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2021,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2022": {
+      "citation_key": "Putnam 2022",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 83rd William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 3, 2022",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2022,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2023": {
+      "citation_key": "Putnam 2023",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 84th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 2, 2023",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2023,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2024": {
+      "citation_key": "Putnam 2024",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 85th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 7, 2024",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2024,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2025": {
+      "citation_key": "Putnam 2025",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 86th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 6, 2025",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2025,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    }
+  }
+}

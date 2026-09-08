@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.2.1",
+  "corpus_version": "0.3.0",
   "entries": [
     {
       "id": "sq-sum-ge-two-mul",
@@ -67,6 +67,122 @@
       "status": "candidate",
       "witness": null,
       "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "putnam-2025-a2-lower",
+      "input": "Prove that $1/\\pi$ is the largest real number $a$ for which $a\\,x(\\pi - x) \\leq \\sin x$ holds for every $x \\in [0, \\pi]$.",
+      "name": "Putnam2025A2Lower",
+      "binders": "",
+      "conclusion": "IsGreatest {a : ℝ | ∀ x ∈ Set.Icc (0 : ℝ) Real.pi, a * (x * (Real.pi - x)) ≤ Real.sin x} (1 / Real.pi)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A2, the lower constant",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2025-a2-upper",
+      "input": "Prove that $4/\\pi^{2}$ is the smallest real number $b$ for which $\\sin x \\leq b\\,x(\\pi - x)$ holds for every $x \\in [0, \\pi]$.",
+      "name": "Putnam2025A2Upper",
+      "binders": "",
+      "conclusion": "IsLeast {b : ℝ | ∀ x ∈ Set.Icc (0 : ℝ) Real.pi, Real.sin x ≤ b * (x * (Real.pi - x))} (4 / Real.pi ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A2, the upper constant",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2025-a2-lower-twin",
+      "input": "Prove that $4/\\pi^{2}$ is the largest real number $a$ for which $a\\,x(\\pi - x) \\leq \\sin x$ holds for every $x \\in [0, \\pi]$.",
+      "name": "Putnam2025A2LowerTwin",
+      "binders": "",
+      "conclusion": "IsGreatest {a : ℝ | ∀ x ∈ Set.Icc (0 : ℝ) Real.pi, a * (x * (Real.pi - x)) ≤ Real.sin x} (4 / Real.pi ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2025-a2-lower",
+      "source": "competition",
+      "title": "Putnam 2025 A2, the two constants swapped",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2025-a2-lower`: it names the problem's *other* constant. $4/\\pi^{2}$ is the value of $\\sin x / (x(\\pi - x))$ at $x = \\pi/2$, where the ratio is largest, so it bounds the quotient above and not below; at $x = 1/10$ the claimed inequality reads $0.1233 \\leq 0.0998$. Both constants are in the paper's answer, which is what makes the swap plausible. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2018-a3",
+      "input": "Prove that $480/49$ is the greatest value of $\\sum_{i=1}^{10} \\cos(3x_i)$ over all real numbers $x_1, \\dots, x_{10}$ with $\\sum_{i=1}^{10} \\cos(x_i) = 0$.",
+      "name": "Putnam2018A3",
+      "binders": "",
+      "conclusion": "IsGreatest {t : ℝ | ∃ x : Fin 10 → ℝ, ∑ i, Real.cos (x i) = 0 ∧ ∑ i, Real.cos (3 * x i) = t} (480 / 49)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2018 A3",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2018",
+          "locator": [
+            1,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
     }
   ]
 }

@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.3.0",
+  "entries": [
+    {
+      "id": "putnam-2019-b3",
+      "input": "Let $Q$ be a real $n \\times n$ matrix with $QQ^{T} = I$, let $u \\in \\mathbb{R}^{n}$ satisfy $\\sum_{i} u_i^{2} = 1$, and put $P = I - 2uu^{T}$. Prove that if $1$ is not an eigenvalue of $Q$, then $1$ is an eigenvalue of $PQ$.",
+      "name": "Putnam2019B3",
+      "binders": "{n : ℕ} (Q : Matrix (Fin n) (Fin n) ℝ) (hQ : Q * Q.transpose = 1) (u : Fin n → ℝ) (hu : ∑ i, u i ^ 2 = 1) (hQ1 : ¬ ∃ v : Fin n → ℝ, v ≠ 0 ∧ Q.mulVec v = v)",
+      "conclusion": "∃ v : Fin n → ℝ, v ≠ 0 ∧ Matrix.mulVec (((1 : Matrix (Fin n) (Fin n) ℝ) - (2 : ℝ) • Matrix.vecMulVec u u) * Q) v = v",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2019 B3",
+      "msc": [
+        "15A18"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2019",
+          "locator": [
+            2,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "`{n : ℕ}` is implicit, and `∃` cannot bind an implicit binder, so the A6 form `∃ <binders>, True` does not exist for this entry."
+    },
+    {
+      "id": "putnam-2022-b2",
+      "input": "Write $v \\times w$ for the cross product of $v, w \\in \\mathbb{R}^{3}$. Prove that a finite set $S \\subset \\mathbb{R}^{3}$ with exactly $n$ elements satisfying $S = \\{v \\times w : v, w \\in S\\}$ exists if and only if $n = 1$ or $n = 7$.",
+      "name": "Putnam2022B2",
+      "binders": "(n : ℕ) (hn : 0 < n)",
+      "conclusion": "(∃ S : Set (Fin 3 → ℝ), S.Finite ∧ S.ncard = n ∧ S = {x | ∃ v ∈ S, ∃ w ∈ S, crossProduct v w = x}) ↔ (n = 1 ∨ n = 7)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2022 B2",
+      "msc": [
+        "15A72"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2022",
+          "locator": [
+            2,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, by norm_num, trivial⟩"
+    }
+  ]
+}

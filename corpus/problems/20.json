@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.2.1",
+  "corpus_version": "0.3.0",
   "entries": [
     {
       "id": "prime-order-cyclic",
@@ -67,6 +67,37 @@
       "status": "candidate",
       "witness": null,
       "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "putnam-2018-a4",
+      "input": "Let $m$ and $n$ be coprime positive integers and put $a_k = \\lfloor mk/n \\rfloor - \\lfloor m(k-1)/n \\rfloor$ for $k = 1, \\dots, n$. Prove that if $g$ and $h$ are elements of a group and $g h^{a_1} g h^{a_2} \\cdots g h^{a_n}$ is the identity, then $gh = hg$.",
+      "name": "Putnam2018A4",
+      "binders": "{G : Type*} [Group G] (m n : ℕ) (hm : 0 < m) (hn : 0 < n) (hmn : Nat.Coprime m n) (g h : G) (hprod : ((List.range n).map (fun k => g * h ^ (m * (k + 1) / n - m * k / n))).prod = 1)",
+      "conclusion": "g * h = h * g",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2018 A4",
+      "msc": [
+        "20A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2018",
+          "locator": [
+            1,
+            0,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "`{G : Type*}` is implicit and `[Group G]` is an instance binder; `∃` can bind neither, so the A6 form `∃ <binders>, True` does not exist for this entry."
     }
   ]
 }

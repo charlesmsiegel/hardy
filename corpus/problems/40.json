@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.3.0",
+  "entries": [
+    {
+      "id": "putnam-2020-a3",
+      "input": "Let $a_0 = \\pi/2$ and $a_n = \\sin(a_{n-1})$ for $n \\geq 1$. Prove that $\\sum_{n=1}^{\\infty} a_n^{2}$ diverges.",
+      "name": "Putnam2020A3",
+      "binders": "(a : ℕ → ℝ) (h0 : a 0 = Real.pi / 2) (hrec : ∀ n : ℕ, a (n + 1) = Real.sin (a n))",
+      "conclusion": "¬ Summable (fun n : ℕ => a (n + 1) ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 A3",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            1,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun n => Nat.rec (motive := fun _ => ℝ) (Real.pi / 2) (fun _ x => Real.sin x) n, rfl, fun _ => rfl, trivial⟩"
+    }
+  ]
+}

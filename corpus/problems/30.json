@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.3.0",
+  "entries": [
+    {
+      "id": "putnam-2020-b5",
+      "input": "Let $z_1, z_2, z_3, z_4$ be complex numbers of modulus $1$, none of them equal to $1$. Prove that $3 - z_1 - z_2 - z_3 - z_4 + z_1 z_2 z_3 z_4 \\neq 0$.",
+      "name": "Putnam2020B5",
+      "binders": "(z₁ z₂ z₃ z₄ : ℂ) (h₁ : ‖z₁‖ = 1) (h₂ : ‖z₂‖ = 1) (h₃ : ‖z₃‖ = 1) (h₄ : ‖z₄‖ = 1) (n₁ : z₁ ≠ 1) (n₂ : z₂ ≠ 1) (n₃ : z₃ ≠ 1) (n₄ : z₄ ≠ 1)",
+      "conclusion": "3 - z₁ - z₂ - z₃ - z₄ + z₁ * z₂ * z₃ * z₄ ≠ 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 B5",
+      "msc": [
+        "30A10"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            2,
+            0,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨-1, -1, -1, -1, by simp, by simp, by simp, by simp, by norm_num, by norm_num, by norm_num, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2020-b5-twin",
+      "input": "Let $z_1, z_2, z_3, z_4$ be complex numbers of modulus $1$. Prove that $3 - z_1 - z_2 - z_3 - z_4 + z_1 z_2 z_3 z_4 \\neq 0$.",
+      "name": "Putnam2020B5Twin",
+      "binders": "(z₁ z₂ z₃ z₄ : ℂ) (h₁ : ‖z₁‖ = 1) (h₂ : ‖z₂‖ = 1) (h₃ : ‖z₃‖ = 1) (h₄ : ‖z₄‖ = 1)",
+      "conclusion": "3 - z₁ - z₂ - z₃ - z₄ + z₁ * z₂ * z₃ * z₄ ≠ 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2020-b5",
+      "source": "competition",
+      "title": "Putnam 2020 B5, the hypothesis $z_j \\neq 1$ dropped",
+      "msc": [
+        "30A10"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2020-b5`, and the archetypal one: the four hypotheses $z_j \\neq 1$ are removed and nothing else changes. Taking every $z_j = 1$ gives $3 - 4 + 1 = 0$, so the conclusion fails on the single point the dropped hypothesis excluded. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨-1, -1, -1, -1, by simp, by simp, by simp, by simp, trivial⟩"
+    }
+  ]
+}

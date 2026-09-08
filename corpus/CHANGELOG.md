@@ -6,6 +6,14 @@ Each head line binds the **manifest digest** — a hash over every content file 
 so an edit that leaves both version strings in place still fails
 `hardy evals corpus check`.
 
+## 0.3.0 - 2026-09-08 - manifest feda7f08cb14f3fb7b8c0fac79c7dab4179e44ee50eb509950d64b75bead2284
+
+- Twenty-three entries from the William Lowell Putnam Mathematical Competition, 2018 through 2025, and the eight papers they cite in `sources.json`. Sixteen are statements: `putnam-2018-a1`, `putnam-2018-a3`, `putnam-2018-a4`, `putnam-2019-a1`, `putnam-2019-b3`, `putnam-2020-a2`, `putnam-2020-a3`, `putnam-2020-b1`, `putnam-2020-b5`, `putnam-2020-b6`, `putnam-2021-a5`, `putnam-2022-b2`, `putnam-2023-b2`, `putnam-2024-a1`, `putnam-2025-a2-lower`, `putnam-2025-a2-upper`. Seven are twins: `putnam-2019-a1-twin`, `putnam-2020-a2-twin`, `putnam-2020-b5-twin`, `putnam-2020-b6-twin`, `putnam-2023-b2-twin`, `putnam-2024-a1-twin`, `putnam-2025-a2-lower-twin`.
+- A competition paper is a source the corpus had no shape for. One sitting is one source -- `putnam-2018` through `putnam-2025` -- because a problem is numbered within its year and nothing outside that year is in scope for a locator. The locators are `(1, 0, n)` for `An` and `(2, 0, n)` for `Bn`, so the lexicographic order on them is the order the problems were sat, and the viewer prints `[Putnam 2024, A1]` once it carries the `competition-problem` style.
+- Four shards are new: `05` (enumerative combinatorics), `15` (basic linear algebra), `30` (functions of a complex variable) and `40` (convergence and divergence). The corpus had four reporting groups and now has seven; `combinatorics`, `linear-algebra` and `complex-analysis` are each below the size a ranking needs, and are here to be grown rather than reported on.
+- Every statement was elaborated against Mathlib (`leanprover/lean4:v4.34.0-rc2`, mathlib4 master) and every witness kernel-checked: the fourteen entries with `∃`-closable binders record `witness` terms whose `#print axioms` names only `propext`, `Classical.choice` and `Quot.sound`. The nine with `witness: null` say why -- seven have no binders at all, `putnam-2019-b3` has an implicit `{n : ℕ}` and `putnam-2018-a4` an instance `[Group G]`, and `∃` binds none of those. Both answers and twins were also checked numerically, which is how `putnam-2020-b6-twin` is known to fail first at $n = 4$ rather than merely believed to.
+- Every entry is `candidate`. The answers are our reading of the papers and of the solutions Kedlaya, Bhargava and Ng publish beside them; `input` is a restatement in our own words throughout, because the MAA holds copyright in the problem text and the solutions are the authors'. Nothing here has had a human faithfulness read.
+
 ## 0.2.1 - 2026-09-04 - manifest bdf6ef50656e358b3261838d6a62866b6480cc02a6513884041f5dd27f2417d0
 
 - All five irrationality entries are now `11J72` ("Irrationality; linear
