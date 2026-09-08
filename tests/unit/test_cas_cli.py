@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from hardy import config as configuration
+from hardy.algebra.tools import CasToolRuntime
 from hardy.app.cli import _read_block, cas_command
-from hardy.cas_tools import CasToolRuntime
 
 
 def stub(runtime, tmp_path):

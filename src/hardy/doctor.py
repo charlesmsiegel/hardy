@@ -231,7 +231,7 @@ def _cas_check(config: Config) -> Check:
     """
     import tempfile
 
-    from hardy.cas_tools import build_runtime
+    from hardy.algebra.tools import build_runtime
 
     required = config.cas_backend != DEFAULT_CAS_BACKEND
     with tempfile.TemporaryDirectory(prefix="hardy-cas-") as directory:

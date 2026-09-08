@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 from test_chat import FakeChatRuntime, factory
 
-from hardy import arxiv
 from hardy.chat import CHAT_TOOLS, MathematicsSession
+from hardy.literature import arxiv
 from hardy.literature import statements as assume_module
 
 FEED = (

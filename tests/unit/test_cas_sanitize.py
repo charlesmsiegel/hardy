@@ -11,7 +11,7 @@ backends that do not need to touch stdout at all.
 
 from __future__ import annotations
 
-from hardy.cas import backend_for
+from hardy.algebra.cas import backend_for
 
 
 def test_macaulay2_sanitize_strips_prompt_lines_and_blanks_counters() -> None:

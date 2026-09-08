@@ -12,9 +12,9 @@ import json
 import re
 from pathlib import Path
 
-from hardy import arxiv
-from hardy.bibliography import Bibliography
-from hardy.paper_tools import PAPER_TOOL_NAMES, PaperToolRuntime, build_runtime
+from hardy.literature import arxiv
+from hardy.literature.bibliography import Bibliography
+from hardy.literature.tools import PAPER_TOOL_NAMES, PaperToolRuntime, build_runtime
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">

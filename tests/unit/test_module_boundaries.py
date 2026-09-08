@@ -71,7 +71,7 @@ def test_full_tree_dependency_directions(import_graph):
     readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'}
     capabilities = {name for name in import_graph if name.startswith(
         ('hardy.formal.', 'hardy.documents.', 'hardy.algebra.', 'hardy.literature.', 'hardy.corpus.')
-    )} | {'hardy.cas_tools', 'hardy.cas_export', 'hardy.paper_tools'}
+    )} | {'hardy.algebra.tools', 'hardy.algebra.export', 'hardy.literature.tools'}
     for module in providers | readers | capabilities:
         forbidden = launchers | controllers
         if module in readers:
@@ -114,7 +114,7 @@ def test_known_dynamic_launch_modules_still_exist():
                             and isinstance(following.value, str)
                             and following.value.startswith('hardy.')):
                         launches.add(following.value)
-    assert launches == {'hardy.mcp_server', 'hardy.cas_driver'}
+    assert launches == {'hardy.mcp_server', 'hardy.algebra.driver'}
     for module in launches:
         assert (SOURCE.parent / Path(*module.split('.'))).with_suffix('.py').is_file()
 

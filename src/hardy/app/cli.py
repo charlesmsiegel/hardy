@@ -13,12 +13,13 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from hardy import cas_tools, doctor
 from hardy import config as configuration
+from hardy import doctor
+from hardy.algebra import tools as cas_tools
+from hardy.algebra.cas import CasError
+from hardy.algebra.export import export_session
 from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
 from hardy.app.terminal import ConsoleTerminal
-from hardy.cas import CasError
-from hardy.cas_export import export_session
 from hardy.chat import MathematicsSession, SchemaError
 from hardy.formal import latency
 from hardy.formal import search as search_tools

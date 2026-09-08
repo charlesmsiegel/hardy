@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from hardy import assume
+from hardy.literature import statements as assume
 
 PAPER = r"""
 \documentclass{article}

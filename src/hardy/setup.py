@@ -211,7 +211,7 @@ def discover_environment(
 
 def _cas_status(config: Config) -> ToolStatus:
     """Start the kernel and ask its version: found is not the same as working."""
-    from hardy.cas_tools import build_runtime
+    from hardy.algebra.tools import build_runtime
 
     with tempfile.TemporaryDirectory(prefix="hardy-cas-") as directory:
         runtime, detail = build_runtime(

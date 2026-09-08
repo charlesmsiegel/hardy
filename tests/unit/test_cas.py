@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from hardy.cas import (
+from hardy.algebra.cas import (
     CasError,
     CasSession,
     CellOutcome,
@@ -25,7 +25,7 @@ from hardy.cas import (
     reproduces,
     run_exported_script,
 )
-from hardy.cas_export import export_session
+from hardy.algebra.export import export_session
 from hardy.foundation.files import LayoutError
 from hardy.workflows.contracts import RunLimits
 

@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from hardy.cas import CasError, CasSession, CellRecord, backend_for
+from hardy.algebra.cas import CasError, CasSession, CellRecord, backend_for
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import cas_spill_note
 from hardy.workflows.contracts import RunLimits

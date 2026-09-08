@@ -34,12 +34,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from hardy.bibliography import Bibliography, BibliographyError
 from hardy.foundation import truncation
 from hardy.foundation.locking import LockTimeout
 from hardy.foundation.paths import HARDY_DIR, global_dir
 from hardy.foundation.values import ToolResult
 from hardy.literature.archives import ArchiveError
+from hardy.literature.bibliography import Bibliography, BibliographyError
 from hardy.literature.client import ArxivClient
 from hardy.literature.library import PaperLibrary
 from hardy.literature.metadata import ArxivError, PaperRecord, parse_id

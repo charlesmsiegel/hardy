@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from hardy import doctor
-from hardy.cas import CasError
+from hardy.algebra.cas import CasError
 from hardy.documents import completion
 from hardy.foundation.values import ToolResult
 from hardy.tui import handlers

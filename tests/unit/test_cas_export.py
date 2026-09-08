@@ -8,8 +8,8 @@ import os
 
 import pytest
 
-from hardy.cas import CasError, CellOutcome
-from hardy.cas_export import export_session
+from hardy.algebra.cas import CasError, CellOutcome
+from hardy.algebra.export import export_session
 from hardy.foundation.files import LayoutError
 
 
@@ -234,7 +234,7 @@ def test_a_check_that_blows_up_costs_the_verdict_not_the_artifacts(
     def explode(**_kwargs):
         raise MemoryError("out of memory reading the script's output")
 
-    monkeypatch.setattr("hardy.cas_export.run_exported_script", explode)
+    monkeypatch.setattr("hardy.algebra.export.run_exported_script", explode)
     session = cas_session()
     try:
         session.execute("a")
@@ -276,7 +276,7 @@ def test_a_multi_line_verdict_detail_still_publishes_a_runnable_script(
     def failed_replay(**_kwargs):
         return [CellOutcome(status="error", stderr=traceback)]
 
-    monkeypatch.setattr("hardy.cas_export.replay_in_fresh_kernel", failed_replay)
+    monkeypatch.setattr("hardy.algebra.export.replay_in_fresh_kernel", failed_replay)
     session = cas_session()
     try:
         session.execute("a")

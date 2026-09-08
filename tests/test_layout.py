@@ -710,8 +710,8 @@ def test_git_actually_ignores_the_old_workspace_after_an_upgrade(tmp_path: Path)
 #: `writeup.pdf` was being copied over whatever a clone pointed it at.
 GUARDED_MODULES = (
     "chat.py",
-    "cas.py",
-    "cas_export.py",
+    "algebra/cas.py",
+    "algebra/export.py",
     "tui/shell.py",
     "formal/workspace.py",
     "documents/latex.py",

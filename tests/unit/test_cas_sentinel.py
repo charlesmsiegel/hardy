@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hardy.cas_export import export_session
+from hardy.algebra.export import export_session
 
 
 def test_a_cell_is_answered_and_the_marker_is_not_in_the_output(sentinel_session) -> None:

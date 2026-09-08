@@ -13,17 +13,13 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from hardy import assume as assume_module
 from hardy import compaction, ingest
 from hardy import summary as summary_module
 from hardy.agents.contracts import ChatRuntime, TurnEvent, final_text, provenance
 from hardy.agents.parsing import json_object
-from hardy.arxiv import ArxivError
-from hardy.bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
-from hardy.bibliography import is_generated as is_generated_bibliography
-from hardy.cas import CasError
-from hardy.cas_export import export_session
-from hardy.cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from hardy.algebra.cas import CasError
+from hardy.algebra.export import export_session
+from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from hardy.documents import completion
 from hardy.documents.latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
 from hardy.documents.writeup import escape_tex_text
@@ -62,9 +58,13 @@ from hardy.foundation.files import (
 from hardy.foundation.paths import HARDY_DIR, global_build, global_lean
 from hardy.foundation.truncation import truncate
 from hardy.foundation.values import ToolResult
+from hardy.literature import statements as assume_module
+from hardy.literature.arxiv import ArxivError
+from hardy.literature.bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
+from hardy.literature.bibliography import is_generated as is_generated_bibliography
+from hardy.literature.tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
+from hardy.literature.tools import build_runtime as build_paper_runtime
 from hardy.loop import Message
-from hardy.paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
-from hardy.paper_tools import build_runtime as build_paper_runtime
 from hardy.project_context import (
     PROJECT_CONTEXT_EVENT,
     PROJECT_CONTEXT_KEY,

@@ -14,8 +14,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hardy.arxiv import PaperRecord, digest
-from hardy.bibliography import (
+from hardy.documents.latex import typeset
+from hardy.foundation.locking import FileLock
+from hardy.literature.arxiv import PaperRecord, digest
+from hardy.literature.bibliography import (
     Bibliography,
     BibliographyError,
     Entry,
@@ -24,8 +26,6 @@ from hardy.bibliography import (
     hand_written_bibliography,
     is_generated,
 )
-from hardy.documents.latex import typeset
-from hardy.foundation.locking import FileLock
 
 
 def _record(

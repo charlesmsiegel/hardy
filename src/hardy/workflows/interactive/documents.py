@@ -14,9 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from hardy.bibliography import STORE as STORE_BIBLIOGRAPHY
-from hardy.bibliography import BibliographyError, hand_written_bibliography
-from hardy.bibliography import is_generated as is_generated_bibliography
 from hardy.documents import completion
 from hardy.documents.latex import ARTIFACTS as LATEX_ARTIFACTS
 from hardy.documents.latex import OUTPUTS as LATEX_OUTPUTS
@@ -24,6 +21,9 @@ from hardy.documents.latex import ROOT_DOCUMENT, LatexTools, compiles_document, 
 from hardy.foundation.files import LayoutError, files_under, guard_for, read_bytes, read_text
 from hardy.foundation.locking import LockTimeout
 from hardy.foundation.values import ToolResult
+from hardy.literature.bibliography import STORE as STORE_BIBLIOGRAPHY
+from hardy.literature.bibliography import BibliographyError, hand_written_bibliography
+from hardy.literature.bibliography import is_generated as is_generated_bibliography
 
 BUILD_DIR_TEX = ".build/tex"
 NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")

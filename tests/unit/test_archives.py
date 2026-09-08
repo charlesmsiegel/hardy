@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import archives
+from hardy.literature import archives
 
 
 def _tar(*members: tuple[str, bytes | None, str], compress: bool = True) -> bytes:

@@ -10,7 +10,7 @@ from hardy.foundation import process
 @pytest.fixture(autouse=True)
 def _temporary_paper_throttle(tmp_path, monkeypatch):
     """Fake literature operations must not write the operator's shared throttle."""
-    monkeypatch.setattr("hardy.paper_tools.global_dir", lambda: tmp_path / "global-hardy")
+    monkeypatch.setattr("hardy.literature.tools.global_dir", lambda: tmp_path / "global-hardy")
 
 
 @pytest.fixture(autouse=True)

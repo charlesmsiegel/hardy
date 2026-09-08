@@ -9,7 +9,7 @@ def test_close_shuts_down_the_staged_cas_kernel(cas_session) -> None:
     process exits.
     """
     staged = importlib.import_module('hardy.staged')
-    cas_tools = importlib.import_module('hardy.cas_tools')
+    cas_tools = importlib.import_module('hardy.algebra.tools')
 
     session = cas_session()
     cas_runtime = cas_tools.CasToolRuntime(session=session, observation_bytes=32 * 1024)
@@ -81,7 +81,7 @@ def test_an_isolated_thread_is_offered_no_tools_at_all(tmp_path, cas_session) ->
     trajectory outright. A reader that can reach the conversation it is
     auditing is not an independent one.
     """
-    cas_tools = importlib.import_module('hardy.cas_tools')
+    cas_tools = importlib.import_module('hardy.algebra.tools')
     cas_runtime = cas_tools.CasToolRuntime(
         session=cas_session(), observation_bytes=32 * 1024
     )

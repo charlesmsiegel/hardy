@@ -23,9 +23,9 @@ from pydantic import BaseModel, ValidationError
 
 from hardy.agents.contracts import final_text
 from hardy.agents.parsing import json_object
-from hardy.cas import CasError
-from hardy.cas_export import export_session
-from hardy.cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from hardy.algebra.cas import CasError
+from hardy.algebra.export import export_session
+from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from hardy.claude_runtime import ClaudeAgentRuntime
 from hardy.formal.contracts import FrozenClaim
 from hardy.foundation.values import ToolResult, schema_text

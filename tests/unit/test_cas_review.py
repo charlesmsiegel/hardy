@@ -19,11 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from hardy import cas
-from hardy.algebra import scripts
-from hardy.cas import CasError, CasSession, backend_for
-from hardy.cas_driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
-from hardy.cas_export import TRANSCRIPT_BEGIN, export_session
+from hardy.algebra import cas, scripts
+from hardy.algebra.cas import CasError, CasSession, backend_for
+from hardy.algebra.driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
+from hardy.algebra.export import TRANSCRIPT_BEGIN, export_session
 from hardy.workflows.contracts import RunLimits
 
 
@@ -151,7 +150,7 @@ def test_a_cell_printing_far_past_the_cap_does_not_hold_it_all(tmp_path) -> None
         "import resource, sys\n"
         "resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024,) * 2)\n"
         "sys.argv = [sys.argv[0], sys.argv[1]]\n"
-        "import hardy.cas_driver as driver\n"
+        "import hardy.algebra.driver as driver\n"
         "driver.main()\n",
         encoding="utf-8",
     )
@@ -1537,7 +1536,7 @@ def test_an_artifact_changed_while_the_export_is_written_is_not_described_as_sou
     disk had. The rewrite is simulated here, because a race cannot be timed
     from a test; the window is what is being pinned.
     """
-    from hardy import cas_export
+    from hardy.algebra import export as cas_export
 
     real = cas_export.render_notebook
 

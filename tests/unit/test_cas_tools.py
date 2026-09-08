@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from hardy.cas import CasSession, backend_for
-from hardy.cas_tools import CAS_TOOL_NAMES, CasToolRuntime, build_runtime
+from hardy.algebra.cas import CasSession, backend_for
+from hardy.algebra.tools import CAS_TOOL_NAMES, CasToolRuntime, build_runtime
 from hardy.workflows.contracts import RunLimits
 
 

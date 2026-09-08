@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy import arxiv
 from hardy.foundation.files import LayoutError
 from hardy.foundation.locking import FileLock
+from hardy.literature import arxiv
 from hardy.literature import client as client_module
 from hardy.literature import library as library_module
 

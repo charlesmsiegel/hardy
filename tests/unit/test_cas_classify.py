@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.cas import backend_for
+from hardy.algebra.cas import backend_for
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "cas"
 

@@ -19,8 +19,8 @@ from typing import Any
 
 from hardy import catalog, doctor
 from hardy import config as configuration
-from hardy.cas import CasError
-from hardy.cas_export import export_session
+from hardy.algebra.cas import CasError
+from hardy.algebra.export import export_session
 from hardy.config import DEFAULT_BACKEND, authentication
 from hardy.foundation import process
 from hardy.prompts import user as user_prompts

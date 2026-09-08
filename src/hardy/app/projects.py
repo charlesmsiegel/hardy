@@ -10,8 +10,8 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from hardy import cas_tools
 from hardy import config as configuration
+from hardy.algebra import tools as cas_tools
 from hardy.chat import MathematicsSession
 from hardy.formal import lakefile
 from hardy.formal import search as search_tools

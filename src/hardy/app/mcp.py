@@ -20,8 +20,8 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
-from hardy.cas_export import ExportReport, export_session
-from hardy.cas_tools import CasCellResult, CasStateResult, CasToolRuntime, build_runtime
+from hardy.algebra.export import ExportReport, export_session
+from hardy.algebra.tools import CasCellResult, CasStateResult, CasToolRuntime, build_runtime
 from hardy.config import load as load_config
 from hardy.formal.contracts import FrozenClaim, freeze_claim
 from hardy.formal.declarations import DeclarationIndex

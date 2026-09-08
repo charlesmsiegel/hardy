@@ -12,8 +12,8 @@ import shutil
 
 import pytest
 
-from hardy.cas import CasSession, backend_for
-from hardy.cas_export import export_session
+from hardy.algebra.cas import CasSession, backend_for
+from hardy.algebra.export import export_session
 from hardy.workflows.contracts import RunLimits
 
 pytestmark = pytest.mark.real_toolchain

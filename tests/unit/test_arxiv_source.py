@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import archives, arxiv
+from hardy.literature import archives, arxiv
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">

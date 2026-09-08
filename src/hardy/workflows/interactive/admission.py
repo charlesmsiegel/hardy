@@ -13,9 +13,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from hardy import assume as assume_module
-from hardy.arxiv import ArxivError
-from hardy.bibliography import BibliographyError
 from hardy.formal import refute
 from hardy.formal.workspace import (
     ANY_NAME,
@@ -27,6 +24,9 @@ from hardy.formal.workspace import (
 from hardy.foundation.files import LayoutError
 from hardy.foundation.locking import LockTimeout
 from hardy.foundation.values import ToolResult
+from hardy.literature import statements as assume_module
+from hardy.literature.arxiv import ArxivError
+from hardy.literature.bibliography import BibliographyError
 
 
 @dataclass(frozen=True)

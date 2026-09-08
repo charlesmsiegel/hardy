@@ -37,7 +37,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from hardy.cas import (
+from hardy.algebra.cas import (
     CasError,
     CasSession,
     CellRecord,

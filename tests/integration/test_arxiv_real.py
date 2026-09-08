@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.arxiv import ArxivClient, ArxivError, PaperLibrary
+from hardy.literature.arxiv import ArxivClient, ArxivError, PaperLibrary
 
 #: Perelman's first Ricci flow preprint. Old-style identifier, one version,
 #: never revised -- so both the spelling and the immutability claim are
