@@ -24,9 +24,9 @@ from pydantic import BaseModel, ValidationError
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
-from .chat import final_text
+from .agents.contracts import final_text
 from .claude_runtime import ClaudeAgentRuntime
-from .codex_runtime import ProofSubmission
+from .workflows.contracts import ProofSubmission
 from .domain import FrozenClaim, RunPhase, schema_text
 from .models import ToolResult, json_object
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION

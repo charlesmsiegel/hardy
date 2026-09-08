@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from .chat import final_text
+from .agents.contracts import final_text
 from .loop import AgentLoop, Message, ProviderTurn, ToolCall
 from .models import ToolResult, TurnEvent
 

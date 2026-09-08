@@ -45,7 +45,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     from . import retrieval
     from .declarations import DeclarationIndex
     from .lean import LeanService
-    from .mcp_server import LeanToolRuntime
+    from .formal.tools import LeanToolRuntime
     from .prompts import PROMPT_SET_SHA256
     from .verifier import FinalVerifier
     from .workflow import ProveWorkflow

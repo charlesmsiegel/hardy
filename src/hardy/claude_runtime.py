@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from .chat import final_text
+from .agents.contracts import final_text
 from .loop import TurnLimitReached
 from .models import ToolResult, TurnEvent
 
