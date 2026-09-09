@@ -59,6 +59,7 @@ The shortest route to a meaningful prototype is:
 ```text
 shared mathematical ledger
         │
+        ├── concept/representation resolution
         ├── formalization primitive
         ├── generic admission policy
         ├── manuscript structure
@@ -67,22 +68,23 @@ shared mathematical ledger
                  ▼
         prerequisite acquisition
                  │
-       ┌─────────┴─────────┐
-       ▼                   ▼
-    Research            Referee
-       │                   │
-       └─────────┬─────────┘
+       ┌─────────┼─────────┐
+       ▼         ▼         ▼
+    Explore   Research   Referee
+       │         │         │
+       └─────────┼─────────┘
                  ▼
         Publication/report
 ```
 
 The first acceptance milestone is deliberately synthetic:
 
-1. persistent project graph works;
+1. persistent project graph works, including a concept with multiple representations;
 2. one target theorem recursively resolves a Mathlib dependency, a local definition, a local proof, and a literature result;
 3. exact trust boundary is reported;
 4. target-paper self-assumption is refused;
-5. selecting the theorem produces a publication plan containing meaningful dependencies and an illustrative example.
+5. selecting the theorem produces a publication plan containing meaningful dependencies and an illustrative example;
+6. an exploratory session can introduce a concept without forcing a Lean representation, then add/refine representations when later questions require them.
 
 Only then make the Prym/Jacobian paper the primary stress test.
 
@@ -201,8 +203,11 @@ At minimum represent:
 
 ```text
 ProjectItem / ProjectItemKind / ProjectOrigin
+  including concept and representation kinds
 Obligation / ObligationKind / ObligationStatus
+  including resolve_representation and refine_representation
 Relation / RelationKind
+  including interprets plus existing uses/refines/supersedes
 Scope
 Resolution
 EvidenceRef / ArtifactRef
@@ -210,7 +215,20 @@ CitationContract
 publication visibility/role
 ```
 
-Acceptance fixtures must cover theorem -> lemma -> definition, example illustrates theorem, prose documents theorem at a digest, external-result use, repair obligation, and target scope (`must_prove` vs allowed background).
+Do not add a domain-specific capability enum for mathematical notions such as universal families, tangent spaces, weak solutions, etc. The persistent schema needs to know that a concept and a representation are different project items, not enumerate every possible mathematical structure.
+
+Acceptance fixtures must cover theorem -> lemma -> definition, example illustrates theorem, prose documents theorem at a digest, external-result use, repair obligation, target scope (`must_prove` vs allowed background), and:
+
+```text
+Concept: ModuliOfGenusGCurves
+Representation: CurveFamilies interprets Concept
+Representation: CoarseMg interprets Concept
+Representation: StackMg interprets Concept
+ClaimA uses CoarseMg
+ClaimB uses StackMg
+```
+
+The fixture must prove that one concept can have several simultaneous legitimate representations and that no globally active representation is required.
 
 ## B1 — Ledger event store — P0
 
@@ -222,25 +240,40 @@ Implement durable project-level persistence, preferably append-only. Requirement
 
 **Deps:** B0
 
-Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, and helpers used by publication closure. Cycles are valid input and may indicate a paper defect.
+Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, helpers used by publication closure, and representation-use reverse closure (“which items use representation R, and what depends on those items?”). Cycles are valid input and may indicate a paper defect.
+
+Adding another representation for a concept must not invalidate existing users. Replacing the representation used by a claim is an explicit relation change whose downstream blast radius is computable.
 
 ## B3 — Ledger policy — P0
 
 **Deps:** B0
 
-Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit scope changes, and the rule that model proposals are not evidence.
+Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit scope changes, the rule that model proposals are not evidence, and the rule that a mathematical concept is not silently identified with one representation.
 
 ## B4 — Ledger derived views — P0
 
 **Deps:** B0; finalize against B2
 
-Pure views for status, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
+Pure views for status, concepts and their known representations, unresolved/ambiguous representation obligations, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
 
 ## B5 — Shared statement formalization — P0
 
-**Deps:** none conceptually; integrate with B0 after contract freeze
+**Deps:** none conceptually; integrate with B0 after contract freeze; consume B7 when available
 
 Extract one reusable formalization path over existing Lean checking and independent faithfulness review. It must work without a `MathematicsSession` and be reused by Prove, Research, Referee, Critique probing, and citation-contract construction.
+
+The semantic pipeline is:
+
+```text
+informal statement
+-> identify referenced concepts
+-> resolve only representation choices needed here
+-> formalization proposal
+-> Lean elaboration
+-> faithfulness review
+```
+
+If the current representation is insufficient, emit a `resolve_representation` or `refine_representation` obligation rather than treating the situation as generic formalization failure.
 
 ## B6 — Generic assumption admission policy — P0
 
@@ -250,6 +283,29 @@ Extract policy from interactive admission. Generic policy owns search-first evid
 
 There must be one trust-widening route.
 
+## B7 — Shared concept/representation resolution — P0
+
+**Deps:** B0; integrate graph queries after B2
+
+Add `workflows/representation.py` as the shared model-driven primitive for deciding how a mathematical concept should be represented for a particular use.
+
+Required flow:
+
+```text
+concept + intended use + project state
+-> retrieve known project representations
+-> search local/Mathlib realizations
+-> identify plausible mathematical interpretations
+-> choose the weakest adequate existing representation
+   OR create a representation plan
+-> record interprets/uses/refines relationships
+-> optionally request Lean materialization
+```
+
+Hardy supplies tools, persistent state, and verification boundaries; the model supplies domain reasoning. Lean may verify that a proposed interface elaborates and supports downstream statements, but that does not by itself prove semantic faithfulness. Representation assumptions must remain inspectable.
+
+The primitive must work with no target theorem so Explore can use it during open-ended research. It must also work with a concrete downstream statement so paper formalization/acquisition can use the same mechanism.
+
 ---
 
 # Wave C — prerequisite acquisition and basic proof strategies
@@ -258,7 +314,7 @@ There must be one trust-widening route.
 
 **Deps:** B0, B2
 
-Classify a prerequisite as Mathlib, existing local, cheap local definition, cheap local proof, established literature result, missing standard-object interface, target-paper obligation, or unresolved. Record local/Mathlib searches before claiming absence.
+Classify a prerequisite as Mathlib, existing local, cheap local definition, cheap local proof, established literature result, representation unresolved/insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Record local/Mathlib searches before claiming absence.
 
 ## C1 — Definition acquisition — P0
 
@@ -282,15 +338,17 @@ Reuse the existing literature subsystem. Match exact source statements to requir
 
 A synthetic fixture must include one superficially relevant but unusable source and one correct source.
 
-## C3 — Standard-object interface synthesis — P0
+## C3 — Standard-object Lean interface materialization — P0
 
-**Deps:** B0, B2, B3, C1
+**Deps:** B0, B2, B3, B7, C1
 
-Generate minimal interface plans and child obligations for objects absent from Mathlib. Do not create domain-specific Python modules. Only required downstream fields/properties are introduced.
+Materialize minimal Lean project interfaces from representation plans for objects absent from Mathlib. Do not create domain-specific Python modules. `workflows/representation.py` owns the general mathematical choice; `workflows/acquisition/interfaces.py` writes only the Lean interface needed by the selected plan and creates any child obligations it exposes.
+
+Only required downstream fields/properties are introduced.
 
 ## C4 — Recursive obligation resolver — P0
 
-**Deps:** C0; register C1/C2/C3 as they land
+**Deps:** C0; register C1/C2/C3/B7-backed representation resolution as they land
 
 Implement classification -> resolver dispatch -> child obligations -> verify -> attach evidence -> resume parent. Build/test first with fake resolvers if needed. Unresolved is legitimate; there is no blind axiom fallback.
 
@@ -328,20 +386,20 @@ Hardy must choose four distinct resolution kinds, widen trust only for the exter
 
 ## D1 — Research workflow — P0
 
-**Deps:** B0-B6, C0-C5
+**Deps:** B0-B7, C0-C5
 
 Thin orchestration:
 
 ```text
-target/scope -> formalize -> register obligations
+target/scope -> identify concepts/representations -> formalize -> register obligations
 -> resolve prerequisites -> prove target -> update ledger -> report
 ```
 
-No duplicated Lean/literature logic.
+No duplicated representation/Lean/literature logic.
 
 ## D2 — Critique workflow — P0/P1
 
-**Deps:** B0-B5
+**Deps:** B0-B5; B7 for representation-specific findings
 
 Implement three layers:
 
@@ -349,7 +407,7 @@ Implement three layers:
 2. formalization probing;
 3. adversarial mathematical/citation review.
 
-Findings become shared ledger obligations. Critique never repairs automatically. A “no gaps detected” result names which layers actually ran.
+Findings become shared ledger obligations. Critique never repairs automatically. A “no gaps detected” result names which layers actually ran. A representation mismatch should become a representation obligation when that is the real defect.
 
 ## D3 — Repair workflow — P1
 
@@ -357,11 +415,11 @@ Findings become shared ledger obligations. Critique never repairs automatically.
 
 Repair one obligation while preserving the claim. Apply through guarded save, compute reverse dependency closure, recheck affected artifacts, retain stable obligation identity/history, and reopen rather than silently replace a gap after overlapping changes.
 
-Changing hypotheses/conclusion creates a revised claim, not a repair.
+Changing hypotheses/conclusion creates a revised claim, not a repair. Changing which representation a claim uses is also an explicit semantic change with a computed blast radius.
 
 ## D4 — Referee workflow — P0
 
-**Deps:** A8, B0-B6, C2, D2; C5 for formal checks
+**Deps:** A8, B0-B7, C2, D2; C5 for formal checks
 
 Minimum paper-audit flow:
 
@@ -369,13 +427,14 @@ Minimum paper-audit flow:
 manuscript inventory
 -> scope/main results
 -> claim items
+-> concept/representation choices where relevant
 -> citation uses/contracts
 -> critical-path selection
 -> formalization/probing
 -> coverage/trust report
 ```
 
-Primary contract: “verified/probed modulo these exact external contracts, with these unresolved claims and this coverage,” never a bare “paper correct.”
+Primary contract: “verified/probed modulo these exact external contracts, with these unresolved claims and this coverage,” never a bare “paper correct.” Conventional shorthand may use the weakest representation actually needed; later steps that require stronger structure must make that strengthening explicit.
 
 ## D5 — Publication planner — P0
 
@@ -394,7 +453,7 @@ Example illustrates Main
 Prose documents Main at digest X
 ```
 
-Expected: include Main + meaningful lemma + example + citation; exclude internal helper; detect stale prose when Main changes.
+Expected: include Main + meaningful lemma + example + citation; exclude internal helper; detect stale prose when Main changes. Publication may expose the concept/representation assumptions a selected result depends on but must not change them.
 
 ## D6 — Publication -> document assembly adapter — P0/P1
 
@@ -402,23 +461,49 @@ Expected: include Main + meaningful lemma + example + citation; exclude internal
 
 Feed `PublicationPlan` into existing document machinery. `documents/` remains mechanical and never traverses the project graph. Human prose is never silently regenerated.
 
+## D7 — Exploratory concept/representation flow — P0
+
+**Deps:** B0-B4, B7; C3 only for the step that materializes Lean
+
+Add the shared behavior needed for Explore to persist mathematical progress before there is a theorem-shaped target. It should be thin orchestration over the ledger and `workflows/representation.py`, not a new domain engine in `interactive/session.py`.
+
+Acceptance conversation:
+
+```text
+User: Let's study the moduli of genus-g curves.
+-> create Concept ModuliOfGenusGCurves; do not force a Lean object.
+
+User: Let's reason about base change of families.
+-> introduce/select a families-functor representation.
+
+User: A family gives a map to M_g.
+-> introduce/select a coarse-moduli representation.
+
+User: Pull back the universal curve from M_g.
+-> detect that the coarse representation is insufficient.
+-> propose/select a stack/fine representation or an explicit stronger assumption.
+-> do not silently strengthen the coarse representation already used elsewhere.
+```
+
+The same concept and representation graph must survive restart. If a representation is changed for an existing claim, only actual users/dependents are invalidated.
+
 ---
 
 # Wave E — first real validation and UX
 
 ## E0 — Jacobian/Prym paper prototype — P0 showcase
 
-**Deps:** D0, D1, C3
+**Deps:** D0, D1, D7, C3
 
-Choose a bounded theorem/proposition whose vocabulary crosses the Mathlib boundary. Expected branches include local wrappers/interfaces, Jacobians, Pryms, polarizations, moduli abstractions, classical literature facts, and target-paper novel arguments.
+Choose a bounded theorem/proposition whose vocabulary crosses the Mathlib boundary. Expected branches include local wrappers/interfaces, Jacobians, Pryms, polarizations, moduli abstractions, classical literature facts, target-paper novel arguments, and at least one concept for which multiple plausible representations exist.
 
-Initial success is an intelligible dependency/trust graph and partial target closure; full theorem proof is the stronger milestone.
+Initial success is an intelligible dependency/representation/trust graph and partial target closure; full theorem proof is the stronger milestone.
 
 ## E1 — Synthetic referee manuscript — P0/P1
 
 **Deps:** D4
 
-Fixture includes a correct theorem, a correct citation, a citation missing a hypothesis, a circular proof dependency, an unsupported prose claim, and an irrelevant side theorem. Referee must identify each correctly and report coverage.
+Fixture includes a correct theorem, a correct citation, a citation missing a hypothesis, a circular proof dependency, an unsupported prose claim, an irrelevant side theorem, and one passage whose conventional shorthand is harmless under a weak representation followed by a later passage that actually requires stronger structure. Referee must identify each correctly and report coverage.
 
 ## E2 — Real paper audit trial — P1
 
@@ -445,7 +530,7 @@ UI edits/queries the ledger; it does not reimplement planning.
 
 **Deps:** B1, B4
 
-Show target, blockers, project items, exact external trust boundary, citation status, stale exposition, and publication readiness from shared views.
+Show target/research focus, concepts, known representations, unresolved representation choices, blockers, project items, exact external trust boundary, citation status, stale exposition, and publication readiness from shared views.
 
 ---
 
@@ -511,15 +596,15 @@ When explicitly requested, update stale prose and record that it now documents t
 
 ## H0 — Project/shared-library retrieval source — P1
 
-**Deps:** B0/B1 + stable verified project artifacts
+**Deps:** B0/B1 + stable project artifacts
 
-Index verified project/shared Lean declarations and clearly separated approved external assumptions. Keep provenance. The index is derived/rebuildable.
+Index verified project/shared Lean declarations, clearly separated approved external assumptions, and concise concept/representation summaries from the project ledger. Keep provenance and distinguish project semantics from formal evidence. The index is derived/rebuildable.
 
 ## H1 — Re-evaluate whether a separate proof-memory store is needed — P1
 
 **Deps:** H0 + ledger
 
-First measure whether verified Lean + project ledger + retrieval index already solves repeated-lemma reuse. Only build a distinct memory subsystem if a residual category (for example portable strategy/domain lessons) actually needs its own lifetime/API.
+First measure whether verified Lean + project ledger + retrieval index already solves repeated-lemma, concept, and representation reuse. Only build a distinct memory subsystem if a residual category (for example portable strategy/domain lessons) actually needs its own lifetime/API.
 
 ## H2 — Contamination-aware evaluation — P1
 
@@ -540,14 +625,16 @@ Add later `workflows/interactive/history.py` for transcript entry IDs/parents, a
 Explicitly distinguish:
 
 ```text
-mathematical dependency graph  -> workflows/ledger/
-proof-search frontier           -> workflows/strategies/
-conversation tree               -> workflows/interactive/history.py
+mathematical dependency/representation graph -> workflows/ledger/
+proof-search frontier                         -> workflows/strategies/
+conversation tree                             -> workflows/interactive/history.py
 ```
 
 ## I1 — Prompt templates/project commands — P2
 
 Useful conveniences such as `/audit`, `/formalize`, `/publish`, `/restyle`. Expanded text is transcript input, never evidence.
+
+Do not solve concept/representation handling by stuffing domain cases into prompts. Permanent prompt guidance should remain generic: keep concepts distinct from representations, reuse existing representations when adequate, and prefer the weakest representation sufficient for the current work.
 
 ## I2 — Model-menu/catalog polish — P2
 
@@ -579,7 +666,7 @@ Concrete current defects stay in Issues. Periodically audit all subprocess/resul
 
 ## K0 — Acceptance fixtures for every new primitive — P0
 
-Add deterministic fixtures as each primitive lands: ledger/policy, scope protection, acquisition, citation contracts, publication, Critique/Repair, and Referee coverage.
+Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, representation resolution, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, and Referee coverage.
 
 ## K1 — Regression tracking — P1
 
@@ -604,7 +691,7 @@ Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Har
 A practical initial agent fan-out:
 
 ```text
-Agent 1   B0 ledger contracts
+Agent 1   B0 ledger contracts, including concept/representation ontology
 Agent 2   A1 save-gate refactor
 Agent 3   B5 formalization extraction
 Agent 4   B6 admission extraction
@@ -620,9 +707,11 @@ Agent 12  A10 eval identity/journal residual audit
 
 As soon as B0 lands, run B1/B2/B3/B4 concurrently.
 
-As soon as B3/B5/B6 land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows C1.
+Start B7 as soon as B0 is frozen; integrate its graph queries as B2 lands. B5 can be extracted in parallel and then wired to B7 without making representation resolution a mandatory separate model call.
 
-As soon as the core loop works, run D0/D1/D2/D5 concurrently; then D3/D4/D6 according to their local dependencies.
+As soon as B3/B5/B6 land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows B7 + C1.
+
+As soon as the core loop works, run D0/D1/D2/D5/D7 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
 Then run E0/E1/E3/E4 concurrently.
 
@@ -634,9 +723,9 @@ The project graph itself should later expose independent mathematical work. If:
 
 ```text
 Main
-├── Jacobian interface
+├── Jacobian representation/interface
 ├── Prym polarization literature theorem
-├── moduli-map notation
+├── moduli-map representation choice
 └── local incidence lemma
 ```
 
@@ -651,6 +740,7 @@ This is separate from parallel proof strategies for one goal.
 The following former issue concepts are intentionally represented here rather than as separate persistent backlogs:
 
 - Critique, three critique layers, persistent holes, Repair, and crash-safe patch history -> B ledger + D2/D3;
+- concept/representation persistence and synthesis -> B0/B2/B4/B7/C3/D7 rather than a domain-specific memory/package;
 - mid-proof closers -> C6;
 - proof-strategy seam/sketch/best-first/parallel/escalation -> A7/C5/C6/F0-F2;
 - token/cost budgets -> A9;
@@ -663,7 +753,7 @@ The following former issue concepts are intentionally represented here rather th
 - configuration comparison -> A2;
 - save-gate refactor -> A1.
 
-No separate hole ledger, patch database, citation database, stale-prose store, publication graph, or theorem-memory database should be added unless this architecture is explicitly reconsidered.
+No separate hole ledger, concept database, representation database, patch database, citation database, stale-prose store, publication graph, or theorem-memory database should be added unless this architecture is explicitly reconsidered.
 
 ---
 
@@ -671,18 +761,22 @@ No separate hole ledger, patch database, citation database, stale-prose store, p
 
 ## R1 — Persistent mathematical project
 
-- ledger contracts/store/graph/policy/views;
-- shared formalization/admission;
+- ledger contracts/store/graph/policy/views, including concept/representation items and relations;
+- shared representation/formalization/admission primitives;
 - current Prove/interactive behavior remains sound;
-- selected theorem can show dependencies/examples/exposition relationships.
+- a session may persist a mathematical concept before a theorem or Lean encoding exists;
+- one concept may have multiple representations used by different claims without global conflict;
+- selected theorem can show dependencies/examples/exposition/representation relationships.
 
 ## R2 — Literature-aware research
 
 - acquisition classification;
 - Mathlib-first definition policy;
+- representation-plan -> Lean-interface materialization;
 - literature resolver/citation contracts;
 - recursive resolution;
 - synthetic research fixture passes;
+- exploratory concept/representation fixture passes;
 - target-paper self-assumption refused;
 - Publication can make a theorem-centered draft plan.
 
@@ -692,6 +786,7 @@ No separate hole ledger, patch database, citation database, stale-prose store, p
 - Critique obligations;
 - Referee main-path inventory;
 - citation contracts checked;
+- representation shorthand/strengthening is audited where relevant;
 - coverage/trust report;
 - synthetic flawed manuscript passes expected findings;
 - one real paper trial.
@@ -702,11 +797,11 @@ The Prym/Jacobian showcase begins during R2 and matures through R3.
 
 One project can support, over one mathematical graph:
 
-- **Research:** prove a theorem and source missing prerequisites;
-- **Referee:** audit a paper modulo exact external results;
-- **Critique:** record unsupported/suspicious steps;
-- **Repair:** fix one gap without weakening the claim;
-- **Publication:** assemble selected results, meaningful dependencies, examples, current exposition, and citations into a draft;
-- **Explore:** move among these operations interactively.
+- **Research:** prove a theorem and source missing prerequisites while making its representation assumptions explicit;
+- **Referee:** audit a paper modulo exact external results and the mathematical representations actually used;
+- **Critique:** record unsupported/suspicious steps or representation mismatches;
+- **Repair:** fix one gap without weakening the claim or silently changing its interpretation;
+- **Publication:** assemble selected results, meaningful dependencies, examples, current exposition, citations, and relevant representation assumptions into a draft;
+- **Explore:** begin from concepts/questions rather than theorem statements, create and refine representations incrementally, and move among the other operations interactively.
 
 That is the target architecture.
