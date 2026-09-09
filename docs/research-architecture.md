@@ -12,6 +12,8 @@ A research project may begin with a concept or question before it has a theorem-
 
 Exploration also routinely begins by introducing local mathematical objects rather than claims: “Let X be a smooth manifold,” “Fix p ∈ X,” or “Let f : X → Y be smooth.” Hardy must treat these as **scoped mathematical declarations** in a persistent mathematical context. A declaration is neither a concept nor a representation, and ordinary binder/local-hypothesis context is not the same thing as widening Hardy's trusted assumption set.
 
+Hardy must also model four other ordinary research moves explicitly rather than leaving them as ephemeral chat: mathematicians pose **questions/goals/conjectures** before knowing whether they are true; introduce **notation, aliases, and standing conventions** without creating new mathematical objects; replace or identify objects using **justified transport/WLOG/equivalence**; and remember **high-level approaches and dead ends** that are mathematically meaningful even when no proof was completed.
+
 ## 1. Keep the existing top-level package boundaries
 
 The current top-level packages remain the right owners:
@@ -29,13 +31,13 @@ The current top-level packages remain the right owners:
 | `workflows/` | composition of capabilities into mathematical work |
 | `app/` | CLI/TUI/MCP/construction adapters |
 
-Do **not** create top-level `research/`, `referee/`, `publication/`, `memory/`, `concepts/`, `representations/`, `contexts/`, `jacobian/`, or `prym/` packages. The new cross-capability behavior belongs primarily under `workflows/`.
+Do **not** create top-level `research/`, `referee/`, `publication/`, `memory/`, `concepts/`, `representations/`, `contexts/`, `goals/`, `approaches/`, `notation/`, `jacobian/`, or `prym/` packages. The new cross-capability behavior belongs primarily under `workflows/` and the shared ledger.
 
 ## 2. Keep five kinds of authority separate
 
 Hardy should never collapse these into one store.
 
-1. **Mathematical project state** — what concepts, representations, scoped declarations/contexts, results, examples, exposition, dependencies, obligations, and publication links exist. New owner: `workflows/ledger/`.
+1. **Mathematical project state** — what concepts, representations, scoped declarations/contexts, questions/goals/conjectures, approaches, results, examples, exposition, dependencies, obligations, and publication links exist. New owner: `workflows/ledger/`.
 2. **Conversation history** — what the human/model said and what interactive branches were explored. Owner: transcript/agent history.
 3. **Automated run trajectory** — what an unattended run did, including budgets, tool calls, costs, and terminal reason. Owner: run artifacts and `evals/`.
 4. **Formal evidence** — what Lean elaborated, what the kernel accepted, and what axioms/toolchain were reported. Owner: `formal/`.
@@ -43,7 +45,7 @@ Hardy should never collapse these into one store.
 
 The ledger points at formal/literature/CAS/document/run evidence; it does not copy or manufacture it.
 
-A conversation may have a current *lens* on a concept and an active mathematical context, but those are not mathematical truth. The ledger records which representations exist, which declarations are in which contexts, and which mathematical items use them; it does not require one globally active representation for a concept.
+A conversation may have a current *lens* on a concept and an active mathematical context, but those are not mathematical truth. The ledger records which representations exist, which declarations/bindings are in which contexts, which questions are open, which approaches have been tried, and which mathematical items use them; it does not require one globally active representation for a concept.
 
 ## 3. New central primitive: `workflows/ledger/`
 
@@ -60,7 +62,7 @@ workflows/
     views.py
 ```
 
-This one primitive replaces the need for separate dependency graphs, hole ledgers, paper-claim ledgers, citation-use ledgers, publication graphs, theorem/example stores, concept stores, representation stores, context stores, stale-prose stores, and repair histories.
+This one primitive replaces the need for separate dependency graphs, hole ledgers, paper-claim ledgers, citation-use ledgers, publication graphs, theorem/example stores, concept stores, representation stores, context stores, conjecture stores, approach/dead-end stores, stale-prose stores, and repair histories.
 
 ### 3.1 `ProjectItem`
 
@@ -68,6 +70,7 @@ Use a general persistent item, not a theorem-only claim. Representative kinds:
 
 ```text
 concept representation declaration
+question conjecture goal approach research_note
 definition theorem lemma proposition corollary claim
 external_result standard_object example computation
 exposition section chapter document_fragment
@@ -75,9 +78,13 @@ exposition section chapter document_fragment
 
 A `concept` is the durable mathematical thing being discussed, for example “moduli of smooth genus-g curves” or “weak solution of Navier–Stokes.” It need not have a Lean declaration. A `representation` is one particular mathematical/formal realization or interface used for that concept, for example a families functor, a moduli stack, a coarse moduli space, or a hypothetical fine-moduli interface.
 
-A `declaration` is a scoped mathematical binding or local hypothesis introduced in research prose, for example `X` in “let X be a smooth manifold,” `p` in “fix p ∈ X,” or the compactness condition in “suppose X is compact.” A declaration records its human symbol/name, semantic type/property, dependencies on earlier declarations/concepts, and owning mathematical context. One declaration may later materialize to several Lean binders/typeclass hypotheses; the semantic declaration remains the project-level object.
+A `declaration` is a scoped mathematical binding or local hypothesis introduced in research prose, for example `X` in “let X be a smooth manifold,” `p` in “fix p ∈ X,” or the compactness condition in “suppose X is compact.” A declaration records its human symbol/name, semantic type/property, dependencies on earlier declarations/concepts, declaration role, and owning mathematical context. One declaration may later materialize to several Lean binders/typeclass hypotheses; the semantic declaration remains the project-level object.
 
-Common fields include stable ID, kind, human name/title, origin, artifact/source references, current digest/version where applicable, and publication visibility. Representation- and declaration-specific details should stay extensible/model-readable rather than becoming giant hard-coded capability or mathematical-object enums.
+A `question` records something the project is trying to determine without asserting a truth value. A `conjecture` records a proposed mathematical statement that may later be proved, refuted, weakened, strengthened, or superseded; it is never evidence merely because it is in the ledger. A `goal` is an active research target, which may point at a question, conjecture, theorem obligation, construction, computation, or other desired outcome.
+
+An `approach` is a durable high-level research strategy such as “degenerate to the boundary” or “reduce to the symmetric case first.” It is distinct from tactic-level proof-search trajectory. Representative approach states may include `proposed`, `active`, `promising`, `blocked`, `failed`, `succeeded`, and `abandoned`, with attached reasons/evidence references where appropriate. A `research_note` captures durable semantic observations that are worth keeping but do not deserve their own theorem/approach object.
+
+Common fields include stable ID, kind, human name/title, origin, artifact/source references, current digest/version where applicable, and publication visibility. Representation-, declaration-, and research-state details should stay extensible/model-readable rather than becoming giant hard-coded mathematical enums.
 
 Representative origins:
 
@@ -86,7 +93,7 @@ target_paper background_paper mathlib local_project
 generated_local human_authored imported_project
 ```
 
-### 3.2 Mathematical contexts
+### 3.2 Mathematical contexts and scoped bindings
 
 Add a lightweight persistent `MathematicalContext` contract alongside project items. It is not conversation history and it is not Hardy's trust/scope policy.
 
@@ -96,13 +103,27 @@ Representative fields:
 context_id
 parent_context_id | null
 ordered declaration ids
+ordered scoped binding ids
 human label / origin
 status
 ```
 
-Contexts form a persistent parent-linked tree/DAG of mathematical local state. Extending a context with “suppose X is compact” creates a new context state rather than mutating historical mathematics. “Drop compactness” may return to/fork from the parent context; it must not delete history. Claims, examples, and computations record the context in which they were established.
+Contexts form a persistent parent-linked tree/DAG of mathematical local state. Extending a context with “suppose X is compact” creates a new context state rather than mutating historical mathematics. “Drop compactness” may return to/fork from the parent context; it must not delete history. Claims, examples, computations, conjectures, and approaches record the context in which they were made or established.
 
-Do not conflate this with the existing `Scope` contract. `Scope` controls project/trust policy such as `must_prove` versus allowed background assumptions. `MathematicalContext` controls ordinary binders and local hypotheses such as arbitrary `X`, `f`, `p`, compactness, orientation, characteristic, or a chosen basis.
+A lightweight scoped binding records notation/alias/convention without pretending it is a new mathematical object. Representative kinds:
+
+```text
+alias       -- write J for J(C)
+notation    -- introduce local mathematical notation
+convention  -- throughout this context, “curve” means smooth projective curve
+ambient     -- all schemes are over C / characteristic zero / etc.
+```
+
+Bindings point at stable project/declaration IDs where possible. Printed symbols are presentation; stable declaration identity is semantic. Renaming or shadowing `X` must not change which object an older theorem used.
+
+Do not conflate `MathematicalContext` with the existing `Scope` contract. `Scope` controls project/trust policy such as `must_prove` versus allowed background assumptions. `MathematicalContext` controls ordinary binders, local hypotheses, notation, and conventions such as arbitrary `X`, `f`, `p`, compactness, orientation, characteristic, or a chosen basis.
+
+Declaration role should be recorded generically enough to distinguish at least `arbitrary`, `chosen`, `derived`, and `local_hypothesis`. “Let x ∈ X” and “choose x satisfying P” are not the same: a chosen declaration may depend on an existence result/obligation.
 
 ### 3.3 `Obligation`
 
@@ -119,6 +140,8 @@ construct_interface
 resolve_representation
 refine_representation
 resolve_declaration
+justify_transport
+resolve_goal
 critique
 repair
 refresh_stale_artifact
@@ -126,7 +149,7 @@ check_informal_step
 resolve_ambiguity
 ```
 
-`resolve_representation` means the current work cannot proceed honestly until Hardy chooses or constructs an adequate interpretation of a concept. `refine_representation` means an existing representation was sufficient for earlier work but lacks structure required by a new use. `resolve_declaration` means a mathematical binding or local hypothesis is semantically understood but cannot yet be faithfully materialized in the selected representation/context. These are semantic obligations, not generic Lean failures.
+`resolve_representation` means the current work cannot proceed honestly until Hardy chooses or constructs an adequate interpretation of a concept. `refine_representation` means an existing representation was sufficient for earlier work but lacks structure required by a new use. `resolve_declaration` means a mathematical binding or local hypothesis is semantically understood but cannot yet be faithfully materialized in the selected representation/context. `justify_transport` means a WLOG/identification/replacement step has been proposed but the preservation/equivalence argument still needs evidence. `resolve_goal` is generic research work owed by an active goal and may spawn more specific obligations.
 
 Representative states are `open`, `investigating`, `blocked`, `resolved`, `dismissed`, and `abandoned`. `resolved` is legal only when `ledger/policy.py` accepts the attached resolution/evidence.
 
@@ -137,9 +160,16 @@ Use typed edges instead of feature-specific tables:
 ```text
 depends_on supports formalizes documents illustrates
 cites uses contains contradicts refines supersedes interprets typed_by
+poses targets pursues produces blocked_by
+specializes generalizes equivalent_to identified_with transported_from
+counterexample_to justifies
 ```
 
 `RepresentationR interprets ConceptC` means R is one legitimate project representation of C. `uses` records the representation a theorem/example/definition actually relies on. `DeclarationX typed_by ConceptC` records the semantic type/concept of a local mathematical declaration where that relation is useful. Introducing a second representation of the same concept does not invalidate users of the first.
+
+`QuestionQ` may `poses` a research problem and `GoalG targets QuestionQ` or a conjecture. `ApproachA pursues GoalG`, may `produces LemmaL`, and may be `blocked_by ObstructionO`. A counterexample uses `counterexample_to` rather than relying only on generic contradiction.
+
+`equivalent_to`, `identified_with`, and `transported_from` describe mathematically justified changes of object/viewpoint. They do **not** mean definitional equality. A new context created by “replace X by an isomorphic model,” “identify V with k^n,” or a WLOG normalization must preserve the original declaration and attach the relation/justification used to transport relevant goals/results. `specializes`/`generalizes` record logically stronger/weaker claims or contexts without silently rewriting either.
 
 Examples:
 
@@ -153,26 +183,32 @@ StackMg interprets ModuliOfGenusGCurves
 Theorem37 uses StackMg
 X typed_by SmoothManifold
 f depends_on X
+Goal1 targets Conjecture1
+BoundaryDegeneration pursues Goal1
+BoundaryDegeneration blocked_by MonodromyObstruction
+Counterexample7 counterexample_to Conjecture2
+Xnormal equivalent_to X
+NormalizationStep justifies Xnormal
 Section5 contains Proposition5_3
 ```
 
-Relations may carry source/use spans, role, publication visibility, the digest/version against which they were established, or hypothesis mappings.
+Relations may carry source/use spans, role, publication visibility, the digest/version against which they were established, or hypothesis/transport mappings.
 
 ### 3.5 Evidence references
 
 Define lightweight references such as `FormalEvidenceRef`, `LiteratureEvidenceRef`, `FaithfulnessEvidenceRef`, `CasEvidenceRef`, `DocumentEvidenceRef`, and `RunEvidenceRef`.
 
-Only the owning capability produces the underlying evidence. A model proposal is never evidence. A representation or declaration proposal is project state only after normal ledger admission; it is still not formal or literature evidence.
+Only the owning capability produces the underlying evidence. A model proposal is never evidence. A representation/declaration/conjecture/approach proposal is project state only after normal ledger admission; it is still not formal or literature evidence. A failed approach may be recorded from reproducible formal/CAS/literature evidence or as a human/model research conclusion with its provenance clearly labeled; those are not the same trust grade.
 
 ### 3.6 `store.py`
 
-Use one durable project-level ledger, preferably append-only (`ledger.jsonl` or an equivalent path consistent with the project layout). It must preserve stable IDs/history across restarts, fail clearly on corrupt schema, serialize concurrent writers, and leave resolved/dismissed entries as history.
+Use one durable project-level ledger, preferably append-only (`ledger.jsonl` or an equivalent path consistent with the project layout). It must preserve stable IDs/history across restarts, fail clearly on corrupt schema, serialize concurrent writers, and leave resolved/dismissed/failed/abandoned entries as history.
 
 Prefer events such as:
 
 ```text
 item_added item_updated relation_added relation_removed
-context_added context_activated
+context_added context_activated binding_added
 obligation_added resolution_proposed resolution_accepted
 status_changed evidence_attached scope_changed invalidated
 ```
@@ -181,15 +217,15 @@ Do not turn `session.json` into this ledger.
 
 ### 3.7 `graph.py`
 
-Pure deterministic graph operations should include dependency/reverse closures, blockers, paths, SCCs, critical unresolved branches, publication closure, declaration/context closure, and `ready_obligations` for dependency-level parallelism.
+Pure deterministic graph operations should include dependency/reverse closures, blockers, paths, SCCs, critical unresolved branches, publication closure, declaration/context closure, research-goal/approach neighborhoods, transport/equivalence paths, and `ready_obligations` for dependency-level parallelism.
 
 The graph must also support representation-use reverse closure: “which items use this representation, and what depends on those items?” This lets Hardy change or supersede one representation without treating the underlying concept as stale.
 
 Declaration closure answers questions such as “which local binders/hypotheses does this theorem actually need?” so theorem export can carry the minimal semantic context rather than every declaration that happened to be active in the conversation.
 
-Do not assume the graph is acyclic: a circular dependency in a manuscript may itself be a defect. Context parentage, however, must be well-founded enough to reconstruct local state deterministically.
+Research queries should support “what are we trying to prove?”, “which approaches have already failed and why?”, “what did this approach produce?”, and “which conjectures remain open?” without replaying the whole transcript.
 
-This powers “why do we need this?”, “what breaks if this changes?”, “which claims depend on this interpretation?”, “what is in scope here?”, referee triage, repair blast radius, publication closure, and independent-work scheduling.
+Do not assume the mathematical dependency graph is acyclic: a circular dependency in a manuscript may itself be a defect. Context parentage must be well-founded enough to reconstruct local state deterministically. Equivalence/transport relations may form cycles and should not be mistaken for dependency cycles.
 
 ### 3.8 `policy.py`
 
@@ -204,11 +240,15 @@ Correctness rules belong in code, not prompts. At minimum:
 - a concept is not silently identified with one representation;
 - replacing a representation relation for an existing claim is an explicit graph change with normal invalidation consequences;
 - ordinary binder declarations and local hypotheses do **not** widen Hardy's trusted assumption set;
-- a theorem proved under a stronger mathematical context cannot silently be reported in a weaker one.
+- a theorem proved under a stronger mathematical context cannot silently be reported in a weaker one;
+- questions/conjectures/goals are never treated as established facts merely because they are project items;
+- notation/aliases never create duplicate mathematical identity;
+- WLOG/identification/replacement steps never silently mutate a declaration and require an explicit preservation/equivalence justification before transported results are accepted;
+- a failed/blocked approach remains historical project state rather than being deleted or silently retried as if novel.
 
 ### 3.9 `views.py`
 
-Derived, model-free views should include project status, active mathematical context/declarations, selected theorem status, concepts and their known representations, unresolved declaration/representation obligations, trust boundary, formalization/citation coverage, open blockers, stale artifacts, and publication readiness. The same derived state should feed `/status`, compaction/context summaries, Referee reports, Publication, export, and evaluation inspection.
+Derived, model-free views should include project status, active mathematical context/declarations/bindings, active/open questions/conjectures/goals, approaches and their states, concepts and their known representations, unresolved declaration/representation/transport obligations, trust boundary, formalization/citation coverage, open blockers, stale artifacts, and publication readiness. The same derived state should feed `/status`, compaction/context summaries, Referee reports, Publication, export, and evaluation inspection.
 
 ### 3.10 Concept and representation semantics
 
@@ -238,8 +278,8 @@ The analogous rule for ordinary mathematical setup is:
 Concept: SmoothManifold
 Representation: chosen Mathlib/local manifold encoding
 Context C0:
-  Declaration X : SmoothManifold
-  Declaration f : X → ℝ, smooth
+  Declaration X : SmoothManifold        [arbitrary]
+  Declaration f : X → ℝ, smooth         [arbitrary]
 
 Context C1 extends C0:
   local hypothesis: X is compact
@@ -251,27 +291,86 @@ If the user later says “drop compactness,” Hardy returns to/forks from `C0`;
 
 Local declarations and hypotheses are theorem parameters/context, not trusted external results. They must never appear in the trust report merely because Lean renders them as variables or hypotheses.
 
+A choice behaves differently from an arbitrary binder:
+
+```text
+ExistenceLemma proves ∃ x, P x
+Declaration x : X [chosen, satisfying P]
+x depends_on ExistenceLemma
+```
+
+Hardy may later materialize this using a witness, classical choice, or another Lean pattern appropriate to the representation, but the semantic distinction is preserved.
+
+### 3.12 Questions, conjectures, goals, and approaches
+
+Exploratory mathematics should not require Hardy to pretend every interesting sentence is a theorem.
+
+Example:
+
+```text
+Question Q: Is locus Z irreducible?
+Conjecture C: Z is irreducible.
+Goal G: prove or refute C.
+Approach A1: degeneration to boundary.   [blocked]
+  reason: loses polarization data.
+Approach A2: analyze generic fiber first. [promising]
+  produces Lemma L.
+```
+
+The status of `C` is epistemic project state, not truth. If a counterexample is found, record it and mark/supersede the conjecture appropriately; do not rewrite the historical conjecture into the corrected statement. If the statement is repaired to `C'`, use `supersedes`/`generalizes`/`specializes` as appropriate.
+
+Tactic attempts such as “try `simp` then `aesop`” belong to run trajectory. High-level mathematical approaches such as “degenerate to the boundary” belong in the ledger when they are durable enough that a mathematician would want to remember them next week.
+
+### 3.13 Notation, conventions, transport, and WLOG
+
+Notation is context, not identity:
+
+```text
+Declaration Jcurve : Jacobian C
+Binding alias: J ↦ Jcurve
+Binding convention: “curve” means smooth projective geometrically connected curve
+```
+
+A later shadowed `J` in a child context may refer elsewhere without changing older results. Formalization uses stable IDs plus the active binding environment, not bare strings.
+
+Transport is explicit mathematics:
+
+```text
+Context C0: X with goal G(X)
+Context C1: X' equivalent/isomorphic to X
+Relation: X' equivalent_to X
+Justification: equivalence preserves property relevant to G
+Transported goal: G(X') transported_from G(X)
+```
+
+“WLOG choose coordinates so p = [1:0:…:0]” is therefore a context transformation plus a justification, not destructive mutation of `p`. The justification may be a proved theorem, literature result, already-known equivalence, or an open `justify_transport` obligation. Until that obligation is acceptable, conclusions obtained only after the normalization cannot silently discharge the original goal.
+
 ## 4. Shared primitive: `workflows/context.py`
 
 Add one shared primitive for manipulating semantic mathematical contexts.
 
-Question: **what objects and local hypotheses are currently in mathematical scope, and what minimal context does this result actually depend on?**
+Question: **what objects, notation, conventions, and local hypotheses are currently in mathematical scope, and what minimal context does this result actually depend on?**
 
 Core operations:
 
 ```text
 create root context
 extend context with declaration/local hypothesis
+add scoped alias/notation/convention
 fork/return to a parent context without deleting history
 resolve declaration dependencies
 compute minimal declaration closure for an item
+rename/shadow printed symbols without changing stable identity
+create justified transport/identification child context
 render model-facing semantic context
 request Lean materialization of declarations when needed
 ```
 
 `workflows/context.py` owns semantic context operations; it does not own Lean syntax and it does not admit trusted assumptions. `formal/` remains the owner of Lean execution/syntax, and `workflows/admission.py` remains the only trust-widening route.
 
-A model should be allowed to parse several common mathematical surface forms into the same declaration machinery: “let,” “fix,” “choose,” “take,” “suppose,” “assume [local property],” and similar prose. Do not hard-code domain-specific mathematical meanings into Python; use the model to propose the declaration semantics and Hardy to persist/validate the structure.
+A model should be allowed to parse several common mathematical surface forms into the same declaration/context machinery: “let,” “fix,” “choose,” “take,” “suppose,” local “assume,” “write,” “set,” “throughout,” “identify,” “replace by,” and “without loss of generality.” Do not hard-code domain-specific mathematical meanings into Python; use the model to propose the semantics and Hardy to persist/validate the structure and required justifications.
+
+Case splits are sibling/descendant mathematical contexts, not a new architecture. Hypothetical reasoning such as “assume RH for the moment” creates a local hypothesis in a child context when it is being used to derive a conditional result; it becomes a trusted assumption only if Hardy is asked to assert an unconditional result modulo RH.
 
 ## 5. Shared primitive: `workflows/formalization.py`
 
@@ -279,7 +378,8 @@ Extract one reusable operation:
 
 ```text
 informal mathematics + mathematical context
-  -> identify referenced declarations/concepts
+  -> identify referenced declarations/concepts/goals
+  -> resolve active notation/bindings
   -> resolve only representation choices relevant to this statement
   -> compute required semantic declaration closure
   -> formalization proposal(s)
@@ -290,9 +390,9 @@ informal mathematics + mathematical context
 
 One semantic declaration may materialize into multiple Lean binders/typeclass hypotheses. The formalization artifact should retain links back to the declaration IDs it realizes so a human can audit whether `X : smooth manifold` was encoded faithfully without pretending that the one prose declaration corresponds to one Lean binder.
 
-Representation resolution does not have to be a separate model call for every statement; it is a semantic boundary. If a translation is blocked because the current representation lacks required structure, formalization should emit a `resolve_representation` or `refine_representation` obligation. If a local binder cannot yet be faithfully rendered, emit `resolve_declaration` rather than collapsing the problem into generic translation failure.
+Representation resolution does not have to be a separate model call for every statement; it is a semantic boundary. If a translation is blocked because the current representation lacks required structure, formalization should emit a `resolve_representation` or `refine_representation` obligation. If a local binder cannot yet be faithfully rendered, emit `resolve_declaration`. If the issue is a proposed WLOG/identification step whose preservation has not been established, emit `justify_transport` rather than collapsing the problem into generic translation failure.
 
-Reuse existing Lean checks and `workflows/faithfulness.py`. Prove, Research, Referee, Critique probing, citation-contract construction, and “formalize this paragraph” must all use the same semantics.
+Formalizing a conjecture does not make it true. It produces a faithful formal statement that may then become a proof/refutation goal. Reuse existing Lean checks and `workflows/faithfulness.py`. Prove, Research, Referee, Critique probing, citation-contract construction, and “formalize this paragraph” must all use the same semantics.
 
 ## 6. Shared primitive: `workflows/admission.py`
 
@@ -326,7 +426,7 @@ The model may reason about several legitimate interpretations. Hardy provides th
 
 Do not hard-code an enum of mathematical capabilities such as `has_universal_family`, `has_tangent_space`, or `admits_base_change`. The model should infer needed structure from the current mathematical use. Repeatedly useful structures may later be promoted into reusable Lean code, but Hardy's Python architecture remains domain-neutral.
 
-For paper-driven work, the source's downstream uses constrain the representation. For open-ended exploration, the current research question and declarations supply those constraints incrementally. Hardy may revise or add representations as exploration develops; it should not force a complete foundational encoding at the start of a session.
+For paper-driven work, the source's downstream uses constrain the representation. For open-ended exploration, the current research question, goals, and declarations supply those constraints incrementally. Hardy may revise or add representations as exploration develops; it should not force a complete foundational encoding at the start of a session.
 
 ## 8. Shared primitive: `workflows/acquisition/`
 
@@ -345,7 +445,7 @@ Question: **what is the cheapest trustworthy way to acquire this prerequisite?**
 
 ### `classify.py`
 
-Classify as existing Mathlib, existing local, cheap definition, cheap proof, established literature result, representation/declaration unresolved or insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Search local/Mathlib before declaring absence.
+Classify as existing Mathlib, existing local, cheap definition, cheap proof, established literature result, representation/declaration/transport unresolved or insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Search local/Mathlib before declaring absence.
 
 ### `definitions.py`
 
@@ -398,7 +498,7 @@ resolve obligation
   -> resume parent
 ```
 
-Representation/declaration obligations dispatch through the shared representation/context primitives. There is no “failed N times, therefore axiom” fallback. `unresolved` is legitimate.
+Representation/declaration/transport obligations dispatch through the shared representation/context primitives. There is no “failed N times, therefore axiom” fallback. `unresolved` is legitimate.
 
 ## 9. Shared primitive: `workflows/strategies/`
 
@@ -415,7 +515,9 @@ workflows/strategies/
 
 Define a small `ProofTask`/`ProofOutcome`/`Strategy` seam with shared budgets and evidence semantics. Existing iterative proving becomes one strategy. Sketch holes become independent proof tasks. Cheap closers are a strategy/tool invoked against current goals rather than a separate subsystem.
 
-Tactic-level failed attempts remain trajectory/transcript data. Only durable mathematical discoveries (for example “we need lemma L,” “this claim needs a stronger representation of concept C,” or “this result actually needs compactness”) become ledger obligations/relations.
+Tactic-level failed attempts remain trajectory/transcript data. Durable mathematical discoveries become ledger state: for example “we need lemma L,” “this claim needs a stronger representation of concept C,” “this result actually needs compactness,” or “the degeneration approach is blocked because it loses polarization data.”
+
+Do not confuse a `workflows/strategies/` proof-search strategy with a ledger `approach`: the former is machine execution policy for one proof task; the latter is a mathematical research idea worth remembering across sessions.
 
 ## 10. High-level workflows are compositions
 
@@ -431,33 +533,35 @@ workflows/publication.py
 
 ### Explore
 
-Explore is the primary interactive composition and does **not** require a target theorem. It may create concepts, scoped declarations/local hypotheses, conjectures, examples, computations, and representation candidates; refine or add representations as new questions demand more structure; fork or weaken mathematical contexts; and invoke formalization, proof, acquisition, literature, CAS, or publication primitives when useful.
+Explore is the primary interactive composition and does **not** require a target theorem. It may create concepts, scoped declarations/local hypotheses, questions/conjectures/goals, approaches/research notes, examples, computations, and representation candidates; introduce notation/conventions; refine or add representations as new questions demand more structure; fork or weaken mathematical contexts; perform justified WLOG/transport steps; and invoke formalization, proof, acquisition, literature, CAS, or publication primitives when useful.
 
-For example, “let X be a smooth manifold” creates a declaration in the active mathematical context without requiring an immediate Lean encoding or trust approval. “Suppose X is compact” extends that context; “drop compactness” returns to/forks from the weaker context without rewriting history.
+For example, “let X be a smooth manifold” creates a declaration in the active mathematical context without requiring an immediate Lean encoding or trust approval. “Suppose X is compact” extends that context; “drop compactness” returns to/forks from the weaker context without rewriting history. “Write M for the moduli space” creates a binding, not another moduli object.
 
-Likewise, “we're going to study the moduli of genus-g curves” may create a durable concept before any Lean declaration exists. A later question about base change may select a families-functor representation; a question about a moduli map may introduce a coarse-space representation; a request for a universal family may require the stack/fine-moduli viewpoint or an explicit stronger assumption. The interactive shell should not force the user through a foundational questionnaire before doing mathematics.
+Likewise, “we're going to study the moduli of genus-g curves” may create a durable concept and question before any Lean declaration exists. A later question about base change may select a families-functor representation; a question about a moduli map may introduce a coarse-space representation; a request for a universal family may require the stack/fine-moduli viewpoint or an explicit stronger assumption. The interactive shell should not force the user through a foundational questionnaire before doing mathematics.
 
-Conversation text remains conversation history. Durable concepts, representations, declarations/contexts, claims, examples, and obligations become mathematical project state through the ledger.
+If the user says “maybe the small Schottky locus is irreducible,” Hardy may create a conjecture and goal without asserting it. If an attempted degeneration is later shown to lose the needed structure, that high-level approach remains recorded as blocked so a future model does not rediscover it as though it were novel.
+
+Conversation text remains conversation history. Durable concepts, representations, declarations/contexts/bindings, questions/goals/conjectures, approaches, claims, examples, and obligations become mathematical project state through the ledger.
 
 ### Research
 
-Changes the graph by creating/refining concepts, representations, and mathematical contexts, then formalizing/proving/defining/acquiring prerequisites. It composes ledger + context + representation + formalization + acquisition + strategies + admission; it must not duplicate Lean/literature logic.
+Changes the graph by creating/refining concepts, representations, mathematical contexts, research goals, and approaches, then formalizing/proving/defining/acquiring prerequisites. It composes ledger + context + representation + formalization + acquisition + strategies + admission; it must not duplicate Lean/literature logic.
 
 ### Critique
 
-Runs three layers: kernel/formal defects, formalization probing, and adversarial mathematical/citation review. Findings become shared ledger obligations. Critique never repairs automatically. A suspected representation mismatch may become a `resolve_representation`/`refine_representation` obligation; a hidden missing hypothesis may become a context/declaration defect rather than an undifferentiated mathematical gap.
+Runs three layers: kernel/formal defects, formalization probing, and adversarial mathematical/citation review. Findings become shared ledger obligations. Critique never repairs automatically. A suspected representation mismatch may become a `resolve_representation`/`refine_representation` obligation; a hidden missing hypothesis may become a context/declaration defect; an unjustified “WLOG” may become `justify_transport`; and a claimed theorem contradicted by an example should acquire an explicit counterexample relation.
 
 ### Repair
 
-Consumes one defect obligation, patches through normal guarded mechanisms, computes reverse dependency closure, rechecks affected artifacts, and resolves/reopens based on evidence. Changing hypotheses/conclusion creates a revised/superseding claim rather than silently “repairing” it. Changing which representation or mathematical context a claim uses is likewise an explicit semantic change whose blast radius is computed from the graph.
+Consumes one defect obligation, patches through normal guarded mechanisms, computes reverse dependency closure, rechecks affected artifacts, and resolves/reopens based on evidence. Changing hypotheses/conclusion creates a revised/superseding claim rather than silently “repairing” it. Changing which representation or mathematical context a claim uses is likewise an explicit semantic change whose blast radius is computed from the graph. A disproved conjecture is not “repaired” in place; a corrected conjecture supersedes it.
 
 ### Referee
 
-Audits a manuscript modulo exact external citation contracts. It inventories claims and their local mathematical contexts, selects critical paths/audit depth, formalizes/probes claims, checks citation uses and hypotheses, and reports exact coverage/trust boundaries. It never reduces a partial audit to “the paper is correct.” Conventional mathematical shorthand may be represented at the weakest level actually used, but any strengthening required by a later step is recorded explicitly. Hidden changes of local hypotheses are likewise auditable context changes.
+Audits a manuscript modulo exact external citation contracts. It inventories claims and their local mathematical contexts, selects critical paths/audit depth, formalizes/probes claims, checks citation uses/hypotheses, and reports exact coverage/trust boundaries. It never reduces a partial audit to “the paper is correct.” Conventional mathematical shorthand may be represented at the weakest level actually used, but any strengthening required by a later step is recorded explicitly. Hidden changes of local hypotheses, notation collisions that change referents, or unjustified transport/WLOG steps are likewise auditable semantic changes.
 
 ### Publication
 
-Given selected theorem/result roots, compute the **human publication closure**: meaningful dependencies, required semantic declarations/hypotheses, illustrative examples, current exposition, and citations. This is not the full Lean closure. Give items visibility such as `publish`, `supporting`, `internal` so formal helper lemmas can remain out of the paper.
+Given selected theorem/result roots, compute the **human publication closure**: meaningful dependencies, required semantic declarations/hypotheses/conventions, illustrative examples, current exposition, and citations. This is not the full Lean closure. Give items visibility such as `publish`, `supporting`, `internal` so formal helper lemmas and failed approaches can remain out of the paper unless explicitly requested.
 
 A relation like `ExampleE illustrates TheoremT` lets Publication automatically include/recompute examples. Prose records the digest/version of the mathematics it documents; staleness is derived when that digest changes. Hardy flags stale prose but does not rewrite human prose without an explicit request.
 
@@ -474,7 +578,12 @@ A later `literature/diff.py` may support version-diff auditing, but only after t
 The shared graph supports:
 
 ```text
-Concept C <--- interprets --- Representation R
+Question Q <--- targeted by --- Goal G <--- pursued by --- Approach A
+     |
+     v
+Conjecture C
+
+Concept K <--- interprets --- Representation R
     ^ typed_by                  ^ uses
     |                           |
 Declaration X                  Definition D
@@ -489,7 +598,7 @@ Declaration f                  Lemma L
 Selecting `Theorem T` can therefore:
 
 1. compute meaningful mathematical dependencies;
-2. compute the minimal semantic declaration/local-hypothesis closure;
+2. compute the minimal semantic declaration/local-hypothesis/convention closure;
 3. retain the exact concept/representation choices the result depends on;
 4. include linked examples/computations;
 5. check linked exposition for staleness;
@@ -497,7 +606,7 @@ Selecting `Theorem T` can therefore:
 7. order a `PublicationPlan`;
 8. hand the plan to `documents/` for a paper/chapter/book draft.
 
-A book is not a separate architecture: it is a larger set of section/chapter roots over the same graph.
+A book is not a separate architecture: it is a larger set of section/chapter roots over the same graph. A research log is likewise a view over goals/approaches/notes, not a separate store.
 
 ## 13. Interactive session should get thinner
 
@@ -505,17 +614,17 @@ Do not add new research behavior directly to the already-large interactive sessi
 
 - `interactive/admission.py` becomes the UI adapter over generic admission policy;
 - `interactive/formal.py` adapts shared context/representation/formalization/proof primitives;
-- `interactive/summary.py` consumes ledger views;
+- `interactive/summary.py` consumes ledger views including active goals/approaches;
 - `interactive/documents.py` links document fragments to project items;
 - later `interactive/history.py` owns conversation branching.
 
-Conversation branching, mathematical context branching, mathematical dependency/representation graphs, and proof-search frontiers are distinct structures with distinct owners. A conversation fork does not automatically fork mathematical assumptions, and a mathematical child context does not require a new provider conversation.
+Conversation branching, mathematical context branching, mathematical dependency/representation/research-state graphs, and proof-search frontiers are distinct structures with distinct owners. A conversation fork does not automatically fork mathematical assumptions, and a mathematical child context does not require a new provider conversation.
 
 ## 14. Do not build a standalone memory system yet
 
-The first durable mathematical memory should be verified Lean declarations + the project ledger (including concepts, representations, and scoped mathematical declarations/contexts) + immutable literature records, indexed by retrieval. The index is derived/rebuildable.
+The first durable mathematical memory should be verified Lean declarations + the project ledger (including concepts, representations, scoped mathematical declarations/contexts, questions/conjectures/goals, approaches, and durable research notes) + immutable literature records, indexed by retrieval. The index is derived/rebuildable.
 
-Do not add `hardy/memory/` until real use shows a distinct class of reusable knowledge that does not belong in verified code or the project graph. Portable tactic/domain lessons may eventually qualify; copied theorem stores do not.
+Do not add `hardy/memory/` until real use shows a distinct class of reusable knowledge that does not belong in verified code or the project graph. Portable tactic/domain lessons may eventually qualify; copied theorem stores and failed-approach stores do not.
 
 ## 15. Invalidation and staleness
 
@@ -526,23 +635,27 @@ Derive staleness from identities where possible instead of maintaining mutable `
 - definition/declaration changes -> reverse dependency closure identifies claims/examples/prose requiring recheck;
 - representation R is revised/superseded -> items that `use` R and their reverse dependency closure require recheck as appropriate;
 - adding another representation of the same concept does **not** invalidate users of existing representations;
-- extending a mathematical context creates a child context and does **not** invalidate results in the parent;
+- extending a mathematical context or adding a child-context notation binding does **not** invalidate results in the parent;
 - moving one claim from context C0 to stronger/weaker context C1 is an explicit semantic change and requires recheck;
 - moving one claim from representation R1 to R2 is an explicit semantic change to that claim;
+- changing a notation binding affects only artifacts whose interpretation/rendering depended on that binding; stable semantic IDs prevent accidental global renaming effects;
+- revising a conjecture creates/supersedes a project item rather than mutating historical meaning;
+- discovering a failed approach changes research status but does not invalidate unrelated mathematics;
+- a transport/equivalence justification becoming invalid reopens dependent transported claims/goals;
 - resolved obligation pointing at a removed formal declaration becomes invalid.
 
-The concept itself is not stale merely because one representation changes, and a parent context is not stale merely because a child adds hypotheses.
+The concept itself is not stale merely because one representation changes, and a parent context is not stale merely because a child adds hypotheses or notation.
 
 ## 16. Four distinct structures
 
 Keep these separate:
 
-1. **Mathematical dependency/representation graph** — `workflows/ledger/` relations among concepts, representations, declarations, claims, examples, etc.
-2. **Mathematical context tree/DAG** — persistent parent-linked local binder/hypothesis states managed through `workflows/context.py` and stored in the ledger.
+1. **Mathematical dependency/representation/research graph** — `workflows/ledger/` relations among concepts, representations, declarations, questions/goals/conjectures, approaches, claims, examples, etc.
+2. **Mathematical context tree/DAG** — persistent parent-linked local binder/hypothesis/notation states managed through `workflows/context.py` and stored in the ledger.
 3. **Proof-search frontier** — strategy state under `workflows/strategies/`.
 4. **Conversation tree** — user/model history under later `interactive/history.py`.
 
-Dependency-level parallelism comes from independent ready obligations in the first structure. Proof-search parallelism comes from the third. Conversation branches are the fourth. Mathematical context branches are semantic scoping, not conversation history.
+Dependency-level parallelism comes from independent ready obligations/goals in the first structure. Proof-search parallelism comes from the third. Conversation branches are the fourth. Mathematical context branches are semantic scoping, not conversation history.
 
 ## 17. Target source tree
 
@@ -596,6 +709,8 @@ src/hardy/
     └── isolation.py                   + later
 ```
 
+No separate `goals.py`, `approaches.py`, or `notation.py` module is required initially. Goal/approach state is ordinary ledger state governed by `ledger/policy.py`; notation/transport is mathematical context state governed by `workflows/context.py`. Add a new module only if implementation exposes a real independent seam.
+
 ## 18. Architectural invariants
 
 Enforce these with tests:
@@ -615,17 +730,21 @@ Enforce these with tests:
 13. a mathematical concept is not silently equated with one formal representation;
 14. representation/context changes are explicit graph changes and invalidate only their actual users/dependents;
 15. parent mathematical contexts are immutable historical state; stronger/weaker exploration uses child/ancestor/forked contexts rather than destructive mutation;
-16. staleness is identity-derived where possible;
-17. workflow-specific state may reference but not duplicate the project ledger;
-18. user/model-written Lean still passes the existing guarded save/audit path;
-19. CAS results never change a formal grade.
+16. questions/conjectures/goals are explicit epistemic/research state and are never promoted to facts without evidence;
+17. notation/aliases/conventions affect interpretation/presentation but do not create duplicate mathematical identities;
+18. WLOG/transport/identification steps preserve original declarations and require explicit justifications before transported conclusions close original goals;
+19. high-level failed/blocked approaches remain durable project state, while tactic noise remains trajectory data;
+20. staleness is identity-derived where possible;
+21. workflow-specific state may reference but not duplicate the project ledger;
+22. user/model-written Lean still passes the existing guarded save/audit path;
+23. CAS results never change a formal grade.
 
 ## 19. First seams to freeze
 
 Before the high-level workflows proliferate, stabilize:
 
-1. `workflows/ledger/` contracts/store/graph/policy, including concept/representation/declaration/context semantics;
-2. `workflows/context.py`;
+1. `workflows/ledger/` contracts/store/graph/policy, including concept/representation/declaration/context/question/conjecture/goal/approach semantics;
+2. `workflows/context.py`, including notation/conventions and justified transport;
 3. `workflows/representation.py`;
 4. `workflows/formalization.py`;
 5. generic `workflows/admission.py`;
