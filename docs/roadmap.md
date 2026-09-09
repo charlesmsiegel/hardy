@@ -59,6 +59,7 @@ The shortest route to a meaningful prototype is:
 ```text
 shared mathematical ledger
         │
+        ├── scoped declarations/context
         ├── concept/representation resolution
         ├── formalization primitive
         ├── generic admission policy
@@ -79,12 +80,13 @@ shared mathematical ledger
 
 The first acceptance milestone is deliberately synthetic:
 
-1. persistent project graph works, including a concept with multiple representations;
-2. one target theorem recursively resolves a Mathlib dependency, a local definition, a local proof, and a literature result;
-3. exact trust boundary is reported;
-4. target-paper self-assumption is refused;
-5. selecting the theorem produces a publication plan containing meaningful dependencies and an illustrative example;
-6. an exploratory session can introduce a concept without forcing a Lean representation, then add/refine representations when later questions require them.
+1. persistent project graph works, including a concept with multiple representations and a persistent local mathematical context;
+2. an exploratory session can handle `Let X be a smooth manifold` as a semantic declaration without forcing the user to spell out Lean binders;
+3. one target theorem recursively resolves a Mathlib dependency, a local definition, a local proof, and a literature result;
+4. exact trust boundary is reported, excluding ordinary theorem binders/local hypotheses;
+5. target-paper self-assumption is refused;
+6. selecting the theorem produces a publication plan containing meaningful dependencies, required local hypotheses, and an illustrative example;
+7. exploration can add/refine representations when later questions require them and can strengthen/weaken local mathematical context without rewriting history.
 
 Only then make the Prym/Jacobian paper the primary stress test.
 
@@ -203,32 +205,48 @@ At minimum represent:
 
 ```text
 ProjectItem / ProjectItemKind / ProjectOrigin
-  including concept and representation kinds
+  including concept, representation, and declaration kinds
+MathematicalContext
+  parent-linked persistent local binder/hypothesis state
 Obligation / ObligationKind / ObligationStatus
-  including resolve_representation and refine_representation
+  including resolve_representation, refine_representation, resolve_declaration
 Relation / RelationKind
-  including interprets plus existing uses/refines/supersedes
+  including interprets, typed_by, plus existing uses/refines/supersedes
 Scope
+  trust/project scope; distinct from MathematicalContext
 Resolution
 EvidenceRef / ArtifactRef
 CitationContract
 publication visibility/role
 ```
 
-Do not add a domain-specific capability enum for mathematical notions such as universal families, tangent spaces, weak solutions, etc. The persistent schema needs to know that a concept and a representation are different project items, not enumerate every possible mathematical structure.
+Do not add a domain-specific capability enum for mathematical notions such as universal families, tangent spaces, weak solutions, etc. Do not add a domain-specific declaration enum for every kind of mathematical object. The persistent schema needs to know that concepts, representations, scoped declarations, and contexts are different things; the model supplies domain semantics.
 
-Acceptance fixtures must cover theorem -> lemma -> definition, example illustrates theorem, prose documents theorem at a digest, external-result use, repair obligation, target scope (`must_prove` vs allowed background), and:
+The contract must distinguish:
 
 ```text
-Concept: ModuliOfGenusGCurves
-Representation: CurveFamilies interprets Concept
-Representation: CoarseMg interprets Concept
-Representation: StackMg interprets Concept
-ClaimA uses CoarseMg
-ClaimB uses StackMg
+binder/context declaration      e.g. Let X be a smooth manifold
+local hypothesis                 e.g. Suppose X is compact
+trusted external assumption      e.g. use cited theorem T without proving it
+opaque/interface trust           e.g. locally postulated moduli interface
 ```
 
-The fixture must prove that one concept can have several simultaneous legitimate representations and that no globally active representation is required.
+The first two are theorem context and do **not** widen Hardy's trust boundary. The latter two use admission/trust accounting.
+
+Acceptance fixtures must cover theorem -> lemma -> definition, example illustrates theorem, prose documents theorem at a digest, external-result use, repair obligation, target scope (`must_prove` vs allowed background), concept/representation multiplicity, and:
+
+```text
+Concept: SmoothManifold
+Context C0:
+  Declaration X : SmoothManifold
+  Declaration f : X → ℝ, smooth
+Context C1 extends C0:
+  Local hypothesis: X compact
+ClaimA established in C0
+ClaimB established in C1
+```
+
+The fixture must prove that extending C0 does not mutate/invalidate C0 and that the compactness hypothesis is not reported as an external trusted assumption.
 
 ## B1 — Ledger event store — P0
 
@@ -236,44 +254,62 @@ The fixture must prove that one concept can have several simultaneous legitimate
 
 Implement durable project-level persistence, preferably append-only. Requirements: stable IDs, restart, retained history, crash-safe append, schema version/refusal, serialized writers, and no conflation with `session.json`.
 
+Persist mathematical contexts and context-activation events alongside ordinary ledger items/relations. Parent contexts are immutable history; “drop an assumption” is represented by returning to/forking from an earlier context, not deleting an event.
+
 ## B2 — Ledger graph algorithms — P0
 
 **Deps:** B0
 
-Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, helpers used by publication closure, and representation-use reverse closure (“which items use representation R, and what depends on those items?”). Cycles are valid input and may indicate a paper defect.
+Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, helpers used by publication closure, representation-use reverse closure, and declaration/context closure.
 
-Adding another representation for a concept must not invalidate existing users. Replacing the representation used by a claim is an explicit relation change whose downstream blast radius is computable.
+Required context queries include:
+
+```text
+active declarations for context C
+minimal declaration/hypothesis closure needed by item T
+which items depend on declaration D
+which items were established under local hypothesis H
+```
+
+Adding another representation for a concept must not invalidate existing users. Extending a context must not invalidate results in its parent. Replacing the representation or context used by a claim is an explicit semantic change whose downstream blast radius is computable.
 
 ## B3 — Ledger policy — P0
 
 **Deps:** B0
 
-Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit scope changes, the rule that model proposals are not evidence, and the rule that a mathematical concept is not silently identified with one representation.
+Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit trust-scope changes, the rule that model proposals are not evidence, the rule that a mathematical concept is not silently identified with one representation, and the rule that local binders/hypotheses are not external trusted assumptions.
+
+A result established in a stronger mathematical context cannot silently be relabelled as a result in a weaker one. Generalization requires a new proof/recheck or evidence that the stronger declaration was unused.
 
 ## B4 — Ledger derived views — P0
 
 **Deps:** B0; finalize against B2
 
-Pure views for status, concepts and their known representations, unresolved/ambiguous representation obligations, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
+Pure views for status, active mathematical context/declarations, concepts and their known representations, unresolved declaration/representation obligations, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
+
+Trust views must visibly separate theorem parameters/local hypotheses from admitted external assumptions.
 
 ## B5 — Shared statement formalization — P0
 
-**Deps:** none conceptually; integrate with B0 after contract freeze; consume B7 when available
+**Deps:** none conceptually; integrate with B0 after contract freeze; consume B7/B8 when available
 
 Extract one reusable formalization path over existing Lean checking and independent faithfulness review. It must work without a `MathematicsSession` and be reused by Prove, Research, Referee, Critique probing, and citation-contract construction.
 
 The semantic pipeline is:
 
 ```text
-informal statement
--> identify referenced concepts
+informal statement + mathematical context
+-> identify referenced declarations/concepts
 -> resolve only representation choices needed here
+-> compute minimal declaration closure
 -> formalization proposal
 -> Lean elaboration
 -> faithfulness review
 ```
 
-If the current representation is insufficient, emit a `resolve_representation` or `refine_representation` obligation rather than treating the situation as generic formalization failure.
+One semantic declaration may expand to multiple Lean binders/typeclass hypotheses. Preserve links from generated Lean context back to semantic declaration IDs.
+
+If the current representation is insufficient, emit `resolve_representation`/`refine_representation`. If a binder/local hypothesis cannot yet be faithfully rendered, emit `resolve_declaration` rather than treating the situation as generic formalization failure.
 
 ## B6 — Generic assumption admission policy — P0
 
@@ -282,6 +318,8 @@ If the current representation is insufficient, emit a `resolve_representation` o
 Extract policy from interactive admission. Generic policy owns search-first evidence, elaboration/shape checks, cheap proof/refutation/vacuity probes, source/faithfulness checks, and scope legality. Interactive code remains the human-confirmation/transcript adapter.
 
 There must be one trust-widening route.
+
+Explicitly exclude ordinary mathematical context construction from this route. Phrases such as “suppose X is compact” may create local theorem hypotheses without human trust approval; the distinction is semantic, not keyword-based.
 
 ## B7 — Shared concept/representation resolution — P0
 
@@ -306,6 +344,39 @@ Hardy supplies tools, persistent state, and verification boundaries; the model s
 
 The primitive must work with no target theorem so Explore can use it during open-ended research. It must also work with a concrete downstream statement so paper formalization/acquisition can use the same mechanism.
 
+## B8 — Shared mathematical context/declaration management — P0
+
+**Deps:** B0; persist through B1; integrate closure queries after B2
+
+Add `workflows/context.py` as the shared domain-neutral primitive for semantic local mathematical scope.
+
+Required operations:
+
+```text
+create root mathematical context
+extend with declaration
+extend with local hypothesis
+fork/return to ancestor context without deleting history
+resolve declaration dependencies
+compute minimal declaration closure for an item
+render semantic context for model use
+request Lean materialization when needed
+```
+
+The model parses/normalizes ordinary mathematical setup into these operations. Hardy stores stable declaration/context identities and enforces scope/trust invariants.
+
+Acceptance surface forms should include at least:
+
+```text
+Let X be a smooth manifold.
+Fix p ∈ X.
+Let f : X → Y be smooth.
+Suppose X is compact.
+Choose a basis e₁,...,eₙ of V.
+```
+
+Do not require one prose declaration to correspond to one Lean binder. The materialized Lean context may expand a semantic declaration as needed, but the mapping must be auditable.
+
 ---
 
 # Wave C — prerequisite acquisition and basic proof strategies
@@ -314,7 +385,7 @@ The primitive must work with no target theorem so Explore can use it during open
 
 **Deps:** B0, B2
 
-Classify a prerequisite as Mathlib, existing local, cheap local definition, cheap local proof, established literature result, representation unresolved/insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Record local/Mathlib searches before claiming absence.
+Classify a prerequisite as Mathlib, existing local, cheap local definition, cheap local proof, established literature result, representation/declaration unresolved or insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Record local/Mathlib searches before claiming absence.
 
 ## C1 — Definition acquisition — P0
 
@@ -348,7 +419,7 @@ Only required downstream fields/properties are introduced.
 
 ## C4 — Recursive obligation resolver — P0
 
-**Deps:** C0; register C1/C2/C3/B7-backed representation resolution as they land
+**Deps:** C0; register C1/C2/C3/B7/B8-backed resolution as they land
 
 Implement classification -> resolver dispatch -> child obligations -> verify -> attach evidence -> resume parent. Build/test first with fake resolvers if needed. Unresolved is legitimate; there is no blind axiom fallback.
 
@@ -386,20 +457,23 @@ Hardy must choose four distinct resolution kinds, widen trust only for the exter
 
 ## D1 — Research workflow — P0
 
-**Deps:** B0-B7, C0-C5
+**Deps:** B0-B8, C0-C5
 
 Thin orchestration:
 
 ```text
-target/scope -> identify concepts/representations -> formalize -> register obligations
--> resolve prerequisites -> prove target -> update ledger -> report
+target/context/scope
+-> identify declarations/concepts/representations
+-> formalize -> register obligations
+-> resolve prerequisites -> prove target
+-> update ledger -> report
 ```
 
-No duplicated representation/Lean/literature logic.
+No duplicated context/representation/Lean/literature logic.
 
 ## D2 — Critique workflow — P0/P1
 
-**Deps:** B0-B5; B7 for representation-specific findings
+**Deps:** B0-B5; B7-B8 for representation/context-specific findings
 
 Implement three layers:
 
@@ -407,7 +481,7 @@ Implement three layers:
 2. formalization probing;
 3. adversarial mathematical/citation review.
 
-Findings become shared ledger obligations. Critique never repairs automatically. A “no gaps detected” result names which layers actually ran. A representation mismatch should become a representation obligation when that is the real defect.
+Findings become shared ledger obligations. Critique never repairs automatically. A “no gaps detected” result names which layers actually ran. A representation mismatch should become a representation obligation when that is the real defect; a hidden or stale local hypothesis should become a context/declaration finding.
 
 ## D3 — Repair workflow — P1
 
@@ -415,17 +489,18 @@ Findings become shared ledger obligations. Critique never repairs automatically.
 
 Repair one obligation while preserving the claim. Apply through guarded save, compute reverse dependency closure, recheck affected artifacts, retain stable obligation identity/history, and reopen rather than silently replace a gap after overlapping changes.
 
-Changing hypotheses/conclusion creates a revised claim, not a repair. Changing which representation a claim uses is also an explicit semantic change with a computed blast radius.
+Changing hypotheses/conclusion creates a revised claim, not a repair. Changing which representation or mathematical context a claim uses is also an explicit semantic change with a computed blast radius.
 
 ## D4 — Referee workflow — P0
 
-**Deps:** A8, B0-B7, C2, D2; C5 for formal checks
+**Deps:** A8, B0-B8, C2, D2; C5 for formal checks
 
 Minimum paper-audit flow:
 
 ```text
 manuscript inventory
 -> scope/main results
+-> local declaration/hypothesis contexts
 -> claim items
 -> concept/representation choices where relevant
 -> citation uses/contracts
@@ -434,18 +509,20 @@ manuscript inventory
 -> coverage/trust report
 ```
 
-Primary contract: “verified/probed modulo these exact external contracts, with these unresolved claims and this coverage,” never a bare “paper correct.” Conventional shorthand may use the weakest representation actually needed; later steps that require stronger structure must make that strengthening explicit.
+Primary contract: “verified/probed modulo these exact external contracts, with these unresolved claims and this coverage,” never a bare “paper correct.” Conventional shorthand may use the weakest representation actually needed; later steps that require stronger structure must make that strengthening explicit. Silent hypothesis drift between statements/proofs must also be detectable.
 
 ## D5 — Publication planner — P0
 
-**Deps:** B0, B2, B4
+**Deps:** B0, B2, B4, B8
 
-Implement `PublicationRequest`/`PublicationPlan`, publication closure, visibility policy, examples, citations, stale exposition, and missing exposition.
+Implement `PublicationRequest`/`PublicationPlan`, publication closure, minimal declaration/hypothesis closure, visibility policy, examples, citations, stale exposition, and missing exposition.
 
 Fixture:
 
 ```text
-Main theorem
+Context C0: X arbitrary
+Context C1 extends C0: X compact
+Main theorem established in C1
 ├── publishable lemma
 ├── internal formal helper
 └── external theorem
@@ -453,7 +530,7 @@ Example illustrates Main
 Prose documents Main at digest X
 ```
 
-Expected: include Main + meaningful lemma + example + citation; exclude internal helper; detect stale prose when Main changes. Publication may expose the concept/representation assumptions a selected result depends on but must not change them.
+Expected: include Main + its required local hypothesis + meaningful lemma + example + citation; exclude internal helper; detect stale prose when Main changes. Publication may expose concept/representation assumptions but must not change context or mathematics.
 
 ## D6 — Publication -> document assembly adapter — P0/P1
 
@@ -487,23 +564,56 @@ User: Pull back the universal curve from M_g.
 
 The same concept and representation graph must survive restart. If a representation is changed for an existing claim, only actual users/dependents are invalidated.
 
+## D8 — Exploratory declaration/context flow — P0
+
+**Deps:** B0-B4, B8; B7/B5 when representation/formalization is requested
+
+Add the shared behavior needed for mathematicians to establish local setup conversationally before stating a theorem.
+
+Acceptance conversation:
+
+```text
+User: Let X be a smooth manifold.
+-> create semantic Declaration X in active Context C0.
+-> do not ask the user to spell out Lean topology/chart/typeclass machinery.
+-> do not widen trust.
+
+User: Let f : X → ℝ be smooth and fix p ∈ X.
+-> create declarations f and p with dependencies on X.
+
+User: Suppose X is compact.
+-> create Context C1 extending C0 with a local compactness hypothesis.
+-> do not report compactness as an external trusted assumption.
+
+User: Prove/formalize statement S.
+-> materialize the minimal required declaration closure.
+-> permit one semantic declaration to expand into multiple Lean binders.
+-> retain links back to declaration IDs for faithfulness/audit.
+
+User: Drop compactness; now consider T.
+-> return to/fork from C0 rather than deleting C1.
+-> S remains recorded in C1; T is recorded in the weaker context.
+```
+
+Add a theorem-export assertion that selecting S emits only the declarations/local hypotheses S actually needs, not every declaration that happened to be active in the session.
+
 ---
 
 # Wave E — first real validation and UX
 
 ## E0 — Jacobian/Prym paper prototype — P0 showcase
 
-**Deps:** D0, D1, D7, C3
+**Deps:** D0, D1, D7, D8, C3
 
-Choose a bounded theorem/proposition whose vocabulary crosses the Mathlib boundary. Expected branches include local wrappers/interfaces, Jacobians, Pryms, polarizations, moduli abstractions, classical literature facts, target-paper novel arguments, and at least one concept for which multiple plausible representations exist.
+Choose a bounded theorem/proposition whose vocabulary crosses the Mathlib boundary. Expected branches include local wrappers/interfaces, Jacobians, Pryms, polarizations, moduli abstractions, classical literature facts, target-paper novel arguments, ordinary local mathematical declarations, and at least one concept for which multiple plausible representations exist.
 
-Initial success is an intelligible dependency/representation/trust graph and partial target closure; full theorem proof is the stronger milestone.
+Initial success is an intelligible dependency/context/representation/trust graph and partial target closure; full theorem proof is the stronger milestone.
 
 ## E1 — Synthetic referee manuscript — P0/P1
 
 **Deps:** D4
 
-Fixture includes a correct theorem, a correct citation, a citation missing a hypothesis, a circular proof dependency, an unsupported prose claim, an irrelevant side theorem, and one passage whose conventional shorthand is harmless under a weak representation followed by a later passage that actually requires stronger structure. Referee must identify each correctly and report coverage.
+Fixture includes a correct theorem, a correct citation, a citation missing a hypothesis, a circular proof dependency, an unsupported prose claim, an irrelevant side theorem, a silent local-hypothesis drift, and one passage whose conventional shorthand is harmless under a weak representation followed by a later passage that actually requires stronger structure. Referee must identify each correctly and report coverage.
 
 ## E2 — Real paper audit trial — P1
 
@@ -528,9 +638,11 @@ UI edits/queries the ledger; it does not reimplement planning.
 
 ## E4 — Ledger-aware `/status --full` / context summary — P1
 
-**Deps:** B1, B4
+**Deps:** B1, B4, B8
 
-Show target/research focus, concepts, known representations, unresolved representation choices, blockers, project items, exact external trust boundary, citation status, stale exposition, and publication readiness from shared views.
+Show target/research focus, active mathematical context/declarations, concepts, known representations, unresolved declaration/representation choices, blockers, project items, exact external trust boundary, citation status, stale exposition, and publication readiness from shared views.
+
+The UI must distinguish “local hypotheses currently in scope” from “trusted unproved assumptions.”
 
 ---
 
@@ -598,13 +710,15 @@ When explicitly requested, update stale prose and record that it now documents t
 
 **Deps:** B0/B1 + stable project artifacts
 
-Index verified project/shared Lean declarations, clearly separated approved external assumptions, and concise concept/representation summaries from the project ledger. Keep provenance and distinguish project semantics from formal evidence. The index is derived/rebuildable.
+Index verified project/shared Lean declarations, clearly separated approved external assumptions, and concise concept/representation/context summaries from the project ledger. Keep provenance and distinguish project semantics from formal evidence. The index is derived/rebuildable.
+
+Do not treat transient local symbols as globally reusable concepts merely because they are indexed; declaration scope/context identity must be preserved.
 
 ## H1 — Re-evaluate whether a separate proof-memory store is needed — P1
 
 **Deps:** H0 + ledger
 
-First measure whether verified Lean + project ledger + retrieval index already solves repeated-lemma, concept, and representation reuse. Only build a distinct memory subsystem if a residual category (for example portable strategy/domain lessons) actually needs its own lifetime/API.
+First measure whether verified Lean + project ledger + retrieval index already solves repeated-lemma, concept, representation, and context reuse. Only build a distinct memory subsystem if a residual category (for example portable strategy/domain lessons) actually needs its own lifetime/API.
 
 ## H2 — Contamination-aware evaluation — P1
 
@@ -626,15 +740,18 @@ Explicitly distinguish:
 
 ```text
 mathematical dependency/representation graph -> workflows/ledger/
+mathematical context tree/DAG                -> workflows/context.py + ledger
 proof-search frontier                         -> workflows/strategies/
 conversation tree                             -> workflows/interactive/history.py
 ```
+
+A conversation fork does not automatically fork the mathematical context; a mathematical context fork does not require a new provider conversation.
 
 ## I1 — Prompt templates/project commands — P2
 
 Useful conveniences such as `/audit`, `/formalize`, `/publish`, `/restyle`. Expanded text is transcript input, never evidence.
 
-Do not solve concept/representation handling by stuffing domain cases into prompts. Permanent prompt guidance should remain generic: keep concepts distinct from representations, reuse existing representations when adequate, and prefer the weakest representation sufficient for the current work.
+Do not solve concept/representation/declaration handling by stuffing domain cases into prompts. Permanent prompt guidance should remain generic: keep concepts distinct from representations and declarations, preserve local mathematical scope, reuse existing representations when adequate, and prefer the weakest representation/context sufficient for the current work.
 
 ## I2 — Model-menu/catalog polish — P2
 
@@ -666,7 +783,7 @@ Concrete current defects stay in Issues. Periodically audit all subprocess/resul
 
 ## K0 — Acceptance fixtures for every new primitive — P0
 
-Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, representation resolution, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, and Referee coverage.
+Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, declaration/context semantics, representation resolution, context branching, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, `Let X be ...` workflows, and Referee coverage.
 
 ## K1 — Regression tracking — P1
 
@@ -691,7 +808,7 @@ Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Har
 A practical initial agent fan-out:
 
 ```text
-Agent 1   B0 ledger contracts, including concept/representation ontology
+Agent 1   B0 ledger contracts, including concept/representation/declaration/context ontology
 Agent 2   A1 save-gate refactor
 Agent 3   B5 formalization extraction
 Agent 4   B6 admission extraction
@@ -707,11 +824,11 @@ Agent 12  A10 eval identity/journal residual audit
 
 As soon as B0 lands, run B1/B2/B3/B4 concurrently.
 
-Start B7 as soon as B0 is frozen; integrate its graph queries as B2 lands. B5 can be extracted in parallel and then wired to B7 without making representation resolution a mandatory separate model call.
+Start B7 and B8 as soon as B0 is frozen; integrate their graph/storage queries as B1/B2 land. B5 can be extracted in parallel and then wired to B7/B8 without making either a mandatory separate model call for every statement.
 
 As soon as B3/B5/B6 land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows B7 + C1.
 
-As soon as the core loop works, run D0/D1/D2/D5/D7 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
+As soon as the core loop works, run D0/D1/D2/D5/D7/D8 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
 Then run E0/E1/E3/E4 concurrently.
 
@@ -722,7 +839,7 @@ Then run E0/E1/E3/E4 concurrently.
 The project graph itself should later expose independent mathematical work. If:
 
 ```text
-Main
+Main in context C
 ├── Jacobian representation/interface
 ├── Prym polarization literature theorem
 ├── moduli-map representation choice
@@ -731,7 +848,7 @@ Main
 
 and those branches do not depend on one another, `ready_obligations` should make all four eligible for concurrent workers. Recompute readiness as each branch resolves.
 
-This is separate from parallel proof strategies for one goal.
+This is separate from parallel proof strategies for one goal. Mathematical context branching is also separate: it records different local hypotheses, not competing proof workers.
 
 ---
 
@@ -741,6 +858,7 @@ The following former issue concepts are intentionally represented here rather th
 
 - Critique, three critique layers, persistent holes, Repair, and crash-safe patch history -> B ledger + D2/D3;
 - concept/representation persistence and synthesis -> B0/B2/B4/B7/C3/D7 rather than a domain-specific memory/package;
+- scoped mathematical declarations/context -> B0-B4/B8/D8 rather than a separate session-variable or domain-object subsystem;
 - mid-proof closers -> C6;
 - proof-strategy seam/sketch/best-first/parallel/escalation -> A7/C5/C6/F0-F2;
 - token/cost budgets -> A9;
@@ -753,7 +871,7 @@ The following former issue concepts are intentionally represented here rather th
 - configuration comparison -> A2;
 - save-gate refactor -> A1.
 
-No separate hole ledger, concept database, representation database, patch database, citation database, stale-prose store, publication graph, or theorem-memory database should be added unless this architecture is explicitly reconsidered.
+No separate hole ledger, concept database, representation database, context database, patch database, citation database, stale-prose store, publication graph, or theorem-memory database should be added unless this architecture is explicitly reconsidered.
 
 ---
 
@@ -761,24 +879,28 @@ No separate hole ledger, concept database, representation database, patch databa
 
 ## R1 — Persistent mathematical project
 
-- ledger contracts/store/graph/policy/views, including concept/representation items and relations;
-- shared representation/formalization/admission primitives;
+- ledger contracts/store/graph/policy/views, including concept/representation/declaration/context semantics;
+- shared context/representation/formalization/admission primitives;
 - current Prove/interactive behavior remains sound;
 - a session may persist a mathematical concept before a theorem or Lean encoding exists;
+- a session may persist `Let X be ...`, maps/elements/local hypotheses, and context forks without forcing Lean syntax;
 - one concept may have multiple representations used by different claims without global conflict;
-- selected theorem can show dependencies/examples/exposition/representation relationships.
+- local theorem hypotheses are kept separate from trusted external assumptions;
+- selected theorem can show dependencies/examples/exposition/representation relationships and its minimal required semantic context.
 
 ## R2 — Literature-aware research
 
 - acquisition classification;
 - Mathlib-first definition policy;
 - representation-plan -> Lean-interface materialization;
+- declaration/context -> Lean-binder materialization with auditable back-links;
 - literature resolver/citation contracts;
 - recursive resolution;
 - synthetic research fixture passes;
 - exploratory concept/representation fixture passes;
+- exploratory declaration/context fixture passes;
 - target-paper self-assumption refused;
-- Publication can make a theorem-centered draft plan.
+- Publication can make a theorem-centered draft plan with the correct hypotheses.
 
 ## R3 — Paper-audit/referee prototype
 
@@ -786,6 +908,7 @@ No separate hole ledger, concept database, representation database, patch databa
 - Critique obligations;
 - Referee main-path inventory;
 - citation contracts checked;
+- local hypothesis drift is audited;
 - representation shorthand/strengthening is audited where relevant;
 - coverage/trust report;
 - synthetic flawed manuscript passes expected findings;
@@ -795,13 +918,13 @@ The Prym/Jacobian showcase begins during R2 and matures through R3.
 
 ## Definition of success
 
-One project can support, over one mathematical graph:
+One project can support, over one mathematical graph and scoped mathematical contexts:
 
-- **Research:** prove a theorem and source missing prerequisites while making its representation assumptions explicit;
-- **Referee:** audit a paper modulo exact external results and the mathematical representations actually used;
-- **Critique:** record unsupported/suspicious steps or representation mismatches;
-- **Repair:** fix one gap without weakening the claim or silently changing its interpretation;
-- **Publication:** assemble selected results, meaningful dependencies, examples, current exposition, citations, and relevant representation assumptions into a draft;
-- **Explore:** begin from concepts/questions rather than theorem statements, create and refine representations incrementally, and move among the other operations interactively.
+- **Research:** prove a theorem and source missing prerequisites while making its representation assumptions and actual local hypotheses explicit;
+- **Referee:** audit a paper modulo exact external results, local mathematical context, and the representations actually used;
+- **Critique:** record unsupported/suspicious steps, hidden hypothesis drift, or representation mismatches;
+- **Repair:** fix one gap without weakening the claim or silently changing its interpretation/context;
+- **Publication:** assemble selected results, meaningful dependencies, required hypotheses, examples, current exposition, citations, and relevant representation assumptions into a draft;
+- **Explore:** begin from concepts/questions or declarations like `Let X be a smooth manifold`, build/fork local mathematical context naturally, create/refine representations incrementally, and move among the other operations interactively.
 
 That is the target architecture.
