@@ -267,6 +267,34 @@ def test_self_dependent_obligation_is_not_ready():
     assert g.ready_obligations() == ()
 
 
+@pytest.mark.parametrize("revised", [False, True])
+def test_formalization_can_run_while_blocking_proof_of_the_same_item(revised):
+    theorem, scope = item("T"), Scope(id="scope")
+    formalize = Obligation(id="formalize", kind="formalize", item=theorem.ref, scope=scope)
+    prove = Obligation(id="prove", kind="prove", item=theorem.ref, scope=scope)
+    records = (theorem, scope, formalize, prove,
+               edge("first-formalize", theorem, formalize, "blocked_by"))
+    active = formalize
+    if revised:
+        active = Obligation.model_validate({**formalize.model_dump(), "previous": formalize.ref,
+                                             "status": "investigating"})
+        records += (active,)
+    g = graph(*records)
+    assert g.blockers(theorem.ref) == (active,)
+    assert g.ready_obligations() == (active,)
+
+
+def test_scheduling_its_own_item_blocker_does_not_ignore_cross_obligation_cycles():
+    theorem, scope = item("T"), Scope(id="scope")
+    formalize = Obligation(id="formalize", kind="formalize", item=theorem.ref, scope=scope)
+    prove = Obligation(id="prove", kind="prove", item=theorem.ref, scope=scope)
+    g = graph(theorem, scope, formalize, prove,
+              edge("first-formalize", theorem, formalize, "blocked_by"),
+              edge("formalize-needs-proof", formalize, prove),
+              edge("prove-needs-formalize", prove, formalize))
+    assert g.ready_obligations() == ()
+
+
 def test_revised_open_obligation_still_blocks_its_exact_pinned_users():
     theorem, prerequisite = item("T"), item("prerequisite")
     scope = Scope(id="scope")

@@ -228,7 +228,12 @@ class LedgerGraph:
                 for root in (obligation.item, obligation.ref)
                 for ref in self.dependency_closure(root, include_roots=True)
             )
-            if not cyclic and not self.blockers(obligation.item, is_resolved=is_resolved) \
+            # T blocked_by formalize(T) orders work on T; it does not prevent
+            # formalize(T) itself from running. Exact state equality preserves
+            # pinned incompatible requirements and every explicit graph cycle.
+            item_blockers = (b for b in self.blockers(obligation.item, is_resolved=is_resolved)
+                             if b.ref != obligation.ref)
+            if not cyclic and not any(item_blockers) \
                     and not self.blockers(obligation.ref, is_resolved=is_resolved):
                 ready.append(obligation)
         return tuple(ready)
