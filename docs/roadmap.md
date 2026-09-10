@@ -2,8 +2,8 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-10):** Core A-D, Core F-H and X1 are implemented.
-Their full hermetic landing gates passed. Continue with Core I and remaining sections
+**Current execution scope (2026-09-10):** Core A-D, Core F-I and X1-X2 are implemented.
+Their full hermetic landing gates passed. Continue with the remaining X, S and V sections
 with satisfied dependencies. **Skip all of Core E pending human input.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 
@@ -350,6 +350,8 @@ coverage. Recorded source/treatment controls and separate canonical review cost
 support comparison without causal or fixed-budget certification claims.
 
 ## X2 — Transcript in-flight durability — P1
+
+**Status:** Implemented: independently checkpointed streaming blocks, durable append sequencing and preserved torn tails. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
 
 **Deps:** none
 
@@ -1099,6 +1101,8 @@ Report exact-repeat retrieval, transfer from related prior work, and held-out un
 
 ## I0 — Conversation tree/history — P1
 
+**Status:** Implemented: durable conversation IDs/parents and branch epochs, selected visible replay, explicit abandonment lessons, stale-worker refusal and all-branch spend. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
+
 **Deps:** X2 recommended + stable interactive record
 
 Add later `workflows/interactive/history.py` for transcript entry IDs/parents, active leaf, branch/fork/abandon, and branch summaries.
@@ -1116,11 +1120,15 @@ A conversation fork does not automatically fork the mathematical context; a math
 
 ## I1 — Prompt templates/project commands — P2
 
+**Status:** Implemented: bundled audit/formalize/publish/restyle requests use existing project templates and recorded transcript input; project overrides remain supported. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
+
 Useful conveniences such as `/audit`, `/formalize`, `/publish`, `/restyle`. Expanded text is transcript input, never evidence.
 
 Do not solve concept/representation/declaration/goal handling by stuffing domain cases into prompts. Permanent prompt guidance should remain generic: preserve mathematical identity and scope, distinguish conjecture from fact, keep concepts distinct from representations/declarations, resolve notation through scoped bindings, reuse existing representations when adequate, require explicit transport for WLOG/identification, and remember durable high-level dead ends.
 
 ## I2 — Model-menu/catalog polish — P2
+
+**Status:** Implemented: configured model identities remain visible and catalog suggestions disclose curated provenance, unknown capabilities and unverified availability. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
 
 The current backend-blind menu is a defect and remains in Issues. Longer-term live/curated model-catalog discoverability belongs here rather than in that bug.
 

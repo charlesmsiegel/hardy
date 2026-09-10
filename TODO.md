@@ -4,8 +4,8 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 41 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2 and X1).**
-Checkmarks mean the roadmap records the item as implemented. Core D, F, G and H passed their full hermetic landing gates. Unchecked items
+**Completed: 45 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2 and X1-X2).**
+Checkmarks mean the roadmap records the item as implemented. Core D and F-I passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
 
@@ -23,9 +23,12 @@ Core G verification and integration limits are in the
 Core H verification and measurement limits are in the
 [Core H report](docs/superpowers/reports/2026-09-10-core-h.md).
 
+Core I and X2 verification is in the
+[Core I report](docs/superpowers/reports/2026-09-10-core-i.md).
+
 ## Available next work
 
-Continue with eligible Core I work. **Skip all of Core E pending human input.** Independent X, S and V work
+Continue with eligible X, S and V work. **Skip all of Core E pending human input.** Independent X, S and V work
 retains its own dependencies; X1 supports strategy comparison and X5 supports
 fixed token/cost budgets.
 
@@ -164,15 +167,15 @@ flowchart LR
 
 ## Core I: interactive ergonomics
 
-- [ ] [I0 - Conversation tree/history - P1](docs/roadmap.md#i0--conversation-treehistory--p1) - Deps: [X2](docs/roadmap.md#x2--transcript-in-flight-durability--p1) recommended + stable interactive record.
-- [ ] [I1 - Prompt templates/project commands - P2](docs/roadmap.md#i1--prompt-templatesproject-commands--p2) - Deps: not specified.
-- [ ] [I2 - Model-menu/catalog polish - P2](docs/roadmap.md#i2--model-menucatalog-polish--p2) - Deps: not specified.
+- [x] [I0 - Conversation tree/history - P1](docs/roadmap.md#i0--conversation-treehistory--p1) - Deps: [X2](docs/roadmap.md#x2--transcript-in-flight-durability--p1) recommended + stable interactive record.
+- [x] [I1 - Prompt templates/project commands - P2](docs/roadmap.md#i1--prompt-templatesproject-commands--p2) - Deps: not specified.
+- [x] [I2 - Model-menu/catalog polish - P2](docs/roadmap.md#i2--model-menucatalog-polish--p2) - Deps: not specified.
 
 ## Engineering lane X
 
 - [ ] [X0 - Make the save gates one explicit ordered sequence - P0](docs/roadmap.md#x0--make-the-save-gates-one-explicit-ordered-sequence--p0) - Deps: none.
 - [x] [X1 - Evaluation comparison primitive - P1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) - Deps: none.
-- [ ] [X2 - Transcript in-flight durability - P1](docs/roadmap.md#x2--transcript-in-flight-durability--p1) - Deps: none.
+- [x] [X2 - Transcript in-flight durability - P1](docs/roadmap.md#x2--transcript-in-flight-durability--p1) - Deps: none.
 - [ ] [X3 - Safe interactive assumption prompt presentation - P1](docs/roadmap.md#x3--safe-interactive-assumption-prompt-presentation--p1) - Deps: none.
 - [ ] [X4 - CAS correctness lane - P1](docs/roadmap.md#x4--cas-correctness-lane--p1) - Deps: none.
 - [ ] [X5 - Token/cost reserve-settle budgets - P1](docs/roadmap.md#x5--tokencost-reserve-settle-budgets--p1) - Deps: harness-owned decision point for the relevant runtime.

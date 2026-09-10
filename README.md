@@ -135,6 +135,13 @@ Evaluation exposure binds the frozen retrieval plan and actual forwarded context
 to each run, separating exact repeat, related transfer, declared local held-out
 and unknown exposure. This does not establish unseen provider training data.
 
+Core I adds `/tree`, `/fork` and `/abandon` for durable conversation history.
+Forks replay the selected visible transcript in a fresh runtime; mathematical
+state and total spend stay current. `/audit`, `/formalize`, `/publish` and
+`/restyle` expand into recorded user requests and support project overrides.
+The model menu preserves configured identities and labels its bundled suggestions
+as curated, with availability and capabilities unverified.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

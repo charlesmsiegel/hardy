@@ -244,6 +244,29 @@ related transfer, declared local held-out and unknown exposure. Missing coverage
 truncation, incomplete journals or untracked provider context prevent a held-out
 claim. Local source completeness says nothing about provider pretraining.
 
+## Core I conversation history and prompt conveniences
+
+`workflows/interactive/history.py` owns the conversation tree separately from
+mathematical contexts and proof-search frontiers. SessionRecord assigns stable
+entry IDs and parent links under an OS append lock; durable branch events own
+the active cursor and epoch. Legacy entries receive stable virtual IDs without
+rewriting their bytes. Stale writers and provider threads cannot cross epochs.
+X2 checkpoints independent in-flight blocks and preserves torn-tail evidence.
+
+A fork or abandonment builds a fresh runtime from the selected visible path,
+with the supplied replay recorded and bounded to 1 MiB. Partial checkpoints stay
+partial; opaque provider state is not reconstructed. Human abandonment lessons
+remain attributed and unverified. Compaction and export follow the active path,
+while accounting includes every branch. Mathematical records, scopes, approvals
+and artifacts are not rolled back. Active turns or provider workers prevent forks.
+
+Bundled mathematical prompt shortcuts use the existing project-template expansion
+and transcript path. Project files may override shortcuts, while operational
+commands remain reserved. Expanded requests neither certify claims nor approve
+assumptions. The catalog records curated provenance and unknown capabilities;
+configured identities remain visible, including explicit incompatibility labels.
+The menu does not query current provider availability.
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

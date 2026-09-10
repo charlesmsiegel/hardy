@@ -139,6 +139,19 @@ human-guided paper trials and interactive publication wiring remain deferred.
   context. Exact-repeat, related-transfer, declared-local-held-out and unknown
   cohorts remain separate; missing exposure cannot count as held-out evidence.
 
+### Core I interactive conveniences
+
+- `/tree`, `/fork <entry-id|root>` and `/abandon <entry-id|root> <lesson>` expose
+  durable conversation branches. Replay uses the selected visible history;
+  mathematical state and all-branch spend remain current.
+- Independent streaming blocks receive durable checkpoints. Forks retain partial
+  status and refuse active workers; stale provider bindings cannot cross branches.
+- `/audit [selection]`, `/formalize <claim>`, `/publish <selection>` and
+  `/restyle <instructions>` expand to recorded requests through existing templates.
+  Project overrides are supported; these shortcuts do not provide proof evidence.
+- The model menu preserves the configured choice and labels curated suggestions,
+  incompatible families, and unverified availability without invented capabilities.
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation
