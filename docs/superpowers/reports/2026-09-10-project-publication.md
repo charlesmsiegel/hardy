@@ -61,6 +61,9 @@ Cancellation signals tracked compiler processes and keeps the command and its
 Esc control active until the worker releases the session gates. Repeated stops
 escalate. The next conversation cannot encounter a publication worker left behind
 after the handler has returned.
+The shell owns resume at command admission: publication does not clear an Esc or
+second-Esc escalation already entered in the same input batch. Plain mode resumes
+at its direct command entry because it has no batch key dispatcher.
 
 Theory: presentation selects how exact mathematics is displayed, while capability
 evidence continues to authenticate its original references. The equality rule
@@ -100,3 +103,24 @@ Independent review reproduced attachment-order, cancellation-teardown, repeated
 link and role-rendering failures; each received a failing regression before its
 fix. Final review and repository-wide landing checks are owned by the
 coordinating task.
+
+The subsequent full Windows coverage run exposed a timing issue in three existing
+CAS Escape tests. Each exited on Ctrl+C as soon as the interrupt counter changed,
+before the command returned, so legitimate app-exit cancellation delivered a second
+interrupt. The three tests now wait for explicit command completion before exiting;
+production CAS cancellation was unchanged. A control run reproduced the issue with
+the three tests alone under coverage, independently of E3.
+
+A real-shell regression additionally found that publication's former handler-level
+resume downgraded two same-batch Escape presses from kill to interrupt. Removing
+that late resume for the shell preserves both stop levels; a separate regression
+retains direct-entry resume in plain mode. Final bounded coverage replay:
+
+```powershell
+$env:COVERAGE_FILE = Join-Path $env:TEMP ('hardy-e3-turns-' + [guid]::NewGuid().ToString('N') + '.coverage')
+uv run --extra test pytest tests/tui/test_project_publication.py tests/tui/test_turns.py -q --tb=short --cov --cov-report= --cov-fail-under=0 -p no:cacheprovider
+```
+
+**43 passed in 14.11 seconds.** Coverage data used a unique temporary file and did
+not overwrite the coordinator's full-run data or reports. Ruff and whitespace
+checks passed for the three affected Python files.

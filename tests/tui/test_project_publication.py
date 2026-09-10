@@ -118,3 +118,47 @@ async def test_cancellation_keeps_command_and_stop_control_until_real_session_re
         turn.close()
     finally:
         released.set()
+
+
+@pytest.mark.parametrize("presses", [1, 2])
+async def test_publication_keeps_same_batch_escape_level_from_shell_admission(settings, tmp_path, monkeypatch, presses):
+    import threading
+
+    from hardy.foundation import process
+    from hardy.foundation.values import ToolResult
+
+    from .test_turns import drive
+
+    chat = session(tmp_path, FakeChatRuntime([]))
+    populate(tmp_path)
+    checked = threading.Event()
+    observed = []
+    def check(*args, **kwargs):
+        observed.append(process._STOP_LEVEL)
+        checked.set()
+        return ToolResult(False, "compiler cancelled before launch")
+    monkeypatch.setattr(chat.latex, "check", check)
+    await drive(settings, chat, [
+        ("/project publish Main --scope scope --output draft\r" + "\x1b " * presses, checked.is_set),
+        ("\x03", None),
+    ], settle_before_exit=True)
+    assert observed == [presses]
+
+
+async def test_plain_publication_resumes_at_its_direct_command_entry(settings, tmp_path, monkeypatch):
+    from hardy.app.tui.plain import PlainUi
+    from hardy.foundation import process
+    from hardy.foundation.values import ToolResult
+
+    chat = session(tmp_path, FakeChatRuntime([]))
+    populate(tmp_path)
+    observed = []
+    def check(*args, **kwargs):
+        observed.append(process.stopping())
+        return ToolResult(False, "fixture compiler")
+    monkeypatch.setattr(chat.latex, "check", check)
+    process.interrupt_children()
+    ui = PlainUi(lambda text: None, lambda prompt: "")
+    state = State(config=settings, session=chat)
+    await handlers.handle_project(ui, "publish Main --scope scope --output draft", state)
+    assert observed == [False]

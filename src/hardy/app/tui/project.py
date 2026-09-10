@@ -30,7 +30,12 @@ async def handle_publication(ui: Ui, argument: str, state: State) -> State:
                 operation = process.stop_children if pressed else process.interrupt_children
                 pressed = True
                 return bool(operation())
-            process.resume_children()
+            # The shell resumes at command admission, before reading later
+            # keys in that input batch. Resuming here would erase an Esc or
+            # downgrade a second-Esc kill already recorded for this command.
+            # PlainUi has no batch key dispatcher: its direct entry owns resume.
+            if getattr(ui, "runs_on_event_loop", True) is False:
+                process.resume_children()
             ui.stopping(stop)
             operation = asyncio.create_task(asyncio.to_thread(state.session.project_publish, args[0],
                                             scope=options["--scope"], output=options["--output"]))
