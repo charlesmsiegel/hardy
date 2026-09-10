@@ -45,6 +45,10 @@ class BatchRecorder:
         if any(self.guard.path(name).exists() for name in (MANIFEST, JOURNAL, "trajectory.json", "result.json")):
             raise ValueError("this output directory already contains an attempt; choose a fresh directory")
         from hardy.evals.identity import run_source_digest_of
+        from hardy.workflows.attempt_context import current_attempt
+
+        if evaluation := current_attempt():
+            plan = {**plan, "evaluation_attempt": evaluation}
 
         self.manifest = {"schema": "hardy.batch-attempt/v1", "attempt_id": str(uuid4()),
                          "plan": _copy(plan), "source_sha256": run_source_digest_of(),

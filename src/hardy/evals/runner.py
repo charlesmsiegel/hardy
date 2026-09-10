@@ -15,6 +15,7 @@ from typing import Any
 from hardy.corpus.catalog import load_corpus, manifest_digest
 from hardy.corpus.problems import Entry, sha256_of
 from hardy.corpus.problems import ProblemSet as ProblemSet
+from hardy.evals.certification import CertificationBudget, CertificationRecorder
 from hardy.evals.contracts import Condition, RefusedRun, Scoreboard
 from hardy.evals.exposure import ExposureRecorder
 from hardy.evals.identity import RUN_SOURCE_EXCLUDED_DIRS as RUN_SOURCE_EXCLUDED_DIRS
@@ -26,6 +27,7 @@ from hardy.evals.scoreboard import Row, active_ids, aggregate, batch_row, staged
 from hardy.evals.selection import select
 from hardy.evals.sweep import Baseline, host_info, staleness
 from hardy.formal.contracts import EnvironmentIdentity
+from hardy.workflows.attempt_context import evaluation_attempt
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
 StagedRunner = Callable[[Entry, Path, str], None]   # (entry, row_dir, model): writes the nested run and canonical.json
@@ -111,7 +113,8 @@ def _write(path: Path, board: Scoreboard) -> None:
 def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards_root: Path, condition: Condition,
             environment: EnvironmentIdentity, batch_runner: BatchRunner, staged_runner: StagedRunner | None = None,
             now: Callable[[], datetime], report: Callable[[str], None], workers: int = 1,
-            run_exposed: Callable[[Entry, Path, str, ExposureRecorder], None] | None = None) -> Path:
+            run_exposed: Callable[[Entry, Path, str, ExposureRecorder], None] | None = None,
+            certification: CertificationBudget | None = None) -> Path:
     condition = Condition.model_validate(condition.model_dump())
     if (condition.exposure is None) != (run_exposed is None):
         raise RefusedRun("exposure condition requires its named exposure-aware runner")
@@ -180,6 +183,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),
                        problems_sha256=manifest_digest(problems_path), rows=(), aggregates=aggregate([], baseline, active_ids=active_ids(problems)),
                        started_at=now(), finished_at=None, interrupted=False, host=host)
+    certifier = CertificationRecorder(out, board, entries, certification, workers) if certification is not None else None
     _write(out / "scoreboard.json", board)
     # One job per (entry, repeat), in exactly the order the sequential runner
     # used to produce rows in: `select()`'s own order, then repeats. `evals
@@ -191,10 +195,26 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     # completed contiguous prefix of `slots` is ever written out. Appending
     # rows as workers finish would satisfy neither check.
     jobs = [(entry, repeat) for entry in entries for repeat in range(condition.repeats)]
+    slot_indices = {(entry.id, repeat): index for index, (entry, repeat) in enumerate(jobs)}
     slots: list[Row | None] = [None] * len(jobs)
     lock = threading.Lock()
 
     def run_job(entry: Entry, repeat: int) -> Row:
+        index = slot_indices[(entry.id, repeat)]
+        if certifier is not None:
+            certifier.start_attempt(index)
+        failure = None
+        try:
+            with evaluation_attempt(certifier.contexts[index] if certifier is not None else None):
+                return execute_job(entry, repeat)
+        except BaseException as error:
+            failure = type(error).__name__ + ": " + str(error)
+            raise
+        finally:
+            if certifier is not None:
+                certifier.finish_attempt(index, failure)
+
+    def execute_job(entry: Entry, repeat: int) -> Row:
         tier = baseline.entries[entry.id].tier
         # Twins never run staged: the loop grades every unverified run partial (#23).
         mode = "batch" if entry.expected == "false" else condition.mode
@@ -297,8 +317,12 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
             raise first_error
     except BaseException:
         _write(out / "scoreboard.json", board.model_copy(update={"interrupted": True}))
+        if certifier is not None:
+            certifier.finish(True)
         raise
     _write(out / "scoreboard.json", board.model_copy(update={"finished_at": now()}))
+    if certifier is not None:
+        certifier.finish(False)
     return out
 
 

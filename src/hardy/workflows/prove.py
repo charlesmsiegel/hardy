@@ -332,6 +332,11 @@ class ProveWorkflow:
             run_id=run_id,
         )
         state = _RunState(store)
+        from hardy.workflows.attempt_context import current_attempt
+
+        if evaluation := current_attempt():
+            store.write_json(PurePosixPath("evaluation-attempt.json"), evaluation)
+            store.append("workflow.evaluation_attempt", evaluation, phase=state.phase)
         active_started = self._monotonic()
         user_wait = 0.0
         store.write_text(PurePosixPath("request.md"), request.text.rstrip() + "\n")
