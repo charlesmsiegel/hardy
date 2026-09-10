@@ -854,3 +854,59 @@ def test_a_cell_log_symlinked_after_the_session_opened_is_refused(tmp_path, cas_
         assert victim.read_text(encoding="utf-8") == "#!/bin/sh\n"
     finally:
         session.close()
+
+
+def test_a_kernel_start_is_charged_to_the_session_budget(tmp_path, cas_session, monkeypatch) -> None:
+    """Issue #37: `_start` sat outside the billed window in `_restore`, so a
+    recovery cost one unbilled kernel start -- and `FEATURES.md` says the
+    budget bounds total wall clock within a process."""
+    session = cas_session(cas_cell_seconds=30)
+    original = session._start
+
+    def slow_start() -> None:
+        time.sleep(0.05)
+        original()
+
+    monkeypatch.setattr(session, "_start", slow_start)
+    try:
+        # No accepted cells, so the rebuild starts a kernel and sends nothing:
+        # whatever is on the bill afterwards is the start and only the start.
+        report = session._restore()
+        assert report.replayed == 0
+        assert session.spent_seconds >= 0.05
+    finally:
+        session.close()
+
+
+def test_a_rebuild_names_the_failed_cells_it_could_not_replay(tmp_path, cas_session) -> None:
+    """Issue #37: `_restore` replays only accepted cells, so `x = 41; 1 / 0`
+    leaves `x` live but unaccepted, and an accepted `pass` after it rebuilds
+    "faithfully" while the next cell finds no `x`. On a backend that carries a
+    state digest the digest catches it; this backend carries none, so the
+    rebuild has to say which cells it left out rather than report a faithful
+    rebuild it cannot have checked."""
+    session = cas_session(cas_cell_seconds=1)
+    try:
+        session.execute("a")
+        failed = session.execute("boom")
+        session.execute("b")
+        session.execute("hang")
+        assert session.state == "dead"
+
+        recovered = session.execute("d")
+        assert recovered.status == "ok"
+        assert f"cell(s) [{failed.seq}]" in recovered.restart_note
+        assert "not replayed" in recovered.restart_note
+    finally:
+        session.close()
+
+
+def test_a_rebuild_with_no_failed_cells_does_not_warn_about_any(tmp_path, cas_session) -> None:
+    session = cas_session(cas_cell_seconds=1)
+    try:
+        session.execute("a")
+        session.execute("hang")
+        recovered = session.execute("b")
+        assert "not replayed" not in recovered.restart_note
+    finally:
+        session.close()

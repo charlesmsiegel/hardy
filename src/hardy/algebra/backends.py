@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import re
 import sys
@@ -383,21 +384,42 @@ class Macaulay2Backend(_SentinelBackend):
         then computes; a fed blank line comes back as the indent alone and so
         does not end anything.
 
+        The echo arrives in the order the lines were fed, so the match is
+        against a cursor into the fed text rather than a set over all of it.
+        A set let a cell whose genuine output equalled a *different* line's
+        source -- cell 2 printing `     x^2 + y^2` under cell 1's `x^2 + y^2`
+        -- lose that output silently. The cursor rejects the match: by the
+        time cell 2's output arrives, cell 1's line has already been echoed
+        and passed.
+
         What survives this and should not is narrow enough to name: output
         indented by exactly the prompt width, abutting the echo with no blank
-        line between, whose text is verbatim one of the lines fed in.
+        line between, whose text is verbatim the *next* line to be echoed.
         """
-        echoed = {line.rstrip() for line in fed.splitlines() if line.strip()}
+        pending = [line.rstrip() for line in fed.splitlines() if line.strip()]
+        cursor = 0
         kept: list[str] = []
         width = 0
         for line in stdout.split("\n"):
             prompt = self._echo_prompt.match(line)
             if prompt is not None:
                 width = prompt.end()
+                # A prompt line is always an echo; move the cursor past the
+                # fed line it shows, so the continuation lines that follow
+                # are matched against the right neighbours.
+                shown = line[width:].rstrip()
+                with contextlib.suppress(ValueError):
+                    cursor = pending.index(shown, cursor) + 1
                 continue
             if not line:
                 width = 0
-            elif width and line.startswith(" " * width) and line[width:].rstrip() in echoed:
+            elif (
+                width
+                and cursor < len(pending)
+                and line.startswith(" " * width)
+                and line[width:].rstrip() == pending[cursor]
+            ):
+                cursor += 1
                 continue
             kept.append(line)
         return "\n".join(kept)

@@ -246,3 +246,69 @@ def test_the_api_probe_reports_an_absent_sdk_rather_than_raising() -> None:
 
     assert ok is False
     assert 'not importable' in detail
+
+
+
+def _discover_with_cas(tmp_path, monkeypatch, *, cas_backend: str, cas_healthy: bool):
+    config_module = importlib.import_module('hardy.app.config')
+    process = importlib.import_module('hardy.foundation.process')
+    setup = importlib.import_module('hardy.app.setup')
+    elan = _touch(tmp_path / 'bin' / 'elan.exe')
+    lake = _touch(tmp_path / 'bin' / 'lake.exe')
+    tectonic = _touch(tmp_path / 'bin' / 'tectonic.exe')
+    lean_project = tmp_path / 'lean_project'
+    lean_project.mkdir(exist_ok=True)
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=0,
+            stdout='Lean (version 4.32.0, commit 8c9756b)\n', stderr='',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    monkeypatch.setattr(
+        setup,
+        '_cas_status',
+        lambda config: setup.ToolStatus(
+            name='cas', path=None, version=None, healthy=cas_healthy,
+            detail='smoke test passed' if cas_healthy else 'not found',
+        ),
+    )
+    return setup.discover_environment(
+        config_module.Config(
+            model='test-model',
+            lean_command=('lake', 'env', 'lean'),
+            lean_project=lean_project,
+            lean_timeout=30.0,
+            latex_command=('tectonic',),
+            root=lean_project,
+            project='workspace',
+            elan=elan,
+            lake=lake,
+            tectonic=tectonic,
+            cas_backend=cas_backend,
+        ),
+        runner=runner,
+        backend_probe=lambda: (True, 'claude-agent-sdk 0.2'),
+        which=lambda _: None,
+        common_locations={},
+    )
+
+
+def test_a_configured_non_default_cas_that_cannot_start_is_not_healthy(tmp_path, monkeypatch) -> None:
+    """Issue #37: `healthy` was computed before the CAS status was folded in,
+    so `run_setup()` reported a ready installation while the configured
+    Singular or Macaulay2 kernel could not start. `doctor` treats a named
+    non-default backend as required; the two paths have to agree."""
+    report = _discover_with_cas(tmp_path, monkeypatch, cas_backend='singular', cas_healthy=False)
+    assert not report.healthy
+
+
+def test_the_default_cas_is_not_required_for_a_healthy_report(tmp_path, monkeypatch) -> None:
+    report = _discover_with_cas(tmp_path, monkeypatch, cas_backend='sympy', cas_healthy=False)
+    assert report.healthy
+
+
+def test_a_working_non_default_cas_keeps_the_report_healthy(tmp_path, monkeypatch) -> None:
+    report = _discover_with_cas(tmp_path, monkeypatch, cas_backend='singular', cas_healthy=True)
+    assert report.healthy

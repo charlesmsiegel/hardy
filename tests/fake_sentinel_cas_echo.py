@@ -13,6 +13,7 @@ notices a regression in either.
 """
 
 import sys
+import threading
 import time
 
 ECHO_PREFIX = 'ECHO "'
@@ -22,6 +23,13 @@ ECHO_TAIL = '";'
 # first, so a reader that ends the cell on the echoed end marker ends it
 # before this output exists.
 DEFER_DELAY = 0.05
+# How long after the end marker has gone out on stdout a `laterror;` cell's
+# error reaches stderr. Two pipes, two drain threads on the parent, nothing
+# ordering their delivery: this is the shape in which an error written before
+# the marker can still arrive after it. Inside the quiet window
+# `stderr_settled` waits out (20 ms), so the settle is what has to catch it;
+# reading stderr the instant the marker was found did not.
+STDERR_DELAY = 0.005
 
 
 def main() -> None:
@@ -31,6 +39,15 @@ def main() -> None:
     # the statement that follows it -- including after the echo of the end
     # marker, which is what makes trusting that echo cut a cell short.
     pending: list[str] = []
+    # An error owed to stderr but not yet written: paid after the next end
+    # marker has gone out, on its own thread, so it lands late.
+    late_error = False
+
+    def write_late_error() -> None:
+        time.sleep(STDERR_DELAY)
+        sys.stderr.write("stdio:1:1:(1): error: fake late division by zero\n")
+        sys.stderr.flush()
+
     for counter, line in enumerate(sys.stdin, start=1):
         line = line.rstrip("\n")
         # Echo the prompt and the exact source line, unconditionally -- this
@@ -52,6 +69,14 @@ def main() -> None:
         if line.startswith(ECHO_PREFIX) and line.endswith(ECHO_TAIL):
             marker = line[len(ECHO_PREFIX) : -len(ECHO_TAIL)]
             sys.stdout.write(marker + "\n")
+            sys.stdout.flush()
+            if late_error and "hardy-end" in marker:
+                late_error = False
+                threading.Thread(target=write_late_error, daemon=True).start()
+        elif line == "laterror;":
+            # The error is real and belongs to this cell; it just reaches the
+            # parent after the parent has seen the cell end on stdout.
+            late_error = True
         elif line == "error;":
             # Nothing on stdout for a failed statement -- exactly what a
             # real division-by-zero cell does in Macaulay2. The error lands

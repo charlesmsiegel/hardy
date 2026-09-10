@@ -162,3 +162,44 @@ def test_reopening_a_workspace_restores_the_state_it_lists(tmp_path) -> None:
 
 def test_the_tool_names_are_the_ones_the_bindings_route_on() -> None:
     assert set(CAS_TOOL_NAMES) == {"cas_run", "cas_state", "cas_reset", "cas_export"}
+
+
+def test_a_truncated_envelope_is_measured_before_it_is_returned(tmp_path, cas_session) -> None:
+    """Issue #37: the entry test was against the encoded envelope, but the
+    truncated one was sliced by a byte-derived character count and returned
+    unmeasured, so multibyte output still walked past the cap on the way out."""
+    from hardy.algebra.contracts import CellRecord
+
+    runtime = make_runtime(cas_session(), {}, observation_bytes=2_048)
+    record = CellRecord(
+        seq=0, segment=0, author="model", source="wide", status="ok", accepted=True,
+        stdout="é" * 5_000, stderr="漢" * 5_000, value_repr="ü" * 5_000,
+    )
+    result = runtime._bound(record)
+    assert result.observation_truncated is True
+    assert len(result.model_dump_json().encode("utf-8")) <= 2_048
+    assert result.stdout, "the cap must leave the model some of the output"
+
+
+def test_state_is_bounded_by_the_observation_budget(tmp_path, cas_session) -> None:
+    """Issue #37: the accepted-cell listing grew with the session and had no
+    relationship to `model_observation_bytes`."""
+    runtime = make_runtime(cas_session(), {}, observation_bytes=1_024)
+    for index in range(40):
+        runtime.run(f"cell{index} " + "z" * 60)
+    state = runtime.state()
+    assert len(state.model_dump_json().encode("utf-8")) <= 1_024
+    assert state.omitted > 0
+    assert state.omitted + len(state.accepted) == 40
+    # The most recent cells are the ones a model is building on.
+    assert state.accepted[-1].startswith("[39]")
+    assert "omitted" in (state.note or "")
+
+
+def test_a_small_state_is_listed_whole(tmp_path, cas_session) -> None:
+    runtime = make_runtime(cas_session(), {})
+    runtime.run("first")
+    runtime.run("second")
+    state = runtime.state()
+    assert state.omitted == 0 and state.note is None
+    assert len(state.accepted) == 2

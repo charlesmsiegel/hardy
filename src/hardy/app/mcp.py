@@ -13,15 +13,18 @@ a bounded summary that names the artifact holding the rest.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from hardy.algebra.export import ExportReport, export_session
 from hardy.algebra.tools import CasCellResult, CasStateResult, CasToolRuntime, build_runtime
+from hardy.app.config import Config
 from hardy.app.config import load as load_config
 from hardy.formal.contracts import FrozenClaim, freeze_claim
 from hardy.formal.declarations import DeclarationIndex
@@ -86,13 +89,49 @@ def register_cas_tools(runtime: CasToolRuntime, directory: Path) -> None:
         return export_session(_configured_cas().session, _cas_directory)
 
 
-def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
-    required = ("HARDY_RUN_DIR", "HARDY_CONFIG", "HARDY_CLAIM_SHA256")
+LEAN_TOOL_NAMES = (
+    "lean_check_proof",
+    "lean_check_scratch",
+    "lean_inspect_declarations",
+    "lean_search_declarations",
+    "rank_premises",
+)
+
+
+def _withdraw_lean_tools() -> None:
+    """Stop advertising the Lean tools on a server that has no claim to scope them to.
+
+    They are registered at import, before anyone knows whether a Frozen Claim
+    exists, and a server started for the formalization stage has none: every
+    one of them could only fail. The same rule `register_cas_tools` states --
+    a tool that can only fail is worse than an absent one.
+    """
+    for name in LEAN_TOOL_NAMES:
+        # Already withdrawn is not an error: a process that loads twice without
+        # a claim -- a test does -- has nothing further to take down.
+        with contextlib.suppress(ToolError):
+            mcp.remove_tool(name)
+
+
+def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime | None:
+    """Configure the server from its environment.
+
+    `HARDY_CLAIM_SHA256` is what says a Frozen Claim exists. Without it the
+    server serves the computer algebra session and nothing else, which is
+    what the formalization stage needs and all it can honestly offer; the
+    Lean tools are withdrawn rather than left to fail, and `None` says no
+    Lean runtime was built.
+    """
+    required = ("HARDY_RUN_DIR", "HARDY_CONFIG")
     missing = [name for name in required if not environ.get(name)]
     if missing:
         raise ValueError("missing MCP environment settings: " + ", ".join(missing))
     run_dir = Path(environ["HARDY_RUN_DIR"])
     config = load_config(Path(environ["HARDY_CONFIG"]))
+    if not environ.get("HARDY_CLAIM_SHA256"):
+        _withdraw_lean_tools()
+        _serve_cas(config, run_dir)
+        return None
     if config.lean_project is None:
         raise ValueError("Hardy configuration has no registered Lean project")
     claim = FrozenClaim.model_validate_json(
@@ -131,7 +170,11 @@ def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
         declarations=declarations,
     )
     configure_runtime(runtime)
+    _serve_cas(config, run_dir)
+    return runtime
 
+
+def _serve_cas(config: Config, run_dir: Path) -> None:
     # Discovery before advertisement: an absent or broken backend leaves this
     # server with Lean tools only, which is the honest description of it.
     store = RunStore(run_dir, UUID(int=0))
@@ -148,7 +191,6 @@ def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
     )
     if cas_runtime is not None:
         register_cas_tools(cas_runtime, cas_directory)
-    return runtime
 
 
 def _configured() -> LeanToolRuntime:

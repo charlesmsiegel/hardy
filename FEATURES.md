@@ -783,7 +783,11 @@ Priority labels are sequencing hints:
   is discarded, and crediting its tactic would name a closer for a run that
   ends with no verified proof.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same
-  shape, shipped as the optional `codex` extra.
+  shape, shipped as the optional `codex` extra. Its stdio MCP server is
+  started before a Frozen Claim exists as well, serving the computer algebra
+  session alone during formalization, so examples can be computed while
+  deciding what to formalize; the Lean tools are withdrawn rather than left to
+  fail until a claim scopes them.
 - **Now (implemented):** an interactive session accumulates the cost and token
   usage the provider reports for each exchange, persists the total in
   `.local/state.json` so reopening a workspace continues it, carries an
@@ -907,7 +911,11 @@ Priority labels are sequencing hints:
   accepted cell whose recorded state includes what a failed cell left behind,
   reproduces empty output either way. A missing digest makes the rebuild
   unverified whatever the cell printed, and the session says so rather than
-  reporting a rebuild as if it had been checked. Digests go missing readily and
+  reporting a rebuild as if it had been checked. A rebuild also names the cells
+  of the segment that failed and so were not replayed: what such a cell changed
+  on its way to failing is outside the rebuilt state, the digest catches a
+  later cell built on it where there is one, and where there is none the
+  restart note is the only place the gap is said. Digests go missing readily and
   on purpose: Singular and Macaulay2 have no protocol to carry one, an older
   log has none, and the default kernel refuses to fingerprint a namespace
   holding a value it could only see a prefix of, one whose repr is CPython's
@@ -1115,7 +1123,8 @@ Priority labels are sequencing hints:
 - **Now (implemented):** within one Hardy process, `cas_session_seconds` bounds
   total CAS wall clock rather than only the cells a caller asked for. A rebuild
   after a kernel death and the fresh-kernel replay an export verifies itself
-  with are both charged; a cell's deadline is the smaller of `cas_cell_seconds`
+  with are both charged, the kernel start each brings up included; a cell's
+  deadline is the smaller of `cas_cell_seconds`
   and what is left of the session, so a session with one second remaining
   cannot run a sleeping cell for a minute; and `cas_reset` — a tool the model
   can call itself — clears the namespace and opens a new segment without
@@ -1125,6 +1134,16 @@ Priority labels are sequencing hints:
   session starts `cas_session_seconds` again even though the cells it replays
   to rebuild that session are charged. A long-running run is bounded; a
   workspace reopened all day is not.
+- **Now (implemented):** an export holds the session for its whole duration,
+  so a cell cannot land between the replay and the manifest that describes
+  it. `cas_state` is bounded by `model_observation_bytes` like every other
+  observation -- the oldest cells drop first and the result says how many --
+  and a `cas_run` envelope that had to be cut is measured after the cut, so
+  multibyte output cannot walk past the cap on the way out. `hardy setup` is
+  not ready while a `cas_backend` the user named cannot start, which is the
+  rule `doctor` already applied. The real-backend CI job pins its runner image
+  and both package versions, so a red run means the adapter broke rather than
+  that a package moved.
 - **Now (implemented):** every cell record carries the backend and probed
   version that produced it, so a saved-but-never-exported trajectory still
   names its toolchain. A log whose live segment was written by another backend

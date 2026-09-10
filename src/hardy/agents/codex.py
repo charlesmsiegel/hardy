@@ -146,25 +146,32 @@ class CodexRuntime:
                 config={},
             )
             return AgentThread(sdk_thread=sdk_thread, wall_seconds=wall_seconds)
+        # Hardy's tools are served to the agent over stdio MCP. With a claim
+        # the server is pinned to this run and this claim, so a Lean tool call
+        # cannot address another. Before one exists -- the formalization
+        # thread -- the server is still started, and serves the computer
+        # algebra session alone: deciding what to formalize is exactly when
+        # examples get computed, and the Claude staged runtime offers CAS in
+        # every stage. The claim hash is simply absent, and the server reads
+        # its absence as "no Lean tools yet" rather than as a broken launch.
+        environment = {
+            "HARDY_RUN_DIR": str(run_dir),
+            "HARDY_CONFIG": str(self._config_path),
+        }
         if claim is not None:
-            # Hardy's Lean tools are served to the agent over stdio MCP, pinned
-            # to this run and this claim, so a tool call cannot address another.
-            configuration = {
-                "mcp_servers": {
-                    "hardy": {
-                        "command": sys.executable,
-                        "args": ["-m", "hardy.mcp_server"],
-                        "cwd": str(run_dir),
-                        "env": {
-                            "HARDY_RUN_DIR": str(run_dir),
-                            "HARDY_CONFIG": str(self._config_path),
-                            "HARDY_CLAIM_SHA256": claim.content_hash,
-                        },
-                        "startup_timeout_sec": 20,
-                        "required": True,
-                    }
+            environment["HARDY_CLAIM_SHA256"] = claim.content_hash
+        configuration = {
+            "mcp_servers": {
+                "hardy": {
+                    "command": sys.executable,
+                    "args": ["-m", "hardy.mcp_server"],
+                    "cwd": str(run_dir),
+                    "env": environment,
+                    "startup_timeout_sec": 20,
+                    "required": True,
                 }
             }
+        }
         sdk_thread = self._client.thread_start(
             model=model,
             cwd=str(run_dir),

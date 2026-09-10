@@ -46,8 +46,13 @@ def replay_in_fresh_kernel(
     outcomes: list[CellOutcome | None] = []
     budget = budget_seconds if budget_seconds is not None else limits.cas_session_seconds
     try:
+        # The start is spent from the same budget as the cells: a kernel the
+        # export brings up is the session's time however briefly it lives.
+        started = time.monotonic()
         session._start()
-        spent = 0.0
+        spent = time.monotonic() - started
+        if charge is not None:
+            charge(spent)
         for record in cells:
             remaining = budget - spent
             if remaining <= 0:

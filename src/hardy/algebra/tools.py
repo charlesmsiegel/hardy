@@ -151,6 +151,11 @@ class CasStateResult(FrozenModel):
     segment: int
     accepted: tuple[str, ...]
     seconds_remaining: int
+    # How many of the oldest accepted cells the listing left out to stay
+    # inside the observation budget, and a note saying so. The cells are
+    # still accepted; only the list is shorter.
+    omitted: int = 0
+    note: str | None = None
 
 
 class CasToolRuntime:
@@ -175,20 +180,41 @@ class CasToolRuntime:
 
     def state(self) -> CasStateResult:
         session = self.session
-        return CasStateResult(
+        lines = [
+            f"[{record.seq}] {record.source.strip().splitlines()[0][:80]}"
+            for record in session.accepted()
+        ]
+        result = CasStateResult(
             backend=session.backend.name,
             version=session.version,
             kernel=session.state,
             segment=session.segment,
-            accepted=tuple(
-                f"[{record.seq}] {record.source.strip().splitlines()[0][:80]}"
-                for record in session.accepted()
-            ),
+            accepted=tuple(lines),
             seconds_remaining=max(
                 0,
                 round(session.limits.cas_session_seconds - session.spent_seconds),
             ),
         )
+        # Bounded like every other observation: the listing grows with the
+        # session and a few hundred cells outgrow the default budget. The
+        # oldest go first -- the recent cells are the ones a model is building
+        # on -- and the result says how many it dropped rather than looking
+        # like the whole list.
+        omitted = 0
+        while lines and self._size(result) > self.observation_bytes:
+            lines.pop(0)
+            omitted += 1
+            result = result.model_copy(
+                update={
+                    "accepted": tuple(lines),
+                    "omitted": omitted,
+                    "note": (
+                        f"{omitted} earlier accepted cell(s) omitted to fit the "
+                        "observation budget; they are still part of the session state."
+                    ),
+                }
+            )
+        return result
 
     def reset(self, *, author: str = "model") -> CasStateResult:
         """Discard the namespace and open a clean segment.
@@ -212,7 +238,7 @@ class CasToolRuntime:
             capture_truncated=record.capture_truncated,
             restart_note=record.restart_note,
         )
-        if len(result.model_dump_json().encode("utf-8")) <= self.observation_bytes:
+        if self._size(result) <= self.observation_bytes:
             return result
 
         artifact = None
@@ -221,14 +247,27 @@ class CasToolRuntime:
             self._artifact_sequence += 1
             artifact = self._spill(name, record.model_dump_json(indent=2))
         note = cas_spill_note(artifact=artifact, capture_truncated=record.capture_truncated)
+        # `room` is characters and the cap is bytes, so the slice is a first
+        # guess and the encoded envelope is what decides: multibyte output
+        # sliced to a byte-derived character count came back several times
+        # larger than the cap. Halved until it fits, or until there is nothing
+        # left to cut and the note alone is what goes back.
         room = max(256, self.observation_bytes // 4)
-        return result.model_copy(
-            update={
-                "stdout": result.stdout[:room],
-                "stderr": result.stderr[:room],
-                "value_repr": result.value_repr[:room],
-                "observation_truncated": True,
-                "output_artifact": artifact,
-                "note": note,
-            }
-        )
+        while True:
+            bounded = result.model_copy(
+                update={
+                    "stdout": result.stdout[:room],
+                    "stderr": result.stderr[:room],
+                    "value_repr": result.value_repr[:room],
+                    "observation_truncated": True,
+                    "output_artifact": artifact,
+                    "note": note,
+                }
+            )
+            if room == 0 or self._size(bounded) <= self.observation_bytes:
+                return bounded
+            room //= 2
+
+    @staticmethod
+    def _size(result: FrozenModel) -> int:
+        return len(result.model_dump_json().encode("utf-8"))
