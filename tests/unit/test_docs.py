@@ -183,3 +183,13 @@ def test_computer_algebra_page_states_that_computation_is_not_evidence() -> None
     page = (ROOT / "docs" / "design" / "computer-algebra.md").read_text(encoding="utf-8")
     assert "no computation is evidence" in page.lower()
     assert "os.system" in page, "the escape hatches a cell has must be named"
+
+
+def test_docs_index_lists_every_page() -> None:
+    index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    listed = {target.split("#")[0] for target in links(index)}
+    for path in (ROOT / "docs").rglob("*.md"):
+        rel = path.relative_to(ROOT / "docs").as_posix()
+        if rel == "README.md" or rel.startswith(("archive/", "superpowers/", "ideas/")) or rel in {"INSTALL.md", "security.md"}:
+            continue
+        assert rel in listed, f"docs/README.md does not list {rel}"
