@@ -535,7 +535,11 @@ class DocumentService:
                 digest.update(b"\0")
                 continue
             try:
-                digest.update(_as_snapshot(read_bytes(self.tex_root, path)))
+                raw = read_bytes(self.tex_root, path)
+                # Only .tex files have text snapshots. Other compiler inputs
+                # may be binary even when their bytes happen to decode as
+                # UTF-8, so their CR and LF bytes must remain distinct.
+                digest.update(_as_snapshot(raw) if path.endswith(".tex") else raw)
             except (OSError, ValueError):
                 # Unreadable is itself a state to be stamped against, and a
                 # distinct one from absent: the path is already in the hash

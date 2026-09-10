@@ -506,6 +506,18 @@ def test_a_non_tex_compiler_input_is_part_of_the_writeup_signature(session) -> N
     assert session._tex_signature() != before
 
 
+@pytest.mark.parametrize("pixel_bytes", [b"\r\n", b"\r"])
+def test_binary_compiler_inputs_keep_their_exact_bytes_in_the_signature(session, pixel_bytes) -> None:
+    # Binary inputs can decode as UTF-8 too: an uncompressed image stream's
+    # pixel bytes 13 and 10 are data, not interchangeable line endings.
+    (session.workspace / "tex").mkdir(exist_ok=True)
+    extra = session.workspace / "tex" / "figure.pdf"
+    extra.write_bytes(b"\x00" + pixel_bytes + b"\x01")
+    before = session._tex_signature()
+    extra.write_bytes(b"\x00\n\x01")
+    assert session._tex_signature() != before
+
+
 def test_a_writeup_with_crlf_line_endings_is_not_stale_after_its_own_compile(session) -> None:
     r"""The stamp hashed the bytes on disk; `_stale_writeup` hashed the text it
     had just read, which universal newlines had already turned from `\r\n`
@@ -520,6 +532,7 @@ def test_a_writeup_with_crlf_line_endings_is_not_stale_after_its_own_compile(ses
         {"source": "\\documentclass{article}\n\\begin{document}\n\\input{notes}\n\\end{document}\n"},
     )
     assert saved.ok, saved.output
+    assert session._tex_signature() == session._tex_signature(tex=session._tex_sources())
     assert session._stale_writeup() == []
 
 
