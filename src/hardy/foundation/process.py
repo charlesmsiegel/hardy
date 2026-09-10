@@ -552,8 +552,8 @@ def _settled_within(settled: threading.Event, entry: _Running, seconds: float) -
 class ProcessSpec(FrozenModel):
     argv: tuple[str, ...]
     cwd: Path
-    timeout_seconds: float
-    max_output_bytes: int
+    timeout_seconds: float = Field(ge=0, allow_inf_nan=False, strict=True)
+    max_output_bytes: int = Field(ge=0, strict=True)
     env: dict[str, str] = Field(default_factory=dict)
 
 

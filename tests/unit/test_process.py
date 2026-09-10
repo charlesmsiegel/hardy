@@ -11,6 +11,39 @@ import pytest
 EMITTER = Path(__file__).parents[1] / 'fixtures' / 'process' / 'emit.py'
 
 
+@pytest.mark.parametrize('timeout', [float('nan'), float('inf'), -float('inf'), -1, True])
+def test_process_spec_refuses_deadlines_that_cannot_bound_execution(tmp_path, timeout):
+    from pydantic import ValidationError
+
+    from hardy.foundation.process import ProcessSpec
+
+    with pytest.raises(ValidationError):
+        ProcessSpec(argv=(sys.executable, '-c', 'pass'), cwd=tmp_path,
+                    timeout_seconds=timeout, max_output_bytes=4096)
+
+
+@pytest.mark.parametrize('cap', [-1, 1.5, True])
+def test_process_spec_refuses_invalid_output_byte_caps(tmp_path, cap):
+    from pydantic import ValidationError
+
+    from hardy.foundation.process import ProcessSpec
+
+    with pytest.raises(ValidationError):
+        ProcessSpec(argv=(sys.executable, '-c', 'pass'), cwd=tmp_path,
+                    timeout_seconds=1, max_output_bytes=cap)
+
+
+def test_zero_deadline_remains_an_immediate_timeout(tmp_path):
+    from hardy.foundation.process import ProcessSpec, run_process
+
+    result = run_process(ProcessSpec(
+        argv=(sys.executable, '-c', 'import time; time.sleep(2)'), cwd=tmp_path,
+        timeout_seconds=0, max_output_bytes=0,
+    ))
+    assert result.timed_out
+    assert result.returncode is None
+
+
 def test_process_captures_stdout_and_stderr_separately(tmp_path) -> None:
     process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
