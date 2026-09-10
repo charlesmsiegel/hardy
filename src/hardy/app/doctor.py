@@ -45,6 +45,8 @@ def _probe(command: list[str], *, cwd: Path | None = None, timeout: float = 120)
     except NotADirectoryError:
         return False, f"working directory not usable: {cwd}"
     output = (process.stdout + process.stderr).strip().splitlines()
+    if process.output_overflow:
+        return False, "probe output exceeded its byte limit"
     detail = output[0] if output else f"exit={process.returncode}"
     return process.returncode == 0, detail[:200]
 

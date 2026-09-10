@@ -468,6 +468,11 @@ def test_a_runaway_log_is_read_bounded(tmp_path: Path, monkeypatch):
     assert len(text.encode("utf-8")) <= 1_024 + len("terminal\n")
 
 
+def test_diagnostics_disclose_terminal_output_overflow(tmp_path):
+    text = latex._diagnostics(tmp_path, GuardedResult(returncode=None, output_overflow=True))
+    assert 'terminal output exceeded its byte limit' in text
+
+
 def test_a_timeout_is_measured_in_the_bytes_it_costs(tmp_path: Path):
     """`output_limit` is a byte budget, and this path was slicing characters.
 

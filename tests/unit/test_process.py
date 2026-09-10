@@ -44,6 +44,31 @@ def test_zero_deadline_remains_an_immediate_timeout(tmp_path):
     assert result.returncode is None
 
 
+def test_guarded_compiler_output_is_bounded_before_it_reaches_the_caller(tmp_path):
+    from hardy.foundation.process import run_guarded
+
+    result = run_guarded(
+        [sys.executable, '-c', "import sys; sys.stdout.write('x' * (2 << 20))"],
+        cwd=tmp_path, timeout=5,
+    )
+    assert len((result.stdout + result.stderr).encode('utf-8')) <= 1 << 20
+    assert result.output_overflow
+    assert result.returncode is None
+
+
+@pytest.mark.parametrize('guarded', [True, False])
+def test_one_byte_overflow_is_detected_without_waiting_for_the_deadline(tmp_path, guarded):
+    from hardy.foundation.process import ProcessSpec, run_guarded, run_process
+
+    argv = (sys.executable, '-c', "import sys,time; sys.stdout.write('x'*101); sys.stdout.flush(); time.sleep(3)")
+    if guarded:
+        result = run_guarded(argv, cwd=tmp_path, timeout=1, max_output_bytes=100)
+    else:
+        result = run_process(ProcessSpec(argv=argv, cwd=tmp_path, timeout_seconds=1, max_output_bytes=100))
+    assert result.output_overflow
+    assert not result.timed_out
+
+
 def test_process_captures_stdout_and_stderr_separately(tmp_path) -> None:
     process = importlib.import_module('hardy.foundation.process')
     spec = process.ProcessSpec(
@@ -519,15 +544,26 @@ def test_a_guarded_run_does_not_leave_its_group_behind_when_the_caller_is_interr
     out its limit after Hardy has exited.
     """
     process = importlib.import_module('hardy.foundation.process')
-    if not hasattr(os, 'killpg'):  # pragma: no cover - POSIX-only assertion
-        pytest.skip('process groups are addressed differently on Windows')
     seen: dict[str, subprocess.Popen] = {}
+    original_popen = subprocess.Popen
+    original_sleep = time.sleep
+    caller = threading.current_thread()
+    raised = False
 
-    def interrupted(self, *args, **kwargs):
-        seen['child'] = self
-        raise KeyboardInterrupt
+    def start(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        seen['child'] = child
+        return child
 
-    monkeypatch.setattr(subprocess.Popen, 'communicate', interrupted)
+    def interrupted(seconds):
+        nonlocal raised
+        if threading.current_thread() is caller and not raised:
+            raised = True
+            raise KeyboardInterrupt
+        return original_sleep(seconds)
+
+    monkeypatch.setattr(process.subprocess, 'Popen', start)
+    monkeypatch.setattr(process.time, 'sleep', interrupted)
 
     with pytest.raises(KeyboardInterrupt):
         process.run_guarded(
@@ -538,6 +574,8 @@ def test_a_guarded_run_does_not_leave_its_group_behind_when_the_caller_is_interr
 
     child = seen['child']
     assert child.poll() is not None
+    if not hasattr(os, 'killpg'):
+        return
     # The leader is reaped, so nothing is left in the group unless the
     # grandchild survived it.
     end = time.monotonic() + 10

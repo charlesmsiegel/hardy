@@ -1219,7 +1219,7 @@ class MathematicsSession:
                     timeout=60,
                 )
                 out = probe.stdout
-                stopped = probe.interrupted or probe.timed_out
+                stopped = probe.interrupted or probe.timed_out or probe.output_overflow
                 # A probe that was stopped has no answer: reading its partial
                 # output would silently narrow `LEAN_PATH` and stamp every
                 # external import `missing`.

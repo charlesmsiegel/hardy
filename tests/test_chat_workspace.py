@@ -12,6 +12,22 @@ BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"
 
 
+def test_overflowed_lake_path_probe_does_not_cache_the_fallback(tmp_path, monkeypatch):
+    from hardy.foundation import process
+
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat._lean_command = ('lake', 'env', 'lean')
+    chat._search_path = None
+    monkeypatch.setenv('LEAN_PATH', str(tmp_path / 'fallback'))
+    replies = iter((
+        process.GuardedResult(returncode=None, stdout='partial', output_overflow=True),
+        process.GuardedResult(returncode=0, stdout=str(tmp_path / 'actual')),
+    ))
+    monkeypatch.setattr(process, 'run_guarded', lambda *args, **kwargs: next(replies))
+    assert chat._lean_search_path() == (tmp_path / 'fallback',)
+    assert chat._lean_search_path() == (tmp_path / 'actual',)
+
+
 def test_a_top_level_lean_file_is_left_alone_not_migrated(tmp_path: Path):
     """`_migrate_layout` was deleted: opening a project must not move files.
 

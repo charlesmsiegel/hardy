@@ -441,6 +441,7 @@ class GuardedResult(FrozenModel):
     stderr: str = ""
     timed_out: bool = False
     interrupted: bool = False
+    output_overflow: bool = False
 
 
 def run_guarded(
@@ -449,6 +450,7 @@ def run_guarded(
     cwd: Path | None = None,
     timeout: float,
     env: dict[str, str] | None = None,
+    max_output_bytes: int = 1 << 20,
 ) -> GuardedResult:
     """Run a child to completion, reachable by Esc, inheriting the environment.
 
@@ -459,19 +461,35 @@ def run_guarded(
     the group, the register, the grace, and the escalation -- and three callers
     reimplementing that is three chances to leave one rung off the ladder.
 
-    Output is read whole rather than capped: these are probes and compilers
-    whose output the caller already trims, not the unbounded captures
-    `run_process` exists to bound.
+    Output is bounded while it arrives, before any caller trims diagnostics.
+    An overflow stops the child and cannot be mistaken for compiler success.
     """
+    limits = ProcessSpec(argv=tuple(argv), cwd=cwd or Path.cwd(),
+                         timeout_seconds=timeout, max_output_bytes=max_output_bytes)
     child = subprocess.Popen(
         list(argv),
         cwd=str(cwd) if cwd else None,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         **child_creation(),
     )
+    captured = [bytearray(), bytearray()]
+    capture_lock = threading.Lock()
+    overflow = threading.Event()
+
+    def drain(pipe, destination: bytearray) -> None:
+        while chunk := pipe.read1(4096):
+            with capture_lock:
+                remaining = max(0, limits.max_output_bytes - sum(map(len, captured)))
+                destination.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    overflow.set()
+
+    readers = [threading.Thread(target=drain, args=(pipe, target), daemon=True)
+               for pipe, target in zip((child.stdout, child.stderr), captured, strict=True)]
+    for reader in readers:
+        reader.start()
     with tracked(child) as entry:
         settled = threading.Event()
         watcher = threading.Thread(
@@ -479,12 +497,20 @@ def run_guarded(
         )
         watcher.start()
         timed_out = False
+        deadline = time.monotonic() + limits.timeout_seconds
         try:
-            stdout, stderr = child.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            kill_group(child)
-            stdout, stderr = child.communicate()
+            # A wrapper can exit while its descendant still owns the pipes.
+            # Keep the register and Esc watcher alive until output settles.
+            while child.poll() is None or any(reader.is_alive() for reader in readers):
+                if overflow.is_set():
+                    kill_group(child)
+                    break
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    kill_group(child)
+                    break
+                time.sleep(0.005)
+            child.wait(timeout=TEARDOWN_SECONDS)
         except BaseException:
             # A Ctrl+C at a *synchronous* caller: `hardy doctor` run as a
             # command has no cancellation wrapper around `run_checks`, so the
@@ -500,14 +526,17 @@ def run_guarded(
         finally:
             settled.set()
             watcher.join(timeout=1)
+            for reader in readers:
+                reader.join(timeout=TEARDOWN_SECONDS)
         interrupted = entry.interrupted.is_set()
-    stopped = timed_out or interrupted
+    stopped = timed_out or interrupted or overflow.is_set()
     return GuardedResult(
         returncode=None if stopped else child.returncode,
-        stdout=stdout or "",
-        stderr=stderr or "",
+        stdout=_decode_output(bytes(captured[0])),
+        stderr=_decode_output(bytes(captured[1])),
         timed_out=timed_out,
         interrupted=interrupted,
+        output_overflow=overflow.is_set(),
     )
 
 
@@ -591,7 +620,7 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
 
     def drain(pipe, destination: bytearray) -> None:
         nonlocal captured_bytes
-        while chunk := pipe.read(4_096):
+        while chunk := pipe.read1(4_096):
             with output_lock:
                 remaining = max(0, spec.max_output_bytes - captured_bytes)
                 destination.extend(chunk[:remaining])

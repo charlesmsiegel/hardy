@@ -195,6 +195,8 @@ def _diagnostics(work: Path, outcome: GuardedResult) -> str:
                 text = handle.read().decode("utf-8", errors="replace")
         except (OSError, LayoutError):
             text = ""
+    if outcome.output_overflow:
+        text += "\nHardy stopped the compiler: terminal output exceeded its byte limit.\n"
     return text + outcome.stdout + outcome.stderr
 
 
