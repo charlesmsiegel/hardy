@@ -519,6 +519,17 @@ Trust views must visibly separate theorem parameters/local hypotheses from admit
 
 **Deps:** A0; integrate graph queries after B1
 
+**Status: implemented (2026-09-10).** `workflows/representation.py` composes
+named local/Mathlib search, a structured model decision and optional materialization
+over exact project snapshots. It supports target-free exploration, reuse and
+explicit refinement/plans, recording model/configuration, search identities,
+interpretations, assumptions, reasons and outstanding requirements. A revised
+representation cannot silently replace an unchanged exact use. Locally required
+semantic work retains its use context while global interface materialization
+retains its representation context. These are model assessments, not semantic or
+kernel certification; production search/model/materializer adapters remain with
+later workflow composition. Run `uv run --extra test pytest tests/unit/test_representation.py -q`.
+
 Add `workflows/representation.py` as the shared model-driven primitive for deciding how a mathematical concept should be represented for a particular use.
 
 Required flow:
