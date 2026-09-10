@@ -325,6 +325,35 @@ verdicts. Actors and problem/repeat labels are declared attribution, not externa
 identity authentication. See the
 [engineering verification report](docs/superpowers/reports/2026-09-10-engineering.md).
 
+## Evaluation history, prospective scope and external sources
+
+V1's `evals/history.py` composes X1 comparisons chronologically without pooling
+boards or inferring causal attribution. Input bounds, exact artifact checks and
+duplicate rejection preserve the difference between independent observations,
+missing data and copies of one record. False-statement outcomes stay separate
+from proof gains; recorded timestamps are not an independent clock.
+
+V2's `evals/certification.py` seals the selected universe, conditions, budget and
+slots before execution. The attempt context is persisted before provider work and
+bound to actual workflow artifacts. A read-only certificate requires the same
+corpus/baseline; `CertificationInputsChanged` refuses a changed universe. The
+supported statistic is observed success within the first k declared attempts at
+a per-attempt independent-verifier-call cap. Unsolved completed attempts count as
+zero; missing, unsealed or reused attempts remain provisional. Batch records lack
+this cap's enforcement evidence. Lean CPU time and hard provider limits remain
+unknown; scheduler occupancy measures executor time rather than CPU utilization.
+Existing recorded Lean/canonical trust limits still apply.
+
+V3's `evals/benchmarks.py` imports pinned miniF2F, PutnamBench and ProofNet archives
+through bounded extraction and explicit format profiles. The manifest preserves
+exact original bytes, statement locations, support context, splits, toolchain
+metadata and license identities. Archive hashes are checked; supplied commit
+attribution is not independently authenticated remote origin. Lexical indexing
+neither executes nor ports Lean, adopts corpus claims or establishes semantic
+coverage. V0's [acceptance index](docs/superpowers/reports/2026-09-10-acceptance-index.md)
+remains an ongoing obligation. See the
+[evaluation report](docs/superpowers/reports/2026-09-10-evaluation.md).
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:
@@ -729,20 +758,20 @@ Windows, where Macaulay2 has no native build at all.
 The kernel is persistent because replaying an accumulated script on every call
 would recompute a Gröbner basis every turn. Replay is kept for the two jobs it
 is good at: rebuilding state after a kernel dies, and checking that an exported
-script and notebook actually reproduce the session. Both compare recorded
-output against replayed output, because a cell that errored may already have
-mutated the namespace, so a live session and a clean script can disagree
-without anything saying so. A rebuild that reconstructs different values
-poisons the session rather than reporting success.
+script and notebook actually reproduce the session. Recovery first refuses any
+unaccepted current-segment cell whose kernel stayed live or whose survival is
+unknown; an explicit reset is required. Known terminal interrupts and legacy
+timeout/kernel-death statuses may roll back to accepted state. Allowed rebuilds
+and export compare recorded output against replayed output. A rebuild that
+reconstructs different values poisons the session rather than reporting success.
 
 Comparing output is not the same as comparing state, and the difference is
 where a rebuild used to overclaim. `import random; x = random.random()` prints
 nothing at all: a replay that rebuilt a different `x` reproduced three empty
 fields and was called faithful, with every later cell then standing on a value
 nobody had compared. So the kernel fingerprints its own namespace after every
-cell and the record carries the digest, which closes the other half of the same
-hole for free — a cell whose recorded state includes what a *failed* cell left
-behind cannot be matched by a replay that never ran the failure. Only the
+cell and the record carries the digest. Live/unknown unaccepted effects are now
+refused before recovery regardless of whether a digest could detect them. Only the
 default backend can do this: Singular and Macaulay2 have no protocol to carry
 it, so a rebuild there names the cells whose replay proved nothing rather than
 reporting a rebuild as though it had been checked.
@@ -785,7 +814,11 @@ namespace stands. What that cannot promise is obedience: a cell inside a C loop
 that never returns to its interpreter will not see the signal, so an interrupt
 that goes unanswered within a short grace escalates to exactly what the timeout
 did. An interrupted cell is never accepted — it did not finish, and like an
-errored one it may already have changed the namespace.
+errored one it may already have changed the namespace. That live state remains
+available until lost, but recovery cannot silently omit those effects. Persisted
+`kernel_lost` permits a known terminal interrupt to roll back accepted state;
+unknown legacy survival remains conservative. Reopening and later kernel deaths
+do not clear an earlier live unaccepted cell.
 
 Replaying the cells is not the same claim as the script working, so export also
 runs the file it just published, as a subprocess and at the path it published

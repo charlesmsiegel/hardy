@@ -184,6 +184,24 @@ human-guided paper trials and interactive publication wiring remain deferred.
 See the [engineering report](docs/superpowers/reports/2026-09-10-engineering.md)
 for scope and gate status. Core E remains deferred; S1/S2 remain unaccepted.
 
+### Evaluation measurement and source preservation
+
+- V1: `hardy evals history` compares authenticated exact slots across recorded
+  times, retaining missing controls and observations without causal attribution.
+- V2: prospective Python `run_set`/`certify` APIs distinguish observed first-k
+  success under an independent-verifier-call cap from provisional evidence.
+  Actual unsolved attempts count as zero; changed corpus/baseline inputs refuse.
+  Lean CPU time, hard provider caps and independent kernel replay are not established.
+- V3: `hardy evals import-benchmark` preserves pinned miniF2F, PutnamBench and
+  ProofNet bytes with original context, splits and toolchain/license metadata.
+  Lexical coverage is reported separately from unverified semantic coverage.
+  Imports do not execute source, port Lean or adopt corpus entries.
+- V0 remains ongoing: the [fixture index](docs/superpowers/reports/2026-09-10-acceptance-index.md)
+  maps current primitives without accepting future work or deferred Core E trials.
+
+The [evaluation report](docs/superpowers/reports/2026-09-10-evaluation.md) records
+focused tests, pinned import measurements and the passed integrated landing gate.
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation
@@ -894,10 +912,11 @@ Priority labels are sequencing hints:
   an auditor holding `transcript.jsonl` has every input to it: a public block
   contributes its identity and position, since what it says is already in the
   record, and only a block Hardy will not transcribe contributes a digest of
-  itself. `proof.lean` is cleared on a run that verified nothing rather than
-  merely not written, since an output directory is reusable and a stale one
-  left a checked proof of an earlier statement beside a result saying no
-  artifact was produced. The output
+  itself. A directory containing an earlier batch attempt's manifest, journal,
+  trajectory or result is refused before model work; choose another `--output`
+  path, including when the previous attempt was interrupted. For an otherwise
+  available directory, a run that verifies nothing also removes any leftover
+  `proof.lean` so its result cannot sit beside an unrelated proof. The output
   cap each reply is generated under is recorded in the run's provenance
   alongside model, backend and endpoint: change it and the same model gets a
   different amount of room to reach a submission, which is a different
@@ -1063,19 +1082,21 @@ Priority labels are sequencing hints:
 - **Now (implemented):** state carries between cells. Replay is recovery and
   verification rather than the execution path, because recomputing a Gröbner
   basis every turn is not affordable.
-- **Now (implemented):** a rebuild after a kernel death compares every replayed
+- **Now (implemented):** recovery first refuses any current-segment unaccepted
+  cell whose kernel remained live or whose survival is unknown. This includes
+  errors, live interruptions, swallowed interrupts and clipped sentinel successes;
+  later accepted cells or kernel death do not clear that refusal. An explicit
+  reset starts a clean segment. Recorded terminal interrupts and timeout/kernel
+  deaths permit rollback to accepted cells, including after reopening.
+  An allowed rebuild after a kernel death compares every replayed
   cell against its record -- what it printed *and*, on the default backend, a
   digest of the namespace it left behind -- and poisons the session on
   divergence. Running without error is not the same as recovering, and neither
-  is printing the same thing: a cell that binds a fresh random value, or an
-  accepted cell whose recorded state includes what a failed cell left behind,
-  reproduces empty output either way. A missing digest makes the rebuild
+  is printing the same thing: a cell that binds a fresh random value can
+  reproduce empty output while changing state. A missing digest makes the rebuild
   unverified whatever the cell printed, and the session says so rather than
-  reporting a rebuild as if it had been checked. A rebuild also names the cells
-  of the segment that failed and so were not replayed: what such a cell changed
-  on its way to failing is outside the rebuilt state, the digest catches a
-  later cell built on it where there is one, and where there is none the
-  restart note is the only place the gap is said. Digests go missing readily and
+  reporting a rebuild as if it had been checked. Missing digests never relax the
+  earlier refusal of live/unknown unaccepted effects. Digests go missing readily and
   on purpose: Singular and Macaulay2 have no protocol to carry one, an older
   log has none, and the default kernel refuses to fingerprint a namespace
   holding a value it could only see a prefix of, one whose repr is CPython's
@@ -1207,12 +1228,12 @@ Priority labels are sequencing hints:
   script verdict goes `unverified` too, never `diverged`: "the script printed
   something else" is as much a claim about the unread tail as "it printed the
   same".
-- **Known cost of that refusal:** a refused cell still changed the live
-  namespace, and that change is now outside the accepted set. Every later cell
-  that depends on it will diverge on export and fail to rebuild after a kernel
-  restart, exactly as one depending on an errored cell does. The cell's record
-  says so. The remedy is to rerun it printing less, or to raise
-  `cas_output_bytes` and rerun it, before building on it.
+- **Known cost of that refusal:** a refused live cell may have changed the
+  namespace outside the accepted set. Recovery refuses that segment even if a
+  later accepted cell appears independent; export does not establish that the
+  live effects were reproduced. Reset the session, reconstruct the intended
+  accepted state, and rerun with less output or a larger `cas_output_bytes` limit
+  before building on it. Rerunning alone does not erase the refused cell.
 - **Now (implemented):** the human drives the same kernel through `/cas`, and
   those cells enter the same log, replay, and export as the model's.
 - **Now (implemented):** an absent backend registers no tools on any binding,
@@ -1236,6 +1257,9 @@ Priority labels are sequencing hints:
   an export rebuild from. A kernel that will not answer within a short grace --
   a cell inside a C loop that never returns to its interpreter -- is stopped
   the way the timeout stopped it, and the record says the state went with it.
+  Durable `kernel_lost` distinguishes this terminal rollback from a live
+  interruption: the former permits rebuilding accepted state; the latter refuses
+  recovery until reset, even after reopening. Legacy unknown survival also refuses.
   A second Esc escalates to that immediately rather than waiting the grace out.
   A kernel wedged *between* cells -- one that answered and then stopped reading
   its input -- is the one case the first press cannot reach: a cell whose frame

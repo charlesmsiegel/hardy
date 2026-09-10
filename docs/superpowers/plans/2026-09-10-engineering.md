@@ -9,7 +9,8 @@ Macaulay2 platform checks. Remote model revision, provider SDK and full runtime
 identity remain unestablished. Integrated source `0063fd1` passed 168 related
 tests and Ruff. Its full gate found one CAS recovery regression and three fixture
 failures, resolved in reviewed commits through `f76cb18`. Its fresh full hermetic
-gate is pending; the corrected source passed fresh installed-wheel smoke.
+gate passed: 4,511 tests, 158 skipped, 36 deselected and 90.15% coverage in
+674.26 seconds. The corrected source also passed fresh installed-wheel smoke.
 See the [engineering report](../reports/2026-09-10-engineering.md).
 
 - [x] X0: expose the Lean save gates as named ordered operations, preserving

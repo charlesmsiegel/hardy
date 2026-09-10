@@ -4,7 +4,7 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 51 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2, X0-X3, X5-X6, S0 and S3).**
+**Completed: 54 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2, X0-X3, X5-X6, S0, S3 and V1-V3).**
 Checkmarks mean the roadmap records the item as implemented. Core D and F-I passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
@@ -28,21 +28,29 @@ Core I and X2 verification is in the
 
 S0/S3 verification and the unaccepted S1/S2 capability requirements are in the
 [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
-Execution remains unconfined. Engineering X and evaluation V work remain ongoing.
+Execution remains unconfined. X4 and V0 remain ongoing.
 
 The [engineering report](docs/superpowers/reports/2026-09-10-engineering.md)
 records X0/X3/X5 acceptance and X6's completed residual audit/supported batch path.
 X4 remains ongoing. X6's checkmark does not establish immutable remote model,
 SDK or full worker-runtime identity. The first engineering full gate found one
 production regression and three fixture failures; reviewed fixes are in place,
-and a fresh full gate remains pending. The corrected source passed fresh
-installed-wheel smoke.
+and the corrected source passed its fresh full gate (4,511 tests, 90.15%
+coverage) and installed-wheel smoke.
+
+V1-V3 acceptance scope, exact import measurements and the passed integrated
+evaluation gate (4,569 tests, 90.08% coverage) are in the
+[evaluation report](docs/superpowers/reports/2026-09-10-evaluation.md).
+V0's [fixture index](docs/superpowers/reports/2026-09-10-acceptance-index.md)
+remains an ongoing obligation rather than a completed universal acceptance claim.
 
 ## Available next work
 
-Continue with eligible X, S and V work. **Skip all of Core E pending human input.** Independent X, S and V work
-retains its own dependencies; X1 supports strategy comparison and X5 supports
-expected-spend admission for supported API chat/batch paths, not hard provider caps.
+**Skip all of Core E pending human input.** Remaining lane work is X4's CAS
+late-stderr/prompt-timing and real Macaulay2 checks, S1's demonstrated confinement
+capability gap, S2's dependent independent audit, and continuing V0 fixtures.
+Core A-D and F-I primitives are implemented. Release milestones retain their
+full integration/acceptance requirements and are not accepted by item counts.
 
 ## Dependency map
 
@@ -202,12 +210,13 @@ flowchart LR
 
 ## Evaluation lane V
 
-V0 is ongoing: A-D and F fixtures exist; later primitives still need their own.
+V0 is ongoing: the integrated fixture index covers current primitives; every
+new behavior still requires its own acceptance and regression cases.
 
 - [ ] [V0 - Acceptance fixtures for every new primitive - P0](docs/roadmap.md#v0--acceptance-fixtures-for-every-new-primitive--p0) - Deps: not specified.
-- [ ] [V1 - Regression tracking - P1](docs/roadmap.md#v1--regression-tracking--p1) - Deps: [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) recommended.
-- [ ] [V2 - Certified fixed-budget pass@k - P1](docs/roadmap.md#v2--certified-fixed-budget-passk--p1) - Deps: stable run budgets/identities; especially relevant after [F1](docs/roadmap.md#f1--diverse-parallel-proof-attempts--p1p2).
-- [ ] [V3 - External Lean benchmark importers - P2](docs/roadmap.md#v3--external-lean-benchmark-importers--p2) - Deps: not specified.
+- [x] [V1 - Regression tracking - P1](docs/roadmap.md#v1--regression-tracking--p1) - Deps: [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) recommended.
+- [x] [V2 - Certified fixed-budget pass@k - P1](docs/roadmap.md#v2--certified-fixed-budget-passk--p1) - Deps: stable run budgets/identities; especially relevant after [F1](docs/roadmap.md#f1--diverse-parallel-proof-attempts--p1p2).
+- [x] [V3 - External Lean benchmark importers - P2](docs/roadmap.md#v3--external-lean-benchmark-importers--p2) - Deps: not specified.
 
 ## Release acceptance milestones
 

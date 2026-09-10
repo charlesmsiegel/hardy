@@ -188,6 +188,47 @@ cannot rewrite an existing budget journal; `HARDY_PROVIDER_BUDGET` can select th
 policy path. Full remote model revision, SDK and local runtime identity remain
 unestablished even when a model alias and local launcher digest are recorded.
 
+V1 adds a chronological read-only view of authenticated scoreboards. It retains
+missing measurements and uncontrolled differences; historical change is not
+causal evidence. For existing boards and their declared corpus/baseline:
+
+```sh
+hardy evals history evals/scoreboards/before evals/scoreboards/after --vary model --problems corpus/problems --baseline evals/baseline.json
+```
+
+V3 preserves a supplied upstream archive and indexes its original statement bytes
+without compilation, Lean porting or corpus adoption. The output must be new.
+For the measured miniF2F archive:
+
+```sh
+hardy evals import-benchmark minif2f --archive miniF2F.tar.gz --revision f0dcc8b59e630fba00ba9569ca6714700e0a8801 --sha256 298cfb25e8f7c065cbdc87c2516214772241bad8b9818653a15069c8c8da95ca --output imported-minif2f
+```
+
+V2's Python API prospectively declares the first k attempts and a per-attempt
+independent-verifier-call cap. Given the existing `run_set` arguments in
+`run_options`, with a staged condition allowing at least three repeats and
+`official_checks=2`:
+
+```python
+from hardy.evals.certification import CertificationBudget, certify
+from hardy.evals.runner import run_set
+
+board = run_set(**run_options, certification=CertificationBudget(
+    independent_verifier_calls=2, ks=(1, 3),
+))
+report = certify(board, problems_path=run_options["problems_path"],
+                 baseline_path=run_options["baseline_path"])
+```
+
+Certification reports observed success within the first k declared attempts,
+under the existing recorded Lean/canonical trust boundary. It is not an IID
+estimator or an independent kernel recheck. Missing evidence remains provisional;
+changed corpus/baseline inputs refuse. Batch records do not establish this
+verifier-call cap. Lean CPU time and hard provider token/invoice caps remain
+unknown. See the [evaluation report](docs/superpowers/reports/2026-09-10-evaluation.md)
+for acceptance scope and gate status. V0's fixture obligation continues; Core E,
+S1/S2 and X4's remaining work are not accepted by these measurements.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.
@@ -918,8 +959,12 @@ whether the provider was also stopped. A computer algebra cell that answers
 the interrupt costs only itself: the kernel survives, and with it everything the
 earlier cells put in the namespace. What an interrupted cell had already changed
 before it was stopped stays changed — nothing is rolled back — which is why such
-a cell is never accepted. One that does not answer within a couple of seconds is
-stopped the way the timeout stopped it, and the state goes with it; a second Esc
+a cell is never accepted. If that kernel later dies or the session is reopened,
+recovery refuses the segment until an explicit reset; rerunning the cell does not
+erase its unaccepted history. One that does not answer within a couple of seconds is
+stopped the way the timeout stopped it, and the state goes with it. A recorded
+terminal interrupt permits rebuilding accepted cells, provided no earlier
+live/unknown unaccepted cell remains; a second Esc
 skips that wait and kills what had not stopped. On Windows that kill reaches the
 process Hardy started and not the tree beneath it — stopping a whole tree there
 needs a job object Hardy does not set up. A cell you started yourself with `/cas`
@@ -1047,7 +1092,8 @@ prime above two is odd"`, or `/prove every prime above two is odd` from inside a
 session, and its artifacts — request, frozen claim, trajectory,
 Lean source, verification, paper, and manifest — are written under `runs_root`.
 The retained batch check is `hardy batch examples/true.json --output
-hardy-output`, and `examples/sqrt-two-plus-sqrt-three.json` is the nontrivial
+hardy-output`, using an output path without an earlier attempt, and
+`examples/sqrt-two-plus-sqrt-three.json` is the nontrivial
 problem the recorded acceptance runs used. `hardy accept --recorded
 acceptance/recorded/*` rechecks those committed runs — manifest against
 trajectory against Lean source against document, the axiom line Lean printed
@@ -1254,6 +1300,11 @@ verified. A request whose declaration is an anonymous `example` is refused up
 front, since `#print axioms` has no name to audit and the run could never
 verify.
 
+Choose a fresh output path for every attempt. A directory containing an earlier
+batch manifest, journal, trajectory or result is refused before another model
+call, including incomplete attempts. The default `hardy-output` is not reusable
+after a run; retain its evidence and select another `--output` path.
+
 ```sh
 hardy batch examples/true.json --output hardy-output
 ```
@@ -1261,9 +1312,9 @@ hardy batch examples/true.json --output hardy-output
 | Option | Default | What it does |
 | --- | --- | --- |
 | `request` (positional) | required | Path to the request JSON. `examples/sqrt-two-plus-sqrt-three.json` is the nontrivial problem the recorded acceptance runs used. |
-| `--output PATH` | `hardy-output` | Where the run's artifacts are written. |
+| `--output PATH` | `hardy-output` | Where a fresh attempt's artifacts are written; an earlier attempt at this path is refused. |
 | `--max-turns N` | `8` | Model turns the loop may take. |
-| `--wall-seconds S` | `300` | Wall-clock budget for the run. Unvalidated here, unlike `evals run`'s: `0` and `inf` are both accepted and both mean *no* deadline, since the runtime reads a falsy budget as unbounded and `inf` never elapses. Pass a positive, finite number. |
+| `--wall-seconds S` | `300` | Wall-clock budget for the run. Use a positive finite number. Zero leaves no model-call budget and records `wall_clock_limit`; nonfinite values are refused when the attempt manifest is serialized. |
 
 ### `hardy evals`
 

@@ -25,12 +25,15 @@ owners remain real. The full landing reports record aggregate test coverage.
 | F0-F3 search and lessons | [best first](../../../tests/unit/test_best_first_strategy.py), [race](../../../tests/unit/test_race_strategy.py), [escalation](../../../tests/unit/test_escalating_strategy.py), [lessons](../../../tests/unit/test_strategy_lessons.py) | Exact claim, shared ceilings, cancellation and attributed failure lessons |
 | G0-G3 manuscripts and prose | [recursive Referee](../../../tests/unit/test_referee_recursive.py), [versions](../../../tests/unit/test_version_audit.py), [structure](../../../tests/unit/test_publication_structure.py), [refresh](../../../tests/unit/test_exposition_refresh.py) | Coverage limits, invalidation, chapter membership and explicit prose revisions |
 | H0-H2 reuse and exposure | [retrieval](../../../tests/unit/test_project_retrieval.py), [reuse](../../../tests/unit/test_project_reuse.py), [exposure](../../../tests/unit/test_evals_exposure.py) | Current evidence and exact-repeat/transfer/unseen declarations; fixtures do not establish gains |
+| I0/X2 conversation and checkpoints | [history](../../../tests/unit/test_conversation_history.py), [terminal history](../../../tests/tui/test_conversation_history.py), [streaming](../../../tests/test_claude_runtime_stream.py) | Selected branch replay, durable partial observations and stale-worker refusal; mathematical state and all-branch spend remain current |
+| I1/I2 prompt and catalog conveniences | [templates](../../../tests/unit/test_prompt_templates.py), [commands](../../../tests/tui/test_prompt_commands.py), [catalog](../../../tests/test_catalog.py) | Recorded request expansion and configured model identities; no proof evidence or invented availability |
 | X0/X5 save gates and spend | [save sequence](../../../tests/unit/test_save_gate_sequence.py), [spend](../../../tests/unit/test_spend_budget.py) | Ordered refusals and durable reserve/settle; no hard billing guarantee |
+| X6 durable attempts and adjudication | [batch journals](../../../tests/unit/test_batch_recording.py), [reviews](../../../tests/unit/test_evals_adjudication.py) | Crash/incomplete identity, exact completion receipts and attributed history; legacy and remote runtime identity gaps remain explicit |
 | S3 process floor | [process](../../../tests/unit/test_process.py) | Finite requests, bounded capture, overflow, cancellation and teardown |
 | V1-V3 measurements and imports | [history](../../../tests/unit/test_evals_history.py), [certification](../../../tests/unit/test_evals_certification.py), [benchmarks](../../../tests/unit/test_evals_benchmarks.py) | Comparable controls, prospective first-k receipts, exact upstream bytes and explicit unknowns |
 
-Core I/X2 conversation fixtures and X6 journal/adjudication fixtures are included
-by the final integrated tree; their item reports give the focused verification
+Core I/X2 conversation fixtures and X6 journal/adjudication fixtures above are
+present in the integrated tree; their item reports give focused verification
 counts. All runnable primitives continue to require their own regressions as
 behavior changes. V0 remains an ongoing obligation, rather than a claim that
 future primitives or the deferred Core E human trials are accepted.

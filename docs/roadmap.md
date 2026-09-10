@@ -448,8 +448,8 @@ Concrete current defects stay in Issues. Periodically audit all subprocess/resul
 
 # Core B — persistent mathematical project
 
-All Core B tasks depend on the A0 contracts. Core B is the currently authorized
-implementation pass; independent work can proceed against those frozen seams.
+All Core B tasks depend on the A0 contracts. Core B is implemented against those
+frozen seams; its current acceptance is recorded with each item below.
 
 ## B0 — Ledger event store — P0
 
@@ -1158,9 +1158,13 @@ These tasks run alongside the core and should be added as the corresponding prim
 
 ## V0 — Acceptance fixtures for every new primitive — P0
 
+**Status:** Ongoing obligation. The [acceptance fixture index](superpowers/reports/2026-09-10-acceptance-index.md) maps current primitives, including I/X6; it does not accept future behavior or deferred Core E trials.
+
 Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, declaration/context/notation semantics, research-goal/conjecture/approach semantics, representation resolution, context branching, transport/WLOG justification, arbitrary-vs-chosen declarations, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, `Let X be ...` workflows, counterexamples, and Referee coverage.
 
 ## V1 — Regression tracking — P1
+
+**Status:** Implemented: bounded read-only chronological exact-slot comparisons retain unknown controls, missing observations and descriptive deltas without causal attribution. See the [evaluation report](superpowers/reports/2026-09-10-evaluation.md).
 
 **Deps:** X1 recommended
 
@@ -1168,11 +1172,15 @@ Provide the across-time view over comparable scoreboards. Never attribute a hist
 
 ## V2 — Certified fixed-budget pass@k — P1
 
+**Status:** Implemented in the declared scope: prospective observed-first-k reports with exact universe/attempt receipts and a per-attempt independent-verifier-call cap. Batch enforcement, Lean CPU and hard provider caps remain unestablished; incomplete evidence is provisional. No IID estimate or independent kernel replay is claimed. See the [evaluation report](superpowers/reports/2026-09-10-evaluation.md).
+
 **Deps:** stable run budgets/identities; especially relevant after F1
 
 Separate provisional from certified results. Report pass@1/pass@k with explicit fixed budgets plus cost, Lean CPU, makespan/utilization, failure kinds, and per-domain results.
 
 ## V3 — External Lean benchmark importers — P2
+
+**Status:** Implemented: pinned miniF2F/PutnamBench/ProofNet archives retain exact source/context/split/toolchain/license identities and lexical coverage findings, with semantic coverage unverified. No execution, porting or corpus adoption. See the [evaluation report](superpowers/reports/2026-09-10-evaluation.md).
 
 Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Hardy's own classified corpus remains strategically primary.
 
@@ -1206,7 +1214,7 @@ Agent 14  X6 eval identity/journal residual audit
 
 **Core B implements B0/B1/B2/B3/B4/B5** against those seams.
 Independent tasks proceed once their own dependencies permit, without waiting
-for unrelated X/S tasks. Core D and F are verified on main; eligible work outside Core E continues.
+for unrelated X/S tasks. Core A-D and F-I primitives are implemented; outstanding lane work remains explicit below.
 
 A2 is shared by the new B5 projection; B4 representation decisions remain an optional semantic step, not a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
 
@@ -1215,8 +1223,9 @@ Core C followed this dependency order: C0/C1/C2/C5 could proceed independently; 
 As soon as the core loop works, run D0/D1/D2/D5/D7/D8/D9 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
 Core E is deferred for human input under the current execution instruction.
-Continue with eligible Core F-I work; X/S/V lanes retain their own dependencies.
-V0 acceptance work accompanies each primitive rather than waiting for Core E.
+Continue X4's CAS residuals and V0's fixture obligation; S1's confinement
+capability gap and the dependent S2 audit remain unaccepted. V1-V3 implementations
+retain their scoped measurement limits; the integrated full landing gate passed.
 
 ---
 

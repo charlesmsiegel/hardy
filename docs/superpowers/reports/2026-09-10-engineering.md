@@ -92,11 +92,14 @@ completed attempt directory, which X6 deliberately refuses. `033ce4c` and
 `1743688` now generate the intended conditions through actual attempt owners,
 preserving strict journal validation.
 
-A fresh full hermetic gate on frozen source `f76cb18` is running; its result is
-**pending**. Fresh log:
-`%TEMP%/hardy-engineering-final-hermetic-r2.log`. The first gate and earlier wheel
-result do not establish acceptance of the current source. Counts, coverage and
-elapsed time will be recorded after the fresh gate completes.
+The fresh full hermetic gate passed on frozen source `f76cb18`:
+**4,511 passed, 158 skipped, 36 deselected; 90.15% coverage** (82% required),
+in **674.26 seconds**. Log:
+`%TEMP%/hardy-engineering-final-hermetic-r2.log`.
+
+The [history mapping](2026-09-10-linear-history.md) records rewritten equivalent
+`b1de4f8`; this gate ran on original source `f76cb18`, not on every rewritten
+intermediate tree. The integrated evaluation gate remains a separate requirement.
 
 ```powershell
 uv run --extra test pytest -q -m 'not real_toolchain and not live' --cov --cov-report=xml --cov-report=html --cov-report=term --tb=short

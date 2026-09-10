@@ -44,5 +44,6 @@ names original source `f76cb18` in its [report](2026-09-10-engineering.md).
 The mapping's saved untracked-report digest describes preservation at rebase
 time, before later documentation edits.
 
-The intended landing is a fast-forward through the final evaluation history once
-both required gates pass. The linear engineering branch is not a separate landing.
+Both required gates passed. Final integration uses a fast-forward through the
+evaluation history; this report does not claim that landing has already occurred.
+The linear engineering branch is not a separate landing.
