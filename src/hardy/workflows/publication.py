@@ -8,8 +8,10 @@ Reused: LedgerGraph closure/minimal_context (also ContextManager's semantic
 owner), LedgerViews authentication/coverage/staleness, and immutable records.
 Assumes: semantic dependency edges have been recorded; no text parser can infer
 missing mathematics here. Readiness authenticates with the supplied policy.
+Containment selects document members, never mathematical dependencies. Ledger
+relation order determines chapters; shared prerequisites appear at first use.
 Watch: attachment fixed points can require several graph walks; human document
-artifacts are referenced, not read. Chapter policy and prose refresh are separate.
+artifacts are referenced, not read. Prose refresh remains a separate operation.
 """
 from __future__ import annotations
 
@@ -65,6 +67,11 @@ class PublicationExposition(FrozenModel):
     target: VersionRef
 
 
+class PublicationPlacement(FrozenModel):
+    item: VersionRef
+    containers: tuple[VersionRef, ...] = ()
+
+
 class PublicationPlan(FrozenModel):
     request: PublicationRequest
     revision: int
@@ -78,6 +85,8 @@ class PublicationPlan(FrozenModel):
     unestablished: tuple[VersionRef, ...]
     obligations: tuple[Obligation, ...]
     citations_open: tuple[VersionRef, ...]
+    containment: tuple[Relation, ...] = ()
+    structure: tuple[PublicationPlacement, ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -90,6 +99,69 @@ class PublicationPlan(FrozenModel):
 _PROSE = frozenset({ProjectItemKind.EXPOSITION, ProjectItemKind.DOCUMENT_FRAGMENT})
 _RESEARCH = frozenset({ProjectItemKind.APPROACH, ProjectItemKind.RESEARCH_NOTE,
                        ProjectItemKind.QUESTION, ProjectItemKind.GOAL})
+_CONTAINERS = frozenset({ProjectItemKind.SECTION, ProjectItemKind.CHAPTER, ProjectItemKind.BOOK})
+
+
+def _containment(snapshot, graph, roots):
+    """Preorder exact members, rejecting cycles even through hidden containers.
+
+    B1 chooses historical relation versions; snapshot order chooses siblings.
+    Reordering an unchanged container requires a new ledger snapshot. To retain
+    both editions in one snapshot, revise the container and its logical links.
+    """
+    active = {r.ref for r in graph.relations if r.kind == RelationKind.CONTAINS}
+    relations = tuple(r for r in snapshot.records if isinstance(r, Relation) and r.ref in active)
+    children = {}
+    for relation in relations:
+        children.setdefault(relation.source, []).append(relation)
+    paths, visiting = {}, set()
+    pending = [(ref, (), False) for ref in reversed(roots)]
+    while pending:
+        ref, ancestors, exiting = pending.pop()
+        if exiting:
+            visiting.remove(ref)
+            continue
+        if ref in visiting:
+            raise ValueError(f"publication containment cycle at {ref.id}@{ref.digest}")
+        if ref in paths:
+            continue
+        record = snapshot.get(ref)
+        if not isinstance(record, ProjectItem):
+            raise ValueError("publication containment must identify a project item")
+        paths[ref] = ancestors
+        if record.kind not in _CONTAINERS:
+            if children.get(ref):
+                raise ValueError("publication containment source must be a section, chapter or book")
+            continue
+        visiting.add(ref)
+        pending.append((ref, ancestors, True))
+        pending.extend((r.target, (*ancestors, ref), False) for r in reversed(children.get(ref, ())))
+    return paths, tuple(r for r in relations if r.source in paths)
+
+
+def _structure(snapshot, graph, paths, items):
+    """Place every visible exact item once, shared material at its first use."""
+    selected = {i.ref for i in items}
+    if not any(snapshot.get(ref).kind in _CONTAINERS for ref in paths):
+        return tuple(PublicationPlacement(item=i.ref) for i in items)
+    ledger_order = dict.fromkeys(r.ref for r in snapshot.records)
+    result, placed = [], set()
+
+    def place(ref, ancestors):
+        if ref in selected and ref not in placed:
+            result.append(PublicationPlacement(item=ref, containers=tuple(a for a in ancestors if a in selected)))
+            placed.add(ref)
+
+    for ref, ancestors in paths.items():
+        container = snapshot.get(ref).kind in _CONTAINERS
+        if container:
+            place(ref, ancestors)
+        local = set(graph.publication_closure(ref)) & selected - paths.keys()
+        for dependency in ledger_order:
+            if dependency in local:
+                place(dependency, (*ancestors, ref) if container else ancestors)
+        place(ref, ancestors)
+    return tuple(result)
 
 
 class PublicationPlanner:
@@ -124,8 +196,7 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
             raise ValueError("publication root must identify a project item")
         if record.publication_visibility == PublicationVisibility.OMITTED:
             raise ValueError("explicitly omitted item cannot be a publication root")
-        if record.kind in {ProjectItemKind.SECTION, ProjectItemKind.CHAPTER}:
-            raise ValueError("section/chapter publication policy is not implemented")
+    paths, containment = _containment(snapshot, graph, request.roots)
 
     def visible(record: object) -> bool:
         return isinstance(record, ProjectItem) and (
@@ -138,8 +209,8 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
 
     # The structural owner provides the universe. Only visible attachments may
     # expand the draft; internal proof dependencies still expand transitively.
-    candidates = set(graph.publication_closure(request.roots))
-    closure = set(graph.dependency_closure(request.roots, include_roots=True))
+    candidates = set(graph.publication_closure(paths))
+    closure = set(graph.dependency_closure(paths, include_roots=True))
     while True:
         attached = {r.source for r in attachments.values()
                     if r.target in closure and r.source in candidates
@@ -203,7 +274,7 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     citations.update((c.ref, c) for c in snapshot.current(CitationContract)
                      if c.use_site in closure
                      or c.use_site == c.required_claim and c.required_claim in citation_subjects)
-    reports = tuple(views.publication(root, scope) for root in request.roots)
+    reports = tuple(views.publication(root, scope) for root in paths)
     unestablished = ordered(ref for report in reports for ref in report.unestablished if ref in closure)
     pending = {o.ref: o for report in reports for o in report.obligations
                if o.item in closure or o.ref in closure}
@@ -215,9 +286,10 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
                         and views.policy.is_accepted(snapshot, o.resolution)}
     checked = {c.ref for c in citations.values() if c.required_claim in checked_subjects}
     documented = {p.target for p in current_prose if p.prose.statement is not None or p.prose.artifacts}
-    missing = tuple(i.ref for i in items if i.ref not in documented)
+    missing = tuple(i.ref for i in items if i.kind not in _CONTAINERS and i.ref not in documented)
     return PublicationPlan(request=request, revision=snapshot.revision, closure=ordered(closure),
         items=items, contexts=tuple(contexts), citations=tuple(citations[r] for r in ordered(citations)),
         exposition=tuple(current_prose), stale_exposition=tuple(stale_prose), missing_exposition=missing,
         unestablished=unestablished, obligations=tuple(pending[r] for r in ordered(pending)),
-        citations_open=ordered(set(citations) - checked))
+        citations_open=ordered(set(citations) - checked), containment=containment,
+        structure=_structure(snapshot, graph, paths, items))

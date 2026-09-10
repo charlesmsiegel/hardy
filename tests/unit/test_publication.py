@@ -166,7 +166,8 @@ def test_annotated_research_goal_does_not_become_publication_ready(publication, 
     assert not make_plan(publication, (store, goal, scope)).ready
 
 
-def test_readiness_requires_authenticated_evidence_and_missing_prose_remains_a_gap(publication, tmp_path):
+@pytest.mark.parametrize("container", [False, True])
+def test_readiness_requires_authenticated_evidence_and_missing_prose_remains_a_gap(publication, tmp_path, container):
     store = LedgerStore(tmp_path)
     theorem = item("T", statement="True")
     scope = Scope(id="scope", must_prove=(theorem.ref,))
@@ -179,12 +180,14 @@ def test_readiness_requires_authenticated_evidence_and_missing_prose_remains_a_g
     decisions = {}
     policy = LedgerPolicy(read_evidence=evidence_records.get, read_decision=decisions.get)
     decisions[receipt] = AcceptanceDecision(proposal.ref, work.ref, theorem.ref, scope.ref, None, policy.digest)
-    snapshot = store.append((theorem, scope, work), expected_revision=0)
+    root = item("Book", "book") if container else theorem
+    containers = (root, edge("contains-theorem", root, theorem, "contains")) if container else ()
+    snapshot = store.append((theorem, scope, work, *containers), expected_revision=0)
     accepted = policy.accept(snapshot, proposal, receipt)
     closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref, "status": "resolved", "resolution": accepted})
     store.append((closed,), expected_revision=1, validate=policy.validate)
     planner = publication.PublicationPlanner(store, policy=policy)
-    request = publication.PublicationRequest(roots=(theorem.ref,), scope=scope.ref)
+    request = publication.PublicationRequest(roots=(root.ref,), scope=scope.ref)
     missing = planner.plan(request)
     assert not missing.unestablished and not missing.obligations
     assert missing.missing_exposition == (theorem.ref,) and not missing.ready

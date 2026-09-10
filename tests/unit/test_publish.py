@@ -119,6 +119,79 @@ def test_existing_human_output_is_never_overwritten(publish, project, tmp_path):
     assert not (output / "writeup.pdf").exists()
 
 
+def test_book_uses_same_document_gate_and_persists_exact_structure(publish, project, tmp_path):
+    store, theorem, prose, scope, _ = project
+    book = ProjectItem(id="Book", name="Collected results", kind="book", origin="human_authored",
+                       publication_visibility="public")
+    chapter = ProjectItem(id="Chapter", name="First chapter", kind="chapter", origin="human_authored",
+                          publication_visibility="public")
+    contains = (Relation(id="chapter", kind="contains", source=book.ref, target=chapter.ref),
+                Relation(id="theorem", kind="contains", source=chapter.ref, target=theorem.ref))
+    store.append((book, chapter, *contains), expected_revision=1)
+    plan = PublicationPlanner(store).plan(PublicationRequest(roots=(book.ref,), scope=scope.ref))
+    result = publish.PublishWorkflow(compiler(tmp_path)).publish(plan, output=tmp_path / "book")
+    assert result.compilation.ok and not result.draft.ready
+    assert r"\documentclass{book}" in result.draft.source
+    assert r"\part*{Book: Collected results}" in result.draft.source
+    assert r"\chapter*{Chapter: First chapter}" in result.draft.source
+    assert escape_tex_text(prose.statement) in result.draft.source
+    saved = json.loads((result.output / "publication.json").read_text(encoding="utf-8"))
+    assert saved["plan"]["containment"] == [r.model_dump(mode="json") for r in contains]
+    assert saved["plan"]["structure"][-1]["containers"] == [book.ref.model_dump(), chapter.ref.model_dump()]
+
+
+def test_nested_section_and_later_chapter_sibling_keep_their_document_parents(publish, project):
+    store, theorem, _, scope, _ = project
+    chapter = ProjectItem(id="Chapter", name="Chapter", kind="chapter", origin="human_authored",
+                          publication_visibility="public")
+    outer = ProjectItem(id="Outer", name="Outer", kind="section", origin="human_authored",
+                        publication_visibility="public")
+    inner = outer.model_copy(update={"id": "Inner", "name": "Inner"})
+    sibling = theorem.model_copy(update={"id": "Sibling", "name": "Sibling", "statement": "Sibling claim"})
+    store.append((chapter, outer, inner, sibling,
+        Relation(id="outer", kind="contains", source=chapter.ref, target=outer.ref),
+        Relation(id="inner", kind="contains", source=outer.ref, target=inner.ref),
+        Relation(id="nested-theorem", kind="contains", source=inner.ref, target=theorem.ref),
+        Relation(id="sibling", kind="contains", source=chapter.ref, target=sibling.ref)), expected_revision=1)
+    plan = PublicationPlanner(store).plan(PublicationRequest(roots=(chapter.ref,), scope=scope.ref))
+    source = publish.assemble_publication(plan).source
+    headings = [line for line in source.splitlines() if line.startswith((
+        r"\chapter*", r"\section*", r"\subsection*", r"\subsubsection*"))]
+    assert headings == [
+        r"\section*{Status and remaining work}",
+        r"\chapter*{Chapter: Chapter}",
+        r"\section*{Section: Outer}",
+        r"\subsection*{Section: Inner}",
+        r"\subsubsection*{Theorem: Main theorem}",
+        r"\section*{Theorem: Sibling}",
+    ]
+    # Local prose labels must not pop the theorem out of its nested section.
+    assert r"\textbf{Exposition}" in source
+    for item in plan.items:
+        assert source.count(f"Source identity: {item.id}@{item.digest}") == 1
+    sibling_text = source.split(r"\section*{Theorem: Sibling}")[1]
+    assert f"Document containers: Chapter [{chapter.id}@{chapter.digest}]" in sibling_text
+    assert "Outer [" not in sibling_text and "Inner [" not in sibling_text
+
+
+def test_deeper_than_latex_headings_keeps_explicit_exact_container_path(publish, project):
+    store, theorem, _, scope, _ = project
+    sections = tuple(ProjectItem(id=f"S{i}", name=f"Section {i}", kind="section", origin="human_authored",
+                                 publication_visibility="public") for i in range(8))
+    children = (*sections[1:], theorem)
+    links = tuple(Relation(id=f"member-{i}", kind="contains", source=parent.ref, target=child.ref)
+                  for i, (parent, child) in enumerate(zip(sections, children, strict=True)))
+    store.append((*sections, *links), expected_revision=1)
+    plan = PublicationPlanner(store).plan(PublicationRequest(roots=(sections[0].ref,), scope=scope.ref))
+    source = publish.assemble_publication(plan).source
+    assert r"\textbf{Theorem: Main theorem}" in source
+    theorem_text = source.split(r"\textbf{Theorem: Main theorem}")[1]
+    for section in sections:
+        assert f"{section.name} [{section.id}@{section.digest}]" in theorem_text
+    assert "\\subsubparagraph" not in source
+    assert source.count(theorem.statement) == 1
+
+
 def test_plan_survives_later_ledger_changes_without_document_owner_reading_them(publish, project, tmp_path):
     store, theorem, _, _, plan = project
     store.append((theorem.model_copy(update={"statement": "Later mathematics"}),), expected_revision=1)

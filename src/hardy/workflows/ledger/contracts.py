@@ -76,6 +76,7 @@ class ProjectItemKind(str, Enum):
     EXPOSITION = "exposition"
     SECTION = "section"
     CHAPTER = "chapter"
+    BOOK = "book"
     DOCUMENT_FRAGMENT = "document_fragment"
 
 

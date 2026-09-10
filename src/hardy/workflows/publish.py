@@ -9,7 +9,9 @@ second publication cannot silently overwrite a human-edited manuscript.
 Assumes: callers supply a plan from PublicationPlanner and a trusted configured
 compiler in a disposable development environment. This is not process isolation.
 Watch: artifact-only exposition is identified but not dereferenced; this first
-adapter renders recorded plain text, not arbitrary linked TeX or chapter policy.
+adapter renders recorded plain text and the planner's exact container structure,
+not arbitrary linked TeX. Containers never introduce ambient hypotheses. Heading
+depth follows exact ancestry; beyond LaTeX's levels, explicit paths retain it.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from hardy.documents.latex import LatexTools
 from hardy.documents.writeup import escape_tex_text
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.values import FrozenModel, ToolResult, json_digest
+from hardy.workflows.ledger.contracts import ProjectItemKind
 from hardy.workflows.publication import PublicationPlan
 
 
@@ -56,16 +59,20 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
     if not plan.ready and not gaps:
         gaps.append("Selected material is not eligible for publication readiness.")
 
-    lines = [r"\documentclass{article}", r"\usepackage[T1]{fontenc}", r"\usepackage[utf8]{inputenc}",
+    kinds = {item.kind for item in plan.items}
+    document_class = "book" if ProjectItemKind.BOOK in kinds else "report" if ProjectItemKind.CHAPTER in kinds else "article"
+    lines = [r"\documentclass{" + document_class + "}", r"\usepackage[T1]{fontenc}", r"\usepackage[utf8]{inputenc}",
              r"\usepackage{hyperref}", r"\begin{document}",
              r"\title{" + escape_tex_text(title) + "}", r"\author{}", r"\date{}", r"\maketitle"]
 
     def paragraph(text: str) -> None:
         lines.extend((escape_tex_text(text), ""))
 
-    def heading(text: str, *, subsection: bool = False) -> None:
-        command = r"\subsection*{" if subsection else r"\section*{"
-        lines.append(command + escape_tex_text(text) + "}")
+    def heading(text: str, command: str = "section") -> None:
+        lines.append("\\" + command + "*{" + escape_tex_text(text) + "}")
+
+    def local_heading(text: str) -> None:
+        lines.append(r"\par\medskip\noindent\textbf{" + escape_tex_text(text) + r"}\par")
 
     paragraph(f"Publication plan {identity}; ledger revision {plan.revision}.")
     paragraph("Draft assembled from recorded mathematics and author exposition. "
@@ -78,14 +85,29 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
         paragraph("The frozen plan reported no outstanding publication gaps when it was assembled.")
 
     contexts = {context.item: context for context in plan.contexts}
-    for item in plan.items:
-        heading(f"{item.kind.value.replace('_', ' ').title()}: {item.name}")
+    placements = {p.item: p for p in plan.structure}
+    by_ref = {item.ref: item for item in plan.items}
+    ordered_items = tuple(by_ref[p.item] for p in plan.structure) if plan.structure else plan.items
+    heading_commands = ("part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph")
+    container_levels = {ProjectItemKind.BOOK: 0, ProjectItemKind.CHAPTER: 1, ProjectItemKind.SECTION: 2}
+    for item in ordered_items:
+        label = f"{item.kind.value.replace('_', ' ').title()}: {item.name}"
+        ancestors = placements[item.ref].containers if item.ref in placements else ()
+        level = -1
+        for ref in (*ancestors, item.ref):
+            level = max(level + 1, container_levels.get(by_ref[ref].kind, 2))
+        if level < len(heading_commands):
+            heading(label, heading_commands[level])
+        else:
+            local_heading(label)
+        paragraph("Document containers: " + (" / ".join(
+            f"{by_ref[ref].name} [{ref.id}@{ref.digest}]" for ref in ancestors) or "top level"))
         paragraph(f"Source identity: {item.id}@{item.digest}")
         if item.publication_role is not None:
             paragraph(f"Publication role: {item.publication_role.value}")
         context = contexts.get(item.ref)
         if context is not None:
-            heading("Required mathematical context", subsection=True)
+            local_heading("Required mathematical context")
             paragraph(f"Context: {context.context.id}@{context.context.digest}")
             for declaration in context.parameters:
                 detail = declaration.declaration
@@ -100,7 +122,10 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
                           f"[{binding.id}@{binding.digest}]")
                 if binding.target is not None:
                     paragraph(f"Referent: {binding.target.id}@{binding.target.digest}")
-        paragraph(item.statement or "No statement text recorded.")
+        if item.statement is not None:
+            paragraph(item.statement)
+        elif item.kind not in container_levels:
+            paragraph("No statement text recorded.")
         for name, value in item.semantics:
             paragraph(f"{name}: {value}")
         for artifact in item.artifacts:
@@ -108,7 +133,7 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
                       (f" ({artifact.locator})" if artifact.locator else ""))
         for passage in plan.exposition:
             if passage.target == item.ref and passage.prose.statement is not None:
-                heading("Exposition", subsection=True)
+                local_heading("Exposition")
                 paragraph(f"{passage.prose.origin.value}: {passage.prose.id}@{passage.prose.digest}; "
                           f"documents {passage.documented.id}@{passage.documented.digest}")
                 paragraph(passage.prose.statement)
