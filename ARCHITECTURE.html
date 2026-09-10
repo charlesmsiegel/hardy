@@ -69,7 +69,7 @@
 <div class="grid">
  <article class="card"><h3><code>record.py</code></h3><p><strong>SessionRecord:</strong> guarded state writes, transcript identity, local thread and spend recovery, and detached snapshots.</p></article>
  <article class="card"><h3><code>formal.py</code></h3><p><strong>FormalWorkspaceService:</strong> staged checked saves, dependent rebuilds, axiom audit, evidence freshness and automation disclosures.</p></article>
- <article class="card"><h3><code>admission.py</code></h3><p><strong>AssumptionAdmission:</strong> search evidence, approval, independent-reader disagreement quarantine and rollback when a generated save refuses.</p></article>
+ <article class="card"><h3><code>admission.py</code></h3><p><strong>AssumptionAdmission:</strong> confirmation, transcript, quarantine, persistence and generated-save rollback. Shared <code>workflows/admission.py</code> owns search/scope/source decisions and Lean probe algorithms over named operations; staged <code>--assume</code> reuses its preauthorized structural/refutation checks.</p></article>
  <article class="card"><h3><code>documents.py</code></h3><p><strong>DocumentService:</strong> guarded sources, compilation and publication, compiler labels, freshness stamps and completion obligations.</p></article>
  <article class="card"><h3><code>turns.py</code></h3><p><strong>TurnCoordinator:</strong> serialized dispatch, result pairing, cancellation, usage accounting and compaction boundaries.</p></article>
 </div>

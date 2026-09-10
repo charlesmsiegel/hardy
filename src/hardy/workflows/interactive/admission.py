@@ -6,20 +6,14 @@ Approval is recorded before the gated module save and rolled back on refusal.
 """
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from hardy.formal import refute
 from hardy.formal.workspace import (
-    ANY_NAME,
-    COMMAND,
     module_name,
     safe_relative,
-    unreadable_assumptions,
 )
 from hardy.foundation.files import LayoutError
 from hardy.foundation.locking import LockTimeout
@@ -27,14 +21,21 @@ from hardy.foundation.values import ToolResult
 from hardy.literature import statements as assume_module
 from hardy.literature.arxiv import ArxivError
 from hardy.literature.bibliography import BibliographyError
+from hardy.workflows.admission import (
+    AdmissionPolicy,
+    AdmissionRequest,
+    FaithfulnessDisposition,
+    ProbeOperations,
+    SearchEvidence,
+    SourceEvidence,
+    TrustRequestKind,
+    assumption_shape,
+)
 
 
 @dataclass(frozen=True)
 class AdmissionOperations:
-    shape: Callable[[str, str], str | None]
-    probe: Callable[[str], tuple[str | None, str]]
-    vacuity: Callable[[str], str]
-    refutation: Callable[[str], refute.Verdict]
+    probes: ProbeOperations
     faithfulness: Callable[..., tuple[bool, bool, tuple[str, ...]]]
     confirm: Callable[[dict[str, Any]], bool]
     goal: Callable[[], str]
@@ -51,71 +52,35 @@ class AdmissionOperations:
 
 class AssumptionAdmission:
     def __init__(self):
-        self._inspected_since_request = False
-        self._searched_since_request: list[str] = []
-        self._inspect_attempts_since_request = 0
+        self.policy = AdmissionPolicy()
+        self.search = SearchEvidence()
         self._rejected: dict[str, list[str]] = {}
 
     def attempted_inspection(self) -> None:
-        self._inspect_attempts_since_request += 1
+        self.search.attempted_inspection()
 
     def rejected(self, name: str, statement: str) -> None:
         self._rejected.setdefault(name, []).append(statement)
 
     def _consume_search_evidence(self) -> None:
-        """Spend the search evidence gathered for the request just handled.
-
-        Shared by every exit out of `_request_assumption` once the
-        search-first gate has passed, because the evidence a request
-        consults belongs to *that* request, not to whichever one asks next.
-        A request the search gate itself refused never reaches here -- it
-        looked at nothing, so there is nothing to spend -- but a request the
-        gate let through and `_assumption_shape` or `_assumption_probe` then
-        refused has: a human's `inspect_declarations` call was already
-        looked at to decide the refusal, and letting it sit unconsumed let a
-        next request under a different `formal_name` walk through the
-        search gate on evidence that was never about it.
-        """
-        self._inspected_since_request = False
-        self._searched_since_request = []
-        self._inspect_attempts_since_request = 0
+        """Only called after the search gate passes, on every subsequent exit."""
+        self.search.consume()
 
 
     def _note_inspected(self, names: list[str], output: str) -> None:
-        """Remember what a completed inspection asked, and what it found."""
-        resolved: set[str] = set()
-        try:
-            payload = json.loads(output[output.index("{"):])
-            resolved = {item["name"] for item in payload.get("resolved", [])}
-        except (ValueError, KeyError, TypeError):
-            # A hint line with no JSON after it, or JSON in an unexpected
-            # shape -- either way, nothing was resolved as far as this can
-            # tell, and every name below is recorded as not found.
-            pass
-        for name in names:
-            self._searched_since_request.append(f"{name} {'✓' if name in resolved else '✗'}")
-        self._inspected_since_request = True
+        self.search.note_inspected(names, output)
 
 
-    def _request_assumption(self, proposal: dict[str, str], *, search_available: bool, operations: AdmissionOperations) -> ToolResult:
-        if search_available and self._inspect_attempts_since_request == 0:
-            # Three axioms were approved on a failing run with the reason
-            # "Mathlib does not expose this" and nothing had been searched
-            # for. When search is available, a request is refused until
-            # `inspect_declarations` has actually been *tried* since the last
-            # request -- the reason given in `reason` is free text and proves
-            # nothing on its own. Gated on attempts, not completions: a
-            # machine whose Lean cannot finish an inspection still tried, and
-            # refusing it forever with a message claiming nothing was even
-            # attempted is the failure this fix exists to close. Below, once
-            # an attempt has been made, the request goes through even if none
-            # of them finished -- `searched` tells the human that state.
-            return ToolResult(
-                False,
-                "no `inspect_declarations` has been run since the last assumption "
-                "request. Look for the result before assuming it: pass several "
-                "candidate spellings and let Lean say which exist.",
-            )
+    def _request_assumption(
+        self, proposal: dict[str, str], *, search_available: bool, operations: AdmissionOperations,
+        admission_request: AdmissionRequest = AdmissionRequest(TrustRequestKind.GLOBAL_ASSUMPTION),
+    ) -> ToolResult:
+        refusal = self.policy.request_refusal(admission_request)
+        if refusal:
+            return ToolResult(False, refusal)
+        refusal = self.search.refusal(available=search_available)
+        if refusal:
+            return ToolResult(False, refusal)
         # Both gates below run before `confirm`. Nobody should be asked to
         # approve a statement Hardy has not read, and nobody should be asked
         # at all about one that could never be declared or that Lean proves
@@ -129,52 +94,15 @@ class AssumptionAdmission:
         # above, returns without spending anything: it refused before any of
         # this request's evidence was looked at.
         try:
-            refusal = operations.shape(proposal["formal_name"], proposal["lean_statement"])
-            if refusal is not None:
-                return ToolResult(False, refusal)
-            # Built once and reused: the text elaborated, the text approved, and
-            # the text the model is told to write are one string, which is the
-            # whole point.
+            decision = self.policy.check_global(
+                proposal["formal_name"], proposal["lean_statement"], operations.probes
+            )
+            if decision.refusal:
+                return ToolResult(False, decision.refusal)
             declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement'].strip()}"
-            refusal, caveat = operations.probe(declaration)
-            if refusal is not None:
-                return ToolResult(False, refusal)
-            # Carried to the prompt rather than swallowed: a human approving an
-            # unchecked statement is owed the word "unchecked", and one whose
-            # hypotheses turn out to be doing no work is owed that too. Only run
-            # when the first probe actually elaborated: a caveat already means
-            # Lean was unreachable or unreadable, and a second full Lean run
-            # would spend up to PROBE_SECONDS on an answer `or caveat` discards.
-            warning = operations.vacuity(proposal["lean_statement"]) if not caveat else ""
-            # The elaboration sentence always leads: it is the one fact that is
-            # true of every request that reaches this line, so a vacuity warning
-            # or a strip-refused note is appended to it rather than displacing
-            # it -- finding #5 of the second brutal review, where a stripper
-            # refusal used to replace the only sentence saying Lean had read the
-            # statement at all.
-            elaborated = "Lean elaborated this statement and could not prove it."
-            proposal["checked"] = caveat or (f"{elaborated} {warning}" if warning else elaborated)
+            proposal["checked"] = decision.checked
             proposal["goal"] = operations.goal()
-            if self._inspect_attempts_since_request and not self._inspected_since_request:
-                # Every attempt since the last request was stopped before it
-                # could report anything -- `_searched_since_request` is empty for
-                # the honest reason that nothing to put in it ever finished, not
-                # because nothing was tried. Say which is true, in the human's
-                # own count, rather than leave the list looking untouched.
-                proposal["searched"] = [
-                    f"{self._inspect_attempts_since_request} inspection(s) attempted "
-                    "since the last request, none finished"
-                ]
-            else:
-                searched = list(self._searched_since_request)
-                if len(searched) > 20:
-                    # A session that inspects in large batches across many
-                    # requests can pile up a `searched` list a human is never
-                    # going to read in full. Show the count and the most recent
-                    # 20 -- what was just asked, not the whole session's
-                    # history -- rather than let the field grow without bound.
-                    searched = [f"{len(searched)} names inspected; last 20:"] + searched[-20:]
-                proposal["searched"] = searched
+            proposal["searched"] = self.search.description()
             # A name refused or declined earlier this session gets its last
             # statement shown beside the new one: `sylow_unique_normal` lost a
             # conjunct between a refused request and an approved one, unseen,
@@ -236,7 +164,10 @@ class AssumptionAdmission:
             self._consume_search_evidence()
 
 
-    def _assume_statement(self, request: dict[str, str], *, search_available: bool, operations: AdmissionOperations) -> ToolResult:
+    def _assume_statement(
+        self, request: dict[str, str], *, search_available: bool, operations: AdmissionOperations,
+        admission_request: AdmissionRequest = AdmissionRequest(TrustRequestKind.PAPER_STATEMENT_ASSUMPTION),
+    ) -> ToolResult:
         """Mint one paper statement as an axiom, or say why not.
 
         The order of the gates is the design. Everything Hardy can establish
@@ -253,61 +184,24 @@ class AssumptionAdmission:
         assumption, because it lets Hardy prove what the paper never claimed
         while naming the paper as its source.
         """
+        refusal = self.policy.request_refusal(admission_request)
+        if refusal:
+            return ToolResult(False, refusal)
         try:
             record, reading = operations.paper_statements(request["paper_id"])
         except (ArxivError, assume_module.AssumeError) as error:
             return ToolResult(False, str(error))
-        statements = reading.statements
-        wanted = assume_module.find(statements, request["statement"])
-        if wanted is None:
-            # A truncated reading is said so rather than reported as the
-            # paper's silence: the inventory stopping is Hardy's bound, and
-            # "the paper makes no statement called that" is a claim about the
-            # paper that Hardy has not established.
-            cut = (
-                f" The reading stopped at the first {assume_module.MAX_STATEMENTS} statements, "
-                "so this may be one it did not reach."
-                if reading.truncated
-                else ""
-            )
-            return ToolResult(
-                False,
-                f"{record.arxiv_id} makes no statement called {request['statement']!r}.{cut} "
-                f"list_statements names them: {[item.ref for item in statements][:20]}",
-            )
+        wanted, source_evidence, refusal = self.policy.paper_statement(record, reading, request["statement"])
+        if refusal:
+            return ToolResult(False, refusal)
         kind = request.get("kind") or "statement"
-        if kind not in ("statement", "constant"):
-            return ToolResult(
-                False, f"kind must be 'statement' or 'constant', not {kind!r}"
-            )
-        # One component, refused here rather than at the save. The module is
-        # regenerated from the record with only the leaf of the recorded name,
-        # so a dotted name passed every gate, spent a human approval, and then
-        # failed the save under a Lean name nobody proposed -- advising
-        # `request_assumption`, which cannot write `Papers/` either. The
-        # namespace is Hardy's to choose; the caller names the axiom in it.
         short = request["formal_name"].strip()
-        # One component: `ANY_NAME` admits the guillemet escape, and `«a.b»`
-        # carries a dot through it. The module is regenerated with
-        # `rsplit(".", 1)[-1]`, so the human approved `Papers.<key>.«a.b»`
-        # and the file was written with `axiom b»`.
-        if "." in short or not re.fullmatch(ANY_NAME, short):
-            return ToolResult(
-                False,
-                f"formal_name must be a single Lean identifier, not {short!r}: the "
-                "namespace is the paper's cite key and Hardy writes it. Pass the axiom's "
-                "own name with no dots in it.",
-            )
-        if search_available and self._inspect_attempts_since_request == 0:
-            # The same gate `request_assumption` lives by, for the same
-            # reason: a paper stating a result is not evidence that Mathlib
-            # lacks it, and an axiom for something already formalised is a
-            # widening of the trust base bought for nothing.
-            return ToolResult(
-                False,
-                "no `inspect_declarations` has been run since the last assumption request. "
-                "Look for the result in Mathlib before assuming it from the paper.",
-            )
+        refusal = self.policy.paper_name_refusal(short, kind)
+        if refusal:
+            return ToolResult(False, refusal)
+        refusal = self.search.refusal(available=search_available, paper=True)
+        if refusal:
+            return ToolResult(False, refusal)
         # Spent from here on, whatever the answer, for the reason
         # `_request_assumption` spends it: an inspection was evidence about
         # *this* request, and leaving it standing on a refusal let the next
@@ -340,7 +234,7 @@ class AssumptionAdmission:
                     "assumption cannot be restated under a name that is already minted: ask "
                     "for the corrected statement under a new formal_name.",
                 )
-            return self._mint(request, record, entry, wanted, namespace, qualified, kind, operations=operations)
+            return self._mint(request, record, entry, wanted, namespace, qualified, kind, operations=operations, source_evidence=source_evidence)
         finally:
             self._consume_search_evidence()
 
@@ -354,52 +248,18 @@ class AssumptionAdmission:
         namespace: str,
         qualified: str,
         kind: str,
-        *, operations: AdmissionOperations,
+        *, operations: AdmissionOperations, source_evidence: SourceEvidence | None = None,
     ) -> ToolResult:
         statement = request["lean_statement"].strip()
-        # The shape gate runs for both kinds. What it asks -- is this a type
-        # rather than a declaration, is it one line -- is as true of a
-        # constant's type as of a proposition, and skipping it let a
-        # `lean_statement` carrying its own `axiom` reach the human and the
-        # generated file, with only the final elaboration behind it.
-        refusal = operations.shape(request["formal_name"], statement)
-        if refusal is not None:
-            return ToolResult(False, refusal)
-        # The *probes* are what a constant has nothing to say to: they ask
-        # whether Lean proves a proposition, and a type is not one. Its own
-        # risk is put to the human instead, and recorded as added trust.
-        if kind == "statement":
-            probe, caveat = operations.probe(f"axiom {qualified} : {statement}")
-            if probe is not None:
-                return ToolResult(False, probe)
-            verdict = operations.refutation(statement)
-            if verdict.refuted:
-                return ToolResult(False, refute.describe(verdict, statement))
-            # Both caveats travel, not the first of them. A human approving
-            # an axiom is owed every fact about what was and was not checked,
-            # and reporting only the elaboration's silence would leave them
-            # believing the counterexample search had come back clean.
-            checked = " ".join(
-                part
-                for part in (
-                    caveat
-                    or "Lean elaborated this statement and could not prove it.",
-                    (
-                        f"The counterexample search was not conclusive: {verdict.caveat}."
-                        if verdict.caveat
-                        else "No counterexample was found by the cheap refutation probes."
-                    ),
-                )
-                if part
-            )
-        else:
-            checked = (
-                "An opaque constant is not elaborated as a proposition, so nothing was "
-                "proved or refuted about it. It asserts that something with this type "
-                "exists, which is trust beyond assuming a statement."
-            )
+        decision = self.policy.check_paper(
+            request["formal_name"], qualified, statement, kind, operations.probes
+        )
+        if decision.refusal:
+            return ToolResult(False, decision.refusal)
+        checked = decision.checked
         reached, agreed, divergences = operations.faithfulness(request, record, wanted, qualified)
-        if not reached:
+        disposition = self.policy.faithfulness(reached=reached, agreed=agreed)
+        if disposition == FaithfulnessDisposition.UNAVAILABLE:
             # Refused, and nothing recorded against the name. Hardy did not
             # establish anything about this translation, so the record must
             # not read as though it did.
@@ -416,7 +276,7 @@ class AssumptionAdmission:
                 f"assumed could not be reached: {list(divergences)}. Nothing was minted and "
                 "nothing is recorded against this name -- try again.",
             )
-        if not agreed:
+        if disposition == FaithfulnessDisposition.QUARANTINE:
             self._quarantine(request, record, entry, wanted, qualified, kind, divergences, operations=operations)
             return ToolResult(
                 False,
@@ -499,6 +359,8 @@ class AssumptionAdmission:
             "latex_name": proposal["latex_name"],
             "description": request["informal_statement"],
         }
+        if source_evidence is not None:
+            durable["paper"]["source_artifact"] = source_evidence.artifact.model_dump(mode="json")
         fresh = operations.admit(durable, mapping)
         if fresh:
             # Recorded BEFORE the module is written, because the module is
@@ -563,56 +425,6 @@ class AssumptionAdmission:
 
 
     def _assumption_shape(self, formal_name: str, lean_statement: str) -> str | None:
-        """Why this could never be declared, or None.
-
-        `request_assumption` used to accept anything and wrap it in
-        `axiom NAME : ...`, so it could approve text `save_lean` would refuse
-        forever. That is not hypothetical: a session was told to declare
-        `axiom cyclic_of_prime_order : axiom cyclic_of_prime_order (G : Type*)
-        ... : ...` -- a double header nothing can parse -- and spent ten turns
-        discovering there was no spelling that satisfied both ends. Matching the
-        approval required binders the parser refuses; satisfying the parser
-        produced a statement that no longer matched the approval.
-
-        So both ends now ask the same code about the same string. `COMMAND` is
-        what recognises a line opening a declaration, and an axiom's statement
-        is a type, never a command. `unreadable_assumptions` is what `save_lean`
-        itself calls.
-
-        A statement is also one line. `True\\naxiom extra : False` is two
-        declarations and `ASSUMPTION` reads both happily, so without this the
-        request round-trips and an approval granted for the first carries the
-        second. Approved statements are stored whitespace-collapsed anyway, so
-        refusing a newline costs nothing a caller needed.
-
-        Not sufficient, and not meant to be. A binder-only statement --
-        `(G : Type*) : True` -- matches neither check, because
-        `axiom f : (G : Type*) : True` parses by taking everything after the
-        first colon. It is not valid Lean and only elaboration can say so, which
-        is what `_assumption_probe` is for. `opaque`, and any declaration
-        keyword `COMMAND` does not list, land there too.
-        """
-        statement = lean_statement.strip()
-        if "\n" in statement or "\r" in statement:
-            return (
-                "a statement is one line and one type. More than one line can carry a "
-                "second declaration, which an approval of the first would not cover. "
-                "Collapse it to one line."
-            )
-        if COMMAND.match(statement):
-            return (
-                f"a statement may not itself be a declaration, and `{statement[:60]}` "
-                f"opens one. Pass only the statement -- the type after the colon -- and "
-                f"Hardy writes `axiom {formal_name} :` in front of it. Binders belong "
-                f"inside the statement as `forall`, not before the colon."
-            )
-        declaration = f"axiom {formal_name} : {statement}"
-        if unreadable_assumptions(declaration):
-            return (
-                f"`{declaration[:80]}` cannot be read as `axiom NAME : STATEMENT`, so "
-                f"save_lean could never accept it. An assumption carries no binders and "
-                f"no universe parameters."
-            )
-        return None
+        return assumption_shape(formal_name, lean_statement)
 
 

@@ -232,6 +232,7 @@ def test_known_dynamic_launch_modules_still_exist():
 
 
 @pytest.mark.parametrize("module, forbidden", [
+    ("workflows.admission", ("workflows.interactive.session", "workflows.prove", "agents.claude", "agents.codex", "agents.api", "app.cli")),
     ("documents.completion", ("formal.workspace", "documents.latex")),
     ("workflows.recorded", ("workflows.prove", "workflows.batch", "agents.staged", "agents.claude")),
     ("evals.scoreboard", ("evals.runner", "evals.commands", "evals.staged", "workflows.prove")),

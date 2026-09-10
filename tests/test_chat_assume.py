@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from test_chat import FakeChatRuntime, factory
 
+from hardy.formal.lean import LeanToolResult
 from hardy.literature import arxiv
 from hardy.literature import statements as assume_module
 from hardy.workflows.interactive.session import CHAT_TOOLS, MathematicsSession
@@ -221,7 +222,7 @@ def test_a_paper_with_no_source_cannot_be_assumed_from(session) -> None:
 
 def test_a_statement_lean_proves_outright_is_refused_as_a_theorem(sourced, monkeypatch) -> None:
     monkeypatch.setattr(
-        sourced, "_assumption_probe", lambda declaration: ("Lean proves this outright", "")
+        sourced, "_admission_elaborate_source", lambda source: LeanToolResult(True, "", source)
     )
 
     result = _assume(sourced)
@@ -231,11 +232,37 @@ def test_a_statement_lean_proves_outright_is_refused_as_a_theorem(sourced, monke
     assert sourced.state["assumptions"] == []
 
 
-def test_a_statement_whose_negation_lean_proves_is_refused(sourced, monkeypatch) -> None:
-    from hardy.formal import refute
+def test_explicit_paper_conjecture_assumption_still_needs_human_approval(sourced, monkeypatch):
+    from dataclasses import replace
 
+    record, reading = sourced._paper_statements(PAPER)
+    conjectures = tuple(replace(item, kind="conjecture") for item in reading.statements)
+    monkeypatch.setattr(sourced, "_paper_statements", lambda paper: (record, replace(reading, statements=conjectures)))
+    shown = []
+    sourced.confirm = lambda proposal: shown.append(dict(proposal)) or False
+    result = _assume(sourced)
+    assert not result.ok
+    assert "declined" in result.output
+    assert shown[0]["paper_text"] == conjectures[0].text
+    assert sourced.state["assumptions"] == []
+
+
+def test_admitted_paper_retains_exact_source_excerpt_identity(sourced):
+    from hashlib import sha256
+
+    result = _assume(sourced)
+    assert result.ok, result.output
+    paper = sourced.state["assumptions"][0]["paper"]
+    assert paper["source_artifact"] == {
+        "uri": f"arxiv:{PAPER}/statement-excerpt",
+        "digest": sha256(paper["text"].encode("utf-8")).hexdigest(),
+        "locator": "main.tex#thm:collapse",
+    }
+
+
+def test_a_statement_whose_negation_lean_proves_is_refused(sourced, monkeypatch) -> None:
     monkeypatch.setattr(
-        sourced, "_refutation_probe", lambda statement: refute.Verdict(True, tactic="decide")
+        sourced, "_admission_refute_source", lambda source: LeanToolResult(True, "", source)
     )
 
     result = _assume(sourced)
@@ -251,14 +278,12 @@ def test_a_refutation_that_could_not_be_run_does_not_block_the_request(
 ) -> None:
     """A machine whose Lean will not start must not be one where nothing can
     be assumed. The caveat travels to the human instead."""
-    from hardy.formal import refute
-
     shown: list[dict] = []
     sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True
     monkeypatch.setattr(
         sourced,
-        "_refutation_probe",
-        lambda statement: refute.Verdict(False, caveat="the refutation probe did not finish"),
+        "_admission_refute_source",
+        lambda source: LeanToolResult(False, "", source, timed_out=True),
     )
 
     result = _assume(sourced)

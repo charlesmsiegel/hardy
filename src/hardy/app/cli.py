@@ -557,10 +557,12 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
     # the source the kernel reads. Run here so a malformed file costs nothing:
     # inside the verifier they land after formalization, the faithfulness read
     # and the whole proving loop.
-    from hardy.formal.verifier import declaration_violation
+    from hardy.workflows.admission import AdmissionPolicy, AdmissionRequest, TrustRequestKind
 
+    policy = AdmissionPolicy()
+    request = AdmissionRequest(TrustRequestKind.PREAUTHORIZED_RUN_ASSUMPTION)
     for item in declared:
-        violation = declaration_violation(item)
+        violation = policy.preauthorized_declaration(request, item)
         if violation is not None:
             raise ValueError(violation)
     return declared

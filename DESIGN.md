@@ -135,6 +135,23 @@ whole session. Existing locks and save/admission gates remain in force; moving a
 method grants no new write authority. Compatibility record mutation accessors
 remain for the coordinator and existing callers.
 
+`workflows/admission.py` owns admission categories, request-scoped search evidence,
+shape validation, actual elaboration/provability/vacuity/refutation algorithms over
+named Lean operations, and source/faithfulness decisions. The interactive adapter
+consumes search only after its search gate passes, and retains confirmation,
+quarantine, persistence and admission/save rollback. Paper approvals also retain
+an exact `ArtifactRef` for the inventoried excerpt (versioned paper, text digest,
+file and statement locator); this does not authenticate the whole source archive.
+Caller-owned subject and scope must be supplied together. A `must_prove` subject
+is refused both at its exact revision and at a mismatched revision of the same ID.
+Local binders/hypotheses and research-state conjectures never enter global trust.
+An explicit request to assume a paper proposition remains an assumption request
+even if its source calls it a conjecture, and still requires all admission gates.
+CLI `--assume` declarations are caller-preauthorized: structural validation at
+parsing and shared refutation in Prove preserve their stages and approved set,
+without adding search, source-reader or confirmation requirements. B2 will supply
+authenticated ledger scope and evidence through this seam; A3 does not resolve it.
+
 The package root contains only `__init__.py`, `__main__.py`, `cli.py`,
 `mcp_server.py` and `cas_driver.py`. The latter three retain the CLI, MCP and CAS
 entry-point spellings; implementation imports use their owning packages.

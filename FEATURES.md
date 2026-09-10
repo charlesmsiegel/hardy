@@ -22,6 +22,13 @@ interactive surface's own live run is still to come.
   owners with named collaborators and independent tests.
   `workflows/interactive/session.py` remains the coordinator for construction and
   cross-capability policy.
+- Shared assumption admission policy owns exact scope/category decisions,
+  request-scoped search evidence, paper selection/faithfulness and Lean probe
+  algorithms. Interactive effects remain in adapters; explicit staged `--assume`
+  input uses shared structural/refutation checks without new prompts. Paper
+  approvals retain an exact inventoried-excerpt identity. Local context and
+  research conjectures do not widen global trust; B2 ledger enforcement remains
+  future work.
 - Algebra backend/kernel/session/replay/script owners and literature
   metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
   points, `app/tui`, configuration, setup, project construction and terminal

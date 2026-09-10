@@ -84,6 +84,7 @@ def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_pat
     from types import SimpleNamespace
 
     from hardy.foundation.values import ToolResult
+    from hardy.workflows.admission import ProbeOperations
     from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
 
     record = SessionRecord(tmp_path)
@@ -91,10 +92,7 @@ def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_pat
     admission = AssumptionAdmission()
     persisted = []
     operations = AdmissionOperations(
-        shape=admission._assumption_shape,
-        probe=lambda declaration: (None, ""),
-        vacuity=lambda statement: "",
-        refutation=lambda statement: None,
+        probes=ProbeOperations(elaborate=lambda source: None, refute=lambda source: None),
         faithfulness=lambda *args: (True, True, ()),
         confirm=lambda proposal: True,
         goal=lambda: "Find a witness",

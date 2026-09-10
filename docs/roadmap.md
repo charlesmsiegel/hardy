@@ -254,11 +254,25 @@ Formalizing a conjecture produces a formal target, not a theorem. If the current
 
 **Deps:** none conceptually; integrate scope rule after B2
 
+**Status: implemented (2026-09-09).** `workflows/admission.py` owns request
+categories, paired exact subject/scope refusal (including stale `must_prove` IDs),
+search evidence, shape/provability/vacuity/refutation algorithms, source selection
+and faithfulness dispositions. Interactive code retains confirmation, events,
+quarantine and admission/save rollback. CLI structural checks and Prove refutation
+share the policy for caller-preauthorized `--assume` input without new gates or
+prompts. Paper approvals carry an exact inventoried-excerpt artifact identity.
+Direct policy and existing admission regressions cover these boundaries; B2's
+authenticated scope/evidence enforcement remains unimplemented.
+
 Extract policy from interactive admission. Generic policy owns search-first evidence, elaboration/shape checks, cheap proof/refutation/vacuity probes, source/faithfulness checks, and scope legality. Interactive code remains the human-confirmation/transcript adapter.
 
 There must be one trust-widening route.
 
 Explicitly exclude ordinary mathematical context construction and conjecture creation from this route. Phrases such as “suppose X is compact” may create local theorem hypotheses, and “I conjecture C” may create research state, without human trust approval; neither makes an unproved fact globally trusted.
+
+This exclusion concerns research-state creation. An explicit request to assume a
+paper's proposition remains an assumption request even when the source inventory
+calls it a conjecture; source wording never selects a bypass category.
 
 ## A4 — Proof-strategy contract — P0
 

@@ -54,7 +54,11 @@ src/hardy/
 ```
 
 `workflows/interactive/session.py` coordinates record, formal workspace,
-assumption admission, document and turn owners. The package root contains only
+assumption admission, document and turn owners. `workflows/admission.py` owns
+shared search, scope, source and Lean probe decisions; interactive adapters own
+confirmation, quarantine, persistence and publication. Explicit `prove --assume`
+files use its preauthorized structural/refutation checks without another prompt.
+The package root contains only
 `__init__.py`, `__main__.py`, and the `cli.py`, `mcp_server.py`, and
 `cas_driver.py` compatibility entry points. Import implementations from their
 owning packages. Pure evidence readers do not import run launchers. See

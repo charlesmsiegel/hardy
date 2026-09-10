@@ -31,7 +31,6 @@ from uuid import UUID, uuid4
 from hardy.app.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
 from hardy.documents.writeup import DocumentResult, WriteupContent
-from hardy.formal import refute
 from hardy.formal.contracts import (
     DeclaredAssumption,
     EnvironmentIdentity,
@@ -43,6 +42,7 @@ from hardy.formal.lean import LeanCheckResult
 from hardy.formal.verifier import VerificationResult
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import PROMPT_SET_SHA256, proof_prompt, writeup_prompt
+from hardy.workflows.admission import AdmissionPolicy, refutation_probe
 from hardy.workflows.contracts import (
     FaithfulnessOutcome,
     FaithfulnessStatus,
@@ -966,22 +966,14 @@ class ProveWorkflow:
         record that only keeps failures cannot show it was ever looked for.
         """
         unchecked: list[str] = []
+        policy = AdmissionPolicy()
         for item in assumptions:
-            try:
-                # Body only: `check_scratch` prepends the import itself, and a
-                # file carrying two of them shifts every probe past the line
-                # `judge` reads it on. Built inside the guard because
-                # `probe_source` refuses a statement it cannot put on one
-                # line, and a probe that will not run is a gap rather than a
-                # crash however early it declines.
-                source, tactics = refute.probe_source(item.statement, imported=False)
-                result = self._lean.check_scratch(source)
-            except Exception as error:  # noqa: BLE001 - an unrunnable probe is a gap, not a crash
-                verdict = refute.Verdict(
-                    False, caveat=f"the refutation probe could not run ({error})"
-                )
-            else:
-                verdict = refute.judge(result, tactics)
+            # check_scratch owns the import header; its position is part of
+            # the shared refutation judge's diagnostic-line contract.
+            verdict = refutation_probe(
+                item.statement, run_source=self._lean.check_scratch, imported=False
+            )
+            decision = policy.refutation(verdict)
             store.append(
                 "assumption.refutation",
                 {
@@ -992,15 +984,15 @@ class ProveWorkflow:
                 },
                 phase=phase,
             )
-            if verdict.refuted:
+            if decision.refusal:
                 return (
                     f"The declared assumption {item.name} is false: Lean proves its negation "
                     f"with `{verdict.tactic}`.",
                     (),
                 )
-            if verdict.caveat:
+            if decision.checked:
                 unchecked.append(
-                    f"The refutation check for {item.name} was inconclusive: {verdict.caveat}."
+                    f"The refutation check for {item.name} was inconclusive: {decision.checked}."
                 )
         return None, tuple(unchecked)
 
