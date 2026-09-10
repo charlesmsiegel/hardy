@@ -150,3 +150,58 @@ def test_turn_owner_records_cancelled_tool_without_running_it(tmp_path):
     assert len(events) == 1
     assert events[0]["name"] == "save_lean"
     assert events[0]["result"]["ok"] is False
+
+
+def test_turn_owner_records_a_tool_call_started_before_running_it(tmp_path):
+    """A Lean check can run for minutes, and a session killed during one used
+    to leave no trace that the call had been made at all. The start goes into
+    the record before the tool runs, so the record can say a call began and
+    did not finish."""
+    from hardy.foundation.values import ToolResult
+    from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
+
+    record = SessionRecord(tmp_path)
+    record.load()
+    turns = TurnCoordinator()
+    persistence = TurnPersistence(
+        event=record._record, remember_thread=lambda: None, current_turn=lambda: True,
+        read_usage=lambda: record.usage, publish_usage=record.publish_usage,
+        mark_read=record._mark_ledger_read, end=record._transcript_end,
+    )
+    recorded_when_running: list[dict] = []
+
+    def tool(name, arguments):
+        recorded_when_running.extend(record._recorded())
+        return ToolResult(True, "done")
+
+    result = turns._dispatch("check_lean", {"module": "Sylow"}, tool=tool, persistence=persistence)
+    assert result.ok
+    assert [event["type"] for event in recorded_when_running] == ["tool_started"]
+    assert recorded_when_running[0]["name"] == "check_lean"
+    assert recorded_when_running[0]["arguments"] == {"module": "Sylow"}
+    assert [event["type"] for event in record._recorded()] == ["tool_started", "tool"]
+
+
+def test_record_appends_from_many_threads_stay_whole_lines(tmp_path):
+    """The runtime's worker, the SDK's tool threads and the shell all append.
+    Every line has to parse back, or a torn one is silently dropped by the
+    reader and the count comes up short."""
+    import threading
+
+    record = SessionRecord(tmp_path)
+    record.load()
+    payload = "x" * 20000
+
+    def append(tag: int) -> None:
+        for index in range(50):
+            record._record({"type": "note", "tag": tag, "index": index, "payload": payload})
+
+    threads = [threading.Thread(target=append, args=(tag,)) for tag in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    events = list(record._recorded())
+    assert len(events) == 400
+    assert all(event["payload"] == payload for event in events)

@@ -572,24 +572,91 @@ def _imported(entries: Iterable[Mapping[str, Any]]) -> str:
     return _rows(rows)
 
 
+def _superseded(events: Sequence[Mapping[str, Any]]) -> set[int]:
+    """The partial assistant events a later one in the same turn supersedes.
+
+    The runtime checkpoints an answer into the record while it is still being
+    streamed, so a crash cannot take it; on the ordinary path the block then
+    completes and is recorded whole. Each checkpoint carries everything drawn
+    so far, so within one turn the newest assistant event -- the next
+    checkpoint, the completed block, or the text settled at an interrupt --
+    always contains what the partial before it did. Rendering them all would
+    show one answer several times over, growing. A user message ends the turn:
+    a partial the record ends on, or that the user then spoke after, is the
+    evidence the checkpoints exist to keep, and it stays.
+    """
+    superseded: set[int] = set()
+    pending: int | None = None
+    for index, event in enumerate(events):
+        kind = event.get("type")
+        if kind == "assistant":
+            if pending is not None:
+                superseded.add(pending)
+            pending = index if event.get("partial") else None
+        elif kind in SPEAKERS:
+            pending = None
+    return superseded
+
+
+def _unfinished(events: Sequence[Mapping[str, Any]]) -> set[int]:
+    """The tool calls the record says started and never says finished.
+
+    `tool_started` is written before a call runs and `tool` after it; a start
+    with no `tool` for the same name after it is a call the session died in.
+    Matched by name, oldest first, because the two events carry no shared id
+    -- and two calls to one tool in flight together are told apart well enough
+    by that for a page whose point is that *something* did not finish.
+    """
+    pending: dict[str, list[int]] = {}
+    for index, event in enumerate(events):
+        kind = event.get("type")
+        name = str(event.get("name", ""))
+        if kind == "tool_started":
+            pending.setdefault(name, []).append(index)
+        elif kind == "tool" and pending.get(name):
+            pending[name].pop(0)
+    return {index for indexes in pending.values() for index in indexes}
+
+
 def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
     parts = []
-    for event in events:
+    superseded = _superseded(events)
+    unfinished = _unfinished(events)
+    for index, event in enumerate(events):
         kind = str(event.get("type", ""))
         if kind in SPEAKERS:
+            if index in superseded:
+                continue
             text = _message(event).strip()
             if text:
                 # A block the provider never finished, kept because the user
                 # watched the words arrive. Saying so is the point: rendered as
                 # an ordinary turn, an interrupted fragment reads as a completed
                 # answer, and the reader cannot tell that the model was cut off
-                # mid-sentence.
+                # mid-sentence. A checkpoint nothing superseded is the same
+                # fragment left by a session that died rather than one that was
+                # interrupted, and says so.
                 who = SPEAKERS[kind]
-                if event.get("partial"):
+                if event.get("checkpoint"):
+                    who = f"{who} — cut off mid-answer, not a completed answer"
+                elif event.get("partial"):
                     who = f"{who} — interrupted, not a completed answer"
                 parts.append(
                     f'<div class="turn"><div class="who">{html.escape(who)}</div>'
                     f"{_block(text)}</div>"
+                )
+        elif kind == "tool_started":
+            # Only when nothing answered it: a call that finished is rendered
+            # from its `tool` event, with the result. One that did not is the
+            # record that the session ended -- was killed, most likely -- while
+            # the tool was running, which a page that dropped the start would
+            # show as a session that simply stopped.
+            if index in unfinished:
+                parts.append(
+                    f'<div class="turn"><div class="who">Tool</div>'
+                    f'<p class="tool fail"><code>{_escape(event.get("name", "?"))}</code>'
+                    " — started and never finished: the session ended while it was running</p>"
+                    f"{_arguments(event.get('arguments'))}</div>"
                 )
         elif kind == "turn":
             # How the turn ended, when it did not end by itself. The transcript

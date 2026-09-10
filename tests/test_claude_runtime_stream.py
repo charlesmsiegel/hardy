@@ -615,3 +615,90 @@ def test_partial_messages_are_actually_requested():
     """Without this the SDK never emits a delta, and the stream is only a
     slower way of doing what `ask` already did."""
     assert runtime()._options().include_partial_messages is True
+
+
+def checkpoint(text: str) -> dict:
+    """What an interval checkpoint of drawn text looks like in the record."""
+    return {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": text},
+        "partial": True,
+        "checkpoint": True,
+    }
+
+
+def test_drawn_text_is_checkpointed_while_its_block_is_still_being_written():
+    """A hard kill mid-answer -- SIGKILL, a crash, power loss -- runs none of
+    the settling the tests above rely on. The words the user watched arrive
+    survive it only if they were already in the record while the block was
+    still being written, so the record is inspected at the moment each delta
+    reaches the terminal: that is exactly where the process could die.
+    """
+    seen: list[dict] = []
+    live, _ = wired(
+        [StreamEvent("Half a "), StreamEvent("sentence"), ResultMessage()],
+        stall_after=2,
+        after_interrupt=[ResultMessage(is_error=True, subtype="interrupted")],
+        observe=seen.append,
+        checkpoint_seconds=0.0,
+    )
+    recorded_when_drawn: list[list[dict]] = []
+    for event in live.stream("go"):
+        if event.kind == "text":
+            recorded_when_drawn.append([e for e in seen if e["type"] == "assistant"])
+            if event.text == "sentence":
+                live.cancel()
+
+    assert recorded_when_drawn == [
+        [checkpoint("Half a ")],
+        [checkpoint("Half a "), checkpoint("Half a sentence")],
+    ]
+
+
+def test_checkpoints_are_paced_by_the_interval_and_not_per_delta():
+    """Per delta would write a line per token. The interval is what makes the
+    checkpoint cheap enough to leave on, and a turn shorter than one interval
+    records only the completed block, as before."""
+    seen: list[dict] = []
+    live, _ = wired(
+        [
+            StreamEvent("a"),
+            StreamEvent("b"),
+            StreamEvent("c"),
+            AssistantMessage(TextBlock("abc")),
+            ResultMessage(),
+        ],
+        observe=seen.append,
+        checkpoint_seconds=60.0,
+    )
+    list(live.stream("go"))
+
+    assert [event for event in seen if event["type"] == "assistant"] == [
+        {"type": "assistant", "message": {"role": "assistant", "content": "abc"}}
+    ]
+
+
+def test_a_completed_block_is_recorded_after_the_checkpoints_that_drew_it():
+    """The checkpoints are marked for what they are, the completed block is
+    recorded as it always was, and the reply says the answer exactly once --
+    a checkpoint is a copy for the record, never a second reading of the words.
+    """
+    seen: list[dict] = []
+    live, _ = wired(
+        [
+            StreamEvent("Lean "),
+            StreamEvent("agrees."),
+            AssistantMessage(TextBlock("Lean agrees.")),
+            ResultMessage(),
+        ],
+        observe=seen.append,
+        checkpoint_seconds=0.0,
+    )
+    events = list(live.stream("go"))
+
+    assert [event.text for event in events if event.kind == "reply"] == ["Lean agrees."]
+    assert [event for event in seen if event["type"] == "assistant"] == [
+        checkpoint("Lean "),
+        checkpoint("Lean agrees."),
+        {"type": "assistant", "message": {"role": "assistant", "content": "Lean agrees."}},
+    ]

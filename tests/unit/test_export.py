@@ -1398,3 +1398,71 @@ def test_a_shared_library_that_moved_under_the_gather_is_flagged():
 
 def test_a_settled_shared_library_says_nothing():
     assert "changed while this page was being gathered" not in build()
+
+
+def _checkpoint(text: str) -> dict:
+    return {
+        "type": "assistant",
+        "message": {"role": "assistant", "content": text},
+        "partial": True,
+        "checkpoint": True,
+    }
+
+
+def test_a_completed_answer_supersedes_the_checkpoints_that_drew_it():
+    """The runtime checkpoints an answer while it streams so a crash cannot
+    take it. On the ordinary path the block then completes, and a replay that
+    rendered the checkpoints too would show one answer three times over."""
+    page = build(
+        transcript=[
+            _checkpoint("The proof"),
+            _checkpoint("The proof goes by"),
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": "The proof goes by induction."},
+            },
+        ]
+    )
+    assert page.count("The proof goes by induction.") == 1
+    assert "<pre>The proof</pre>" not in page
+    assert "<pre>The proof goes by</pre>" not in page
+    assert "not a completed answer" not in page
+
+
+def test_the_checkpoint_a_record_ends_on_is_shown_once_and_as_in_flight():
+    """A session killed mid-answer leaves its last checkpoint and nothing
+    after it. That one is the evidence the checkpoints exist to keep, shown
+    once -- the earlier, shorter ones are superseded -- and labelled so a
+    reader does not take a cut-off answer for a finished one."""
+    page = build(transcript=[_checkpoint("The proof"), _checkpoint("The proof goes by indu")])
+    assert page.count("The proof goes by indu") == 1
+    assert "<pre>The proof</pre>" not in page
+    assert "not a completed answer" in page
+
+
+def test_a_tool_call_that_started_and_never_finished_is_shown_as_such():
+    """The record says the call began; nothing says it ended. A replay that
+    dropped the start would show a session that simply stopped, indistinguishable
+    from one that never asked for the tool."""
+    page = build(
+        transcript=[
+            {"type": "tool_started", "name": "check_lean", "arguments": {"module": "Sylow"}},
+        ]
+    )
+    assert "check_lean" in page
+    assert "never finished" in page
+
+
+def test_a_tool_call_that_finished_is_not_also_shown_as_unfinished():
+    page = build(
+        transcript=[
+            {"type": "tool_started", "name": "check_lean", "arguments": {"module": "Sylow"}},
+            {
+                "type": "tool",
+                "name": "check_lean",
+                "arguments": {"module": "Sylow"},
+                "result": {"ok": True, "output": "fine"},
+            },
+        ]
+    )
+    assert "never finished" not in page
