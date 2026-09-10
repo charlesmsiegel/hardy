@@ -211,6 +211,12 @@ def add_parser(subparsers: Any) -> None:
     compare.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
     compare.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     compare.add_argument("--right-baseline", type=Path, default=None)
+    benchmark = verbs.add_parser("import-benchmark", help="preserve a pinned upstream archive; no execution or corpus adoption")
+    benchmark.add_argument("benchmark", choices=("minif2f", "putnambench", "proofnet"))
+    benchmark.add_argument("--archive", type=Path, required=True, help="Local upstream tar or tar.gz archive")
+    benchmark.add_argument("--revision", required=True, help="Full upstream commit SHA, not a branch or tag")
+    benchmark.add_argument("--sha256", required=True, help="Expected SHA-256 of the archive bytes")
+    benchmark.add_argument("--output", type=Path, required=True, help="New local output directory; existing paths are refused")
     history = verbs.add_parser("history", help="read chronological scoreboard observations without pooling; JSON on stdout")
     history.add_argument("boards", nargs="+", type=Path)
     history.add_argument("--vary", action="append", default=[], help="Control intended to vary; does not establish causality")
@@ -518,6 +524,8 @@ def run_summary(args: argparse.Namespace) -> int:
 
 
 def main(args: argparse.Namespace, config: Any) -> int:
+    if args.evals_command == "import-benchmark":
+        return run_import_benchmark(args)
     if args.evals_command == "history":
         return run_history(args)
     if args.evals_command == "compare":
@@ -582,6 +590,19 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "summary":
         return run_summary(args)
     raise AssertionError(args.evals_command)
+
+
+def run_import_benchmark(args: argparse.Namespace) -> int:
+    from hardy.evals.benchmarks import BenchmarkImportRefused, import_archive
+
+    try:
+        result = import_archive(args.archive, benchmark=args.benchmark, revision=args.revision,
+                                expected_sha256=args.sha256, output=args.output)
+    except BenchmarkImportRefused as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    return int(bool(result["coverage"]["issues"]))
 
 
 def run_history(args: argparse.Namespace) -> int:
