@@ -177,6 +177,12 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
                     stale_prose.append(PublicationExposition(prose=prose, relation=relation.ref,
                         documented=relation.target, target=target))
 
+    # An explicit refresh of this logical prose attachment replaces its own
+    # historical warning. A different paragraph does not repair stale prose.
+    refreshed = {(p.prose.id, p.relation.id, p.target) for p in current_prose}
+    stale_prose = [p for p in stale_prose
+                   if (p.prose.id, p.relation.id, p.target) not in refreshed]
+
     contexts = []
     for item in items:
         minimal = graph.minimal_context(item.ref)
@@ -191,12 +197,23 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     # An explicit citation edge pins a historical contract; otherwise use the
     # current contract whose exact use site is actually in this draft.
     citations = {ref: snapshot.get(ref) for ref in closure if isinstance(snapshot.get(ref), CitationContract)}
-    citations.update((c.ref, c) for c in snapshot.current(CitationContract) if c.use_site in closure)
+    citation_subjects = {work.item for ref in closure
+                        if isinstance(work := snapshot.get(ref), Obligation)
+                        and work.kind in {"check_citation", "acquire_prerequisite"}}
+    citations.update((c.ref, c) for c in snapshot.current(CitationContract)
+                     if c.use_site in closure
+                     or c.use_site == c.required_claim and c.required_claim in citation_subjects)
     reports = tuple(views.publication(root, scope) for root in request.roots)
     unestablished = ordered(ref for report in reports for ref in report.unestablished if ref in closure)
     pending = {o.ref: o for report in reports for o in report.obligations
                if o.item in closure or o.ref in closure}
-    checked = set(views.coverage().citations_checked)
+    # General coverage spans project scopes. A draft may only reuse a check
+    # authenticated for its exact scope and exact required claim.
+    checked_subjects = {o.item for o in snapshot.current(Obligation)
+                        if o.kind == "check_citation" and o.scope.ref == scope.ref
+                        and o.status == "resolved" and o.resolution is not None
+                        and views.policy.is_accepted(snapshot, o.resolution)}
+    checked = {c.ref for c in citations.values() if c.required_claim in checked_subjects}
     documented = {p.target for p in current_prose if p.prose.statement is not None or p.prose.artifacts}
     missing = tuple(i.ref for i in items if i.ref not in documented)
     return PublicationPlan(request=request, revision=snapshot.revision, closure=ordered(closure),

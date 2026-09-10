@@ -308,6 +308,3 @@ class ExploreWorkflow:
             if relation.kind == RelationKind.TRANSPORTED_FROM and relation.source in contexts | subjects)
         return bool(mappings) and all(self.contexts.policy.transport_accepted(snapshot, relation, scope=policy_scope)
                                       for relation in mappings)
-
-
-

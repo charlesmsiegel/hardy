@@ -226,3 +226,68 @@ def test_relinked_prose_preserves_the_previous_theorems_historical_attachment(pu
     store.append((changed, prose, edge("documents", prose, changed, "documents")), expected_revision=store.read().revision)
     assert [p.prose.statement for p in make_plan(publication, project).exposition] == ["The author's exact paragraph."]
     assert [p.prose.statement for p in make_plan(publication, (store, changed, scope)).exposition] == ["Explicitly refreshed text."]
+
+def test_refreshed_logical_attachment_clears_only_its_own_stale_exposition(publication, project):
+    store, old, scope = project
+    independent = item("IndependentProse", "exposition", statement="Another paragraph still describes the old claim.")
+    store.append((independent, edge("independent-documents", independent, old, "documents")),
+                 expected_revision=store.read().revision)
+    changed = old.model_copy(update={"statement": "Revised mathematics"})
+    prose = store.read().head("Prose").model_copy(update={"statement": "Explicitly refreshed text."})
+    store.append((changed, prose, edge("documents", prose, changed, "documents")),
+                 expected_revision=store.read().revision)
+    plan = make_plan(publication, (store, changed, scope))
+    assert [p.prose.id for p in plan.stale_exposition] == ["IndependentProse"]
+    assert [p.prose.statement for p in plan.exposition] == ["Explicitly refreshed text."]
+    historical = make_plan(publication, project)
+    assert {p.prose.statement for p in historical.exposition} == {
+        "The author's exact paragraph.", "Another paragraph still describes the old claim."}
+
+
+@pytest.mark.parametrize("kind, included", [("check_citation", True), ("acquire_prerequisite", True), ("prove", False)])
+def test_citation_contract_selected_for_exact_citation_blocker_subject(publication, tmp_path, kind, included):
+    store = LedgerStore(tmp_path)
+    main = item("Main", statement="Main claim")
+    needed = item("Needed", "external_result", statement="Required result from literature")
+    scope = Scope(id="scope")
+    work = Obligation(id="source-work", kind=kind, item=needed.ref, scope=scope)
+    contract = CitationContract(id="needed-contract", use_site=needed.ref, required_claim=needed.ref,
+        paper_id="source-paper", paper_version="v1", source_statement=ArtifactRef(uri="source", digest="a" * 64),
+        conclusion=needed.statement)
+    unrelated = item("Unrelated", statement="Another use of the same source result")
+    unrelated_contract = contract.model_copy(update={"id": "unrelated-contract", "use_site": unrelated.ref})
+    link = Relation(id="main-source-work", kind="blocked_by", source=main.ref, target=work.ref)
+    store.append((main, needed, scope, work, contract, unrelated, unrelated_contract, link), expected_revision=0)
+    plan = make_plan(publication, (store, main, scope))
+    assert work.ref in plan.closure and needed.ref not in plan.closure
+    assert plan.citations == ((contract,) if included else ())
+    assert plan.citations_open == ((contract.ref,) if included else ())
+
+def test_citation_acceptance_in_another_scope_does_not_close_publication_coverage(publication, tmp_path):
+    store = LedgerStore(tmp_path)
+    main = item("Main", statement="Main uses the source result")
+    needed = item("Needed", "external_result", statement="Required source result")
+    scope_a, scope_b = Scope(id="scope-a"), Scope(id="scope-b")
+    source = ArtifactRef(uri="source-text", digest="a" * 64)
+    reading = EvidenceRef(kind="literature", subject=needed.ref, producer="source-owner", artifact=source)
+    faithful = EvidenceRef(kind="faithfulness", subject=needed.ref, producer="reader",
+        artifact=ArtifactRef(uri="faithful", digest="b" * 64))
+    contract = CitationContract(id="contract", use_site=main.ref, required_claim=needed.ref,
+        paper_id="paper", paper_version="v1", source_statement=source,
+        conclusion=needed.statement, evidence=(reading, faithful))
+    work = Obligation(id="check-a", kind="check_citation", item=needed.ref, scope=scope_a)
+    snapshot = store.append((main, needed, scope_a, scope_b, contract, work, edge("uses-source", main, needed)),
+        expected_revision=0)
+    evidence_records = {ref: AuthenticatedEvidence(ref, scope_a.ref, None, outcome, citation=contract.ref)
+        for ref, outcome in ((reading, "source_read"), (faithful, "faithful"))}
+    decisions = {}
+    policy = LedgerPolicy(read_evidence=evidence_records.get, read_decision=decisions.get)
+    proposal = Resolution(id="resolution-a", obligation=work.ref, item=needed.ref, evidence=(reading, faithful))
+    receipt = ArtifactRef(uri="receipt-a", digest="c" * 64)
+    decisions[receipt] = AcceptanceDecision(proposal.ref, work.ref, needed.ref, scope_a.ref, None, policy.digest)
+    accepted = policy.accept(snapshot, proposal, receipt)
+    closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref, "status": "resolved", "resolution": accepted})
+    store.append((closed,), expected_revision=snapshot.revision, validate=policy.validate)
+    planner = publication.PublicationPlanner(store, policy=policy)
+    assert not planner.plan(publication.PublicationRequest(roots=(main.ref,), scope=scope_a.ref)).citations_open
+    assert planner.plan(publication.PublicationRequest(roots=(main.ref,), scope=scope_b.ref)).citations_open == (contract.ref,)
