@@ -77,3 +77,41 @@ def test_status_markers_live_only_in_the_roadmap(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     hits = sorted({m.group(0) for m in STATUS_MARKER.finditer(text)})
     assert not hits, f"{path.relative_to(ROOT)} carries milestone markers {hits}; status lives in docs/roadmap.md"
+
+
+def _subcommands(parser, prefix: str = "hardy"):
+    """Yield (command name, parser) for every subparser, depth first."""
+    import argparse
+
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for name, sub in action.choices.items():
+                full = f"{prefix} {name}"
+                yield full, sub
+                yield from _subcommands(sub, full)
+
+
+def _options(parser) -> list[str]:
+    import argparse
+
+    out = []
+    for action in parser._actions:
+        if isinstance(action, (argparse._HelpAction, argparse._SubParsersAction)):
+            continue
+        if action.option_strings:
+            out.append(max(action.option_strings, key=len))
+    return out
+
+
+def test_cli_reference_names_every_command_and_option() -> None:
+    from hardy.app.cli import build_parser
+
+    page = (ROOT / "docs" / "reference" / "cli.md").read_text(encoding="utf-8")
+    parser = build_parser()
+    body = section(page, "Global options")
+    for option in _options(parser):
+        assert f"`{option}`" in body, f"global option {option} missing from Global options"
+    for name, sub in _subcommands(parser):
+        body = section(page, name)
+        for option in _options(sub):
+            assert f"`{option}`" in body, f"{name}: option {option} missing"
