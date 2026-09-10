@@ -96,8 +96,7 @@ process. Real confinement is a boundary the operating system enforces around
 the whole of Hardy, model loop and executors together; the policy it would
 have to meet, the controls it would have to enforce and the attacks each one
 has to survive are in
-[the confinement policy](../ISOLATION.md).
-<!-- relink to ../isolation.md after the rename -->
+[the confinement policy](../isolation.md).
 Until that exists, run only trusted output, in an environment you are willing
 to lose. [The roadmap](../roadmap.md) tracks the work.
 
