@@ -92,10 +92,11 @@ best-first's ranked search needs a budget bridge shared across the proof
 threads it opens that Codex's MCP transport does not provide; `iterative`
 against Codex has no such requirement. See
 [the CLI reference](../reference/cli.md#hardy-prove) for both flags in
-full, and the acceptance test in
-[the recorded runs](#the-recorded-runs) below for a run that uses neither
-option (both recorded `hardy prove` runs are `iterative` with
-`--history-mode full`).
+full. The one recorded `hardy prove` run, `prove-verified` in
+[the recorded runs](#the-recorded-runs) below, was invoked with neither
+flag, so it exercises the default combination, `iterative` with
+`--history-mode full`, rather than either alternative; it predates
+`strategy.json`, so its strategy is not itself part of what was recorded.
 
 ## Declaring assumptions
 
@@ -133,8 +134,7 @@ full field table.
 `hardy batch` cannot widen the trust base at all: there is no declaration
 file on that surface and nobody to approve one, so any axiom beyond Lean's
 own standard set refuses the proof rather than being recorded and shipped.
-Assumptions fail closed there; `--assume` only exists on `hardy prove` and
-`hardy accept`.
+Assumptions fail closed there; `--assume` only exists on `hardy prove`.
 
 ## The faithfulness reader
 
@@ -183,11 +183,12 @@ for the full account of why the check is built this way.
 `--backend` on `hardy prove` and `hardy accept` chooses `claude` (the
 default) or `codex`, which SDK drives the proof search and the
 faithfulness read. This is a per-invocation flag, not the config file's
-`backend` setting: the config's `backend` accepts only `claude` or `api`
-and governs `hardy chat` instead, where `api` calls the Messages API
-directly with `ANTHROPIC_API_KEY` rather than going through the Claude
-Code CLI. There is no `--backend api` on `prove`, `accept`, or `batch`;
-configure it in the config file if you want it for `hardy chat`.
+`backend` setting: the config's `backend` accepts only `claude` or `api`,
+and governs `hardy chat` and `hardy batch` instead, where `api` calls the
+Messages API directly with `ANTHROPIC_API_KEY` rather than going through
+the Claude Code CLI. `hardy batch` takes no `--backend` flag of its own at
+all; it always runs on whichever backend the config file names. Configure
+`backend = "api"` in the config file if you want it.
 
 The preflight before a staged run starts is checked against whichever
 backend the run will actually use, not always Claude's. `--backend codex`
@@ -233,9 +234,10 @@ pipeline exercised with no model, no network, and no toolchain present.
 ## The recorded runs
 
 Four runs live under `acceptance/recorded/`, each a real attempt against a
-real Claude subscription, a real pinned Mathlib, and a real Tectonic
-build, kept as committed evidence and rechecked by
-`hardy accept --recorded` on every change rather than re-run:
+real Claude subscription and a real pinned Mathlib (the staged run also
+against a real Tectonic build, since only it compiles a document), kept as
+committed evidence and rechecked by `hardy accept --recorded` on every
+change rather than re-run:
 
 - **`batch-verified`**: `hardy batch` against the problem, verified. The
   proof states several intermediate facts as `have`s before deriving the
@@ -273,7 +275,7 @@ rebuild-dependents refusal live only on the interactive `hardy chat`
 surface, since `hardy batch` works over one file with four tools and
 `hardy prove` is single-file by construction; recording that needs a
 committed interactive run, which these four are not. The TeX package set
-these runs compiled against is also pinned only through the Tectonic
+the staged run compiled against is also pinned only through the Tectonic
 bundle's own digest, not independently of it, so a bundle upgrade moves
 the package set along with the binary. See `writeup.md` or `paper.pdf`
 inside each recorded run's directory for the artifact itself, and
@@ -326,8 +328,9 @@ trajectory records which one it actually was either way. See
 ## Toolchain pins
 
 Hardy pins a specific toolchain rather than tracking whatever is newest:
-Lean `4.33.1`, Mathlib `v4.33.1`, elan `4.2.1`, and Tectonic `0.16.9`,
-verified against a recorded digest before that download is installed.
+Lean `4.33.1`, Mathlib `v4.33.1`, elan `4.2.1`, and Tectonic `0.16.9`. The
+Tectonic download is the one checked against a recorded digest before it
+is installed.
 
 ```sh
 hardy setup
@@ -336,10 +339,11 @@ hardy setup
 `hardy setup` discovers the pinned toolchain, records the paths it found
 in the config file, and prints what is still missing. What it installs
 for you depends on the platform: the shared Mathlib project wherever
-`lake` is present, elan and Tectonic on Windows only, downloaded and
-verified against their recorded digests; on Linux and macOS a missing elan
-or Tectonic is reported with instructions instead, and `scripts/install.sh`
-is the one to run for those.
+`lake` is present, elan and Tectonic on Windows only, elan through
+`winget` by pinned version and Tectonic downloaded and verified against
+its recorded digest; on Linux and macOS a missing elan or Tectonic is
+reported with instructions instead, and `scripts/install.sh` is the one to
+run for those.
 
 ```sh
 hardy doctor
