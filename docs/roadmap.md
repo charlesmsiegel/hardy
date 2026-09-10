@@ -2,6 +2,12 @@
 
 **Status:** canonical implementation backlog
 
+**Current execution scope (2026-09-09):** this implementation pass stops after
+reviewed and verified Core A on `implementation/a-contracts-and-shared-primitives`.
+The branch remains for end-of-wave review and validation, then pauses. The
+dependency graph below is an architectural roadmap, not authorization to begin
+Core B or create a B branch during this pass.
+
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
 [Supporting evaluation protocols and audit procedures](ideas/README.md) retain
@@ -417,7 +423,9 @@ Concrete current defects stay in Issues. Periodically audit all subprocess/resul
 
 # Core B — persistent mathematical project
 
-All Core B tasks depend on the A0 contracts. Once A0 lands, B0-B5 can begin in parallel, with graph/storage integration added as neighboring tasks land.
+All Core B tasks depend on the A0 contracts. Their dependency relationship permits
+parallel work when a later implementation pass authorizes it; the current pass
+ends after Core A and does not start B0-B5.
 
 ## B0 — Ledger event store — P0
 
@@ -1010,7 +1018,11 @@ Agent 13  X5 budget accounting
 Agent 14  X6 eval identity/journal residual audit
 ```
 
-**As soon as A0 lands**, start B0/B1/B2/B3/B4/B5 concurrently. There is no reason to wait for X/S tasks, and B tasks do not wait for unrelated A tasks unless they explicitly name them.
+**When a future implementation pass starts Core B after its own authorization,**
+B0/B1/B2/B3/B4/B5 may begin concurrently once their own dependencies permit.
+They need not wait for unrelated X/S tasks or unrelated A tasks. This is a
+scheduling qualification, not an instruction to start B work from the completed
+Core A branch.
 
 A2 can be extracted in parallel with the ledger and wired to B4/B5 as those land; representation/context resolution need not become a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
 

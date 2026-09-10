@@ -14,6 +14,40 @@ subprocesses, a durable transcript, explicit assumption approval, and a manifest
 linking formal names to LaTeX labels. Continue optimizing for
 learning and add abstraction only after an experiment exposes a real seam.
 
+## Core A shared primitives
+
+Core A freezes seams that later project workflows can share without claiming that
+the project architecture already exists. Immutable ledger values carry derived
+content identities and exact references for items, contexts, bindings,
+obligations, relations, scopes, evidence, and publication contracts. Constructors
+check their own shape; they do not verify cross-record history, mathematical
+truth, evidence, or acceptance decisions.
+
+The shared formalization operation can consume an optional caller-supplied
+semantic context. It freezes exact source records and generated Lean-binder
+origins into its contextual identity, sends the frozen projection to the
+independent reader, and returns typed declaration, representation, or transport
+obligations when supplied prerequisites are missing or stale. The standalone
+Prove request and its legacy context-free frozen hashes remain unchanged. Core B
+will own persistent records, reachability and minimal-closure discovery,
+representation adequacy, and transport/acceptance decisions; there is no
+project-aware Prove UI yet.
+
+Admission policy is likewise shared but staged: it owns request categories,
+exact scope checks, evidence/probe decisions, and caller-preauthorized
+declarations; interactive and paper adapters retain human confirmation,
+quarantine, persistence, and publication. Local theorem context and research
+conjectures do not widen the trust boundary. A4 is only a bounded proof-strategy
+value/protocol contract: outcomes describe attempts or submissions and cannot
+self-grade. A5 inventories literal manuscript sections, conservative source
+blocks, labels, citations, spans, and digests from supplied text. It does not
+read paths, execute TeX, expand macros, or decide semantic claim boundaries.
+
+These seams test mechanisms and import ownership; they add no execution
+isolation and establish no mathematical benchmark improvement. The exact
+implementation status and later owners are maintained in
+[docs/roadmap.md](docs/roadmap.md).
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

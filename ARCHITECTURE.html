@@ -75,6 +75,15 @@
 </div>
 <p>Value contracts belong to their consumers: <code>agents/contracts.py</code>, <code>formal/contracts.py</code>, <code>documents/contracts.py</code>, <code>workflows/contracts.py</code> and <code>workflows/batch_contracts.py</code>. The former root <code>domain.py</code> and <code>models.py</code> are gone. The package root contains only <code>__init__.py</code>, <code>__main__.py</code> and the <code>cli.py</code>, <code>mcp_server.py</code>, <code>cas_driver.py</code> entry-point shims. Full-tree import checks enforce dependency boundaries and the removed evaluation/CLI cycles. Source fingerprints include relocated owners, so previous measurements are not relabelled after a move. See <a href="DESIGN.md#internal-module-boundaries">the complete ownership map</a>.</p>
 
+<h2>Core A: shared primitives</h2>
+<p>Implemented seams are deliberately smaller than the persistent mathematical project planned next. They preserve exact identities and refuse missing semantic prerequisites as typed obligations; they do not fill those gaps with fallback assumptions. See the canonical <a href="docs/roadmap.md">roadmap</a> for ownership and scheduling.</p>
+<div class="grid">
+ <article class="card"><h3><span class="tag">Implemented</span> Ledger values and boundaries</h3><p>Immutable, exact-reference ledger contracts describe items, contexts, bindings, obligations, scopes, evidence and publication. Import rules keep capability packages away from workflow orchestration and keep ledger code away from transports and controllers. There is no store, graph, or accepted project state yet.</p></article>
+ <article class="card"><h3><span class="tag">Implemented</span> Formalization and admission seams</h3><p>Standalone Prove reuses formalization; optional contextual callers bind exact source records and generated binder origins into the frozen identity while legacy context-free hashes remain stable. Shared admission policy checks request category, scope, source and probes; adapters retain confirmation, quarantine, persistence and publication.</p></article>
+ <article class="card"><h3><span class="tag">Implemented</span> Strategy and manuscript contracts</h3><p>A bounded strategy returns an attempt or submission without assigning a formal grade. The manuscript inventory reports literal sections, conservative blocks, labels, citations, spans and digests from supplied text only; it never reads paths, executes TeX, expands macros, or judges mathematics.</p></article>
+ <article class="card"><h3><span class="tag later">Later: Core B+</span> Project integration</h3><p>Core B owns persistence, graph/reachability, context and representation resolution, and acceptance policy. It will make project-aware workflow inputs possible. Core A adds no isolation, benchmark result, search engine, or full project-aware Prove UI.</p></article>
+</div>
+
 <h2>Artifact contract</h2>
 <div class="contract">
  <div><h3>Formal dimension</h3><p>Kernel verified · verified modulo explicit paper assumptions · partially formalized · not formalized.</p></div>

@@ -29,12 +29,25 @@ interactive surface's own live run is still to come.
   approvals retain an exact inventoried-excerpt identity. Local context and
   research conjectures do not widen global trust; B2 ledger enforcement remains
   future work.
+- Core A shared contracts add immutable exact-reference ledger values and import
+  boundaries; optional direct contextual formalization callers bind source
+  records and generated binder origins into their identity while standalone
+  schemas and frozen hashes remain unchanged. Missing or stale semantic
+  prerequisites return typed obligations. The strategy protocol is bounded and
+  descriptive only, and the manuscript inventory reports literal spans/digests,
+  sections, conservative blocks, labels and citations without reading paths,
+  executing TeX, expanding macros, or judging mathematical claims. There is no
+  persistent project store, graph/resolution engine, project-aware Prove UI, or
+  new execution isolation.
 - Algebra backend/kernel/session/replay/script owners and literature
   metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
   points, `app/tui`, configuration, setup, project construction and terminal
   approval adapters; the CLI/TUI and
   evaluation cycles are removed and checked by full-tree import tests.
-- One wheel and unchanged commands, formats, prompts and mathematical gates.
+- One wheel and unchanged commands and mathematical gates. The source relocation
+  preserved existing standalone formats and prompts; Core A adds optional
+  contextual formalization fields without changing legacy context-free schemas
+  or frozen hashes.
   Source moves invalidate measurement identities; previous evidence is not
   restamped. No execution sandbox is added. See
   [DESIGN.md](DESIGN.md#internal-module-boundaries) for the package and contract map.
@@ -1198,6 +1211,10 @@ Priority labels are sequencing hints:
   retrieval ceilings. A strategy returns an attempt or submission; only the independent
   verifier may assign a formal grade. Shared CPU metering and token/cost reservation
   accounting remain later work.
+- **Next:** C5 will adapt existing iterative proving behind this contract; later
+  sketch-and-discharge adapters and reserve/settle metering may follow. This
+  contract adds no search engine, execution provider, formal verification run,
+  or token/cost accounting.
 - **Later — Sketch and discharge:** create an informal plan and Lean skeleton,
   then solve holes independently. Its first prerequisite is in place: a skeleton
   with holes in it can now be saved, imported, and built on, so the holes have
