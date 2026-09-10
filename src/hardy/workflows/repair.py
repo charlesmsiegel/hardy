@@ -145,6 +145,9 @@ class RepairWorkflow:
         self.check_cancelled()
         if self.store.read().revision != snapshot.revision:
             return incomplete("Overlap during guarded save; saved artifacts require rechecking", overlap=True)
+        if (not isinstance(saved, RepairSaveResult) or not isinstance(saved.result, ToolResult)
+                or type(saved.result.ok) is not bool):
+            raise ValueError("save owner must return an explicit boolean result")
         if not saved.result.ok:
             return incomplete(saved.result.output)
         for subject in affected:
@@ -152,6 +155,8 @@ class RepairWorkflow:
             result = self.recheck(snapshot, subject)
             if not isinstance(result, RecheckResult) or result.subject != subject:
                 raise ValueError("recheck returned another subject")
+            if type(result.passed) is not bool:
+                raise ValueError("recheck must return an explicit boolean result")
             checks.append(result)
             if self.store.read().revision != snapshot.revision:
                 return incomplete("Overlap during dependent recheck", overlap=True)

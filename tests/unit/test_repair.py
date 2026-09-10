@@ -120,3 +120,15 @@ def test_same_text_with_changed_frozen_proposition_is_not_a_repair(tmp_path):
     with pytest.raises(ValueError, match="revised claim"):
         flow.run(request.model_copy(update={"task": _task(claim=altered)}), strategy=_strategy(results=(True,))[0])
     assert not events
+
+
+@pytest.mark.parametrize("boundary", ["save", "recheck"])
+def test_string_failure_is_not_interpreted_as_a_successful_callback(tmp_path, boundary):
+    api, flow, request, store, _, _ = setup(tmp_path)
+    if boundary == "save":
+        flow.save = lambda _: api.RepairSaveResult(ToolResult("failed", "Save gate refused"))
+    else:
+        flow.recheck = lambda snapshot, ref: api.RecheckResult(subject=ref, passed="failed", detail="Did not check")
+    with pytest.raises(ValueError, match="explicit boolean"):
+        flow.run(request, strategy=_strategy(results=(True,))[0])
+    assert store.read().head(request.obligation.id).status == "open"
