@@ -1022,13 +1022,12 @@ def test_a_kernel_start_is_charged_to_the_session_budget(tmp_path, cas_session, 
         session.close()
 
 
-def test_a_rebuild_names_the_failed_cells_it_could_not_replay(tmp_path, cas_session) -> None:
+def test_a_rebuild_refuses_failed_cells_whose_effects_it_cannot_replay(tmp_path, cas_session) -> None:
     """Issue #37: `_restore` replays only accepted cells, so `x = 41; 1 / 0`
     leaves `x` live but unaccepted, and an accepted `pass` after it rebuilds
     "faithfully" while the next cell finds no `x`. On a backend that carries a
     state digest the digest catches it; this backend carries none, so the
-    rebuild has to say which cells it left out rather than report a faithful
-    rebuild it cannot have checked."""
+    rebuild must refuse the ambiguous state before running the next cell."""
     session = cas_session(cas_cell_seconds=1)
     try:
         session.execute("a")
@@ -1037,10 +1036,12 @@ def test_a_rebuild_names_the_failed_cells_it_could_not_replay(tmp_path, cas_sess
         session.execute("hang")
         assert session.state == "dead"
 
-        recovered = session.execute("d")
-        assert recovered.status == "ok"
-        assert f"cell(s) [{failed.seq}]" in recovered.restart_note
-        assert "not replayed" in recovered.restart_note
+        with pytest.raises(CasError, match=rf"failed or interrupted cell\(s\) \[{failed.seq}\]"):
+            session.execute("d")
+        assert session.state == "poisoned"
+        assert session.records()[-1].source == "hang"
+        session.reset()
+        assert session.execute("d").status == "ok"
     finally:
         session.close()
 

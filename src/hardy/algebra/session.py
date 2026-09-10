@@ -1071,6 +1071,22 @@ class CasSession:
 
     def _restore(self) -> RebuildReport:
         """Rebuild live state after a death, and verify what was rebuilt."""
+        # Failed live cells can mutate the namespace before raising. Replaying
+        # only accepted cells cannot recover those effects, even when later
+        # accepted cells produce the same output. Require an explicit reset.
+        unreplayed = tuple(
+            record.seq
+            for record in self.cells()
+            if not record.accepted and record.status in {"error", "interrupted"}
+        )
+        if unreplayed:
+            self._drop_kernel()
+            self.state = "poisoned"
+            raise CasError(
+                "CAS state did not reproduce: failed or interrupted cell(s) "
+                f"{list(unreplayed)} may have changed the live state. "
+                "Reset the session to start clean."
+            )
         # The start is the session's time too. Unbilled, a recovery cost one
         # kernel start the budget never saw, and `cas_session_seconds` bounded
         # total wall clock plus a start per death rather than total wall clock.
@@ -1078,14 +1094,6 @@ class CasSession:
         self._start()
         self.charge(time.monotonic() - started)
         pending = self.accepted()
-        # What ran in this segment and is not being replayed. `cells()` is
-        # every executed record of the live segment; the reset boundary and
-        # empty sources are already outside it.
-        unreplayed = tuple(
-            record.seq
-            for record in self.cells()
-            if not record.accepted and record.status in {"error", "interrupted"}
-        )
         if not pending:
             return RebuildReport(unreplayed=unreplayed)
         diverged: list[int] = []
