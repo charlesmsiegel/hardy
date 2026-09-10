@@ -18,6 +18,7 @@ from hardy.agents import compaction
 from hardy.agents.contracts import ChatRuntime, TurnEvent, final_text, provenance
 from hardy.agents.loop import Message
 from hardy.agents.parsing import json_object
+from hardy.agents.spend_budget import bind_spend_budget
 from hardy.agents.usage import Usage
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
@@ -421,7 +422,7 @@ class MathematicsSession:
         # a long session's turns under repetitions of itself.
         self._shared_observed: dict[str, Any] = {"shadowed": {}, "unbuildable": []}
         self._shared_failures: tuple[str, ...] = ()
-        self._make_runtime = make_runtime
+        self._make_runtime = bind_spend_budget(make_runtime, workspace / "provider-budget.jsonl")
         # The system prompt the current runtime was built with. Set by
         # `_build`; empty only in the window before the first one exists, which
         # nothing that reads it can reach.

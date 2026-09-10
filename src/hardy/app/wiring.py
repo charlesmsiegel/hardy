@@ -15,12 +15,13 @@ from types import SimpleNamespace
 from typing import Any
 
 from hardy.agents import claude as claude_runtime
+from hardy.agents.spend_budget import SpendPolicy
 from hardy.algebra import tools as cas_tools
 from hardy.app import config as configuration
 from hardy.app import doctor
 
 
-def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND) -> Callable[..., Any]:
+def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND, *, spend_policy: SpendPolicy | None = None) -> Callable[..., Any]:
     """A way for the session to build its runtime once it can offer the tools.
 
     `backend` chooses the transport, and with it who owns the turn loop. The
@@ -31,18 +32,29 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
     nor a key installed still starts on the default.
     """
 
+    if spend_policy is not None and backend != "api":
+        raise ValueError("provider budgets require the harness-owned API backend")
+
     def make(model: str | None = None, **context: Any) -> Any:
+        if spend_policy is not None and context.get("spend_budget") is None:
+            raise ValueError("bind the declared provider budget to a run or session before constructing its runtime")
+        if context.get("spend_budget") is not None and backend != "api":
+            raise ValueError("provider budgets require the harness-owned API backend")
         if backend == "api":
             from hardy.agents.api import ApiRuntime
 
             return ApiRuntime(model or default_model, **context)
         return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
 
+    make.spend_policy = spend_policy
+    make.budget_backend = backend
     return make
 
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
+    if getattr(config, "provider_budget", None) is not None:
+        raise ValueError("provider budgets require the harness-owned API backend; staged SDK runs are unsupported")
     from hardy.documents.writeup import RunIdentities, build_writeup, tectonic_version
     from hardy.formal import lean as lean_module
     from hardy.formal import retrieval

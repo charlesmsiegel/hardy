@@ -195,7 +195,7 @@ def _chat(
         try:
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model), config.backend),
+                runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget),
                 config.lean_command,
                 config.latex_command,
                 confirm,
@@ -352,7 +352,7 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
             f"which is the longest this platform can wait for, not {args.wall_seconds:g}"
         )
     closers = _closer_ladder(args.closers)
-    result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
+    result = run(request, runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
 

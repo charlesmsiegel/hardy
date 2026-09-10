@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from hardy.agents.spend_budget import budget_record_issues
 from hardy.documents.contracts import DocumentStatus
 from hardy.documents.writeup import dropped_glyphs, host_paths
 from hardy.formal import audit
@@ -429,7 +430,7 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
 USAGE_FIELDS = ("cost_usd", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens")
 IDENTITY_FIELDS = ("lean_version", "lean_commit", "mathlib_revision", "lake_manifest_sha256")
 # Batch terminal reasons that describe a run which produced no proof, honestly.
-BATCH_FAILURES = frozenset({"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit", "runtime_error"})
+BATCH_FAILURES = frozenset({"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit", "runtime_error", "provider_budget_limit"})
 
 # How a batch run on a false statement may end (acceptance run 3). Not a
 # budget: a run that ran out of turns or time shows Hardy stopped waiting,
@@ -1046,6 +1047,7 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     reason = result.get("terminal_reason")
     if trajectory.get("terminal_reason") != reason:
         issues.append("terminal reason differs between result.json and trajectory.json")
+    issues.extend(budget_record_issues(output_dir, trajectory.get("provider_budget")))
     # A mapping or nothing. `or {}` forgave a falsy value and kept a truthy
     # one of any type, so a hand-edited or half-merged trajectory whose
     # `request` is a string took the validator down with an `AttributeError`
@@ -1154,6 +1156,10 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
             issues.append("a wall_clock_limit run records no TimeoutError event or wall_seconds limit")
         if reason == "turn_limit" and "max_turns" not in limits_hit:
             issues.append("a turn_limit run records no max_turns limit event")
+        if reason == "provider_budget_limit":
+            budget = trajectory.get("provider_budget")
+            if not isinstance(budget, dict) or not budget.get("ending_limit") or budget["ending_limit"] not in limits_hit:
+                issues.append("a provider_budget_limit run lacks its authenticated ending limit")
         if reason == "runtime_error" and not any(not text.startswith("TimeoutError") for text in errors):
             issues.append("a runtime_error run records no error event")
         if result.get("formalization") != "not formalized":

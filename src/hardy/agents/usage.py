@@ -177,6 +177,8 @@ class Usage:
         would add spend already counted. `MathematicsSession._observed` is
         where stale reports are kept away from here.
         """
+        if event.get("provider_unasked") is True:
+            return self
         session = event.get("session_id")
         session = session if isinstance(session, str) and session else self.provider_session
         restarted = session != self.provider_session

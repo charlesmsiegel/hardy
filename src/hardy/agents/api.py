@@ -32,6 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from hardy.agents.contracts import TurnEvent, final_text
 from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
+from hardy.agents.spend_budget import SpendBudget
 from hardy.foundation.values import ToolResult
 
 BACKEND = "anthropic-api"
@@ -261,10 +262,12 @@ class AnthropicProvider:
         *,
         client: Any | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        spend_budget: SpendBudget | None = None,
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
         self._client = client
+        self.spend_budget = spend_budget
 
     def client(self) -> Any:
         """The SDK client, built on the first call that needs one.
@@ -367,9 +370,13 @@ class AnthropicProvider:
         # rather than being given `None` as an instruction to wait forever.
         if timeout is not None:
             request["timeout"] = max(timeout, 0.0)
+        reservation = self.spend_budget.reserve(request) if self.spend_budget is not None else None
         try:
             reply = self._within(request, timeout)
-        except Exception as error:
+            reported = _usage(getattr(reply, "usage", None))
+        except BaseException as error:
+            if reservation is not None:
+                self.spend_budget.settle(reservation, None)
             # The SDK's own timeout is an `APITimeoutError` -- a subclass of
             # `APIConnectionError`, not of Python's `TimeoutError` -- so a
             # request that ran out of the wall clock Hardy handed it would
@@ -384,6 +391,8 @@ class AnthropicProvider:
                 bound = f"its {timeout:g}s budget" if timeout is not None else "the transport's own timeout"
                 raise TimeoutError(f"the provider request exceeded {bound}") from error
             raise
+        if reservation is not None:
+            self.spend_budget.settle(reservation, reported)
         text: list[str] = []
         calls: list[ToolCall] = []
         reasoning: list[Any] = []
@@ -420,7 +429,7 @@ class AnthropicProvider:
             # message the provider produced rather than Hardy's regrouping of
             # it. The fields above stay what the loop dispatches and records.
             blocks=tuple(content),
-            usage=_usage(getattr(reply, "usage", None)),
+            usage=reported,
             stop_reason=getattr(reply, "stop_reason", None),
         )
 
@@ -463,6 +472,7 @@ class ApiRuntime:
         provider: Any | None = None,
         before_turn: Callable[[Sequence[Message]], str | None] | None = None,
         compact: Callable[[list[Message]], list[Message] | None] | None = None,
+        spend_budget: SpendBudget | None = None,
     ) -> None:
         self.model = model
         # Accepted and dropped. A caller that has a thread id from another
@@ -472,6 +482,12 @@ class ApiRuntime:
         self.session_id: str | None = None
         self._cwd = cwd
         self._provider = provider if provider is not None else AnthropicProvider(model)
+        if spend_budget is not None:
+            if not isinstance(self._provider, AnthropicProvider):
+                raise ValueError("provider budget requires the owned AnthropicProvider call boundary")
+            if self._provider.spend_budget not in (None, spend_budget):
+                raise ValueError("provider already belongs to another spend budget")
+            self._provider.spend_budget = spend_budget
         self._loop = AgentLoop(
             self._provider,
             system_prompt=system_prompt,
@@ -491,6 +507,11 @@ class ApiRuntime:
     @property
     def endpoint(self) -> str:
         return getattr(self._provider, "endpoint", "messages api")
+
+    @property
+    def provider_budget(self) -> dict[str, Any] | None:
+        owner = getattr(self._provider, "spend_budget", None)
+        return owner.summary() if owner is not None else None
 
     @property
     def output_limit(self) -> int | None:

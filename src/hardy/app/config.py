@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from hardy.agents import compaction
+from hardy.agents.spend_budget import SpendPolicy
 from hardy.workflows import layout
 from hardy.workflows.contracts import RunLimits
 
@@ -51,6 +52,7 @@ SETTINGS = {
     "cas_command": "HARDY_CAS_COMMAND",
     "project_context": "HARDY_PROJECT_CONTEXT",
     "context_window": "HARDY_CONTEXT_WINDOW",
+    "provider_budget": "HARDY_PROVIDER_BUDGET",
 }
 
 # What a project's own committed config may say. Deliberately tiny: the file
@@ -272,6 +274,7 @@ class Config:
     backend: str = DEFAULT_BACKEND
     # See DEFAULT_CONTEXT_WINDOW: what compaction plans against, in tokens.
     context_window: int = DEFAULT_CONTEXT_WINDOW
+    provider_budget: SpendPolicy | None = None
     # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
@@ -514,6 +517,14 @@ def load(
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
+    provider_budget = None
+    if values.get("provider_budget"):
+        budget_path = Path(str(values["provider_budget"])).expanduser()
+        if not budget_path.is_absolute():
+            budget_path = path.parent / budget_path
+        provider_budget = SpendPolicy.model_validate_json(budget_path.read_text(encoding="utf-8"))
+        if backend != "api":
+            raise ValueError("provider budgets require the harness-owned API backend")
     cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a
     # config file, and the place to say so is where the file is read.
@@ -545,6 +556,7 @@ def load(
         cas_command=location("cas_command"),
         project_context=flag("project_context", True),
         context_window=context_window,
+        provider_budget=provider_budget,
         path=path if path.exists() else None,
         requested_path=path,
     )

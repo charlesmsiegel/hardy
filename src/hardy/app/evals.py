@@ -396,6 +396,9 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     from hardy.evals.outstanding import matching_boards
     from hardy.evals.outstanding import outstanding as compute_outstanding
 
+    if getattr(config, "provider_budget", None) is not None:
+        print("Refused: eval provider budgets require an API-owned eval runner; SDK evals are unsupported", file=sys.stderr)
+        return 2
     refusal = _refuse_missing(args.problems, args.baseline)
     if refusal is not None:
         print(refusal, file=sys.stderr)
@@ -609,6 +612,9 @@ def check_command(args: Any) -> int:
 
 
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
+    if getattr(config, "provider_budget", None) is not None:
+        print("Refused: eval provider budgets require an API-owned eval runner; SDK evals are unsupported", file=sys.stderr)
+        return 2
     from hardy.evals.identity import run_source_digest_of
     from hardy.formal.lean import environment_identity
     from hardy.prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256

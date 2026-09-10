@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from hardy.agents import compaction
 from hardy.agents.contracts import provenance
 from hardy.agents.loop import TurnLimitReached
+from hardy.agents.spend_budget import SpendLimitReached, bind_spend_budget
 from hardy.agents.usage import Usage
 from hardy.documents.batch import SKETCH_HEADING as SKETCH_HEADING
 from hardy.documents.batch import describe_toolchain, sketch_section
@@ -170,6 +171,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     was is written into `trajectory.json` either way.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    make_runtime = bind_spend_budget(make_runtime, output_dir / "provider-budget.jsonl")
     # Before the first turn, so a run the wall clock cuts short still says
     # what it ran against; and asked rather than trusted from the caller when
     # nobody said.
@@ -597,6 +599,10 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     try:
         if asked:
             runtime.ask(task)
+    except SpendLimitReached as error:
+        reason = "provider_budget_limit"
+        asked = getattr(runtime, "turns", None) != 0
+        events.append({"type": "limit", "limit": error.limit, "detail": str(error)})
     except TurnLimitReached as error:
         # The bound the caller asked for, reached as asked. Recording it as a
         # provider failure would misreport an expected partial result.
