@@ -1899,7 +1899,10 @@ class MathematicsSession:
         self._refresh_shared_identity()
         sources = self.lean_workspace.sources()
         tex = self._tex_sources()
-        return summary_module.assemble(
+        from hardy.workflows.interactive.project_summary import with_project
+        from hardy.workflows.ledger.store import LedgerStore
+
+        assembled = summary_module.assemble(
             goal=self.goal(),
             assumptions=list(self.state["assumptions"]),
             registry=list(self.state["names"]),
@@ -1919,6 +1922,7 @@ class MathematicsSession:
             # theorem the sections beside it do not have.
             automation=self._automation_closed(sources),
         )
+        return with_project(assembled, LedgerStore(self.workspace).read())
 
     def export_material(self) -> dict[str, Any]:
         """Everything one exportable account of this session needs (#105).

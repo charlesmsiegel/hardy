@@ -1,5 +1,11 @@
 # Hardy: design
 
+E4 now adds persisted mathematical context, scoped research, blockers, trust and
+publication readiness to `/status --full` and the shared context summary.
+Ledger evidence authentication remains unavailable in the terminal adapter;
+recorded acceptance is not proof. E1/E3 are in progress; E0/E2 remain deferred.
+See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
+
 ## Vision
 
 Hardy is a model-agnostic agentic harness for proving theorems in Lean 4. The
@@ -148,7 +154,7 @@ or overwritten. A compiled draft is not a mathematical verification result.
 
 These are shared workflow APIs with actual persistence and capability composition
 fixtures. Application-specific model/readers and terminal wiring remain separate;
-Core E is deferred for human input. No real-paper acceptance or live-model result
+E0/E2 remain deferred for human input. No real-paper acceptance or live-model result
 is inferred from deterministic software tests.
 
 ## Core F proof search and comparison

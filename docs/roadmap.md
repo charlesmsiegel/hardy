@@ -4,7 +4,7 @@
 
 **Current execution scope (2026-09-10):** Core A-D, Core F-I and X1-X2 are implemented.
 Their full hermetic landing gates passed. Continue with the remaining X, S and V sections
-with satisfied dependencies. **Skip all of Core E pending human input.** Keep an individual
+with satisfied dependencies. **E1/E3/E4 are authorized for automated implementation; E0/E2 remain deferred.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
@@ -1222,7 +1222,7 @@ Core C followed this dependency order: C0/C1/C2/C5 could proceed independently; 
 
 As soon as the core loop works, run D0/D1/D2/D5/D7/D8/D9 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
-Core E is deferred for human input under the current execution instruction.
+E1/E3/E4 are authorized for automated work; E0/E2 remain deferred for human input.
 Continue X4's CAS residuals and V0's fixture obligation; S1's confinement
 capability gap and the dependent S2 audit remain unaccepted. V1-V3 implementations
 retain their scoped measurement limits; the integrated full landing gate passed.

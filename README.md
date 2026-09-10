@@ -1,5 +1,11 @@
 # Hardy
 
+E4 now adds persisted mathematical context, scoped research, blockers, trust and
+publication readiness to `/status --full` and the shared context summary.
+Ledger evidence authentication remains unavailable in the terminal adapter;
+recorded acceptance is not proof. E1/E3 are in progress; E0/E2 remain deferred.
+See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
+
 Hardy is an experimental, model-agnostic harness for theorem proving in Lean 4.
 It puts a language model in a tight loop with the Lean kernel, giving the model
 useful proof tools while keeping verification and honest reporting under the
@@ -103,8 +109,7 @@ selects minimal context and recorded prose, then delegates mechanical compilatio
 
 These workflows have hermetic owner-composition tests. Applications still supply
 the named model, capability-reader and guarded-save operations; the new project
-flows are not wired into the terminal UI. Core E's human-guided trials and UI
-integration are explicitly deferred. No new live-model performance or execution
+flows are not wired into the terminal UI. E0/E2's human-guided trials remain deferred; E1/E3 integration is in progress. No new live-model performance or execution
 isolation is claimed. See the [roadmap](docs/roadmap.md).
 
 Core F adds ranked textual proof search and a shared check/deadline budget.

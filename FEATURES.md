@@ -1,5 +1,11 @@
 # Hardy feature inventory
 
+E4 now adds persisted mathematical context, scoped research, blockers, trust and
+publication readiness to `/status --full` and the shared context summary.
+Ledger evidence authentication remains unavailable in the terminal adapter;
+recorded acceptance is not proof. E1/E3 are in progress; E0/E2 remain deferred.
+See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
+
 This inventory describes desired behavior and implemented capabilities, drawing
 on the former milestone specs and implementation plans. The
 [roadmap](docs/roadmap.md) defines planned work and its dependency order. The
@@ -79,7 +85,7 @@ interactive surface's own live run is still to come.
   does not certify mathematics and human prose is never silently rewritten.
 - Core A-D have hermetic persistence and owner-composition tests. Applications
   supply named capability readers, model/search and guarded-save operations.
-  Terminal wiring and Core E's human-guided trials remain deferred. There is no
+  Broader terminal wiring and E0/E2's human-guided trials remain deferred. There is no
   new live-model performance claim or execution isolation from this work.
 - Core F adds a persisted ranked proof-candidate frontier, shared atomic check
   budgets and deadlines, independent proof races with all-attempt usage, and
@@ -182,7 +188,7 @@ human-guided paper trials and interactive publication wiring remain deferred.
   full local runtime remain unestablished. Reviews never replace canonical verdicts.
 
 See the [engineering report](docs/superpowers/reports/2026-09-10-engineering.md)
-for scope and gate status. Core E remains deferred; S1/S2 remain unaccepted.
+for scope and gate status. E0/E2 remain deferred; S1/S2 remain unaccepted.
 
 ### Evaluation measurement and source preservation
 
