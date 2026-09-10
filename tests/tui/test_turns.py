@@ -803,7 +803,7 @@ class CasCommandSession(Streams):
         self.abandoned.append(reason)
 
 
-async def drive(settings, session, batches, *, timeout: float = 5.0):
+async def drive(settings, session, batches, *, timeout: float = 5.0, settle_before_exit: bool = False):
     """Send key batches in stages, waiting between them.
 
     `blast` sends everything at once, which is right for testing what a single
@@ -820,6 +820,14 @@ async def drive(settings, session, batches, *, timeout: float = 5.0):
             task = asyncio.ensure_future(built.run_async())
             await asyncio.sleep(0.05)
             for keys, wait_for in batches:
+                if settle_before_exit and keys == "\x03":
+                    # These callers test Esc, not app-exit cancellation. The
+                    # interrupt counter changes before the executor result is
+                    # delivered; exiting then can legitimately interrupt again.
+                    end = time.monotonic() + timeout
+                    while built._commands_running and time.monotonic() < end:
+                        await asyncio.sleep(0.01)
+                    assert not built._commands_running, "command did not settle before exit"
                 pipe.send_text(keys)
                 if wait_for is not None:
                     end = time.monotonic() + timeout
@@ -847,6 +855,7 @@ async def test_escape_interrupts_a_human_cas_cell(settings):
             ("\x1b ", lambda: session.interrupted == 1),
             ("\x03", None),
         ],
+        settle_before_exit=True,
     )
     assert session.interrupted == 1
     # No turn was cancelled, because none was running: a command is not a turn,
@@ -867,6 +876,7 @@ async def test_a_second_escape_during_a_command_escalates(settings):
             ("\x1b \x1b ", lambda: session.escalated == 1),
             ("\x03", None),
         ],
+        settle_before_exit=True,
     )
     assert session.interrupted == 1
     assert session.escalated == 1
@@ -994,6 +1004,7 @@ async def test_escape_in_the_same_batch_as_the_command_is_not_erased(settings):
             ("/cas 1+1\r\x1b ", lambda: session.interrupted == 1),
             ("\x03", None),
         ],
+        settle_before_exit=True,
     )
     # The stop is lifted when the command is admitted, and the press lands
     # after it. The other order leaves the press with nothing to hold.
