@@ -2,8 +2,9 @@
 
 This page records the choices behind Hardy that no other page states as a
 choice: what was chosen, what was rejected, what it costs, and where a condition
-for revisiting it was stated. Each entry links the page explaining the mechanism
-instead of repeating it; what is planned lives in [the roadmap](../roadmap.md).
+for revisiting it was stated, for a reader about to change one of them. Each
+entry links the page explaining the mechanism instead of repeating it; what is
+planned lives in [the roadmap](../roadmap.md).
 
 ## Verification
 
@@ -15,7 +16,8 @@ We chose to audit every non-private theorem and lemma in the rebuilt modules,
 over only the names the model registered, because a scope the model chooses is
 a gate it can switch off: a session registering nothing has nothing to audit.
 
-Cost: a private theorem cannot be audited, so it is refused, not skipped.
+Cost: private declarations are skipped, since the probe cannot name one, and a
+module with nothing auditable records "not established" rather than refusing.
 
 ### The audit rides on the check's Lean invocation
 
@@ -104,7 +106,7 @@ The mechanisms are on [the output contract](output-contract.md).
 
 We chose to refuse a save introducing a `theorem` not already registered, over
 asking for the convention in the prompt, because registering costs a
-description that [the ratchet](output-contract.md) then collects on.
+description that the ratchet then collects on.
 
 Cost: registering comes before saving, reversing the order first used.
 
@@ -276,7 +278,9 @@ Cost: the user renames a file or declines, both of which are reversible.
 ### Hardy's compiled modules sit beside the shared Lean project
 
 We chose to put Hardy's own compiled-module directory beside the shared Lean
-project, over registering the workspace in a build file every session shares.
+project, over registering the workspace as a library target in that project's
+build file, because that file is shared by every session on the machine and two
+concurrent workspaces would collide in it.
 
 Cost: a user's own build sees a problem's modules only if it is registered.
 
@@ -290,7 +294,7 @@ We chose four subject fields deep, at roughly a hundred and twenty five entries
 each, over thin coverage of every class, because a rate within one field can be
 read against that field's difficulty while a thin spread cannot.
 
-Limit: nothing here speaks to a subject [the corpus](corpus.md) omits.
+Limit: nothing measured here speaks to a subject the corpus omits.
 
 ### The subject classification is canonical, the coarse class derived
 
@@ -450,18 +454,22 @@ Revisit when: an adapter needs context the projection lacks; widen it.
 
 ### Formalization is shared, and the ledger stays outside the formal packages
 
-We chose one formalization and review path serving the staged workflow and the
-contextual service, over a step per surface, because two paths drift.
+We chose to share statement formalization and review between the staged
+workflow and the contextual service, with the caller supplying resolved exact
+records and the provider generating binder fragments, because the formal
+contracts never import the ledger.
 
-Limit: what it establishes stops at explicit references, not semantic closure.
+Limit: raw binders derive only from those fragments, and semantic closure is
+the caller's.
 
 ### The staged request schema stays standalone
 
-We chose to keep the staged prove request free of project context, over
-threading a project in, because that schema is public and recorded in every
-manifest.
+We chose to keep the public staged prove request standalone, exposing
+contextual formalization directly, over a project-aware request, which is
+deferred to later integration.
 
-Cost: a project-aware staged run needs an additional input adapter.
+Cost: a project-aware staged run needs an additional input adapter; the
+contextual service it would call already exists.
 
 ### Assumption admission is one policy owner
 
@@ -472,11 +480,12 @@ Cost: a new surface adds an adapter rather than a probe.
 
 ### A command-line assumption is preauthorized, not unchecked
 
-We chose to treat a declaration in an assumption file as an authorization that
-still passes the structural and refutation checks, over trusting the file,
-because the human authorized a statement, not what it elaborates to.
+We chose to keep a declaration in an assumption file preauthorized while still
+running it through the structural and refutation checks, over a path of its
+own, because those checks are shared rather than rebuilt per surface.
 
-Cost: a run may fail on its declarations rather than on the problem.
+Cost: a self-assumption of what the run must prove refuses, as does a stale
+identifier for it.
 
 ### Selection validates what it was given and materializes nothing else
 
@@ -519,8 +528,6 @@ view, over separate stores for contexts, research and publication, because
 three stores need three consistency arguments over one history.
 
 Cost: replay costs the length of the history; path enumeration can explode.
-
-Revisit when: readers can authenticate subject, context, scope and transport.
 
 ### Status and publication surfaces default to unauthenticated evidence
 
@@ -584,8 +591,8 @@ Cost: the reasoning nobody moved is gone.
 ### Repository history was linearized
 
 We chose to rewrite the unpublished history as one sequence of item commits
-with no merges, over keeping the integration merges, because the topology
-recorded who integrated what and nothing about the mathematics.
+with no merges, over keeping the integration merges. The report records equal
+patch identities and equal trees at each snapshot; it states no further reason.
 
 Limit: commit identifiers cited in older material do not resolve, and equal
 patch identities do not mean every rewritten tree was tested.
