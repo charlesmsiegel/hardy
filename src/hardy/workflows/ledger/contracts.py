@@ -19,7 +19,6 @@ from pydantic import StringConstraints, model_validator
 
 from hardy.foundation.values import FrozenModel, json_digest
 
-
 StableId = Annotated[str, StringConstraints(strict=True, pattern=r"\A[A-Za-z0-9][A-Za-z0-9_.:-]*\z")]
 Digest = Annotated[str, StringConstraints(strict=True, pattern=r"\A[0-9a-f]{64}\z")]
 Text = Annotated[str, StringConstraints(strict=True, min_length=1, pattern=r"\S")]
@@ -329,13 +328,14 @@ class Obligation(LedgerRecord):
     def check_resolution_record(self) -> Self:
         if self.previous and self.previous.id != self.id:
             raise ValueError("previous obligation identity must preserve stable ID")
-        if self.resolution:
-            if (self.resolution.obligation != self.previous
-                    or self.resolution.item != self.item):
-                raise ValueError("resolution identity must match previous obligation and exact item")
-        if self.status == ObligationStatus.RESOLVED:
-            if self.resolution is None or self.resolution.accepted_by is None:
-                raise ValueError("resolved obligation requires recorded policy acceptance")
+        if self.resolution and (
+            self.resolution.obligation != self.previous or self.resolution.item != self.item
+        ):
+            raise ValueError("resolution identity must match previous obligation and exact item")
+        if self.status == ObligationStatus.RESOLVED and (
+            self.resolution is None or self.resolution.accepted_by is None
+        ):
+            raise ValueError("resolved obligation requires recorded policy acceptance")
         return self
 
 

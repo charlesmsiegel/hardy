@@ -19,17 +19,28 @@ from typing import Literal, Protocol, Self
 from pydantic import model_validator
 
 from hardy.formal.contracts import (
-    ContextualFormalizationProposal, DeclaredAssumption, EnvironmentIdentity,
-    FormalizationContext, FormalizationProposal, FrozenClaim, SemanticEntry,
-    SemanticRef, freeze_claim,
+    ContextualFormalizationProposal,
+    DeclaredAssumption,
+    EnvironmentIdentity,
+    FormalizationContext,
+    FormalizationProposal,
+    FrozenClaim,
+    SemanticEntry,
+    SemanticRef,
+    freeze_claim,
 )
 from hardy.formal.lean import LeanCheckResult
 from hardy.foundation.values import FrozenModel, json_digest
 from hardy.prompts import FORMALIZATION_PROMPT
 from hardy.workflows.faithfulness import review_translation  # shared independent-read operation
 from hardy.workflows.ledger.contracts import (
-    MathematicalContext, Obligation, ProjectItem, ProjectItemKind, Scope,
-    ScopedBinding, VersionRef,
+    MathematicalContext,
+    Obligation,
+    ProjectItem,
+    ProjectItemKind,
+    Scope,
+    ScopedBinding,
+    VersionRef,
 )
 
 __all__ = [

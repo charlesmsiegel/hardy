@@ -9,6 +9,7 @@ run — plus the two promises the runtime makes about itself.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -222,13 +223,23 @@ def test_a_provider_nobody_calls_needs_no_key(monkeypatch: pytest.MonkeyPatch) -
     assert provider.max_tokens > 0
 
 
-def test_a_transport_timeout_is_reported_as_one() -> None:
+@pytest.mark.parametrize("sdk_available", [False, True])
+def test_a_transport_timeout_is_reported_as_one(monkeypatch, sdk_available) -> None:
     """The SDK's own timeout is an `APITimeoutError` -- not a `TimeoutError` --
     so a request that ran out of the wall clock Hardy handed it would reach the
     runner as an ordinary failure and be graded `runtime_error` instead of
     `wall_clock_limit`."""
     class APITimeoutError(Exception):
         pass
+
+    def load_sdk():
+        if not sdk_available:
+            raise RuntimeError("the optional SDK is not installed")
+        return SimpleNamespace(APITimeoutError=APITimeoutError)
+
+    # The fake transport and SDK must agree on the exception type, regardless
+    # of whether this machine happens to have the optional dependency installed.
+    monkeypatch.setattr("hardy.agents.api.load_sdk", load_sdk)
 
     class Timing(FakeClient):
         def create(self, **request):

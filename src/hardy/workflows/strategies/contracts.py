@@ -21,7 +21,6 @@ from hardy.formal.verifier import verification_source
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.contracts import ProofSubmission, RunLimits
 
-
 _STRATEGY_LIMIT_FIELDS = (
     "active_seconds",
     "proof_seconds",

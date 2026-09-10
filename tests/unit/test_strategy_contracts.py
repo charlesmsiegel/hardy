@@ -23,7 +23,6 @@ from hardy.workflows.strategies.contracts import (
     Strategy,
 )
 
-
 NOW = datetime(2026, 9, 9, tzinfo=UTC)
 
 

@@ -6,7 +6,7 @@ import pytest
 
 from hardy.formal.contracts import EnvironmentIdentity, VerificationEvidence
 from hardy.formal.retrieval import RetrievalProvenance, premises_digest
-from hardy.workflows.interactive.session import _split_top, _split_top_before
+from hardy.workflows.admission import _split_top, _split_top_before
 
 
 def test_verification_digest_preserves_utf8_and_canonical_bytes():

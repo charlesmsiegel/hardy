@@ -71,14 +71,22 @@ from hardy.prompts import (
     chat_project_context_prompt,
 )
 from hardy.workflows import admission as admission_policy
+from hardy.workflows import ingest
 from hardy.workflows.admission import (
     UNREADABLE as UNREADABLE,
+)
+from hardy.workflows.admission import (
     VACUITY_STRIP_REFUSED as VACUITY_STRIP_REFUSED,
+)
+from hardy.workflows.admission import (
     _probe_suggestion as _probe_suggestion,
+)
+from hardy.workflows.admission import (
     _strip_hypotheses as _strip_hypotheses,
+)
+from hardy.workflows.admission import (
     _vacuity_source as _vacuity_source,
 )
-from hardy.workflows import ingest
 from hardy.workflows.contracts import RunLimits
 from hardy.workflows.interactive import summary as summary_module
 from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission

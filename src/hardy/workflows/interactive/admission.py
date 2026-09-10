@@ -32,6 +32,9 @@ from hardy.workflows.admission import (
     assumption_shape,
 )
 
+_GLOBAL_REQUEST = AdmissionRequest(TrustRequestKind.GLOBAL_ASSUMPTION)
+_PAPER_REQUEST = AdmissionRequest(TrustRequestKind.PAPER_STATEMENT_ASSUMPTION)
+
 
 @dataclass(frozen=True)
 class AdmissionOperations:
@@ -73,7 +76,7 @@ class AssumptionAdmission:
 
     def _request_assumption(
         self, proposal: dict[str, str], *, search_available: bool, operations: AdmissionOperations,
-        admission_request: AdmissionRequest = AdmissionRequest(TrustRequestKind.GLOBAL_ASSUMPTION),
+        admission_request: AdmissionRequest = _GLOBAL_REQUEST,
     ) -> ToolResult:
         refusal = self.policy.request_refusal(admission_request)
         if refusal:
@@ -166,7 +169,7 @@ class AssumptionAdmission:
 
     def _assume_statement(
         self, request: dict[str, str], *, search_available: bool, operations: AdmissionOperations,
-        admission_request: AdmissionRequest = AdmissionRequest(TrustRequestKind.PAPER_STATEMENT_ASSUMPTION),
+        admission_request: AdmissionRequest = _PAPER_REQUEST,
     ) -> ToolResult:
         """Mint one paper statement as an axiom, or say why not.
 

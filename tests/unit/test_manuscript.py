@@ -8,7 +8,6 @@ import pytest
 
 from hardy.literature.manuscript import inventory
 
-
 SOURCE = r"""%
 é\section*{Intro}
 \begin{theorem}

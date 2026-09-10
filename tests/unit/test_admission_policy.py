@@ -202,6 +202,7 @@ def test_paper_source_missing_or_unread_is_refused(policy_module):
 
 def test_paper_selection_requires_held_source_and_records_exact_excerpt(policy_module):
     from hashlib import sha256
+
     from hardy.literature.statements import survey
     policy = policy_module.AdmissionPolicy()
     wanted, evidence, refusal = policy.paper_statement(None, None, "thm:one")

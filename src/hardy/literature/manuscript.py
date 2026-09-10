@@ -13,8 +13,8 @@ comment-spliced citation identities require a contiguous span or a finding.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Mapping
 
 from hardy.literature.statements import ALIASES, KINDS
 

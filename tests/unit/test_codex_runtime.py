@@ -271,9 +271,7 @@ def test_the_codex_ledger_counts_turns_and_states_no_figures(tmp_path) -> None:
     store = storage.RunStore.create(
         tmp_path, 'codex', now=datetime(2026, 7, 24, tzinfo=UTC), run_id=UUID(int=7)
     )
-    events = [
-        {'method': 'item/completed', 'params': {'item': {'type': 'agent_message', 'text': '{"proof_body": "by rfl", "informal_proof": "Reflexivity."}'}}},
-    ]
+    events = _events('proof-events.json')
     runtime = runtime_module.CodexRuntime(client=FakeClient(events), store=store, config_path=tmp_path / 'c.toml')
 
     assert runtime.usage['exchanges'] == 0

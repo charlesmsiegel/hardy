@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -999,10 +1000,15 @@ def test_a_kernel_start_is_charged_to_the_session_budget(tmp_path, cas_session, 
     budget bounds total wall clock within a process."""
     session = cas_session(cas_cell_seconds=30)
     original = session._start
+    clock = 100.0
+    # Control only the session's clock, leaving the real kernel's deadlines
+    # alone. Windows clock granularity can make a 50ms sleep measure as 47ms.
+    monkeypatch.setattr("hardy.algebra.session.time", SimpleNamespace(monotonic=lambda: clock))
 
     def slow_start() -> None:
-        time.sleep(0.05)
+        nonlocal clock
         original()
+        clock += 0.25
 
     monkeypatch.setattr(session, "_start", slow_start)
     try:
@@ -1010,7 +1016,8 @@ def test_a_kernel_start_is_charged_to_the_session_budget(tmp_path, cas_session, 
         # whatever is on the bill afterwards is the start and only the start.
         report = session._restore()
         assert report.replayed == 0
-        assert session.spent_seconds >= 0.05
+        assert session.spent_seconds == 0.25
+        assert session.total_spent_seconds == 0.25
     finally:
         session.close()
 

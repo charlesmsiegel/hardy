@@ -1,9 +1,9 @@
 """Shared formalization preserves source meaning, identity and binder origins."""
-from datetime import UTC, datetime
-from types import SimpleNamespace
-from pathlib import PurePosixPath
-from uuid import UUID
 import json
+from datetime import UTC, datetime
+from pathlib import PurePosixPath
+from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -126,8 +126,8 @@ def test_legacy_freeze_hash_is_unchanged():
 
 
 def test_standalone_service_preserves_prompt_and_candidate():
-    from hardy.workflows import formalization as service
     from hardy.prompts import FORMALIZATION_PROMPT
+    from hardy.workflows import formalization as service
     request = service.StandaloneFormalizationInput(text=" text\n")
     assert service.formalization_prompt(request, "fix") == (
         FORMALIZATION_PROMPT + "\n\nUser claim:\n text\n\n\nUser revision request:\nfix"
@@ -160,8 +160,8 @@ def test_contextual_binders_are_derived_from_fragments_with_repeated_origins():
 
 
 def test_context_identity_survives_persistence_and_excludes_proposer_gloss_from_reader(tmp_path):
-    from hardy.workflows import formalization as service
     from hardy.prompts import faithfulness_prompt
+    from hardy.workflows import formalization as service
     request = contextual()
     claim = service.freeze_formalization(request, contextual_proposal(request), environment(), NOW)
     path = tmp_path / "formalization.json"
@@ -271,11 +271,11 @@ def test_legacy_proposal_schema_order_is_unchanged():
 
 
 def test_contextual_claim_reaches_independent_final_verifier(tmp_path):
+    from hardy.formal.verifier import FinalVerifier
+    from hardy.foundation.process import ProcessResult
     from hardy.workflows import formalization as service
     from hardy.workflows.contracts import RunLimits
     from hardy.workflows.storage import RunStore
-    from hardy.formal.verifier import FinalVerifier
-    from hardy.foundation.process import ProcessResult
     request = contextual()
     claim = service.freeze_formalization(request, contextual_proposal(request), environment(), NOW)
     store = RunStore.create(tmp_path, "verify", now=NOW, run_id=UUID(int=2))
@@ -294,9 +294,9 @@ def test_contextual_claim_reaches_independent_final_verifier(tmp_path):
 
 
 def test_contextual_persisted_claim_loads_through_mcp(tmp_path, monkeypatch):
+    from hardy.app import config, mcp
     from hardy.workflows import formalization as service
     from hardy.workflows.storage import RunStore
-    from hardy.app import config, mcp
     request = contextual()
     claim = service.freeze_formalization(request, contextual_proposal(request), environment(), NOW)
     store = RunStore.create(tmp_path, "mcp", now=NOW, run_id=UUID(int=3))

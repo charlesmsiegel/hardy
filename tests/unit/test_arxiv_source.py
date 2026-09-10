@@ -224,9 +224,10 @@ def test_a_manifest_that_does_not_match_its_archive_digest_is_refused(held) -> N
     files and recomputing their digests must not leave that claim standing."""
     _, library, _ = held
     identifier = arxiv.parse_id(PAPER)
-    library.admit_source(identifier, _bundle(), source_url="u", fetched_at="t")
+    bundle = _bundle()
+    library.admit_source(identifier, bundle, source_url="u", fetched_at="t")
     path = library.path_for(identifier) / "source" / "source.json"
-    path.write_text(path.read_text().replace(hashlib.sha256(_bundle()).hexdigest(), "0" * 64))
+    path.write_text(path.read_text().replace(hashlib.sha256(bundle).hexdigest(), "0" * 64))
 
     with pytest.raises(arxiv.ArxivError, match="digest"):
         library.read_source(identifier, "main.tex")
