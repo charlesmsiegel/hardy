@@ -838,6 +838,9 @@ class ProveWorkflow:
                 elif parent is not None:
                     prompt += "\nThe last independently checked candidate and Lean feedback:\n"
                     prompt += json.dumps(parent.model_dump(mode="json"), sort_keys=True)
+                # Opening a fresh context and authenticating replay can consume
+                # the remaining deadline before any provider request is sent.
+                budget.ensure()
                 return runtime.run_structured(
                     active_thread, "proof-candidates", prompt, _CandidateBatch,
                 ).candidates

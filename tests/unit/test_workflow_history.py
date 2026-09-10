@@ -141,3 +141,32 @@ def test_compact_provider_prompt_contains_lessons_instead_of_full_failed_prose(t
     assert 'by exact True.intro' in prompts['compact']
     assert 'LEAN_ELABORATION_FAILURE' in prompts['compact']
     assert 'do not repeat' in prompts['compact']
+
+
+@pytest.mark.parametrize('mode', ['replay-full', 'compact'])
+def test_context_setup_exhausting_deadline_prevents_next_provider_call(tmp_path, mode):
+    workflow, domain, controller, state = _controller(tmp_path)
+    clock, starts = [0.0], []
+    controller._monotonic = lambda: clock[0]
+    factory = controller._runtime_factory
+
+    def delayed_factory(store):
+        runtime = factory(store)
+        start = runtime.start
+        def delayed_start(**kwargs):
+            thread = start(**kwargs)
+            if kwargs.get('claim') is not None:
+                starts.append(thread)
+                if len(starts) == 2:
+                    clock[0] = controller._config.limits.proof_seconds
+            return thread
+        runtime.start = delayed_start
+        return runtime
+
+    controller._runtime_factory = delayed_factory
+    manifest = controller.run(workflow.ProveRequest(
+        text='Two equals two.', model='fixture', strategy='best-first', history_mode=mode,
+    ), Terminal())
+    assert len(state.candidate_threads) == 1
+    assert state.verifier_calls == 1
+    assert manifest.terminal_reason == domain.TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
