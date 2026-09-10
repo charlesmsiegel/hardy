@@ -267,6 +267,26 @@ assumptions. The catalog records curated provenance and unknown capabilities;
 configured identities remain visible, including explicit incompatibility labels.
 The menu does not query current provider availability.
 
+## Hardening policy and operational bounds
+
+S0 defines a shared launch contract for filesystem/network confinement, pinned
+read-only inputs, aggregate scratch quotas and descendant resource ceilings.
+The [confinement policy](docs/ISOLATION.md) and disposable Windows baseline expose
+the current launcher's outside read/write and loopback authority. Native API
+availability does not establish enforcement: aggregate scratch byte and file-count
+quotas remain unresolved under the tested host capabilities. S1 and the separate
+trusted declaration/axiom verifier required by S2 are unaccepted.
+
+S3 audited current process/result, guarded-write and export-redaction paths.
+Process requests now reject nonfinite or negative deadlines and noninteger,
+negative or Boolean byte limits before launch. Guarded compiler execution uses
+bounded capture, detects even a one-byte overflow promptly and reports overflow
+separately from deadline expiry. Doctor probes and interactive Lean-path discovery
+refuse truncated answers; TeX diagnostics name the overflow. Existing cancellation,
+atomic-write and credential-filtering owners remain in place. These controls do
+not confine generated Lean, TeX, CAS or helper processes. See the
+[hardening verification report](docs/superpowers/reports/2026-09-10-hardening.md).
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

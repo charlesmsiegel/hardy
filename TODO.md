@@ -4,7 +4,7 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 45 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2 and X1-X2).**
+**Completed: 47 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2, X1-X2, S0 and S3).**
 Checkmarks mean the roadmap records the item as implemented. Core D and F-I passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
@@ -25,6 +25,10 @@ Core H verification and measurement limits are in the
 
 Core I and X2 verification is in the
 [Core I report](docs/superpowers/reports/2026-09-10-core-i.md).
+
+S0/S3 verification and the unaccepted S1/S2 capability requirements are in the
+[hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
+Execution remains unconfined. Engineering X and evaluation V work remain ongoing.
 
 ## Available next work
 
@@ -183,10 +187,10 @@ flowchart LR
 
 ## Hardening lane S
 
-- [ ] [S0 - Process-isolation design/spike - HARDEN](docs/roadmap.md#s0--process-isolation-designspike--harden) - Deps: none.
+- [x] [S0 - Process-isolation design/spike - HARDEN](docs/roadmap.md#s0--process-isolation-designspike--harden) - Deps: none.
 - [ ] [S1 - Process isolation implementation - HARDEN](docs/roadmap.md#s1--process-isolation-implementation--harden) - Deps: [S0](docs/roadmap.md#s0--process-isolation-designspike--harden).
 - [ ] [S2 - Audit outside the audited Lean environment - HARDEN](docs/roadmap.md#s2--audit-outside-the-audited-lean-environment--harden) - Deps: [S1](docs/roadmap.md#s1--process-isolation-implementation--harden).
-- [ ] [S3 - Operational-floor audit - HARDEN/P1](docs/roadmap.md#s3--operational-floor-audit--hardenp1) - Deps: not specified.
+- [x] [S3 - Operational-floor audit - HARDEN/P1](docs/roadmap.md#s3--operational-floor-audit--hardenp1) - Deps: not specified.
 
 ## Evaluation lane V
 

@@ -396,6 +396,8 @@ Do not rebuild already-shipped `run_procedure_digest`, environment pooling, or r
 
 ## S0 — Process-isolation design/spike — HARDEN
 
+**Status:** Completed design/spike: shared acceptance policy, disposable Windows baseline and native capability investigation. The baseline establishes current authority, not confinement. See the [hardening verification report](superpowers/reports/2026-09-10-hardening.md) and [policy](ISOLATION.md).
+
 **Deps:** none
 
 Design a reusable confinement policy (likely `foundation/isolation.py`) used by Lean, TeX, CAS, paper helpers, and other subprocesses:
@@ -412,17 +414,23 @@ The later anti-cheat audit must execute where audited Lean source cannot modify 
 
 ## S1 — Process isolation implementation — HARDEN
 
+**Status:** Unaccepted: the tested native Windows capabilities do not establish the required aggregate scratch byte and file-count quotas. No complete policy implementation or confinement claim. See the [capability findings](ISOLATION.md#native-windows-capability-findings-2026-09-10).
+
 **Deps:** S0
 
 Implement the confinement policy for Lean, TeX, CAS, paper extraction, and helpers. This gates untrusted input, multi-user execution, or autonomous network-enabled modes.
 
 ## S2 — Audit outside the audited Lean environment — HARDEN
 
+**Status:** Unaccepted: S1 remains incomplete and no trusted independent declaration/axiom verifier has been established. The current in-environment audit retains its documented limitation.
+
 **Deps:** S1
 
 Ensure audited source cannot redefine/intercept the mechanism used to establish its axiom report. This is an acceptance criterion of isolation/audit architecture, not a separate backlog system.
 
 ## S3 — Operational-floor audit — HARDEN/P1
+
+**Status:** Completed current audit: invalid process limits are rejected before launch, compiler output capture is bounded and overflow is classified promptly; truncated probes cannot establish environment success. Existing cancellation, guarded-write and export-redaction paths were reviewed. This is an operational audit, not execution isolation or a guarantee against future defects. See the [hardening verification report](superpowers/reports/2026-09-10-hardening.md).
 
 Concrete current defects stay in Issues. Periodically audit all subprocess/result paths for deterministic timeout semantics, bounded outputs, durable atomic writes, and secret redaction; open/retain Issues only for observable failures in the current tree.
 

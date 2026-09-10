@@ -142,6 +142,13 @@ state and total spend stay current. `/audit`, `/formalize`, `/publish` and
 The model menu preserves configured identities and labels its bundled suggestions
 as curated, with availability and capabilities unverified.
 
+Hardening S0 records the confinement policy and a Windows baseline in which
+outside reads, outside writes and loopback connections all succeed. S3 adds
+finite process limits, bounded compiler capture and explicit output-overflow
+failures. S1/S2 remain unaccepted: the available native Windows capabilities do
+not establish the required aggregate scratch quotas or independent audit boundary.
+See the [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

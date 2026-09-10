@@ -60,6 +60,35 @@ normal host access. This is inventory, not a requirement to install WSL. Native
 Windows support remains a design requirement, and no Linux containment result is
 claimed from this machine.
 
+### Native Windows capability findings, 2026-09-10
+
+The normal host token has no `SeManageVolumePrivilege`; neither `SrmSvc` nor
+`vmcompute` was found. Read-only export checks found AppContainer, Job Object and
+virtual-disk APIs, plus `Experimental_CreateProcessInSandbox` in
+`processmodel.dll`. The experimental API documents AppContainer and read-only /
+read-write filesystem grants, but no aggregate scratch quota. Export presence
+establishes API availability, not successful confinement.
+[Experimental sandbox API](https://learn.microsoft.com/en-us/windows/win32/secauthz/createprocessinsandbox).
+
+The unresolved control is a hard aggregate scratch byte and file-count limit.
+NTFS quotas are administrator-managed per user and volume; their accounting
+excludes reparse points and other file metadata, so a byte quota alone does not
+bound file-count exhaustion.
+[NTFS quota administration](https://learn.microsoft.com/en-us/windows/win32/fileio/managing-disk-quotas),
+[quota accounting](https://learn.microsoft.com/en-us/windows/win32/fileio/disk-quota-limits).
+FSRM folder quotas require a Windows Server role service, absent here.
+[FSRM](https://learn.microsoft.com/en-us/windows-server/storage/fsrm/fsrm-overview).
+Attaching a bounded VHD requires `SeManageVolumePrivilege`, absent from the tested
+token; a VHD would still need its file-count policy demonstrated.
+[AttachVirtualDisk requirements](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-attachvirtualdisk).
+Job Objects provide aggregate committed-memory and user-mode CPU-time limits,
+but these do not supply a filesystem quota.
+[Job limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information).
+
+No complete native Windows S1 boundary was established under the available
+capabilities and authorized setup. No profiles, ACLs, services or machine
+configuration were changed by this investigation. S1 and S2 remain incomplete.
+
 ## Capability integration and independent audit
 
 Lean and TeX receive pre-fetched, pinned toolchain/library inputs. Toolchain package

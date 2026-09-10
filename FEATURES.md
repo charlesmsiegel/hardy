@@ -152,6 +152,18 @@ human-guided paper trials and interactive publication wiring remain deferred.
 - The model menu preserves the configured choice and labels curated suggestions,
   incompatible families, and unverified availability without invented capabilities.
 
+### Hardening acceptance and operational floor
+
+- S0's confinement policy and disposable Windows baseline are recorded; the
+  existing launcher permits outside reads, outside writes and loopback access.
+- S3 rejects invalid process limits, bounds compiler capture and distinguishes
+  prompt output-overflow termination from deadline expiry. Truncated doctor and
+  Lean-path probes are refused, and TeX diagnostics disclose overflow.
+- S1/S2 remain unaccepted. Native aggregate scratch byte/file quotas and the
+  independent trusted audit boundary have not been established. This work adds
+  no execution isolation or safety guarantee. See the
+  [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation
