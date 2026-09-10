@@ -128,3 +128,15 @@ def test_session_reference_names_every_slash_command() -> None:
             assert f"`/{command.name}`" in section(page, "Commands that work while a turn is running")
     for template in user.SHORTCUTS:
         assert f"`/{template.name}`" in section(page, "Prompt shortcuts")
+
+
+def test_configuration_reference_names_every_setting() -> None:
+    from hardy.app.config import SETTINGS
+
+    page = (ROOT / "docs" / "reference" / "configuration.md").read_text(encoding="utf-8")
+    body = section(page, "Settings")
+    for key, env in SETTINGS.items():
+        assert f"`{key}`" in body, f"setting {key} missing"
+        assert f"`{env}`" in body, f"env var {env} missing"
+    for extra in ("HARDY_CONFIG", "HARDY_PLAIN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
+        assert f"`{extra}`" in page, f"{extra} missing"
