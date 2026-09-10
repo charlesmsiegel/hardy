@@ -27,14 +27,16 @@ tier from `closed_by` and nothing sets it independently:
 
 | Tier | What closed it | What it is good for |
 | --- | --- | --- |
-| 0 | a single tactic other than `exact?`, `apply?` or `hint` | a sanity check; excluded from the headline |
+| 0 | a single tactic other than `exact?`, `apply?` or `hint` | a sanity check |
 | 1 | one of those three searchers, and no other single | the statement is essentially in Mathlib: useful for testing search, not proving |
 | 2 | no single tactic, but a chain | tactic-level planning |
 | 3 | nothing on the ladder | an intermediate statement is required |
 
 `hint` sits with the searchers rather than with the other singles because it
 runs `exact?` internally, so a goal it closes is a library-search hit and not an
-automation close.
+automation close. The headline aggregate is taken over tiers 2 and 3 across
+active entries only (`aggregate`, `scoreboard.py`), so neither tier 0 nor tier 1
+reaches it.
 
 A tier is a fact about one ladder against one Mathlib revision on one machine,
 never a property of a theorem, which is why it lives in `evals/baseline.json`
@@ -142,11 +144,13 @@ the entry a headline count of tier-3 problems is made of.
 ## The environment gate is not advisory
 
 Before `hardy evals run` spends anything, `staleness` (`sweep.py`) checks the
-baseline it was handed against this checkout: the corpus digest it was measured
-over, the singles and chains against the code's own constants, the heartbeat
-budget, the procedure digest, all four fields of the Lean environment identity,
-the host, and that the baseline records no problems with the list. Any of them
-is a refusal, not a warning.
+baseline it was handed against this checkout: the statement digest of every
+entry it was measured over, the singles and chains against the code's own
+constants, the heartbeat budget, the procedure digest, all four fields of the
+Lean environment identity, the host, and that the baseline records no problems
+with the list. Any of them is a refusal, not a warning. Staleness is per entry
+rather than per file, so a correction to one statement invalidates that entry's
+measurement and leaves the rest good ([the corpus page](corpus.md)).
 
 That is deliberately unlike `hardy doctor`'s toolchain pin check, which reports
 and lets the caller proceed. The whole point of the tier file is that a Mathlib
@@ -195,10 +199,11 @@ condition and the entry rather than believing the row's own claim.
 
 **`invalid` rows are missing measurements, not failures.** A row the audit
 cannot read says nothing about the model: the artifact is unreadable, which is a
-fact about the harness. The tier aggregate reports the invalid count in its own
-field beside the rate, so a reader can see how much of `n` is unmeasured. It does
-not yet remove those rows from the denominator: `_tier_aggregate` puts every true
-row into `n` and only `solved` rows into the numerator, so an invalid row
+fact about the harness. The tier aggregate reports an `invalid` count beside
+the rate, though it is a count and not a share of it: `_tier_aggregate` counts
+every invalid row in the tier, twins included, while `n` counts true rows only.
+Nor does the aggregate remove those rows from the denominator. It puts every
+true row into `n` and only `solved` rows into the numerator, so an invalid row
 currently depresses a solve rate exactly like a failed proof, and in a
 comparison could manufacture discordance that reads as a model difference.
 Excluding them from ranking-capable reports, and withholding a claim entirely
@@ -275,8 +280,11 @@ renders and interpolates those templates is in neither prompt hash and is picked
 up by the source denylist, which is the reason the source set cannot be replaced
 by a list of prompt files.
 
-Three fields are kept out of the key, each for a stated reason, and `pool()`
-correspondingly declines to ask for the three checks built on them:
+Three fields are kept out of the key, each for a stated reason. `pool()`
+declines the two checks that would rest on the first two of them, along with the
+aggregate re-derivation, since an earlier board necessarily names a corpus and a
+baseline that have since grown and its aggregates were computed against the
+denominators of its own day:
 
 - `problems_sha256` must drift, because entries are added by design.
 - `baseline_sha256` drifts as the baseline grows. What matters is the
@@ -299,9 +307,10 @@ invalidate the baseline carry-forward and un-pool every prior run. Worker counts
 are the one thing free to vary, and both the sweep and a run take `--workers`
 (defaulting to 1, since the sweep is CPU-bound on Lean elaboration while a run
 is mostly waiting on a provider, and the right number differs per machine).
-Every row records the `workers` value it ran under, so its `wall_seconds` is
+A row records the `workers` value it ran under, so its `wall_seconds` is
 self-describing rather than a bare number a later reader mistakes for serial
-time.
+time. Rows written before that field existed carry `None`, and a pool of them
+says the concurrency is unrecorded rather than naming a number it does not have.
 
 **Which numbers survive concurrency.** Outcomes, token counts and cost are
 unaffected by worker count, because the frozen backstop sits far enough above an
@@ -331,16 +340,25 @@ fact from two boards agreeing. The caller names each field it *intended* to vary
 with `--vary`, so an unintended difference is reported as one rather than left
 for a reader to notice.
 
-**The reader model joins the condition.** The canonical reader is chosen outside
-the recorded condition, from configuration (`staged.py`), while its verdict is
-what separates `solved` from `solved_other`. Two boards with identical
-conditions can therefore have been graded by different readers, and the
-disagreement lands in the very outcome the comparison is about. So `_controls`
-reads the reviewer's model, backend, template digest, response-schema digest and
-per-slot prompt digest off each row's own `canonical.json`, not off the
-condition label, and the same is done for the strategy, history mode, context
-policy and shared tool budget: a condition label alone cannot establish what
-actually ran.
+**The reader is only partly inside the condition.** A staged run's canonical
+reader decides `solved` against `solved_other`, so which reader graded a board
+lands in the very outcome a comparison is about. `Condition` therefore carries
+`reviewer_model` and `canonical_template_sha256` (`contracts.py`), a staged run
+populates both (`app/evals.py`), `run_procedure_digest_of` folds both into the
+pooling key (`identity.py`), and the validator refuses a row whose
+`canonical.json` names a reviewer, a template or a backend other than its
+condition's (`scoreboard.py`).
+
+What is still outside `Condition` is the reader's backend, its response-schema
+digest and its per-slot prompt digest, which `compare.py` adds to the control
+fields itself. The reader is also chosen from configuration
+(`config.faithfulness_model`, `staged.py`) rather than from `--model`, so it can
+differ from the model under test with nothing on the command line saying so, and
+a board written before those condition fields existed records `None` for them.
+So `_controls` re-derives every one of them from each row's own `canonical.json`
+instead of trusting a label, and does the same for the strategy, history mode,
+context policy and shared tool budget: a condition label alone cannot establish
+what actually ran.
 
 **Recorded provenance is not an independent attestation.** Source, host,
 concurrency and treatment identities describe an experiment; they do not certify
@@ -512,16 +530,23 @@ test's own docstring.
 | acquisition | [acquisition](../../tests/unit/test_core_c_acceptance.py), [resolver](../../tests/unit/test_acquisition_resolver.py), [literature](../../tests/unit/test_acquisition_literature.py), [interfaces](../../tests/unit/test_acquisition_interfaces.py) | That a proposal succeeds. The source bytes are real; the model and Lean operations are scripted. |
 | proof strategies | [iterative](../../tests/unit/test_iterative_strategy.py), [sketch](../../tests/unit/test_sketch_strategy.py), [best first](../../tests/unit/test_best_first_strategy.py), [race](../../tests/unit/test_race_strategy.py), [escalation](../../tests/unit/test_escalating_strategy.py), [lessons](../../tests/unit/test_strategy_lessons.py) | Any benchmark improvement, and no strategy's own report of success: only a fresh independent check of the assembled original claim establishes a result. Compact replay quotes exact failed attempts and cannot license a general impossibility. |
 | research, critique, repair, referee | [research composition](../../tests/unit/test_core_d_acceptance.py), [Research](../../tests/unit/test_research.py), [Critique](../../tests/unit/test_critique.py), [Repair](../../tests/unit/test_repair.py), [Referee](../../tests/unit/test_referee.py) | Any external judgment, all of which are scripted here. Referee audits recorded readings and does not hold the authority behind them. |
-| publication and prose | [planner](../../tests/unit/test_publication.py), [assembly](../../tests/unit/test_publish.py), [structure](../../tests/unit/test_publication_structure.py), [versions](../../tests/unit/test_version_audit.py), [refresh](../../tests/unit/test_exposition_refresh.py) | That a version comparison verifies mathematics: a reading schedules a recheck rather than performing one, and document structure is not mathematical use. |
+| publication and prose | [planner](../../tests/unit/test_publication.py), [assembly](../../tests/unit/test_publish.py), [structure](../../tests/unit/test_publication_structure.py), [versions](../../tests/unit/test_version_audit.py), [refresh](../../tests/unit/test_exposition_refresh.py), [recursive Referee](../../tests/unit/test_referee_recursive.py) | That a version comparison verifies mathematics: a reading schedules a recheck rather than performing one, recursive coverage is bounded by what the inventory reached, and document structure is not mathematical use. |
 | explore | [representations](../../tests/unit/test_explore_representation.py), [contexts](../../tests/unit/test_explore_context.py), [research](../../tests/unit/test_explore_research.py) | A proof of anything. Interpretation, context branches and persistent approaches exist before a theorem target does. |
 | synthetic referee | [manuscript](../../tests/integration/test_referee_manuscript.py) | Live referee performance: the semantic readings and the acceptance authority are both scripted, kernel and formalization review are skipped, and citation depth stays zero. |
 | terminal publication and status | [session](../../tests/test_project_publication.py), [terminal](../../tests/tui/test_project_publication.py), [summary](../../tests/test_project_summary.py) | Authenticated terminal evidence, which remains unavailable, and document compilation, which is scripted. |
 | reuse and exposure | [retrieval](../../tests/unit/test_project_retrieval.py), [reuse](../../tests/unit/test_project_reuse.py), [exposure](../../tests/unit/test_evals_exposure.py) | A gain of any kind, or model performance: the restart is a ledger and index restart and the fixtures make no provider or Lean calls. |
 | conversation and checkpoints | [history](../../tests/unit/test_conversation_history.py), [terminal history](../../tests/tui/test_conversation_history.py), [streaming](../../tests/test_claude_runtime_stream.py) | That selecting a branch rewinds mathematical state, which it never does, and that a durable partial observation is a completed turn. |
+| prompt and catalog conveniences | [templates](../../tests/unit/test_prompt_templates.py), [commands](../../tests/tui/test_prompt_commands.py), [catalog](../../tests/test_catalog.py) | Any proof evidence, and any model availability the configuration did not state: a user's own command expands a recorded request, and the catalog reports configured identities rather than inventing them. |
+| transcript replacement refusal | [chat](../../tests/test_chat.py) | That the filesystem is out of reach. A cloned or replaced transcript is refused, but the native-link case is skipped on a platform whose token cannot create symlinks, so only a Linux run exercises it. |
 | durable attempts and adjudication | [batch journals](../../tests/unit/test_batch_recording.py), [reviews](../../tests/unit/test_evals_adjudication.py) | That a declared actor or label is an authenticated identity: they are caller declarations, a review never rewrites the attempt it reviews, and legacy runs' identity gaps stay unknown. |
 | save gates and spend | [save sequence](../../tests/unit/test_save_gate_sequence.py), [spend](../../tests/unit/test_spend_budget.py) | Any hard billing guarantee. What is ordered is the refusal sequence, and what is durable is the reserve and settle record. |
 | measurements and imports | [history](../../tests/unit/test_evals_history.py), [certification](../../tests/unit/test_evals_certification.py), [benchmarks](../../tests/unit/test_evals_benchmarks.py) | Any performance or benchmark result: certification mechanics run on scripted receipts, and an imported archive is preserved bytes rather than a runnable environment. |
 | process floor | [process](../../tests/unit/test_process.py) | Filesystem or network confinement, or an independent axiom-audit environment; bounds on requests, capture, overflow and teardown are bounds on one process ([trust boundary](trust-boundary.md)). |
+
+The ordered CAS diagnostics fixtures are not listed here: what they establish
+about sentinel capture, split echoes and terminal diagnostics belongs with the
+reasoning on [the computer algebra page](computer-algebra.md), and the real
+backend tests among them need Singular or Macaulay2 installed.
 
 Every runnable component still owes its own regressions as its behaviour
 changes; this table is an obligation, not a certificate that anything added
