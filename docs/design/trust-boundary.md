@@ -21,13 +21,20 @@ Controlled:
   `--backend codex` run serves the same tools from a Hardy-owned MCP subprocess
   (`agents/codex.py`), which is a process seam on the same unconfined host and
   not a boundary.
-- **Anything that is not a Hardy tool is refused.** The permission callback in
-  `agents/claude.py` allows a call only when its name is one of the tools Hardy
-  registered, and denies everything else whatever it is called. Claude Code's
-  `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`, `WebSearch` and
-  the rest are additionally disallowed outright, but the default-deny gate is
-  what carries the guarantee: a denylist has to anticipate every built-in the
-  CLI grows next, and this one does not.
+- **On the Claude backend, anything that is not a Hardy tool is refused.** The
+  permission callback in `agents/claude.py` allows a call only when its name is
+  one of the tools Hardy registered, and denies everything else whatever it is
+  called. Claude Code's `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
+  `WebFetch`, `WebSearch` and the rest are additionally disallowed outright,
+  but the default-deny gate is what carries the guarantee: a denylist has to
+  anticipate every built-in the CLI grows next, and this one does not. The
+  scoping to that backend is load-bearing. A staged `--backend codex` run has
+  no such gate: its working thread is started with `sandbox=workspace_write`
+  and
+  `approval_mode=auto_review` (`agents/codex.py`), so that SDK's agent keeps
+  its own file and shell tools, auto-approved, over the run directory. Hardy's
+  tools are still the only way to reach Lean, TeX and the record, but on that
+  backend they are not the only tools in the conversation.
 - **No inherited configuration.** Claude Code settings and `CLAUDE.md` files
   are not read. An interactive session reads exactly one project file,
   `AGENTS.md` at the project root or `HARDY.md` in its place, never an
@@ -125,9 +132,17 @@ Lean's exit code, and a kernel-verified grade with no faithfulness verdict
 behind it is refused on read-back rather than believed. What each grade means
 and where it is written is in [the artifacts reference](../reference/artifacts.md).
 
-The batch and staged paths cannot reach "verified modulo listed assumptions",
-because there is nobody there authorised to widen the trust base. That grade
-is reachable only in the interactive path, where a human approves each axiom.
+Who may widen the trust base, and when, differs by path. In an interactive
+session a human approves each axiom at the moment it is requested, with the
+statement and the goal on screen. A staged `hardy prove` run has nobody to ask
+during the run, so it widens the trust base only from a human-authored
+`--assume` file, a declaration made before the run starts; a proof the kernel
+reports as using one of those axioms is graded `verified_modulo`, and the
+manifest names exactly the ones it used rather than everything the file
+offered (`app/cli.py`, `workflows/prove.py`). A `hardy batch` run cannot widen
+it at all: there is no declaration file and nobody to approve one, so anything
+beyond the standard axioms refuses the proof rather than being recorded and
+shipped (`workflows/batch.py`).
 
 ## The audit runs inside the environment it audits
 
@@ -261,14 +276,25 @@ narrower than what was asked for.
   the workspace's imports, because a narrower import set turns "you used a
   name that does not exist" into "you used a name I did not import", which is
   a different and misleading sentence.
-- **Two fail-closed probes.** A triviality ladder asks whether standard
-  automation already closes the statement, and a separate vacuity elaboration
-  asks whether the statement is satisfied by a trivial witness after its
-  propositional hypotheses are stripped (`workflows/admission.py`). Both have
-  a stated limit: this is a **filter over what standard automation closes, not
-  a decision procedure**, and a true statement no tactic in the ladder finds a
-  witness for passes it. Its other job is to say *this is not an assumption,
-  it is a lemma you have not looked up*.
+- **Fail-closed probes, and which path runs which.** Three exist, all in
+  `workflows/admission.py`. A shape gate reads the request as Lean would. A
+  provability probe runs a triviality ladder to ask whether standard automation
+  already closes the statement. A vacuity elaboration asks whether the
+  statement is satisfied by a trivial witness after its propositional
+  hypotheses are stripped. A refutation probe asks Lean whether the *negation*
+  is provable (`refutation_probe`, over `formal/refute.py`). An ordinary
+  assumption request runs shape, provability and vacuity
+  (`AdmissionPolicy.check_global`); a paper-sourced one runs shape,
+  provability and refutation instead (`check_paper`), and an opaque constant
+  is not elaborated as a proposition at all, so nothing is proved or refuted
+  about it and the prompt says so. A staged run runs the same refutation over
+  every axiom its `--assume` file declares, writing each verdict to the
+  trajectory whether or not it refuted anything, because "we looked and found
+  nothing" is the fact the grade rests on (`workflows/prove.py`). The
+  provability probe has a stated limit: it is a **filter over what standard
+  automation closes, not a decision procedure**, and a true statement no
+  tactic in the ladder finds a witness for passes it. Its other job is to say
+  *this is not an assumption, it is a lemma you have not looked up*.
 - **The axiom is declared after the probes.** With it in scope above them,
   `exact?` closes every statement by citing the axiom under test, and each
   honest request is refused as "proved from itself". Lean resolves names in
@@ -346,9 +372,11 @@ name a venv launcher rather than the Python DLL and standard library, so even
 that byte digest is weaker than it reads. A model alias and a launcher digest
 do not close any of it.
 
-Spend is an estimate. The budget owner reserves expected spend before a
-provider call and admits or denies the call against the reservation, and exact
-reported token counts settle it afterwards; missing usage reports and
+Spend is an estimate. The `provider_budget` setting names a spend-policy file
+([configuration](../reference/configuration.md)), and the budget owner reserves
+expected spend before a provider call and admits or denies the call against the
+reservation, with exact reported token counts settling it afterwards; missing
+usage reports and
 interrupted calls retain their liability rather than being refunded, and an
 actual overrun denies later calls (`agents/spend_budget.py`). A quote estimates
 input tokens and reserves the actual output cap, so it **cannot** guarantee a
