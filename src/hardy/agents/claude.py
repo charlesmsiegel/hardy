@@ -21,6 +21,7 @@ import contextlib
 import json
 import queue
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
@@ -324,6 +325,14 @@ class ClaudeAgentRuntime:
                     finished = True
                     return
                 if isinstance(item, _Failed):
+                    # Over on the SDK's side already: the thread raised out of
+                    # the turn, or the deadline abandoned it. Nothing is left
+                    # to cancel, and what is still winding down is the
+                    # provider's own shutdown, which the deadline took off the
+                    # clock on purpose -- so the consumer does not wait for it
+                    # here. `settle` is the bounded wait for a caller that
+                    # needs the thread gone.
+                    finished = True
                     raise item.error
                 yield item
         finally:
@@ -332,7 +341,7 @@ class ClaudeAgentRuntime:
             # into a queue nobody will ever read again.
             if not finished:
                 self.cancel()
-            worker.join(timeout=TEARDOWN_SECONDS)
+                worker.join(timeout=TEARDOWN_SECONDS)
 
     def cancel(self) -> None:
         """Stop the model. Safe from any thread, and safe to call twice.
@@ -386,15 +395,40 @@ class ClaudeAgentRuntime:
 
         `max_turns` is the SDK's to enforce, but nothing bounds a stalled
         request, so the deadline is imposed here rather than trusted to it.
+
+        Imposed on the caller's side of the queue, not on the exchange's.
+        `asyncio.wait_for` cancels the exchange and then waits for the
+        cancellation to finish -- which closes the SDK client, which tears
+        down the Claude Code subprocess. A 1.5s budget was measured aborting
+        at 3.5s that way (issue #27): the caller learned of the bound only
+        once the provider had finished dying, and the trajectory then called
+        a bound nobody had kept "hardy". So the deadline tells the caller
+        first, and the teardown runs afterwards on this thread, off the clock.
+        It is not skipped, only no longer waited for here; `settle` is the
+        bounded wait for a caller that wants the thread gone.
         """
         if not self.wall_seconds:
             await self._exchange(text, outbox)
             return
-        try:
-            await asyncio.wait_for(self._exchange(text, outbox), timeout=self.wall_seconds)
-        except TimeoutError:
-            self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
-            raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget") from None
+        started = time.monotonic()
+        exchange = asyncio.ensure_future(self._exchange(text, outbox))
+        done, _ = await asyncio.wait({exchange}, timeout=self.wall_seconds)
+        if done:
+            exchange.result()
+            return
+        elapsed = time.monotonic() - started
+        # Settled here rather than left to the exchange's own `finally`, which
+        # now runs after the caller has been told: the text the user watched
+        # arrive belongs on the record before the limit that ended the turn,
+        # and before a caller that writes the record the moment it hears.
+        self._settle_drawn()
+        # The bound asked for and the moment it fired. No deadline is exact,
+        # and a tool call already running is not interrupted, so the record
+        # says by how much rather than reporting the budget back as kept.
+        self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds, "elapsed": round(elapsed, 3)})
+        outbox.put(_Failed(TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")))
+        exchange.cancel()
+        await asyncio.wait({exchange})
 
     async def _exchange(self, text: str, outbox: queue.Queue) -> None:
         spoken: list[str] = []

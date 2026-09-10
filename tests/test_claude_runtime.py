@@ -105,7 +105,12 @@ def test_a_stalled_exchange_is_cut_off_at_the_wall_clock_budget():
     live._exchange = forever
     with pytest.raises(TimeoutError):
         live.ask("hello")
-    assert seen == [{"type": "wall_clock_limit", "seconds": 0.05}]
+    # The bound asked for, and the moment it actually fired (issue #27): a
+    # deadline is never exact, and the record says by how much rather than
+    # reporting the budget back as if it had been kept to the microsecond.
+    [limit] = seen
+    assert limit["type"] == "wall_clock_limit" and limit["seconds"] == 0.05
+    assert limit["elapsed"] >= 0.05
 
 
 def test_the_turn_bound_is_handed_to_the_sdk():

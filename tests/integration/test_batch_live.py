@@ -240,7 +240,11 @@ def test_a_starved_wall_clock_is_recorded_as_a_budget_not_a_provider_error(
     assert limits["wall_seconds"] == 1
     assert limits["wall_clock_enforced_by"] == "hardy"
     # Hardy cancels the exchange; it does not kill a Lean check already running
-    # on a worker thread, and that thread is waited on during shutdown. So the
-    # run can overrun its budget, and `elapsed_seconds` says so rather than
-    # reporting the budget back as if it had been kept.
+    # on a worker thread, nor hurry the SDK's teardown of the CLI subprocess.
+    # Neither is waited for before the caller hears of the bound (issue #27),
+    # so the run ends at its deadline -- and `elapsed_seconds` is measured, so
+    # whatever overrun remains is stated rather than the budget reported back.
     assert limits["elapsed_seconds"] >= limits["wall_seconds"]
+    [limit] = [event for event in _trajectory(tmp_path)["events"] if event.get("type") == "wall_clock_limit"]
+    assert limit["seconds"] == 1
+    assert limit["elapsed"] >= 1

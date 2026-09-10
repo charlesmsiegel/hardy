@@ -1553,7 +1553,13 @@ What the runs showed that the fake-process tests assume differently:
   clock cancels has no count at all — `null`, not zero — and `hardy accept`
   refuses a wall-clock-cancelled record that claims one.
 - Hardy's clock cancels the exchange without killing a Lean check already in
-  flight, so `elapsed_seconds` legitimately exceeds `wall_seconds`.
+  flight. It used to wait for that check, and for the SDK to tear down the
+  Claude Code subprocess, before telling the caller the bound had fired — a
+  1.5 s budget aborted at 3.5 s, and `elapsed_seconds` carried the overrun as
+  though the bound had been kept (issue #27). The deadline now reaches the
+  caller when it fires and the teardown runs afterwards, off the clock; the
+  `wall_clock_limit` event records both the budget and the `elapsed` moment
+  it actually fired, on every backend, so a late bound says by how much.
 - The SDK names an in-process tool `mcp__hardy__<name>` in the staged
   trajectory; the tool-use record is under that name.
 - The staged workflow grades every run that did not verify as `partial`, so a

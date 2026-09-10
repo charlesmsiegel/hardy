@@ -604,11 +604,17 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 + ". Anything above it stopped here.</p>"
             )
         elif kind == "wall_clock_limit":
-            parts.append(
-                f'<p class="fail">Hardy\'s wall-clock limit fired after '
-                f"{_escape(event.get('seconds', '?'))}s; the turn ended here "
-                "rather than finishing.</p>"
+            # Records since issue #27 say when the limit actually fired beside
+            # what it was set to; older ones state only the budget, and the
+            # page does not dress that up as a measurement.
+            budget = _escape(event.get("seconds", "?"))
+            fired = event.get("elapsed")
+            when = (
+                f"fired at {_escape(fired)}s against a {budget}s budget"
+                if fired is not None
+                else f"fired after {budget}s"
             )
+            parts.append(f'<p class="fail">Hardy\'s wall-clock limit {when}; the turn ended here rather than finishing.</p>')
         elif kind == "tool":
             result = event.get("result")
             ok = bool(result.get("ok")) if isinstance(result, Mapping) else True

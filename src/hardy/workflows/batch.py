@@ -133,6 +133,11 @@ def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float, c
     "hardy" beside it would claim a guarantee the harness cannot make. A
     backend that keeps both says so, and one that keeps neither could say that
     too.
+
+    `elapsed_seconds` is measured, from the run's start to the exchange
+    returning, and is not the bound restated: a run the wall clock ended
+    reports the time it actually took. How far past the bound the deadline
+    itself fired is in the `wall_clock_limit` event's `elapsed` (issue #27).
     """
     enforcement = getattr(runtime, "enforcement", None)
     if not isinstance(enforcement, dict):

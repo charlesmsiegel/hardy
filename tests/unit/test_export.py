@@ -332,6 +332,14 @@ def test_a_wall_clock_limit_is_shown_rather_than_dropped():
     assert "wall-clock limit fired after 600s" in page
 
 
+def test_a_wall_clock_limit_says_when_it_fired_when_the_record_knows():
+    """The budget is what was asked for; `elapsed` is when the bound actually
+    landed (issue #27). A page that showed the budget as the moment would be
+    presenting a request as a measurement."""
+    page = build(transcript=[{"type": "wall_clock_limit", "seconds": 1.5, "elapsed": 1.503}])
+    assert "wall-clock limit fired at 1.503s against a 1.5s budget" in page
+
+
 def test_a_completed_reply_carries_no_interruption_note():
     page = build(
         transcript=[{"type": "assistant", "message": {"role": "assistant", "content": "Done."}}]
