@@ -1,12 +1,5 @@
 # Hardy: design
 
-E4 now adds persisted mathematical context, scoped research, blockers, trust and
-publication readiness to `/status --full` and the shared context summary.
-Ledger evidence authentication remains unavailable in the terminal adapter;
-recorded acceptance is not proof. E1 now has a synthetic manuscript acceptance fixture with scripted semantic
-readings and explicit coverage. E3 is in progress; E0/E2 remain deferred.
-See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
-
 ## Vision
 
 Hardy is a model-agnostic agentic harness for proving theorems in Lean 4. The
@@ -153,8 +146,18 @@ exposition. `publish.py` renders recorded text into a fresh guarded output bundl
 and delegates compilation to existing document tools. Human prose is not generated
 or overwritten. A compiled draft is not a mathematical verification result.
 
+The interactive project owner supplies exact selectors to these APIs through
+`/project publish`, `link` and `mark`. Presentation revisions freeze effective
+visibility/role while retaining exact mathematical references and attachment
+provenance. The session excludes active turns during publication and cancellation
+waits for compiler teardown. One ledger snapshot also supplies full status and
+context compaction with contexts, research, blockers, trust and draft readiness.
+Terminal ledger evidence authentication remains unavailable; recorded acceptance
+does not establish proof. E1's synthetic manuscript uses scripted semantic
+readings to test coverage and finding attribution through the real Referee owner.
+
 These are shared workflow APIs with actual persistence and capability composition
-fixtures. Application-specific model/readers and terminal wiring remain separate;
+fixtures. Application-specific model/readers for broader workflows remain separate;
 E0/E2 remain deferred for human input. No real-paper acceptance or live-model result
 is inferred from deterministic software tests.
 
@@ -308,8 +311,8 @@ terminal and idempotent; a crashed owner releases the lease. Prompt sanitization
 retains ambiguous nonempty output. Persisted nullable `kernel_lost` distinguishes
 terminal rollback from unaccepted live/unknown cell mutations across reloads.
 Known lost interrupts may rebuild accepted state; a later kernel death cannot
-erase earlier live unaccepted effects. Late-stderr attribution, prompt timing and real
-Macaulay2 platform checks remain unfinished.
+erase earlier live unaccepted effects. Ordered merged capture addresses late stderr
+and split-marker timing; real Macaulay2 platform checks remain pending.
 
 `agents/spend_budget.py` owns X5's immutable quote policy and shared append-only
 reserve/settle journal. API chat and batch bind one owner across auxiliary readers,

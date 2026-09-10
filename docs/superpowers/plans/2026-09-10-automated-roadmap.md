@@ -15,22 +15,22 @@ items on 2026-09-10. E0/E2 remain deferred.
 commits per item. No model calls or broad real-toolchain sweep. Full hermetic
 coverage gate before fast-forward landing. Tests use trusted disposable fixtures.
 
-- [ ] X4: reproduce late-stderr/prompt sequences in CAS subprocess tests, fix
+- [x] X4: reproduce late-stderr/prompt sequences in CAS subprocess tests, fix
   ordering in the sentinel owner, run related CAS tests, record real-tool availability.
 - [x] E4: add `interactive/project_summary.py` over one `LedgerSnapshot` and
   `LedgerViews`; incorporate sections into `MathematicsSession._summary`. Test
   context/hypothesis separation, conjectures, blocked approaches, exact scope,
   citation/transport blockers, stale prose, restart and corrupt-ledger refusal.
-- [ ] E3: add `interactive/project.py` operations and `/project publish`,
+- [x] E3: add `interactive/project.py` operations and `/project publish`,
   `/project link`, `/project mark` handlers. Require exact unambiguous item IDs
   and explicit scope for publication. Use `plan_publication` and
-  `PublicationPublisher` for fresh guarded bundles. Test actual command dispatch,
+  `PublishWorkflow` for fresh guarded bundles. Test actual command dispatch,
   history-preserving edits, stale output refusal and partial draft disclosure.
 - [x] E1: commit the synthetic flawed manuscript and expected findings; run
   real Referee composition with attributed scripted semantic reads. Assert both
   detected defects and clean controls, source coverage and restart behavior.
-- [ ] S1/S2: read-only capability recheck; record any unresolved host prerequisite.
-- [ ] V0/docs: refresh fixture index, roadmap, TODO and the four overview docs.
+- [x] S1/S2: read-only capability recheck; record any unresolved host prerequisite.
+- [x] V0/docs: refresh fixture index, roadmap, TODO and the four overview docs.
 - [ ] Review changes, run focused tests before each commit, then full hermetic
   coverage, Ruff and installed-wheel smoke before landing with `--ff-only`.
 

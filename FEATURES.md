@@ -1,12 +1,5 @@
 # Hardy feature inventory
 
-E4 now adds persisted mathematical context, scoped research, blockers, trust and
-publication readiness to `/status --full` and the shared context summary.
-Ledger evidence authentication remains unavailable in the terminal adapter;
-recorded acceptance is not proof. E1 now has a synthetic manuscript acceptance fixture with scripted semantic
-readings and explicit coverage. E3 is in progress; E0/E2 remain deferred.
-See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
-
 This inventory describes desired behavior and implemented capabilities, drawing
 on the former milestone specs and implementation plans. The
 [roadmap](docs/roadmap.md) defines planned work and its dependency order. The
@@ -131,8 +124,16 @@ interactive surface's own live run is still to come.
 - Explicit exposition refresh updates one selected paragraph and its DOCUMENTS
   link atomically, with new authorship provenance and preserved old text.
 
-These are shared workflow APIs with deterministic acceptance fixtures. Core E's
-human-guided paper trials and interactive publication wiring remain deferred.
+These workflow APIs have deterministic acceptance fixtures. E3 exposes
+`/project publish ITEM --scope SCOPE --output BUNDLE`, `/project link SOURCE
+illustrates|documents TARGET` and `/project mark ITEM internal|public|omitted`.
+Fresh draft bundles preserve exact mathematics, recorded prose and presentation
+history; compilation is reported separately from mathematical readiness.
+E4 adds persisted context, scoped research, blockers, trust, citations and
+publication readiness to full status and context summaries. Terminal ledger
+evidence authentication remains unavailable. E1's synthetic manuscript exercises
+Referee coverage with scripted semantic readings. E0/E2's human-guided paper
+trials remain deferred.
 
 ### Core H retrieval and reuse APIs
 
@@ -178,8 +179,8 @@ human-guided paper trials and interactive publication wiring remain deferred.
   serialization through the existing approval owner.
 - X4 adds conservative prompt-output handling, exclusive CAS journal ownership
   and durable terminal/live recovery distinctions across reloads. Unaccepted live
-  or unknown mutations refuse recovery. The lane remains ongoing
-  for late stderr, prompt timing and real Macaulay2 platform checks.
+  or unknown mutations refuse recovery. Ordered capture and split-marker
+  regressions cover late stderr and prompt timing; real Macaulay2 CI is pending.
 - X5's `provider_budget` policy supports expected-spend reserve/settle admission
   for API chat and batch, including auxiliary calls and restart liability. It is
   not a hard token or invoice cap. SDK, staged Prove and eval declarations refuse.

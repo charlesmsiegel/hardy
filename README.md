@@ -1,12 +1,5 @@
 # Hardy
 
-E4 now adds persisted mathematical context, scoped research, blockers, trust and
-publication readiness to `/status --full` and the shared context summary.
-Ledger evidence authentication remains unavailable in the terminal adapter;
-recorded acceptance is not proof. E1 now has a synthetic manuscript acceptance fixture with scripted semantic
-readings and explicit coverage. E3 is in progress; E0/E2 remain deferred.
-See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
-
 Hardy is an experimental, model-agnostic harness for theorem proving in Lean 4.
 It puts a language model in a tight loop with the Lean kernel, giving the model
 useful proof tools while keeping verification and honest reporting under the
@@ -108,10 +101,15 @@ exists. Critique records typed gaps, Repair preserves the stored frozen claim,
 and Referee reports exact manuscript coverage and external contracts. Publication
 selects minimal context and recorded prose, then delegates mechanical compilation.
 
-These workflows have hermetic owner-composition tests. Applications still supply
-the named model, capability-reader and guarded-save operations; the new project
-flows are not wired into the terminal UI. E0/E2's human-guided trials remain deferred; E1/E3 integration is in progress. No new live-model performance or execution
-isolation is claimed. See the [roadmap](docs/roadmap.md).
+These workflows have hermetic owner-composition tests. `/project publish`,
+`/project link` and `/project mark` expose ledger publication in the terminal;
+`/status --full` and context compaction include persisted mathematical state.
+See the [publication command report](docs/superpowers/reports/2026-09-10-project-publication.md)
+for exact selectors and output rules. Terminal ledger evidence authentication
+remains unavailable: recorded acceptance is not proof. E1 exercises a synthetic
+referee manuscript with scripted semantic readings. Applications still supply
+model and capability readers for broader workflows; E0/E2's human-guided trials
+remain deferred. No live-model performance or execution isolation is claimed.
 
 Core F adds ranked textual proof search and a shared check/deadline budget.
 `hardy prove --strategy best-first` uses the staged Claude runtime; unsupported
@@ -233,7 +231,7 @@ estimator or an independent kernel recheck. Missing evidence remains provisional
 changed corpus/baseline inputs refuse. Batch records do not establish this
 verifier-call cap. Lean CPU time and hard provider token/invoice caps remain
 unknown. See the [evaluation report](docs/superpowers/reports/2026-09-10-evaluation.md)
-for acceptance scope and gate status. V0's fixture obligation continues; Core E,
+for acceptance scope and gate status. V0's fixture obligation continues; E0/E2,
 S1/S2 and X4's remaining work are not accepted by these measurements.
 
 ## What this cannot establish
