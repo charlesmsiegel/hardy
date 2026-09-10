@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import ast
-import contextlib
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -374,7 +374,10 @@ class Macaulay2Backend(_SentinelBackend):
     def _strip_echo(self, stdout: str, fed: str) -> str:
         """Remove M2's echo of the input, prompt line and continuations alike.
 
-        The prompt line goes whatever is on it -- it is always an echo. A
+        A nonempty prompt line goes only when its text matches remaining fed
+        source and its occurrences do not exceed the source occurrences. Extra
+        matches are ambiguous user output: preserve all of them, even if that
+        leaves echo in the comparison and causes export divergence. A
         continuation line goes only when it is indented to exactly that
         prompt's width *and* what is under the indent is verbatim a line of
         the text the interpreter was fed. Both conditions are needed: an
@@ -397,19 +400,37 @@ class Macaulay2Backend(_SentinelBackend):
         line between, whose text is verbatim the *next* line to be echoed.
         """
         pending = [line.rstrip() for line in fed.splitlines() if line.strip()]
+        source_counts = Counter(pending)
+        prompt_counts = Counter(
+            line[prompt.end():].rstrip()
+            for line in stdout.split("\n")
+            if (prompt := self._echo_prompt.match(line)) is not None
+        )
         cursor = 0
         kept: list[str] = []
         width = 0
         for line in stdout.split("\n"):
             prompt = self._echo_prompt.match(line)
             if prompt is not None:
-                width = prompt.end()
-                # A prompt line is always an echo; move the cursor past the
-                # fed line it shows, so the continuation lines that follow
-                # are matched against the right neighbours.
-                shown = line[width:].rstrip()
-                with contextlib.suppress(ValueError):
+                shown = line[prompt.end():].rstrip()
+                if not shown:
+                    # An empty interpreter prompt can introduce the next
+                    # continuation block, or remain after EOF.
+                    width = prompt.end()
+                    continue
+                if prompt_counts[shown] > source_counts[shown]:
+                    width = 0
+                    kept.append(line)
+                    continue
+                # User output can itself look like `i42 : coefficient`.
+                # The prefix alone is not evidence that this line was echoed.
+                try:
                     cursor = pending.index(shown, cursor) + 1
+                except ValueError:
+                    width = 0
+                    kept.append(line)
+                else:
+                    width = prompt.end()
                 continue
             if not line:
                 width = 0

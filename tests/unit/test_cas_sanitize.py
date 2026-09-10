@@ -146,6 +146,23 @@ def test_macaulay2_sanitize_keeps_output_that_merely_looks_like_an_echo() -> Non
     assert backend.sanitize(transcript, fed) == "     indented output\n"
 
 
+def test_macaulay2_keeps_printed_prompt_shaped_output_not_in_fed_source() -> None:
+    """Issue 37: a coefficient label is output even when it resembles a prompt."""
+    fed = '<< "i42 : coefficient" << endl;\n'
+    transcript = 'i2 : << "i42 : coefficient" << endl;\ni42 : coefficient\n'
+    assert backend_for("macaulay2").sanitize(transcript, fed) == "i42 : coefficient\n"
+
+
+def test_macaulay2_preserves_ambiguous_output_matching_a_future_prompt() -> None:
+    fed = '<< "i42 : 1+1" << endl;\n1+1\n'
+    transcript = ('i2 : << "i42 : 1+1" << endl;\ni42 : 1+1\n'
+                  'i3 : 1+1\n\no3 = 2\n')
+    sanitized = backend_for("macaulay2").sanitize(transcript, fed)
+    assert 'i42 : 1+1\n' in sanitized
+    assert 'i3 : 1+1\n' in sanitized
+    assert 'o = 2\n' in sanitized
+
+
 def test_macaulay2_sanitize_without_the_fed_text_keeps_the_older_rule() -> None:
     """`sanitize` is called from paths that cannot say what was fed, and there
     it must still take the prompt lines it always took."""
