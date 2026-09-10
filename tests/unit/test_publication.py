@@ -207,3 +207,22 @@ def test_shadowed_binding_does_not_replace_exact_parent_notation(publication, pr
     context = next(c for c in plan.contexts if c.item == main.ref)
     assert context.bindings[0].target == store.read().head("X").ref
     assert context.context == main.context
+
+
+def test_revised_paragraph_replaces_its_prior_link_to_the_same_exact_theorem(publication, project):
+    store, main, _ = project
+    old_prose = store.read().head("Prose")
+    revised = old_prose.model_copy(update={"statement": "The author's explicitly revised paragraph."})
+    store.append((revised, edge("documents", revised, main, "documents")), expected_revision=store.read().revision)
+    plan = make_plan(publication, project)
+    assert tuple(p.prose for p in plan.exposition) == (revised,)
+    assert old_prose.ref not in plan.closure
+
+
+def test_relinked_prose_preserves_the_previous_theorems_historical_attachment(publication, project):
+    store, old, scope = project
+    changed = old.model_copy(update={"statement": "Revised mathematics"})
+    prose = store.read().head("Prose").model_copy(update={"statement": "Explicitly refreshed text."})
+    store.append((changed, prose, edge("documents", prose, changed, "documents")), expected_revision=store.read().revision)
+    assert [p.prose.statement for p in make_plan(publication, project).exposition] == ["The author's exact paragraph."]
+    assert [p.prose.statement for p in make_plan(publication, (store, changed, scope)).exposition] == ["Explicitly refreshed text."]

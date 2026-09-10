@@ -25,6 +25,7 @@ from hardy.workflows.ledger.contracts import (
     ProjectItem,
     ProjectItemKind,
     PublicationVisibility,
+    Relation,
     RelationKind,
     Scope,
     ScopedBinding,
@@ -107,6 +108,16 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     if not isinstance(scope, Scope):
         raise ValueError("publication scope must identify a Scope")
     graph, views = LedgerGraph(snapshot), LedgerViews(snapshot, policy)
+    # Graph history retains outgoing edges of earlier source revisions. For
+    # incoming prose/example selection, the last link to each exact target
+    # replaces that link's prior source, while different target versions retain
+    # their historical attachments. Use ledger order, never digest sort order.
+    graph_relations = {r.ref for r in graph.relations}
+    attachments = {}
+    for record in snapshot.records:
+        if (isinstance(record, Relation) and record.ref in graph_relations
+                and record.kind in {RelationKind.DOCUMENTS, RelationKind.ILLUSTRATES}):
+            attachments[record.id, record.target] = record
     for ref in request.roots:
         record = snapshot.get(ref)
         if not isinstance(record, ProjectItem):
@@ -130,7 +141,7 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     candidates = set(graph.publication_closure(request.roots))
     closure = set(graph.dependency_closure(request.roots, include_roots=True))
     while True:
-        attached = {r.source for r in graph.relations
+        attached = {r.source for r in attachments.values()
                     if r.target in closure and r.source in candidates
                     and r.kind in {RelationKind.DOCUMENTS, RelationKind.ILLUSTRATES}
                     and visible(snapshot.get(r.source))}
@@ -149,7 +160,7 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     selected = {r.ref for r in items}
     current_prose, stale_prose = [], []
     stale_relations = {s.relation for s in views.stale_artifacts()}
-    for relation in graph.relations:
+    for relation in attachments.values():
         if relation.kind != RelationKind.DOCUMENTS:
             continue
         prose = snapshot.get(relation.source)
