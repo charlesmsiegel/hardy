@@ -154,3 +154,26 @@ def test_trust_boundary_qualifies_the_codex_reader_and_compaction() -> None:
     assert "codex" in page and "cannot" in page
     for phrase in ("compaction", "what was dropped", "checkable", "precompact"):
         assert phrase in page, f"trust-boundary.md must keep the compaction-integrity argument ({phrase})"
+
+
+def test_output_contract_records_what_the_theorem_gate_does_not_cover() -> None:
+    """Two live runs on the same problem walked past the theorem gate -- one
+    asserted its result in ordinary prose with no theorem environment at all,
+    the other put the same claim in a `lemma` environment, which is exempt.
+    Both routes are open by design, and the provenance banner is what covers
+    them. That is a decision, and the output contract must record it beside the
+    other scanner limits rather than leave it to be rediscovered as a bug.
+    """
+    page = (ROOT / "docs" / "design" / "output-contract.md").read_text(encoding="utf-8")
+    body = section(page, "The scanner reads environments, not claims")
+
+    for route in ('prose', '`lemma`'):
+        assert route in body, f'the {route} route past the gate is not named'
+    assert 'banner' in body, 'the page does not say what covers the rest'
+    assert 'known_gaps' in body, 'the stronger answer is not named'
+    # The banner's cover is aggregate -- counts, never which claim is unbacked.
+    # A page that presents it as coverage without that residue overstates,
+    # which is the failure the banner itself is documented to refuse.
+    assert 'which' in body and 'count' in body, (
+        'the page does not say the banner counts and never points at a claim'
+    )
