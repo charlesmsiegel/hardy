@@ -297,3 +297,37 @@ def test_parent_and_hole_binders_are_preserved_in_each_independent_task(tmp_path
     assert verified[0][0].claim.proposal.binders == "(n : Nat) (m : Nat)"
     assert "have reflexivity (m : Nat) : m = m :=" in outcome.submission.proof_body
     assert verified[-1][0] == task
+
+
+def test_repeated_claim_in_distinct_run_stores_has_distinct_hole_obligations(tmp_path):
+    task, strategy, store, ledger, verified, proposed = _setup(tmp_path)
+    assert run_strategy(strategy, task).status == "submitted"
+    original = ledger.read().current(Obligation)
+    # Explicitly reusing a run ID must still not conflate different artifact trees.
+    second_store = RunStore.create(tmp_path / "runs", "second-sketch",
+        now=datetime.now(UTC), run_id=store.run_id)
+    strategy._store = second_store
+
+    assert run_strategy(strategy, task).status == "submitted"
+
+    current = ledger.read().current(Obligation)
+    assert len(current) == 4
+    assert set(obligation.id for obligation in original).isdisjoint(
+        obligation.id for obligation in current if obligation not in original)
+    for obligation in current:
+        item = ledger.read().get(obligation.item)
+        assert dict(item.semantics)["parent_claim_sha256"] == task.claim.content_hash
+
+
+def test_same_store_retry_refuses_before_model_calls_and_preserves_prior_artifacts(tmp_path):
+    task, strategy, store, ledger, verified, proposed = _setup(tmp_path)
+    assert run_strategy(strategy, task).status == "submitted"
+    before = {path.relative_to(store.path): path.read_bytes() for path in store.path.rglob("*") if path.is_file()}
+    prior_ledger = ledger.read()
+    strategy._propose_sketch = lambda _: pytest.fail("same-store retry reached the model")
+
+    with pytest.raises(ValueError, match="fresh RunStore|already.*sketch"):
+        run_strategy(strategy, task)
+
+    assert {path.relative_to(store.path): path.read_bytes() for path in store.path.rglob("*") if path.is_file()} == before
+    assert ledger.read() == prior_ledger

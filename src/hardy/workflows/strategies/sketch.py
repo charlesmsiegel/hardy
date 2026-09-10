@@ -20,7 +20,7 @@ from hardy.formal.closers import CLOSERS, close
 from hardy.formal.contracts import FormalizationProposal, freeze_claim
 from hardy.formal.lean import LeanTools, scannable
 from hardy.formal.verifier import FORBIDDEN_TOKEN, VerificationResult
-from hardy.foundation.values import FrozenModel
+from hardy.foundation.values import FrozenModel, json_digest
 from hardy.workflows.contracts import ProofSubmission, RunPhase
 from hardy.workflows.ledger.contracts import ArtifactRef, Obligation, ProjectItem, Scope
 from hardy.workflows.storage import RunStore
@@ -100,6 +100,8 @@ class SketchStrategy:
     ordinary open A0 records through the existing ledger; this strategy never
     admits assumptions, attaches policy acceptance, or resolves obligations.
     Successful formal evidence remains available for a later B2 policy decision.
+    A caller-owned RunStore carries one sketch attempt. Retrying requires a
+    fresh store so prior skeletons, checks and canonical parent artifacts survive.
     """
 
     def __init__(
@@ -127,6 +129,8 @@ class SketchStrategy:
         self._closers = tuple(closers)
 
     def run(self, task: ProofTask) -> ProofOutcome:
+        if (self._store.path / "sketch").exists():
+            raise ValueError("This run already has a sketch attempt; use a fresh RunStore")
         budget = _Budget(task, self._monotonic, self._active_elapsed, self._check_cancelled)
         plan = None
         proved: dict[str, ProofSubmission] = {}
@@ -191,7 +195,11 @@ class SketchStrategy:
         child = ProofTask(claim=claim, declared_assumptions=parent.declared_assumptions,
                           limits=parent.limits)
         artifact = self._store.write_json(PurePosixPath(f"sketch/holes/{hole.name}/task.json"), child)
-        item_id = f"sketch.{parent.claim.content_hash}.{claim.content_hash}"
+        # Claim hashes identify the mathematics, while the store identifies this
+        # attempt's artifacts. Even caller-reused run IDs cannot merge two trees.
+        attempt = json_digest({"run_id": str(self._store.run_id),
+                               "store": self._store.path.resolve().as_uri()})
+        item_id = f"sketch.{attempt}.{parent.claim.content_hash}.{claim.content_hash}"
         item = ProjectItem(
             id=item_id, kind="lemma", name=hole.name, origin="generated_local",
             statement=f"{proposal.binders} : {proposal.proposition}",
