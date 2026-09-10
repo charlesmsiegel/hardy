@@ -162,3 +162,41 @@ def test_failed_statement_elaboration_never_reaches_proof_or_attestation(tmp_pat
     assert not report.completed and not report.established
     assert calls == ["prepare"]
     assert any("failed elaboration" in reason for reason in report.reasons)
+
+
+@pytest.mark.parametrize("missing", ["formalization", "link", "wrong_endpoint"])
+def test_serialized_restart_marker_cannot_skip_formalization(tmp_path, missing):
+    _, flow, request, store, _, calls = setup(tmp_path)
+    scope = store.read().get(request.scope)
+    note = ProjectItem(id=request.id, kind="research_note", name="Research request",
+        origin="generated_local", context=request.context,
+        semantics=(("research-request", request.model_dump_json()),))
+    work = Obligation(id=f"{request.id}:target", item=request.target, scope=scope,
+                      context=request.context, kind="prove")
+    formalize = Obligation(id=f"{request.id}:formalize", item=request.target, scope=scope,
+                           context=request.context, kind="formalize")
+    records = (note, work) if missing == "formalization" else (note, work, formalize)
+    if missing == "wrong_endpoint":
+        records += (Relation(id=f"{request.id}:formalization", kind="blocked_by",
+                             source=work.ref, target=work.ref),)
+    store.append(records, expected_revision=store.read().revision)
+    with pytest.raises(ValueError, match="formalization|reference|identity"):
+        flow.run(request)
+    assert not calls
+    assert store.read().head(work.id).status == "open"
+
+
+def test_authority_reader_cannot_return_success_for_a_target_changed_during_read(tmp_path):
+    _, flow, request, store, owners, _ = setup(tmp_path)
+    read = owners.policy.trust_boundary
+
+    def changed(snapshot, target, **kwargs):
+        result = read(snapshot, target, **kwargs)
+        original = store.read().get(request.target)
+        store.append((original.model_copy(update={"statement": "Different current claim."}),),
+                     expected_revision=store.read().revision)
+        return result
+
+    owners.policy.trust_boundary = changed
+    with pytest.raises(ValueError, match="stale"):
+        flow.run(request)

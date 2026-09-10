@@ -95,14 +95,28 @@ class ResearchWorkflow:
             semantics=(("research-request", request.model_dump_json()),))
         work = Obligation(id=f"{request.id}:target", item=target.ref, scope=scope, context=target.context,
             kind="prove" if request.operation == "prove" else "check_informal_step")
+        formalize = Obligation(id=f"{request.id}:formalize", item=target.ref, kind="formalize",
+                               scope=scope, context=target.context)
         if any(record.id == request.id for record in snapshot.records):
             if snapshot.head(request.id) != note:
                 raise ValueError("research request identity already names another request")
-            current = snapshot.head(work.id)
-            if not isinstance(current, Obligation) or (current.item, current.kind, current.scope, current.context) != (
-                    work.item, work.kind, work.scope, work.context):
-                raise ValueError("research request work changed identity")
-            return current
+            # A serialized note is not permission to skip the original A2 gate.
+            # Link endpoints may pin prior obligation revisions after acceptance,
+            # but both their exact semantics and their current heads must match.
+            snapshot.get(work.ref)
+            snapshot.get(formalize.ref)
+            link = snapshot.head(f"{request.id}:formalization")
+            if not isinstance(link, Relation) or link.kind != "blocked_by":
+                raise ValueError("research formalization dependency is missing or changed")
+            for expected, references in ((work, (snapshot.head(work.id).ref, link.source)),
+                                         (formalize, (snapshot.head(formalize.id).ref, link.target))):
+                for reference in references:
+                    value = snapshot.get(reference)
+                    if not isinstance(value, Obligation) or (
+                        value.id, value.item, value.kind, value.scope, value.context
+                    ) != (expected.id, expected.item, expected.kind, expected.scope, expected.context):
+                        raise ValueError("research formalization work changed identity")
+            return snapshot.head(work.id)
         plan = self.identify(snapshot, request)
         if not isinstance(plan, ResearchPlan):
             raise ValueError("research identification must return a ResearchPlan")
@@ -113,8 +127,6 @@ class ResearchWorkflow:
             if isinstance(record, Obligation) and (record.status != "open" or record.resolution is not None
                                                   or record.scope != scope):
                 raise ValueError("research plan cannot assign acceptance or change scope")
-        formalize = Obligation(id=f"{request.id}:formalize", item=target.ref, kind="formalize",
-                               scope=scope, context=target.context)
         links = [Relation(id=f"{request.id}:formalization", kind="blocked_by",
                           source=work.ref, target=formalize.ref)]
         for index, prerequisite in enumerate(plan.prerequisites):
@@ -180,5 +192,7 @@ class ResearchWorkflow:
         established = self.resolver.policy.premise_allowed(snapshot, target.ref, scope=scope, context=target.context)
         used = self.resolver.policy.trust_boundary(snapshot, target.ref, scope=scope,
                                                   context=target.context) if established else ()
+        if self.store.read().revision != snapshot.revision:
+            raise ValueError("stale research report: project changed during authority authentication")
         return ResearchReport(request, request.operation, result.resolved, established, used,
                               result.outstanding, result.reasons, result.attempts, snapshot.revision)
