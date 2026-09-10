@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from hardy.algebra.cas import CasSession, backend_for
 from hardy.algebra.tools import CAS_TOOL_NAMES, CasToolRuntime, build_runtime
 from hardy.workflows.contracts import RunLimits
@@ -203,3 +205,38 @@ def test_a_small_state_is_listed_whole(tmp_path, cas_session) -> None:
     state = runtime.state()
     assert state.omitted == 0 and state.note is None
     assert len(state.accepted) == 2
+
+
+@pytest.mark.parametrize("budget", [1_024, 32_768])
+def test_a_long_recovery_warning_is_bounded_without_hiding_the_state_gap(cas_session, budget) -> None:
+    from hardy.algebra.contracts import CellRecord
+
+    spilled = {}
+    runtime = make_runtime(cas_session(), spilled, observation_bytes=budget)
+    warning = (
+        f"[cell(s) {list(range(10_000))} failed before being accepted and were not replayed: "
+        "anything they changed on the way to failing is not in the rebuilt state.]"
+    )
+    record = CellRecord(
+        seq=10_000, segment=0, author="model", source="pass", status="ok", accepted=True,
+        restart_note=warning,
+    )
+    result = runtime._bound(record)
+    assert len(result.model_dump_json().encode("utf-8")) <= budget
+    assert result.observation_truncated
+    assert "details omitted" in result.restart_note
+    assert "state may differ" in result.restart_note
+    assert json.loads(next(iter(spilled.values())))["restart_note"] == warning
+
+
+@pytest.mark.parametrize("operation", ["cell", "state"])
+def test_an_observation_budget_that_cannot_hold_the_envelope_is_refused(cas_session, operation) -> None:
+    from hardy.algebra.contracts import CasError, CellRecord
+
+    runtime = make_runtime(cas_session(), {}, observation_bytes=1)
+    record = CellRecord(seq=0, segment=0, author="model", source="pass", status="ok", accepted=True)
+    with pytest.raises(CasError, match="observation budget is too small"):
+        if operation == "cell":
+            runtime._bound(record)
+        else:
+            runtime.state()

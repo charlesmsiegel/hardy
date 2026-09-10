@@ -214,6 +214,8 @@ class CasToolRuntime:
                     ),
                 }
             )
+        if self._size(result) > self.observation_bytes:
+            raise CasError("CAS observation budget is too small to report the session state")
         return result
 
     def reset(self, *, author: str = "model") -> CasStateResult:
@@ -250,10 +252,16 @@ class CasToolRuntime:
         # `room` is characters and the cap is bytes, so the slice is a first
         # guess and the encoded envelope is what decides: multibyte output
         # sliced to a byte-derived character count came back several times
-        # larger than the cap. Halved until it fits, or until there is nothing
-        # left to cut and the note alone is what goes back.
+        # larger than the cap. Recovery details are bounded too: the list of
+        # failed cells can itself outgrow the cap. Keep a warning about the
+        # rebuilt state even when its full explanation has to stay in the log.
         room = max(256, self.observation_bytes // 4)
         while True:
+            restart_note = result.restart_note
+            if len(restart_note) > room:
+                restart_note = restart_note[:room] + (
+                    "\n[Restart details omitted; rebuilt state may differ. Rerun dependencies.]"
+                )
             bounded = result.model_copy(
                 update={
                     "stdout": result.stdout[:room],
@@ -262,10 +270,13 @@ class CasToolRuntime:
                     "observation_truncated": True,
                     "output_artifact": artifact,
                     "note": note,
+                    "restart_note": restart_note,
                 }
             )
-            if room == 0 or self._size(bounded) <= self.observation_bytes:
+            if self._size(bounded) <= self.observation_bytes:
                 return bounded
+            if room == 0:
+                raise CasError("CAS observation budget is too small to report the result and its warnings")
             room //= 2
 
     @staticmethod
