@@ -7,6 +7,7 @@ drawing differs, which is what keeps `hardy < script.txt` working.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -27,15 +28,35 @@ class PlainUi:
     def __init__(self, out: Callable[[str], None], read: Callable[[str], str]):
         self._out = out
         self._read = read
+        # One lock for everything this session puts on the terminal, held
+        # across a whole prompt -- question, rows and the read of the answer.
+        # The SDK runs a tool on a thread of its own, so the axiom prompt
+        # (`terminal.confirm_assumption`, through `_Straight`) is written and
+        # read from that thread while `run`, on this session's main thread,
+        # is still drawing the turn; and the SDK can start a second tool call
+        # while the first waits on the human. Without this, whatever the
+        # painter had to draw landed inside the question or between it and
+        # the answer (issue #29). With it, the painter waits: a line that
+        # arrives while a human is deciding is drawn after the decision.
+        # Reentrant, because a prompt writes its own lines under the lock it
+        # already holds. The real shell gets the same guarantee differently
+        # -- `in_terminal()` suspends its renderer while a nested prompt runs.
+        self._lock = threading.RLock()
+
+    def line(self, text: str) -> None:
+        """One line to the terminal, and never into an open prompt."""
+        with self._lock:
+            self._out(text)
 
     def write(self, text: str, *, style: str = "system") -> None:
         if style == "clear":
             return                                  # nothing to clear
-        if style in {"normal", "warning"}:
-            self._out(text)
-            return
-        for line in transcript.notice_lines(text, WIDTH) or [""]:
-            self._out(line)
+        with self._lock:
+            if style in {"normal", "warning"}:
+                self._out(text)
+                return
+            for line in transcript.notice_lines(text, WIDTH) or [""]:
+                self._out(line)
 
     # Every one of these is synchronous underneath: this session reads with
     # `input()` and writes with `print()`, and the coroutines below exist only
@@ -47,39 +68,43 @@ class PlainUi:
     def choose_now(
         self, title, rows: Sequence[Choice], *, current=0, subtitle=""
     ) -> Choice | None:
-        self._out("")
-        self._out(f"  {title}")
-        if subtitle:
-            self._out(f"  {subtitle}")
-        for number, row in enumerate(rows, start=1):
-            mark = "*" if number - 1 == current else " "
-            note = f"  {row.note}" if row.note else ""
-            self._out(f"  {mark} {number:>3}  {row.label}{note}")
-        # A typo is not an answer, and it is not a cancellation either. Blank
-        # cancels, because the prompt says so; anything else that is not a row
-        # is reported and asked again, which is what the console terminal does
-        # with a mistyped word. Collapsing the two mattered the moment an
-        # abandoned selector began cancelling the run: `/prove` discarded a
-        # staged run over one stray keystroke.
-        while True:
-            answer = self.ask_line_now("Choice (number, or blank to cancel): ")
-            if answer is None:
-                return None
-            answer = answer.strip()
-            if not answer:
-                return None
-            if answer.isdigit() and 1 <= int(answer) <= len(rows):
-                return rows[int(answer) - 1]
-            self._out(f"  {answer!r} is not one of 1-{len(rows)}. Blank cancels.")
+        # Held from the first line of the question to the answer: see `_lock`.
+        with self._lock:
+            self._out("")
+            self._out(f"  {title}")
+            if subtitle:
+                self._out(f"  {subtitle}")
+            for number, row in enumerate(rows, start=1):
+                mark = "*" if number - 1 == current else " "
+                note = f"  {row.note}" if row.note else ""
+                self._out(f"  {mark} {number:>3}  {row.label}{note}")
+            # A typo is not an answer, and it is not a cancellation either.
+            # Blank cancels, because the prompt says so; anything else that is
+            # not a row is reported and asked again, which is what the console
+            # terminal does with a mistyped word. Collapsing the two mattered
+            # the moment an abandoned selector began cancelling the run:
+            # `/prove` discarded a staged run over one stray keystroke.
+            while True:
+                answer = self.ask_line_now("Choice (number, or blank to cancel): ")
+                if answer is None:
+                    return None
+                answer = answer.strip()
+                if not answer:
+                    return None
+                if answer.isdigit() and 1 <= int(answer) <= len(rows):
+                    return rows[int(answer) - 1]
+                self._out(f"  {answer!r} is not one of 1-{len(rows)}. Blank cancels.")
 
     def ask_line_now(self, prompt: str) -> str | None:
-        try:
-            return self._read(prompt)
-        except (EOFError, KeyboardInterrupt):
-            return None
+        with self._lock:
+            try:
+                return self._read(prompt)
+            except (EOFError, KeyboardInterrupt):
+                return None
 
     def confirm_now(self, question: str) -> bool:
-        answer = self.ask_line_now(f"{question} [y/N] ")
+        with self._lock:
+            answer = self.ask_line_now(f"{question} [y/N] ")
         return (answer or "").strip().lower() in {"y", "yes"}
 
     async def choose(
@@ -150,6 +175,9 @@ def run(
     notices: Sequence[str] = (),
 ) -> int:
     ui = PlainUi(out, read)
+    # Everything below draws through the Ui's lock, not the bare callable, so
+    # a turn's lines cannot land inside a prompt a tool thread has open.
+    out = ui.line
     if ui_holder is not None:
         # Populated before the loop starts: `run_session._run_plain`'s
         # `confirm` closure looks this up lazily, since the approval

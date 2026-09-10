@@ -238,6 +238,16 @@ interactive surface's own live run is still to come.
   It is printed above every assumption request and on the writeup itself. Hardy makes no
   judgment about the relationship between the two — the claim is only that a human is
   never asked to approve an axiom with the assignment off-screen.
+- **Now (implemented):** the assumption prompt stands alone while a turn is in
+  flight (issue #29). The SDK runs a tool on its own thread, so the question is
+  asked from that thread while the model's output is still being drawn. In the
+  real shell the prompt is marshalled onto the event loop and the shell's own
+  renderer is suspended for as long as it is open; in `--plain` the session's
+  output lock is held from the first line of the question to the answer, so a
+  line that arrives while the human is deciding — a second tool call the SDK
+  started meanwhile — is drawn after the decision rather than into it. Esc or
+  end of input at the prompt declines, never approves. Both paths are covered
+  by a test that opens the prompt from a tool thread with output arriving.
 - **Now (implemented):** every compile of the writeup carries a provenance banner on
   page one, injected into the scratch copy the compiler is handed rather than into the
   saved source, so it cannot be edited out of the document a reader opens. It states how

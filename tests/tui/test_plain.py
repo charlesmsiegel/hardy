@@ -146,3 +146,72 @@ def test_a_blank_choice_still_cancels():
 
     ui = PlainUi(lambda line: None, lambda prompt: "")
     assert ui.choose_now("Pick", [Choice("a", "A")]) is None
+
+
+def test_an_approval_prompt_from_a_tool_thread_stands_alone_in_the_output(settings):
+    """Issue #29. The SDK runs a tool on a thread of its own, so the axiom
+    prompt is written and read from that thread while this session's only
+    other thread is still drawing the turn -- and the SDK can start a second
+    tool call while the first is waiting on the human. Nothing used to keep the
+    two apart: whatever the painter had to draw landed in the middle of the
+    question, or between the question and the answer.
+
+    The prompt has to hold the output until it has been answered. So a line
+    that arrives while the human is deciding is drawn after the decision, not
+    into it -- `PROPOSAL` is the same one the real shell's test approves.
+    """
+    import threading
+    import time
+
+    from hardy.agents.contracts import TurnEvent
+    from hardy.app import terminal
+
+    from .test_marshalling import PROPOSAL
+
+    written: list[str] = []
+    holder: dict[str, object] = {}
+    answers: list[bool] = []
+    prompt_open = threading.Event()
+
+    class Session(Streams):
+        def stream(self, text: str):
+            yield TurnEvent("tool_use", name="request_assumption", call_id="call-1")
+            asking = threading.Thread(
+                target=lambda: answers.append(terminal.confirm_assumption(holder["ui"])(PROPOSAL)),
+                name="sdk-tool",
+            )
+            asking.start()
+            assert prompt_open.wait(5), "the tool thread never reached the prompt"
+            # Arrives while the question is still on the human's screen.
+            yield TurnEvent("tool_use", name="check_lean", call_id="call-2")
+            asking.join(5)
+            yield TurnEvent("reply", text="done")
+
+        def switch_model(self, model: str) -> None:
+            pass
+
+    typed = iter(["prove it"])
+
+    def read(prompt: str) -> str:
+        if prompt.startswith("Choice"):
+            prompt_open.set()
+            # The human reading. Long enough for the painter to have been
+            # handed the second tool call and tried to draw it.
+            time.sleep(0.3)
+            written.append("[human answers 2]")
+            return "2"
+        try:
+            return next(typed)
+        except StopIteration as stop:
+            raise EOFError from stop
+
+    plain.run(settings, Session(), out=written.append, read=read, ui_holder=holder)
+
+    assert answers == [True]
+    first = next(index for index, line in enumerate(written) if line.startswith("Goal, as you stated it"))
+    answered = written.index("[human answers 2]")
+    # From the first line of the question to the answer, nothing but the
+    # question: the second tool call is drawn only once the human has decided.
+    between = written[first:answered]
+    assert not any("check_lean" in line for line in between), between
+    assert any("check_lean" in line for line in written[answered:])
