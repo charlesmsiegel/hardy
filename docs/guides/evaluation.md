@@ -2,7 +2,7 @@
 
 This guide walks through `hardy evals`: checking and browsing the corpus,
 sweeping the automation floor, running a model against a set of statements,
-checking and pooling the boards that run writes, comparing boards, and
+checking and pooling the boards a run writes, comparing boards, and
 reading what the numbers do and do not say. It is for someone who already
 has Hardy installed and wants to run one of these commands rather than read
 about the whole system. For every flag, see
@@ -61,8 +61,8 @@ hardy evals corpus serve
 
 [`serve`](../reference/cli.md#hardy-evals-corpus-serve) browses the corpus
 in a local page that re-reads from disk on every refresh: the statement, the
-Lean, and the classification side by side, with the objections `check`
-would raise shown against the entries that earned them. It binds
+Lean, and the classification side by side, with a status banner listing
+every objection `check` would raise across the whole corpus. It binds
 `127.0.0.1` by default (`--host`, `--port 8765`), because a working corpus
 is not a published site, and the page is unauthenticated, so binding
 `0.0.0.0` hands the whole corpus to anything that can reach the machine.
@@ -96,19 +96,24 @@ hardy evals baseline --acknowledge-unsafe-execution
 fixed ladder of tactics and tactic chains against every canonical
 statement's own declaration and writes the tier file, `evals/baseline.json`
 by default. A **tier** (0 through 3) records how much of that automation
-closed the statement: tier 0 is a single ordinary tactic, tier 1 is one of
-the searchers (`exact?`, `apply?`, `hint`), tier 2 needs a chain, and tier 3
-is nothing on the ladder at all. It is a fact about one ladder against one
-Mathlib revision on one machine, never a property of the theorem; see
-[the evaluation design](../design/evaluation.md) for the full table and the
-reasoning behind it. Rows are carried forward from an existing tier file
-rather than re-swept, but only where the environment, the procedure, and
-that entry's own statement digest all still agree; a corrected statement
-re-sweeps only that entry.
+closed the statement: tier 0 is a single ordinary tactic (even if a
+searcher also closed it), tier 1 is one of the searchers (`exact?`,
+`apply?`, `hint`) and no other single tactic, tier 2 needs a chain with no
+single tactic closing it, and tier 3 is nothing on the ladder at all. It is
+a fact about one ladder against one Mathlib revision on one machine, never
+a property of the theorem; see [the evaluation design](../design/evaluation.md)
+for the full table and the reasoning behind it. Rows are carried forward
+from an existing tier file rather than re-swept, but only where the
+environment, the procedure, and that entry's own statement digest all still
+agree; a corrected statement re-sweeps only that entry.
 
+With no `--only`, `--only-file`, or `--status`, the sweep defaults to active
+entries that do not yet have a baseline row, not the whole corpus; if every
+active entry already has one, it refuses with exit `2` rather than
+resweeping anything, and names `--only` as the way to force a resweep. Name
+entries explicitly with those three flags to select anything else.
 `--problems` defaults to `corpus`, never `corpus/problems`, and `--out`
-defaults to `evals/baseline.json`. `--only`, `--only-file`, and `--status`
-narrow the sweep to selected entries; `--acknowledge-unsafe-execution` is
+defaults to `evals/baseline.json`. `--acknowledge-unsafe-execution` is
 required, because the sweep elaborates Lean built from the problem file's
 own imports, binders, and conclusion with no sandbox. `--workers` (default
 `1`) is the one thing free to raise, since the sweep is CPU-bound on Lean
@@ -129,6 +134,13 @@ hardy evals run --label first-pass --acknowledge-unsafe-execution
 [`hardy evals run`](../reference/cli.md#hardy-evals-run) runs every
 selected entry through the batch or staged path and writes a scoreboard
 under `evals/scoreboards/<label>/`. `--label` is required and names it.
+
+With no `--only`, `--only-file`, `--status`, or `--tiers`, the selected set
+defaults to active entries not already run under this exact model, mode,
+and limits against this environment, the same pooling key `evals pool` and
+`evals todo` use, not the whole corpus. If every active entry has already
+been run under that condition, the command refuses with exit `2` and names
+`--only` as the way to force a rerun.
 
 `--mode` chooses `batch` (the default) or `staged`, with one exception: a
 twin, an entry expected to be false, always runs `batch` regardless of
@@ -157,9 +169,10 @@ are all Claude-shaped. `--workers` (default `1`) is concurrent rows;
 and `--scoreboards` to `evals/scoreboards`.
 
 **`evals run` exits `0` once the board is written, whatever the rows say.**
-An unsolved entry, or a twin the model proved, is a measurement and not a
-failure of the command. Gate CI on `hardy evals check` instead of on this
-exit status.
+An unsolved entry is a measurement, not a failure of the command; even a
+twin the model proved, which the board reports as `graded`, a harness bug
+rather than an ordinary measurement, still leaves the exit status `0`. Gate
+CI on `hardy evals check` instead of on this exit status.
 
 ## Checking a board
 
@@ -198,20 +211,26 @@ hardy evals pool first-pass second-pass
 ```
 
 [`hardy evals pool`](../reference/cli.md#hardy-evals-pool) combines
-scoreboards that share one pooling key into `evals/pools/<label>/pool.json`,
-a derived, recomputable score. The pooling key is
-`(run_procedure_digest, environment_digest)`: two boards pool only when both
-say they measured the same procedure against the same environment.
+scoreboards that share one pooling key into a derived, recomputable score
+under `evals/pools/<first label>/pool.json` by default (`--out` overrides
+it). The pooling key is `(run_procedure_digest, environment_digest)`: two
+boards pool only when both say they measured the same procedure against
+the same environment.
 
-`run_procedure_digest` moves whenever the code that decides a run's outcome
-changes. Concretely, editing anything under `src/hardy/` that is not in the
-denylist in `src/hardy/evals/identity.py` moves it, and a moved digest
-orphans every scoreboard already on disk: boards stop pooling with each
-other and `evals todo` reports `boards_counted: 0` for models that plainly
-have boards. The corresponding digest for the baseline, `procedure_digest`,
-moves the same way when one of the six `DECIDING_SOURCES` in
-`src/hardy/evals/sweep.py` changes, and that stales the whole tier file
-rather than one entry.
+`run_procedure_digest` moves whenever anything the run's outcome depends on
+changes. That includes the code: editing anything under `src/hardy/` that
+is not in the denylist in `src/hardy/evals/identity.py` moves it, and a
+moved digest orphans every scoreboard already on disk, so boards stop
+pooling with each other and `evals todo` reports `boards_counted: 0` for
+models that plainly have boards. It also includes the condition itself:
+`run_procedure_digest_of` folds in the model, the mode, the limits
+(`max_turns`, `wall_seconds`, and `lean_timeout`, or the staged budgets),
+`repeats`, `reviewer_model`, and the staged strategy and history mode, so
+two boards run under different models or budgets never pool together
+either, by design rather than by omission. The corresponding digest for the
+baseline, `procedure_digest`, moves the same way when one of the six
+`DECIDING_SOURCES` in `src/hardy/evals/sweep.py` changes, and that stales
+the whole tier file rather than one entry.
 
 Neither is a reason not to make the change; both are a reason to batch such
 edits together rather than trickle them in one at a time, and to never make
@@ -232,12 +251,14 @@ and baseline file hashes, and the source revision).
 ## Comparing
 
 ```sh
-hardy evals compare left-board right-board --vary model
+hardy evals compare evals/scoreboards/before evals/scoreboards/after --vary model
 ```
 
 [`hardy evals compare`](../reference/cli.md#hardy-evals-compare) reads two
 scoreboards, pairs their exact `(id, repeat)` slots, and reports the pairs
-as JSON on stdout. It computes no mean, names no winner, runs no
+as JSON on stdout. Unlike `evals pool`'s labels, `left` and `right` are
+paths to scoreboard directories, not names resolved against
+`--scoreboards`. It computes no mean, names no winner, runs no
 significance test, and attributes nothing causally: it describes, and
 naming a field with `--vary` records that you intended to vary it, so an
 unintended difference is reported as one rather than left for you to
@@ -294,17 +315,24 @@ field list and the three datasets' recorded revisions and license files.
 
 ## Certification
 
-`hardy evals`'s certified statistic is not pass@k. `certify` reads a board
-and reports, per declared `k`, the observed success within each problem's
-first `k` prospectively declared attempts, under a per-attempt cap on
-independent verifier calls, against a frozen claim. It is not an IID
-pass@k estimator, not a confidence interval, and not an independent kernel
-replay: a certified attempt still rests on the same recorded Lean and
-canonical trust boundary every other row does. Three figures are reported
-rather than one, an observed lower bound, an observed upper bound that
-keeps unauthenticated or unrun slots open, and a certified value that
-appears only when every declared slot is present and eligible, because
-missing evidence must not quietly shrink the denominator. See
+Certification has no command-line route today. `run_set`
+(`src/hardy/evals/runner.py`) accepts a `certification: CertificationBudget`
+argument that `hardy evals run` never supplies, and `certify`
+(`src/hardy/evals/certification.py`) is a library function you call from
+Python against a run directory, not a subcommand. Reach for it only if you
+are scripting against the runner directly.
+
+What it computes is not pass@k. `certify` reads a board and reports, per
+declared `k`, the observed success within each problem's first `k`
+prospectively declared attempts, under a per-attempt cap on independent
+verifier calls, against a frozen claim. It is not an IID pass@k estimator,
+not a confidence interval, and not an independent kernel replay: a
+certified attempt still rests on the same recorded Lean and canonical
+trust boundary every other row does. Three figures are reported rather
+than one, an observed lower bound, an observed upper bound that keeps
+unauthenticated or unrun slots open, and a certified value that appears
+only when every declared slot is present and eligible, because missing
+evidence must not quietly shrink the denominator. See
 [the evaluation design](../design/evaluation.md) for the full account,
 including what batch receipts and the wall-clock figures cannot establish.
 
@@ -318,8 +346,9 @@ entries run at 10 repeats each is 1,250 rows, not 1,250 independent
 observations of 1,250 different problems. Before computing an interval or
 comparing two conditions by hand, collapse each `(model, entry)` pair to
 one declared outcome under a rule you fix in advance; treating raw rows as
-independent samples narrows an interval by roughly the repeat count and can
-manufacture a difference that is not there.
+independent samples narrows an interval by roughly the square root of the
+repeat count (about 3.2x at 10 repeats) and can manufacture a difference
+that is not there.
 
 **Items cluster on the source text.** A field's entries are commonly drawn
 from as few as two texts, so problems sharing a chapter, a prerequisite
