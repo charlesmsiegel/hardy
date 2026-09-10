@@ -298,7 +298,15 @@ implemented here.
 
 **Deps:** none
 
-Add `literature/manuscript.py` exposing objective structure such as sections, theorem/definition/proof environments, labels, citation occurrences, and source spans. It must not judge correctness or semantic claim boundaries.
+**Status:** Implemented in Core A (`feat(A5): inventory mechanical manuscript source structure`).
+`literature/manuscript.py` inventories only literal sections, conservative
+statement/definition/proof source blocks, labels, and citation keys from an
+explicit source mapping. Immutable spans carry a supplied source's SHA-256 and
+original Unicode-codepoint offsets; duplicate occurrences remain distinct.
+Comments, verbatim regions, inline `\verb`, macro bodies, and conditionals are
+suppressed or reported as bounded lexical limits. It neither reads paths,
+executes TeX, expands macros, nor asserts a mathematical claim boundary. Run
+`uv run --extra test pytest tests/unit/test_manuscript.py -q`.
 
 ---
 
