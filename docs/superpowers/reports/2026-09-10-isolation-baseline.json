@@ -1,0 +1,24 @@
+{
+  "schema": "hardy.isolation-baseline/v1",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.13.11",
+  "launcher": "foundation.process.run_process",
+  "probe_sha256": "098cf7b30a7e6899cc4df2020890844d145f4d74bf1452c886bb0103c0427786",
+  "returncode": 0,
+  "timed_out": false,
+  "output_overflow": false,
+  "observations": {
+    "outside_read": {
+      "allowed": true
+    },
+    "outside_write": {
+      "allowed": true
+    },
+    "loopback_connect": {
+      "allowed": true
+    }
+  },
+  "stderr": "",
+  "confinement_established": false,
+  "interpretation": "Only successful operations establish baseline authority; refusal may come from the host environment."
+}
