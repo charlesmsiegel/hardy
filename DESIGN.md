@@ -76,6 +76,43 @@ model/Lean validation, execution isolation or mathematical benchmark improvement
 implementation status and later owners are maintained in
 [docs/roadmap.md](docs/roadmap.md).
 
+## Core C acquisition and proof strategies
+
+`workflows/acquisition/` classifies only after recording local and Mathlib searches.
+Semantic choices carry model/configuration identity. Definitions prefer an exact
+Mathlib/local mapping and a real body before proposing explicit opaque assumptions
+through A3 probes. Literature uses the existing immutable source library/inventory,
+A2 source formalization and independent reading, explicit premise/conclusion
+comparisons, and A3 admission requests. No proposal changes the allowed scope.
+`interfaces.py` materializes only the selected representation's required field
+closure through a named checked formal writer; missing prerequisites block writing.
+
+`resolver.py` checkpoints classifications, records and typed child obligations with
+optimistic ledger revisions. Its explicit registry accepts gap routes and optional
+(gap, obligation-kind) routes, allowing proof, definition, interface and semantic
+operations to share scheduling. Parent resumption requires authenticated children;
+generic acquisition can finish through an exact typed proof/definition/interface
+instead of a citation. B2 reauthenticates those children on later reads, including
+after restart. Cycles, missing resolvers, unavailable decisions and exhausted
+attempt/depth bounds remain unresolved. Mathematical choices still require supplied
+model/capability operations; user-facing Research/Explore workflows are Core D.
+
+`strategies/iterative.py` owns Prove's existing retry order and feedback while the
+run retains provider thread, storage, tool budgets and cancellation. The sketch
+strategy handles explicit independent local lemmas, not arbitrary tactic-state
+extraction. It records open ledger holes, tries existing cheap closers then the
+iterative adapter, and reserves a final verification against the original claim.
+One counter/deadline spans all helper and final checks; runtime tool gates and
+in-flight cancellation remain caller-owned. Each sketch attempt requires a fresh
+RunStore so prior evidence is retained. Helper binders and declared assumptions
+remain explicit; helper success never substitutes for final parent verification.
+
+These APIs have hermetic tests using named capability stand-ins and actual local
+persistence/verification code. A bounded native Lean fixture also compiled the
+generated definition, interface and assembled sketch without axioms. Live model
+results, strategy improvement,
+execution isolation and production project-workflow adapters are not claimed.
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

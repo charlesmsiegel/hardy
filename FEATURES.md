@@ -56,6 +56,18 @@ interactive surface's own live run is still to come.
   It records model/configuration identity, reasons, assumptions and exact
   `interprets`/`uses`/`refines` links; stronger structure gets a new representation
   identity. Mathematical adequacy remains an inspectable model assessment.
+- Core C implements attributed search-first prerequisite classification; real
+  definition acquisition before explicit opaque proposals; exact literature
+  comparison, formalization, faithfulness and admission requests; and minimal
+  required Lean interface fields. Recursive resolution checkpoints open work,
+  resumes parents after authenticated children, and retains cycles, missing
+  resolvers and exhausted bounds as unresolved. B2 rechecks child evidence on use.
+- Staged Prove uses the shared iterative strategy with its existing budgets,
+  runtime thread, trajectories and final verification. The sketch strategy API
+  supports independent local lemmas, cheap closers then iterative repair, shared
+  verification/time ceilings, persistent open holes, and exact final parent
+  verification. Each attempt uses a fresh run store. Production project workflow
+  adapters and a sketch CLI remain later integration; no new live result is claimed.
 - Core B is covered by hermetic persistence and integration tests. Production
   capability readers, model/search adapters and CLI/UI wiring for these new
   project operations remain unconfigured and belong to later workflow/integration
@@ -1233,15 +1245,15 @@ Priority labels are sequencing hints:
   retrieval ceilings. A strategy returns an attempt or submission; only the independent
   verifier may assign a formal grade. Shared CPU metering and token/cost reservation
   accounting remain later work.
-- **Next:** C5 will adapt existing iterative proving behind this contract; later
-  sketch-and-discharge adapters and reserve/settle metering may follow. This
-  contract adds no search engine, execution provider, formal verification run,
-  or token/cost accounting.
-- **Later — Sketch and discharge:** create an informal plan and Lean skeleton,
-  then solve holes independently. Its first prerequisite is in place: a skeleton
-  with holes in it can now be saved, imported, and built on, so the holes have
-  somewhere to live between turns. What is still missing is the part that makes
-  it a *strategy* — choosing which hole to attack, and doing so independently.
+- **Now (implemented):** C5 adapts staged Prove's existing iterative loop behind
+  the strategy contract, preserving provider thread, trajectories, run-owned
+  limits, cancellation and final verification. Token/cost reserve-settle metering
+  remains later work.
+- **Now (implemented API): Sketch and discharge:** C6 records a skeleton of
+  independent local lemmas, tries cheap closers then iterative repair under one
+  check/time budget, and rechecks the assembled original claim. Partial holes
+  persist as open ledger work and run artifacts. Each attempt needs a fresh run
+  store. Arbitrary tactic-state decomposition and a sketch CLI remain later work.
 - **Later — Best-first search:** rank a frontier of proof states and request
   multiple tactic proposals per state.
 - **Later — Diverse parallel attempts:** run independent approaches and accept

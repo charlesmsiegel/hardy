@@ -82,12 +82,23 @@ assumptions without certifying mathematical interpretation. Contextual
 formalization binds exact sources and generated binder origins into its hash;
 legacy context-free hashes remain unchanged.
 
+Core C adds search-first prerequisite classification, definition and literature
+acquisition, minimal representation interfaces, and bounded recursive resolution.
+Searches and model assessments remain proposals; exact capability evidence and
+ledger policy decide completion. Unresolved assumptions and citation hypotheses
+remain visible child obligations, and revoking child evidence invalidates parents.
+
+Staged Prove now delegates its existing repair loop to the shared iterative
+strategy. The sketch strategy API decomposes a claim into independent local lemmas,
+tries cheap closers before iterative repair, shares verification/time ceilings,
+and rechecks the assembled original claim. Partial holes and per-attempt artifacts
+remain explicit; each sketch attempt requires a fresh run store.
+
 These primitives have hermetic persistence and integration tests. Production
 capability readers, model/search adapters and CLI/UI wiring for the new project
 operations remain unconfigured and belong to later workflow and integration
 stages. Core B adds no live model/Lean validation, performance result or execution
-isolation. Core A's bounded strategy contracts and literal manuscript inventory
-remain available. See the [roadmap](docs/roadmap.md).
+isolation. The literal manuscript inventory remains available. See the [roadmap](docs/roadmap.md).
 
 ## What this cannot establish
 

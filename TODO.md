@@ -4,23 +4,23 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 12 of 63 implementation/lane items (A0-A5 and B0-B5).**
-Checkmarks mean the roadmap records the item as implemented. Unchecked items
+**Completed: 19 of 63 implementation/lane items (A0-A5, B0-B5 and C0-C6).**
+Checkmarks mean the roadmap records the item as implemented. Core C passed its full hermetic test gate. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
 
-Core B provides reusable primitives; production capability/model/search adapters
-and CLI/UI workflow composition remain later work. See the
-[Core B verification report](docs/superpowers/reports/2026-09-10-core-b.md)
-for tests and outstanding full-suite failures.
+Core A-C provide reusable primitives; production project capability/model/search
+adapters and CLI/UI workflow composition remain later work. See the
+[Core C verification report](docs/superpowers/reports/2026-09-10-core-c.md)
+for validation results and integration limits.
 
 ## Available next work
 
-Core C entry points C0, C1, C2, and C5 have their listed prerequisites complete.
-C3 follows C1; C4 can begin with fake resolvers after C0 and integrate concrete
-resolvers as they land. D2, D5, D7, D8, D9, and E4 can also start where their own
-dependencies permit. Core labels are not synchronization barriers; X, S, and V
-lanes run alongside them.
+Core D entry points D0, D1, D2, D3, D5, D7, D8 and D9 have their required
+primitives implemented; D3 uses D2 for realistic inputs. D4 follows D2; D6 follows
+D5. The authorized sequence is Core D, then the remaining sections whose
+dependencies are satisfied. **Skip all of Core E pending human input.**
+Independent X, S and V work does not delay the next eligible core stage.
 
 ## Dependency map
 
@@ -34,14 +34,14 @@ flowchart LR
     A0["A0 Contracts - done"] --> B0["B0 Store - done"] & B1["B1 Graph - done"] & B2["B2 Policy - done"] & B3["B3 Views - done"] & B4["B4 Representations - done"] & B5["B5 Context - done"]
     B1 -.-> B3 & B4 & B5
     B0 -.-> B5
-    A0 & B1 --> C0["C0 Gap classifier"]
-    A0 & B2 & A3["A3 Admission - done"] --> C1["C1 Definition acquisition"]
-    A5["A5 Manuscript - done"] & A0 & B2 & A2["A2 Formalization - done"] & A3 --> C2["C2 Literature resolver"]
-    A0 & B1 & B2 & B4 & C1 --> C3["C3 Lean interfaces"]
-    C0 --> C4["C4 Recursive resolver"]
+    A0 & B1 --> C0["C0 Gap classifier - done"]
+    A0 & B2 & A3["A3 Admission - done"] --> C1["C1 Definition acquisition - done"]
+    A5["A5 Manuscript - done"] & A0 & B2 & A2["A2 Formalization - done"] & A3 --> C2["C2 Literature resolver - done"]
+    A0 & B1 & B2 & B4 & C1 --> C3["C3 Lean interfaces - done"]
+    C0 --> C4["C4 Recursive resolver - done"]
     C1 & C2 & C3 & B4 & B5 -.-> C4
-    A4["A4 Strategy contracts - done"] --> C5["C5 Iterative adapter"]
-    A4 & C5 --> C6["C6 Sketch and discharge"]
+    A4["A4 Strategy contracts - done"] --> C5["C5 Iterative adapter - done"]
+    A4 & C5 --> C6["C6 Sketch and discharge - done"]
     A0 -.-> C6
 ```
 
@@ -86,13 +86,13 @@ flowchart LR
 
 ## Core C: acquisition and proof machinery
 
-- [ ] [C0 - Gap classifier - P0](docs/roadmap.md#c0--gap-classifier--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0).
-- [ ] [C1 - Definition acquisition - P0](docs/roadmap.md#c1--definition-acquisition--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B2](docs/roadmap.md#b2--ledger-policy--p0), [A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0).
-- [ ] [C2 - Goal-directed literature resolver and citation contracts - P0](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0) - Deps: [A5](docs/roadmap.md#a5--mechanical-manuscript-source-model--p0), [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B2](docs/roadmap.md#b2--ledger-policy--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0), [A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0).
-- [ ] [C3 - Standard-object Lean interface materialization - P0](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0), [B2](docs/roadmap.md#b2--ledger-policy--p0), [B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0), [C1](docs/roadmap.md#c1--definition-acquisition--p0).
-- [ ] [C4 - Recursive obligation resolver - P0](docs/roadmap.md#c4--recursive-obligation-resolver--p0) - Deps: [C0](docs/roadmap.md#c0--gap-classifier--p0); register [C1](docs/roadmap.md#c1--definition-acquisition--p0)/[C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0)/[C3](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0)/[B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0)/[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0)-backed resolution as they land.
-- [ ] [C5 - Iterative strategy adapter - P0](docs/roadmap.md#c5--iterative-strategy-adapter--p0) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0).
-- [ ] [C6 - Sketch-and-discharge strategy - P1](docs/roadmap.md#c6--sketch-and-discharge-strategy--p1) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0); [A0](docs/roadmap.md#a0--ledger-contracts--p0) for durable semantic hole obligations.
+- [x] [C0 - Gap classifier - P0](docs/roadmap.md#c0--gap-classifier--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0).
+- [x] [C1 - Definition acquisition - P0](docs/roadmap.md#c1--definition-acquisition--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B2](docs/roadmap.md#b2--ledger-policy--p0), [A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0).
+- [x] [C2 - Goal-directed literature resolver and citation contracts - P0](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0) - Deps: [A5](docs/roadmap.md#a5--mechanical-manuscript-source-model--p0), [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B2](docs/roadmap.md#b2--ledger-policy--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0), [A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0).
+- [x] [C3 - Standard-object Lean interface materialization - P0](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0), [B2](docs/roadmap.md#b2--ledger-policy--p0), [B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0), [C1](docs/roadmap.md#c1--definition-acquisition--p0).
+- [x] [C4 - Recursive obligation resolver - P0](docs/roadmap.md#c4--recursive-obligation-resolver--p0) - Deps: [C0](docs/roadmap.md#c0--gap-classifier--p0); register [C1](docs/roadmap.md#c1--definition-acquisition--p0)/[C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0)/[C3](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0)/[B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0)/[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0)-backed resolution as they land.
+- [x] [C5 - Iterative strategy adapter - P0](docs/roadmap.md#c5--iterative-strategy-adapter--p0) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0).
+- [x] [C6 - Sketch-and-discharge strategy - P1](docs/roadmap.md#c6--sketch-and-discharge-strategy--p1) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0); [A0](docs/roadmap.md#a0--ledger-contracts--p0) for durable semantic hole obligations.
 
 ## Core D: workflows
 

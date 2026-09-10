@@ -2,9 +2,11 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-10):** Core A is complete on `main`. The user
-has authorized Core B (B0–B5), with an individual tested commit for each item.
-This pass stops after Core B review and verification; Core C remains planned.
+**Current execution scope (2026-09-10):** Core A-C are implemented, with Core C
+passing the full hermetic test gate, lint, wheel smoke test and a bounded native
+Lean check. Continue with Core D, then remaining sections with satisfied
+dependencies. **Skip all of Core E pending human input.** Keep an individual
+tested commit for each item and require clean tests before landing each branch.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
@@ -622,11 +624,15 @@ Case splits are sibling/child contexts. Hypothetical reasoning is a child contex
 
 **Deps:** A0, B1
 
+**Status: implemented (2026-09-10).** `acquisition/classifier.py` records local/Mathlib searches and model/configuration identity, validates exact current subject/context/scope, and protects target-paper identities. A classification is a proposal, not evidence.
+
 Classify a prerequisite as Mathlib, existing local, cheap local definition, cheap local proof, established literature result, representation/declaration/transport unresolved or insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Record local/Mathlib searches before claiming absence.
 
 ## C1 — Definition acquisition — P0
 
 **Deps:** A0, B2, A3
+
+**Status: implemented (2026-09-10).** `acquisition/definitions.py` tries exact searched mappings and real local bodies before explicit opaque proposals. A3 probes and recorded characterizing assumptions precede any separate authenticated scope admission.
 
 Implement the general policy:
 
@@ -642,6 +648,8 @@ The opaque branch cannot run before search evidence exists and must expose every
 
 **Deps:** A5, A0, B2, A2, A3
 
+**Status: implemented (2026-09-10).** `acquisition/literature.py` composes the immutable paper library, exact source comparisons, A2 formalization/reading and A3 admission requests. Citation hypotheses and pending admission remain explicit; completed hypotheses require authenticated reuse.
+
 Reuse the existing literature subsystem. Match exact source statements to required results, compare hypotheses/conclusions explicitly, formalize, run faithfulness review, request admission, and attach exact provenance.
 
 A synthetic fixture must include one superficially relevant but unusable source and one correct source.
@@ -649,6 +657,8 @@ A synthetic fixture must include one superficially relevant but unusable source 
 ## C3 — Standard-object Lean interface materialization — P0
 
 **Deps:** A0, B1, B2, B4, C1
+
+**Status: implemented (2026-09-10).** `acquisition/interfaces.py` emits the selected representation's required field/dependency closure through a named checked formal writer. Missing prerequisites block writing; source digests and B2 child authentication are retained.
 
 Materialize minimal Lean project interfaces from representation plans for objects absent from Mathlib. Do not create domain-specific Python modules. `workflows/representation.py` owns the general mathematical choice; `workflows/acquisition/interfaces.py` writes only the Lean interface needed by the selected plan and creates any child obligations it exposes.
 
@@ -658,17 +668,23 @@ Only required downstream fields/properties are introduced.
 
 **Deps:** C0; register C1/C2/C3/B4/B5-backed resolution as they land
 
+**Status: implemented (2026-09-10).** `acquisition/resolver.py` drives bounded classification, typed dispatch, child checkpoints, authenticated acceptance and parent resumption. Exact child evidence remains required on restart/reuse. Named registry operations compose acquisition and caller-supplied semantic capabilities; there is no axiom fallback.
+
 Implement classification -> resolver dispatch -> child obligations -> verify -> attach evidence -> resume parent. Build/test first with fake resolvers if needed. Unresolved is legitimate; there is no blind axiom fallback.
 
 ## C5 — Iterative strategy adapter — P0
 
 **Deps:** A4
 
+**Status: implemented (2026-09-10).** `strategies/iterative.py` wraps the existing retry loop and is used by staged Prove. Provider thread, trajectories, run-owned ceilings, cancellation and final verification retain their existing owners.
+
 Wrap existing iterative proof behavior behind the strategy contract without semantic change. Preserve budgets, trajectories, and existing verification.
 
 ## C6 — Sketch-and-discharge strategy — P1
 
 **Deps:** A4, C5; A0 for durable semantic hole obligations
+
+**Status: implemented (2026-09-10).** `strategies/sketch.py` records independent local-lemma skeletons, tries cheap closers then iterative repair under shared check/time bounds, and verifies the assembled original claim. Open holes persist; each attempt uses a fresh run store. This is an API for explicit lemma decomposition, not a sketch CLI or arbitrary tactic-state extraction.
 
 Create a Lean skeleton and independent per-hole proof tasks. Cheap closers run against the current hole/goal as the cheapest discharge strategy. Final verification remains hole-free-only.
 
@@ -1088,13 +1104,13 @@ Agent 13  X5 budget accounting
 Agent 14  X6 eval identity/journal residual audit
 ```
 
-**The authorized Core B pass implements B0/B1/B2/B3/B4/B5** against those seams.
+**Core B implements B0/B1/B2/B3/B4/B5** against those seams.
 Independent tasks proceed once their own dependencies permit, without waiting
-for unrelated X/S tasks. Core C remains outside this pass.
+for unrelated X/S tasks. Core C passed verification; Core D is the next authorized stage, followed by eligible work outside Core E.
 
 A2 is shared by the new B5 projection; B4 representation decisions remain an optional semantic step, not a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
 
-As soon as the needed A/B dependencies land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows B4 + C1.
+Core C followed this dependency order: C0/C1/C2/C5 could proceed independently; C4 began with fake resolvers after C0 and then integrated concrete operations; C3 followed B4 + C1. C6 reused C5.
 
 As soon as the core loop works, run D0/D1/D2/D5/D7/D8/D9 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
