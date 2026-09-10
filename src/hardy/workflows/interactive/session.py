@@ -619,6 +619,28 @@ class MathematicsSession:
     def conversation_tree(self) -> HistorySnapshot:
         return self.record.history()
 
+    def _project_operations(self):
+        """Named ledger operations; called while both session gates are held."""
+        from hardy.workflows.interactive.project import ProjectOperations
+        from hardy.workflows.publish import PublishWorkflow
+
+        worker = getattr(self.runtime, "worker", None)
+        if any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive()):
+            raise ValueError("A conversation turn or provider worker is still running.")
+        return ProjectOperations(self.workspace, PublishWorkflow(self.latex).publish)
+
+    def project_mark(self, item: str, visibility: str):
+        with self._conversation_gate, self._gate:
+            return self._project_operations().mark(item, visibility)
+
+    def project_link(self, source: str, kind: str, target: str):
+        with self._conversation_gate, self._gate:
+            return self._project_operations().link(source, kind, target)
+
+    def project_publish(self, item: str, *, scope: str, output: str):
+        with self._conversation_gate, self._gate:
+            return self._project_operations().publish(item, scope=scope, output=output)
+
     def fork_conversation(self, parent: str | None, *, expected_leaf: str | None = None) -> str:
         return self._branch_conversation(parent, expected_leaf=expected_leaf)
 

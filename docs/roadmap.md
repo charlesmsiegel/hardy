@@ -973,6 +973,13 @@ link ParagraphP documents TheoremT
 
 UI edits/queries the ledger; it does not reimplement planning.
 
+**Status:** Implemented. `/project publish ITEM --scope SCOPE --output BUNDLE`,
+`/project link SOURCE illustrates|documents TARGET` and `/project mark ITEM
+internal|public|omitted` delegate to the shared ledger, planner and document
+owners. Exact mathematical references survive presentation changes; compilation
+and mathematical readiness remain separate. See the
+[E3 verification report](superpowers/reports/2026-09-10-project-publication.md).
+
 ## E4 — Ledger-aware `/status --full` / context summary — P1
 
 **Deps:** B0, B3, B5

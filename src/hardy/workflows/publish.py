@@ -103,8 +103,10 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
         paragraph("Document containers: " + (" / ".join(
             f"{by_ref[ref].name} [{ref.id}@{ref.digest}]" for ref in ancestors) or "top level"))
         paragraph(f"Source identity: {item.id}@{item.digest}")
-        if item.publication_role is not None:
-            paragraph(f"Publication role: {item.publication_role.value}")
+        presentation = next((p for p in plan.presentation_revisions if p.item == item.ref), None)
+        role = presentation.role if presentation is not None else item.publication_role
+        if role is not None:
+            paragraph(f"Publication role: {role.value}")
         context = contexts.get(item.ref)
         if context is not None:
             local_heading("Required mathematical context")

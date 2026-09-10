@@ -26,6 +26,7 @@ from hardy.workflows.ledger.contracts import (
     Obligation,
     ProjectItem,
     ProjectItemKind,
+    PublicationRole,
     PublicationVisibility,
     Relation,
     RelationKind,
@@ -72,6 +73,15 @@ class PublicationPlacement(FrozenModel):
     containers: tuple[VersionRef, ...] = ()
 
 
+class PublicationPresentation(FrozenModel):
+    """Later presentation metadata applied to an otherwise identical exact item."""
+
+    item: VersionRef
+    presentation: VersionRef
+    visibility: PublicationVisibility
+    role: PublicationRole | None = None
+
+
 class PublicationPlan(FrozenModel):
     request: PublicationRequest
     revision: int
@@ -87,6 +97,8 @@ class PublicationPlan(FrozenModel):
     citations_open: tuple[VersionRef, ...]
     containment: tuple[Relation, ...] = ()
     structure: tuple[PublicationPlacement, ...] = ()
+    presentation_revisions: tuple[PublicationPresentation, ...] = ()
+    attachments: tuple[Relation, ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -100,6 +112,12 @@ _PROSE = frozenset({ProjectItemKind.EXPOSITION, ProjectItemKind.DOCUMENT_FRAGMEN
 _RESEARCH = frozenset({ProjectItemKind.APPROACH, ProjectItemKind.RESEARCH_NOTE,
                        ProjectItemKind.QUESTION, ProjectItemKind.GOAL})
 _CONTAINERS = frozenset({ProjectItemKind.SECTION, ProjectItemKind.CHAPTER, ProjectItemKind.BOOK})
+
+
+def same_publication_subject(left: ProjectItem, right: ProjectItem) -> bool:
+    """Presentation can change without moving statements, provenance or evidence."""
+    excluded = {"publication_visibility", "publication_role"}
+    return left.model_dump(exclude=excluded) == right.model_dump(exclude=excluded)
 
 
 def _containment(snapshot, graph, roots):
@@ -139,7 +157,7 @@ def _containment(snapshot, graph, roots):
     return paths, tuple(r for r in relations if r.source in paths)
 
 
-def _structure(snapshot, graph, paths, items):
+def _structure(snapshot, paths, items, publication_members):
     """Place every visible exact item once, shared material at its first use."""
     selected = {i.ref for i in items}
     if not any(snapshot.get(ref).kind in _CONTAINERS for ref in paths):
@@ -156,7 +174,7 @@ def _structure(snapshot, graph, paths, items):
         container = snapshot.get(ref).kind in _CONTAINERS
         if container:
             place(ref, ancestors)
-        local = set(graph.publication_closure(ref)) & selected - paths.keys()
+        local = publication_members((ref,)) & selected - paths.keys()
         for dependency in ledger_order:
             if dependency in local:
                 place(dependency, (*ancestors, ref) if container else ancestors)
@@ -180,6 +198,20 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     if not isinstance(scope, Scope):
         raise ValueError("publication scope must identify a Scope")
     graph, views = LedgerGraph(snapshot), LedgerViews(snapshot, policy)
+    presentation_revisions = {}
+
+    def presentation(record: ProjectItem) -> ProjectItem:
+        # The latest head supplies metadata only when every other field matches.
+        # Return the original item elsewhere: dependencies and authority remain
+        # bound to its old exact ref, and this overlay gets its own plan receipt.
+        head = snapshot.head(record.id)
+        if isinstance(head, ProjectItem) and head.ref != record.ref and same_publication_subject(record, head):
+            presentation_revisions[record.ref] = PublicationPresentation(
+                item=record.ref, presentation=head.ref, visibility=head.publication_visibility,
+                role=head.publication_role)
+            return head
+        return record
+
     # Graph history retains outgoing edges of earlier source revisions. For
     # incoming prose/example selection, the last link to each exact target
     # replaces that link's prior source, while different target versions retain
@@ -194,38 +226,47 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
         record = snapshot.get(ref)
         if not isinstance(record, ProjectItem):
             raise ValueError("publication root must identify a project item")
-        if record.publication_visibility == PublicationVisibility.OMITTED:
+        if presentation(record).publication_visibility == PublicationVisibility.OMITTED:
             raise ValueError("explicitly omitted item cannot be a publication root")
     paths, containment = _containment(snapshot, graph, request.roots)
 
     def visible(record: object) -> bool:
         return isinstance(record, ProjectItem) and (
-            record.publication_visibility != PublicationVisibility.OMITTED
+            presentation(record).publication_visibility != PublicationVisibility.OMITTED
             and (record.ref in request.roots or (
                 record.kind not in _RESEARCH
-                and (request.include_internal or record.publication_visibility == PublicationVisibility.PUBLIC)
+                and (request.include_internal or presentation(record).publication_visibility == PublicationVisibility.PUBLIC)
             ))
         )
-
-    # The structural owner provides the universe. Only visible attachments may
-    # expand the draft; internal proof dependencies still expand transitively.
-    candidates = set(graph.publication_closure(paths))
-    closure = set(graph.dependency_closure(paths, include_roots=True))
-    while True:
-        attached = {r.source for r in attachments.values()
-                    if r.target in closure and r.source in candidates
-                    and r.kind in {RelationKind.DOCUMENTS, RelationKind.ILLUSTRATES}
-                    and visible(snapshot.get(r.source))}
-        cited = {r.target for r in graph.relations
-                 if r.source in closure and r.kind == RelationKind.CITES}
-        expanded = set(graph.dependency_closure(closure | attached | cited, include_roots=True))
-        if expanded == closure:
-            break
-        closure = expanded
 
     def ordered(refs):
         return tuple(sorted(set(refs), key=lambda r: (r.id, r.digest)))
 
+    def attachment_targets(target, refs):
+        documented = snapshot.get(target)
+        return tuple(ref for ref in ordered(refs) if ref == target or (
+            ref.id == target.id and isinstance(documented, ProjectItem)
+            and isinstance(subject := snapshot.get(ref), ProjectItem)
+            and same_publication_subject(documented, subject)))
+
+    def publication_members(roots):
+        # Only presentation attachments may cross metadata-equivalent versions.
+        # Their own mathematical prerequisites still come from exact graph edges.
+        found = set(graph.dependency_closure(roots, include_roots=True))
+        while True:
+            attached = {r.source for r in attachments.values()
+                        if attachment_targets(r.target, found) and visible(snapshot.get(r.source))}
+            cited = {r.target for r in graph.relations
+                     if r.source in found and r.kind == RelationKind.CITES}
+            expanded = set(graph.dependency_closure(found | attached | cited, include_roots=True))
+            if expanded == found:
+                return found
+            found = expanded
+
+    closure = publication_members(paths)
+    applied_attachments = tuple(r for r in attachments.values()
+                                if r.source in closure and attachment_targets(r.target, closure)
+                                and visible(snapshot.get(r.source)))
     material = tuple(snapshot.get(ref) for ref in ordered(closure) if visible(snapshot.get(ref)))
     items = tuple(r for r in material if r.kind not in _PROSE | {ProjectItemKind.DECLARATION})
     selected = {r.ref for r in items}
@@ -237,9 +278,10 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
         prose = snapshot.get(relation.source)
         if not visible(prose) or prose.kind not in _PROSE:
             continue
-        if relation.target in selected:
-            current_prose.append(PublicationExposition(prose=prose, relation=relation.ref,
-                documented=relation.target, target=relation.target))
+        targets = attachment_targets(relation.target, selected)
+        if targets:
+            current_prose.extend(PublicationExposition(prose=prose, relation=relation.ref,
+                documented=relation.target, target=target) for target in targets)
         elif relation.ref in stale_relations:
             # Old prose is outside the new claim's exact structural closure.
             # Compare identities only to report the gap, never to reuse prose.
@@ -274,7 +316,10 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     citations.update((c.ref, c) for c in snapshot.current(CitationContract)
                      if c.use_site in closure
                      or c.use_site == c.required_claim and c.required_claim in citation_subjects)
-    reports = tuple(views.publication(root, scope) for root in paths)
+    # Shared views do not cross presentation revisions. Authenticate the newly
+    # attached sources too, so their dependencies cannot escape the same audit.
+    report_roots = dict.fromkeys((*paths, *(r.source for r in applied_attachments)))
+    reports = tuple(views.publication(root, scope) for root in report_roots)
     unestablished = ordered(ref for report in reports for ref in report.unestablished if ref in closure)
     pending = {o.ref: o for report in reports for o in report.obligations
                if o.item in closure or o.ref in closure}
@@ -292,4 +337,6 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
         exposition=tuple(current_prose), stale_exposition=tuple(stale_prose), missing_exposition=missing,
         unestablished=unestablished, obligations=tuple(pending[r] for r in ordered(pending)),
         citations_open=ordered(set(citations) - checked), containment=containment,
-        structure=_structure(snapshot, graph, paths, items))
+        structure=_structure(snapshot, paths, items, publication_members),
+        presentation_revisions=tuple(presentation_revisions[ref] for ref in ordered(presentation_revisions)),
+        attachments=applied_attachments)

@@ -881,7 +881,9 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
-PROJECT_USAGE = "/project list · /project switch <name> · /project new <name>"
+PROJECT_USAGE = ("/project list · /project switch <name> · /project new <name> · "
+                 "/project publish ITEM --scope SCOPE --output BUNDLE · "
+                 "/project link SOURCE illustrates|documents TARGET · /project mark ITEM internal|public|omitted")
 
 
 def _known(config) -> list[str]:
@@ -1041,6 +1043,10 @@ async def handle_project(ui: Ui, argument: str, state: State) -> State:
 async def _project(ui: Ui, argument: str, state: State) -> State:
     verb, _, name = argument.strip().partition(" ")
     verb, name = verb.lower(), name.strip()
+    if verb in {"publish", "link", "mark"}:
+        from hardy.app.tui.project import handle_publication
+
+        return await handle_publication(ui, f"{verb} {name}", state)
     if not verb or verb == "list":
         return await _list(ui, state)
     if verb not in {"new", "switch"}:
@@ -1161,8 +1167,8 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
             argument_hint="[<dir>|lean|reference|tex]",
         ),
         Command(
-            "project", "see the problems here, or open another", handle_project,
-            argument_hint="[list|new|switch]",
+            "project", "open projects, link items, or assemble publication drafts", handle_project,
+            argument_hint="[list|new|switch|publish|link|mark]",
         ),
         Command(
             "status", "show the project, model, and paths", handle_status,

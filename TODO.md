@@ -4,7 +4,7 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 56 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, E1/E4, F0-F3, G0-G3, H0-H2, I0-I2, X0-X3, X5-X6, S0, S3 and V1-V3).**
+**Completed: 57 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, E1/E3/E4, F0-F3, G0-G3, H0-H2, I0-I2, X0-X3, X5-X6, S0, S3 and V1-V3).**
 Checkmarks mean the roadmap records the item as implemented. Core D and F-I passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
@@ -46,8 +46,8 @@ remains an ongoing obligation rather than a completed universal acceptance claim
 
 ## Available next work
 
-**E1/E3/E4 are authorized for automated implementation; E0/E2 remain deferred.** Remaining lane work is X4's CAS
-late-stderr/prompt-timing and real Macaulay2 checks, S1's demonstrated confinement
+**E1/E3/E4 have automated acceptance; E0/E2 remain deferred.** Remaining lane work is X4's
+real Macaulay2 acceptance after the tested stream-ordering fixes, S1's demonstrated confinement
 capability gap, S2's dependent independent audit, and continuing V0 fixtures.
 Core A-D and F-I primitives are implemented. Release milestones retain their
 full integration/acceptance requirements and are not accepted by item counts.
@@ -93,7 +93,7 @@ flowchart LR
     D0 & D1 & D7 & D8 & D9 & C3 --> E0["E0 Jacobian/Prym prototype - deferred"]
     D4 --> E1["E1 Synthetic referee manuscript - done"] & E2["E2 Real paper audit - deferred"]
     E1 --> E2
-    D5 & D6 --> E3["E3 Publish selected theorem - deferred"]
+    D5 & D6 --> E3["E3 Publish selected theorem - done"]
 ```
 
 The next sections can proceed without Core E. Dotted edges remain recommended
@@ -162,7 +162,7 @@ flowchart LR
 - [ ] [E0 - Jacobian/Prym paper prototype - P0 showcase](docs/roadmap.md#e0--jacobianprym-paper-prototype--p0-showcase) - Deps: [D0](docs/roadmap.md#d0--synthetic-literature-gap-acceptance-fixture--p0), [D1](docs/roadmap.md#d1--research-workflow--p0), [D7](docs/roadmap.md#d7--exploratory-conceptrepresentation-flow--p0), [D8](docs/roadmap.md#d8--exploratory-declarationcontext-flow--p0), [D9](docs/roadmap.md#d9--exploratory-goals-notation-transport-and-approaches--p0), [C3](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0).
 - [x] [E1 - Synthetic referee manuscript - P0/P1](docs/roadmap.md#e1--synthetic-referee-manuscript--p0p1) - Deps: [D4](docs/roadmap.md#d4--referee-workflow--p0).
 - [ ] [E2 - Real paper audit trial - P1](docs/roadmap.md#e2--real-paper-audit-trial--p1) - Deps: [D4](docs/roadmap.md#d4--referee-workflow--p0), [E1](docs/roadmap.md#e1--synthetic-referee-manuscript--p0p1).
-- [ ] [E3 - Interactive “publish selected theorem” - P1](docs/roadmap.md#e3--interactive-publish-selected-theorem--p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0)-[D6](docs/roadmap.md#d6--publication---document-assembly-adapter--p0p1).
+- [x] [E3 - Interactive “publish selected theorem” - P1](docs/roadmap.md#e3--interactive-publish-selected-theorem--p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0)-[D6](docs/roadmap.md#d6--publication---document-assembly-adapter--p0p1).
 - [x] [E4 - Ledger-aware `/status --full` / context summary - P1](docs/roadmap.md#e4--ledger-aware-status---full--context-summary--p1) - Deps: [B0](docs/roadmap.md#b0--ledger-event-store--p0), [B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0).
 
 ## Core F: proof search
