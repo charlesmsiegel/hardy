@@ -691,7 +691,8 @@ import your own Lean modules. Without it, Lean runs in the current directory as
 before.
 
 A problem's computer algebra artifacts live under its own `cas/`: an append-only
-`cells.jsonl` recording every cell and who ran it, and, once exported,
+`cells.jsonl` recording every cell and who ran it, `cells.jsonl.spend.json`
+preserving the cumulative CAS charge even without a subsequent cell, and, once exported,
 `session.py` (or `.sing`/`.m2`), `session.ipynb`, and an `export.json` naming
 both files by digest, recording which cells reproduced, and carrying a
 `script_verdict` for running the exported script as a whole. In a session,

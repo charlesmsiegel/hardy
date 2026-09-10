@@ -1151,10 +1151,9 @@ Priority labels are sequencing hints:
   may legitimately be open for months, and a lifetime cap attached to it
   would eventually refuse work for reasons that have nothing to do with the
   work.
-- **Known gap:** spend after the last record is written -- a rebuild nobody
-  then ran a cell on, an export -- becomes durable only when the next record
-  is appended, so a session closed straight after such work reopens a little
-  behind its true figure.
+  Each charge also atomically writes and fsyncs `cells.jsonl.spend.json`, so
+  export and rebuild charges survive closing without another cell append.
+  An unreadable or invalid spend file is refused rather than treated as zero.
 - **Now (implemented):** every cell record carries the backend and probed
   version that produced it, so a saved-but-never-exported trajectory still
   names its toolchain. A log whose live segment was written by another backend
