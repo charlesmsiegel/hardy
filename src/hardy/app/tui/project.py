@@ -7,10 +7,7 @@ import shlex
 from hardy.app.tui.ports import State, Ui
 from hardy.foundation import process
 from hardy.prompts import user as user_prompts
-
-USAGE = ("/project publish ITEM --scope SCOPE --output BUNDLE; "
-         "/project link SOURCE illustrates|documents TARGET; "
-         "/project mark ITEM internal|public|omitted")
+from hardy.prompts.terminal import PUBLICATION_USAGE as USAGE
 
 
 async def handle_publication(ui: Ui, argument: str, state: State) -> State:

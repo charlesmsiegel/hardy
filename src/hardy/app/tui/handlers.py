@@ -27,6 +27,7 @@ from hardy.app.tui.commands import Command, canonical, from_template
 from hardy.app.tui.ports import Choice, State, Ui
 from hardy.foundation import process
 from hardy.prompts import user as user_prompts
+from hardy.prompts.terminal import PROJECT_USAGE
 from hardy.workflows import layout
 
 
@@ -879,11 +880,6 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     ui.write("  not a proof. The Lean is exempt from it so it still hashes to what")
     ui.write("  was checked; the writeup .tex is not. Read it before you share it.")
     return state
-
-
-PROJECT_USAGE = ("/project list · /project switch <name> · /project new <name> · "
-                 "/project publish ITEM --scope SCOPE --output BUNDLE · "
-                 "/project link SOURCE illustrates|documents TARGET · /project mark ITEM internal|public|omitted")
 
 
 def _known(config) -> list[str]:
