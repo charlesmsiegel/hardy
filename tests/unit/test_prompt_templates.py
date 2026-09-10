@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,10 @@ def test_a_file_that_cannot_be_decoded_is_reported_rather_than_raised(tmp_path):
     assert "bad.md" in problems[0]
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="NTFS is case-insensitive: audit.md and AUDIT.md are one file, so the collision cannot be created",
+)
 def test_two_files_naming_one_command_keep_the_first_and_report_the_second(tmp_path):
     write(tmp_path, "audit.md", "First.")
     write(tmp_path, "AUDIT.md", "Second.")
@@ -211,6 +216,14 @@ def test_an_ordinary_two_digit_placeholder_still_works():
     assert templates.expand(parsed, " ".join(str(n) for n in range(1, 12))) == "10 came last"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "Windows has no O_NOFOLLOW, so there is no open that refuses a link on its own: "
+        "the is_symlink pre-check this test disables is the whole leaf check there, and "
+        "the next test covers that path"
+    ),
+)
 def test_a_link_is_refused_by_the_open_itself_not_by_a_check_before_it(tmp_path, monkeypatch):
     """The pre-check and the read looked at the name separately.
 

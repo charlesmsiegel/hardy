@@ -50,11 +50,18 @@ def make_session(problem: Path, root: Path | None = None) -> MathematicsSession:
 
 
 def pile_with(tmp_path: Path, files: dict[str, str]) -> Path:
+    """A pile whose files hold exactly the strings given, byte for byte.
+
+    `write_bytes`, not `write_text`: the record's claim is the digest of the
+    bytes that arrived, and the tests compute that digest from the string. On
+    Windows `write_text` turns every `\\n` into `\\r\\n`, so the file on disk
+    was no longer the string the assertion hashed.
+    """
     pile = tmp_path / "pile"
     for name, text in files.items():
         target = pile / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        target.write_bytes(text.encode("utf-8"))
     return pile
 
 
