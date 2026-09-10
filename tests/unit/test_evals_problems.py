@@ -89,11 +89,11 @@ def test_ids_and_names_are_unique():
         ProblemSet(entries=(Entry(**_entry()), Entry(**_entry(id="other"))))
 
 
-def test_the_committed_corpus_loads_and_has_fifteen_true_entries_and_five_twins():
+def test_the_committed_corpus_loads_and_its_twins_point_at_true_entries():
     from hardy.corpus.catalog import load_corpus
 
     problems = load_corpus(ROOT / "corpus")
-    assert len(problems.true_entries) == 15 and len(problems.twins) == 5
+    assert len(problems.true_entries) == 1125 and len(problems.twins) == 89
     assert {t.twin_of for t in problems.twins} <= {e.id for e in problems.true_entries}
     assert problems.by_id("sqrt-two-plus-sqrt-three").expected == "true"
 

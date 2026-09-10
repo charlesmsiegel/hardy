@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "la-volume-scales-by-det",
+      "input": "Let $T$ be a linear operator on $\\mathbb{R}^n$ and $\\Omega \\subseteq \\mathbb{R}^n$ any set. Then the Lebesgue measure of $T(\\Omega)$ is $|\\det T|$ times the Lebesgue measure of $\\Omega$.",
+      "name": "VolumeScalesByDet",
+      "binders": "(n : ℕ) (T : (Fin n → ℝ) →ₗ[ℝ] (Fin n → ℝ)) (Ω : Set (Fin n → ℝ))",
+      "conclusion": "MeasureTheory.volume (T '' Ω) = ENNReal.ofReal |LinearMap.det T| * MeasureTheory.volume Ω",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "28A75",
+        "15A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            10,
+            0,
+            38
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 0, ∅, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "la-ellipsoid-volume",
+      "input": "Let $a, b, c > 0$. The solid ellipsoid $\\{(x, y, z) \\in \\mathbb{R}^3 : x^2/a^2 + y^2/b^2 + z^2/c^2 < 1\\}$ has volume $\\tfrac{4}{3} \\pi a b c$.",
+      "name": "EllipsoidVolume",
+      "binders": "(a b c : ℝ) (ha : 0 < a) (hb : 0 < b) (hc : 0 < c)",
+      "conclusion": "MeasureTheory.volume {p : EuclideanSpace ℝ (Fin 3) | (p 0) ^ 2 / a ^ 2 + (p 1) ^ 2 / b ^ 2 + (p 2) ^ 2 / c ^ 2 < 1} = ENNReal.ofReal (4 / 3 * Real.pi * a * b * c)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "28A75",
+        "51M25"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            10,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 1, 1, one_pos, one_pos, one_pos, trivial⟩",
+      "witness_note": null
+    }
+  ]
+}

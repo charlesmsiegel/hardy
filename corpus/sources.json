@@ -1,1 +1,392 @@
-{"schema_version": 1, "sources": {}}
+{
+  "schema_version": 1,
+  "sources": {
+    "atiyah-macdonald": {
+      "title": "Introduction to commutative algebra",
+      "authors": [
+        "M. F. Atiyah",
+        "I. G. Macdonald"
+      ],
+      "publisher": "Addison-Wesley Publishing Co.",
+      "year": 1969,
+      "level": "graduate",
+      "level_note": "Grew out of a third-year undergraduate course at Oxford (the authors' introduction), but is the standard first graduate text on the subject elsewhere; filed at the level it is read at.",
+      "msc": [
+        "13"
+      ],
+      "locator_convention": "chapter-item: (chapter, 0, n) is the numbered body item chapter.n (propositions, theorems, corollaries and the exercises interleaved with them share one sequence); (chapter, 1, n) is exercise n at the end of the chapter. Body items therefore sort before the exercises that depend on them.",
+      "surveyed": {},
+      "harvested": {
+        "13": "chapters 1-9, body and exercises, at 0.4.0 (chapter 1 at 0.3.0)"
+      },
+      "citation_key": "AM69",
+      "address": "Reading, Mass.-London-Don Mills, Ont.",
+      "locator_style": "chapter-item"
+    },
+    "reid-ucai": {
+      "title": "Undergraduate commutative algebra",
+      "authors": [
+        "Miles Reid"
+      ],
+      "publisher": "Cambridge University Press",
+      "series": "London Mathematical Society Student Texts",
+      "year": 1995,
+      "level": "advanced-undergraduate",
+      "msc": [
+        "13"
+      ],
+      "locator_convention": "paragraph: Reid numbers paragraphs chapter.section; (chapter, section, 0) is the paragraph's own statement, (chapter, section, 1) the corollary that follows it, higher items further numbered statements within it. Exercises to chapter n are (n, 99, exercise number).",
+      "surveyed": {},
+      "harvested": {
+        "13": "chapter 1 and 5.12-5.14 with exercises, for cross-citation of the Atiyah-Macdonald chapter 1 batch at 0.3.1"
+      },
+      "citation_key": "Rei95",
+      "volume": 29,
+      "address": "Cambridge",
+      "locator_style": "paragraph"
+    },
+    "matsumura-crt": {
+      "title": "Commutative ring theory",
+      "authors": [
+        "Hideyuki Matsumura"
+      ],
+      "publisher": "Cambridge University Press",
+      "series": "Cambridge Studies in Advanced Mathematics",
+      "year": 1986,
+      "level": "graduate",
+      "msc": [
+        "13"
+      ],
+      "locator_convention": "numbered-section: sections are numbered continuously across chapters (section 1 is in chapter 1, section 4 in chapter 2); (chapter, s, n) is Theorem s.n; exercises to section s are (chapter, s, 100 + exercise number); numbered Examples in section s are (chapter, s, 200 + example number).",
+      "surveyed": {},
+      "harvested": {
+        "13": "sections 1 and 4 with exercises, for cross-citation at 0.3.1"
+      },
+      "citation_key": "Mat86",
+      "note": "translated from the Japanese by M. Reid",
+      "volume": 8,
+      "address": "Cambridge",
+      "locator_style": "numbered-section"
+    },
+    "eisenbud-ca": {
+      "title": "Commutative algebra",
+      "authors": [
+        "David Eisenbud"
+      ],
+      "publisher": "Springer-Verlag",
+      "series": "Graduate Texts in Mathematics",
+      "year": 1995,
+      "level": "graduate",
+      "msc": [
+        "13"
+      ],
+      "locator_convention": "chapter-item: Eisenbud numbers results chapter.item independently of section, so (chapter, 0, n) is result chapter.n (Proposition, Corollary, Lemma or Theorem) and (chapter, 1, n) is Exercise chapter.n.",
+      "surveyed": {},
+      "harvested": {
+        "13": "0.1, 1.11 (Spec), 2.3, 2.6 (idempotents), 3.2, for cross-citation at 0.3.1"
+      },
+      "citation_key": "Eis95",
+      "note": "with a view toward algebraic geometry",
+      "volume": 150,
+      "address": "New York",
+      "locator_style": "chapter-item"
+    },
+    "dummit-foote": {
+      "title": "Abstract algebra",
+      "authors": [
+        "David S. Dummit",
+        "Richard M. Foote"
+      ],
+      "publisher": "John Wiley & Sons, Inc.",
+      "edition": "third",
+      "year": 2004,
+      "level": "first-course",
+      "msc": [
+        "13",
+        "20",
+        "12"
+      ],
+      "level_note": "A general first algebra text; only chapters 7-9 and 15-16 are commutative algebra, and those are the first exposure most students get.",
+      "locator_convention": "section-item: (chapter, section, n) is numbered item n of that chapter (Dummit-Foote number propositions, theorems and corollaries in one sequence per chapter), cited as §chapter.section, no. n; exercises are (chapter, section, 100 + exercise number).",
+      "surveyed": {},
+      "harvested": {
+        "13": "7.4, 7.6, 10.5, 15.2-15.5, 16.1-16.3 with exercises, via the djvu text layer, for cross-citation at 0.3.0",
+        "15": "chapters 11-12, numbered results only, for cross-citation at 0.3.0",
+        "20": "chapters 1-6, numbered results and exercises, via the djvu text layer, at 0.3.0 (branch corpus/commutative-algebra)"
+      },
+      "citation_key": "DF04",
+      "address": "Hoboken, NJ",
+      "locator_style": "section-item"
+    },
+    "rudin-pma": {
+      "citation_key": "Rud76",
+      "authors": [
+        "Walter Rudin"
+      ],
+      "title": "Principles of mathematical analysis",
+      "edition": "third",
+      "series": "International Series in Pure and Applied Mathematics",
+      "publisher": "McGraw-Hill Book Co.",
+      "address": "New York",
+      "year": 1976,
+      "level": "advanced-undergraduate",
+      "msc": [
+        "26",
+        "54"
+      ],
+      "locator_style": "chapter-item",
+      "locator_convention": "chapter-item: Rudin numbers every definition, theorem and remark chapter.n in one sequence, so (chapter, 0, n) is item chapter.n; (chapter, 1, n) is exercise n at the end of the chapter.",
+      "surveyed": {},
+      "harvested": {
+        "26": "chapters 1-7, body and exercises, at 0.3.0 (branch corpus/commutative-algebra)"
+      }
+    },
+    "rudin-rca": {
+      "citation_key": "Rud87",
+      "authors": [
+        "Walter Rudin"
+      ],
+      "title": "Real and complex analysis",
+      "edition": "third",
+      "publisher": "McGraw-Hill Book Co.",
+      "address": "New York",
+      "year": 1987,
+      "level": "graduate",
+      "msc": [
+        "28",
+        "26",
+        "30"
+      ],
+      "locator_style": "chapter-item",
+      "locator_convention": "chapter-item: items are numbered chapter.n in one sequence per chapter, so (chapter, 0, n) is item chapter.n; (chapter, 1, n) is exercise n at the end of the chapter.",
+      "surveyed": {},
+      "harvested": {}
+    },
+    "abbott": {
+      "citation_key": "Abb01",
+      "authors": [
+        "Stephen Abbott"
+      ],
+      "title": "Understanding analysis",
+      "series": "Undergraduate Texts in Mathematics",
+      "publisher": "Springer-Verlag",
+      "address": "New York",
+      "year": 2001,
+      "level": "first-course",
+      "msc": [
+        "26"
+      ],
+      "locator_style": "section-theorem",
+      "locator_convention": "section-theorem: Abbott numbers results chapter.section.n, so (chapter, section, n) is Theorem chapter.section.n; exercises are numbered chapter.section.n too and are recorded as (chapter, section, 100 + n).",
+      "surveyed": {},
+      "harvested": {
+        "26": "numbered theorems of chapters 1-8 matched against the Rudin batch for cross-citation; not yet harvested for its own exercises"
+      }
+    },
+    "axler-ladr": {
+      "citation_key": "Axl97",
+      "authors": [
+        "Sheldon Axler"
+      ],
+      "title": "Linear algebra done right",
+      "edition": "second",
+      "series": "Undergraduate Texts in Mathematics",
+      "publisher": "Springer-Verlag",
+      "address": "New York",
+      "year": 1997,
+      "level": "first-course",
+      "msc": [
+        "15"
+      ],
+      "locator_style": "chapter-item",
+      "locator_convention": "chapter-item: results are numbered chapter.n in one sequence per chapter, so (chapter, 0, n) is result chapter.n; (chapter, 1, n) is exercise n at the end of the chapter.",
+      "surveyed": {},
+      "harvested": {
+        "15": "chapters 1-10, numbered results and end-of-chapter exercises, at 0.3.0 (branch corpus/commutative-algebra)"
+      }
+    },
+    "hoffman-kunze": {
+      "citation_key": "HK71",
+      "authors": [
+        "Kenneth Hoffman",
+        "Ray Kunze"
+      ],
+      "title": "Linear algebra",
+      "edition": "second",
+      "publisher": "Prentice-Hall, Inc.",
+      "address": "Englewood Cliffs, NJ",
+      "year": 1971,
+      "level": "advanced-undergraduate",
+      "msc": [
+        "15"
+      ],
+      "locator_style": "section-item",
+      "locator_convention": "section-item: theorems are numbered per chapter and exercises per section, so (chapter, section, n) is Theorem n of that chapter, read in section chapter.section; exercises are (chapter, section, 100 + exercise number).",
+      "surveyed": {},
+      "harvested": {
+        "15": "selected theorems of chapters 1-10, read from the text layer, at 0.3.0 (branch corpus/commutative-algebra)"
+      }
+    },
+    "roman-ala": {
+      "citation_key": "Rom08",
+      "authors": [
+        "Steven Roman"
+      ],
+      "title": "Advanced linear algebra",
+      "edition": "third",
+      "series": "Graduate Texts in Mathematics",
+      "volume": 135,
+      "publisher": "Springer",
+      "address": "New York",
+      "year": 2008,
+      "level": "graduate",
+      "msc": [
+        "15"
+      ],
+      "locator_style": "chapter-item",
+      "locator_convention": "chapter-item: theorems are numbered chapter.n in one sequence per chapter, so (chapter, 0, n) is Theorem chapter.n; (chapter, 1, n) is exercise n at the end of the chapter.",
+      "surveyed": {},
+      "harvested": {
+        "15": "selected theorems of chapters 1-3 and 7-11, read from the page images (the text layer is garbled), at 0.3.0 (branch corpus/commutative-algebra)"
+      }
+    },
+    "lang-algebra": {
+      "citation_key": "Lan02",
+      "authors": [
+        "Serge Lang"
+      ],
+      "title": "Algebra",
+      "edition": "revised third",
+      "series": "Graduate Texts in Mathematics",
+      "volume": 211,
+      "publisher": "Springer-Verlag",
+      "address": "New York",
+      "year": 2002,
+      "level": "graduate",
+      "msc": [
+        "20",
+        "13",
+        "15",
+        "16"
+      ],
+      "locator_style": "section-item",
+      "locator_convention": "section-item: chapters are numbered I, II, ... and recorded as 1, 2, ...; theorems are numbered per section, so (chapter, section, n) is Theorem section.n of that chapter; exercises are per chapter and recorded as (chapter, 99, exercise number).",
+      "surveyed": {},
+      "harvested": {
+        "20": "chapter I, numbered results and end-of-chapter exercises, via the djvu text layer, at 0.3.0 (branch corpus/commutative-algebra)"
+      }
+    },
+    "putnam-2018": {
+      "citation_key": "Putnam 2018",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 79th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 1, 2018",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2018,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2019": {
+      "citation_key": "Putnam 2019",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 80th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 7, 2019",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2019,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2020": {
+      "citation_key": "Putnam 2020",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 81st William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat February 20, 2021",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2020,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2021": {
+      "citation_key": "Putnam 2021",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 82nd William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 4, 2021",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2021,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2022": {
+      "citation_key": "Putnam 2022",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 83rd William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 3, 2022",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2022,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2023": {
+      "citation_key": "Putnam 2023",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 84th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 2, 2023",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2023,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2024": {
+      "citation_key": "Putnam 2024",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 85th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 7, 2024",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2024,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    },
+    "putnam-2025": {
+      "citation_key": "Putnam 2025",
+      "authors": [
+        "Mathematical Association of America"
+      ],
+      "title": "The 86th William Lowell Putnam Mathematical Competition",
+      "note": "Problem statements as archived by Kiran S. Kedlaya at https://kskedlaya.org/putnam-archive/; sat December 6, 2025",
+      "publisher": "Mathematical Association of America",
+      "address": "Washington, DC",
+      "year": 2025,
+      "level": "undergraduate",
+      "locator_style": "competition-problem",
+      "locator_convention": "(1, 0, n) is problem A n and (2, 0, n) is problem B n of this year's paper; one paper is one source, so no component names a year."
+    }
+  }
+}

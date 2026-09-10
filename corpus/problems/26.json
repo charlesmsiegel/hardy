@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.2.1",
+  "corpus_version": "0.5.0",
   "entries": [
     {
       "id": "sq-sum-ge-two-mul",
@@ -14,15 +14,33 @@
       "expected": "true",
       "twin_of": null,
       "source": "textbook",
+      "title": null,
       "msc": [
         "26Dxx"
       ],
+      "arxiv_override": null,
+      "override_reason": null,
       "difficulty": "routine",
       "occurrences": [],
       "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
-      "status": "candidate",
       "witness": null,
-      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:02:53+00:00",
+        "statement_digest": "582f445f0f6fa15095387ccbf74ee1e1026b9d2ef6806d6d15f251549d14fab2",
+        "prompt_digest": "c6273213a419845bda891b809bbd6f392b5e3d2a22de05aab01e95d31f07f493",
+        "msc": [
+          "26Dxx"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
     },
     {
       "id": "am-gm-two",
@@ -36,15 +54,33 @@
       "expected": "true",
       "twin_of": null,
       "source": "textbook",
+      "title": null,
       "msc": [
         "26Dxx"
       ],
+      "arxiv_override": null,
+      "override_reason": null,
       "difficulty": "routine",
       "occurrences": [],
       "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
-      "status": "candidate",
       "witness": null,
-      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:03:22+00:00",
+        "statement_digest": "c0cce14e654b1cc75243cc7e76538c28fa2a7939bfd173b7d83121c9b6d3424a",
+        "prompt_digest": "107f286c17c7877f0d505575e8ee3fd25f5017a6a20995ad7f9f080596f2d644",
+        "msc": [
+          "26Dxx"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
     },
     {
       "id": "sq-sum-le-two-mul",
@@ -58,15 +94,3817 @@
       "expected": "false",
       "twin_of": "sq-sum-ge-two-mul",
       "source": "textbook",
+      "title": null,
       "msc": [
         "26Dxx"
       ],
+      "arxiv_override": null,
+      "override_reason": null,
       "difficulty": "routine",
       "occurrences": [],
       "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:07:22+00:00",
+        "statement_digest": "4ad5454617b516d4837c3faddee1f32f2995ec76efe0dda788741056e44180c4",
+        "prompt_digest": "b3799b41c9dce375a373b166e6897eadc7f7ed9a3606609ffe9e562a8188294f",
+        "msc": [
+          "26Dxx"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "inf-exists-for-bounded-below",
+      "input": "Every nonempty set of real numbers that is bounded below has a greatest lower bound in $\\mathbb{R}$.",
+      "name": "InfExistsForBoundedBelow",
+      "binders": "(S : Set ℝ) (h₁ : S.Nonempty) (h₂ : BddBelow S)",
+      "conclusion": "∃ α : ℝ, IsGLB S α",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            11
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨{0}, Set.singleton_nonempty 0, bddBelow_singleton, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:09:00+00:00",
+        "statement_digest": "8d7fb579d4844101486b4fd4cde4db735bc90420bacd1219280e9253198073fa",
+        "prompt_digest": "2fc9c5435711cf4b655ef0ac4162136827b081497c127cb5045834614f42598e",
+        "msc": [
+          "26A03"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "archimedean-property",
+      "input": "For real numbers $x > 0$ and $y$ there is a positive integer $n$ with $nx > y$.",
+      "name": "ArchimedeanProperty",
+      "binders": "(x y : ℝ) (hx : 0 < x)",
+      "conclusion": "∃ n : ℕ, y < n * x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Archimedean property",
+      "msc": [
+        "26A03"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            20
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            2
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨1, 0, one_pos, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:09:29+00:00",
+        "statement_digest": "bfbbf192aeedc297ee99548e74df8033dac3bf83d39fbbfba82ae45d544c86ba",
+        "prompt_digest": "abdc81e7edf4b6a84e84f71967d82a389b3631389e3b16958f059f650a660d4f",
+        "msc": [
+          "26A03"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "rationals-dense",
+      "input": "Between any two real numbers $x < y$ there is a rational number.",
+      "name": "RationalsDense",
+      "binders": "(x y : ℝ) (h : x < y)",
+      "conclusion": "∃ q : ℚ, x < q ∧ (q : ℝ) < y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            20
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            3
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨0, 1, zero_lt_one, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:09:40+00:00",
+        "statement_digest": "69931401e701eb9961f2c86aa8ddf7aeefb3a3b22080b4e6e3206e9db7e2988d",
+        "prompt_digest": "a951a6ce0610b6acdef5228a169c842aee5ac567e9a4d33d6c3ae0a88deac104",
+        "msc": [
+          "26A03"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "positive-nth-root-unique",
+      "input": "For every real $x > 0$ and every integer $n \\geq 1$ there is exactly one positive real $y$ with $y^n = x$.",
+      "name": "PositiveNthRootUnique",
+      "binders": "(x : ℝ) (hx : 0 < x) (n : ℕ) (hn : 0 < n)",
+      "conclusion": "∃! y : ℝ, 0 < y ∧ y ^ n = x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            21
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨1, one_pos, 1, one_pos, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:10:05+00:00",
+        "statement_digest": "7640b1983035f270fb3324ff07d7bc5d77adb5eb32b5c83ae76975f33f276bec",
+        "prompt_digest": "df5c6996ac7d53a4fefd5f14bd6fab665375e3613d55239cd56defba6ad59343",
+        "msc": [
+          "26A03"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "nth-root-of-product",
+      "input": "For nonnegative reals $a, b$ and a positive integer $n$, $(ab)^{1/n} = a^{1/n} b^{1/n}$.",
+      "name": "NthRootOfProduct",
+      "binders": "(a b : ℝ) (ha : 0 ≤ a) (hb : 0 ≤ b) (n : ℕ)",
+      "conclusion": "(a * b) ^ (1 / (n : ℝ)) = a ^ (1 / (n : ℝ)) * b ^ (1 / (n : ℝ))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A09"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            21
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨1, 1, zero_le_one, zero_le_one, 1, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T02:51:16+00:00",
+        "statement_digest": "062571fb558e916b9fa0d906f9e23926f84fae64a3d537a3f6eb515c10d871f0",
+        "prompt_digest": "9d78f2819a0383e5ddd3b09e5d03ce7c8582804387041e8c4a9037e1f7dff939",
+        "msc": [
+          "26A09"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "complex-triangle-inequality",
+      "input": "For complex numbers $z, w$, $|z + w| \\leq |z| + |w|$.",
+      "name": "ComplexTriangleInequality",
+      "binders": "(z w : ℂ)",
+      "conclusion": "‖z + w‖ ≤ ‖z‖ + ‖w‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D15"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            33
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨0, 0, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T02:51:25+00:00",
+        "statement_digest": "1d296124e5134b4e99cc267b64b240b0b1b56149e98bd6815a3fc4c04985bffe",
+        "prompt_digest": "5903b5fc6c8a18ab09efb817f80ff69ee5238b3f1ba3a6ee6aa79cfe22c14545",
+        "msc": [
+          "26D15"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "cauchy-schwarz-complex-sums",
+      "input": "For complex numbers $a_1, \\dots, a_n$ and $b_1, \\dots, b_n$, $\\bigl|\\sum_j a_j \\bar b_j\\bigr|^2 \\leq \\sum_j |a_j|^2 \\cdot \\sum_j |b_j|^2$.",
+      "name": "CauchySchwarzComplexSums",
+      "binders": "(n : ℕ) (a b : Fin n → ℂ)",
+      "conclusion": "‖∑ j, a j * (starRingEnd ℂ) (b j)‖ ^ 2 ≤ (∑ j, ‖a j‖ ^ 2) * ∑ j, ‖b j‖ ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Schwarz inequality",
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            35
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, ![], ![], trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "euclidean-triangle-inequality",
+      "input": "For vectors $\\mathbf{x}, \\mathbf{y}$ in $\\mathbb{R}^k$, $|\\mathbf{x} + \\mathbf{y}| \\leq |\\mathbf{x}| + |\\mathbf{y}|$.",
+      "name": "EuclideanTriangleInequality",
+      "binders": "(k : ℕ) (x y : EuclideanSpace ℝ (Fin k))",
+      "conclusion": "‖x + y‖ ≤ ‖x‖ + ‖y‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D15"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            37
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨0, 0, 0, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T02:51:42+00:00",
+        "statement_digest": "cb581323e7f408abb75b09833500ac0652e5614aa0fef55c595b1df585a9e0b4",
+        "prompt_digest": "2bd35a81df9c410875a9d68285f0c9ae2e4f427d858bf7e4af8faa6ae6a1b699",
+        "msc": [
+          "26D15"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "inf-eq-neg-sup-neg",
+      "input": "Let $A$ be a nonempty set of real numbers that is bounded below, and $-A$ the set of all $-x$ with $x \\in A$. Then $\\inf A = -\\sup(-A)$.",
+      "name": "InfEqNegSupNeg",
+      "binders": "(A : Set ℝ) (h₁ : A.Nonempty) (h₂ : BddBelow A)",
+      "conclusion": "sInf A = - sSup (-A)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            5
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨{0}, Set.singleton_nonempty 0, bddBelow_singleton, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T02:52:06+00:00",
+        "statement_digest": "41c678fcb68a2c5dabd8d413efc20e48a461accd5ceba35c42c9b6fcd1bc1329",
+        "prompt_digest": "4e8d8c1b1cb04eccea57b1d97d97fe6e1df28343345e1a82e441a80e84391a63",
+        "msc": [
+          "26A03"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "real-power-add",
+      "input": "Let $b > 1$ and $r, s$ real. Then $b^{r+s} = b^r b^s$.",
+      "name": "RealPowerAdd",
+      "binders": "(b : ℝ) (hb : 1 < b) (r s : ℝ)",
+      "conclusion": "b ^ (r + s) = b ^ r * b ^ s",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A09"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            6
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨2, one_lt_two, 0, 0, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T02:52:12+00:00",
+        "statement_digest": "1c0b29f3df6ec7bd6878e12235b5da9c5137089114fe26a3ebadcaa0a0ee8c72",
+        "prompt_digest": "ca3a7d715fb93486daff9c8bbd9f5815d31049783f9f3064f1894382bf2c956d",
+        "msc": [
+          "26A09"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "logarithm-exists-unique",
+      "input": "Let $b > 1$ and $y > 0$ be real. There is exactly one real $x$ with $b^x = y$.",
+      "name": "LogarithmExistsUnique",
+      "binders": "(b y : ℝ) (hb : 1 < b) (hy : 0 < y)",
+      "conclusion": "∃! x : ℝ, b ^ x = y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A09"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            7
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨2, 1, one_lt_two, one_pos, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T03:13:12+00:00",
+        "statement_digest": "cbcc2e2e11b0d6f1f92212461526e177f303062b2b46d762a1ccdd4acf6265d3",
+        "prompt_digest": "b389669fe750f1152e2a0a2ec95f76d7205f66fa6f3e6630696a77a32efa4ef0",
+        "msc": [
+          "26A09"
+        ],
+        "group": "analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "complex-sum-norm-le",
+      "input": "For complex numbers $z_1, \\dots, z_n$, $|z_1 + \\dots + z_n| \\leq |z_1| + \\dots + |z_n|$.",
+      "name": "ComplexSumNormLe",
+      "binders": "(n : ℕ) (z : Fin n → ℂ)",
+      "conclusion": "‖∑ i, z i‖ ≤ ∑ i, ‖z i‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, ![], trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "reverse-triangle-complex",
+      "input": "For complex numbers $x, y$, $\\bigl||x| - |y|\\bigr| \\leq |x - y|$.",
+      "name": "ReverseTriangleComplex",
+      "binders": "(x y : ℂ)",
+      "conclusion": "|‖x‖ - ‖y‖| ≤ ‖x - y‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "sup-in-closure",
+      "input": "Let $E$ be a nonempty set of real numbers that is bounded above. Then $\\sup E$ lies in the closure of $E$; in particular $\\sup E \\in E$ when $E$ is closed.",
+      "name": "SupInClosure",
+      "binders": "(E : Set ℝ) (h₁ : E.Nonempty) (h₂ : BddAbove E)",
+      "conclusion": "sSup E ∈ closure E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            28
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨{0}, Set.singleton_nonempty 0, bddAbove_singleton, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "nested-intervals",
+      "input": "If $I_n = [a_n, b_n]$ is a sequence of closed intervals in $\\mathbb{R}$ with $I_{n+1} \\subseteq I_n$ for every $n$, then $\\bigcap_n I_n$ is nonempty.",
+      "name": "NestedIntervals",
+      "binders": "(a b : ℕ → ℝ) (hab : ∀ n, a n ≤ b n) (hmono : ∀ n, a n ≤ a (n + 1) ∧ b (n + 1) ≤ b n)",
+      "conclusion": "(⋂ n, Set.Icc (a n) (b n)).Nonempty",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Nested interval theorem",
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            38
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 1, fun _ => zero_le_one, fun _ => ⟨le_rfl, le_rfl⟩, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "bolzano-weierstrass-sets",
+      "input": "Every bounded infinite subset of $\\mathbb{R}^k$ has a limit point in $\\mathbb{R}^k$.",
+      "name": "BolzanoWeierstrassSets",
+      "binders": "(k : ℕ) (E : Set (EuclideanSpace ℝ (Fin k))) (hb : Bornology.IsBounded E) (hi : E.Infinite)",
+      "conclusion": "∃ p : EuclideanSpace ℝ (Fin k), AccPt p (Filter.principal E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Bolzano–Weierstrass theorem",
+      "msc": [
+        "26A03",
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            42
+          ]
+        }
+      ],
       "status": "candidate",
       "witness": null,
-      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+      "witness_note": "Satisfiable: `k = 1` and `E` the set of `1/(n+1)`; no short closed term is recorded because the infinitude proof is not a one-liner."
+    },
+    {
+      "id": "nonempty-perfect-set-uncountable",
+      "input": "Every nonempty perfect subset of $\\mathbb{R}$ is uncountable.",
+      "name": "NonemptyPerfectSetUncountable",
+      "binders": "(P : Set ℝ) (hP : Perfect P) (hne : P.Nonempty)",
+      "conclusion": "¬ P.Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            43
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            3,
+            4,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `P = Set.Icc 0 1`; the perfectness proof is not a one-liner, so no closed term is recorded."
+    },
+    {
+      "id": "reals-uncountable",
+      "input": "The set of real numbers is uncountable.",
+      "name": "RealsUncountable",
+      "binders": "",
+      "conclusion": "¬ Countable ℝ",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            43
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "closed-interval-uncountable",
+      "input": "Every closed interval $[a, b]$ with $a < b$ is uncountable.",
+      "name": "ClosedIntervalUncountable",
+      "binders": "(a b : ℝ) (h : a < b)",
+      "conclusion": "¬ (Set.Icc a b).Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            43
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 1, zero_lt_one, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cantor-set-compact-perfect-no-segment",
+      "input": "The Cantor middle-thirds set is compact, is perfect, and contains no segment $(a, b)$ with $a < b$.",
+      "name": "CantorSetCompactPerfectNoSegment",
+      "binders": "",
+      "conclusion": "IsCompact cantorSet ∧ Perfect cantorSet ∧ ∀ a b : ℝ, a < b → ¬ Set.Ioo a b ⊆ cantorSet",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cantor set",
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            44
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "connected-subsets-of-line",
+      "input": "A subset $E$ of $\\mathbb{R}$ is connected if and only if it is an interval in the sense that whenever $x, y \\in E$ and $x < z < y$, also $z \\in E$.",
+      "name": "ConnectedSubsetsOfLine",
+      "binders": "(E : Set ℝ)",
+      "conclusion": "IsPreconnected E ↔ E.OrdConnected",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03",
+        "54D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            47
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            3,
+            4,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨∅, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "irrationals-uncountable",
+      "input": "The set of irrational real numbers is uncountable.",
+      "name": "IrrationalsUncountable",
+      "binders": "",
+      "conclusion": "¬ {x : ℝ | Irrational x}.Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "harmonic-set-with-zero-is-compact",
+      "input": "The set consisting of $0$ and the numbers $1/n$ for $n = 1, 2, 3, \\dots$ is a compact subset of $\\mathbb{R}$.",
+      "name": "HarmonicSetWithZeroIsCompact",
+      "binders": "",
+      "conclusion": "IsCompact ({0} ∪ Set.range fun n : ℕ => 1 / ((n : ℝ) + 1))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "open-unit-segment-not-compact",
+      "input": "The segment $(0, 1)$ is not a compact subset of $\\mathbb{R}$: it has an open cover with no finite subcover.",
+      "name": "OpenUnitSegmentNotCompact",
+      "binders": "",
+      "conclusion": "¬ IsCompact (Set.Ioo (0 : ℝ) 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "countable-closed-set-has-isolated-point",
+      "input": "Every nonempty countable closed subset of $\\mathbb{R}$ has an isolated point.",
+      "name": "CountableClosedSetHasIsolatedPoint",
+      "binders": "(C : Set ℝ) (hC : IsClosed C) (hcount : C.Countable) (hne : C.Nonempty)",
+      "conclusion": "∃ p ∈ C, ¬ AccPt p (Filter.principal C)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            28
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨{0}, isClosed_singleton, Set.countable_singleton 0, Set.singleton_nonempty 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "open-subsets-of-line-are-countable-disjoint-unions-of-segments",
+      "input": "Every open subset of $\\mathbb{R}$ is the union of an at most countable collection of pairwise disjoint open intervals, the endpoints being allowed to be $\\pm\\infty$.",
+      "name": "OpenSubsetsOfLineAreCountableDisjointUnionsOfSegments",
+      "binders": "(U : Set ℝ) (hU : IsOpen U)",
+      "conclusion": "∃ S : Set (Set ℝ), S.Countable ∧ (∀ I ∈ S, ∃ a b : EReal, I = {x : ℝ | a < (x : EReal) ∧ (x : EReal) < b}) ∧ S.PairwiseDisjoint id ∧ U = ⋃₀ S",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            29
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨∅, isOpen_empty, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "newton-square-root-iteration",
+      "input": "Let $\\alpha > 0$, $x_1 > \\sqrt\\alpha$ and $x_{n+1} = \\tfrac12 (x_n + \\alpha/x_n)$. Then $x_n$ decreases monotonically and converges to $\\sqrt\\alpha$.",
+      "name": "NewtonSquareRootIteration",
+      "binders": "(α : ℝ) (hα : 0 < α) (x : ℕ → ℝ) (h0 : Real.sqrt α < x 0) (hx : ∀ n, x (n + 1) = (x n + α / x n) / 2)",
+      "conclusion": "Antitone x ∧ Filter.Tendsto x Filter.atTop (nhds (Real.sqrt α))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Babylonian square-root iteration",
+      "msc": [
+        "26A18",
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, one_pos, fun n => Nat.rec 2 (fun _ t => (t + 1 / t) / 2) n, by simp, fun _ => rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "limit-laws-for-functions",
+      "input": "Let $f, g$ be real functions with $f(x) \\to A$ and $g(x) \\to B$ as $x \\to p$ through values $x \\neq p$. Then $f + g \\to A + B$ and $fg \\to AB$.",
+      "name": "LimitLawsForFunctions",
+      "binders": "(f g : ℝ → ℝ) (p A B : ℝ) (hf : Filter.Tendsto f (nhdsWithin p {p}ᶜ) (nhds A)) (hg : Filter.Tendsto g (nhdsWithin p {p}ᶜ) (nhds B))",
+      "conclusion": "Filter.Tendsto (fun x => f x + g x) (nhdsWithin p {p}ᶜ) (nhds (A + B)) ∧ Filter.Tendsto (fun x => f x * g x) (nhdsWithin p {p}ᶜ) (nhds (A * B))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A06"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            4
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            4,
+            2,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, 0, 0, tendsto_const_nhds, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "continuity-iff-limit-equals-value",
+      "input": "A real function $f$ is continuous at $p$ if and only if $f(x) \\to f(p)$ as $x \\to p$ through values $x \\neq p$.",
+      "name": "ContinuityIffLimitEqualsValue",
+      "binders": "(f : ℝ → ℝ) (p : ℝ)",
+      "conclusion": "ContinuousAt f p ↔ Filter.Tendsto f (nhdsWithin p {p}ᶜ) (nhds (f p))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "extreme-value-theorem-interval",
+      "input": "A real function continuous on a closed interval $[a, b]$ attains a maximum there.",
+      "name": "ExtremeValueTheoremInterval",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hf : ContinuousOn f (Set.Icc a b))",
+      "conclusion": "∃ p ∈ Set.Icc a b, ∀ x ∈ Set.Icc a b, f x ≤ f p",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Extreme value theorem",
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            16
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            4,
+            4,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, zero_le_one, continuousOn_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "heine-cantor-on-interval",
+      "input": "A real function continuous on a closed interval $[a, b]$ is uniformly continuous there.",
+      "name": "HeineCantorOnInterval",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hf : ContinuousOn f (Set.Icc a b))",
+      "conclusion": "UniformContinuousOn f (Set.Icc a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Heine–Cantor theorem",
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            19
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            4,
+            4,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, continuousOn_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "noncompact-set-admits-unbounded-continuous-function",
+      "input": "On every noncompact subset $E$ of $\\mathbb{R}$ there is a continuous real function that is not bounded.",
+      "name": "NoncompactSetAdmitsUnboundedContinuousFunction",
+      "binders": "(E : Set ℝ) (hE : ¬ IsCompact E)",
+      "conclusion": "∃ f : ℝ → ℝ, ContinuousOn f E ∧ ¬ BddAbove (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `E = Set.univ`, which is not compact; the non-compactness proof is short but not a term."
+    },
+    {
+      "id": "noncompact-set-admits-bounded-continuous-function-without-maximum",
+      "input": "On every noncompact subset $E$ of $\\mathbb{R}$ there is a continuous bounded real function that has no maximum.",
+      "name": "NoncompactSetAdmitsBoundedContinuousFunctionWithoutMaximum",
+      "binders": "(E : Set ℝ) (hE : ¬ IsCompact E)",
+      "conclusion": "∃ f : ℝ → ℝ, ContinuousOn f E ∧ BddAbove (f '' E) ∧ ∀ x ∈ E, ∃ y ∈ E, f x < f y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `E = Set.univ`."
+    },
+    {
+      "id": "noncompact-bounded-set-admits-non-uniformly-continuous-function",
+      "input": "On every bounded noncompact subset $E$ of $\\mathbb{R}$ there is a continuous real function that is not uniformly continuous.",
+      "name": "NoncompactBoundedSetAdmitsNonUniformlyContinuousFunction",
+      "binders": "(E : Set ℝ) (hE : ¬ IsCompact E) (hb : Bornology.IsBounded E)",
+      "conclusion": "∃ f : ℝ → ℝ, ContinuousOn f E ∧ ¬ UniformContinuousOn f E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `E = Set.Ioo 0 1`."
+    },
+    {
+      "id": "intermediate-value-theorem",
+      "input": "Let $f$ be a real function continuous on $[a, b]$ with $f(a) < c < f(b)$. Then $f(x) = c$ for some $x \\in (a, b)$.",
+      "name": "IntermediateValueTheorem",
+      "binders": "(f : ℝ → ℝ) (a b c : ℝ) (hab : a < b) (hf : ContinuousOn f (Set.Icc a b)) (h1 : f a < c) (h2 : c < f b)",
+      "conclusion": "∃ x ∈ Set.Ioo a b, f x = c",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Intermediate value theorem",
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            23
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            4,
+            5,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, 1 / 2, zero_lt_one, continuousOn_id, by norm_num, by norm_num, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "monotone-function-has-one-sided-limits",
+      "input": "Let $f$ be monotonically increasing on $(a, b)$. Then the left-hand limit $f(x-)$ exists at every $x \\in (a, b)$.",
+      "name": "MonotoneFunctionHasOneSidedLimits",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hf : MonotoneOn f (Set.Ioo a b)) (x : ℝ) (hx : x ∈ Set.Ioo a b)",
+      "conclusion": "∃ l : ℝ, Filter.Tendsto f (nhdsWithin x (Set.Iio x)) (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A48"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            29
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, fun _ _ _ _ h => h, 1 / 2, by norm_num, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "monotone-function-countably-many-discontinuities",
+      "input": "A monotone real function on $\\mathbb{R}$ is discontinuous at no more than countably many points.",
+      "name": "MonotoneFunctionCountablyManyDiscontinuities",
+      "binders": "(f : ℝ → ℝ) (hf : Monotone f)",
+      "conclusion": "{x | ¬ ContinuousAt f x}.Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A48"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            30
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, monotone_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "symmetric-difference-quotient-condition-does-not-imply-continuity",
+      "input": "There is a real function $f$ with $f(x + h) - f(x - h) \\to 0$ as $h \\to 0$ for every $x$, which is not continuous.",
+      "name": "SymmetricDifferenceQuotientConditionDoesNotImplyContinuity",
+      "binders": "",
+      "conclusion": "∃ f : ℝ → ℝ, (∀ x, Filter.Tendsto (fun h => f (x + h) - f (x - h)) (nhds 0) (nhds 0)) ∧ ¬ Continuous f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "continuity-on-compact-set-iff-graph-compact",
+      "input": "Let $E$ be a compact subset of $\\mathbb{R}$ and $f$ a real function on $E$. Then $f$ is continuous on $E$ if and only if its graph is compact.",
+      "name": "ContinuityOnCompactSetIffGraphCompact",
+      "binders": "(E : Set ℝ) (hE : IsCompact E) (f : ℝ → ℝ)",
+      "conclusion": "ContinuousOn f E ↔ IsCompact ((fun x => (x, f x)) '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨∅, isCompact_empty, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "uniformly-continuous-on-bounded-set-is-bounded",
+      "input": "A real function uniformly continuous on a bounded subset of $\\mathbb{R}$ is bounded there.",
+      "name": "UniformlyContinuousOnBoundedSetIsBounded",
+      "binders": "(E : Set ℝ) (hE : Bornology.IsBounded E) (f : ℝ → ℝ) (hf : UniformContinuousOn f E)",
+      "conclusion": "Bornology.IsBounded (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨∅, Bornology.isBounded_empty, 0, uniformContinuous_const.uniformContinuousOn, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "fixed-point-on-unit-interval",
+      "input": "A continuous map of $[0, 1]$ into itself has a fixed point.",
+      "name": "FixedPointOnUnitInterval",
+      "binders": "(f : ℝ → ℝ) (hf : ContinuousOn f (Set.Icc 0 1)) (hmaps : Set.MapsTo f (Set.Icc 0 1) (Set.Icc 0 1))",
+      "conclusion": "∃ x ∈ Set.Icc (0 : ℝ) 1, f x = x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, continuousOn_id, Set.mapsTo_id _, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "continuous-open-map-on-line-is-monotone",
+      "input": "A continuous open map from $\\mathbb{R}$ to $\\mathbb{R}$ is monotone.",
+      "name": "ContinuousOpenMapOnLineIsMonotone",
+      "binders": "(f : ℝ → ℝ) (hf : Continuous f) (ho : IsOpenMap f)",
+      "conclusion": "Monotone f ∨ Antitone f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            15
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, continuous_id, IsOpenMap.id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "floor-discontinuities-are-integers",
+      "input": "The floor function $x \\mapsto \\lfloor x \\rfloor$ is discontinuous exactly at the integers.",
+      "name": "FloorDiscontinuitiesAreIntegers",
+      "binders": "",
+      "conclusion": "{x : ℝ | ¬ ContinuousAt (fun y : ℝ => (⌊y⌋ : ℝ)) x} = Set.range ((↑) : ℤ → ℝ)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "intermediate-value-property-with-closed-rational-level-sets-implies-continuity",
+      "input": "Let $f$ be a real function on $\\mathbb{R}$ with the intermediate value property, and suppose that for every rational $r$ the set $\\{x : f(x) = r\\}$ is closed. Then $f$ is continuous.",
+      "name": "IntermediateValuePropertyWithClosedRationalLevelSetsImpliesContinuity",
+      "binders": "(f : ℝ → ℝ) (hivp : ∀ a b c : ℝ, (f a < c ∧ c < f b) ∨ (f b < c ∧ c < f a) → ∃ x, min a b < x ∧ x < max a b ∧ f x = c) (hclosed : ∀ r : ℚ, IsClosed {x | f x = r})",
+      "conclusion": "Continuous f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            19
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f = id`; the intermediate value property of the identity is a short argument rather than a term."
+    },
+    {
+      "id": "convex-function-continuous",
+      "input": "A convex real function on an open interval $(a, b)$ is continuous there.",
+      "name": "ConvexFunctionContinuous",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hf : ConvexOn ℝ (Set.Ioo a b) f)",
+      "conclusion": "ContinuousOn f (Set.Ioo a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A51"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, convexOn_const _ (convex_Ioo 0 1), trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "increasing-convex-of-convex-is-convex",
+      "input": "If $f$ is convex on $(a, b)$ and $g$ is convex and increasing on $\\mathbb{R}$, then $g \\circ f$ is convex on $(a, b)$.",
+      "name": "IncreasingConvexOfConvexIsConvex",
+      "binders": "(f g : ℝ → ℝ) (a b : ℝ) (hf : ConvexOn ℝ (Set.Ioo a b) f) (hg : ConvexOn ℝ Set.univ g) (hmono : Monotone g)",
+      "conclusion": "ConvexOn ℝ (Set.Ioo a b) (g ∘ f)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A51"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 0, 1, convexOn_const _ (convex_Ioo 0 1), convexOn_const _ convex_univ, monotone_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "convex-function-slopes-increase",
+      "input": "If $f$ is convex on $(a, b)$ and $a < s < t < u < b$, then $\\frac{f(t) - f(s)}{t - s} \\leq \\frac{f(u) - f(s)}{u - s} \\leq \\frac{f(u) - f(t)}{u - t}$.",
+      "name": "ConvexFunctionSlopesIncrease",
+      "binders": "(f : ℝ → ℝ) (a b s t u : ℝ) (hf : ConvexOn ℝ (Set.Ioo a b) f) (hs : s ∈ Set.Ioo a b) (hu : u ∈ Set.Ioo a b) (hst : s < t) (htu : t < u)",
+      "conclusion": "(f t - f s) / (t - s) ≤ (f u - f s) / (u - s) ∧ (f u - f s) / (u - s) ≤ (f u - f t) / (u - t)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A51"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f = 0` on `(0, 1)` with `s, t, u = 1/4, 1/2, 3/4`; membership proofs are `by norm_num`, not recorded as a single term."
+    },
+    {
+      "id": "midpoint-convex-continuous-implies-convex",
+      "input": "A continuous real function on $(a, b)$ satisfying $f\\bigl(\\tfrac{x+y}{2}\\bigr) \\leq \\tfrac{f(x) + f(y)}{2}$ for all $x, y$ is convex.",
+      "name": "MidpointConvexContinuousImpliesConvex",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hf : ContinuousOn f (Set.Ioo a b)) (hmid : ∀ x ∈ Set.Ioo a b, ∀ y ∈ Set.Ioo a b, f ((x + y) / 2) ≤ (f x + f y) / 2)",
+      "conclusion": "ConvexOn ℝ (Set.Ioo a b) f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A51"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, continuousOn_const, fun _ _ _ _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "sum-of-closed-sets-need-not-be-closed",
+      "input": "There are closed subsets $C_1, C_2$ of $\\mathbb{R}$ whose sum $C_1 + C_2$ is not closed.",
+      "name": "SumOfClosedSetsNeedNotBeClosed",
+      "binders": "",
+      "conclusion": "∃ C₁ C₂ : Set ℝ, IsClosed C₁ ∧ IsClosed C₂ ∧ ¬ IsClosed (Set.image2 (· + ·) C₁ C₂)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "uniformly-continuous-function-is-bounded",
+      "input": "A real function uniformly continuous on a subset of $\\mathbb{R}$ is bounded there.",
+      "name": "UniformlyContinuousFunctionIsBounded",
+      "binders": "(E : Set ℝ) (f : ℝ → ℝ) (hf : UniformContinuousOn f E)",
+      "conclusion": "Bornology.IsBounded (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "uniformly-continuous-on-bounded-set-is-bounded",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `uniformly-continuous-on-bounded-set-is-bounded`, dropping the boundedness of `E` as exercise 4.8 asks: the identity on ℝ is uniformly continuous and unbounded. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "midpoint-convex-implies-convex",
+      "input": "A real function on $(a, b)$ satisfying $f\\bigl(\\tfrac{x+y}{2}\\bigr) \\leq \\tfrac{f(x) + f(y)}{2}$ for all $x, y$ is convex.",
+      "name": "MidpointConvexImpliesConvex",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hmid : ∀ x ∈ Set.Ioo a b, ∀ y ∈ Set.Ioo a b, f ((x + y) / 2) ≤ (f x + f y) / 2)",
+      "conclusion": "ConvexOn ℝ (Set.Ioo a b) f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "midpoint-convex-continuous-implies-convex",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A51"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `midpoint-convex-continuous-implies-convex`, dropping continuity: a discontinuous additive function ℝ → ℝ, which exists by a Hamel basis, is midpoint convex and not convex on any interval. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "differentiable-implies-continuous",
+      "input": "A real function differentiable at a point is continuous there.",
+      "name": "DifferentiableImpliesContinuous",
+      "binders": "(f : ℝ → ℝ) (x : ℝ) (h : DifferentiableAt ℝ f x)",
+      "conclusion": "ContinuousAt f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            2
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            2,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, differentiableAt_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "product-rule",
+      "input": "If $f$ and $g$ are differentiable at $x$ with derivatives $f'$ and $g'$, then $fg$ is differentiable at $x$ with derivative $f'g(x) + f(x)g'$.",
+      "name": "ProductRule",
+      "binders": "(f g : ℝ → ℝ) (x f' g' : ℝ) (hf : HasDerivAt f f' x) (hg : HasDerivAt g g' x)",
+      "conclusion": "HasDerivAt (fun y => f y * g y) (f' * g x + f x * g') x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            3
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            2,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, id, 0, 1, 1, hasDerivAt_id 0, hasDerivAt_id 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "quotient-rule",
+      "input": "If $f$ and $g$ are differentiable at $x$ with derivatives $f'$ and $g'$, and $g(x) \\neq 0$, then $f/g$ is differentiable at $x$ with derivative $(g(x)f' - f(x)g')/g(x)^2$.",
+      "name": "QuotientRule",
+      "binders": "(f g : ℝ → ℝ) (x f' g' : ℝ) (hf : HasDerivAt f f' x) (hg : HasDerivAt g g' x) (h0 : g x ≠ 0)",
+      "conclusion": "HasDerivAt (fun y => f y / g y) ((g x * f' - f x * g') / g x ^ 2) x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            3
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            2,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, fun _ => 1, 0, 1, 0, hasDerivAt_id 0, hasDerivAt_const 0 1, one_ne_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "chain-rule",
+      "input": "If $f$ is differentiable at $x$ and $g$ is differentiable at $f(x)$, then $g \\circ f$ is differentiable at $x$ with derivative $g'(f(x)) f'(x)$.",
+      "name": "ChainRule",
+      "binders": "(f g : ℝ → ℝ) (x f' g' : ℝ) (hf : HasDerivAt f f' x) (hg : HasDerivAt g g' (f x))",
+      "conclusion": "HasDerivAt (g ∘ f) (g' * f') x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Chain rule",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            5
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            2,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, id, 0, 1, 1, hasDerivAt_id 0, hasDerivAt_id 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "fermat-local-maximum",
+      "input": "If a real function has a local maximum at $x$ and is differentiable there, then $f'(x) = 0$.",
+      "name": "FermatLocalMaximum",
+      "binders": "(f : ℝ → ℝ) (x : ℝ) (h : IsLocalMax f x) (hd : DifferentiableAt ℝ f x)",
+      "conclusion": "deriv f x = 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Fermat's theorem on stationary points",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, isLocalMax_const, differentiableAt_const 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cauchy-mean-value-theorem",
+      "input": "If $f, g$ are real functions continuous on $[a, b]$ and differentiable on $(a, b)$, then $[f(b) - f(a)] g'(x) = [g(b) - g(a)] f'(x)$ for some $x \\in (a, b)$.",
+      "name": "CauchyMeanValueTheorem",
+      "binders": "(f g : ℝ → ℝ) (a b : ℝ) (hab : a < b) (hfc : ContinuousOn f (Set.Icc a b)) (hgc : ContinuousOn g (Set.Icc a b)) (hfd : DifferentiableOn ℝ f (Set.Ioo a b)) (hgd : DifferentiableOn ℝ g (Set.Ioo a b))",
+      "conclusion": "∃ x ∈ Set.Ioo a b, (f b - f a) * deriv g x = (g b - g a) * deriv f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Generalised mean value theorem",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            9
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            3,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, id, 0, 1, zero_lt_one, continuousOn_id, continuousOn_id, differentiableOn_id, differentiableOn_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "mean-value-theorem",
+      "input": "If $f$ is a real function continuous on $[a, b]$ and differentiable on $(a, b)$, then $f(b) - f(a) = (b - a) f'(x)$ for some $x \\in (a, b)$.",
+      "name": "MeanValueTheorem",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hab : a < b) (hc : ContinuousOn f (Set.Icc a b)) (hd : DifferentiableOn ℝ f (Set.Ioo a b))",
+      "conclusion": "∃ x ∈ Set.Ioo a b, f b - f a = (b - a) * deriv f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Mean value theorem",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            10
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            3,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, zero_lt_one, continuousOn_id, differentiableOn_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "nonnegative-derivative-implies-monotone",
+      "input": "If $f$ is differentiable on $(a, b)$ with $f'(x) \\geq 0$ for all $x$, then $f$ is monotonically increasing on $(a, b)$.",
+      "name": "NonnegativeDerivativeImpliesMonotone",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hd : DifferentiableOn ℝ f (Set.Ioo a b)) (h : ∀ x ∈ Set.Ioo a b, 0 ≤ deriv f x)",
+      "conclusion": "MonotoneOn f (Set.Ioo a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, differentiableOn_id, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "zero-derivative-implies-constant",
+      "input": "If $f$ is differentiable on $(a, b)$ with $f'(x) = 0$ for all $x$, then $f$ is constant on $(a, b)$.",
+      "name": "ZeroDerivativeImpliesConstant",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hd : DifferentiableOn ℝ f (Set.Ioo a b)) (h : ∀ x ∈ Set.Ioo a b, deriv f x = 0)",
+      "conclusion": "∃ c, ∀ x ∈ Set.Ioo a b, f x = c",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            11
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            3,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, 1, differentiableOn_const 0, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "darboux-theorem",
+      "input": "Let $f$ be differentiable at every point of $[a, b]$ with $f'(a) < \\lambda < f'(b)$. Then $f'(x) = \\lambda$ for some $x \\in (a, b)$.",
+      "name": "DarbouxTheorem",
+      "binders": "(f : ℝ → ℝ) (a b lam : ℝ) (hab : a < b) (hd : ∀ x ∈ Set.Icc a b, DifferentiableAt ℝ f x) (h1 : deriv f a < lam) (h2 : lam < deriv f b)",
+      "conclusion": "∃ x ∈ Set.Ioo a b, deriv f x = lam",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Darboux's theorem",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            12
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            5,
+            2,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun x => x ^ 2, 0, 1, 1, zero_lt_one, fun x _ => by fun_prop, by simp, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "lhopital-zero-over-zero",
+      "input": "Let $f, g$ be differentiable on $(a, b)$ with $g'(x) \\neq 0$ there, $f(x) \\to 0$ and $g(x) \\to 0$ as $x \\to a^+$, and $f'(x)/g'(x) \\to A$ as $x \\to a^+$. Then $f(x)/g(x) \\to A$ as $x \\to a^+$.",
+      "name": "LhopitalZeroOverZero",
+      "binders": "(f g f' g' : ℝ → ℝ) (a b : ℝ) (hab : a < b) (hff' : ∀ x ∈ Set.Ioo a b, HasDerivAt f (f' x) x) (hgg' : ∀ x ∈ Set.Ioo a b, HasDerivAt g (g' x) x) (hg' : ∀ x ∈ Set.Ioo a b, g' x ≠ 0) (hfa : Filter.Tendsto f (nhdsWithin a (Set.Ioi a)) (nhds 0)) (hga : Filter.Tendsto g (nhdsWithin a (Set.Ioi a)) (nhds 0)) (A : ℝ) (hdiv : Filter.Tendsto (fun x => f' x / g' x) (nhdsWithin a (Set.Ioi a)) (nhds A))",
+      "conclusion": "Filter.Tendsto (fun x => f x / g x) (nhdsWithin a (Set.Ioi a)) (nhds A)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "L'Hôpital's rule",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f = g = id` on `(0, 1)` with `A = 1`; the one-sided limit facts are short but not a single term."
+    },
+    {
+      "id": "taylor-theorem-lagrange-remainder",
+      "input": "Let $f$ be $n$ times continuously differentiable on $[a, b]$ with $f^{(n)}$ differentiable on $(a, b)$, and $P$ its Taylor polynomial of degree $n$ at $a$. Then $f(b) = P(b) + \\frac{f^{(n+1)}(x)}{(n+1)!}(b - a)^{n+1}$ for some $x \\in (a, b)$.",
+      "name": "TaylorTheoremLagrangeRemainder",
+      "binders": "(f : ℝ → ℝ) (n : ℕ) (a b : ℝ) (hab : a < b) (hf : ContDiffOn ℝ n f (Set.Icc a b)) (hf' : DifferentiableOn ℝ (iteratedDerivWithin n f (Set.Icc a b)) (Set.Ioo a b))",
+      "conclusion": "∃ x ∈ Set.Ioo a b, f b - taylorWithinEval f n (Set.Icc a b) a b = iteratedDerivWithin (n + 1) f (Set.Icc a b) x * (b - a) ^ (n + 1) / (n + 1).factorial",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Taylor's theorem",
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            15
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f = 0`, `n = 0`, `a = 0`, `b = 1`; the smoothness facts for the zero function are standard but not recorded as one term."
+    },
+    {
+      "id": "mean-value-inequality-vector-valued",
+      "input": "Let $\\mathbf{f} : [a, b] \\to \\mathbb{R}^k$ be continuous on $[a, b]$ and differentiable on $(a, b)$. Then $|\\mathbf{f}(b) - \\mathbf{f}(a)| \\leq (b - a) |\\mathbf{f}'(x)|$ for some $x \\in (a, b)$.",
+      "name": "MeanValueInequalityVectorValued",
+      "binders": "(k : ℕ) (f : ℝ → EuclideanSpace ℝ (Fin k)) (a b : ℝ) (hab : a < b) (hc : ContinuousOn f (Set.Icc a b)) (hd : DifferentiableOn ℝ f (Set.Ioo a b))",
+      "conclusion": "∃ x ∈ Set.Ioo a b, ‖f b - f a‖ ≤ (b - a) * ‖deriv f x‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            0,
+            19
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, fun _ => 0, 0, 1, zero_lt_one, continuousOn_const, differentiableOn_const 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "bounded-by-square-of-difference-implies-constant",
+      "input": "If a real function $f$ on $\\mathbb{R}$ satisfies $|f(x) - f(y)| \\leq (x - y)^2$ for all $x, y$, then $f$ is constant.",
+      "name": "BoundedBySquareOfDifferenceImpliesConstant",
+      "binders": "(f : ℝ → ℝ) (h : ∀ x y, |f x - f y| ≤ (x - y) ^ 2)",
+      "conclusion": "∃ c, ∀ x, f x = c",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun x y => by simp; positivity, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "positive-derivative-implies-strictly-increasing",
+      "input": "If $f'(x) > 0$ for all $x \\in (a, b)$, then $f$ is strictly increasing on $(a, b)$.",
+      "name": "PositiveDerivativeImpliesStrictlyIncreasing",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hd : DifferentiableOn ℝ f (Set.Ioo a b)) (hpos : ∀ x ∈ Set.Ioo a b, 0 < deriv f x)",
+      "conclusion": "StrictMonoOn f (Set.Ioo a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, differentiableOn_id, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "inverse-function-derivative-on-interval",
+      "input": "If $f'(x) > 0$ for all $x \\in (a, b)$ and $g$ is the inverse of $f$ on $f((a, b))$, then $g$ is differentiable at $f(x)$ with $g'(f(x)) = 1/f'(x)$ for every $x \\in (a, b)$.",
+      "name": "InverseFunctionDerivativeOnInterval",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hd : ∀ x ∈ Set.Ioo a b, DifferentiableAt ℝ f x) (hpos : ∀ x ∈ Set.Ioo a b, 0 < deriv f x)",
+      "conclusion": "∀ x ∈ Set.Ioo a b, HasDerivAt (Function.invFunOn f (Set.Ioo a b)) (1 / deriv f x) (f x)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, fun x _ => differentiableAt_id, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "small-perturbation-of-identity-injective",
+      "input": "Let $g$ be a differentiable real function with $|g'| \\leq M$ on $\\mathbb{R}$. For all sufficiently small $\\varepsilon > 0$ the function $f(x) = x + \\varepsilon g(x)$ is injective.",
+      "name": "SmallPerturbationOfIdentityInjective",
+      "binders": "(g : ℝ → ℝ) (M : ℝ) (hg : Differentiable ℝ g) (hM : ∀ x, |deriv g x| ≤ M)",
+      "conclusion": "∃ ε > 0, Function.Injective (fun x => x + ε * g x)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, differentiable_const 0, fun x => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "polynomial-with-vanishing-weighted-sum-has-root",
+      "input": "If real numbers $C_0, \\dots, C_n$ satisfy $C_0 + C_1/2 + \\dots + C_n/(n+1) = 0$, then $C_0 + C_1 x + \\dots + C_n x^n = 0$ for some $x \\in (0, 1)$.",
+      "name": "PolynomialWithVanishingWeightedSumHasRoot",
+      "binders": "(n : ℕ) (C : ℕ → ℝ) (h : ∑ k ∈ Finset.range (n + 1), C k / (k + 1) = 0)",
+      "conclusion": "∃ x ∈ Set.Ioo (0 : ℝ) 1, ∑ k ∈ Finset.range (n + 1), C k * x ^ k = 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, fun _ => 0, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "derivative-tending-to-zero-implies-differences-tend-to-zero",
+      "input": "If $f$ is differentiable for $x > 0$ and $f'(x) \\to 0$ as $x \\to +\\infty$, then $f(x + 1) - f(x) \\to 0$ as $x \\to +\\infty$.",
+      "name": "DerivativeTendingToZeroImpliesDifferencesTendToZero",
+      "binders": "(f : ℝ → ℝ) (hd : ∀ x > (0 : ℝ), DifferentiableAt ℝ f x) (h : Filter.Tendsto (deriv f) Filter.atTop (nhds 0))",
+      "conclusion": "Filter.Tendsto (fun x => f (x + 1) - f x) Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun x _ => differentiableAt_const 0, by simpa using tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "increasing-derivative-implies-f-over-x-increasing",
+      "input": "Let $f$ be continuous on $[0, \\infty)$ and differentiable on $(0, \\infty)$ with $f(0) = 0$ and $f'$ increasing. Then $f(x)/x$ is increasing on $(0, \\infty)$.",
+      "name": "IncreasingDerivativeImpliesFOverXIncreasing",
+      "binders": "(f : ℝ → ℝ) (hc : ContinuousOn f (Set.Ici 0)) (hd : ∀ x > (0 : ℝ), DifferentiableAt ℝ f x) (h0 : f 0 = 0) (hmono : MonotoneOn (deriv f) (Set.Ioi 0))",
+      "conclusion": "MonotoneOn (fun x => f x / x) (Set.Ioi 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, continuousOn_id, fun x _ => differentiableAt_id, rfl, by simp [monotoneOn_const], trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "limit-of-quotient-of-functions-vanishing-at-a-point",
+      "input": "If $f'(x)$ and $g'(x)$ exist, $g'(x) \\neq 0$, and $f(x) = g(x) = 0$, then $f(t)/g(t) \\to f'(x)/g'(x)$ as $t \\to x$.",
+      "name": "LimitOfQuotientOfFunctionsVanishingAtAPoint",
+      "binders": "(f g : ℝ → ℝ) (x f' g' : ℝ) (hf : HasDerivAt f f' x) (hg : HasDerivAt g g' x) (hg0 : g' ≠ 0) (h0 : f x = 0 ∧ g x = 0)",
+      "conclusion": "Filter.Tendsto (fun t => f t / g t) (nhdsWithin x {x}ᶜ) (nhds (f' / g'))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, id, 0, 1, 1, hasDerivAt_id 0, hasDerivAt_id 0, one_ne_zero, ⟨rfl, rfl⟩, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "continuous-derivative-implies-uniform-differentiability",
+      "input": "Let $f$ be differentiable on $[a, b]$ with $f'$ continuous there. For every $\\varepsilon > 0$ there is $\\delta > 0$ such that $\\bigl|\\frac{f(t) - f(x)}{t - x} - f'(x)\\bigr| < \\varepsilon$ whenever $x, t \\in [a, b]$ and $0 < |t - x| < \\delta$.",
+      "name": "ContinuousDerivativeImpliesUniformDifferentiability",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hab : a < b) (hd : ∀ x ∈ Set.Icc a b, DifferentiableAt ℝ f x) (hc : ContinuousOn (deriv f) (Set.Icc a b)) (ε : ℝ) (hε : 0 < ε)",
+      "conclusion": "∃ δ > 0, ∀ x ∈ Set.Icc a b, ∀ t ∈ Set.Icc a b, 0 < |t - x| → |t - x| < δ → |(f t - f x) / (t - x) - deriv f x| < ε",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, zero_lt_one, fun x _ => differentiableAt_id, by simp [continuousOn_const], 1, one_pos, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "derivative-with-limit-at-point-exists-there",
+      "input": "Let $f$ be continuous on $\\mathbb{R}$ and differentiable at every $x \\neq 0$, with $f'(x) \\to 3$ as $x \\to 0$. Then $f'(0)$ exists and equals $3$.",
+      "name": "DerivativeWithLimitAtPointExistsThere",
+      "binders": "(f : ℝ → ℝ) (hc : Continuous f) (hd : ∀ x ≠ (0 : ℝ), DifferentiableAt ℝ f x) (h : Filter.Tendsto (deriv f) (nhdsWithin 0 {0}ᶜ) (nhds 3))",
+      "conclusion": "HasDerivAt f 3 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f x = 3x`; the limit of the constant derivative is `tendsto_const_nhds` after rewriting `deriv`, not a single term."
+    },
+    {
+      "id": "second-derivative-as-symmetric-limit",
+      "input": "If $f''(x)$ exists, then $\\frac{f(x + h) + f(x - h) - 2f(x)}{h^2} \\to f''(x)$ as $h \\to 0$.",
+      "name": "SecondDerivativeAsSymmetricLimit",
+      "binders": "(f : ℝ → ℝ) (x : ℝ) (h1 : ∃ ε > 0, ∀ y ∈ Set.Ioo (x - ε) (x + ε), DifferentiableAt ℝ f y) (h2 : DifferentiableAt ℝ (deriv f) x)",
+      "conclusion": "Filter.Tendsto (fun h => (f (x + h) + f (x - h) - 2 * f x) / h ^ 2) (nhdsWithin 0 {0}ᶜ) (nhds (deriv (deriv f) x))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, ⟨1, one_pos, fun y _ => differentiableAt_id⟩, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cube-of-absolute-value-derivatives",
+      "input": "For $f(x) = |x|^3$, the derivative is $f'(x) = 3x|x|$, but $f'''(0)$ does not exist.",
+      "name": "CubeOfAbsoluteValueDerivatives",
+      "binders": "",
+      "conclusion": "deriv (fun x : ℝ => |x| ^ 3) = (fun x => 3 * x * |x|) ∧ ¬ DifferentiableAt ℝ (deriv (deriv fun x : ℝ => |x| ^ 3)) 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "differentiable-convex-iff-derivative-monotone",
+      "input": "A real function differentiable on $(a, b)$ is convex there if and only if its derivative is monotonically increasing on $(a, b)$.",
+      "name": "DifferentiableConvexIffDerivativeMonotone",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hd : DifferentiableOn ℝ f (Set.Ioo a b))",
+      "conclusion": "ConvexOn ℝ (Set.Ioo a b) f ↔ MonotoneOn (deriv f) (Set.Ioo a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A51"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨id, 0, 1, differentiableOn_id, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "landau-kolmogorov-inequality",
+      "input": "Let $f$ be twice differentiable on $(a, \\infty)$ with $|f| \\leq M_0$ and $|f''| \\leq M_2$ there. Then $f'(x)^2 \\leq 4 M_0 M_2$ for every $x > a$.",
+      "name": "LandauKolmogorovInequality",
+      "binders": "(f : ℝ → ℝ) (a M₀ M₂ : ℝ) (hd : ∀ x > a, DifferentiableAt ℝ f x) (hd2 : ∀ x > a, DifferentiableAt ℝ (deriv f) x) (h0 : ∀ x > a, |f x| ≤ M₀) (h2 : ∀ x > a, |deriv (deriv f) x| ≤ M₂)",
+      "conclusion": "∀ x > a, (deriv f x) ^ 2 ≤ 4 * M₀ * M₂",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Landau–Kolmogorov inequality",
+      "msc": [
+        "26D10"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            15
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, 0, 0, fun x _ => differentiableAt_const 0, fun x _ => by simp, fun x _ => by simp, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "bounded-second-derivative-and-vanishing-limit-imply-derivative-vanishes",
+      "input": "Let $f$ be twice differentiable on $(0, \\infty)$ with $f''$ bounded there and $f(x) \\to 0$ as $x \\to \\infty$. Then $f'(x) \\to 0$ as $x \\to \\infty$.",
+      "name": "BoundedSecondDerivativeAndVanishingLimitImplyDerivativeVanishes",
+      "binders": "(f : ℝ → ℝ) (hd : ∀ x > (0 : ℝ), DifferentiableAt ℝ f x) (hd2 : ∀ x > (0 : ℝ), DifferentiableAt ℝ (deriv f) x) (hb : ∃ M, ∀ x > (0 : ℝ), |deriv (deriv f) x| ≤ M) (h : Filter.Tendsto f Filter.atTop (nhds 0))",
+      "conclusion": "Filter.Tendsto (deriv f) Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun x _ => differentiableAt_const 0, fun x _ => by simp, ⟨0, fun x _ => by simp⟩, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "third-derivative-at-least-three",
+      "input": "Let $f$ be three times differentiable on $\\mathbb{R}$ with $f(-1) = 0$, $f(0) = 0$, $f(1) = 1$ and $f'(0) = 0$. Then $f'''(x) \\geq 3$ for some $x \\in (-1, 1)$.",
+      "name": "ThirdDerivativeAtLeastThree",
+      "binders": "(f : ℝ → ℝ) (hd : ContDiff ℝ 3 f) (h1 : f (-1) = 0) (h2 : f 0 = 0) (h3 : f 1 = 1) (h4 : deriv f 0 = 0)",
+      "conclusion": "∃ x ∈ Set.Ioo (-1 : ℝ) 1, 3 ≤ iteratedDeriv 3 f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            17
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f x = (x³ + x²)/2`, for which equality holds; the derivative computation is not a one-line term."
+    },
+    {
+      "id": "derivative-never-one-implies-at-most-one-fixed-point",
+      "input": "If $f$ is differentiable on $\\mathbb{R}$ with $f'(t) \\neq 1$ for every $t$, then $f$ has at most one fixed point.",
+      "name": "DerivativeNeverOneImpliesAtMostOneFixedPoint",
+      "binders": "(f : ℝ → ℝ) (hd : Differentiable ℝ f) (h : ∀ t, deriv f t ≠ 1)",
+      "conclusion": "∀ x y, f x = x → f y = y → x = y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A18",
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, differentiable_const 0, fun t => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "function-without-fixed-point-with-derivative-in-unit-interval",
+      "input": "The function $f(t) = t + (1 + e^t)^{-1}$ satisfies $0 < f'(t) < 1$ for every real $t$, yet has no fixed point.",
+      "name": "FunctionWithoutFixedPointWithDerivativeInUnitInterval",
+      "binders": "",
+      "conclusion": "(∀ t : ℝ, 0 < deriv (fun t : ℝ => t + (1 + Real.exp t)⁻¹) t ∧ deriv (fun t : ℝ => t + (1 + Real.exp t)⁻¹) t < 1) ∧ ∀ t : ℝ, t + (1 + Real.exp t)⁻¹ ≠ t",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A18"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "contraction-on-line-has-fixed-point",
+      "input": "Let $f$ be differentiable on $\\mathbb{R}$ with $|f'(t)| \\leq A < 1$ for all $t$. Then $f$ has a fixed point $x$, and for every $x_1$ the iterates $x_{n+1} = f(x_n)$ converge to $x$.",
+      "name": "ContractionOnLineHasFixedPoint",
+      "binders": "(f : ℝ → ℝ) (A : ℝ) (hA : A < 1) (hd : Differentiable ℝ f) (h : ∀ t, |deriv f t| ≤ A) (x₁ : ℝ)",
+      "conclusion": "∃ x, f x = x ∧ Filter.Tendsto (fun n => f^[n] x₁) Filter.atTop (nhds x)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Contraction principle on the line",
+      "msc": [
+        "26A18"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, zero_lt_one, differentiable_const 0, fun t => by simp, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "gronwall-type-uniqueness-on-interval",
+      "input": "Let $f$ be differentiable on $[a, b]$ with $f(a) = 0$ and $|f'(x)| \\leq A |f(x)|$ on $[a, b]$ for some constant $A$. Then $f = 0$ on $[a, b]$.",
+      "name": "GronwallTypeUniquenessOnInterval",
+      "binders": "(f : ℝ → ℝ) (a b A : ℝ) (hab : a ≤ b) (hd : ∀ x ∈ Set.Icc a b, DifferentiableAt ℝ f x) (h0 : f a = 0) (h : ∀ x ∈ Set.Icc a b, |deriv f x| ≤ A * |f x|)",
+      "conclusion": "∀ x ∈ Set.Icc a b, f x = 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24",
+        "34A12"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            26
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, 1, 0, zero_le_one, fun x _ => differentiableAt_const 0, rfl, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "integral-monotone",
+      "input": "If $f_1 \\leq f_2$ are integrable on $[a, b]$, then $\\int_a^b f_1 \\leq \\int_a^b f_2$.",
+      "name": "IntegralMonotone",
+      "binders": "(f₁ f₂ : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (h₁ : IntervalIntegrable f₁ MeasureTheory.volume a b) (h₂ : IntervalIntegrable f₂ MeasureTheory.volume a b) (h : ∀ x ∈ Set.Icc a b, f₁ x ≤ f₂ x)",
+      "conclusion": "∫ x in a..b, f₁ x ≤ ∫ x in a..b, f₂ x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 0, 1, zero_le_one, intervalIntegrable_const, intervalIntegrable_const, fun x _ => le_rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "integral-additive-over-adjacent-intervals",
+      "input": "If $f$ is integrable on $[a, b]$ and $a < c < b$, then $\\int_a^c f + \\int_c^b f = \\int_a^b f$.",
+      "name": "IntegralAdditiveOverAdjacentIntervals",
+      "binders": "(f : ℝ → ℝ) (a b c : ℝ) (hac : a ≤ c) (hcb : c ≤ b) (hf : IntervalIntegrable f MeasureTheory.volume a b)",
+      "conclusion": "(∫ x in a..c, f x) + ∫ x in c..b, f x = ∫ x in a..b, f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, 0, le_rfl, zero_le_one, intervalIntegrable_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "integral-bounded-by-sup-times-length",
+      "input": "If $f$ is integrable on $[a, b]$ with $|f| \\leq M$ there, then $\\bigl|\\int_a^b f\\bigr| \\leq M(b - a)$.",
+      "name": "IntegralBoundedBySupTimesLength",
+      "binders": "(f : ℝ → ℝ) (a b M : ℝ) (hab : a ≤ b) (hf : IntervalIntegrable f MeasureTheory.volume a b) (hM : ∀ x ∈ Set.Icc a b, |f x| ≤ M)",
+      "conclusion": "|∫ x in a..b, f x| ≤ M * (b - a)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, 0, zero_le_one, intervalIntegrable_const, fun x _ => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "absolute-value-of-integral-le-integral-of-absolute-value",
+      "input": "If $f$ is integrable on $[a, b]$, then $|f|$ is integrable and $\\bigl|\\int_a^b f\\bigr| \\leq \\int_a^b |f|$.",
+      "name": "AbsoluteValueOfIntegralLeIntegralOfAbsoluteValue",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hf : IntervalIntegrable f MeasureTheory.volume a b)",
+      "conclusion": "IntervalIntegrable (fun x => |f x|) MeasureTheory.volume a b ∧ |∫ x in a..b, f x| ≤ ∫ x in a..b, |f x|",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, zero_le_one, intervalIntegrable_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "change-of-variables-in-integral",
+      "input": "Let $\\varphi$ be continuously differentiable on $[A, B]$ and $f$ continuous on $\\varphi([A, B])$. Then $\\int_{\\varphi(A)}^{\\varphi(B)} f(x)\\,dx = \\int_A^B f(\\varphi(y)) \\varphi'(y)\\,dy$.",
+      "name": "ChangeOfVariablesInIntegral",
+      "binders": "(f φ φ' : ℝ → ℝ) (A B : ℝ) (hφ : ∀ y ∈ Set.uIcc A B, HasDerivAt φ (φ' y) y) (hφ' : ContinuousOn φ' (Set.uIcc A B)) (hf : ContinuousOn f (φ '' Set.uIcc A B))",
+      "conclusion": "∫ x in φ A..φ B, f x = ∫ y in A..B, f (φ y) * φ' y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            19
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, id, fun _ => 1, 0, 1, fun y _ => hasDerivAt_id y, continuousOn_const, continuousOn_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "derivative-of-integral-at-continuity-point",
+      "input": "Let $f$ be integrable on $[a, b]$ and $F(x) = \\int_a^x f$. If $f$ is continuous at $x_0 \\in (a, b)$, then $F$ is differentiable at $x_0$ with $F'(x_0) = f(x_0)$.",
+      "name": "DerivativeOfIntegralAtContinuityPoint",
+      "binders": "(f : ℝ → ℝ) (a b x₀ : ℝ) (hf : IntervalIntegrable f MeasureTheory.volume a b) (hx₀ : x₀ ∈ Set.Ioo a b) (hc : ContinuousAt f x₀)",
+      "conclusion": "HasDerivAt (fun x => ∫ t in a..x, f t) (f x₀) x₀",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Fundamental theorem of calculus, first form",
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, 1 / 2, intervalIntegrable_const, by norm_num, continuousAt_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "fundamental-theorem-of-calculus",
+      "input": "If $F$ is differentiable on $[a, b]$ with $F' = f$ integrable, then $\\int_a^b f = F(b) - F(a)$.",
+      "name": "FundamentalTheoremOfCalculus",
+      "binders": "(f F : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hF : ∀ x ∈ Set.Icc a b, HasDerivAt F (f x) x) (hf : IntervalIntegrable f MeasureTheory.volume a b)",
+      "conclusion": "∫ x in a..b, f x = F b - F a",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Fundamental theorem of calculus",
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            21
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, 1, zero_le_one, fun x _ => hasDerivAt_const x 0, intervalIntegrable_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "integration-by-parts",
+      "input": "If $F, G$ are differentiable on $[a, b]$ with integrable derivatives $f, g$, then $\\int_a^b F g = F(b)G(b) - F(a)G(a) - \\int_a^b f G$.",
+      "name": "IntegrationByParts",
+      "binders": "(F G f g : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hF : ∀ x ∈ Set.Icc a b, HasDerivAt F (f x) x) (hG : ∀ x ∈ Set.Icc a b, HasDerivAt G (g x) x) (hf : IntervalIntegrable f MeasureTheory.volume a b) (hg : IntervalIntegrable g MeasureTheory.volume a b)",
+      "conclusion": "∫ x in a..b, F x * g x = F b * G b - F a * G a - ∫ x in a..b, f x * G x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Integration by parts",
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, fun _ => 0, fun _ => 0, 0, 1, zero_le_one, fun x _ => hasDerivAt_const x 0, fun x _ => hasDerivAt_const x 0, intervalIntegrable_const, intervalIntegrable_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "norm-of-vector-integral-le-integral-of-norm",
+      "input": "If $\\mathbf{f} : [a, b] \\to \\mathbb{R}^k$ is integrable, then $\\bigl|\\int_a^b \\mathbf{f}\\bigr| \\leq \\int_a^b |\\mathbf{f}|$.",
+      "name": "NormOfVectorIntegralLeIntegralOfNorm",
+      "binders": "(k : ℕ) (f : ℝ → EuclideanSpace ℝ (Fin k)) (a b : ℝ) (hab : a ≤ b) (hf : IntervalIntegrable f MeasureTheory.volume a b)",
+      "conclusion": "‖∫ x in a..b, f x‖ ≤ ∫ x in a..b, ‖f x‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            0,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 0, 0, 1, zero_le_one, intervalIntegrable_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "nonnegative-continuous-function-with-zero-integral-vanishes",
+      "input": "If $f \\geq 0$ is continuous on $[a, b]$ with $a < b$ and $\\int_a^b f = 0$, then $f = 0$ on $[a, b]$.",
+      "name": "NonnegativeContinuousFunctionWithZeroIntegralVanishes",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hab : a < b) (hc : ContinuousOn f (Set.Icc a b)) (h0 : ∀ x ∈ Set.Icc a b, 0 ≤ f x) (hint : ∫ x in a..b, f x = 0)",
+      "conclusion": "∀ x ∈ Set.Icc a b, f x = 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, zero_lt_one, continuousOn_const, fun x _ => le_rfl, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "youngs-inequality",
+      "input": "Let $p, q > 1$ with $1/p + 1/q = 1$, and $u, v \\geq 0$. Then $uv \\leq u^p/p + v^q/q$.",
+      "name": "YoungsInequality",
+      "binders": "(p q u v : ℝ) (hp : 1 < p) (hpq : 1 / p + 1 / q = 1) (hu : 0 ≤ u) (hv : 0 ≤ v)",
+      "conclusion": "u * v ≤ u ^ p / p + v ^ q / q",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Young's inequality",
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨2, 2, 0, 0, one_lt_two, by norm_num, le_rfl, le_rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "holders-inequality-for-integrals",
+      "input": "Let $p, q > 1$ with $1/p + 1/q = 1$ and $f, g$ continuous on $[a, b]$. Then $\\bigl|\\int_a^b fg\\bigr| \\leq \\bigl(\\int_a^b |f|^p\\bigr)^{1/p} \\bigl(\\int_a^b |g|^q\\bigr)^{1/q}$.",
+      "name": "HoldersInequalityForIntegrals",
+      "binders": "(f g : ℝ → ℝ) (a b p q : ℝ) (hab : a ≤ b) (hp : 1 < p) (hpq : 1 / p + 1 / q = 1) (hf : ContinuousOn f (Set.Icc a b)) (hg : ContinuousOn g (Set.Icc a b))",
+      "conclusion": "|∫ x in a..b, f x * g x| ≤ (∫ x in a..b, |f x| ^ p) ^ (1 / p) * (∫ x in a..b, |g x| ^ q) ^ (1 / q)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Hölder's inequality",
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 0, 1, 2, 2, zero_le_one, one_lt_two, by norm_num, continuousOn_const, continuousOn_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "l2-triangle-inequality-for-continuous-functions",
+      "input": "For $f, g, h$ continuous on $[a, b]$, with $\\|u\\|_2 = \\bigl(\\int_a^b u^2\\bigr)^{1/2}$, one has $\\|f - h\\|_2 \\leq \\|f - g\\|_2 + \\|g - h\\|_2$.",
+      "name": "L2TriangleInequalityForContinuousFunctions",
+      "binders": "(f g h : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hf : ContinuousOn f (Set.Icc a b)) (hg : ContinuousOn g (Set.Icc a b)) (hh : ContinuousOn h (Set.Icc a b))",
+      "conclusion": "(∫ x in a..b, (f x - h x) ^ 2) ^ ((1 : ℝ) / 2) ≤ (∫ x in a..b, (f x - g x) ^ 2) ^ ((1 : ℝ) / 2) + (∫ x in a..b, (g x - h x) ^ 2) ^ ((1 : ℝ) / 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 0, 0, 1, zero_le_one, continuousOn_const, continuousOn_const, continuousOn_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "heisenberg-type-integral-inequality",
+      "input": "Let $f$ be continuously differentiable on $[a, b]$ with $f(a) = f(b) = 0$ and $\\int_a^b f^2 = 1$. Then $\\int_a^b x f(x) f'(x)\\,dx = -\\tfrac12$ and $\\int_a^b f'^2 \\cdot \\int_a^b x^2 f^2 > \\tfrac14$.",
+      "name": "HeisenbergTypeIntegralInequality",
+      "binders": "(f f' : ℝ → ℝ) (a b : ℝ) (hab : a < b) (hd : ∀ x ∈ Set.Icc a b, HasDerivAt f (f' x) x) (hc : ContinuousOn f' (Set.Icc a b)) (ha : f a = 0) (hb : f b = 0) (h1 : ∫ x in a..b, f x ^ 2 = 1)",
+      "conclusion": "∫ x in a..b, x * f x * f' x = -1 / 2 ∧ 1 / 4 < (∫ x in a..b, f' x ^ 2) * ∫ x in a..b, x ^ 2 * f x ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D10"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            15
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: a suitably normalised multiple of `sin(π(x - a)/(b - a))`; the normalisation is a computation, not a term."
+    },
+    {
+      "id": "continuous-nowhere-differentiable-function-exists",
+      "input": "There is a continuous real function on $\\mathbb{R}$ that is differentiable at no point.",
+      "name": "ContinuousNowhereDifferentiableFunctionExists",
+      "binders": "",
+      "conclusion": "∃ f : ℝ → ℝ, Continuous f ∧ ∀ x, ¬ DifferentiableAt ℝ f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Weierstrass function",
+      "msc": [
+        "26A27"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            18
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "helly-selection-theorem",
+      "input": "Every sequence of monotonically increasing functions $f_n : \\mathbb{R} \\to [0, 1]$ has a subsequence converging at every real point.",
+      "name": "HellySelectionTheorem",
+      "binders": "(f : ℕ → ℝ → ℝ) (hm : ∀ n, Monotone (f n)) (hb : ∀ n x, f n x ∈ Set.Icc (0 : ℝ) 1)",
+      "conclusion": "∃ φ : ℕ → ℕ, StrictMono φ ∧ ∀ x, ∃ l, Filter.Tendsto (fun k => f (φ k) x) Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Helly's selection theorem",
+      "msc": [
+        "26A48"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ _ => 0, fun n => monotone_const, fun n x => ⟨le_rfl, zero_le_one⟩, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "continuous-implies-differentiable",
+      "input": "A real function continuous at a point is differentiable there.",
+      "name": "ContinuousImpliesDifferentiable",
+      "binders": "(f : ℝ → ℝ) (x : ℝ) (h : ContinuousAt f x)",
+      "conclusion": "DifferentiableAt ℝ f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "differentiable-implies-continuous",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `differentiable-implies-continuous`, its converse, which Rudin's remark after 5.2 refutes: `|x|` is continuous and not differentiable at 0. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "mean-value-theorem-complex-valued",
+      "input": "If $f : [a, b] \\to \\mathbb{C}$ is continuous on $[a, b]$ and differentiable on $(a, b)$, then $f(b) - f(a) = (b - a) f'(x)$ for some $x \\in (a, b)$.",
+      "name": "MeanValueTheoremComplexValued",
+      "binders": "(f : ℝ → ℂ) (a b : ℝ) (hab : a < b) (hc : ContinuousOn f (Set.Icc a b)) (hd : DifferentiableOn ℝ f (Set.Ioo a b))",
+      "conclusion": "∃ x ∈ Set.Ioo a b, f b - f a = (b - a) * deriv f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "mean-value-theorem",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `mean-value-theorem` for complex-valued functions, Rudin's Example 5.17: `f(x) = e^{ix}` on `[0, 2π]` has `f(2π) - f(0) = 0` while `|f'(x)| = 1` everywhere. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "symmetric-second-difference-limit-implies-second-derivative",
+      "input": "If $\\frac{f(x + h) + f(x - h) - 2f(x)}{h^2}$ converges as $h \\to 0$, then $f''(x)$ exists.",
+      "name": "SymmetricSecondDifferenceLimitImpliesSecondDerivative",
+      "binders": "(f : ℝ → ℝ) (x L : ℝ) (h : Filter.Tendsto (fun h => (f (x + h) + f (x - h) - 2 * f x) / h ^ 2) (nhdsWithin 0 {0}ᶜ) (nhds L))",
+      "conclusion": "DifferentiableAt ℝ (deriv f) x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "second-derivative-as-symmetric-limit",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26A24"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `second-derivative-as-symmetric-limit`, its converse, which exercise 5.11 asks to refute: for the sign function at `x = 0` the symmetric second difference is identically 0, while `f` is not even continuous there. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "la-odd-degree-real-root",
+      "input": "Every real polynomial of odd degree has a real root.",
+      "name": "OddDegreeRealPolynomialHasRoot",
+      "binders": "(p : Polynomial ℝ) (h : Odd p.natDegree)",
+      "conclusion": "∃ x : ℝ, p.eval x = 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26C10",
+        "12D10"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            4,
+            1,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨Polynomial.X, by simp⟩",
+      "witness_note": null
+    },
+    {
+      "id": "la-weighted-cauchy-schwarz",
+      "input": "For real numbers $a_1, \\dots, a_n$ and $b_1, \\dots, b_n$, $\\big(\\sum_j a_j b_j\\big)^2 \\le \\big(\\sum_j j a_j^2\\big)\\big(\\sum_j b_j^2 / j\\big)$.",
+      "name": "WeightedCauchySchwarz",
+      "binders": "(n : ℕ) (a b : Fin n → ℝ)",
+      "conclusion": "(∑ j, a j * b j) ^ 2 ≤ (∑ j : Fin n, (((j : ℕ) : ℝ) + 1) * a j ^ 2) * (∑ j : Fin n, b j ^ 2 / (((j : ℕ) : ℝ) + 1))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "26D15",
+        "15A63"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            6,
+            1,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "putnam-2025-a2-lower",
+      "input": "Prove that $1/\\pi$ is the largest real number $a$ for which $a\\,x(\\pi - x) \\leq \\sin x$ holds for every $x \\in [0, \\pi]$.",
+      "name": "Putnam2025A2Lower",
+      "binders": "",
+      "conclusion": "IsGreatest {a : ℝ | ∀ x ∈ Set.Icc (0 : ℝ) Real.pi, a * (x * (Real.pi - x)) ≤ Real.sin x} (1 / Real.pi)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A2, the lower constant",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2025-a2-upper",
+      "input": "Prove that $4/\\pi^{2}$ is the smallest real number $b$ for which $\\sin x \\leq b\\,x(\\pi - x)$ holds for every $x \\in [0, \\pi]$.",
+      "name": "Putnam2025A2Upper",
+      "binders": "",
+      "conclusion": "IsLeast {b : ℝ | ∀ x ∈ Set.Icc (0 : ℝ) Real.pi, Real.sin x ≤ b * (x * (Real.pi - x))} (4 / Real.pi ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A2, the upper constant",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2025-a2-lower-twin",
+      "input": "Prove that $4/\\pi^{2}$ is the largest real number $a$ for which $a\\,x(\\pi - x) \\leq \\sin x$ holds for every $x \\in [0, \\pi]$.",
+      "name": "Putnam2025A2LowerTwin",
+      "binders": "",
+      "conclusion": "IsGreatest {a : ℝ | ∀ x ∈ Set.Icc (0 : ℝ) Real.pi, a * (x * (Real.pi - x)) ≤ Real.sin x} (4 / Real.pi ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2025-a2-lower",
+      "source": "competition",
+      "title": "Putnam 2025 A2, the two constants swapped",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2025-a2-lower`: it names the problem's *other* constant. $4/\\pi^{2}$ is the value of $\\sin x / (x(\\pi - x))$ at $x = \\pi/2$, where the ratio is largest, so it bounds the quotient above and not below; at $x = 1/10$ the claimed inequality reads $0.1233 \\leq 0.0998$. Both constants are in the paper's answer, which is what makes the swap plausible. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2018-a3",
+      "input": "Prove that $480/49$ is the greatest value of $\\sum_{i=1}^{10} \\cos(3x_i)$ over all real numbers $x_1, \\dots, x_{10}$ with $\\sum_{i=1}^{10} \\cos(x_i) = 0$.",
+      "name": "Putnam2018A3",
+      "binders": "",
+      "conclusion": "IsGreatest {t : ℝ | ∃ x : Fin 10 → ℝ, ∑ i, Real.cos (x i) = 0 ∧ ∑ i, Real.cos (3 * x i) = t} (480 / 49)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2018 A3",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2018",
+          "locator": [
+            1,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2025-b2",
+      "input": "Let $f \\colon [0,1] \\to [0,\\infty)$ be continuous and strictly increasing, and let $R$ be the region bounded by $x = 0$, $x = 1$, $y = 0$ and $y = f(x)$. The $x$-coordinate of the centroid of $R$ is $x_1 = \\int_0^1 x f(x)\\,dx / \\int_0^1 f(x)\\,dx$, and the $x$-coordinate of the centroid of the solid obtained by revolving $R$ about the $x$-axis is $x_2 = \\int_0^1 x f(x)^2\\,dx / \\int_0^1 f(x)^2\\,dx$. Prove that $x_1 < x_2$.",
+      "name": "Putnam2025B2",
+      "binders": "(f : ℝ → ℝ) (hc : ContinuousOn f (Set.Icc 0 1)) (hnn : ∀ x ∈ Set.Icc (0 : ℝ) 1, 0 ≤ f x) (hmono : StrictMonoOn f (Set.Icc (0 : ℝ) 1))",
+      "conclusion": "(∫ x in (0 : ℝ)..1, x * f x) / (∫ x in (0 : ℝ)..1, f x) < (∫ x in (0 : ℝ)..1, x * f x ^ 2) / (∫ x in (0 : ℝ)..1, f x ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 B2",
+      "msc": [
+        "26D15"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            2,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun x => x, continuousOn_id, fun x hx => hx.1, strictMono_id.strictMonoOn _, trivial⟩"
+    },
+    {
+      "id": "putnam-2024-a2",
+      "input": "Determine the real polynomials $p$ for which there is a real polynomial $q$ with $p(p(x)) - x = (p(x) - x)^{2} q(x)$ for every real $x$. Prove that these are exactly the polynomials $p(x) = x + c$ and $p(x) = -x + c$ with $c$ real.",
+      "name": "Putnam2024A2",
+      "binders": "(p : Polynomial ℝ)",
+      "conclusion": "(∃ q : Polynomial ℝ, p.comp p - Polynomial.X = (p - Polynomial.X) ^ 2 * q) ↔ ∃ c : ℝ, p = Polynomial.X + Polynomial.C c ∨ p = -Polynomial.X + Polynomial.C c",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2024 A2",
+      "msc": [
+        "26C05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2024",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨Polynomial.X, trivial⟩"
+    },
+    {
+      "id": "putnam-2024-b3",
+      "input": "Let $r_n$ be the $n$th smallest positive solution of $\\tan x = x$, the argument being in radians. Prove that $0 < r_{n+1} - r_n - \\pi < \\frac{1}{(n^{2}+n)\\pi}$ for every $n \\geq 1$.",
+      "name": "Putnam2024B3",
+      "binders": "(r : ℕ → ℝ) (hpos : ∀ n, 0 < n → 0 < r n) (htan : ∀ n, 0 < n → Real.tan (r n) = r n) (hmono : ∀ m n, 0 < m → m < n → r m < r n) (hall : ∀ x : ℝ, 0 < x → Real.tan x = x → ∃ n, 0 < n ∧ r n = x) (n : ℕ) (hn : 1 ≤ n)",
+      "conclusion": "0 < r (n + 1) - r n - Real.pi ∧ r (n + 1) - r n - Real.pi < 1 / (((n : ℝ) ^ 2 + n) * Real.pi)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2024 B3",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2024",
+          "locator": [
+            2,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The binders pin `r` to the increasing enumeration of the positive solutions of $\\tan x = x$, so closing them under `∃` means constructing that enumeration and proving it exhaustive. Recorded as a debt rather than guessed."
+    },
+    {
+      "id": "putnam-2020-a6",
+      "input": "For a positive integer $N$ put $f_N(x) = \\sum_{n=0}^{N} \\frac{N + 1/2 - n}{(N+1)(2n+1)} \\sin((2n+1)x)$. Prove that $\\pi/4$ is the smallest constant $M$ with $f_N(x) \\leq M$ for every $N$ and every real $x$.",
+      "name": "Putnam2020A6",
+      "binders": "",
+      "conclusion": "IsLeast {M : ℝ | ∀ N : ℕ, 0 < N → ∀ x : ℝ, (∑ n ∈ Finset.range (N + 1), ((N : ℝ) + 1 / 2 - (n : ℝ)) / (((N : ℝ) + 1) * (2 * (n : ℝ) + 1)) * Real.sin ((2 * (n : ℝ) + 1) * x)) ≤ M} (Real.pi / 4)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 A6",
+      "msc": [
+        "26D05"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            1,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
     }
   ]
 }

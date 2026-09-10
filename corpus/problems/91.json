@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "putnam-2025-a3",
+      "input": "Alice and Bob play with a string of $n$ digits, each of which is $0$, $1$ or $2$; every digit starts at $0$. A move adds $1$ to one digit or subtracts $1$ from one digit, and is legal only if the resulting string has not occurred before in the game. A player with no legal move loses. Alice moves first. Prove that for every $n \\geq 1$ it is Bob who has a winning strategy.",
+      "name": "Putnam2025A3",
+      "binders": "(n : ℕ) (hn : 0 < n)",
+      "conclusion": "∃ bob : List (Fin n → ℕ) → (Fin n → ℕ), (∀ p : List (Fin n → ℕ), p.head? = some (fun _ => 0) → p.Nodup → (∀ v ∈ p, ∀ i, v i ≤ 2) → List.IsChain (fun a b => ∃ i, (∀ j, j ≠ i → a j = b j) ∧ (b i = a i + 1 ∨ a i = b i + 1)) p → (∀ k, 0 < k → 2 * k < p.length → p[2 * k]? = some (bob (p.take (2 * k)))) → Even p.length → (∃ w, (∀ i, w i ≤ 2) ∧ w ∉ p ∧ ∀ a ∈ p.getLast?, (fun a b => ∃ i, (∀ j, j ≠ i → a j = b j) ∧ (b i = a i + 1 ∨ a i = b i + 1)) a w) → ((∀ i, bob p i ≤ 2) ∧ bob p ∉ p ∧ ∀ a ∈ p.getLast?, (fun a b => ∃ i, (∀ j, j ≠ i → a j = b j) ∧ (b i = a i + 1 ∨ a i = b i + 1)) a (bob p))) ∧ (∀ p : List (Fin n → ℕ), p.head? = some (fun _ => 0) → p.Nodup → (∀ v ∈ p, ∀ i, v i ≤ 2) → List.IsChain (fun a b => ∃ i, (∀ j, j ≠ i → a j = b j) ∧ (b i = a i + 1 ∨ a i = b i + 1)) p → (∀ k, 0 < k → 2 * k < p.length → p[2 * k]? = some (bob (p.take (2 * k)))) → (∀ w, (∀ i, w i ≤ 2) → w ∉ p → ∀ a ∈ p.getLast?, ¬ (fun a b => ∃ i, (∀ j, j ≠ i → a j = b j) ∧ (b i = a i + 1 ∨ a i = b i + 1)) a w) → Odd p.length)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A3",
+      "msc": [
+        "91A46",
+        "05C57"
+      ],
+      "arxiv_override": "math.CO",
+      "override_reason": "MSC 91A derives math.OC from the table, which is right for the optimisation and economics that dominate game theory and wrong for a combinatorial game on $\\{0,1,2\\}^n$: this is where math.CO's own description puts it.",
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, by norm_num, trivial⟩"
+    }
+  ]
+}

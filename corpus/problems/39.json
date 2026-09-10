@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "putnam-2022-b6",
+      "input": "Determine the continuous functions $f$ from the positive reals to the positive reals with $f(xf(y)) + f(yf(x)) = 1 + f(x+y)$ for all $x, y > 0$. Prove that every such $f$ is $f(x) = 1/(1+cx)$ for some $c \\geq 0$.",
+      "name": "Putnam2022B6",
+      "binders": "(f : ℝ → ℝ) (hpos : ∀ x : ℝ, 0 < x → 0 < f x) (hcont : ContinuousOn f (Set.Ioi 0)) (heq : ∀ x y : ℝ, 0 < x → 0 < y → f (x * f y) + f (y * f x) = 1 + f (x + y))",
+      "conclusion": "∃ c : ℝ, 0 ≤ c ∧ ∀ x : ℝ, 0 < x → f x = 1 / (1 + c * x)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2022 B6",
+      "msc": [
+        "39B22"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2022",
+          "locator": [
+            2,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 1, fun _ _ => one_pos, continuousOn_const, fun _ _ _ _ => rfl, trivial⟩"
+    }
+  ]
+}

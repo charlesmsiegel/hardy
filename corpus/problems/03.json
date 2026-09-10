@@ -1,0 +1,235 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "subset-of-countable-countable",
+      "input": "Every subset of a countable set is at most countable.",
+      "name": "SubsetOfCountableCountable",
+      "binders": "{α : Type*} (A E : Set α) (hA : A.Countable) (hE : E ⊆ A)",
+      "conclusion": "E.Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "03E10"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            8
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            12
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `α = ℕ`, `A = E = Set.univ`.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:20:24+00:00",
+        "statement_digest": "d98de3ec8722b660cf1d7225f2da590214963d481478c94b22e581b7df1e2386",
+        "prompt_digest": "e72a5d8ecba183686b28016b94a88e8078becac45b7ee80e271e8c6f6bccc40a",
+        "msc": [
+          "03E10"
+        ],
+        "group": "logic",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "countable-union-of-countable",
+      "input": "The union of a sequence of countable sets is countable.",
+      "name": "CountableUnionOfCountable",
+      "binders": "{α : Type*} (E : ℕ → Set α) (h : ∀ n, (E n).Countable)",
+      "conclusion": "(⋃ n, E n).Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "03E10"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            12
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `α = ℕ`, `E n = {n}`."
+    },
+    {
+      "id": "finite-tuples-of-countable-countable",
+      "input": "Let $A$ be a countable set and $n \\geq 1$. The set of all $n$-tuples of elements of $A$ is countable.",
+      "name": "FiniteTuplesOfCountableCountable",
+      "binders": "{α : Type*} (A : Set α) (hA : A.Countable) (n : ℕ)",
+      "conclusion": "(Set.univ.pi fun _ : Fin n => A).Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "03E10"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `α = ℕ`, `A = Set.univ`, `n = 2`."
+    },
+    {
+      "id": "rationals-countable",
+      "input": "The set of rational numbers is countable.",
+      "name": "RationalsCountable",
+      "binders": "",
+      "conclusion": "Countable ℚ",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "03E10"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            13
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            1,
+            4,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "binary-sequences-uncountable",
+      "input": "The set of all sequences whose terms are $0$ or $1$ is uncountable.",
+      "name": "BinarySequencesUncountable",
+      "binders": "",
+      "conclusion": "¬ Countable (ℕ → Bool)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cantor's diagonal argument",
+      "msc": [
+        "03E10"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "algebraic-numbers-countable",
+      "input": "The set of algebraic complex numbers is countable.",
+      "name": "AlgebraicNumbersCountable",
+      "binders": "",
+      "conclusion": "Set.Countable {z : ℂ | IsAlgebraic ℤ z}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "03E10",
+        "11R04"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    }
+  ]
+}

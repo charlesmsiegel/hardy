@@ -1,0 +1,367 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "ordered-field-square-pos",
+      "input": "In an ordered field, the square of every nonzero element is positive.",
+      "name": "OrderedFieldSquarePos",
+      "binders": "{F : Type*} [Field F] [LinearOrder F] [IsStrictOrderedRing F] (x : F) (hx : x ≠ 0)",
+      "conclusion": "0 < x ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12J15"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            0,
+            18
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `F = ℚ`, `x = 1`.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T06:14:13+00:00",
+        "statement_digest": "ac5003290abd1ffac271066bfda2b08ecff8c3873eefe97eeb15bc0487b8f218",
+        "prompt_digest": "5ab57e3a44206cf8ddf6622c85a80f4b1f81542aaebae7c5ad65a7f8736960d4",
+        "msc": [
+          "12J15"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "la-poly-at-most-degree-roots",
+      "input": "A nonzero polynomial $p$ over a field $K$ has at most $\\deg p$ distinct roots in $K$.",
+      "name": "PolynomialAtMostDegreeRoots",
+      "binders": "{K : Type*} [Field K] [DecidableEq K] (p : Polynomial K) (hp : p ≠ 0)",
+      "conclusion": "p.roots.toFinset.card ≤ p.natDegree",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12E05"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            4,
+            0,
+            3
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a field, a space or an operator type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: $p = 1$ over $\\mathbb{Q}$.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T06:14:28+00:00",
+        "statement_digest": "2da7a736ea0710db0fbeaa75f92bd056670d891e2c32446d0649c13eab3bedf9",
+        "prompt_digest": "d9bb2ba3b1555bfd4a1f30883d91ec132d176600558419ec9bd7da6372ad6587",
+        "msc": [
+          "12E05"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "la-lagrange-interpolation",
+      "input": "Let $K$ be a field, $z_1, \\dots, z_{m+1}$ distinct elements of $K$ and $w_1, \\dots, w_{m+1} \\in K$. Then there is exactly one polynomial $p$ over $K$ of degree at most $m$ with $p(z_j) = w_j$ for every $j$.",
+      "name": "LagrangeInterpolation",
+      "binders": "{K : Type*} [Field K] {m : ℕ} (z w : Fin (m + 1) → K) (hz : Function.Injective z)",
+      "conclusion": "∃! p : Polynomial K, p.degree ≤ m ∧ ∀ j, p.eval (z j) = w j",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12E05",
+        "41A05"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            4,
+            1,
+            2
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a field, a space or an operator type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: $m = 0$, $z = (0)$, $w = (0)$ over $\\mathbb{Q}$.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T06:16:07+00:00",
+        "statement_digest": "c9ad4cce0acc7c25859f20d066f9e6bb9351813e1c1e0af54b0ecf078627739f",
+        "prompt_digest": "588cd1391758e0e01868b5716f158bb9b756285da4274e5f92e86260b7e4f76c",
+        "msc": [
+          "12E05",
+          "41A05"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "la-division-algorithm-unique",
+      "input": "Let $p, q$ be polynomials over a field $K$ with $p \\neq 0$. Then there are unique polynomials $s, r$ with $q = s p + r$ and $\\deg r < \\deg p$.",
+      "name": "PolynomialDivisionUnique",
+      "binders": "{K : Type*} [Field K] (p q : Polynomial K) (hp : p ≠ 0)",
+      "conclusion": "∃! sr : Polynomial K × Polynomial K, q = sr.1 * p + sr.2 ∧ sr.2.degree < p.degree",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12E05",
+        "13F20"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            4,
+            1,
+            3
+          ]
+        },
+        {
+          "source_id": "hoffman-kunze",
+          "locator": [
+            4,
+            4,
+            4
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a field, a space or an operator type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: $p = 1$, $q = 0$ over $\\mathbb{Q}$.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T06:57:32+00:00",
+        "statement_digest": "0e588a45cc248601a0249219f6544fb31bea8e2c7f7ea67e3af8207ff700057f",
+        "prompt_digest": "f7f236db12b9f04fb6a0223af00ea56a1e6bfb683101f9ddb46590cc5db2e675",
+        "msc": [
+          "12E05",
+          "13F20"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "la-distinct-roots-iff-coprime-derivative",
+      "input": "Let $p$ be a nonconstant polynomial over $\\mathbb{C}$ of degree $m$. Then $p$ has $m$ distinct roots if and only if $p$ and its derivative $p'$ have no common root.",
+      "name": "DistinctRootsIffNoCommonRootWithDerivative",
+      "binders": "(p : Polynomial ℂ) (hp : 0 < p.natDegree)",
+      "conclusion": "p.roots.toFinset.card = p.natDegree ↔ ∀ z, p.eval z = 0 → (Polynomial.derivative p).eval z ≠ 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12D10",
+        "30C15"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            4,
+            1,
+            4
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨Polynomial.X, by simp⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T06:58:21+00:00",
+        "statement_digest": "fbfdbd648f202f31f5d225f561d21edb843717b6f10e1c8ddf268934d61c459f",
+        "prompt_digest": "15f079d14fb18c66c52b125f58d21887f9be8a4759872e96db35e6784620bdff",
+        "msc": [
+          "12D10",
+          "30C15"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "la-squarefree-iff-coprime-derivative",
+      "input": "Let $K$ be a field of characteristic zero and $p$ a nonzero polynomial over $K$. Then $p$ is a product of distinct irreducible polynomials (that is, $p$ is squarefree) if and only if $p$ and $p'$ are relatively prime.",
+      "name": "SquarefreeIffCoprimeDerivative",
+      "binders": "{K : Type*} [Field K] [CharZero K] (p : Polynomial K) (hp : p ≠ 0)",
+      "conclusion": "Squarefree p ↔ IsCoprime p (Polynomial.derivative p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12E05",
+        "13F20"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "hoffman-kunze",
+          "locator": [
+            4,
+            5,
+            11
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a field, a space or an operator type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: $p = 1$ over $\\mathbb{Q}$.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T07:15:11+00:00",
+        "statement_digest": "d4368d813325a96a0b36afdb9c3447fcd9d9dc234c9e167195721bea49d8daf2",
+        "prompt_digest": "53d926759271cad03f5fe6cafe917378869f0ad6ab16b94a229d9db80832fa2e",
+        "msc": [
+          "12E05",
+          "13F20"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "la-real-quadratic-factors-iff-discriminant",
+      "input": "Let $\\alpha, \\beta \\in \\mathbb{R}$. The polynomial $x^2 + \\alpha x + \\beta$ factors as $(x - \\lambda_1)(x - \\lambda_2)$ with $\\lambda_1, \\lambda_2 \\in \\mathbb{R}$ if and only if $\\alpha^2 \\ge 4\\beta$.",
+      "name": "RealQuadraticFactorsIffDiscriminant",
+      "binders": "(α β : ℝ)",
+      "conclusion": "(∃ l₁ l₂ : ℝ, Polynomial.X ^ 2 + Polynomial.C α * Polynomial.X + Polynomial.C β = (Polynomial.X - Polynomial.C l₁) * (Polynomial.X - Polynomial.C l₂)) ↔ 4 * β ≤ α ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "12D10",
+        "26C10"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            4,
+            0,
+            11
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨0, 0, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T07:14:33+00:00",
+        "statement_digest": "6330722d3879bd4d357ed6e67e41e0f73ea8fbb75e6f4dd85914cef27133bc4d",
+        "prompt_digest": "af4a56be0123f04337bc1ba39083dee7e651f7a8a0587e1fa3b9598ebc3fcc9c",
+        "msc": [
+          "12D10",
+          "26C10"
+        ],
+        "group": "field-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "parallelogram-law-euclidean",
+      "input": "For vectors $\\mathbf{x}, \\mathbf{y}$ in $\\mathbb{R}^k$, $|\\mathbf{x} + \\mathbf{y}|^2 + |\\mathbf{x} - \\mathbf{y}|^2 = 2|\\mathbf{x}|^2 + 2|\\mathbf{y}|^2$.",
+      "name": "ParallelogramLawEuclidean",
+      "binders": "(k : ℕ) (x y : EuclideanSpace ℝ (Fin k))",
+      "conclusion": "‖x + y‖ ^ 2 + ‖x - y‖ ^ 2 = 2 * ‖x‖ ^ 2 + 2 * ‖y‖ ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Parallelogram law",
+      "msc": [
+        "46C05"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            17
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": "⟨0, 0, 0, trivial⟩",
+      "witness_note": null,
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T00:02:17+00:00",
+        "statement_digest": "d3b788ed9268b5608972e1e626a85f34f719949e0824ce3b8752f219176f380c",
+        "prompt_digest": "0b6316b1f15876d0e519dfeb610ba30c8dec6572a91597e891c1814d5e6d9eee",
+        "msc": [
+          "46C05"
+        ],
+        "group": "functional-analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "bounded-continuous-functions-complete",
+      "input": "The space of bounded continuous complex functions on a metric space, with the supremum metric, is complete.",
+      "name": "BoundedContinuousFunctionsComplete",
+      "binders": "{X : Type*} [MetricSpace X]",
+      "conclusion": "CompleteSpace (BoundedContinuousFunction X ℂ)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "46E15"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            15
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-07T00:17:20+00:00",
+        "statement_digest": "5d4c1dee2199c8e27ca72a251bb724a3322a7631f420e5c94854cd934e5a4c3d",
+        "prompt_digest": "ee3079db4a71bac53a14128a75c302d357db3b4721fd685a41123f8b1230a4e0",
+        "msc": [
+          "46E15"
+        ],
+        "group": "functional-analysis",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "arzela-ascoli",
+      "input": "Let $K$ be a compact metric space and $f_n$ a pointwise bounded, equicontinuous sequence of continuous complex functions on $K$. Then the sequence is uniformly bounded and has a uniformly convergent subsequence.",
+      "name": "ArzelaAscoli",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (f : ℕ → X → ℂ) (hf : ∀ n, Continuous (f n)) (hb : ∀ x, ∃ M, ∀ n, ‖f n x‖ ≤ M) (he : Equicontinuous f)",
+      "conclusion": "(∃ M, ∀ n x, ‖f n x‖ ≤ M) ∧ ∃ (φ : ℕ → ℕ) (g : X → ℂ), StrictMono φ ∧ TendstoUniformly (f ∘ φ) g Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Arzelà–Ascoli theorem",
+      "msc": [
+        "46E15",
+        "54E45"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `f n = 0`."
+    },
+    {
+      "id": "la-parallelogram-norm-is-inner-product",
+      "input": "Let $E$ be a normed space over $\\mathbb{R}$ or $\\mathbb{C}$ whose norm satisfies the parallelogram law $\\|x + y\\|^2 + \\|x - y\\|^2 = 2\\|x\\|^2 + 2\\|y\\|^2$. Then the norm comes from an inner product: $E$ admits an inner product space structure whose underlying normed space (norm and scalar multiplication) is the given one.",
+      "name": "ParallelogramNormComesFromInnerProduct",
+      "binders": "{𝕜 : Type*} [RCLike 𝕜] {E : Type*} [NormedAddCommGroup E] [NormedSpace 𝕜 E] (h : ∀ x y : E, ‖x + y‖ ^ 2 + ‖x - y‖ ^ 2 = 2 * ‖x‖ ^ 2 + 2 * ‖y‖ ^ 2)",
+      "conclusion": "∃ s : InnerProductSpace 𝕜 E, @InnerProductSpace.toNormedSpace 𝕜 E _ _ s = ‹NormedSpace 𝕜 E›",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "46C15",
+        "15A63"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "axler-ladr",
+          "locator": [
+            6,
+            1,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a field, a space or an operator type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: $E = \\mathbb{R}$ with its usual norm."
+    }
+  ]
+}

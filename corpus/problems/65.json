@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "newton-method-converges",
+      "input": "Let $f$ be twice differentiable on $[a, b]$ with $f(a) < 0 < f(b)$, $f' \\geq \\delta > 0$ and $0 \\leq f'' \\leq M$ there, and let $\\xi \\in (a, b)$ be the zero of $f$. If $x_1 \\in (\\xi, b)$ and $x_{n+1} = x_n - f(x_n)/f'(x_n)$, then $x_n \\to \\xi$.",
+      "name": "NewtonMethodConverges",
+      "binders": "(f : ℝ → ℝ) (a b δ M ξ : ℝ) (hab : a < b) (hd : ∀ x ∈ Set.Icc a b, DifferentiableAt ℝ f x) (hd2 : ∀ x ∈ Set.Icc a b, DifferentiableAt ℝ (deriv f) x) (hfa : f a < 0) (hfb : 0 < f b) (hδ : 0 < δ) (h1 : ∀ x ∈ Set.Icc a b, δ ≤ deriv f x) (h2 : ∀ x ∈ Set.Icc a b, 0 ≤ deriv (deriv f) x ∧ deriv (deriv f) x ≤ M) (hξ : ξ ∈ Set.Ioo a b) (hξ0 : f ξ = 0) (x : ℕ → ℝ) (h0 : x 0 ∈ Set.Ioo ξ b) (hx : ∀ n, x (n + 1) = x n - f (x n) / deriv f (x n))",
+      "conclusion": "Filter.Tendsto x Filter.atTop (nhds ξ)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Newton's method",
+      "msc": [
+        "65H05",
+        "26A24"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `f x = x` on `[-1, 1]` with `ξ = 0`, `δ = 1`, `M = 0` and the constant-zero sequence after one step; the hypotheses are routine but numerous, so no term is recorded."
+    }
+  ]
+}

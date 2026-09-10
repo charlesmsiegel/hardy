@@ -1,0 +1,218 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "power-series-radius-of-convergence",
+      "input": "Let $\\sum c_n z^n$ be a complex power series and suppose $|c_n|^{1/n} \\to \\alpha$. The series converges when $|z| \\alpha < 1$ and diverges when $|z| \\alpha > 1$.",
+      "name": "PowerSeriesRadiusOfConvergence",
+      "binders": "(c : ℕ → ℂ) (α : ℝ) (hα : Filter.Tendsto (fun n => ‖c n‖ ^ (1 / (n : ℝ))) Filter.atTop (nhds α)) (z : ℂ)",
+      "conclusion": "(‖z‖ * α < 1 → Summable (fun n => c n * z ^ n)) ∧ (1 < ‖z‖ * α → ¬ Summable (fun n => c n * z ^ n))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "30B10",
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            39
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `c = 0`, `α = 0`, `z = 0`; see the root-test entry for why the limit is not a one-line term."
+    },
+    {
+      "id": "radius-of-n-cubed-series",
+      "input": "The power series $\\sum n^3 z^n$ converges exactly for $|z| < 1$.",
+      "name": "RadiusOfNCubedSeries",
+      "binders": "(z : ℂ)",
+      "conclusion": "Summable (fun n : ℕ => (n : ℂ) ^ 3 * z ^ n) ↔ ‖z‖ < 1",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "30B10",
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "radius-of-two-pow-over-factorial-series",
+      "input": "The power series $\\sum 2^n z^n / n!$ converges for every complex $z$.",
+      "name": "RadiusOfTwoPowOverFactorialSeries",
+      "binders": "(z : ℂ)",
+      "conclusion": "Summable (fun n : ℕ => 2 ^ n / (n.factorial : ℂ) * z ^ n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "30B10",
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "radius-of-two-pow-over-n-squared-series",
+      "input": "The power series $\\sum 2^n z^n / n^2$ converges exactly for $|z| \\leq 1/2$.",
+      "name": "RadiusOfTwoPowOverNSquaredSeries",
+      "binders": "(z : ℂ)",
+      "conclusion": "Summable (fun n : ℕ => 2 ^ n / ((n : ℂ) ^ 2) * z ^ n) ↔ ‖z‖ ≤ 1 / 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "30B10",
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "integer-coefficient-power-series-radius-at-most-one",
+      "input": "If a power series $\\sum c_n z^n$ has integer coefficients, infinitely many of which are nonzero, then it diverges for every $z$ with $|z| > 1$.",
+      "name": "IntegerCoefficientPowerSeriesRadiusAtMostOne",
+      "binders": "(c : ℕ → ℤ) (h : Set.Infinite {n | c n ≠ 0}) (z : ℂ) (hz : 1 < ‖z‖)",
+      "conclusion": "¬ Summable (fun n => (c n : ℂ) * z ^ n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "30B10",
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 1, by simpa using (Set.infinite_univ : (Set.univ : Set ℕ).Infinite), 2, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "putnam-2020-b5",
+      "input": "Let $z_1, z_2, z_3, z_4$ be complex numbers of modulus $1$, none of them equal to $1$. Prove that $3 - z_1 - z_2 - z_3 - z_4 + z_1 z_2 z_3 z_4 \\neq 0$.",
+      "name": "Putnam2020B5",
+      "binders": "(z₁ z₂ z₃ z₄ : ℂ) (h₁ : ‖z₁‖ = 1) (h₂ : ‖z₂‖ = 1) (h₃ : ‖z₃‖ = 1) (h₄ : ‖z₄‖ = 1) (n₁ : z₁ ≠ 1) (n₂ : z₂ ≠ 1) (n₃ : z₃ ≠ 1) (n₄ : z₄ ≠ 1)",
+      "conclusion": "3 - z₁ - z₂ - z₃ - z₄ + z₁ * z₂ * z₃ * z₄ ≠ 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 B5",
+      "msc": [
+        "30A10"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            2,
+            0,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨-1, -1, -1, -1, by simp, by simp, by simp, by simp, by norm_num, by norm_num, by norm_num, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2020-b5-twin",
+      "input": "Let $z_1, z_2, z_3, z_4$ be complex numbers of modulus $1$. Prove that $3 - z_1 - z_2 - z_3 - z_4 + z_1 z_2 z_3 z_4 \\neq 0$.",
+      "name": "Putnam2020B5Twin",
+      "binders": "(z₁ z₂ z₃ z₄ : ℂ) (h₁ : ‖z₁‖ = 1) (h₂ : ‖z₂‖ = 1) (h₃ : ‖z₃‖ = 1) (h₄ : ‖z₄‖ = 1)",
+      "conclusion": "3 - z₁ - z₂ - z₃ - z₄ + z₁ * z₂ * z₃ * z₄ ≠ 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2020-b5",
+      "source": "competition",
+      "title": "Putnam 2020 B5, the hypothesis $z_j \\neq 1$ dropped",
+      "msc": [
+        "30A10"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2020-b5`, and the archetypal one: the four hypotheses $z_j \\neq 1$ are removed and nothing else changes. Taking every $z_j = 1$ gives $3 - 4 + 1 = 0$, so the conclusion fails on the single point the dropped hypothesis excluded. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨-1, -1, -1, -1, by simp, by simp, by simp, by simp, trivial⟩"
+    }
+  ]
+}

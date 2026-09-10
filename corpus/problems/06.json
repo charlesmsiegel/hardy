@@ -1,0 +1,37 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "lower-bound-le-upper-bound",
+      "input": "Let $E$ be a nonempty subset of an ordered set, $\\alpha$ a lower bound of $E$ and $\\beta$ an upper bound of $E$. Then $\\alpha \\leq \\beta$.",
+      "name": "LowerBoundLeUpperBound",
+      "binders": "{S : Type*} [Preorder S] (E : Set S) (hE : E.Nonempty) (α β : S) (hα : α ∈ lowerBounds E) (hβ : β ∈ upperBounds E)",
+      "conclusion": "α ≤ β",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "06A06"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `S = ℝ`, `E = {0}`, `α = β = 0`."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "lipschitz-uniqueness-for-initial-value-problem",
+      "input": "Let $\\phi(x, y)$ satisfy $|\\phi(x, y_2) - \\phi(x, y_1)| \\leq A |y_2 - y_1|$. Then the initial value problem $y' = \\phi(x, y)$, $y(a) = c$ has at most one solution on $[a, b]$.",
+      "name": "LipschitzUniquenessForInitialValueProblem",
+      "binders": "(φ : ℝ → ℝ → ℝ) (a b c A : ℝ) (hL : ∀ x y₁ y₂, |φ x y₂ - φ x y₁| ≤ A * |y₂ - y₁|) (f g : ℝ → ℝ) (hf : ∀ x ∈ Set.Icc a b, HasDerivAt f (φ x (f x)) x) (hg : ∀ x ∈ Set.Icc a b, HasDerivAt g (φ x (g x)) x) (hfa : f a = c) (hga : g a = c)",
+      "conclusion": "∀ x ∈ Set.Icc a b, f x = g x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Uniqueness for Lipschitz initial value problems",
+      "msc": [
+        "34A12"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            5,
+            1,
+            27
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ _ => 0, 0, 1, 0, 0, fun x y₁ y₂ => by simp, fun _ => 0, fun _ => 0, fun x _ => hasDerivAt_const x 0, fun x _ => hasDerivAt_const x 0, rfl, rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "peano-existence-theorem",
+      "input": "Let $\\phi$ be a continuous bounded real function on the strip $0 \\leq x \\leq 1$, $y \\in \\mathbb{R}$. Then the initial value problem $y' = \\phi(x, y)$, $y(0) = c$ has a solution on $[0, 1]$.",
+      "name": "PeanoExistenceTheorem",
+      "binders": "(φ : ℝ → ℝ → ℝ) (hc : Continuous (Function.uncurry φ)) (hb : ∃ M, ∀ x y, |φ x y| ≤ M) (c : ℝ)",
+      "conclusion": "∃ f : ℝ → ℝ, f 0 = c ∧ ∀ x ∈ Set.Icc (0 : ℝ) 1, HasDerivAt f (φ x (f x)) x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Peano existence theorem",
+      "msc": [
+        "34A12"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ _ => 0, continuous_const, ⟨0, fun x y => by simp⟩, 0, trivial⟩",
+      "witness_note": null
+    }
+  ]
+}

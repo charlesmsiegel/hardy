@@ -1,0 +1,2561 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "ball-is-open",
+      "input": "In a metric space, every open ball is an open set.",
+      "name": "BallIsOpen",
+      "binders": "{X : Type*} [MetricSpace X] (p : X) (r : ℝ)",
+      "conclusion": "IsOpen (Metric.ball p r)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "arxiv_override": null,
+      "override_reason": null,
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            19
+          ]
+        }
+      ],
+      "rationale": null,
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `p = 0`, `r = 1`.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-06T05:13:31+00:00",
+        "statement_digest": "8a60fafdd53a370877758870962d59c5530aae31217996cbacf7573d900af0f2",
+        "prompt_digest": "a6f36bcf8bbd531799ba99400039f946556d54c26767779fa130c93f975a6fab",
+        "msc": [
+          "54E35"
+        ],
+        "group": "topology",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
+    },
+    {
+      "id": "limit-point-neighbourhoods-infinite",
+      "input": "Let $E$ be a subset of a metric space and $p$ a limit point of $E$. Every neighbourhood of $p$ contains infinitely many points of $E$.",
+      "name": "LimitPointNeighbourhoodsInfinite",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (p : X) (hp : AccPt p (Filter.principal E)) (r : ℝ) (hr : 0 < r)",
+      "conclusion": "(E ∩ Metric.ball p r).Infinite",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = Set.univ`, `p = 0`, `r = 1`."
+    },
+    {
+      "id": "finite-set-has-no-limit-points",
+      "input": "A finite subset of a metric space has no limit points.",
+      "name": "FiniteSetHasNoLimitPoints",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (hE : E.Finite) (p : X)",
+      "conclusion": "¬ AccPt p (Filter.principal E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "open-iff-complement-closed",
+      "input": "A subset of a metric space is open if and only if its complement is closed.",
+      "name": "OpenIffComplementClosed",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "IsOpen E ↔ IsClosed Eᶜ",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "union-of-open-sets-open",
+      "input": "In a metric space, the union of any collection of open sets is open.",
+      "name": "UnionOfOpenSetsOpen",
+      "binders": "{X : Type*} [MetricSpace X] (S : Set (Set X)) (h : ∀ U ∈ S, IsOpen U)",
+      "conclusion": "IsOpen (⋃₀ S)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `S = ∅`."
+    },
+    {
+      "id": "finite-intersection-of-open-sets-open",
+      "input": "In a metric space, the intersection of finitely many open sets is open.",
+      "name": "FiniteIntersectionOfOpenSetsOpen",
+      "binders": "{X : Type*} [MetricSpace X] {ι : Type*} (s : Finset ι) (U : ι → Set X) (h : ∀ i ∈ s, IsOpen (U i))",
+      "conclusion": "IsOpen (⋂ i ∈ s, U i)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `s = ∅`."
+    },
+    {
+      "id": "closure-is-smallest-closed-superset",
+      "input": "Let $E$ be a subset of a metric space $X$. Its closure $\\bar E$ is closed; $E$ is closed if and only if $E = \\bar E$; and $\\bar E \\subseteq F$ for every closed $F \\supseteq E$.",
+      "name": "ClosureIsSmallestClosedSuperset",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "IsClosed (closure E) ∧ (closure E = E ↔ IsClosed E) ∧ ∀ F : Set X, IsClosed F → E ⊆ F → closure E ⊆ F",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            27
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "relatively-open-iff-trace-of-open",
+      "input": "Let $Y$ be a subset of a metric space $X$. A subset $E$ of $Y$ is open relative to $Y$ if and only if $E = Y \\cap G$ for some open subset $G$ of $X$.",
+      "name": "RelativelyOpenIffTraceOfOpen",
+      "binders": "{X : Type*} [MetricSpace X] (Y : Set X) (E : Set Y)",
+      "conclusion": "IsOpen E ↔ ∃ G : Set X, IsOpen G ∧ E = Subtype.val ⁻¹' G",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54B05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            30
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `Y = Set.univ`, `E = ∅`."
+    },
+    {
+      "id": "compactness-is-intrinsic",
+      "input": "Let $K \\subseteq Y \\subseteq X$ with $X$ a metric space. Then $K$ is compact relative to $X$ if and only if $K$ is compact relative to $Y$.",
+      "name": "CompactnessIsIntrinsic",
+      "binders": "{X : Type*} [MetricSpace X] (Y : Set X) (K : Set Y)",
+      "conclusion": "IsCompact K ↔ IsCompact (Subtype.val '' K)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            33
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `Y = Set.univ`, `K = ∅`."
+    },
+    {
+      "id": "compact-is-closed",
+      "input": "Compact subsets of metric spaces are closed.",
+      "name": "CompactIsClosed",
+      "binders": "{X : Type*} [MetricSpace X] (K : Set X) (hK : IsCompact K)",
+      "conclusion": "IsClosed K",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            34
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `K = ∅`."
+    },
+    {
+      "id": "closed-subset-of-compact-is-compact",
+      "input": "A closed subset of a compact set is compact.",
+      "name": "ClosedSubsetOfCompactIsCompact",
+      "binders": "{X : Type*} [MetricSpace X] (F K : Set X) (hF : IsClosed F) (hK : IsCompact K) (h : F ⊆ K)",
+      "conclusion": "IsCompact F",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            35
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `F = K = ∅`."
+    },
+    {
+      "id": "compact-family-finite-intersection-property",
+      "input": "Let $\\{K_i\\}$ be a family of compact subsets of a metric space such that every finite subfamily has nonempty intersection. Then the whole family has nonempty intersection.",
+      "name": "CompactFamilyFiniteIntersectionProperty",
+      "binders": "{X : Type*} [MetricSpace X] {ι : Type*} (K : ι → Set X) (hK : ∀ i, IsCompact (K i)) (h : ∀ s : Finset ι, (⋂ i ∈ s, K i).Nonempty)",
+      "conclusion": "(⋂ i, K i).Nonempty",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            36
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `ι = Unit`, `K _ = {0}`."
+    },
+    {
+      "id": "nested-compact-sets-nonempty-intersection",
+      "input": "If $K_1 \\supseteq K_2 \\supseteq \\dots$ is a decreasing sequence of nonempty compact subsets of a metric space, then $\\bigcap_n K_n$ is nonempty.",
+      "name": "NestedCompactSetsNonemptyIntersection",
+      "binders": "{X : Type*} [MetricSpace X] (K : ℕ → Set X) (hK : ∀ n, IsCompact (K n)) (hne : ∀ n, (K n).Nonempty) (hmono : Antitone K)",
+      "conclusion": "(⋂ n, K n).Nonempty",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            36
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `K n = {0}`."
+    },
+    {
+      "id": "infinite-subset-of-compact-has-limit-point",
+      "input": "If $E$ is an infinite subset of a compact set $K$ in a metric space, then $E$ has a limit point in $K$.",
+      "name": "InfiniteSubsetOfCompactHasLimitPoint",
+      "binders": "{X : Type*} [MetricSpace X] (K E : Set X) (hK : IsCompact K) (hE : E ⊆ K) (hinf : E.Infinite)",
+      "conclusion": "∃ p ∈ K, AccPt p (Filter.principal E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            37
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `K = Set.Icc 0 1`, `E = {1/(n+1)}`."
+    },
+    {
+      "id": "k-cell-is-compact",
+      "input": "Every $k$-cell $\\{ \\mathbf{x} : a_j \\leq x_j \\leq b_j \\}$ in $\\mathbb{R}^k$ is compact.",
+      "name": "KCellIsCompact",
+      "binders": "(k : ℕ) (a b : Fin k → ℝ)",
+      "conclusion": "IsCompact (Set.Icc a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            40
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 0, 1, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "heine-borel",
+      "input": "A subset $E$ of $\\mathbb{R}^k$ is compact if and only if it is closed and bounded.",
+      "name": "HeineBorel",
+      "binders": "(k : ℕ) (E : Set (EuclideanSpace ℝ (Fin k)))",
+      "conclusion": "IsCompact E ↔ IsClosed E ∧ Bornology.IsBounded E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Heine–Borel theorem",
+      "msc": [
+        "54E45",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            41
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, ∅, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "compact-iff-infinite-subsets-have-limit-points",
+      "input": "A metric space $X$ is compact if and only if every infinite subset of $X$ has a limit point in $X$.",
+      "name": "CompactIffInfiniteSubsetsHaveLimitPoints",
+      "binders": "{X : Type*} [MetricSpace X]",
+      "conclusion": "CompactSpace X ↔ ∀ S : Set X, S.Infinite → ∃ p : X, AccPt p (Filter.principal S)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            0,
+            41
+          ]
+        },
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            26
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ` (both sides false) or `X = Unit` (both sides true)."
+    },
+    {
+      "id": "derived-set-is-closed",
+      "input": "Let $E$ be a subset of a metric space. The set $E'$ of limit points of $E$ is closed.",
+      "name": "DerivedSetIsClosed",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "IsClosed {p : X | AccPt p (Filter.principal E)}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "closure-has-same-limit-points",
+      "input": "A subset $E$ of a metric space and its closure $\\bar E$ have the same limit points.",
+      "name": "ClosureHasSameLimitPoints",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "{p : X | AccPt p (Filter.principal (closure E))} = {p : X | AccPt p (Filter.principal E)}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "closure-of-finite-union",
+      "input": "For finitely many subsets $A_1, \\dots, A_n$ of a metric space, the closure of their union is the union of their closures.",
+      "name": "ClosureOfFiniteUnion",
+      "binders": "{X : Type*} [MetricSpace X] {ι : Type*} (s : Finset ι) (A : ι → Set X)",
+      "conclusion": "closure (⋃ i ∈ s, A i) = ⋃ i ∈ s, closure (A i)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `s = ∅`."
+    },
+    {
+      "id": "union-of-closures-subset-closure-of-union",
+      "input": "For a sequence of subsets $A_1, A_2, \\dots$ of a metric space, $\\bigcup_n \\bar A_n \\subseteq \\overline{\\bigcup_n A_n}$.",
+      "name": "UnionOfClosuresSubsetClosureOfUnion",
+      "binders": "{X : Type*} [MetricSpace X] (A : ℕ → Set X)",
+      "conclusion": "⋃ n, closure (A n) ⊆ closure (⋃ n, A n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `A n = ∅`."
+    },
+    {
+      "id": "interior-is-open-and-characterises-openness",
+      "input": "Let $E$ be a subset of a metric space and $E^\\circ$ its interior. Then $E^\\circ$ is open, and $E$ is open if and only if $E = E^\\circ$.",
+      "name": "InteriorIsOpenAndCharacterisesOpenness",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "IsOpen (interior E) ∧ (IsOpen E ↔ interior E = E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "complement-of-interior-is-closure-of-complement",
+      "input": "For a subset $E$ of a metric space, the complement of the interior of $E$ is the closure of the complement of $E$.",
+      "name": "ComplementOfInteriorIsClosureOfComplement",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "(interior E)ᶜ = closure Eᶜ",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "rational-interval-closed-bounded-not-compact",
+      "input": "In the metric space $\\mathbb{Q}$, the set $E$ of rationals $p$ with $2 < p^2 < 3$ is closed and bounded but not compact.",
+      "name": "RationalIntervalClosedBoundedNotCompact",
+      "binders": "",
+      "conclusion": "IsClosed {p : ℚ | 2 < p ^ 2 ∧ p ^ 2 < 3} ∧ Bornology.IsBounded {p : ℚ | 2 < p ^ 2 ∧ p ^ 2 < 3} ∧ ¬ IsCompact {p : ℚ | 2 < p ^ 2 ∧ p ^ 2 < 3}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "connected-metric-space-uncountable",
+      "input": "A connected metric space with at least two points is uncountable.",
+      "name": "ConnectedMetricSpaceUncountable",
+      "binders": "{X : Type*} [MetricSpace X] [ConnectedSpace X] [Nontrivial X]",
+      "conclusion": "¬ Countable X",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            19
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`."
+    },
+    {
+      "id": "convex-subsets-of-euclidean-space-connected",
+      "input": "Every convex subset of $\\mathbb{R}^k$ is connected.",
+      "name": "ConvexSubsetsOfEuclideanSpaceConnected",
+      "binders": "(k : ℕ) (E : Set (EuclideanSpace ℝ (Fin k))) (hE : Convex ℝ E)",
+      "conclusion": "IsPreconnected E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D05",
+        "52A20"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            21
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, ∅, convex_empty, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "euclidean-space-separable",
+      "input": "$\\mathbb{R}^k$ is separable: it has a countable dense subset.",
+      "name": "EuclideanSpaceSeparable",
+      "binders": "(k : ℕ)",
+      "conclusion": "TopologicalSpace.SeparableSpace (EuclideanSpace ℝ (Fin k))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "separable-metric-space-has-countable-base",
+      "input": "Every separable metric space has a countable base for its topology.",
+      "name": "SeparableMetricSpaceHasCountableBase",
+      "binders": "{X : Type*} [MetricSpace X] [TopologicalSpace.SeparableSpace X]",
+      "conclusion": "SecondCountableTopology X",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`."
+    },
+    {
+      "id": "limit-point-property-implies-separable",
+      "input": "A metric space in which every infinite subset has a limit point is separable.",
+      "name": "LimitPointPropertyImpliesSeparable",
+      "binders": "{X : Type*} [MetricSpace X] (h : ∀ S : Set X, S.Infinite → ∃ p : X, AccPt p (Filter.principal S))",
+      "conclusion": "TopologicalSpace.SeparableSpace X",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`."
+    },
+    {
+      "id": "compact-metric-space-has-countable-base",
+      "input": "Every compact metric space has a countable base, and is therefore separable.",
+      "name": "CompactMetricSpaceHasCountableBase",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X]",
+      "conclusion": "SecondCountableTopology X ∧ TopologicalSpace.SeparableSpace X",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`."
+    },
+    {
+      "id": "condensation-points-form-perfect-set",
+      "input": "Let $E$ be an uncountable subset of $\\mathbb{R}$ and $P$ the set of its condensation points, the points every neighbourhood of which contains uncountably many points of $E$. Then $P$ is perfect and $E \\setminus P$ is at most countable.",
+      "name": "CondensationPointsFormPerfectSet",
+      "binders": "(E : Set ℝ) (hE : ¬ E.Countable)",
+      "conclusion": "Perfect {p : ℝ | ∀ r > 0, ¬ (E ∩ Metric.ball p r).Countable} ∧ (E \\ {p : ℝ | ∀ r > 0, ¬ (E ∩ Metric.ball p r).Countable}).Countable",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35",
+        "26A03"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            27
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `E = Set.univ`, using that ℝ is uncountable; no one-line term is recorded."
+    },
+    {
+      "id": "cantor-bendixson",
+      "input": "Every closed subset of a separable metric space is the union of a perfect set and an at most countable set.",
+      "name": "CantorBendixson",
+      "binders": "{X : Type*} [MetricSpace X] [TopologicalSpace.SeparableSpace X] (C : Set X) (hC : IsClosed C)",
+      "conclusion": "∃ P D : Set X, Perfect P ∧ D.Countable ∧ C = P ∪ D",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cantor–Bendixson theorem",
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            28
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `C = ∅`."
+    },
+    {
+      "id": "baire-for-line-closed-cover",
+      "input": "If $\\mathbb{R}$ is the union of a sequence of closed sets $F_n$, then at least one $F_n$ has nonempty interior.",
+      "name": "BaireForLineClosedCover",
+      "binders": "(F : ℕ → Set ℝ) (hF : ∀ n, IsClosed (F n)) (hU : ⋃ n, F n = Set.univ)",
+      "conclusion": "∃ n, (interior (F n)).Nonempty",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Baire category theorem for the line",
+      "msc": [
+        "54E52",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            30
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => Set.univ, fun _ => isClosed_univ, Set.iUnion_const _, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "baire-for-line-dense-opens",
+      "input": "If $G_1, G_2, \\dots$ are dense open subsets of $\\mathbb{R}$, then $\\bigcap_n G_n$ is dense in $\\mathbb{R}$, and in particular nonempty.",
+      "name": "BaireForLineDenseOpens",
+      "binders": "(G : ℕ → Set ℝ) (hG : ∀ n, IsOpen (G n)) (hd : ∀ n, Dense (G n))",
+      "conclusion": "Dense (⋂ n, G n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E52",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            30
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => Set.univ, fun _ => isOpen_univ, fun _ => dense_univ, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "closure-of-countable-union",
+      "input": "For a sequence of subsets $A_1, A_2, \\dots$ of a metric space, the closure of the union equals the union of the closures.",
+      "name": "ClosureOfCountableUnion",
+      "binders": "{X : Type*} [MetricSpace X] (A : ℕ → Set X)",
+      "conclusion": "closure (⋃ n, A n) = ⋃ n, closure (A n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "closure-of-finite-union",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `closure-of-finite-union`, extending it to countably many sets, which exercise 2.7(b) warns against: with `A n = {1/(n+1)}` in ℝ the left side contains 0 and the right side does not. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "interior-of-closure-eq-interior",
+      "input": "For a subset $E$ of a metric space, $E$ and its closure $\\bar E$ have the same interior.",
+      "name": "InteriorOfClosureEqInterior",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "interior (closure E) = interior E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "interior-is-open-and-characterises-openness",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin answering exercise 2.9(e) the wrong way: for `E = ℚ ⊂ ℝ` the interior of `E` is empty while the interior of its closure is all of ℝ. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "closure-of-interior-eq-closure",
+      "input": "For a subset $E$ of a metric space, $E$ and its interior $E^\\circ$ have the same closure.",
+      "name": "ClosureOfInteriorEqClosure",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "closure (interior E) = closure E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "complement-of-interior-is-closure-of-complement",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin answering exercise 2.9(f) the wrong way: for `E = {0} ⊂ ℝ` the interior is empty, so its closure is empty, while the closure of `E` is `{0}`. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "closed-bounded-implies-compact-in-any-metric-space",
+      "input": "In any metric space, every closed and bounded set is compact.",
+      "name": "ClosedBoundedImpliesCompactInAnyMetricSpace",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (hc : IsClosed E) (hb : Bornology.IsBounded E)",
+      "conclusion": "IsCompact E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "heine-borel",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `heine-borel`, dropping the restriction to Euclidean space, which Rudin's remark after 2.41 flags: in ℚ the set of rationals with `2 < p² < 3` is closed and bounded but not compact (exercise 2.16). Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "limit-of-sequence-unique",
+      "input": "In a metric space, a sequence has at most one limit.",
+      "name": "LimitOfSequenceUnique",
+      "binders": "{X : Type*} [MetricSpace X] (u : ℕ → X) (p p' : X) (h : Filter.Tendsto u Filter.atTop (nhds p)) (h' : Filter.Tendsto u Filter.atTop (nhds p'))",
+      "conclusion": "p = p'",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `u = 0`, `p = p' = 0`."
+    },
+    {
+      "id": "convergent-sequence-bounded",
+      "input": "In a metric space, every convergent sequence is bounded.",
+      "name": "ConvergentSequenceBounded",
+      "binders": "{X : Type*} [MetricSpace X] (u : ℕ → X) (p : X) (h : Filter.Tendsto u Filter.atTop (nhds p))",
+      "conclusion": "Bornology.IsBounded (Set.range u)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `u = 0`, `p = 0`."
+    },
+    {
+      "id": "limit-point-is-limit-of-sequence",
+      "input": "If $p$ is a limit point of a subset $E$ of a metric space, then some sequence of points of $E$ converges to $p$.",
+      "name": "LimitPointIsLimitOfSequence",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (p : X) (hp : AccPt p (Filter.principal E))",
+      "conclusion": "∃ u : ℕ → X, (∀ n, u n ∈ E) ∧ Filter.Tendsto u Filter.atTop (nhds p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = Set.univ`, `p = 0`."
+    },
+    {
+      "id": "compact-space-sequence-has-convergent-subsequence",
+      "input": "Every sequence in a compact metric space has a subsequence converging to a point of the space.",
+      "name": "CompactSpaceSequenceHasConvergentSubsequence",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (u : ℕ → X)",
+      "conclusion": "∃ (p : X) (φ : ℕ → ℕ), StrictMono φ ∧ Filter.Tendsto (u ∘ φ) Filter.atTop (nhds p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `u = fun _ => ()`."
+    },
+    {
+      "id": "subsequential-limits-form-closed-set",
+      "input": "The set of subsequential limits of a sequence in a metric space is closed.",
+      "name": "SubsequentialLimitsFormClosedSet",
+      "binders": "{X : Type*} [MetricSpace X] (u : ℕ → X)",
+      "conclusion": "IsClosed {p : X | ∃ φ : ℕ → ℕ, StrictMono φ ∧ Filter.Tendsto (u ∘ φ) Filter.atTop (nhds p)}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `u = 0`."
+    },
+    {
+      "id": "diameter-of-closure",
+      "input": "For a subset $E$ of a metric space, $\\operatorname{diam} \\bar E = \\operatorname{diam} E$.",
+      "name": "DiameterOfClosure",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X)",
+      "conclusion": "Metric.diam (closure E) = Metric.diam E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "nested-compacts-with-shrinking-diameter",
+      "input": "If $K_1 \\supseteq K_2 \\supseteq \\dots$ are nonempty compact subsets of a metric space with $\\operatorname{diam} K_n \\to 0$, then $\\bigcap_n K_n$ consists of exactly one point.",
+      "name": "NestedCompactsWithShrinkingDiameter",
+      "binders": "{X : Type*} [MetricSpace X] (K : ℕ → Set X) (hK : ∀ n, IsCompact (K n)) (hne : ∀ n, (K n).Nonempty) (hmono : Antitone K) (hd : Filter.Tendsto (fun n => Metric.diam (K n)) Filter.atTop (nhds 0))",
+      "conclusion": "∃ p : X, ⋂ n, K n = {p}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `K n = {0}`."
+    },
+    {
+      "id": "convergent-implies-cauchy",
+      "input": "In a metric space, every convergent sequence is a Cauchy sequence.",
+      "name": "ConvergentImpliesCauchy",
+      "binders": "{X : Type*} [MetricSpace X] (u : ℕ → X) (p : X) (h : Filter.Tendsto u Filter.atTop (nhds p))",
+      "conclusion": "CauchySeq u",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E50"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `u = 0`, `p = 0`."
+    },
+    {
+      "id": "cauchy-sequence-in-compact-space-converges",
+      "input": "In a compact metric space, every Cauchy sequence converges.",
+      "name": "CauchySequenceInCompactSpaceConverges",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (u : ℕ → X) (hu : CauchySeq u)",
+      "conclusion": "∃ p : X, Filter.Tendsto u Filter.atTop (nhds p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`."
+    },
+    {
+      "id": "closed-subset-of-complete-space-complete",
+      "input": "Every closed subset of a complete metric space is complete.",
+      "name": "ClosedSubsetOfCompleteSpaceComplete",
+      "binders": "{X : Type*} [MetricSpace X] [CompleteSpace X] (E : Set X) (hE : IsClosed E)",
+      "conclusion": "IsComplete E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E50"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = ∅`."
+    },
+    {
+      "id": "cauchy-sequence-with-convergent-subsequence-converges",
+      "input": "If a Cauchy sequence in a metric space has a subsequence converging to $p$, then the whole sequence converges to $p$.",
+      "name": "CauchySequenceWithConvergentSubsequenceConverges",
+      "binders": "{X : Type*} [MetricSpace X] (u : ℕ → X) (hu : CauchySeq u) (φ : ℕ → ℕ) (hφ : StrictMono φ) (p : X) (h : Filter.Tendsto (u ∘ φ) Filter.atTop (nhds p))",
+      "conclusion": "Filter.Tendsto u Filter.atTop (nhds p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E50"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `u = 0`, `φ = id`, `p = 0`."
+    },
+    {
+      "id": "cantor-intersection-theorem",
+      "input": "In a complete metric space, if $E_1 \\supseteq E_2 \\supseteq \\dots$ are nonempty closed bounded sets with $\\operatorname{diam} E_n \\to 0$, then $\\bigcap_n E_n$ consists of exactly one point.",
+      "name": "CantorIntersectionTheorem",
+      "binders": "{X : Type*} [MetricSpace X] [CompleteSpace X] (E : ℕ → Set X) (hc : ∀ n, IsClosed (E n)) (hne : ∀ n, (E n).Nonempty) (hb : ∀ n, Bornology.IsBounded (E n)) (hmono : Antitone E) (hd : Filter.Tendsto (fun n => Metric.diam (E n)) Filter.atTop (nhds 0))",
+      "conclusion": "∃ p : X, ⋂ n, E n = {p}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cantor intersection theorem",
+      "msc": [
+        "54E50"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            21
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E n = {0}`."
+    },
+    {
+      "id": "baire-category-theorem",
+      "input": "In a nonempty complete metric space, the intersection of a sequence of dense open sets is nonempty, and in fact dense.",
+      "name": "BaireCategoryTheorem",
+      "binders": "{X : Type*} [MetricSpace X] [CompleteSpace X] [Nonempty X] (G : ℕ → Set X) (hG : ∀ n, IsOpen (G n)) (hd : ∀ n, Dense (G n))",
+      "conclusion": "Dense (⋂ n, G n) ∧ (⋂ n, G n).Nonempty",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Baire category theorem",
+      "msc": [
+        "54E52"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `G n = Set.univ`."
+    },
+    {
+      "id": "distances-between-cauchy-sequences-converge",
+      "input": "If $p_n$ and $q_n$ are Cauchy sequences in a metric space, then $d(p_n, q_n)$ converges.",
+      "name": "DistancesBetweenCauchySequencesConverge",
+      "binders": "{X : Type*} [MetricSpace X] (p q : ℕ → X) (hp : CauchySeq p) (hq : CauchySeq q)",
+      "conclusion": "∃ l : ℝ, Filter.Tendsto (fun n => dist (p n) (q n)) Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E50"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `p = q = 0`."
+    },
+    {
+      "id": "completion-of-metric-space-exists",
+      "input": "Every metric space $X$ embeds isometrically as a dense subset of a complete metric space.",
+      "name": "CompletionOfMetricSpaceExists",
+      "binders": "(X : Type) [MetricSpace X]",
+      "conclusion": "∃ (Y : Type) (_ : MetricSpace Y) (_ : CompleteSpace Y) (φ : X → Y), Isometry φ ∧ Dense (Set.range φ)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Completion of a metric space",
+      "msc": [
+        "54E50"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`."
+    },
+    {
+      "id": "sequential-characterisation-of-limits",
+      "input": "Let $f$ map a subset $E$ of a metric space $X$ into a metric space $Y$, and let $p$ be a limit point of $E$. Then $f(x) \\to q$ as $x \\to p$ if and only if $f(p_n) \\to q$ for every sequence $p_n$ in $E \\setminus \\{p\\}$ converging to $p$.",
+      "name": "SequentialCharacterisationOfLimits",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (E : Set X) (p : X) (q : Y) (hp : AccPt p (Filter.principal E))",
+      "conclusion": "Filter.Tendsto f (nhdsWithin p (E \\ {p})) (nhds q) ↔ ∀ u : ℕ → X, (∀ n, u n ∈ E ∧ u n ≠ p) → Filter.Tendsto u Filter.atTop (nhds p) → Filter.Tendsto (f ∘ u) Filter.atTop (nhds q)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`, `E = Set.univ`, `p = q = 0`."
+    },
+    {
+      "id": "composition-of-continuous-maps",
+      "input": "If $f$ is continuous at $p$ and $g$ is continuous at $f(p)$, then $g \\circ f$ is continuous at $p$.",
+      "name": "CompositionOfContinuousMaps",
+      "binders": "{X Y Z : Type*} [MetricSpace X] [MetricSpace Y] [MetricSpace Z] (f : X → Y) (g : Y → Z) (p : X) (hf : ContinuousAt f p) (hg : ContinuousAt g (f p))",
+      "conclusion": "ContinuousAt (g ∘ f) p",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = Z = ℝ`, `f = g = id`."
+    },
+    {
+      "id": "continuous-iff-preimages-of-open-sets-open",
+      "input": "A map between metric spaces is continuous if and only if the inverse image of every open set is open.",
+      "name": "ContinuousIffPreimagesOfOpenSetsOpen",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y)",
+      "conclusion": "Continuous f ↔ ∀ V : Set Y, IsOpen V → IsOpen (f ⁻¹' V)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`."
+    },
+    {
+      "id": "continuous-iff-preimages-of-closed-sets-closed",
+      "input": "A map between metric spaces is continuous if and only if the inverse image of every closed set is closed.",
+      "name": "ContinuousIffPreimagesOfClosedSetsClosed",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y)",
+      "conclusion": "Continuous f ↔ ∀ C : Set Y, IsClosed C → IsClosed (f ⁻¹' C)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`."
+    },
+    {
+      "id": "sum-product-quotient-of-continuous-functions",
+      "input": "If $f, g$ are continuous complex functions on a metric space, then $f + g$ and $fg$ are continuous, and so is $f/g$ when $g$ has no zero.",
+      "name": "SumProductQuotientOfContinuousFunctions",
+      "binders": "{X : Type*} [MetricSpace X] (f g : X → ℂ) (hf : Continuous f) (hg : Continuous g)",
+      "conclusion": "Continuous (fun x => f x + g x) ∧ Continuous (fun x => f x * g x) ∧ ((∀ x, g x ≠ 0) → Continuous (fun x => f x / g x))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `f = g = 0`."
+    },
+    {
+      "id": "vector-valued-map-continuous-iff-components",
+      "input": "A map $\\mathbf{f}$ from a metric space into $\\mathbb{R}^k$ is continuous if and only if each of its coordinate functions is continuous.",
+      "name": "VectorValuedMapContinuousIffComponents",
+      "binders": "{X : Type*} [MetricSpace X] (k : ℕ) (f : X → EuclideanSpace ℝ (Fin k))",
+      "conclusion": "Continuous f ↔ ∀ j, Continuous (fun x => f x j)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `k = 1`, `f = 0`."
+    },
+    {
+      "id": "continuous-image-of-compact-is-compact",
+      "input": "The image of a compact set under a continuous map between metric spaces is compact.",
+      "name": "ContinuousImageOfCompactIsCompact",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (hf : Continuous f) (K : Set X) (hK : IsCompact K)",
+      "conclusion": "IsCompact (f '' K)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`, `K = ∅`."
+    },
+    {
+      "id": "extreme-value-theorem-compact",
+      "input": "A continuous real function on a nonempty compact metric space attains a maximum and a minimum.",
+      "name": "ExtremeValueTheoremCompact",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] [Nonempty X] (f : X → ℝ) (hf : Continuous f)",
+      "conclusion": "∃ p q : X, ∀ x, f q ≤ f x ∧ f x ≤ f p",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `f = 0`."
+    },
+    {
+      "id": "inverse-of-continuous-bijection-from-compact-is-continuous",
+      "input": "A continuous bijection from a compact metric space onto a metric space has a continuous inverse.",
+      "name": "InverseOfContinuousBijectionFromCompactIsContinuous",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] [CompactSpace X] (f : X → Y) (hf : Continuous f) (hbij : Function.Bijective f)",
+      "conclusion": "∃ g : Y → X, Function.LeftInverse g f ∧ Function.RightInverse g f ∧ Continuous g",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            17
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = Unit`, `f = id`."
+    },
+    {
+      "id": "continuous-on-compact-is-uniformly-continuous",
+      "input": "A continuous map from a compact metric space into a metric space is uniformly continuous.",
+      "name": "ContinuousOnCompactIsUniformlyContinuous",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] [CompactSpace X] (f : X → Y) (hf : Continuous f)",
+      "conclusion": "UniformContinuous f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            19
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = Unit`, `f = id`."
+    },
+    {
+      "id": "continuous-image-of-connected-is-connected",
+      "input": "The image of a connected set under a continuous map between metric spaces is connected.",
+      "name": "ContinuousImageOfConnectedIsConnected",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (hf : Continuous f) (E : Set X) (hE : IsConnected E)",
+      "conclusion": "IsConnected (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            0,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`, `E = {0}`."
+    },
+    {
+      "id": "image-of-closure-subset-closure-of-image",
+      "input": "If $f$ is a continuous map between metric spaces, then $f(\\bar E) \\subseteq \\overline{f(E)}$ for every set $E$.",
+      "name": "ImageOfClosureSubsetClosureOfImage",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (hf : Continuous f) (E : Set X)",
+      "conclusion": "f '' closure E ⊆ closure (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`, `E = ∅`."
+    },
+    {
+      "id": "zero-set-of-continuous-function-closed",
+      "input": "The zero set of a continuous real function on a metric space is closed.",
+      "name": "ZeroSetOfContinuousFunctionClosed",
+      "binders": "{X : Type*} [MetricSpace X] (f : X → ℝ) (hf : Continuous f)",
+      "conclusion": "IsClosed {x | f x = 0}",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `f = 0`."
+    },
+    {
+      "id": "continuous-maps-agreeing-on-dense-set-agree",
+      "input": "Two continuous maps between metric spaces that agree on a dense set agree everywhere.",
+      "name": "ContinuousMapsAgreeingOnDenseSetAgree",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f g : X → Y) (hf : Continuous f) (hg : Continuous g) (E : Set X) (hE : Dense E) (h : ∀ x ∈ E, f x = g x)",
+      "conclusion": "f = g",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = g = id`, `E = Set.univ`."
+    },
+    {
+      "id": "continuous-image-of-dense-set-dense-in-image",
+      "input": "If $f$ is a continuous map between metric spaces and $E$ is dense in $X$, then $f(E)$ is dense in $f(X)$.",
+      "name": "ContinuousImageOfDenseSetDenseInImage",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (hf : Continuous f) (E : Set X) (hE : Dense E)",
+      "conclusion": "Set.range f ⊆ closure (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`, `E = Set.univ`."
+    },
+    {
+      "id": "tietze-extension-on-line",
+      "input": "A real function continuous on a closed subset $E$ of $\\mathbb{R}$ extends to a continuous function on all of $\\mathbb{R}$.",
+      "name": "TietzeExtensionOnLine",
+      "binders": "(E : Set ℝ) (hE : IsClosed E) (f : ℝ → ℝ) (hf : ContinuousOn f E)",
+      "conclusion": "∃ g : ℝ → ℝ, Continuous g ∧ ∀ x ∈ E, g x = f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C20",
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨∅, isClosed_empty, 0, continuousOn_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "uniformly-continuous-maps-preserve-cauchy-sequences",
+      "input": "A uniformly continuous map between metric spaces carries Cauchy sequences to Cauchy sequences.",
+      "name": "UniformlyContinuousMapsPreserveCauchySequences",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (hf : UniformContinuous f) (u : ℕ → X) (hu : CauchySeq u)",
+      "conclusion": "CauchySeq (f ∘ u)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E40"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = ℝ`, `f = id`, `u = 0`."
+    },
+    {
+      "id": "composition-of-uniformly-continuous-maps",
+      "input": "A uniformly continuous map of a uniformly continuous map is uniformly continuous.",
+      "name": "CompositionOfUniformlyContinuousMaps",
+      "binders": "{X Y Z : Type*} [MetricSpace X] [MetricSpace Y] [MetricSpace Z] (f : X → Y) (g : Y → Z) (hf : UniformContinuous f) (hg : UniformContinuous g)",
+      "conclusion": "UniformContinuous (g ∘ f)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E40"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Y = Z = ℝ`, `f = g = id`."
+    },
+    {
+      "id": "uniformly-continuous-function-on-dense-set-extends",
+      "input": "A real function uniformly continuous on a dense subset $E$ of a metric space $X$ extends to a continuous function on $X$.",
+      "name": "UniformlyContinuousFunctionOnDenseSetExtends",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (hE : Dense E) (f : X → ℝ) (hf : UniformContinuousOn f E)",
+      "conclusion": "∃ g : X → ℝ, Continuous g ∧ ∀ x ∈ E, g x = f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E40"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = Set.univ`, `f = 0`."
+    },
+    {
+      "id": "distance-to-set-zero-iff-in-closure",
+      "input": "Let $E$ be a nonempty subset of a metric space and $\\rho_E(x) = \\inf_{z \\in E} d(x, z)$. Then $\\rho_E(x) = 0$ if and only if $x \\in \\bar E$.",
+      "name": "DistanceToSetZeroIffInClosure",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (hE : E.Nonempty) (x : X)",
+      "conclusion": "Metric.infDist x E = 0 ↔ x ∈ closure E",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = {0}`, `x = 0`."
+    },
+    {
+      "id": "distance-to-set-is-lipschitz",
+      "input": "Let $E$ be a nonempty subset of a metric space and $\\rho_E(x) = \\inf_{z \\in E} d(x, z)$. Then $|\\rho_E(x) - \\rho_E(y)| \\leq d(x, y)$, so $\\rho_E$ is uniformly continuous.",
+      "name": "DistanceToSetIsLipschitz",
+      "binders": "{X : Type*} [MetricSpace X] (E : Set X) (hE : E.Nonempty) (x y : X)",
+      "conclusion": "|Metric.infDist x E - Metric.infDist y E| ≤ dist x y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `E = {0}`, `x = y = 0`."
+    },
+    {
+      "id": "compact-and-closed-disjoint-sets-have-positive-distance",
+      "input": "Let $K$ be a nonempty compact and $F$ a closed subset of a metric space, with $K \\cap F = \\emptyset$. Then there is $\\delta > 0$ with $d(p, q) > \\delta$ for all $p \\in K$, $q \\in F$.",
+      "name": "CompactAndClosedDisjointSetsHavePositiveDistance",
+      "binders": "{X : Type*} [MetricSpace X] (K F : Set X) (hK : IsCompact K) (hne : K.Nonempty) (hF : IsClosed F) (h : Disjoint K F)",
+      "conclusion": "∃ δ > 0, ∀ p ∈ K, ∀ q ∈ F, δ < dist p q",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            21
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `K = {0}`, `F = ∅`."
+    },
+    {
+      "id": "urysohn-for-metric-spaces",
+      "input": "Let $A, B$ be disjoint nonempty closed subsets of a metric space $X$. There is a continuous $f : X \\to [0, 1]$ with $f = 0$ exactly on $A$ and $f = 1$ exactly on $B$.",
+      "name": "UrysohnForMetricSpaces",
+      "binders": "{X : Type*} [MetricSpace X] (A B : Set X) (hA : IsClosed A) (hB : IsClosed B) (h : Disjoint A B) (hA' : A.Nonempty) (hB' : B.Nonempty)",
+      "conclusion": "∃ f : X → ℝ, Continuous f ∧ (∀ x, f x ∈ Set.Icc 0 1) ∧ (∀ x, f x = 0 ↔ x ∈ A) ∧ (∀ x, f x = 1 ↔ x ∈ B)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Urysohn's lemma for metric spaces",
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `A = {0}`, `B = {1}`."
+    },
+    {
+      "id": "every-closed-set-is-a-zero-set",
+      "input": "Every closed subset of a metric space is the zero set of some continuous real function.",
+      "name": "EveryClosedSetIsAZeroSet",
+      "binders": "{X : Type*} [MetricSpace X] (A : Set X) (hA : IsClosed A)",
+      "conclusion": "∃ f : X → ℝ, Continuous f ∧ ∀ x, f x = 0 ↔ x ∈ A",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E35"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `A = ∅`."
+    },
+    {
+      "id": "compact-plus-closed-is-closed",
+      "input": "If $K$ is compact and $C$ is closed in $\\mathbb{R}^k$, then $K + C = \\{\\mathbf{x} + \\mathbf{y} : \\mathbf{x} \\in K, \\mathbf{y} \\in C\\}$ is closed.",
+      "name": "CompactPlusClosedIsClosed",
+      "binders": "(k : ℕ) (K C : Set (EuclideanSpace ℝ (Fin k))) (hK : IsCompact K) (hC : IsClosed C)",
+      "conclusion": "IsClosed (Set.image2 (· + ·) K C)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54D30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, ∅, ∅, isCompact_empty, isClosed_empty, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "image-of-closure-eq-closure-of-image",
+      "input": "If $f$ is a continuous map between metric spaces, then $f(\\bar E) = \\overline{f(E)}$ for every set $E$.",
+      "name": "ImageOfClosureEqClosureOfImage",
+      "binders": "{X Y : Type*} [MetricSpace X] [MetricSpace Y] (f : X → Y) (hf : Continuous f) (E : Set X)",
+      "conclusion": "f '' closure E = closure (f '' E)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "image-of-closure-subset-closure-of-image",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `image-of-closure-subset-closure-of-image`, turning the inclusion exercise 4.2 proves into an equality it asks to refute: `f x = 1/(1 + x²)` on ℝ with `E = ℝ` has `f(E) = (0, 1]` while the closure of the image contains 0. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "continuous-function-on-any-set-extends",
+      "input": "A real function continuous on a subset $E$ of $\\mathbb{R}$ extends to a continuous function on all of $\\mathbb{R}$.",
+      "name": "ContinuousFunctionOnAnySetExtends",
+      "binders": "(E : Set ℝ) (f : ℝ → ℝ) (hf : ContinuousOn f E)",
+      "conclusion": "∃ g : ℝ → ℝ, Continuous g ∧ ∀ x ∈ E, g x = f x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "tietze-extension-on-line",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54C20",
+        "26A15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `tietze-extension-on-line`, dropping the closedness of `E` as exercise 4.5 asks: `1/x` on `(0, 1)` has no continuous extension to ℝ. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "disjoint-closed-sets-have-positive-distance",
+      "input": "Let $K$ and $F$ be nonempty disjoint closed subsets of $\\mathbb{R}$. Then there is $\\delta > 0$ with $|p - q| > \\delta$ for all $p \\in K$, $q \\in F$.",
+      "name": "DisjointClosedSetsHavePositiveDistance",
+      "binders": "(K F : Set ℝ) (hK : IsClosed K) (hF : IsClosed F) (h : Disjoint K F) (hK' : K.Nonempty) (hF' : F.Nonempty)",
+      "conclusion": "∃ δ > 0, ∀ p ∈ K, ∀ q ∈ F, δ < dist p q",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "compact-and-closed-disjoint-sets-have-positive-distance",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `compact-and-closed-disjoint-sets-have-positive-distance`, weakening compact to closed as exercise 4.21 asks: `K = ℕ` and `F = {n + 1/(n + 2)}` are disjoint closed subsets of ℝ at distance 0. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "space-filling-curve-exists",
+      "input": "There is a continuous map of $[0, 1]$ onto the unit square $[0, 1]^2$.",
+      "name": "SpaceFillingCurveExists",
+      "binders": "",
+      "conclusion": "∃ Φ : ℝ → ℝ × ℝ, Continuous Φ ∧ Set.Icc (0 : ℝ) 1 ×ˢ Set.Icc (0 : ℝ) 1 ⊆ Φ '' Set.Icc 0 1",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Peano curve",
+      "msc": [
+        "54F50",
+        "26A30"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "metric-space-embeds-isometrically-in-bounded-continuous-functions",
+      "input": "Every metric space $X$ embeds isometrically into the space of bounded continuous real functions on $X$ with the supremum metric.",
+      "name": "MetricSpaceEmbedsIsometricallyInBoundedContinuousFunctions",
+      "binders": "(X : Type) [MetricSpace X] [Nonempty X]",
+      "conclusion": "∃ Φ : X → BoundedContinuousFunction X ℝ, Isometry Φ",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Kuratowski embedding",
+      "msc": [
+        "54E35",
+        "46E15"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`."
+    }
+  ]
+}

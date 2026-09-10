@@ -122,6 +122,31 @@ matches the changelog head until a release is cut; the page shows that as
 pending rather than as a failure. Any other objection a write would raise
 reverts the write and comes back as the refusal.
 
+## Sources
+
+`sources.json` keys each text by `source_id`. Beyond the citation fields —
+`authors` (a list), `title`, `edition`, `note`, `series`, `volume`,
+`publisher`, `address`, `year` — a record carries:
+
+| Field | Meaning |
+|---|---|
+| `citation_key` | the AMS alpha label the viewer cites the text by, `AM69`, `DF04` |
+| `level` | `first-course` / `advanced-undergraduate` / `graduate`; C6 stratifies on it |
+| `locator_style` | how this book's `(chapter, section, item)` triples read, one of the styles below |
+| `locator_convention` | the same, in prose, for the human |
+| `surveyed` | per-field: which MSC fields the text has been *exhaustively* read for, and at what version |
+
+The styles, because the same triple means different things in different
+books: `chapter-item` (`(ch, 0, n)` is item *ch.n*, `(ch, 1, n)` exercise *n*
+of chapter *ch*; Atiyah–Macdonald, Eisenbud), `section-item` (`(ch, sec, n)`
+is numbered item *n* of the chapter, `n ≥ 100` exercise *n − 100*, and
+`sec = 99` the chapter's end-of-chapter exercises; Dummit–Foote, Lang),
+`numbered-section` (sections numbered across chapters; `(ch, s, n)` is Theorem
+*s.n*, `n ≥ 100` an exercise, `n ≥ 200` a numbered Example; Matsumura) and
+`paragraph` (`(ch, para, 0)` is the paragraph's statement, `1` its corollary,
+`para = 99` the chapter's exercises; Reid). In every style body items sort
+before exercises, which is what the antecedent rule needs.
+
 ## Classification
 
 `taxonomy/msc2020.json` is the whole of MSC2020 as published at

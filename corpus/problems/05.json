@@ -1,0 +1,120 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "putnam-2020-a2",
+      "input": "Let $k$ be a nonnegative integer. Prove that $\\sum_{j=0}^{k} 2^{k-j} \\binom{k+j}{j} = 4^{k}$.",
+      "name": "Putnam2020A2",
+      "binders": "(k : ℕ)",
+      "conclusion": "∑ j ∈ Finset.range (k + 1), 2 ^ (k - j) * Nat.choose (k + j) j = 4 ^ k",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 A2",
+      "msc": [
+        "05A19",
+        "11B65"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            1,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    },
+    {
+      "id": "putnam-2020-a2-twin",
+      "input": "Let $k$ be a nonnegative integer. Prove that $\\sum_{j=0}^{k-1} 2^{k-j} \\binom{k+j}{j} = 4^{k}$.",
+      "name": "Putnam2020A2Twin",
+      "binders": "(k : ℕ)",
+      "conclusion": "∑ j ∈ Finset.range k, 2 ^ (k - j) * Nat.choose (k + j) j = 4 ^ k",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2020-a2",
+      "source": "competition",
+      "title": "Putnam 2020 A2, top term dropped",
+      "msc": [
+        "05A19"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2020-a2`: the sum stops one term short, dropping $\\binom{2k}{k}$. The identity then fails for every $k$ -- at $k = 1$ the left side is $2$ and the right is $4$ -- but an off-by-one in a summation bound is the error a model is likeliest to wave through, which is what this measures. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    },
+    {
+      "id": "putnam-2025-a5",
+      "input": "Let $n \\geq 2$. For a sequence $s = (s_1, \\dots, s_{n-1})$ with each $s_i = \\pm 1$, let $f(s)$ be the number of permutations $(a_1, \\dots, a_n)$ of $\\{1, \\dots, n\\}$ with $s_i(a_{i+1} - a_i) > 0$ for every $i$. Prove that $f(s)$ is largest exactly when $s$ is one of the two alternating sequences, $s_i = (-1)^{i}$ and $s_i = (-1)^{i+1}$.",
+      "name": "Putnam2025A5",
+      "binders": "(n : ℕ) (hn : 2 ≤ n) (f : (ℕ → ℤ) → ℕ) (hf : ∀ t : ℕ → ℤ, f t = Nat.card {a : Equiv.Perm (Fin n) // ∀ i j : Fin n, (j : ℕ) = (i : ℕ) + 1 → 0 < t (i : ℕ) * (((a j : Fin n) : ℕ) - ((a i : Fin n) : ℕ) : ℤ)}) (s : ℕ → ℤ) (hs : ∀ i, i + 1 < n → (s i = 1 ∨ s i = -1))",
+      "conclusion": "(∀ t : ℕ → ℤ, (∀ i, i + 1 < n → (t i = 1 ∨ t i = -1)) → f t ≤ f s) ↔ ((∀ i, i + 1 < n → s i = (-1 : ℤ) ^ i) ∨ (∀ i, i + 1 < n → s i = (-1 : ℤ) ^ (i + 1)))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A5",
+      "msc": [
+        "05A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "`f` is pinned to an `n`-dependent cardinality by `hf`, so closing the binders under `∃` means writing that whole expression again at a fixed `n`. Recorded as a debt rather than guessed."
+    },
+    {
+      "id": "putnam-2024-b1",
+      "input": "Let $n$ and $k$ be positive integers, and fill the square in row $i$ and column $j$ of an $n \\times n$ grid with $i + j - k$. Prove that one can choose $n$ squares, no two in the same row or column, whose entries are exactly $1, 2, \\dots, n$ if and only if $n$ is odd and $k = (n+1)/2$.",
+      "name": "Putnam2024B1",
+      "binders": "(n k : ℕ) (hn : 0 < n) (hk : 0 < k)",
+      "conclusion": "(∃ σ : Equiv.Perm (Fin n), ∀ m : ℤ, (1 ≤ m ∧ m ≤ (n : ℤ)) ↔ ∃ i : Fin n, (((i : ℕ) : ℤ) + 1) + (((σ i : Fin n) : ℕ) : ℤ) + 1 - (k : ℤ) = m) ↔ (Odd n ∧ 2 * k = n + 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2024 B1",
+      "msc": [
+        "05A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2024",
+          "locator": [
+            2,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 1, by norm_num, by norm_num, trivial⟩"
+    }
+  ]
+}

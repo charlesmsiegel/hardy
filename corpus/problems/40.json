@@ -1,0 +1,2366 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "limit-of-sum-and-product",
+      "input": "If complex sequences $s_n \\to s$ and $t_n \\to t$, then $s_n + t_n \\to s + t$ and $s_n t_n \\to st$.",
+      "name": "LimitOfSumAndProduct",
+      "binders": "(s t : ℕ → ℂ) (a b : ℂ) (hs : Filter.Tendsto s Filter.atTop (nhds a)) (ht : Filter.Tendsto t Filter.atTop (nhds b))",
+      "conclusion": "Filter.Tendsto (fun n => s n + t n) Filter.atTop (nhds (a + b)) ∧ Filter.Tendsto (fun n => s n * t n) Filter.atTop (nhds (a * b))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, 0, tendsto_const_nhds, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "limit-of-reciprocal",
+      "input": "If a complex sequence $s_n \\to s$ with every $s_n \\neq 0$ and $s \\neq 0$, then $1/s_n \\to 1/s$.",
+      "name": "LimitOfReciprocal",
+      "binders": "(s : ℕ → ℂ) (a : ℂ) (hs : Filter.Tendsto s Filter.atTop (nhds a)) (h0 : ∀ n, s n ≠ 0) (ha : a ≠ 0)",
+      "conclusion": "Filter.Tendsto (fun n => (s n)⁻¹) Filter.atTop (nhds a⁻¹)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 1, 1, tendsto_const_nhds, fun _ => one_ne_zero, one_ne_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "convergence-in-euclidean-space-is-coordinatewise",
+      "input": "A sequence in $\\mathbb{R}^k$ converges to $\\mathbf{x}$ if and only if each coordinate sequence converges to the corresponding coordinate of $\\mathbf{x}$.",
+      "name": "ConvergenceInEuclideanSpaceIsCoordinatewise",
+      "binders": "(k : ℕ) (x : ℕ → EuclideanSpace ℝ (Fin k)) (l : EuclideanSpace ℝ (Fin k))",
+      "conclusion": "Filter.Tendsto x Filter.atTop (nhds l) ↔ ∀ j, Filter.Tendsto (fun n => x n j) Filter.atTop (nhds (l j))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            4
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, fun _ => 0, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "bolzano-weierstrass-sequences",
+      "input": "Every bounded sequence in $\\mathbb{R}^k$ has a convergent subsequence.",
+      "name": "BolzanoWeierstrassSequences",
+      "binders": "(k : ℕ) (x : ℕ → EuclideanSpace ℝ (Fin k)) (hb : Bornology.IsBounded (Set.range x))",
+      "conclusion": "∃ (p : EuclideanSpace ℝ (Fin k)) (φ : ℕ → ℕ), StrictMono φ ∧ Filter.Tendsto (x ∘ φ) Filter.atTop (nhds p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Bolzano–Weierstrass theorem for sequences",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, fun _ => 0, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "euclidean-space-complete",
+      "input": "In $\\mathbb{R}^k$ every Cauchy sequence converges.",
+      "name": "EuclideanSpaceComplete",
+      "binders": "(k : ℕ) (x : ℕ → EuclideanSpace ℝ (Fin k)) (hx : CauchySeq x)",
+      "conclusion": "∃ p : EuclideanSpace ℝ (Fin k), Filter.Tendsto x Filter.atTop (nhds p)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cauchy criterion",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, fun _ => 0, cauchySeq_const 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "monotone-sequence-converges-iff-bounded",
+      "input": "A monotonically increasing real sequence converges if and only if it is bounded above.",
+      "name": "MonotoneSequenceConvergesIffBounded",
+      "binders": "(s : ℕ → ℝ) (hs : Monotone s)",
+      "conclusion": "(∃ l, Filter.Tendsto s Filter.atTop (nhds l)) ↔ BddAbove (Set.range s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, monotone_const, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "reciprocal-power-tends-to-zero",
+      "input": "For $p > 0$, $1/n^p \\to 0$ as $n \\to \\infty$.",
+      "name": "ReciprocalPowerTendsToZero",
+      "binders": "(p : ℝ) (hp : 0 < p)",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => 1 / (n : ℝ) ^ p) Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, one_pos, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "nth-root-of-constant-tends-to-one",
+      "input": "For $p > 0$, $p^{1/n} \\to 1$ as $n \\to \\infty$.",
+      "name": "NthRootOfConstantTendsToOne",
+      "binders": "(p : ℝ) (hp : 0 < p)",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => p ^ (1 / (n : ℝ))) Filter.atTop (nhds 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, one_pos, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "nth-root-of-n-tends-to-one",
+      "input": "$n^{1/n} \\to 1$ as $n \\to \\infty$.",
+      "name": "NthRootOfNTendsToOne",
+      "binders": "",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => (n : ℝ) ^ (1 / (n : ℝ))) Filter.atTop (nhds 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "polynomial-over-exponential-tends-to-zero",
+      "input": "For $p > 0$ and real $\\alpha$, $n^\\alpha / (1 + p)^n \\to 0$ as $n \\to \\infty$.",
+      "name": "PolynomialOverExponentialTendsToZero",
+      "binders": "(p α : ℝ) (hp : 0 < p)",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => (n : ℝ) ^ α / (1 + p) ^ n) Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 0, one_pos, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "geometric-sequence-tends-to-zero",
+      "input": "If $|x| < 1$ then $x^n \\to 0$ as $n \\to \\infty$.",
+      "name": "GeometricSequenceTendsToZero",
+      "binders": "(x : ℝ) (hx : |x| < 1)",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => x ^ n) Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cauchy-criterion-for-series",
+      "input": "A series $\\sum a_n$ of complex numbers converges if and only if for every $\\varepsilon > 0$ there is $N$ such that $\\bigl|\\sum_{k=n}^m a_k\\bigr| \\leq \\varepsilon$ whenever $m \\geq n \\geq N$.",
+      "name": "CauchyCriterionForSeries",
+      "binders": "(a : ℕ → ℂ)",
+      "conclusion": "(∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)) ↔ ∀ ε > 0, ∃ N : ℕ, ∀ m n : ℕ, N ≤ n → n ≤ m → ‖∑ k ∈ Finset.Icc n m, a k‖ ≤ ε",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "terms-of-convergent-series-tend-to-zero",
+      "input": "If the series $\\sum a_n$ of complex numbers converges, then $a_n \\to 0$.",
+      "name": "TermsOfConvergentSeriesTendToZero",
+      "binders": "(a : ℕ → ℂ) (h : ∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s))",
+      "conclusion": "Filter.Tendsto a Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, ⟨0, by simp⟩, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "nonnegative-series-converges-iff-partial-sums-bounded",
+      "input": "A series of nonnegative real terms converges if and only if its partial sums form a bounded sequence.",
+      "name": "NonnegativeSeriesConvergesIffPartialSumsBounded",
+      "binders": "(a : ℕ → ℝ) (ha : ∀ n, 0 ≤ a n)",
+      "conclusion": "(∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)) ↔ BddAbove (Set.range (fun n => ∑ k ∈ Finset.range n, a k))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => le_rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "comparison-test",
+      "input": "Let $a_n$ be complex and $c_n$ real with $|a_n| \\leq c_n$ for all $n \\geq N_0$. If $\\sum c_n$ converges, so does $\\sum a_n$.",
+      "name": "ComparisonTest",
+      "binders": "(a : ℕ → ℂ) (c : ℕ → ℝ) (N₀ : ℕ) (h : ∀ n ≥ N₀, ‖a n‖ ≤ c n) (hc : Summable c)",
+      "conclusion": "∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Comparison test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, fun _ _ => by simp, summable_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "comparison-test-divergence",
+      "input": "Let $a_n \\geq d_n \\geq 0$ for all $n \\geq N_0$. If $\\sum d_n$ diverges, so does $\\sum a_n$.",
+      "name": "ComparisonTestDivergence",
+      "binders": "(a d : ℕ → ℝ) (N₀ : ℕ) (h : ∀ n ≥ N₀, d n ≤ a n) (hd : ∀ n, 0 ≤ d n) (hdiv : ¬ Summable d)",
+      "conclusion": "¬ Summable a",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a = d = 1`, `N₀ = 0`; that the constant series diverges is `summable_const_iff`, not a one-line term."
+    },
+    {
+      "id": "geometric-series",
+      "input": "For $0 \\leq x < 1$, $\\sum_{n \\geq 0} x^n = 1/(1 - x)$; for $x \\geq 1$ the series diverges.",
+      "name": "GeometricSeries",
+      "binders": "(x : ℝ) (hx : 0 ≤ x)",
+      "conclusion": "(x < 1 → HasSum (fun n : ℕ => x ^ n) (1 - x)⁻¹) ∧ (1 ≤ x → ¬ Summable (fun n : ℕ => x ^ n))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            26
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, le_rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cauchy-condensation-test",
+      "input": "Let $a_1 \\geq a_2 \\geq \\dots \\geq 0$. Then $\\sum a_n$ converges if and only if $\\sum_k 2^k a_{2^k}$ converges.",
+      "name": "CauchyCondensationTest",
+      "binders": "(a : ℕ → ℝ) (ha : Antitone a) (h0 : ∀ n, 0 ≤ a n)",
+      "conclusion": "Summable a ↔ Summable (fun k : ℕ => (2 : ℝ) ^ k * a (2 ^ k))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cauchy condensation test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            27
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            2,
+            4,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, antitone_const, fun _ => le_rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "p-series",
+      "input": "The series $\\sum_{n \\geq 1} 1/n^p$ converges if and only if $p > 1$.",
+      "name": "PSeries",
+      "binders": "(p : ℝ)",
+      "conclusion": "Summable (fun n : ℕ => 1 / (n : ℝ) ^ p) ↔ 1 < p",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "p-series",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            28
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            2,
+            4,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨2, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "log-p-series",
+      "input": "The series $\\sum_{n \\geq 2} 1/(n (\\log n)^p)$ converges if and only if $p > 1$.",
+      "name": "LogPSeries",
+      "binders": "(p : ℝ)",
+      "conclusion": "Summable (fun n : ℕ => 1 / ((n : ℝ) * Real.log n ^ p)) ↔ 1 < p",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            29
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨2, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "euler-limit-for-e",
+      "input": "$(1 + 1/n)^n \\to e$ as $n \\to \\infty$.",
+      "name": "EulerLimitForE",
+      "binders": "",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => (1 + 1 / (n : ℝ)) ^ n) Filter.atTop (nhds (Real.exp 1))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05",
+        "26A09"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            31
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "root-test",
+      "input": "Let $\\sum a_n$ be a complex series and suppose $|a_n|^{1/n} \\to \\alpha$. If $\\alpha < 1$ the series converges; if $\\alpha > 1$ it diverges.",
+      "name": "RootTest",
+      "binders": "(a : ℕ → ℂ) (α : ℝ) (h : Filter.Tendsto (fun n => ‖a n‖ ^ (1 / (n : ℝ))) Filter.atTop (nhds α))",
+      "conclusion": "(α < 1 → ∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)) ∧ (1 < α → ¬ (∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Root test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            33
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a = 0`, `α = 0`: the terms `‖0‖^(1/n)` vanish for `n ≥ 1`; not a one-line term because the `n = 0` term is `0^0 = 1`."
+    },
+    {
+      "id": "ratio-test",
+      "input": "Let $\\sum a_n$ be a complex series with $a_n \\neq 0$ and suppose $|a_{n+1}/a_n| \\to \\alpha$. If $\\alpha < 1$ the series converges; if $|a_{n+1}| \\geq |a_n|$ for all large $n$ it diverges.",
+      "name": "RatioTest",
+      "binders": "(a : ℕ → ℂ) (ha : ∀ n, a n ≠ 0)",
+      "conclusion": "(∀ α : ℝ, α < 1 → Filter.Tendsto (fun n => ‖a (n + 1)‖ / ‖a n‖) Filter.atTop (nhds α) → ∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)) ∧ ((∃ N, ∀ n ≥ N, ‖a n‖ ≤ ‖a (n + 1)‖) → ¬ (∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Ratio test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            34
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 1, fun _ => one_ne_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "summation-by-parts",
+      "input": "Let $a_n, b_n$ be complex and $A_n = \\sum_{k < n} a_k$. Then $\\sum_{k < n} a_k b_k = A_n b_{n-1} - \\sum_{k < n-1} A_{k+1}(b_{k+1} - b_k)$.",
+      "name": "SummationByParts",
+      "binders": "(a b : ℕ → ℂ) (n : ℕ)",
+      "conclusion": "∑ k ∈ Finset.range n, a k * b k = (∑ k ∈ Finset.range n, a k) * b (n - 1) - ∑ k ∈ Finset.range (n - 1), (∑ j ∈ Finset.range (k + 1), a j) * (b (k + 1) - b k)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Abel summation",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            41
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "dirichlet-test",
+      "input": "Suppose the partial sums of the complex series $\\sum a_n$ are bounded, and $b_n$ is a decreasing real sequence tending to $0$. Then $\\sum a_n b_n$ converges.",
+      "name": "DirichletTest",
+      "binders": "(a : ℕ → ℂ) (b : ℕ → ℝ) (hA : ∃ M, ∀ n, ‖∑ k ∈ Finset.range n, a k‖ ≤ M) (hb : Antitone b) (hb0 : Filter.Tendsto b Filter.atTop (nhds 0))",
+      "conclusion": "∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k * b k) Filter.atTop (nhds s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Dirichlet's test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            42
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, ⟨0, fun _ => by simp⟩, antitone_const, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "alternating-series-test",
+      "input": "If $c_n$ is a decreasing real sequence tending to $0$, then $\\sum (-1)^n c_n$ converges.",
+      "name": "AlternatingSeriesTest",
+      "binders": "(c : ℕ → ℝ) (hc : Antitone c) (h0 : Filter.Tendsto c Filter.atTop (nhds 0))",
+      "conclusion": "∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, (-1 : ℝ) ^ k * c k) Filter.atTop (nhds s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Leibniz test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            43
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            2,
+            7,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, antitone_const, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "absolute-convergence-implies-convergence",
+      "input": "If $\\sum |a_n|$ converges, then $\\sum a_n$ converges.",
+      "name": "AbsoluteConvergenceImpliesConvergence",
+      "binders": "(a : ℕ → ℂ) (h : Summable (fun n => ‖a n‖))",
+      "conclusion": "∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            45
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, by simpa using summable_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "sum-of-convergent-series",
+      "input": "If $\\sum a_n = A$ and $\\sum b_n = B$ then $\\sum (a_n + b_n) = A + B$, and $\\sum c a_n = cA$ for every constant $c$.",
+      "name": "SumOfConvergentSeries",
+      "binders": "(a b : ℕ → ℂ) (A B c : ℂ) (ha : Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds A)) (hb : Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, b k) Filter.atTop (nhds B))",
+      "conclusion": "Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, (a k + b k)) Filter.atTop (nhds (A + B)) ∧ Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, c * a k) Filter.atTop (nhds (c * A))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            47
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, 0, 0, by simpa using tendsto_const_nhds, by simpa using tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "mertens-theorem",
+      "input": "If $\\sum a_n$ converges absolutely with sum $A$ and $\\sum b_n$ converges with sum $B$, then the Cauchy product $\\sum c_n$, $c_n = \\sum_{k \\leq n} a_k b_{n-k}$, converges to $AB$.",
+      "name": "MertensTheorem",
+      "binders": "(a b : ℕ → ℂ) (A B : ℂ) (ha : Summable (fun n => ‖a n‖)) (hA : Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds A)) (hB : Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, b k) Filter.atTop (nhds B))",
+      "conclusion": "Filter.Tendsto (fun n => ∑ m ∈ Finset.range n, ∑ k ∈ Finset.range (m + 1), a k * b (m - k)) Filter.atTop (nhds (A * B))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Mertens' theorem",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            50
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, 0, by simpa using summable_zero, by simpa using tendsto_const_nhds, by simpa using tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "abel-cauchy-product",
+      "input": "If $\\sum a_n$, $\\sum b_n$ and their Cauchy product $\\sum c_n$ all converge, with sums $A$, $B$, $C$, then $C = AB$.",
+      "name": "AbelCauchyProduct",
+      "binders": "(a b : ℕ → ℂ) (A B C : ℂ) (hA : Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds A)) (hB : Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, b k) Filter.atTop (nhds B)) (hC : Filter.Tendsto (fun n => ∑ m ∈ Finset.range n, ∑ k ∈ Finset.range (m + 1), a k * b (m - k)) Filter.atTop (nhds C))",
+      "conclusion": "C = A * B",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Abel's theorem on Cauchy products",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            51
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, 0, 0, 0, by simpa using tendsto_const_nhds, by simpa using tendsto_const_nhds, by simpa using tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "riemann-rearrangement",
+      "input": "Let $\\sum a_n$ be a real series that converges but not absolutely, and let $-\\infty \\leq \\alpha \\leq \\beta \\leq \\infty$. There is a rearrangement whose partial sums have lower limit $\\alpha$ and upper limit $\\beta$.",
+      "name": "RiemannRearrangement",
+      "binders": "(a : ℕ → ℝ) (hconv : ∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)) (habs : ¬ Summable a) (α β : EReal) (hαβ : α ≤ β)",
+      "conclusion": "∃ σ : ℕ ≃ ℕ, Filter.liminf (fun n => ((∑ k ∈ Finset.range n, a (σ k) : ℝ) : EReal)) Filter.atTop = α ∧ Filter.limsup (fun n => ((∑ k ∈ Finset.range n, a (σ k) : ℝ) : EReal)) Filter.atTop = β",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Riemann rearrangement theorem",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            54
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: the alternating harmonic series with `α = β = 0`; the non-absolute-convergence proof is not a one-liner, so no closed term is recorded."
+    },
+    {
+      "id": "rearrangement-of-absolutely-convergent-series",
+      "input": "If $\\sum a_n$ converges absolutely, every rearrangement of it converges to the same sum.",
+      "name": "RearrangementOfAbsolutelyConvergentSeries",
+      "binders": "(a : ℕ → ℂ) (h : Summable (fun n => ‖a n‖)) (σ : ℕ ≃ ℕ)",
+      "conclusion": "∑' n, a (σ n) = ∑' n, a n",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            55
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, by simpa using summable_zero, Equiv.refl ℕ, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "convergence-implies-convergence-of-absolute-values",
+      "input": "If a real sequence $s_n$ converges to $s$, then $|s_n|$ converges to $|s|$.",
+      "name": "ConvergenceImpliesConvergenceOfAbsoluteValues",
+      "binders": "(s : ℕ → ℝ) (l : ℝ) (h : Filter.Tendsto s Filter.atTop (nhds l))",
+      "conclusion": "Filter.Tendsto (fun n => |s n|) Filter.atTop (nhds |l|)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "limit-sqrt-n-squared-plus-n-minus-n",
+      "input": "$\\sqrt{n^2 + n} - n \\to 1/2$ as $n \\to \\infty$.",
+      "name": "LimitSqrtNSquaredPlusNMinusN",
+      "binders": "",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => Real.sqrt ((n : ℝ) ^ 2 + n) - n) Filter.atTop (nhds (1 / 2))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "nested-radical-sequence-converges",
+      "input": "Let $s_1 = \\sqrt 2$ and $s_{n+1} = \\sqrt{2 + \\sqrt{s_n}}$. Then $s_n < 2$ for all $n$ and the sequence converges.",
+      "name": "NestedRadicalSequenceConverges",
+      "binders": "(s : ℕ → ℝ) (h0 : s 0 = Real.sqrt 2) (hs : ∀ n, s (n + 1) = Real.sqrt (2 + Real.sqrt (s n)))",
+      "conclusion": "(∀ n, s n < 2) ∧ ∃ l, Filter.Tendsto s Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun n => Nat.rec (Real.sqrt 2) (fun _ t => Real.sqrt (2 + Real.sqrt t)) n, rfl, fun _ => rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "limsup-of-sum-le-sum-of-limsups",
+      "input": "For bounded real sequences $a_n$ and $b_n$, $\\limsup (a_n + b_n) \\leq \\limsup a_n + \\limsup b_n$.",
+      "name": "LimsupOfSumLeSumOfLimsups",
+      "binders": "(a b : ℕ → ℝ) (ha : Bornology.IsBounded (Set.range a)) (hb : Bornology.IsBounded (Set.range b))",
+      "conclusion": "Filter.limsup (fun n => a n + b n) Filter.atTop ≤ Filter.limsup a Filter.atTop + Filter.limsup b Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, by simp, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "sqrt-differences-series-diverges",
+      "input": "The series $\\sum (\\sqrt{n+1} - \\sqrt n)$ diverges.",
+      "name": "SqrtDifferencesSeriesDiverges",
+      "binders": "",
+      "conclusion": "¬ Summable (fun n : ℕ => Real.sqrt (n + 1) - Real.sqrt n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "sqrt-differences-over-n-series-converges",
+      "input": "The series $\\sum (\\sqrt{n+1} - \\sqrt n)/n$ converges.",
+      "name": "SqrtDifferencesOverNSeriesConverges",
+      "binders": "",
+      "conclusion": "Summable (fun n : ℕ => (Real.sqrt (n + 1) - Real.sqrt n) / n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "nth-root-minus-one-power-series-converges",
+      "input": "The series $\\sum (n^{1/n} - 1)^n$ converges.",
+      "name": "NthRootMinusOnePowerSeriesConverges",
+      "binders": "",
+      "conclusion": "Summable (fun n : ℕ => ((n : ℝ) ^ (1 / (n : ℝ)) - 1) ^ n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "series-one-over-one-plus-z-pow",
+      "input": "For complex $z$ with $1 + z^n \\neq 0$ for all $n$, the series $\\sum 1/(1 + z^n)$ converges absolutely if and only if $|z| > 1$.",
+      "name": "SeriesOneOverOnePlusZPow",
+      "binders": "(z : ℂ) (hz : ∀ n : ℕ, 1 + z ^ n ≠ 0)",
+      "conclusion": "Summable (fun n : ℕ => 1 / (1 + z ^ n)) ↔ 1 < ‖z‖",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `z = 2`, where `1 + 2^n` is a positive real; the complex-cast positivity argument is short but not a term."
+    },
+    {
+      "id": "sqrt-an-over-n-converges",
+      "input": "If $a_n \\geq 0$ and $\\sum a_n$ converges, then $\\sum \\sqrt{a_n}/n$ converges.",
+      "name": "SqrtAnOverNConverges",
+      "binders": "(a : ℕ → ℝ) (h0 : ∀ n, 0 ≤ a n) (h : Summable a)",
+      "conclusion": "Summable (fun n : ℕ => Real.sqrt (a n) / n)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => le_rfl, summable_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "abels-test",
+      "input": "If $\\sum a_n$ converges and $b_n$ is a monotone bounded real sequence, then $\\sum a_n b_n$ converges.",
+      "name": "AbelsTest",
+      "binders": "(a b : ℕ → ℝ) (ha : ∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)) (hb : Monotone b ∨ Antitone b) (hbb : Bornology.IsBounded (Set.range b))",
+      "conclusion": "∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k * b k) Filter.atTop (nhds s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Abel's test",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, ⟨0, by simp⟩, Or.inl monotone_const, by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "divergent-positive-series-an-over-one-plus-an",
+      "input": "If $a_n > 0$ and $\\sum a_n$ diverges, then $\\sum a_n/(1 + a_n)$ diverges.",
+      "name": "DivergentPositiveSeriesAnOverOnePlusAn",
+      "binders": "(a : ℕ → ℝ) (ha : ∀ n, 0 < a n) (hd : ¬ Summable a)",
+      "conclusion": "¬ Summable (fun n => a n / (1 + a n))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a n = 1`; the non-summability of the constant sequence is a short argument rather than a term."
+    },
+    {
+      "id": "divergent-positive-series-an-over-sn",
+      "input": "If $a_n > 0$, $\\sum a_n$ diverges and $s_n = a_1 + \\dots + a_n$, then $\\sum a_n / s_n$ diverges.",
+      "name": "DivergentPositiveSeriesAnOverSn",
+      "binders": "(a : ℕ → ℝ) (ha : ∀ n, 0 < a n) (hd : ¬ Summable a)",
+      "conclusion": "¬ Summable (fun n => a n / ∑ k ∈ Finset.range (n + 1), a k)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a n = 1`; see the sibling entry."
+    },
+    {
+      "id": "divergent-positive-series-an-over-sn-squared",
+      "input": "If $a_n > 0$, $\\sum a_n$ diverges and $s_n = a_1 + \\dots + a_n$, then $\\sum a_n / s_n^2$ converges.",
+      "name": "DivergentPositiveSeriesAnOverSnSquared",
+      "binders": "(a : ℕ → ℝ) (ha : ∀ n, 0 < a n) (hd : ¬ Summable a)",
+      "conclusion": "Summable (fun n => a n / (∑ k ∈ Finset.range (n + 1), a k) ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a n = 1`; see the sibling entry."
+    },
+    {
+      "id": "convergent-positive-series-an-over-tail-diverges",
+      "input": "If $a_n > 0$, $\\sum a_n$ converges and $r_n = \\sum_{m \\geq n} a_m$, then $\\sum a_n / r_n$ diverges.",
+      "name": "ConvergentPositiveSeriesAnOverTailDiverges",
+      "binders": "(a : ℕ → ℝ) (ha : ∀ n, 0 < a n) (hs : Summable a)",
+      "conclusion": "¬ Summable (fun n => a n / ∑' m, a (m + n))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a n = (1/2)^n`; the positivity and summability facts are standard but not a single closed term."
+    },
+    {
+      "id": "convergent-positive-series-an-over-sqrt-tail-converges",
+      "input": "If $a_n > 0$, $\\sum a_n$ converges and $r_n = \\sum_{m \\geq n} a_m$, then $\\sum a_n / \\sqrt{r_n}$ converges.",
+      "name": "ConvergentPositiveSeriesAnOverSqrtTailConverges",
+      "binders": "(a : ℕ → ℝ) (ha : ∀ n, 0 < a n) (hs : Summable a)",
+      "conclusion": "Summable (fun n => a n / Real.sqrt (∑' m, a (m + n)))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Satisfiable: `a n = (1/2)^n`; see the sibling entry."
+    },
+    {
+      "id": "cauchy-product-of-absolutely-convergent-series",
+      "input": "The Cauchy product of two absolutely convergent complex series converges absolutely.",
+      "name": "CauchyProductOfAbsolutelyConvergentSeries",
+      "binders": "(a b : ℕ → ℂ) (ha : Summable (fun n => ‖a n‖)) (hb : Summable (fun n => ‖b n‖))",
+      "conclusion": "Summable (fun n => ‖∑ k ∈ Finset.range (n + 1), a k * b (n - k)‖)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, fun _ => 0, by simpa using summable_zero, by simpa using summable_zero, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cesaro-means-converge",
+      "input": "If a real sequence $s_n$ converges to $s$, then its arithmetic means $\\sigma_n = (s_0 + \\dots + s_n)/(n+1)$ converge to $s$.",
+      "name": "CesaroMeansConverge",
+      "binders": "(s : ℕ → ℝ) (l : ℝ) (h : Filter.Tendsto s Filter.atTop (nhds l))",
+      "conclusion": "Filter.Tendsto (fun n => (∑ k ∈ Finset.range (n + 1), s k) / ((n : ℝ) + 1)) Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Cesàro's theorem",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            1,
+            14
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, tendsto_const_nhds, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "terms-tending-to-zero-implies-convergence",
+      "input": "If $a_n \\to 0$, then the series $\\sum a_n$ converges.",
+      "name": "TermsTendingToZeroImpliesConvergence",
+      "binders": "(a : ℕ → ℂ) (h : Filter.Tendsto a Filter.atTop (nhds 0))",
+      "conclusion": "∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "terms-of-convergent-series-tend-to-zero",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `terms-of-convergent-series-tend-to-zero`, its converse, which Rudin warns against immediately after 3.23: the harmonic series has terms tending to 0 and diverges. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "convergence-implies-absolute-convergence",
+      "input": "If $\\sum a_n$ converges, then $\\sum |a_n|$ converges.",
+      "name": "ConvergenceImpliesAbsoluteConvergence",
+      "binders": "(a : ℕ → ℂ) (h : ∃ s, Filter.Tendsto (fun n => ∑ k ∈ Finset.range n, a k) Filter.atTop (nhds s))",
+      "conclusion": "Summable (fun n => ‖a n‖)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "absolute-convergence-implies-convergence",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `absolute-convergence-implies-convergence`, its converse: the alternating harmonic series converges but not absolutely (Rudin 3.46). Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "convergence-of-absolute-values-implies-convergence",
+      "input": "If $|s_n|$ converges, then the real sequence $s_n$ converges.",
+      "name": "ConvergenceOfAbsoluteValuesImpliesConvergence",
+      "binders": "(s : ℕ → ℝ) (h : ∃ l, Filter.Tendsto (fun n => |s n|) Filter.atTop (nhds l))",
+      "conclusion": "∃ l, Filter.Tendsto s Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "convergence-implies-convergence-of-absolute-values",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `convergence-implies-convergence-of-absolute-values`, the converse exercise 3.1 asks about: `s n = (-1)^n` has `|s n| = 1` convergent and does not converge. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "cesaro-convergence-implies-convergence",
+      "input": "If the arithmetic means $\\sigma_n = (s_0 + \\dots + s_n)/(n+1)$ of a real sequence converge, then the sequence $s_n$ converges.",
+      "name": "CesaroConvergenceImpliesConvergence",
+      "binders": "(s : ℕ → ℝ) (h : ∃ l, Filter.Tendsto (fun n => (∑ k ∈ Finset.range (n + 1), s k) / ((n : ℝ) + 1)) Filter.atTop (nhds l))",
+      "conclusion": "∃ l, Filter.Tendsto s Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "cesaro-means-converge",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `cesaro-means-converge`, its converse, which exercise 3.14(b) asks to refute: `s n = (-1)^n` has Cesàro means tending to 0 and does not converge. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "integral-test",
+      "input": "Let $f \\geq 0$ be decreasing on $[1, \\infty)$. Then $\\sum_{n \\geq 1} f(n)$ converges if and only if the improper integral $\\int_1^\\infty f$ converges.",
+      "name": "IntegralTest",
+      "binders": "(f : ℝ → ℝ) (hf : AntitoneOn f (Set.Ici 1)) (h0 : ∀ x ≥ (1 : ℝ), 0 ≤ f x)",
+      "conclusion": "Summable (fun n : ℕ => f (n + 1)) ↔ ∃ l : ℝ, Filter.Tendsto (fun b => ∫ x in (1 : ℝ)..b, f x) Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Integral test",
+      "msc": [
+        "40A05",
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, antitoneOn_const, fun x _ => le_rfl, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "cauchy-criterion-for-uniform-convergence",
+      "input": "A sequence of complex functions $f_n$ on a set $E$ converges uniformly on $E$ if and only if for every $\\varepsilon > 0$ there is $N$ with $|f_n(x) - f_m(x)| \\leq \\varepsilon$ for all $m, n \\geq N$ and all $x \\in E$.",
+      "name": "CauchyCriterionForUniformConvergence",
+      "binders": "{E : Type*} (f : ℕ → E → ℂ)",
+      "conclusion": "(∃ g : E → ℂ, TendstoUniformly f g Filter.atTop) ↔ ∀ ε > 0, ∃ N : ℕ, ∀ m ≥ N, ∀ n ≥ N, ∀ x, ‖f n x - f m x‖ ≤ ε",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            8
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `E = ℝ`, `f n = 0`."
+    },
+    {
+      "id": "uniform-convergence-iff-sup-norm-tends-to-zero",
+      "input": "Let $f_n \\to f$ pointwise on $E$ and $M_n = \\sup_{x \\in E} |f_n(x) - f(x)|$. Then $f_n \\to f$ uniformly on $E$ if and only if $M_n \\to 0$.",
+      "name": "UniformConvergenceIffSupNormTendsToZero",
+      "binders": "{E : Type*} (f : ℕ → E → ℝ) (g : E → ℝ) (hb : ∀ n, BddAbove (Set.range fun x => |f n x - g x|))",
+      "conclusion": "TendstoUniformly f g Filter.atTop ↔ Filter.Tendsto (fun n => ⨆ x, |f n x - g x|) Filter.atTop (nhds 0)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `E = ℝ`, `f n = g = 0`."
+    },
+    {
+      "id": "weierstrass-m-test",
+      "input": "Let $f_n$ be complex functions on a set $E$ with $|f_n(x)| \\leq M_n$ for all $x$, and suppose $\\sum M_n$ converges. Then $\\sum f_n$ converges uniformly on $E$.",
+      "name": "WeierstrassMTest",
+      "binders": "{E : Type*} (f : ℕ → E → ℂ) (M : ℕ → ℝ) (h : ∀ n x, ‖f n x‖ ≤ M n) (hM : Summable M)",
+      "conclusion": "TendstoUniformly (fun N x => ∑ n ∈ Finset.range N, f n x) (fun x => ∑' n, f n x) Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Weierstrass M-test",
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            10
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `E = ℝ`, `f n = 0`, `M = 0`."
+    },
+    {
+      "id": "interchange-of-limits-under-uniform-convergence",
+      "input": "Suppose $f_n \\to f$ uniformly on a set $E$ in a metric space, $x$ is a limit point of $E$, and $f_n(t) \\to A_n$ as $t \\to x$. Then $A_n$ converges and $\\lim_{t \\to x} f(t) = \\lim_n A_n$.",
+      "name": "InterchangeOfLimitsUnderUniformConvergence",
+      "binders": "{X : Type*} [MetricSpace X] (f : ℕ → X → ℂ) (g : X → ℂ) (E : Set X) (h : TendstoUniformlyOn f g Filter.atTop E) (x : X) (hx : AccPt x (Filter.principal E)) (A : ℕ → ℂ) (hA : ∀ n, Filter.Tendsto (f n) (nhdsWithin x (E \\ {x})) (nhds (A n)))",
+      "conclusion": "∃ L, Filter.Tendsto A Filter.atTop (nhds L) ∧ Filter.Tendsto g (nhdsWithin x (E \\ {x})) (nhds L)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            11
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `f n = g = 0`, `E = Set.univ`, `x = 0`, `A = 0`."
+    },
+    {
+      "id": "uniform-limit-of-continuous-functions-continuous",
+      "input": "A uniform limit of continuous complex functions on a metric space is continuous.",
+      "name": "UniformLimitOfContinuousFunctionsContinuous",
+      "binders": "{X : Type*} [MetricSpace X] (f : ℕ → X → ℂ) (g : X → ℂ) (hf : ∀ n, Continuous (f n)) (h : TendstoUniformly f g Filter.atTop)",
+      "conclusion": "Continuous g",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30",
+        "54C35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            12
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `f n = g = 0`."
+    },
+    {
+      "id": "dini-theorem",
+      "input": "Let $K$ be a compact metric space, $f_n$ continuous real functions on $K$ decreasing pointwise to a continuous function $f$. Then $f_n \\to f$ uniformly on $K$.",
+      "name": "DiniTheorem",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (f : ℕ → X → ℝ) (g : X → ℝ) (hf : ∀ n, Continuous (f n)) (hg : Continuous g) (hp : ∀ x, Filter.Tendsto (fun n => f n x) Filter.atTop (nhds (g x))) (hmono : ∀ x, Antitone (fun n => f n x))",
+      "conclusion": "TendstoUniformly f g Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Dini's theorem",
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            13
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `f n = g = 0`."
+    },
+    {
+      "id": "integral-of-uniform-limit",
+      "input": "Let $f_n$ be integrable on $[a, b]$ and $f_n \\to f$ uniformly on $[a, b]$. Then $f$ is integrable and $\\int_a^b f = \\lim_n \\int_a^b f_n$.",
+      "name": "IntegralOfUniformLimit",
+      "binders": "(f : ℕ → ℝ → ℝ) (g : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hf : ∀ n, IntervalIntegrable (f n) MeasureTheory.volume a b) (h : TendstoUniformlyOn f g Filter.atTop (Set.Icc a b))",
+      "conclusion": "IntervalIntegrable g MeasureTheory.volume a b ∧ Filter.Tendsto (fun n => ∫ x in a..b, f n x) Filter.atTop (nhds (∫ x in a..b, g x))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30",
+        "26A42"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => 0, 0, 0, 1, zero_le_one, fun _ => intervalIntegrable_const, Metric.tendstoUniformlyOn_iff.mpr fun ε hε => Filter.Eventually.of_forall fun n x _ => by simpa using hε, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "derivative-of-uniform-limit",
+      "input": "Let $f_n$ be differentiable on $[a, b]$, converging at some point of $[a, b]$, with $f_n'$ converging uniformly on $[a, b]$ to $g'$. Then $f_n$ converges uniformly on $[a, b]$ to a function $g$, and $g' $ is its derivative on $(a, b)$.",
+      "name": "DerivativeOfUniformLimit",
+      "binders": "(f f' : ℕ → ℝ → ℝ) (a b : ℝ) (hab : a < b) (hd : ∀ n, ∀ x ∈ Set.Icc a b, HasDerivAt (f n) (f' n x) x) (x₀ : ℝ) (hx₀ : x₀ ∈ Set.Icc a b) (hconv : ∃ l, Filter.Tendsto (fun n => f n x₀) Filter.atTop (nhds l)) (g' : ℝ → ℝ) (hu : TendstoUniformlyOn f' g' Filter.atTop (Set.Icc a b))",
+      "conclusion": "∃ g : ℝ → ℝ, TendstoUniformlyOn f g Filter.atTop (Set.Icc a b) ∧ ∀ x ∈ Set.Ioo a b, HasDerivAt g (g' x) x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            17
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            6,
+            3,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ _ => 0, fun _ _ => 0, 0, 1, zero_lt_one, fun n x _ => hasDerivAt_const x 0, 0, by simp, ⟨0, tendsto_const_nhds⟩, 0, Metric.tendstoUniformlyOn_iff.mpr fun ε hε => Filter.Eventually.of_forall fun n x _ => by simpa using hε, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "pointwise-bounded-on-countable-set-has-pointwise-convergent-subsequence",
+      "input": "A pointwise bounded sequence of complex functions on a countable set has a subsequence converging at every point of the set.",
+      "name": "PointwiseBoundedOnCountableSetHasPointwiseConvergentSubsequence",
+      "binders": "(f : ℕ → ℕ → ℂ) (hb : ∀ x, ∃ M, ∀ n, ‖f n x‖ ≤ M)",
+      "conclusion": "∃ φ : ℕ → ℕ, StrictMono φ ∧ ∀ x, ∃ l, Filter.Tendsto (fun k => f (φ k) x) Filter.atTop (nhds l)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ _ => 0, fun x => ⟨0, fun n => by simp⟩, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "uniformly-convergent-sequence-on-compact-is-equicontinuous",
+      "input": "A uniformly convergent sequence of continuous complex functions on a compact metric space is equicontinuous.",
+      "name": "UniformlyConvergentSequenceOnCompactIsEquicontinuous",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (f : ℕ → X → ℂ) (hf : ∀ n, Continuous (f n)) (g : X → ℂ) (h : TendstoUniformly f g Filter.atTop)",
+      "conclusion": "Equicontinuous f",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30",
+        "54E45"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            24
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `f n = g = 0`."
+    },
+    {
+      "id": "uniformly-convergent-sequence-of-bounded-functions-uniformly-bounded",
+      "input": "A uniformly convergent sequence of bounded complex functions on a set is uniformly bounded.",
+      "name": "UniformlyConvergentSequenceOfBoundedFunctionsUniformlyBounded",
+      "binders": "{E : Type*} (f : ℕ → E → ℂ) (g : E → ℂ) (hb : ∀ n, ∃ M, ∀ x, ‖f n x‖ ≤ M) (h : TendstoUniformly f g Filter.atTop)",
+      "conclusion": "∃ M, ∀ n x, ‖f n x‖ ≤ M",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `E = ℝ`, `f n = g = 0`."
+    },
+    {
+      "id": "sum-and-bounded-product-of-uniformly-convergent-sequences",
+      "input": "If $f_n \\to f$ and $g_n \\to g$ uniformly on $E$, then $f_n + g_n \\to f + g$ uniformly; if moreover all $f_n$ and $g_n$ are bounded, then $f_n g_n \\to fg$ uniformly.",
+      "name": "SumAndBoundedProductOfUniformlyConvergentSequences",
+      "binders": "{E : Type*} (f g : ℕ → E → ℂ) (F G : E → ℂ) (hf : TendstoUniformly f F Filter.atTop) (hg : TendstoUniformly g G Filter.atTop)",
+      "conclusion": "TendstoUniformly (fun n x => f n x + g n x) (fun x => F x + G x) Filter.atTop ∧ ((∀ n, ∃ M, ∀ x, ‖f n x‖ ≤ M) → (∀ n, ∃ M, ∀ x, ‖g n x‖ ≤ M) → TendstoUniformly (fun n x => f n x * g n x) (fun x => F x * G x) Filter.atTop)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `E = ℝ`, `f n = g n = F = G = 0`."
+    },
+    {
+      "id": "alternating-series-of-functions-uniformly-but-not-absolutely-convergent",
+      "input": "The series $\\sum (-1)^n (x^2 + n)/n^2$ converges uniformly on every bounded interval but converges absolutely for no real $x$.",
+      "name": "AlternatingSeriesOfFunctionsUniformlyButNotAbsolutelyConvergent",
+      "binders": "(M : ℝ)",
+      "conclusion": "(∃ g : ℝ → ℝ, TendstoUniformlyOn (fun N x => ∑ n ∈ Finset.range N, (-1 : ℝ) ^ (n + 1) * (x ^ 2 + (n + 1)) / ((n : ℝ) + 1) ^ 2) g Filter.atTop (Set.Icc (-M) M)) ∧ ∀ x : ℝ, ¬ Summable (fun n : ℕ => (x ^ 2 + (n + 1)) / ((n : ℝ) + 1) ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "x-over-one-plus-n-x-squared-uniform-limit",
+      "input": "The functions $f_n(x) = x/(1 + nx^2)$ converge uniformly on $\\mathbb{R}$ to $0$; their derivatives converge to $0$ at every $x \\neq 0$ but to $1$ at $x = 0$.",
+      "name": "XOverOnePlusNXSquaredUniformLimit",
+      "binders": "",
+      "conclusion": "TendstoUniformly (fun (n : ℕ) (x : ℝ) => x / (1 + n * x ^ 2)) 0 Filter.atTop ∧ (∀ x : ℝ, x ≠ 0 → Filter.Tendsto (fun n : ℕ => deriv (fun x : ℝ => x / (1 + n * x ^ 2)) x) Filter.atTop (nhds 0)) ∧ ∀ n : ℕ, deriv (fun x : ℝ => x / (1 + n * x ^ 2)) 0 = 1",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            7
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "uniform-limit-evaluated-along-convergent-sequence",
+      "input": "Let $f_n$ be continuous complex functions on a metric space converging uniformly to $f$, and $x_n \\to x$. Then $f_n(x_n) \\to f(x)$.",
+      "name": "UniformLimitEvaluatedAlongConvergentSequence",
+      "binders": "{X : Type*} [MetricSpace X] (f : ℕ → X → ℂ) (g : X → ℂ) (hf : ∀ n, Continuous (f n)) (h : TendstoUniformly f g Filter.atTop) (x : ℕ → X) (p : X) (hx : Filter.Tendsto x Filter.atTop (nhds p))",
+      "conclusion": "Filter.Tendsto (fun n => f n (x n)) Filter.atTop (nhds (g p))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            9
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = ℝ`, `f n = g = 0`, `x = 0`, `p = 0`."
+    },
+    {
+      "id": "equicontinuous-pointwise-convergent-on-compact-converges-uniformly",
+      "input": "An equicontinuous sequence of complex functions on a compact metric space that converges pointwise converges uniformly.",
+      "name": "EquicontinuousPointwiseConvergentOnCompactConvergesUniformly",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (f : ℕ → X → ℂ) (he : Equicontinuous f) (g : X → ℂ) (hp : ∀ x, Filter.Tendsto (fun n => f n x) Filter.atTop (nhds (g x)))",
+      "conclusion": "TendstoUniformly f g Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `f n = g = 0`."
+    },
+    {
+      "id": "primitives-of-uniformly-bounded-integrable-functions-have-uniformly-convergent-subsequence",
+      "input": "Let $f_n$ be integrable on $[a, b]$ with $|f_n| \\leq M$ for all $n$, and $F_n(x) = \\int_a^x f_n$. Then some subsequence of $F_n$ converges uniformly on $[a, b]$.",
+      "name": "PrimitivesOfUniformlyBoundedIntegrableFunctionsHaveUniformlyConvergentSubsequence",
+      "binders": "(f : ℕ → ℝ → ℝ) (a b M : ℝ) (hab : a ≤ b) (hint : ∀ n, IntervalIntegrable (f n) MeasureTheory.volume a b) (hb : ∀ n x, |f n x| ≤ M)",
+      "conclusion": "∃ (φ : ℕ → ℕ) (F : ℝ → ℝ), StrictMono φ ∧ TendstoUniformlyOn (fun k x => ∫ t in a..x, f (φ k) t) F Filter.atTop (Set.Icc a b)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            18
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ _ => 0, 0, 1, 0, zero_le_one, fun n => intervalIntegrable_const, fun n x => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "pointwise-limit-of-continuous-functions-continuous",
+      "input": "A pointwise limit of continuous complex functions on a metric space is continuous.",
+      "name": "PointwiseLimitOfContinuousFunctionsContinuous",
+      "binders": "{X : Type*} [MetricSpace X] (f : ℕ → X → ℂ) (g : X → ℂ) (hf : ∀ n, Continuous (f n)) (h : ∀ x, Filter.Tendsto (fun n => f n x) Filter.atTop (nhds (g x)))",
+      "conclusion": "Continuous g",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "uniform-limit-of-continuous-functions-continuous",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30",
+        "54C35"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `uniform-limit-of-continuous-functions-continuous`, weakening uniform to pointwise convergence, which Rudin's Example 7.3 refutes: `x^n` on `[0, 1]` converges pointwise to a discontinuous limit. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "dini-without-compactness",
+      "input": "Let $f_n$ be continuous real functions on a metric space $X$ decreasing pointwise to a continuous function $f$. Then $f_n \\to f$ uniformly on $X$.",
+      "name": "DiniWithoutCompactness",
+      "binders": "{X : Type*} [MetricSpace X] (f : ℕ → X → ℝ) (g : X → ℝ) (hf : ∀ n, Continuous (f n)) (hg : Continuous g) (hp : ∀ x, Filter.Tendsto (fun n => f n x) Filter.atTop (nhds (g x))) (hmono : ∀ x, Antitone (fun n => f n x))",
+      "conclusion": "TendstoUniformly f g Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "dini-theorem",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `dini-theorem`, dropping compactness, which Rudin's remark after 7.13 refutes: `1/(nx + 1)` on `(0, 1)` decreases to 0 pointwise but not uniformly. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "product-of-uniformly-convergent-sequences-converges-uniformly",
+      "input": "If $f_n \\to f$ and $g_n \\to g$ uniformly on a set $E$, then $f_n g_n \\to fg$ uniformly on $E$.",
+      "name": "ProductOfUniformlyConvergentSequencesConvergesUniformly",
+      "binders": "{E : Type*} (f g : ℕ → E → ℂ) (F G : E → ℂ) (hf : TendstoUniformly f F Filter.atTop) (hg : TendstoUniformly g G Filter.atTop)",
+      "conclusion": "TendstoUniformly (fun n x => f n x * g n x) (fun x => F x * G x) Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "sum-and-bounded-product-of-uniformly-convergent-sequences",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `sum-and-bounded-product-of-uniformly-convergent-sequences`, dropping the boundedness the product needs, which exercise 7.3 asks to exhibit: `f n x = x` and `g n x = 1/n` on ℝ converge uniformly, and `x/n` does not converge uniformly to 0. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "convergence-along-all-sequences-implies-uniform-convergence",
+      "input": "Let $f_n$ be continuous complex functions on a metric space $X$ converging pointwise to a continuous $f$, and suppose $f_n(x_n) \\to f(x)$ whenever $x_n \\to x$. Then $f_n \\to f$ uniformly on $X$.",
+      "name": "ConvergenceAlongAllSequencesImpliesUniformConvergence",
+      "binders": "{X : Type*} [MetricSpace X] (f : ℕ → X → ℂ) (g : X → ℂ) (hf : ∀ n, Continuous (f n)) (hg : Continuous g) (h : ∀ (x : ℕ → X) (p : X), Filter.Tendsto x Filter.atTop (nhds p) → Filter.Tendsto (fun n => f n (x n)) Filter.atTop (nhds (g p)))",
+      "conclusion": "TendstoUniformly f g Filter.atTop",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "uniform-limit-evaluated-along-convergent-sequence",
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "40A30"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: ",
+      "rationale": "False twin of `uniform-limit-evaluated-along-convergent-sequence`, the converse exercise 7.9 asks about, which fails without compactness: on `X = ℝ`, `f n x = x/n` satisfies the sequence condition at every point yet does not converge uniformly to 0. Authored as a soundness instrument; it carries no occurrence."
+    },
+    {
+      "id": "putnam-2020-a3",
+      "input": "Let $a_0 = \\pi/2$ and $a_n = \\sin(a_{n-1})$ for $n \\geq 1$. Prove that $\\sum_{n=1}^{\\infty} a_n^{2}$ diverges.",
+      "name": "Putnam2020A3",
+      "binders": "(a : ℕ → ℝ) (h0 : a 0 = Real.pi / 2) (hrec : ∀ n : ℕ, a (n + 1) = Real.sin (a n))",
+      "conclusion": "¬ Summable (fun n : ℕ => a (n + 1) ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 A3",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            1,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun n => Nat.rec (motive := fun _ => ℝ) (Real.pi / 2) (fun _ x => Real.sin x) n, rfl, fun _ => rfl, trivial⟩"
+    },
+    {
+      "id": "putnam-2019-b2",
+      "input": "For $n \\geq 1$ let $a_n = \\sum_{k=1}^{n-1} \\frac{\\sin\\left(\\frac{(2k-1)\\pi}{2n}\\right)}{\\cos^{2}\\left(\\frac{(k-1)\\pi}{2n}\\right)\\cos^{2}\\left(\\frac{k\\pi}{2n}\\right)}$. Prove that $a_n / n^{3}$ tends to $8/\\pi^{3}$ as $n \\to \\infty$.",
+      "name": "Putnam2019B2",
+      "binders": "",
+      "conclusion": "Filter.Tendsto (fun n : ℕ => (∑ k ∈ Finset.Icc 1 (n - 1), Real.sin ((2 * (k : ℝ) - 1) * Real.pi / (2 * (n : ℝ))) / (Real.cos (((k : ℝ) - 1) * Real.pi / (2 * (n : ℝ))) ^ 2 * Real.cos ((k : ℝ) * Real.pi / (2 * (n : ℝ))) ^ 2)) / (n : ℝ) ^ 3) Filter.atTop (nhds (8 / Real.pi ^ 3))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2019 B2",
+      "msc": [
+        "40A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2019",
+          "locator": [
+            2,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    }
+  ]
+}

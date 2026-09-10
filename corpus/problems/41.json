@@ -1,0 +1,202 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "weierstrass-approximation-theorem",
+      "input": "Every real function continuous on $[a, b]$ is the uniform limit of polynomials: for every $\\varepsilon > 0$ there is a polynomial $P$ with $|P(x) - f(x)| < \\varepsilon$ on $[a, b]$.",
+      "name": "WeierstrassApproximationTheorem",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hf : ContinuousOn f (Set.Icc a b)) (ε : ℝ) (hε : 0 < ε)",
+      "conclusion": "∃ p : Polynomial ℝ, ∀ x ∈ Set.Icc a b, |p.eval x - f x| < ε",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Weierstrass approximation theorem",
+      "msc": [
+        "41A10"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            26
+          ]
+        },
+        {
+          "source_id": "abbott",
+          "locator": [
+            8,
+            3,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, continuousOn_const, 1, one_pos, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "stone-weierstrass-real",
+      "input": "Let $K$ be a compact metric space and $\\mathcal{A}$ an algebra of real continuous functions on $K$ containing the constants and separating points. Then $\\mathcal{A}$ is uniformly dense in the space of all real continuous functions on $K$.",
+      "name": "StoneWeierstrassReal",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (A : Subalgebra ℝ (ContinuousMap X ℝ)) (hsep : A.SeparatesPoints)",
+      "conclusion": "A.topologicalClosure = ⊤",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Stone–Weierstrass theorem",
+      "msc": [
+        "41A65",
+        "46E15"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            32
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `A = ⊤`."
+    },
+    {
+      "id": "stone-weierstrass-complex",
+      "input": "Let $K$ be a compact metric space and $\\mathcal{A}$ a self-adjoint algebra of complex continuous functions on $K$ containing the constants and separating points. Then $\\mathcal{A}$ is uniformly dense in the space of all complex continuous functions on $K$.",
+      "name": "StoneWeierstrassComplex",
+      "binders": "{X : Type*} [MetricSpace X] [CompactSpace X] (A : StarSubalgebra ℂ (ContinuousMap X ℂ)) (hsep : A.SeparatesPoints)",
+      "conclusion": "A.topologicalClosure = ⊤",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": "Stone–Weierstrass theorem, complex form",
+      "msc": [
+        "41A65",
+        "46E15"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            0,
+            33
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The statement quantifies over a space or a function type through implicit type binders and instance binders, which `∃` cannot close, so no witness of the checked shape exists. The hypotheses are satisfiable: `X = Unit`, `A = ⊤`."
+    },
+    {
+      "id": "vanishing-moments-imply-zero",
+      "input": "If $f$ is continuous on $[0, 1]$ and $\\int_0^1 f(x) x^n\\,dx = 0$ for every $n = 0, 1, 2, \\dots$, then $f = 0$ on $[0, 1]$.",
+      "name": "VanishingMomentsImplyZero",
+      "binders": "(f : ℝ → ℝ) (hf : ContinuousOn f (Set.Icc 0 1)) (h : ∀ n : ℕ, ∫ x in (0 : ℝ)..1, f x * x ^ n = 0)",
+      "conclusion": "∀ x ∈ Set.Icc (0 : ℝ) 1, f x = 0",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "41A10"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            20
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, continuousOn_const, fun n => by simp, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "square-integrable-function-approximated-by-polynomials-in-mean",
+      "input": "If $f$ is integrable on $[a, b]$ with $f^2$ integrable, then for every $\\varepsilon > 0$ there is a polynomial $P$ with $\\int_a^b |f - P|^2 < \\varepsilon$.",
+      "name": "SquareIntegrableFunctionApproximatedByPolynomialsInMean",
+      "binders": "(f : ℝ → ℝ) (a b : ℝ) (hab : a ≤ b) (hf : IntervalIntegrable f MeasureTheory.volume a b) (hf2 : IntervalIntegrable (fun x => f x ^ 2) MeasureTheory.volume a b) (ε : ℝ) (hε : 0 < ε)",
+      "conclusion": "∃ p : Polynomial ℝ, ∫ x in a..b, (f x - p.eval x) ^ 2 < ε",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "41A10"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            22
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, 0, 1, zero_le_one, intervalIntegrable_const, by simpa using intervalIntegrable_const, 1, one_pos, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "polynomial-iteration-converging-to-absolute-value",
+      "input": "Let $P_0 = 0$ and $P_{n+1}(x) = P_n(x) + (x^2 - P_n(x)^2)/2$. Then $P_n(x) \\to |x|$ uniformly on $[-1, 1]$.",
+      "name": "PolynomialIterationConvergingToAbsoluteValue",
+      "binders": "(P : ℕ → ℝ → ℝ) (h0 : P 0 = 0) (hP : ∀ n x, P (n + 1) x = P n x + (x ^ 2 - (P n x) ^ 2) / 2)",
+      "conclusion": "TendstoUniformlyOn P (fun x => |x|) Filter.atTop (Set.Icc (-1) 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "41A10"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            7,
+            1,
+            23
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun n => Nat.rec (fun _ => 0) (fun _ Q x => Q x + (x ^ 2 - (Q x) ^ 2) / 2) n, rfl, fun _ _ => rfl, trivial⟩",
+      "witness_note": null
+    }
+  ]
+}

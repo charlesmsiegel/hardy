@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.2.1",
+  "corpus_version": "0.5.0",
   "entries": [
     {
       "id": "two-plus-two",
@@ -14,15 +14,33 @@
       "expected": "true",
       "twin_of": null,
       "source": "textbook",
+      "title": null,
       "msc": [
         "11Axx"
       ],
+      "arxiv_override": null,
+      "override_reason": null,
       "difficulty": "routine",
       "occurrences": [],
       "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
-      "status": "candidate",
       "witness": null,
-      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null.",
+      "status": "active",
+      "retired_reason": null,
+      "review": {
+        "reviewer": "Charles Siegel",
+        "reviewed_at": "2026-09-05T18:37:25+00:00",
+        "statement_digest": "cedb7cc924b10bb915e3d4739c13ace8b79997f3bd1be4825646cd8c9b414545",
+        "prompt_digest": "e6d0a566d3bf243dd11d97a0d10195759b0f1f82dad1ca96b1ca9c507037757e",
+        "msc": [
+          "11Axx"
+        ],
+        "group": "number-theory",
+        "verdict": "faithful",
+        "reason": null
+      },
+      "audit": [],
+      "fixtures": []
     },
     {
       "id": "euler-polynomial-small",
@@ -309,6 +327,839 @@
       "status": "candidate",
       "witness": null,
       "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "rational-plus-irrational",
+      "input": "If $r$ is rational and $x$ is irrational, then $r + x$ is irrational, and so is $rx$ when $r \\neq 0$.",
+      "name": "RationalPlusIrrational",
+      "binders": "(r : ℚ) (x : ℝ) (hx : Irrational x)",
+      "conclusion": "Irrational (r + x) ∧ (r ≠ 0 → Irrational (r * x))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11J72"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, Real.sqrt 2, irrational_sqrt_two, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "no-rational-square-twelve",
+      "input": "There is no rational number whose square is $12$.",
+      "name": "NoRationalSquareTwelve",
+      "binders": "",
+      "conclusion": "¬ ∃ q : ℚ, q ^ 2 = 12",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11J72"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            1,
+            1,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "transcendental-real-exists",
+      "input": "There is a real number that is not algebraic.",
+      "name": "TranscendentalRealExists",
+      "binders": "",
+      "conclusion": "∃ x : ℝ, ¬ IsAlgebraic ℤ x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11J81"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            2,
+            1,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "e-irrational",
+      "input": "The number $e$ is irrational.",
+      "name": "EIrrational",
+      "binders": "",
+      "conclusion": "Irrational (Real.exp 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11J72"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            3,
+            0,
+            32
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Closed statement; no hypotheses to witness."
+    },
+    {
+      "id": "integer-combinations-of-irrational-dense",
+      "input": "If $\\alpha$ is irrational, the set of numbers $m + n\\alpha$ with $m, n$ integers is dense in $\\mathbb{R}$.",
+      "name": "IntegerCombinationsOfIrrationalDense",
+      "binders": "(α : ℝ) (hα : Irrational α)",
+      "conclusion": "Dense (Set.range fun p : ℤ × ℤ => (p.1 : ℝ) + p.2 * α)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11J71",
+        "26A03"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            4,
+            1,
+            25
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨Real.sqrt 2, irrational_sqrt_two, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "zeta-as-integral-of-floor",
+      "input": "For real $s > 1$, $\\zeta(s) = \\sum_{n \\geq 1} n^{-s} = s \\int_1^\\infty \\lfloor x \\rfloor x^{-s-1}\\,dx$.",
+      "name": "ZetaAsIntegralOfFloor",
+      "binders": "(s : ℝ) (hs : 1 < s)",
+      "conclusion": "∑' n : ℕ, 1 / ((n : ℝ) + 1) ^ s = s * ∫ x in Set.Ioi (1 : ℝ), (⌊x⌋ : ℝ) / x ^ (s + 1)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11M06",
+        "26A42"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "rudin-pma",
+          "locator": [
+            6,
+            1,
+            16
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨2, one_lt_two, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "gt-fermat-little",
+      "input": "Let $p$ be a prime. Then $a^p \\equiv a \\pmod p$ for every integer $a$.",
+      "name": "FermatLittleViaLagrange",
+      "binders": "(p : ℕ) (hp : p.Prime) (a : ℤ)",
+      "conclusion": "a ^ p ≡ a [ZMOD p]",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11A07",
+        "20D60"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "dummit-foote",
+          "locator": [
+            3,
+            2,
+            116
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨2, Nat.prime_two, 0, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "gt-euler-theorem",
+      "input": "Let $n \\ge 1$ and $a$ an integer relatively prime to $n$. Then $a^{\\varphi(n)} \\equiv 1 \\pmod n$, where $\\varphi$ is Euler's function.",
+      "name": "EulerTheoremViaLagrange",
+      "binders": "(n : ℕ) (a : ℕ) (h : Nat.Coprime a n)",
+      "conclusion": "a ^ Nat.totient n ≡ 1 [MOD n]",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "title": null,
+      "msc": [
+        "11A07",
+        "20D60"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "dummit-foote",
+          "locator": [
+            3,
+            2,
+            122
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, 1, Nat.coprime_one_left 1, trivial⟩",
+      "witness_note": null
+    },
+    {
+      "id": "putnam-2024-a1",
+      "input": "Let $n$ be a positive integer. Prove that there are positive integers $a$, $b$, $c$ with $2a^{n} + 3b^{n} = 4c^{n}$ if and only if $n = 1$.",
+      "name": "Putnam2024A1",
+      "binders": "(n : ℕ) (hn : 0 < n)",
+      "conclusion": "(∃ a b c : ℕ, 0 < a ∧ 0 < b ∧ 0 < c ∧ 2 * a ^ n + 3 * b ^ n = 4 * c ^ n) ↔ n = 1",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2024 A1",
+      "msc": [
+        "11D41"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2024",
+          "locator": [
+            1,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2024-a1-twin",
+      "input": "Let $n$ be a positive integer. Prove that there are positive integers $a$, $b$, $c$ with $2a^{n} + 3b^{n} = 4c^{n}$ if and only if $n \\leq 2$.",
+      "name": "Putnam2024A1Twin",
+      "binders": "(n : ℕ) (hn : 0 < n)",
+      "conclusion": "(∃ a b c : ℕ, 0 < a ∧ 0 < b ∧ 0 < c ∧ 2 * a ^ n + 3 * b ^ n = 4 * c ^ n) ↔ n ≤ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2024-a1",
+      "source": "competition",
+      "title": "Putnam 2024 A1, answer set widened to $n \\leq 2$",
+      "msc": [
+        "11D41"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2024-a1`: it admits $n = 2$ as well. The quadratic case is the one the 2024 solution rules out first, by reducing $a^{2} + c^{2} \\equiv 0 \\pmod 3$ on a primitive solution, so a model that agrees here is agreeing with the exact case the problem turns on. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨1, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2023-b2",
+      "input": "For a positive integer $n$ let $k(n)$ be the number of $1$s in the base-$2$ expansion of $2023n$. Prove that the least value $k$ attains is $3$.",
+      "name": "Putnam2023B2",
+      "binders": "",
+      "conclusion": "IsLeast {m : ℕ | ∃ n : ℕ, 0 < n ∧ (Nat.digits 2 (2023 * n)).sum = m} 3",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2023 B2",
+      "msc": [
+        "11A63"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2023",
+          "locator": [
+            2,
+            0,
+            2
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2023-b2-twin",
+      "input": "For a positive integer $n$ let $k(n)$ be the number of $1$s in the base-$2$ expansion of $2023n$. Prove that the least value $k$ attains is $2$.",
+      "name": "Putnam2023B2Twin",
+      "binders": "",
+      "conclusion": "IsLeast {m : ℕ | ∃ n : ℕ, 0 < n ∧ (Nat.digits 2 (2023 * n)).sum = m} 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2023-b2",
+      "source": "competition",
+      "title": "Putnam 2023 B2, minimum lowered to two",
+      "msc": [
+        "11A63"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2023-b2`: $2$ is not attained, because $2023n = 2^{a} + 2^{b}$ would force $-1$ to be a power of $2$ modulo the factor $7$ of $2023$. Lowering a minimum by one leaves the claim looking exactly as plausible as the true one, which is the point. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2020-b1",
+      "input": "For a positive integer $n$ let $d(n)$ be the sum of the digits of $n$ written in base $2$. Prove that $\\sum_{k=1}^{2020} (-1)^{d(k)} k^{3} \\equiv 1990 \\pmod{2020}$.",
+      "name": "Putnam2020B1",
+      "binders": "",
+      "conclusion": "(∑ k ∈ Finset.Icc 1 2020, (-1 : ℤ) ^ (Nat.digits 2 k).sum * (k : ℤ) ^ 3) ≡ 1990 [ZMOD 2020]",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 B1",
+      "msc": [
+        "11A63"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            2,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2020-b6",
+      "input": "Let $n$ be a positive integer. Prove that $\\sum_{k=1}^{n} (-1)^{\\lfloor k(\\sqrt{2}-1) \\rfloor} \\geq 0$.",
+      "name": "Putnam2020B6",
+      "binders": "(n : ℕ) (hn : 0 < n)",
+      "conclusion": "0 ≤ ∑ k ∈ Finset.Icc 1 n, (-1 : ℝ) ^ ⌊(k : ℝ) * (Real.sqrt 2 - 1)⌋",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2020 B6",
+      "msc": [
+        "11B83"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2020",
+          "locator": [
+            2,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨1, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2020-b6-twin",
+      "input": "Let $n$ be a positive integer. Prove that $\\sum_{k=1}^{n} (-1)^{\\lfloor k(\\sqrt{2}-1) \\rfloor} > 0$.",
+      "name": "Putnam2020B6Twin",
+      "binders": "(n : ℕ) (hn : 0 < n)",
+      "conclusion": "0 < ∑ k ∈ Finset.Icc 1 n, (-1 : ℝ) ^ ⌊(k : ℝ) * (Real.sqrt 2 - 1)⌋",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2020-b6",
+      "source": "competition",
+      "title": "Putnam 2020 B6, inequality made strict",
+      "msc": [
+        "11B83"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2020-b6`: the partial sums do reach $0$, first at $n = 4$, where the floors are $0, 0, 1, 1$ and the four signs are $+, +, -, -$. Tightening $\\geq$ to $>$ is the smallest possible perturbation of an inequality and cannot be spotted without evaluating the sum. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨1, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2018-a1",
+      "input": "Determine every pair $(a, b)$ of positive integers with $\\frac{1}{a} + \\frac{1}{b} = \\frac{3}{2018}$. Prove that the pairs are exactly $(673, 1358114)$, $(674, 340033)$, $(1009, 2018)$, $(2018, 1009)$, $(340033, 674)$ and $(1358114, 673)$.",
+      "name": "Putnam2018A1",
+      "binders": "(a b : ℕ) (ha : 0 < a) (hb : 0 < b)",
+      "conclusion": "(1 / (a : ℚ) + 1 / (b : ℚ) = 3 / 2018) ↔ (a, b) ∈ ({(673, 1358114), (674, 340033), (1009, 2018), (2018, 1009), (340033, 674), (1358114, 673)} : Set (ℕ × ℕ))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2018 A1",
+      "msc": [
+        "11D09"
+      ],
+      "difficulty": "routine",
+      "occurrences": [
+        {
+          "source_id": "putnam-2018",
+          "locator": [
+            1,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨673, 1358114, by norm_num, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2021-a5",
+      "input": "Let $A$ be the set of integers $n$ with $1 \\leq n \\leq 2021$ and $\\gcd(n, 2021) = 1$, and for a nonnegative integer $j$ put $S(j) = \\sum_{n \\in A} n^{j}$. Prove that $2021$ divides $S(j)$ exactly when $j$ is a multiple of neither $42$ nor $46$.",
+      "name": "Putnam2021A5",
+      "binders": "(j : ℕ)",
+      "conclusion": "(2021 ∣ ∑ n ∈ (Finset.Icc 1 2021).filter (fun n => Nat.gcd n 2021 = 1), n ^ j) ↔ ¬ (42 ∣ j) ∧ ¬ (46 ∣ j)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2021 A5",
+      "msc": [
+        "11A07"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2021",
+          "locator": [
+            1,
+            0,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    },
+    {
+      "id": "putnam-2019-a1",
+      "input": "Determine which integers have the form $A^{3} + B^{3} + C^{3} - 3ABC$ with $A$, $B$, $C$ nonnegative integers. Prove that an integer $n$ has this form exactly when $n \\geq 0$ and $n$ is congruent to neither $3$ nor $6$ modulo $9$.",
+      "name": "Putnam2019A1",
+      "binders": "(n : ℤ)",
+      "conclusion": "(∃ A B C : ℤ, 0 ≤ A ∧ 0 ≤ B ∧ 0 ≤ C ∧ A ^ 3 + B ^ 3 + C ^ 3 - 3 * A * B * C = n) ↔ 0 ≤ n ∧ n % 9 ≠ 3 ∧ n % 9 ≠ 6",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2019 A1",
+      "msc": [
+        "11D85"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [
+        {
+          "source_id": "putnam-2019",
+          "locator": [
+            1,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    },
+    {
+      "id": "putnam-2019-a1-twin",
+      "input": "Determine which integers have the form $A^{3} + B^{3} + C^{3} - 3ABC$ with $A$, $B$, $C$ nonnegative integers. Prove that an integer $n$ has this form exactly when $n \\geq 0$.",
+      "name": "Putnam2019A1Twin",
+      "binders": "(n : ℤ)",
+      "conclusion": "(∃ A B C : ℤ, 0 ≤ A ∧ 0 ≤ B ∧ 0 ≤ C ∧ A ^ 3 + B ^ 3 + C ^ 3 - 3 * A * B * C = n) ↔ 0 ≤ n",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2019-a1",
+      "source": "competition",
+      "title": "Putnam 2019 A1, congruence condition dropped",
+      "msc": [
+        "11D85"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2019-a1`: dropping the modulus condition claims every nonnegative integer is represented, and $3$ is not. Nonnegativity is the half of the answer that is easy to see, so a model reading only that far agrees; the residues $3$ and $6$ modulo $9$ are the half that has to be proved. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨0, trivial⟩"
+    },
+    {
+      "id": "putnam-2025-a1",
+      "input": "Let $m_0$ and $n_0$ be distinct positive integers, and for each $k \\geq 1$ let $m_k$ and $n_k$ be the coprime positive integers with $m_k / n_k = (2m_{k-1} + 1)/(2n_{k-1} + 1)$. Prove that $2m_k + 1$ and $2n_k + 1$ are coprime for all but finitely many $k$.",
+      "name": "Putnam2025A1",
+      "binders": "(m n : ℕ → ℕ) (hpos : ∀ k, 0 < m k ∧ 0 < n k) (hne : m 0 ≠ n 0) (hcop : ∀ k, 1 ≤ k → Nat.Coprime (m k) (n k)) (hrec : ∀ k, m (k + 1) * (2 * n k + 1) = n (k + 1) * (2 * m k + 1))",
+      "conclusion": "{k : ℕ | ¬ Nat.Coprime (2 * m k + 1) (2 * n k + 1)}.Finite",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A1",
+      "msc": [
+        "11A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The binders constrain two sequences by a mutual recursion together with coprimality at every index, so closing them under `∃` needs the recursively defined pair and a proof at every index. Recorded as a debt rather than guessed."
+    },
+    {
+      "id": "putnam-2025-a6",
+      "input": "Let $b_0 = 0$ and $b_{n+1} = 2b_n^{2} + b_n + 1$ for $n \\geq 0$. Prove that for every $k \\geq 1$ the number $b_{2^{k+1}} - 2b_{2^{k}}$ is divisible by $2^{2k+2}$ but not by $2^{2k+3}$.",
+      "name": "Putnam2025A6",
+      "binders": "(b : ℕ → ℤ) (h0 : b 0 = 0) (hrec : ∀ n : ℕ, b (n + 1) = 2 * b n ^ 2 + b n + 1) (k : ℕ) (hk : 1 ≤ k)",
+      "conclusion": "(2 : ℤ) ^ (2 * k + 2) ∣ b (2 ^ (k + 1)) - 2 * b (2 ^ k) ∧ ¬ ((2 : ℤ) ^ (2 * k + 3) ∣ b (2 ^ (k + 1)) - 2 * b (2 ^ k))",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 A6",
+      "msc": [
+        "11B37"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            1,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun n => Nat.rec (motive := fun _ => ℤ) 0 (fun _ x => 2 * x ^ 2 + x + 1) n, rfl, fun _ => rfl, 1, le_refl 1, trivial⟩"
+    },
+    {
+      "id": "putnam-2025-a6-twin",
+      "input": "Let $b_0 = 0$ and $b_{n+1} = 2b_n^{2} + b_n + 1$ for $n \\geq 0$. Prove that for every $k \\geq 1$ the number $b_{2^{k+1}} - 2b_{2^{k}}$ is divisible by $2^{2k+3}$.",
+      "name": "Putnam2025A6Twin",
+      "binders": "(b : ℕ → ℤ) (h0 : b 0 = 0) (hrec : ∀ n : ℕ, b (n + 1) = 2 * b n ^ 2 + b n + 1) (k : ℕ) (hk : 1 ≤ k)",
+      "conclusion": "(2 : ℤ) ^ (2 * k + 3) ∣ b (2 ^ (k + 1)) - 2 * b (2 ^ k)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2025-a6",
+      "source": "competition",
+      "title": "Putnam 2025 A6, exponent raised by one",
+      "msc": [
+        "11B37"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2025-a6`: the true statement is that the $2$-adic valuation is *exactly* $2k+2$, so raising the exponent by one turns a sharp result into a false one. At $k = 1$ the difference is $2768 = 2^4 \\cdot 173$. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨fun n => Nat.rec (motive := fun _ => ℤ) 0 (fun _ x => 2 * x ^ 2 + x + 1) n, rfl, fun _ => rfl, 1, le_refl 1, trivial⟩"
+    },
+    {
+      "id": "putnam-2025-b3",
+      "input": "Let $S$ be a nonempty set of positive integers such that whenever $n \\in S$, every positive divisor of $2025^{n} - 15^{n}$ also lies in $S$. Prove that $S$ contains every positive integer.",
+      "name": "Putnam2025B3",
+      "binders": "(S : Set ℕ) (hne : S.Nonempty) (hpos : ∀ n ∈ S, 0 < n) (hdiv : ∀ n ∈ S, ∀ d : ℕ, 0 < d → d ∣ (2025 ^ n - 15 ^ n) → d ∈ S)",
+      "conclusion": "∀ m : ℕ, 0 < m → m ∈ S",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 B3",
+      "msc": [
+        "11A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            2,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨{n : ℕ | 0 < n}, ⟨1, Nat.one_pos⟩, fun n hn => hn, fun n _ d hd _ => hd, trivial⟩"
+    },
+    {
+      "id": "putnam-2025-b3-twin",
+      "input": "Let $S$ be a set of positive integers such that whenever $n \\in S$, every positive divisor of $2025^{n} - 15^{n}$ also lies in $S$. Prove that $S$ contains every positive integer.",
+      "name": "Putnam2025B3Twin",
+      "binders": "(S : Set ℕ) (hpos : ∀ n ∈ S, 0 < n) (hdiv : ∀ n ∈ S, ∀ d : ℕ, 0 < d → d ∣ (2025 ^ n - 15 ^ n) → d ∈ S)",
+      "conclusion": "∀ m : ℕ, 0 < m → m ∈ S",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2025-b3",
+      "source": "competition",
+      "title": "Putnam 2025 B3, the nonemptiness hypothesis dropped",
+      "msc": [
+        "11A05"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2025-b3`: without `S.Nonempty` the empty set satisfies both remaining hypotheses vacuously and contains no positive integer at all. Nonemptiness is what starts the induction -- it is how $1$ gets into $S$ -- so the twin removes the one premise the proof cannot do without. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": "⟨(∅ : Set ℕ), fun n hn => absurd hn (Set.notMem_empty n), fun n hn => absurd hn (Set.notMem_empty n), trivial⟩"
+    },
+    {
+      "id": "putnam-2025-b5",
+      "input": "Let $p > 3$ be prime and, for $k \\in \\{1, \\dots, p-1\\}$, let $I(k)$ be the element of $\\{1, \\dots, p-1\\}$ with $k \\cdot I(k) \\equiv 1 \\pmod p$. Prove that the number of $k \\in \\{1, \\dots, p-2\\}$ with $I(k+1) < I(k)$ is greater than $p/4 - 1$.",
+      "name": "Putnam2025B5",
+      "binders": "(p : ℕ) (hp : p.Prime) (h3 : 3 < p) (I : ℕ → ℕ) (hI : ∀ k, 1 ≤ k → k ≤ p - 1 → 1 ≤ I k ∧ I k ≤ p - 1 ∧ k * I k ≡ 1 [MOD p])",
+      "conclusion": "(p : ℝ) / 4 - 1 < ((Finset.Icc 1 (p - 2)).filter (fun k => I (k + 1) < I k)).card",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 B5",
+      "msc": [
+        "11A07"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            2,
+            0,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨5, by norm_num, by norm_num, fun k => if k = 1 then 1 else if k = 2 then 3 else if k = 3 then 2 else 4, by intro k h1 h2; interval_cases k <;> simp [Nat.ModEq], trivial⟩"
+    },
+    {
+      "id": "putnam-2025-b6",
+      "input": "Prove that $1/4$ is the largest real number $r$ for which there is a function $g$ from the positive integers to the positive integers with $g(n+1) - g(n) \\geq (g(g(n)))^{r}$ for every positive integer $n$.",
+      "name": "Putnam2025B6",
+      "binders": "",
+      "conclusion": "IsGreatest {r : ℝ | ∃ g : ℕ → ℕ, (∀ n, 0 < n → 0 < g n) ∧ ∀ n, 0 < n → ((g (g n) : ℝ)) ^ r ≤ (g (n + 1) : ℝ) - (g n : ℝ)} (1 / 4)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 B6",
+      "msc": [
+        "11B83",
+        "39B62"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            2,
+            0,
+            6
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2025-b6-twin",
+      "input": "Prove that $1/2$ is the largest real number $r$ for which there is a function $g$ from the positive integers to the positive integers with $g(n+1) - g(n) \\geq (g(g(n)))^{r}$ for every positive integer $n$.",
+      "name": "Putnam2025B6Twin",
+      "binders": "",
+      "conclusion": "IsGreatest {r : ℝ | ∃ g : ℕ → ℕ, (∀ n, 0 < n → 0 < g n) ∧ ∀ n, 0 < n → ((g (g n) : ℝ)) ^ r ≤ (g (n + 1) : ℝ) - (g n : ℝ)} (1 / 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "putnam-2025-b6",
+      "source": "competition",
+      "title": "Putnam 2025 B6, constant raised to one half",
+      "msc": [
+        "11B83"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [],
+      "rationale": "A soundness twin for `putnam-2025-b6`: no such $g$ exists for any $r > 1/4$, so $1/2$ is not even in the set, let alone its greatest element. $1/2$ is the constant a reader guesses from $g(n) = n^{2}$ without checking which exponent that choice actually supports, which is $1/4$. It states nothing the paper asked, so it cites no occurrence.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "The entry has no binders: it states one closed claim about a single set, so there is nothing for A6 to existentially close and a `trivial` witness would record coverage that was never obtained."
+    },
+    {
+      "id": "putnam-2021-a3",
+      "input": "Determine the positive integers $N$ for which the sphere $x^{2} + y^{2} + z^{2} = N$ has an inscribed regular tetrahedron with integer coordinates. Prove that these are exactly the $N$ of the form $3m^{2}$ with $m$ a positive integer.",
+      "name": "Putnam2021A3",
+      "binders": "(N : ℕ) (hN : 0 < N)",
+      "conclusion": "(∃ v : Fin 4 → (Fin 3 → ℤ), Function.Injective v ∧ (∀ i, ∑ t, v i t ^ 2 = (N : ℤ)) ∧ ∀ i j k l : Fin 4, i ≠ j → k ≠ l → ∑ t, (v i t - v j t) ^ 2 = ∑ t, (v k t - v l t) ^ 2) ↔ ∃ m : ℕ, 0 < m ∧ N = 3 * m ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2021 A3",
+      "msc": [
+        "11E25"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2021",
+          "locator": [
+            1,
+            0,
+            3
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨3, by norm_num, trivial⟩"
+    },
+    {
+      "id": "putnam-2019-a5",
+      "input": "Let $p$ be an odd prime and let $q(x) = \\sum_{k=1}^{p-1} a_k x^k$ in $\\mathbb{F}_p[x]$, where $a_k$ is $k^{(p-1)/2}$ reduced modulo $p$. Prove that $(p-1)/2$ is the greatest $n$ for which $(x-1)^{n}$ divides $q(x)$.",
+      "name": "Putnam2019A5",
+      "binders": "(p : ℕ) (hp : p.Prime) (hodd : Odd p)",
+      "conclusion": "IsGreatest {n : ℕ | (Polynomial.X - 1) ^ n ∣ (∑ k ∈ Finset.Icc 1 (p - 1), Polynomial.C ((k : ZMod p) ^ ((p - 1) / 2)) * Polynomial.X ^ k)} ((p - 1) / 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2019 A5",
+      "msc": [
+        "11T06"
+      ],
+      "difficulty": "research-adjacent",
+      "occurrences": [
+        {
+          "source_id": "putnam-2019",
+          "locator": [
+            1,
+            0,
+            5
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨3, by norm_num, by decide, trivial⟩"
     }
   ]
 }

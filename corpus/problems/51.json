@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.5.0",
+  "entries": [
+    {
+      "id": "putnam-2025-b1",
+      "input": "Colour every point of the plane red or green so that for any three non-collinear points of one colour, the centre of the circle through them has that colour too. Prove that every point then has the same colour.",
+      "name": "Putnam2025B1",
+      "binders": "(c : EuclideanSpace ℝ (Fin 2) → Bool) (h : ∀ A B C P : EuclideanSpace ℝ (Fin 2), c A = c B → c B = c C → ¬ Collinear ℝ ({A, B, C} : Set (EuclideanSpace ℝ (Fin 2))) → dist P A = dist P B → dist P B = dist P C → c P = c A)",
+      "conclusion": "∀ x y : EuclideanSpace ℝ (Fin 2), c x = c y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "competition",
+      "title": "Putnam 2025 B1",
+      "msc": [
+        "51M04"
+      ],
+      "difficulty": "qualifying",
+      "occurrences": [
+        {
+          "source_id": "putnam-2025",
+          "locator": [
+            2,
+            0,
+            1
+          ]
+        }
+      ],
+      "status": "candidate",
+      "witness": "⟨fun _ => true, fun _ _ _ _ _ _ _ _ _ => rfl, trivial⟩"
+    }
+  ]
+}

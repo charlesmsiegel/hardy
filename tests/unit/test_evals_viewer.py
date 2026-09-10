@@ -48,8 +48,8 @@ def test_an_entry_arrives_classified_so_the_page_derives_nothing():
 def test_the_shipped_corpus_reports_clean_with_its_counts():
     got = payload(ROOT / "corpus")
     assert got["issues"] == []
-    assert got["counts"] == {"entries": 20, "twins": 5, "active": 0,
-                             "unwitnessed": 20, "unsourced": 20,
+    assert got["counts"] == {"entries": 1214, "twins": 89, "active": 74,
+                             "unwitnessed": 995, "unsourced": 104,
                              # No tier file is passed, so nothing is tiered.
                              "tiered": 0, "broken": 0}
     assert got["corpus_version"]
