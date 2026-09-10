@@ -4,7 +4,7 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 47 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2, X1-X2, S0 and S3).**
+**Completed: 51 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2, I0-I2, X0-X3, X5-X6, S0 and S3).**
 Checkmarks mean the roadmap records the item as implemented. Core D and F-I passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
@@ -30,11 +30,19 @@ S0/S3 verification and the unaccepted S1/S2 capability requirements are in the
 [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
 Execution remains unconfined. Engineering X and evaluation V work remain ongoing.
 
+The [engineering report](docs/superpowers/reports/2026-09-10-engineering.md)
+records X0/X3/X5 acceptance and X6's completed residual audit/supported batch path.
+X4 remains ongoing. X6's checkmark does not establish immutable remote model,
+SDK or full worker-runtime identity. The first engineering full gate found one
+production regression and three fixture failures; reviewed fixes are in place,
+and a fresh full gate remains pending. The corrected source passed fresh
+installed-wheel smoke.
+
 ## Available next work
 
 Continue with eligible X, S and V work. **Skip all of Core E pending human input.** Independent X, S and V work
 retains its own dependencies; X1 supports strategy comparison and X5 supports
-fixed token/cost budgets.
+expected-spend admission for supported API chat/batch paths, not hard provider caps.
 
 ## Dependency map
 
@@ -177,13 +185,13 @@ flowchart LR
 
 ## Engineering lane X
 
-- [ ] [X0 - Make the save gates one explicit ordered sequence - P0](docs/roadmap.md#x0--make-the-save-gates-one-explicit-ordered-sequence--p0) - Deps: none.
+- [x] [X0 - Make the save gates one explicit ordered sequence - P0](docs/roadmap.md#x0--make-the-save-gates-one-explicit-ordered-sequence--p0) - Deps: none.
 - [x] [X1 - Evaluation comparison primitive - P1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) - Deps: none.
 - [x] [X2 - Transcript in-flight durability - P1](docs/roadmap.md#x2--transcript-in-flight-durability--p1) - Deps: none.
-- [ ] [X3 - Safe interactive assumption prompt presentation - P1](docs/roadmap.md#x3--safe-interactive-assumption-prompt-presentation--p1) - Deps: none.
+- [x] [X3 - Safe interactive assumption prompt presentation - P1](docs/roadmap.md#x3--safe-interactive-assumption-prompt-presentation--p1) - Deps: none.
 - [ ] [X4 - CAS correctness lane - P1](docs/roadmap.md#x4--cas-correctness-lane--p1) - Deps: none.
-- [ ] [X5 - Token/cost reserve-settle budgets - P1](docs/roadmap.md#x5--tokencost-reserve-settle-budgets--p1) - Deps: harness-owned decision point for the relevant runtime.
-- [ ] [X6 - Complete reproducible run identity/journaling - P1](docs/roadmap.md#x6--complete-reproducible-run-identityjournaling--p1) - Deps: none for residual audit.
+- [x] [X5 - Token/cost reserve-settle budgets - P1](docs/roadmap.md#x5--tokencost-reserve-settle-budgets--p1) - Deps: harness-owned decision point for the relevant runtime.
+- [x] [X6 - Complete reproducible run identity/journaling - P1](docs/roadmap.md#x6--complete-reproducible-run-identityjournaling--p1) - Deps: none for residual audit.
 
 ## Hardening lane S
 

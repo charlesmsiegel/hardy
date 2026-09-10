@@ -322,6 +322,8 @@ These tasks may start immediately or whenever engineering capacity is available.
 
 ## X0 — Make the save gates one explicit ordered sequence — P0
 
+**Status:** Implemented and characterized: named preflight, staged checks and post-commit publication retain actual refusal order, cached/shared builds and stage/commit/discard behavior. No broader filesystem atomicity claim. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
+
 **Deps:** none
 
 Refactor the existing guarded Lean save path without changing behavior. One named sequence should make the invariant obvious and directly testable:
@@ -359,17 +361,23 @@ Checkpoint assistant text at an interval, record in-flight tool calls, and prese
 
 ## X3 — Safe interactive assumption prompt presentation — P1
 
+**Status:** Accepted existing implementation: 23 tests verify prompt serialization and stream/approval ordering without changing admission authority. See the [prompt acceptance report](superpowers/reports/2026-09-10-assumption-prompt.md).
+
 **Deps:** none
 
 Ensure human trust-widening approval cannot be visually interleaved/confused with concurrent model streaming. This is tracked as a current defect in Issues; this roadmap entry only records its relationship to the new generic admission seam.
 
 ## X4 — CAS correctness lane — P1
 
+**Status:** Ongoing. Tested fixes preserve ambiguous prompt-shaped output, enforce lifetime OS writer leases and distinguish known terminal rollback from unaccepted live/unknown mutations across reloads. Late-stderr attribution, prompt timing and real Macaulay2 platform checks remain. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
+
 **Deps:** none
 
 Continue resolving concrete CAS defect issues independently of the research architecture. Correctness and honest accounting outrank performance polish.
 
 ## X5 — Token/cost reserve-settle budgets — P1
+
+**Status:** Implemented for API chat/batch: immutable expected-spend policy, request-bound reservations, reported-usage settlement and durable unknown liability. This is not a hard provider token or invoice cap. SDK, staged Prove and evaluation declarations refuse. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
 
 **Deps:** harness-owned decision point for the relevant runtime
 
@@ -378,6 +386,8 @@ Runs may declare token/cost budgets. Before a provider call, reserve expected sp
 This is especially important before comparing proof strategies at “equal budget.”
 
 ## X6 — Complete reproducible run identity/journaling — P1
+
+**Status:** Residual audit and supported batch implementation complete: durable attempt manifests/observations, exact completion receipts and append-only attributed artifact reviews reuse existing digests/readers. Remote immutable model revision, installed provider SDK and full worker-runtime closure remain unestablished; legacy journals are not upgraded. The checkmark records the audit and supported path, not complete identity coverage. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
 
 **Deps:** none for residual audit
 

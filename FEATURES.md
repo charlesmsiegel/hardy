@@ -164,6 +164,26 @@ human-guided paper trials and interactive publication wiring remain deferred.
   no execution isolation or safety guarantee. See the
   [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
 
+### Engineering correctness and supported accounting
+
+- X0 exposes the existing ordered save gates and preserves refusals, cached/shared
+  builds and stage/commit/discard semantics. X3 records tested assumption-prompt
+  serialization through the existing approval owner.
+- X4 adds conservative prompt-output handling, exclusive CAS journal ownership
+  and durable terminal/live recovery distinctions across reloads. Unaccepted live
+  or unknown mutations refuse recovery. The lane remains ongoing
+  for late stderr, prompt timing and real Macaulay2 platform checks.
+- X5's `provider_budget` policy supports expected-spend reserve/settle admission
+  for API chat and batch, including auxiliary calls and restart liability. It is
+  not a hard token or invoice cap. SDK, staged Prove and eval declarations refuse.
+- X6's residual audit and supported batch path add durable attempts, explicit
+  crash/incomplete status and attributed append-only reviews of exact artifacts.
+  Legacy journals are not upgraded; remote model revision, SDK identity and the
+  full local runtime remain unestablished. Reviews never replace canonical verdicts.
+
+See the [engineering report](docs/superpowers/reports/2026-09-10-engineering.md)
+for scope and gate status. Core E remains deferred; S1/S2 remain unaccepted.
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation

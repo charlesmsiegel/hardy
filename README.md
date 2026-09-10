@@ -149,6 +149,45 @@ failures. S1/S2 remain unaccepted: the available native Windows capabilities do
 not establish the required aggregate scratch quotas or independent audit boundary.
 See the [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
 
+Engineering X0 makes the existing formal-save order explicit without changing
+refusals or stage/commit/discard behavior. X3 verifies serialized assumption
+approval presentation. X4 has tested prompt-output, writer-lease and recovery
+fixes but remains ongoing for late stderr, prompt timing and real Macaulay2
+platform checks. Recovery distinguishes known terminal rollback from unaccepted
+live/unknown mutations, including after reopening. X6 adds durable batch attempt
+journals and append-only attributed
+evaluation reviews; legacy records and unknown runtime identities remain explicit.
+See the [engineering report](docs/superpowers/reports/2026-09-10-engineering.md).
+
+X5 supports expected-spend admission for API chat and batch. Set `provider_budget`
+to a JSON policy path, resolved relative to the selected configuration file:
+
+```toml
+backend = "api"
+model = "YOUR_CONFIGURED_MODEL"
+provider_budget = "provider-budget.json"
+```
+
+```json
+{
+  "id": "local-token-policy-v1",
+  "models": ["YOUR_CONFIGURED_MODEL"],
+  "token_limit": 100000,
+  "input_characters_per_token": "4",
+  "input_overhead_tokens": 512
+}
+```
+
+Replace the model placeholder with the configured provider identity. A shared
+journal reserves estimated input plus the actual output cap before each call,
+then settles reported usage. Missing usage retains liability; overruns prevent
+later calls. The estimate is not a hard token ceiling or provider invoice cap.
+An optional cost limit requires an explicit tariff in the policy. SDK backends,
+staged `prove` and evaluation budget declarations are refused. Policy changes
+cannot rewrite an existing budget journal; `HARDY_PROVIDER_BUDGET` can select the
+policy path. Full remote model revision, SDK and local runtime identity remain
+unestablished even when a model alias and local launcher digest are recorded.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

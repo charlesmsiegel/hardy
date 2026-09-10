@@ -287,6 +287,44 @@ atomic-write and credential-filtering owners remain in place. These controls do
 not confine generated Lean, TeX, CAS or helper processes. See the
 [hardening verification report](docs/superpowers/reports/2026-09-10-hardening.md).
 
+## Engineering ordering, spend and attempt records
+
+X0 exposes preflight, staged checks and post-commit publication as named formal
+save operations. It preserves the existing name-before-axiom refusal order,
+shared-library build before staging, cached builds and stage/commit/discard
+behavior. This refactor adds no whole-workspace atomicity guarantee. X3's existing
+prompt owner pauses streaming around assumption approval; its tested acceptance
+does not widen admission authority.
+
+X4 uses an OS-held lifetime writer lease for each CAS session journal. Closing is
+terminal and idempotent; a crashed owner releases the lease. Prompt sanitization
+retains ambiguous nonempty output. Persisted nullable `kernel_lost` distinguishes
+terminal rollback from unaccepted live/unknown cell mutations across reloads.
+Known lost interrupts may rebuild accepted state; a later kernel death cannot
+erase earlier live unaccepted effects. Late-stderr attribution, prompt timing and real
+Macaulay2 platform checks remain unfinished.
+
+`agents/spend_budget.py` owns X5's immutable quote policy and shared append-only
+reserve/settle journal. API chat and batch bind one owner across auxiliary readers,
+continuations, compaction, model changes and restarts. The serialized actual
+request is identified before dispatch; usage settles before reply interpretation.
+Unknown usage keeps liability, and an overrun refuses subsequent calls. Estimates
+and explicit tariff-derived costs are not hard provider token or invoice limits.
+SDK, staged Prove and evaluation declarations refuse this unsupported policy.
+
+X6 reuses existing configuration/source/toolchain/corpus digests and result
+validation. `workflows/batch_recording.py` durably records a manifest before model
+work, runtime metadata before the first ask, and each observation/tool/usage event.
+Completion binds the journal, trajectory and result; a crash leaves an explicit
+incomplete attempt. Legacy unjournaled records remain unknown. The local launcher
+hash does not identify the full Python runtime, installed provider SDK or remote
+model revision. `evals/adjudication.py` appends actor/time/reason/decision history
+against exact completed batch artifact sets under an expected-prior-head check.
+Changed artifacts stale annotations without erasing history or rewriting canonical
+verdicts. Actors and problem/repeat labels are declared attribution, not external
+identity authentication. See the
+[engineering verification report](docs/superpowers/reports/2026-09-10-engineering.md).
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:
