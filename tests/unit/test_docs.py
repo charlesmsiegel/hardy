@@ -147,3 +147,10 @@ def test_module_boundaries_page_matches_the_package_list() -> None:
     packages = sorted(p.name for p in (ROOT / "src" / "hardy").iterdir() if p.is_dir() and p.name != "__pycache__")
     for name in packages:
         assert f"`{name}/`" in page, f"package {name}/ missing from the ownership table"
+
+
+def test_trust_boundary_qualifies_the_codex_reader_and_compaction() -> None:
+    page = (ROOT / "docs" / "design" / "trust-boundary.md").read_text(encoding="utf-8").lower()
+    assert "codex" in page and "cannot" in page
+    for phrase in ("compaction", "what was dropped", "checkable", "precompact"):
+        assert phrase in page, f"trust-boundary.md must keep the compaction-integrity argument ({phrase})"
