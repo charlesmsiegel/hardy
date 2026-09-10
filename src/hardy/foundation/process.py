@@ -24,6 +24,7 @@ import signal
 import subprocess
 import threading
 import time
+import weakref
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -156,8 +157,11 @@ def terminate_group(child: subprocess.Popen) -> None:
     leaves a group with members and no leader -- which is exactly the tree this
     exists to reach, and checking `poll()` first would skip it.
 
-    Windows has no equivalent: killing a process tree there needs a job object,
-    which nothing here sets up, so the leader is all `terminate` can reach.
+    Windows has no SIGTERM: `terminate` and `kill` are both `TerminateProcess`,
+    and a console group cannot be terminated as one. The tree is reached through
+    the job object `tracked` put the child in, which its descendants inherit;
+    a child nobody tracked has no job, and there the leader is all that can be
+    reached, as before.
     """
     if os.name != "nt":
         try:
@@ -167,6 +171,8 @@ def terminate_group(child: subprocess.Popen) -> None:
             # No group to aim at. Fall through rather than leave the child
             # running because the tidier way of stopping it was unavailable.
             pass
+    else:
+        _terminate_job(child)
     with contextlib.suppress(OSError):
         child.terminate()
 
@@ -179,8 +185,77 @@ def kill_group(child: subprocess.Popen) -> None:
             return
         except (OSError, ValueError):
             pass
+    else:
+        _terminate_job(child)
     with contextlib.suppress(OSError):
         child.kill()
+
+
+# Windows only: the job each tracked child was put in, by the `Popen` leading
+# it. Weak, so the handle lives exactly as long as the `Popen` does and no
+# longer: `run_process` sweeps the group after its registration is dropped,
+# so the job cannot be closed when `tracked` exits.
+_JOBS: weakref.WeakKeyDictionary[subprocess.Popen, int] = weakref.WeakKeyDictionary()
+_KERNEL32 = None
+_PROCESS_TERMINATE = 0x0001
+_PROCESS_SET_QUOTA = 0x0100
+
+
+def _kernel32():
+    """The job-object entry points, typed once. Windows only."""
+    global _KERNEL32
+    if _KERNEL32 is None:
+        api = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        handle, bool_, dword = ctypes.c_void_p, ctypes.c_int, ctypes.c_uint32
+        api.CreateJobObjectW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+        api.CreateJobObjectW.restype = handle
+        api.OpenProcess.argtypes = (dword, bool_, dword)
+        api.OpenProcess.restype = handle
+        api.AssignProcessToJobObject.argtypes = (handle, handle)
+        api.AssignProcessToJobObject.restype = bool_
+        api.TerminateJobObject.argtypes = (handle, dword)
+        api.TerminateJobObject.restype = bool_
+        api.CloseHandle.argtypes = (handle,)
+        api.CloseHandle.restype = bool_
+        _KERNEL32 = api
+    return _KERNEL32
+
+
+def _assign_job(child: subprocess.Popen) -> None:
+    """Put a child, and whatever it goes on to spawn, in a job of its own. Windows only.
+
+    Descendants inherit the job, so `TerminateJobObject` reaches the compiler
+    a wrapper handed off to before exiting -- the Windows spelling of the
+    group `killpg` addresses. Best effort: a child that has already exited, or
+    a host that refuses the assignment, leaves the leader as all a stop can
+    reach, which is what every Windows stop was before.
+
+    Not airtight: the child has been running since `Popen` returned, so a
+    grandchild spawned before this line escapes the job. Assigning takes
+    microseconds; starting a process that could spawn one takes milliseconds.
+    """
+    if os.name != "nt" or child in _JOBS:
+        return
+    api = _kernel32()
+    job = api.CreateJobObjectW(None, None)
+    if not job:
+        return
+    process = api.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, child.pid)
+    assigned = bool(process) and bool(api.AssignProcessToJobObject(job, process))
+    if process:
+        api.CloseHandle(process)
+    if not assigned:
+        api.CloseHandle(job)
+        return
+    _JOBS[child] = job
+    weakref.finalize(child, api.CloseHandle, job)
+
+
+def _terminate_job(child: subprocess.Popen) -> None:
+    """Terminate every process in the child's job, if it was given one. Windows only."""
+    job = _JOBS.get(child)
+    if job is not None:
+        _kernel32().TerminateJobObject(job, 1)
 
 
 class _Running:
@@ -228,8 +303,14 @@ def tracked(child: subprocess.Popen):
     Public because not every child Hardy runs goes through `run_process`: an
     interactive LaTeX check drives its own `Popen` so it can keep the caller's
     environment, and it still has to be reachable by Esc.
+
+    On Windows this is also where the child's tree becomes addressable: the
+    group `child_creation` asked for can take a Ctrl+Break but cannot be
+    terminated as one, so the child is put in a job object here and
+    `terminate_group` reaches its descendants through that.
     """
     entry = _Running(child)
+    _assign_job(child)
     with _RUNNING_LOCK:
         _RUNNING.add(entry)
         # Read under the same lock the sweeps take, so this child is either in
