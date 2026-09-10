@@ -4,6 +4,11 @@
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
+[Supporting evaluation protocols and audit procedures](ideas/README.md) retain
+measurement controls, concrete failure cases, and source rationale from earlier
+planning. They support this roadmap; their historical priorities and task
+sequencing do not override it.
+
 ## Issue policy
 
 GitHub Issues are a **defect ledger**.
