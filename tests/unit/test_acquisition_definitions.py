@@ -164,3 +164,48 @@ def test_unavailable_selected_mapping_falls_back_to_real_local_definition(tmp_pa
     semantics = dict(result.records[0].semantics)
     assert semantics["method"] == "local_definition"
     assert "did not elaborate" in semantics["mapping-failure"]
+
+
+@pytest.mark.parametrize("contradictory", [False, True])
+def test_opaque_properties_are_probed_over_local_carrier_without_assuming_other_laws(tmp_path, contradictory):
+    from types import SimpleNamespace
+
+    from hardy.formal.lean import LeanDiagnostic
+    from hardy.workflows.acquisition.definitions import CharacterizingAssumption, OpaqueDefinition
+    from hardy.workflows.admission import ProbeOperations
+
+    store, obligation = fixture(tmp_path)
+    candidate = OpaqueDefinition(name="Carrier", lean_type="Type", reason="Abstract nonempty carrier",
+        assumptions=(CharacterizingAssumption(name="nonempty", statement="Nonempty Carrier"),
+                     CharacterizingAssumption(name="law", statement=(
+                         "False ∧ Nonempty Carrier" if contradictory else "∀ x y : Carrier, x = y"))))
+    sources = []
+
+    def elaborate(source):
+        sources.append(source)
+        lines = source.splitlines()
+        scoped = lines[1] == "variable (Carrier : Type)"
+        negation = any(line.startswith("example : ¬") for line in lines)
+        disproved = scoped and negation and "False ∧ Nonempty Carrier" in source
+        errors = tuple(LeanDiagnostic(severity="error", line=i,
+            message="unsolved goals" if scoped else "unknown identifier Carrier")
+            for i, line in enumerate(lines, 1)
+            if (not scoped and "Carrier" in line)
+            or (scoped and line.startswith("example") and "by sorry" not in line and not disproved))
+        return SimpleNamespace(ok=not errors, diagnostics=errors,
+                               output="unsolved goals" if scoped else "unknown identifier Carrier")
+
+    result = operations(propose_opaque=lambda options: candidate,
+                        probes=ProbeOperations(elaborate=elaborate, refute=elaborate)).resolve(
+                            store.read(), obligation)
+
+    assert sources and all(source.splitlines()[1] == "variable (Carrier : Type)" for source in sources)
+    assert all("axiom Carrier" not in source for source in sources)
+    assert all("axiom nonempty" not in source for source in sources if "law :" in source)
+    assert not result.evidence
+    if contradictory:
+        assert not result.children
+    else:
+        assert len(result.children) == 3
+        for record in result.records[1:]:
+            assert "local parameter" in dict(record.semantics)["admission-check"]

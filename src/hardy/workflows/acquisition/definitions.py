@@ -196,10 +196,11 @@ class DefinitionResolver:
             return self._result(options, "unresolved", "Target-paper or contextual definitions cannot become global assumptions")
         if self.probes is None:
             return self._result(options, "unresolved", "Opaque assumptions require admission probe operations")
+        contextual_probes = _opaque_probes(opaque, self.probes)
         checks = [self.admission.check_paper(opaque.name, opaque.name, opaque.lean_type, "constant", self.probes)]
         for assumption in opaque.assumptions:
             checks.append(self.admission.check_paper(assumption.name, assumption.name, assumption.statement,
-                                                     "statement", self.probes))
+                                                     "statement", contextual_probes))
         if refusal := next((check.refusal for check in checks if check.refusal), None):
             return self._result(options, "unresolved", refusal)
         records = []
@@ -212,7 +213,10 @@ class DefinitionResolver:
                 kind=ProjectItemKind.DEFINITION if index == 0 else ProjectItemKind.CLAIM,
                 name=name, statement=statement, origin=ProjectOrigin.GENERATED_LOCAL,
                 research=ResearchState(status="proposed", reason="Requires explicit authenticated admission or proof"),
-                semantics=(("trust", "opaque characterizing assumption"), ("admission-check", checks[index].checked)))
+                semantics=(("trust", "opaque characterizing assumption"),
+                    ("admission-check", checks[index].checked + " "
+                     + f"Property probes use {opaque.name} : {opaque.lean_type} as a local parameter; "
+                     + "no characterizing laws are assumed. These checks neither construct a witness nor admit trust.")))
             records.append(assumption)
             children.append(Obligation(id=f"{obligation.id}:opaque-obligation:{index}",
                 item=assumption.ref, kind=kind, scope=obligation.scope,
@@ -237,3 +241,26 @@ class DefinitionResolver:
                 *((("mapping-failure", options.mapping_failure),) if options.mapping_failure else ()),
                 *((("candidate", candidate),) if candidate else ())))
         return ResolverResult(records=(assessment,), evidence=materialized.evidence, detail=detail)
+
+
+def _opaque_probes(candidate: OpaqueDefinition, operations: ProbeOperations) -> ProbeOperations:
+    """Probe laws in their carrier context without assuming the candidate laws.
+
+    The carrier is a local parameter, not a new axiom in the project. Replace
+    only the prelude's blank second line so A3's diagnostic line arithmetic
+    remains valid for elaboration and negation probes alike. Quantifying the
+    entire statement instead would incorrectly refute ``Nonempty Carrier``
+    by choosing Empty, rather than testing the proposed fixed carrier.
+    """
+    prelude = "import Mathlib\n\n"
+    contextual = f"import Mathlib\nvariable ({candidate.name} : {candidate.lean_type})\n"
+
+    def source(text: str) -> str:
+        if not text.startswith(prelude):
+            raise ValueError("opaque probe source changed its diagnostic prelude")
+        return contextual + text[len(prelude):]
+
+    return ProbeOperations(
+        elaborate=lambda text: operations.elaborate(source(text)),
+        refute=lambda text: operations.refute(source(text)),
+    )
