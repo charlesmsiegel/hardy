@@ -109,6 +109,15 @@ These are the first architectural tasks. `A0` is the central contract freeze; th
 
 **Deps:** none
 
+**Status:** Implemented in Core A (`feat(A0): define immutable project ledger contracts`).
+`workflows/ledger/contracts.py` provides frozen, tuple-based records with derived,
+schema-tagged content identities and exact references. The 21 focused acceptance
+tests cover dependency/publication versions, immutable contexts and aliases,
+research state, scope separation, citation gaps, and prior-version resolutions.
+Run `uv run --extra test pytest tests/unit/test_ledger_contracts.py -q`.
+Constructors validate schema consistency only: B0 still owns reference/history
+validation, and B2 must authenticate decisions and apply evidence/trust policy.
+
 Add `workflows/ledger/contracts.py` and freeze the public types before parallel implementation of Core B.
 
 At minimum represent:
