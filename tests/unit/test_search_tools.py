@@ -11,8 +11,21 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import pathlib
 from pathlib import Path
+
+import pytest
+
+# Every test here builds its `lake` as an extensionless `#!/bin/sh` script.
+# Windows cannot execute one (`lake env lean --version` fails with WinError
+# 193), and `shutil.which` refuses a file with no PATHEXT extension, so
+# `_same_toolchain` cannot even resolve it: the refusal tests would pass for
+# the wrong reason and the runtime tests cannot pass at all. A real `lake.exe`
+# resolves and runs through the same code path; only the fake is missing.
+pytestmark = pytest.mark.skipif(
+    os.name == 'nt', reason='the fake lake is a POSIX shell script'
+)
 
 MANIFEST = {'packages': [{'name': 'mathlib', 'rev': '81a5d257' + '0' * 32}]}
 
