@@ -1,0 +1,567 @@
+{
+  "main": {
+    "original_main": "a18cfe24ff1bcfdf24ed47824319ab892e0fbbed",
+    "published_base": "dd239cba0f150a965fc304218e1f71164946523c",
+    "linear_tip": "6121c54ff6939ca921d42a006a8c8e46a7418d60",
+    "identical_tree": "35b9160cd215621f451d3246bdae5748866053f1",
+    "worktree": "C:\\Users\\charl\\github\\hardy\\.worktrees\\linear-history",
+    "branch": "linear-history",
+    "preserved_original_ref": "archive/pre-linear-main-a18cfe2",
+    "original_commits": 62,
+    "linear_commits": 60,
+    "rewritten_items": 11,
+    "omitted_merge_commits": [
+      "acab2beb07acfe90df25531d517ab193754e6ed9",
+      "cc35febb45d3908357c471243b9ce2b488a62e2b"
+    ],
+    "items": [
+      {
+        "subject": "feat(C0): classify prerequisites with exact recorded search evidence",
+        "old": "bf8f5587d6c86ae074283330dec52b291e4ae1fb",
+        "new": "bf8f5587d6c86ae074283330dec52b291e4ae1fb",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(C5): adapt iterative proving behind the shared strategy contract",
+        "old": "153e1337743f22f738278d51b85ede6a3e8b9ef4",
+        "new": "153e1337743f22f738278d51b85ede6a3e8b9ef4",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(C1): acquire definitions before proposing explicit opaque assumptions",
+        "old": "a2a0f79250062e0194536e2857679c2e1c89bdf2",
+        "new": "a2a0f79250062e0194536e2857679c2e1c89bdf2",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(C2): resolve exact literature citations through formalization and admission",
+        "old": "292c0e7dba0eff21dee70f5ff4a25625a586a265",
+        "new": "292c0e7dba0eff21dee70f5ff4a25625a586a265",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(C3): materialize minimal interfaces for exact representation plans",
+        "old": "8ee90a6e9de47844e8670b7590b4c4d09f323192",
+        "new": "8ee90a6e9de47844e8670b7590b4c4d09f323192",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(C6): discharge independent sketch lemmas under shared proof budgets",
+        "old": "b759ed2747133c24d1546827d881fb0b6f7084c7",
+        "new": "b759ed2747133c24d1546827d881fb0b6f7084c7",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(C0): reject superseded subjects before prerequisite search",
+        "old": "4a4229cc721f3441937eda54cf2d6016263a4a61",
+        "new": "4a4229cc721f3441937eda54cf2d6016263a4a61",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(C2): resume citations after authenticated hypothesis discharge",
+        "old": "ad2bfec2d5e3ecf89c791eb617179ee699b24596",
+        "new": "ad2bfec2d5e3ecf89c791eb617179ee699b24596",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(C1): probe opaque laws under their explicit carrier parameter",
+        "old": "82d3bea35fc26969b3f6f91a58d4c093d783e0d9",
+        "new": "82d3bea35fc26969b3f6f91a58d4c093d783e0d9",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(C6): preserve sketch evidence across independent run attempts",
+        "old": "616b09d53297d9ed42fb05467cd0f2a0059b1643",
+        "new": "616b09d53297d9ed42fb05467cd0f2a0059b1643",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(C4): resolve typed prerequisites with authenticated recursive checkpoints",
+        "old": "1ecb1a6ae7bbc97c5ca40c0c788572c34abaaeea",
+        "new": "1ecb1a6ae7bbc97c5ca40c0c788572c34abaaeea",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs: record Core C implementation and clean verification",
+        "old": "5638fee6ebd279867033044706ab45affeccb9b8",
+        "new": "5638fee6ebd279867033044706ab45affeccb9b8",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D7): persist exploratory concepts and explicit representation changes",
+        "old": "3799a2e9e6d1c63bdf67b20ce7dcf197f99e4f1c",
+        "new": "3799a2e9e6d1c63bdf67b20ce7dcf197f99e4f1c",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D2): record layered critique as exact shared obligations",
+        "old": "2906d3b4c88eafaf8826538e778d20ee95027c55",
+        "new": "2906d3b4c88eafaf8826538e778d20ee95027c55",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D5): plan publication with exact context and exposition coverage",
+        "old": "58e9068dc1dafd7162cb5df8527cb5f90a6bab1e",
+        "new": "58e9068dc1dafd7162cb5df8527cb5f90a6bab1e",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D1): orchestrate Research through shared formalization and acquisition",
+        "old": "55d0485c37bd4a9f73803426b15c4ca5b97cac5e",
+        "new": "55d0485c37bd4a9f73803426b15c4ca5b97cac5e",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D8): persist semantic context setup and minimal binder materialization",
+        "old": "f3f18b77245eedc9fc41a9efd91e819c0e68d579",
+        "new": "f3f18b77245eedc9fc41a9efd91e819c0e68d579",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(D5): select revised prose once for each exact theorem",
+        "old": "58b0c3a60e1bd18f98eb8fe0f0b6bd575f2c62d3",
+        "new": "58b0c3a60e1bd18f98eb8fe0f0b6bd575f2c62d3",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D6): assemble publication plans through mechanical document checks",
+        "old": "596175ca932153f276e78b83e3a74238466c0e89",
+        "new": "596175ca932153f276e78b83e3a74238466c0e89",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D3): guard exact-claim repair and recheck affected artifacts",
+        "old": "82e3c7a527c2dcd758cd21712a0fb21d223d86b2",
+        "new": "82e3c7a527c2dcd758cd21712a0fb21d223d86b2",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D9): preserve exploratory goals approaches and justified transport",
+        "old": "98b5e223a64fdd6025a93b16208832eb521ea9e4",
+        "new": "98b5e223a64fdd6025a93b16208832eb521ea9e4",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(D4): audit manuscript paths with exact coverage and trust reports",
+        "old": "a5a71bb9ae541015b604b4a698d9da500aedbd7f",
+        "new": "a5a71bb9ae541015b604b4a698d9da500aedbd7f",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(D3): reject ambiguous save and recheck callback outcomes",
+        "old": "f59554a8ef4b7406d2ba8ac85cdac25083546738",
+        "new": "f59554a8ef4b7406d2ba8ac85cdac25083546738",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(D1): authenticate restart structure and reject stale final reports",
+        "old": "692c35233a59517b5e3af23e980fbdd4d507229e",
+        "new": "692c35233a59517b5e3af23e980fbdd4d507229e",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(D4): bind citation audit acceptance to the exact manuscript use",
+        "old": "a542f057f000c7d9f15287d08fa31d8d3b90e30d",
+        "new": "a542f057f000c7d9f15287d08fa31d8d3b90e30d",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "test(D0): verify four acquisition routes exact trust and restart",
+        "old": "a0d954ec40b643187792eb145e1ae3b4a1061a63",
+        "new": "a0d954ec40b643187792eb145e1ae3b4a1061a63",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(D5): preserve exact prose refresh and scoped citation coverage",
+        "old": "f2235508203597ea47334c59c8a84e713bcecae0",
+        "new": "f2235508203597ea47334c59c8a84e713bcecae0",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(D): record completed workflows and clean landing gate",
+        "old": "fc6b25a42a3b4322672701df81fcf9d72bf13893",
+        "new": "fc6b25a42a3b4322672701df81fcf9d72bf13893",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(X1): compare authenticated evaluation rows and measurement coverage",
+        "old": "97a7e8296b6475e7df7920891489079deb7a647c",
+        "new": "97a7e8296b6475e7df7920891489079deb7a647c",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(F0): search a ranked proof frontier under shared run ceilings",
+        "old": "324bf0f88ee4cd806fde5df851709253ec7f1cb7",
+        "new": "324bf0f88ee4cd806fde5df851709253ec7f1cb7",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(F1): race independent proof attempts and retain total spend",
+        "old": "6db157e647ba6c0908cdbfbee534f081c5c77eee",
+        "new": "6db157e647ba6c0908cdbfbee534f081c5c77eee",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(F2): escalate proof strategies without resetting shared budgets",
+        "old": "40b8657200ec157f9bab8eb8ee7e0881892dd32e",
+        "new": "40b8657200ec157f9bab8eb8ee7e0881892dd32e",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(F0): expose staged best-first with shared tool and verifier budgets",
+        "old": "efff2f8d2ab28855d6e9d1ebdbfd8660dc5d0ca8",
+        "new": "efff2f8d2ab28855d6e9d1ebdbfd8660dc5d0ca8",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(F3): derive source-bound lessons from failed proof attempts",
+        "old": "a4f2b2d97fb453353eaa7bf6370f1ba168114e36",
+        "new": "a4f2b2d97fb453353eaa7bf6370f1ba168114e36",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(F3): compare full and compact replay in fresh proof contexts",
+        "old": "461c5677a257ef40842b7bd725de00208007a5d1",
+        "new": "461c5677a257ef40842b7bd725de00208007a5d1",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(F3): recheck proof deadline after opening replay context",
+        "old": "c57e1faeb6f5704e8a06771c4091ed717c5d0bd4",
+        "new": "c57e1faeb6f5704e8a06771c4091ed717c5d0bd4",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(F0): journal independent verifier calls separately from model tools",
+        "old": "b40b5541922feb753744d11af3611eee94d6f2aa",
+        "new": "b40b5541922feb753744d11af3611eee94d6f2aa",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(X1): authenticate strategy comparisons and canonical reader controls",
+        "old": "3a294c8e32448f43a12d28907e1b67c03470f9e4",
+        "new": "3a294c8e32448f43a12d28907e1b67c03470f9e4",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(F1): initialize attempt stores before opening provider contexts",
+        "old": "d1d995c47da5e76f97450d04faed20b41e8a3454",
+        "new": "d1d995c47da5e76f97450d04faed20b41e8a3454",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(F): record verified strategies comparisons and landing gate",
+        "old": "05af98471ccfa9a68db866e455ff37dfb2b8d81e",
+        "new": "05af98471ccfa9a68db866e455ff37dfb2b8d81e",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(G3): explicitly refresh stale exposition at an exact mathematical version",
+        "old": "79d98b09e596274ae4d8d22dedf64cd3ce3fa659",
+        "new": "79d98b09e596274ae4d8d22dedf64cd3ce3fa659",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(G0): audit bounded recursive citations with exact source provenance",
+        "old": "7eea46e5b31646486978fd9719c9ad14a3a22c17",
+        "new": "7eea46e5b31646486978fd9719c9ad14a3a22c17",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(G2): publish exact chapter and book structure through the existing planner",
+        "old": "93a5344186ed1fa4d4db6f907242fd7d7790cd17",
+        "new": "93a5344186ed1fa4d4db6f907242fd7d7790cd17",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(G0): reauthenticate recursive citation receipts before reporting",
+        "old": "a5341d788f1b036c1725254ccf30c5ff0605ee59",
+        "new": "a5341d788f1b036c1725254ccf30c5ff0605ee59",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(G1): audit source versions and reopen exact affected citation uses",
+        "old": "0d4930776c786b879a7068ccbdd96b681c928d7d",
+        "new": "0d4930776c786b879a7068ccbdd96b681c928d7d",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(G): record verified manuscript and publication landing gate",
+        "old": "a060a2ac21b2c736968385ca7ce7f1ec1427def5",
+        "new": "a060a2ac21b2c736968385ca7ce7f1ec1427def5",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(S0): define confinement acceptance and measure current launcher authority",
+        "old": "26d2095bdcfb84353bd775ae16298b8b98958ffb",
+        "new": "26d2095bdcfb84353bd775ae16298b8b98958ffb",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(S3): reject nonfinite process deadlines and invalid byte limits",
+        "old": "eecae455272ac9364de77dea999770a30da78a51",
+        "new": "eecae455272ac9364de77dea999770a30da78a51",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(S3): bound compiler capture and stop promptly on output overflow",
+        "old": "bd5023ff5f301dccb57535c9417571095bf73af6",
+        "new": "bd5023ff5f301dccb57535c9417571095bf73af6",
+        "rewritten": false,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(X2): durably checkpoint independent transcript blocks and torn tails",
+        "old": "d01943c89288691133d0f03da2f1c7eb943f8df2",
+        "new": "5e4e975cc4d142e16dc16d542b021247fe23389a",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(I0): persist conversation branches and replay the selected visible history",
+        "old": "c992a4f824e49024bbf80b9479daa2c822e92b43",
+        "new": "4399844a5cc7530d4be7a09cf694a27d973fefb3",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(I1): add recorded mathematical prompt shortcuts with project overrides",
+        "old": "4608ceb833824951ffbac75387c55cc056dc0416",
+        "new": "8405d69a984efd55e930ea2325a3b9df19c61671",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(I2): preserve configured models and disclose catalog uncertainty",
+        "old": "d5fe6c7405ec5d18747777802214948bc462ac64",
+        "new": "90526bf8ba781d47c71eab6ec1f19ff7d64933ec",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(H0): retrieve scoped project knowledge with current evidence authentication",
+        "old": "7a27c77bdd4186559709ef2c85e8632f26f44fc7",
+        "new": "60694281d86d244d44cca41d4e6796ebb6e26cd3",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(H0): bound complete retrieval payloads and recheck cached evidence",
+        "old": "ca998060fb09eafa226a8786a71cfbec537f6ecd",
+        "new": "9544ee27538ff166667759e34b52e8dc7ce48d41",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "test(H1): measure durable project reuse before adding a memory store",
+        "old": "fdf81c211f115aba115f38b3ae96cfa929ed5c8e",
+        "new": "bce4a4a34f9ec729f0fb0ab4c8d5f1ab1fd718a2",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(H2): authenticate evaluation exposure and separate reuse cohorts",
+        "old": "0fd3b97fbc54c2a1119cf0b49218e7f8d7b9d427",
+        "new": "ee565bfcccd95d94835f42d898ed92d45c0e1ef4",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(H): record verified retrieval and reuse landing gate",
+        "old": "d2000dbcb49fc87bf504de47b21aa11c2e4926f9",
+        "new": "05b4d50ad6d89edf67efb6128ea2879773ee4882",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(I): record verified conversation and ergonomics landing gate",
+        "old": "9fb61f0f2bef286c76ed2851b4bb6909572f9d57",
+        "new": "dc0d0373fde782933f6e850d2233053582eaddef",
+        "rewritten": true,
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(S): record verified hardening and isolation capability gaps",
+        "old": "a18cfe24ff1bcfdf24ed47824319ab892e0fbbed",
+        "new": "6121c54ff6939ca921d42a006a8c8e46a7418d60",
+        "rewritten": true,
+        "patch_identity_equal": true
+      }
+    ]
+  },
+  "engineering": {
+    "original_tip": "10db4f60396e6f3b63c0a2dd194573bb9ceba754",
+    "linear_tip": "73ea6788d5943202a959d841d70cca74d7ebbf50",
+    "identical_tree": "91d4bf0606499d818e9b31bdc2b5d01894734be4",
+    "preserved_original_ref": "archive/pre-linear-engineering-10db4f6",
+    "items": [
+      {
+        "subject": "refactor(X0): make formal save gates an explicit ordered sequence",
+        "old": "ae8054346ee17a6bcb85aa79ea27265ed4c866c5",
+        "new": "f08bfe441ab3eec3f7d2015457e02a43774f63aa",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(X4): preserve ambiguous Macaulay2 prompt-shaped output",
+        "old": "57b21f12494baf431e833673bda7fbdd75ea6a43",
+        "new": "87037b6fa659b238effc8300511603eb5284c3dc",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(X4): hold an OS writer lease for each CAS session lifetime",
+        "old": "da6c57c8c663b3691db695e050333e31ca70619d",
+        "new": "ddbabea806136d02e48f452f9a867e7f799917e9",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(X3): record tested assumption-prompt ordering acceptance",
+        "old": "bc3cd6e974dced27c791af898b810f4e7fc9f450",
+        "new": "15269cdd7dd112f61066d2a76b475f0b1bd51d85",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(X5): reserve and settle durable provider-call budgets at the API boundary",
+        "old": "09fcc2d10cad0253c768c8c748172ed418e60ef1",
+        "new": "5499d1bb5933c89b47b92b4cb86443542bdd72f1",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(X6): journal batch attempts before model work and bind completed results",
+        "old": "e3523c4447f0eba379e88fe0f9e95c59cc31c929",
+        "new": "92c73c54f3199a9fbe5f0e92791068b216c31f6d",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(X6): append attributed reviews of exact attempt artifacts",
+        "old": "1953381e530381827601884006c34d33151f2765",
+        "new": "cf98a5f2dc5b853a7eeed1441c04b9944063760b",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(X4): refuse recovery across unaccepted cell mutations",
+        "old": "70a77c2728d64a5029636644b9fcd388a9430e48",
+        "new": "153184dde8eecffdf5472ea6a245288e97e25c04",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "test(X6): create authentic foreign-toolchain scoreboard fixtures",
+        "old": "033ce4ce10307bd77a287e14f0036abb57284d9b",
+        "new": "23cc160911bf3fc1e139db768ae5ed190a45dc67",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "test(X6): exercise sketch judgments through authentic attempt journals",
+        "old": "1743688dbaa5e319e244a4bd1107096acb855d07",
+        "new": "8fd7cb60475eb29b3240fb43da1dc7ad92a19ce7",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "fix(X4): distinguish terminal CAS rollback from live mutations",
+        "old": "f76cb18d7b6757f1168ef822c762e7d5b86ce7ea",
+        "new": "b1de4f84c3ddaf9160d534c296f1538fba7fd972",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(X): record engineering contracts and pending final gate",
+        "old": "10db4f60396e6f3b63c0a2dd194573bb9ceba754",
+        "new": "73ea6788d5943202a959d841d70cca74d7ebbf50",
+        "patch_identity_equal": true
+      }
+    ]
+  },
+  "evaluation": {
+    "original_tip": "894765b80c144d53dceab3c602f30e0ce0539716",
+    "linear_tip": "29275affa7f21ddf2b462a87863cf38150b0f4d4",
+    "expected_union_tree": "601d5e9d52adc57e8f38d26d2382ebc45b70d668",
+    "union_sources": [
+      "10db4f60396e6f3b63c0a2dd194573bb9ceba754",
+      "894765b80c144d53dceab3c602f30e0ce0539716"
+    ],
+    "preserved_original_ref": "archive/pre-linear-evaluation-894765b",
+    "items": [
+      {
+        "subject": "feat(V1): track authenticated scoreboard history without causal attribution",
+        "old": "794ca295c9cf5bde870afb56ab88b4307325477e",
+        "new": "13b6ae9e4f92d840faaed880e9329c80cc628629",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(V3): import pinned external benchmark source identities",
+        "old": "07d8e67e7b50a6d31f72d8f983e8b55ec0e411da",
+        "new": "7c79a5349e3e455a7655bfe4aba93a6279a09324",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "docs(V0): index deterministic primitive acceptance fixtures",
+        "old": "647c5fb21769f5a161155ede28ecf935b83aab32",
+        "new": "88642b49b68c79d15c67b597fe5894e987fa68d7",
+        "patch_identity_equal": true
+      },
+      {
+        "subject": "feat(V2): certify prospective fixed verifier-budget attempts",
+        "old": "894765b80c144d53dceab3c602f30e0ce0539716",
+        "new": "29275affa7f21ddf2b462a87863cf38150b0f4d4",
+        "patch_identity_equal": true
+      }
+    ],
+    "absorbed_equivalent_items": [
+      {
+        "old": "a762bf83273d2330b4783a8e97f231e6eca53844",
+        "old_subject": "test(X6): preserve journal identity in toolchain mismatch fixtures",
+        "new": "23cc160911bf3fc1e139db768ae5ed190a45dc67",
+        "new_subject": "test(X6): create authentic foreign-toolchain scoreboard fixtures",
+        "patch_identity_equal": true
+      }
+    ],
+    "untracked_report_sha256": "1ee4b84fc415259512c432c6bcac7af3eb00e3b643ac8921ddcf9e891e8364c8"
+  },
+  "evidence_note": "Original reports continue to identify the originally tested commits. Rewritten patches and final tree identities were compared; no tests are newly attributed to rewritten hashes by this mapping."
+}
