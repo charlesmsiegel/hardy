@@ -106,6 +106,56 @@ def _handle_stops_by(handler) -> None:
             signal.signal(number, handler)
 
 
+# The console event `signal_interrupt` sends on Windows. `CTRL_C_EVENT` cannot
+# be aimed at a process group, so a break is what a stop arrives as.
+_CTRL_BREAK_EVENT = 1
+# Held for the life of the process: the console calls this from a thread of
+# its own, and a callback that has been collected is a call into freed memory.
+_CONSOLE_HANDLER = None
+
+
+def redirect_console_breaks() -> None:
+    """Make a console break wake a cell the way Ctrl+C would. Windows only.
+
+    The C runtime turns `CTRL_BREAK_EVENT` into `SIGBREAK`, and a Python
+    handler for that runs at the next bytecode boundary and not before. A
+    `SIGINT` is different: Python's own console handler also sets the event
+    that `time.sleep`, lock acquisition and every other blocking wait on
+    Windows are waiting on, so Ctrl+C wakes them and a break does not. A
+    cell asleep in `time.sleep(300)` therefore took the interrupt 300
+    seconds later, long after Hardy had given up on the kernel and dropped
+    the namespace the interrupt exists to keep.
+
+    A console control handler runs on its own thread the instant the event
+    arrives. It raises `SIGINT` from there -- through Python's C-level
+    handler, which sets that event -- and answers True so the runtime's own
+    handler does not deliver `SIGBREAK` behind it: one press is one
+    `KeyboardInterrupt`, and the `_STOP_SIGNALS` dance above sees it as it
+    always has, deferred between cells and raised inside one.
+    """
+    global _CONSOLE_HANDLER
+    if sys.platform != "win32":
+        return
+    with contextlib.suppress(Exception):
+        import ctypes
+        from ctypes import wintypes
+
+        prototype = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+        def handler(event: int) -> bool:
+            if event != _CTRL_BREAK_EVENT:
+                return False
+            signal.raise_signal(signal.SIGINT)
+            return True
+
+        callback = prototype(handler)
+        set_handler = ctypes.windll.kernel32.SetConsoleCtrlHandler
+        set_handler.argtypes = (prototype, wintypes.BOOL)
+        set_handler.restype = wintypes.BOOL
+        if set_handler(callback, True):
+            _CONSOLE_HANDLER = callback
+
+
 def read_exact(stream, count: int) -> bytes | None:
     """Read exactly `count` bytes, or None if the stream ended first.
 
@@ -456,7 +506,7 @@ class _Stream:
 # and its output would land on the protocol descriptor after all: the exact
 # failure descriptor capture exists to prevent, still reachable on one
 # platform. `SetStdHandle` is the other half of the redirect there.
-_WIN32_STD = {1: -11, 2: -12}
+_WIN32_STD = {0: -10, 1: -11, 2: -12}
 
 
 def _redirect_win32_handle(fd: int) -> None:
@@ -488,6 +538,33 @@ def _redirect_win32_handle(fd: int) -> None:
         handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
         if not set_std_handle(wintypes.DWORD(_WIN32_STD[fd]), handle):
             raise OSError(ctypes.get_last_error(), "SetStdHandle refused the redirect")
+
+
+def _protocol_input():
+    """Hardy's frames, on a descriptor that no child of a cell inherits.
+
+    They arrive on descriptor 0, and a helper a cell starts without naming
+    its stdin inherits that -- so it could read the next frame as its own
+    input, and the protocol would never resynchronise. On Windows it is worse
+    before it is anything: a child that inherits the pipe cannot start while
+    this process is blocked reading it. A pending synchronous read holds the
+    pipe's file object, and the child's C runtime, which asks that same
+    object what kind of file it is while setting up its own stdin, waits for
+    the read to return. A helper that printed "after its cell" therefore did
+    not start until the *next* cell's frame arrived, and printed into that
+    cell -- and a session that spawned a helper and then sat idle left it
+    frozen for as long as the idleness lasted. Descriptor 0 goes to the null
+    device, and the frames are read from a private duplicate, exactly as
+    `_Capture` keeps the protocol's replies off descriptor 1.
+    """
+    protocol = os.dup(0)
+    with contextlib.suppress(OSError, AttributeError):
+        os.set_inheritable(protocol, False)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    _redirect_win32_handle(0)
+    return os.fdopen(protocol, "rb")
 
 
 class _Capture:
@@ -951,10 +1028,22 @@ def main() -> None:
     # session put in the namespace from what the preamble did.
     baseline = dict(namespace)
 
+    # A cell's `print` goes through `sys.stdout`, and on Windows that wrapper
+    # encodes with the console codepage and writes "\r\n" for every "\n". The
+    # capture below reads the descriptor as bytes and the parent decodes them
+    # as UTF-8, so the wrapper is told to write what will be read: without
+    # this a record carried "\r\n" line endings and U+FFFD for every
+    # non-ASCII character a cell printed. Before `_Capture` takes the
+    # descriptors, because reconfiguring flushes.
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.reconfigure(encoding="utf-8", errors=stream.errors, newline="\n")
+
     capture = _Capture(limit)
 
     global PENDING_INTERRUPT
-    stdin = sys.stdin.buffer
+    stdin = _protocol_input()
+    redirect_console_breaks()
     while True:
         # Deferred across the read, raised across the cell. The cell is the one
         # place a stop *should* interrupt Python directly -- that is what makes

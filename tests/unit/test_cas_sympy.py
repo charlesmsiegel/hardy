@@ -159,14 +159,16 @@ def test_the_output_cap_counts_bytes_not_characters(tmp_path) -> None:
         session.close()
 
 
-def test_an_exported_sympy_session_reproduces(sympy_session, tmp_path) -> None:
+def test_an_exported_sympy_session_reproduces(
+    sympy_session, tmp_path, script_agreed, reproduced
+) -> None:
     sympy_session.probe_version()
     sympy_session.execute("x, y = symbols('x y')")
     sympy_session.execute("factor(x**2 - y**2)")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.reproduces
+    assert reproduced(report), report.model_dump_json(indent=2)
     assert report.verified == 2
-    assert report.script_verdict == "verified"
+    assert script_agreed(report), report.script_detail
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
     # The preamble the driver preloads is emitted, so the script stands alone.
     assert "from sympy import *" in script
@@ -191,7 +193,7 @@ def transcript_lines(stdout: str) -> list[str]:
 
 
 def test_running_the_exported_script_prints_what_the_session_recorded(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed, reproduced
 ) -> None:
     """The claim, checked by running the thing the claim is about.
 
@@ -234,8 +236,8 @@ def test_running_the_exported_script_prints_what_the_session_recorded(
         "(x - 1)*(x + 1)",
         "4",
     ]
-    assert report.script_verdict == "verified"
-    assert report.reproduces
+    assert script_agreed(report), report.script_detail
+    assert reproduced(report), report.model_dump_json(indent=2)
 
 
 def test_a_script_that_cannot_run_is_not_reported_as_reproducing(
@@ -277,7 +279,7 @@ def test_a_script_that_cannot_run_is_not_reported_as_reproducing(
 
 
 def test_awkwardly_shaped_cells_still_render_into_a_runnable_script(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed, reproduced
 ) -> None:
     """The trailing expression is spliced by source offset, not by line.
 
@@ -295,13 +297,13 @@ def test_awkwardly_shaped_cells_still_render_into_a_runnable_script(
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
     assert "y = 2; sys.displayhook((x + y))" in script
     assert "# ∀ε>0" in script  # the comment survives the splice
-    assert report.script_verdict == "verified", report.script_detail
-    assert report.reproduces
+    assert script_agreed(report), report.script_detail
+    assert reproduced(report), report.model_dump_json(indent=2)
 
 
 @pytest.mark.parametrize(("source", "printed"), [("x, y", "(x, y)"), ("x,", "(x,)")])
 def test_a_tuple_valued_cell_still_exports_a_runnable_script(
-    sympy_session, tmp_path, source, printed
+    sympy_session, tmp_path, source, printed, script_agreed, reproduced
 ) -> None:
     """A trailing expression can have a top-level comma, and a call splits on it.
 
@@ -327,8 +329,8 @@ def test_a_tuple_valued_cell_still_exports_a_runnable_script(
     )
     assert finished.returncode == 0, finished.stderr
     assert transcript_lines(finished.stdout) == [TRANSCRIPT_BEGIN, printed, TRANSCRIPT_END]
-    assert report.script_verdict == "verified", report.script_detail
-    assert report.reproduces
+    assert script_agreed(report), report.script_detail
+    assert reproduced(report), report.model_dump_json(indent=2)
 
 
 def test_the_script_header_does_not_claim_a_verification_it_cannot_have(
@@ -399,3 +401,20 @@ def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_sess
     # every later cell of a cancelled turn is stopped too, deliberately.
     sympy_session.resume()
     assert sympy_session.execute("kept").value_repr == "x**4 + 4*x**3*y + 6*x**2*y**2 + 4*x*y**3 + y**4"
+
+
+def test_a_cell_printing_non_ascii_is_recorded_as_written(
+    sympy_session, tmp_path, script_agreed
+) -> None:
+    """The capture reads the descriptors as bytes and decodes them as UTF-8,
+    so the kernel's own text streams have to write UTF-8 with bare newlines.
+    On Windows they did neither by default: `«` came back as U+FFFD and every
+    line ended in "\\r\\n", so a record disagreed with the script that
+    reproduced it exactly -- and the script, run under the same default,
+    printed markers Hardy could not recognise as its own."""
+    record = sympy_session.execute("print('∀ε>0 «kept»')")
+    assert record.stdout == "∀ε>0 «kept»\n"
+    assert record.capture_truncated is False
+
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert script_agreed(report), report.model_dump_json(indent=2)

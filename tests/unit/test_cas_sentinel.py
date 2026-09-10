@@ -84,7 +84,9 @@ def test_a_silent_cell_still_completes(sentinel_session) -> None:
     assert session.execute("silent;").status == "ok"
 
 
-def test_an_exported_sentinel_script_is_run_and_compared(tmp_path, sentinel_session) -> None:
+def test_an_exported_sentinel_script_is_run_and_compared(
+    tmp_path, sentinel_session, script_agreed, reproduced
+) -> None:
     """The published script is fed back to the interpreter, as a reader would.
 
     A line-oriented interpreter prints a statement's value itself, so these
@@ -95,5 +97,5 @@ def test_an_exported_sentinel_script_is_run_and_compared(tmp_path, sentinel_sess
     session.execute("hello;")
     session.execute("second;")
     report = export_session(session, tmp_path / "cas")
-    assert report.script_verdict == "verified"
-    assert report.reproduces
+    assert script_agreed(report), report.script_detail
+    assert reproduced(report), report.model_dump_json(indent=2)

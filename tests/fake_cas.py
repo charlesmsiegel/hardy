@@ -201,6 +201,12 @@ def main() -> None:
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 256 * 1024
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     global PENDING_INTERRUPT
+    # As `cas_driver.main` does, and borrowed rather than mirrored: on Windows
+    # the break `signal_interrupt` sends does not wake a `time.sleep` unless
+    # it is turned into a `SIGINT` first, and `hang` is a `time.sleep`.
+    from hardy.algebra.driver import redirect_console_breaks
+
+    redirect_console_breaks()
     while True:
         if STOP_READING:
             # Wedged between cells with the stop still deferred, so it is deaf
