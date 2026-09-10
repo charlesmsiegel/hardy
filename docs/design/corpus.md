@@ -400,20 +400,21 @@ Content versions answer a different question from measurement staleness:
 where a patch corrects, a minor adds and a major breaks.
 
 Asserting only that `corpus_version` equals the changelog head cannot detect an
-unversioned edit: a shard changes while both strings stay put and the check still
-passes, which makes a published version non-reproducible. So the head binds a
-**manifest digest** over every content file, and the heading reads
+unversioned edit: a shard changes while both strings stay put and the check
+still passes, which makes a published version non-reproducible. So the head
+binds a **manifest digest** over every content file, and the heading reads
 `## <version> - <date> - manifest <digest>`. `manifest_digest` (`catalog.py`)
 hashes the shards, the taxonomy tables, `sources.json`, `tombstones.json` and
-the fixture and analysis-plan files when they exist, each under its
-posix-shaped relative path, because `str(Path)` yields backslashes on Windows
-and an unchanged corpus would otherwise hash differently per platform.
-`measurements/` is deliberately outside the manifest: re-sweeping a baseline
-against a new Mathlib revision changes no content and must not manufacture a
-release. `CHANGELOG.md` is outside it because the head is where the digest is
-written, and hashing the file the digest lives in could never settle;
-`SCHEMA.md` is outside it so that an edit to a paragraph of prose is not a
-content release that invalidates every scoreboard bound to the manifest.
+the fixture and analysis-plan files when they exist, each under its posix-shaped
+relative path, because `str(Path)` yields backslashes on Windows and an
+unchanged corpus would otherwise hash differently per platform. A corpus-side
+`measurements/` tree, were one built, would sit outside the manifest:
+re-sweeping a baseline against a new Mathlib revision changes no content and
+must not manufacture a release. `CHANGELOG.md` is outside it because the head is
+where the digest is written, and hashing the file the digest lives in could
+never settle; `SCHEMA.md` is outside it so that an edit to a paragraph of prose
+is not a content release that invalidates every scoreboard bound to the
+manifest.
 
 Two gates need a historical anchor rather than the working tree, because a tree
 that has been edited in both places is self-consistent. `release_issues` compares
@@ -494,11 +495,13 @@ reporting work that would need it.
 
 Three further limits shape what can be asked of the corpus today. Selection by
 MSC code, arXiv class, difficulty, source or level is not implemented: a run
-selects by id, tier, twin and status. Per-field aggregation and paired model
-comparison are not implemented either, so the headline is restricted to `active`
-entries at tier 2 or above and reports no field breakdown. And the evals runner
-drives one backend, so a comparison across providers cannot be run at all,
-however the corpus is classified ([roadmap](../roadmap.md)).
+selects by id, tier, twin and status. Per-field aggregation is not implemented,
+so the headline is restricted to `active` entries at tier 2 or above and reports
+no field breakdown; `hardy evals compare` pairs slots between two boards
+descriptively and is not the per-field paired report with a multiplicity
+adjustment the design describes. And the evals runner drives one backend, so a
+comparison across providers cannot be run at all, however the corpus is
+classified ([roadmap](../roadmap.md)).
 
 ## Where the statements live
 
