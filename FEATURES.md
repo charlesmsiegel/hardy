@@ -1,7 +1,8 @@
 # Hardy feature inventory
 
-This is the consolidated backlog extracted from the former milestone specs and
-implementation plans. It describes desired behavior and current sequencing. The
+This inventory describes desired behavior and implemented capabilities, drawing
+on the former milestone specs and implementation plans. The
+[roadmap](docs/roadmap.md) defines planned work and its dependency order. The
 interactive CLI slice covers the items marked **Now (implemented)**. The batch
 and staged surfaces have been validated against a real model, the pinned
 Mathlib, and a real Tectonic on a nontrivial theorem, with the runs recorded

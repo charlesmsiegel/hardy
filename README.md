@@ -25,10 +25,11 @@ the unharnessed one produces proofs that *appear* complete while resting on
 informal claim. Until that experiment reports, everything below describes
 mechanism rather than performance, and there are no benchmark numbers here.
 
-The issue tracker is a working backlog rather than a defect list. An open issue
-here usually records a design decision made and not yet acted on, and issue
-numbers are referenced from the code and the docs where that reasoning matters —
-see #23 for an example.
+The issue tracker records reproducible defects and concrete deferred review
+findings. Planned capabilities and their dependency order live in the
+[roadmap](docs/roadmap.md), supported by the
+[research architecture](docs/research-architecture.md). Historical issue
+references in code and documentation retain the reasoning behind earlier work.
 
 A tool that refuses to let a model claim more than its artifacts support should
 hold itself to the same standard.
