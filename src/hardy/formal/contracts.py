@@ -5,6 +5,7 @@ that checked it; workflow approval and final grades are separate contracts.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -90,6 +91,17 @@ class FrozenClaim(FrozenModel):
     @model_validator(mode="after")
     def check_generated_signature(self) -> Self:
         if self.semantic_context is not None:
+            # Check the serialized projection without importing the ledger owner.
+            # Hash consistency alone cannot reconcile two different originals.
+            subjects = [entry for entry in self.semantic_context.entries if entry.role == "subject"]
+            if len(subjects) != 1 or subjects[0].ref != self.semantic_context.subject:
+                raise ValueError("contextual claim requires one exact subject statement source")
+            subject = json.loads(subjects[0].text)
+            if not isinstance(subject, dict):
+                raise ValueError("subject statement source must be a serialized record")
+            statement = subject.get("statement")
+            if statement is not None and self.original_text != statement:
+                raise ValueError("original text differs from exact subject statement")
             rendered = " ".join(b.lean_syntax for b in self.semantic_context.generated_binders)
             if self.proposal.binders != rendered:
                 raise ValueError("contextual signature differs from generated binder origins")

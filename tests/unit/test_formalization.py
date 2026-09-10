@@ -69,6 +69,45 @@ def contextual_proposal(request):
     )
 
 
+@pytest.mark.parametrize("text", ["Zero equals zero.", "Original statement."])
+def test_contextual_constructor_rejects_text_different_from_exact_subject(text):
+    from hardy.workflows import formalization as service
+    values = contextual().model_dump()
+    values["text"] = text
+    with pytest.raises(ValueError, match="subject statement"):
+        service.ContextualFormalizationInput(**values)
+
+
+@pytest.mark.parametrize("operation", ["prompt", "prepare"])
+def test_contextual_mismatch_is_rejected_before_prompt_and_lean(operation):
+    from hardy.workflows import formalization as service
+    request = contextual().model_copy(update={"text": "Zero equals zero."})
+    lean = Lean()
+    with pytest.raises(ValueError, match="subject statement"):
+        if operation == "prompt":
+            service.formalization_prompt(request)
+        else:
+            service.prepare_candidate(request, contextual_proposal(request), environment(), NOW, lean=lean)
+    assert lean.calls == []
+
+
+@pytest.mark.parametrize("operation", ["readback", "reconstruction"])
+def test_contextual_persisted_text_cannot_disagree_with_exact_subject(operation):
+    from hardy.workflows import formalization as service
+    request = contextual()
+    claim = service.freeze_formalization(request, contextual_proposal(request), environment(), NOW)
+    saved = claim.model_dump(mode="json")
+    saved["original_text"] = "Zero equals zero."
+    # Rehashing a mismatched artifact must not make its two original texts consistent.
+    saved["content_hash"] = json_digest({key: value for key, value in saved.items() if key != "content_hash"})
+    with pytest.raises(ValueError, match="subject statement"):
+        if operation == "readback":
+            formal.FrozenClaim.model_validate_json(json.dumps(saved))
+        else:
+            formal.freeze_claim(saved["original_text"], claim.proposal, claim.environment, NOW,
+                                semantic_context=claim.semantic_context)
+
+
 class Lean:
     def __init__(self):
         self.calls = []

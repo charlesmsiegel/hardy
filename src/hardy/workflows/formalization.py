@@ -2,6 +2,7 @@
 
 Theory: a candidate translates original text plus caller-resolved semantic state;
 only the provider generates binder syntax, and every fragment retains its origin.
+An exact subject statement is the original text, including its whitespace.
 This module validates supplied records and composes freeze/Lean/independent review.
 Prove owns calls, approval, budgets, cancellation and persisted-readback ordering.
 B0/B4/B5 must establish store reachability, minimal closure, representation adequacy
@@ -80,6 +81,12 @@ class ContextualFormalizationInput(FrozenModel):
     required_transports: tuple[VersionRef, ...] = ()
     requirements: tuple[SemanticRequirement, ...] = ()
 
+    @model_validator(mode="after")
+    def exact_subject_statement(self) -> Self:
+        if self.subject.statement is not None and self.text != self.subject.statement:
+            raise ValueError("original text differs from exact subject statement")
+        return self
+
 
 FormalizationInput = StandaloneFormalizationInput | ContextualFormalizationInput
 Proposal = FormalizationProposal | ContextualFormalizationProposal
@@ -117,6 +124,8 @@ def resolve_input(request: FormalizationInput) -> FormalizationContext | Semanti
     """Validate supplied context, not mathematical resolution or trust policy."""
     if isinstance(request, StandaloneFormalizationInput):
         return None
+    # model_copy updates bypass construction validators; consumers recheck.
+    request.exact_subject_statement()
     if request.subject.context != request.context.ref:
         raise ValueError("subject context reference differs from supplied context")
     sources = {source.ref.id: source for source in request.sources}

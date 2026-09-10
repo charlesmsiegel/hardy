@@ -5,6 +5,9 @@ structure and keeps every location in the original Unicode string, so a caller
 can check a record against the exact source it supplied.  In particular, it is
 not a statement reader: macro expansion, conditionals, custom environments and
 the boundary of a mathematical claim are outside this small scanner.
+Nested title commands are explicitly unavailable. Malformed stored definitions
+make the remaining source unavailable when no reliable body boundary exists;
+comment-spliced citation identities require a contiguous span or a finding.
 """
 
 from __future__ import annotations
@@ -241,6 +244,13 @@ class _Scanner:
         self.result.sections.append(
             Section(name, starred, self._span(start, closing), self._span(opening + 1, closing - 1))
         )
+        if "\\" in self.text[opening + 1 : closing - 1]:
+            self._finding(
+                "nested_title_structure",
+                "commands inside section titles are not inventoried",
+                opening + 1,
+                closing - 1,
+            )
         return closing
 
     def _begin(self, start: int, end: int) -> int:
@@ -324,11 +334,18 @@ class _Scanner:
                 position = self._comment_end(position) if self.text[position] == "%" else position + 1
             bodies = 1
         else:
+            position = self._skip_space_comments(position)
             first = self._group(position, "{", "}")
-            if first is None:
-                self._finding("macro_definition", f"\\{name} has no balanced declaration", start, end)
-                return end
-            _, position = first
+            if first is not None:
+                _, position = first
+            elif (name in {"newcommand", "renewcommand", "providecommand"}
+                  and position < len(self.text) and self.text[position] == "\\"):
+                _, position = self._control_word(position)
+            else:
+                # No reliable body boundary remains: do not scan stored decoys.
+                self._finding("macro_definition", f"\\{name} declaration is unsupported; remaining source unavailable",
+                              start, len(self.text))
+                return len(self.text)
             optional = self._group(position, "[", "]")
             if optional is not None:
                 _, position = optional
@@ -342,8 +359,9 @@ class _Scanner:
         for _ in range(bodies):
             body = self._group(position, "{", "}")
             if body is None:
-                self._finding("macro_definition", f"\\{name} has an unbalanced body", start, position)
-                return position
+                self._finding("macro_definition", f"\\{name} has an unbalanced body; remaining source unavailable",
+                              start, len(self.text))
+                return len(self.text)
             _, position = body
         self._finding("macro_definition", f"\\{name} body is stored, not expanded", start, position)
         return position
@@ -415,24 +433,43 @@ class _Scanner:
 
     def _citation_keys(self, start: int, end: int) -> list[tuple[int, int]]:
         keys: list[tuple[int, int]] = []
-        key_start = start
+        left: int | None = None
+        right = start
+        comments: list[int] = []
         depth = 0
-        for position in range(start, end + 1):
+        position = start
+        while position <= end:
             at_end = position == end
             character = "" if at_end else self.text[position]
-            if not at_end and character == "{":
-                depth += 1
-            elif not at_end and character == "}" and depth:
-                depth -= 1
+            if character == "%":
+                comments.append(position)
+                position = min(self._comment_end(position), end)
+                continue
             if at_end or (character == "," and depth == 0):
-                left, right = key_start, position
-                while left < right and self.text[left].isspace():
-                    left += 1
-                while right > left and self.text[right - 1].isspace():
-                    right -= 1
-                if left < right:
-                    keys.append((left, right))
-                key_start = position + 1
+                if left is not None:
+                    if any(left < comment < right for comment in comments):
+                        self._finding("comment_spliced_citation_key",
+                                      "comment-spliced key has no contiguous original source span", left, right)
+                    else:
+                        keys.append((left, right))
+                left = None
+                comments = []
+                position += 1
+                continue
+            # Use the same token boundaries as balanced groups: escaped commas,
+            # braces and percent signs are control tokens, not delimiters.
+            after = position + 1
+            if character == "\\":
+                _, after = self._control_word(position)
+            elif character == "{":
+                depth += 1
+            elif character == "}" and depth:
+                depth -= 1
+            if not character.isspace():
+                if left is None:
+                    left = position
+                right = after
+            position = after
         return keys
 
     def _control_word(self, start: int) -> tuple[str, int]:

@@ -31,8 +31,10 @@ interactive surface's own live run is still to come.
   future work.
 - Core A shared contracts add immutable exact-reference ledger values and import
   boundaries; optional direct contextual formalization callers bind source
-  records and generated binder origins into their identity while standalone
-  schemas and frozen hashes remain unchanged. Missing or stale semantic
+  records and generated binder origins into their identity while the legacy
+  proposal schema and context-free frozen hashes remain unchanged. FrozenClaim's
+  schema and serialization add optional `semantic_context` (null for standalone
+  claims); old artifacts still load. Missing or stale semantic
   prerequisites return typed obligations. The strategy protocol is bounded and
   descriptive only, and the manuscript inventory reports literal spans/digests,
   sections, conservative blocks, labels and citations without reading paths,
@@ -46,8 +48,8 @@ interactive surface's own live run is still to come.
   evaluation cycles are removed and checked by full-tree import tests.
 - One wheel and unchanged commands and mathematical gates. The source relocation
   preserved existing standalone formats and prompts; Core A adds optional
-  contextual formalization fields without changing legacy context-free schemas
-  or frozen hashes.
+  contextual formalization fields without changing the legacy proposal schema
+  or context-free frozen hashes.
   Source moves invalidate measurement identities; previous evidence is not
   restamped. No execution sandbox is added. See
   [DESIGN.md](DESIGN.md#internal-module-boundaries) for the package and contract map.

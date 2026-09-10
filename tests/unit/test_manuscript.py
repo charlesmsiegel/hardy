@@ -140,3 +140,58 @@ def test_comment_splicing_does_not_invent_a_control_word_and_spans_reject_change
 def test_unpaired_surrogates_are_refused_before_digesting() -> None:
     with pytest.raises(UnicodeEncodeError):
         inventory({"broken.tex": "\ud800"})
+
+
+@pytest.mark.parametrize("command", ("newcommand", "renewcommand", "providecommand"))
+@pytest.mark.parametrize("options", ("", "[1][default]"))
+def test_unbraced_macro_name_suppresses_stored_decoys(command, options):
+    definition = (
+        f"\\{command}\\hidden{options}"
+        r"{\begin{theorem}\label{decoy}\cite{decoy}\end{theorem}}"
+    )
+    source = definition + r"\label{real}\cite{real}"
+    found = inventory({"paper.tex": source})
+    assert not found.environments
+    assert [item.value for item in found.labels] == ["real"]
+    assert [item.key for item in found.citations] == ["real"]
+    assert _slice(source, found.unsupported[0].span) == definition
+
+
+@pytest.mark.parametrize("definition", [
+    r"\newcommand hidden{\begin{theorem}\label{decoy}\cite{decoy}\end{theorem}}",
+    r"\newcommand{\hidden}{\begin{theorem}\label{decoy}\cite{decoy}\end{theorem}",
+])
+def test_unsupported_macro_definition_does_not_leak_body_records(definition):
+    found = inventory({"paper.tex": definition})
+    assert not found.environments and not found.labels and not found.citations
+    assert _slice(definition, found.unsupported[0].span) == definition
+
+
+def test_citation_comment_does_not_manufacture_keys_or_change_original_spans():
+    command = "\\cite{one,% ignored, decoy } {\ntwo}"
+    source = command + r"\cite{two}"
+    found = inventory({"paper.tex": source})
+    assert [item.key for item in found.citations] == ["one", "two", "two"]
+    assert [_slice(source, item.key_span) for item in found.citations] == ["one", "two", "two"]
+    assert [_slice(source, item.command) for item in found.citations] == [command, command, r"\cite{two}"]
+    assert found.citations[1].key_span != found.citations[2].key_span
+    assert not found.unsupported
+
+
+def test_comment_spliced_citation_key_is_bounded_unsupported():
+    source = "\\cite{pa% ignored, }\nper, real}"
+    found = inventory({"paper.tex": source})
+    assert [item.key for item in found.citations] == ["real"]
+    assert len(found.unsupported) == 1
+    assert _slice(source, found.unsupported[0].span) == "pa% ignored, }\nper"
+
+
+def test_title_nested_occurrences_are_reported_as_bounded_unsupported():
+    title = r"Related work \cite{paper}\label{sec:related}"
+    source = "\\section{" + title + r"}\cite{after}\label{after}"
+    found = inventory({"paper.tex": source})
+    assert _slice(source, found.sections[0].title) == title
+    assert [item.key for item in found.citations] == ["after"]
+    assert [item.value for item in found.labels] == ["after"]
+    assert len(found.unsupported) == 1
+    assert _slice(source, found.unsupported[0].span) == title
