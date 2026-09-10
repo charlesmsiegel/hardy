@@ -263,3 +263,8 @@ def test_new_citation_cannot_inherit_another_uses_authenticated_contract(tmp_pat
     restarted = flow.run(request)
     assert restarted.citations[0].checked
     assert restarted.citations[0].contracts == (current_contract,)
+
+    recursive = flow.run(replace(request, citation_depth=1))
+    assert recursive.citations[0].checked
+    assert recursive.recursive_citations[0].status == "missing_reader"
+    assert not recursive.recursive_coverage_complete

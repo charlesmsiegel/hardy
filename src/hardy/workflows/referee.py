@@ -17,6 +17,13 @@ from dataclasses import dataclass, replace
 from hardy.foundation.values import json_digest
 from hardy.literature.manuscript import Inventory, SourceSpan, inventory
 from hardy.workflows.acquisition.contracts import ResolverResult
+from hardy.workflows.citation_audit import (
+    CitationAudit,
+    CitationExpansion,
+    CitationUse,
+    RecursiveCitationAudit,
+    audit_recursive,
+)
 from hardy.workflows.critique import (
     LAYERS,
     CritiqueFinding,
@@ -61,28 +68,14 @@ class ManuscriptClaim:
 
 
 @dataclass(frozen=True)
-class CitationUse:
-    span: SourceSpan
-    use_site: VersionRef
-    required_claim: VersionRef
-
-
-@dataclass(frozen=True)
 class RefereeRequest:
     sources: Mapping[str, str]
     scope: VersionRef
     main_results: tuple[VersionRef, ...]
     claims: tuple[ManuscriptClaim, ...]
     citations: tuple[CitationUse, ...] = ()
-
-
-@dataclass(frozen=True)
-class CitationAudit:
-    use: CitationUse
-    obligation: VersionRef
-    contracts: tuple[CitationContract, ...]
-    checked: bool
-    outstanding: tuple[VersionRef, ...]
+    citation_depth: int = 0
+    citation_max_nodes: int = 32
 
 
 @dataclass(frozen=True)
@@ -105,6 +98,17 @@ class RefereeReport:
     citations: tuple[CitationAudit, ...]
     trust: tuple[tuple[VersionRef, TrustView], ...]
 
+    recursive_citations: tuple[RecursiveCitationAudit, ...] = ()
+    citation_depth: int = 0
+
+    @property
+    def recursive_coverage_complete(self) -> bool:
+        """Whether pinned-source traversal completed; never certifies whole-paper semantics."""
+        return self.citation_depth > 0 and not self.unmapped_citations and not self.inventory.unsupported and all(
+            node.status == "expanded" and not node.unmapped and not node.limitations
+            and all(child.checked for child in node.children)
+            for node in self.recursive_citations) and all(c.checked for c in self.citations)
+
     @property
     def summary(self) -> str:
         contracts = tuple(c for audit in self.citations for c in audit.contracts)
@@ -116,18 +120,22 @@ class RefereeReport:
                 f"unselected claims: {len(self.unselected_claims)}; "
                 f"unreviewed dependencies: {len(self.unreviewed_dependencies)}; "
                 f"unmapped citations: {len(self.unmapped_citations)}; "
+                f"recursive citation depth: {self.citation_depth}, coverage complete: {self.recursive_coverage_complete}; "
                 f"structural findings: {sum(len(findings) for _, findings in self.structural_findings)}; "
                 f"lexical limitations: {len(self.inventory.unsupported)}. "
+                "Recursive coverage covers only C2 pinned source files. "
                 "Semantic reading completeness is unverified; review layers are listed per claim.")
 
 
 class RefereeWorkflow:
     def __init__(self, store: LedgerStore, *, critique: CritiqueOperations,
                  resolve_citation: Callable[[LedgerSnapshot, Obligation], ResolverResult] | None = None,
-                 policy: LedgerPolicy | None = None):
+                 policy: LedgerPolicy | None = None,
+                 expand_citation: Callable[[LedgerSnapshot, CitationContract, Scope], CitationExpansion] | None = None):
         self.store = store
         self.critique = critique
         self.resolve_citation = resolve_citation
+        self.expand_citation = expand_citation
         self.policy = policy or LedgerPolicy()
 
     @staticmethod
@@ -139,6 +147,10 @@ class RefereeWorkflow:
 
     def _validate(self, request: RefereeRequest, scanned: Inventory,
                   snapshot: LedgerSnapshot) -> Scope:
+        if type(request.citation_depth) is not int or request.citation_depth not in {0, 1, 2}:
+            raise ValueError("citation_depth must be 0, 1 or 2")
+        if type(request.citation_max_nodes) is not int or request.citation_max_nodes < 1:
+            raise ValueError("citation_max_nodes must be a positive integer")
         scope = self._current(snapshot, request.scope, Scope)
         environments = {env.opening: env for env in scanned.environments if env.kind != "proof"}
         if len({c.environment for c in request.claims}) != len(request.claims):
@@ -318,6 +330,11 @@ class RefereeWorkflow:
         selected = tuple(c.item for c in request.claims if c.item in closure)
         uses = tuple(use for use in request.citations if use.use_site in selected)
         citation_work = tuple(self._citation(use, scope) for use in uses)
+        recursive = audit_recursive(store=self.store, policy=self.policy, scope=scope,
+            roots=tuple(self._citation_audit(self.store.read(), use, work)
+                        for use, work in zip(uses, citation_work, strict=True)),
+            depth=request.citation_depth, max_nodes=request.citation_max_nodes,
+            expand=self.expand_citation, check=self._citation, audit=self._citation_audit) if request.citation_depth else ()
         critiques = []
         structural_findings = []
         for claim in request.claims:
@@ -371,6 +388,7 @@ class RefereeWorkflow:
                            any(o.item in LedgerGraph(snapshot).dependency_closure(ref, include_roots=True) for o in pending))
         report = RefereeReport(
             inventory=scanned, scope=scope.ref, main_results=request.main_results,
+            recursive_citations=recursive, citation_depth=request.citation_depth,
             critical_path=path,
             unreviewed_dependencies=tuple(ref for ref in path if ref not in selected
                                           and isinstance(snapshot.get(ref), ProjectItem)
