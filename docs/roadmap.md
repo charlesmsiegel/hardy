@@ -278,7 +278,19 @@ calls it a conjecture; source wording never selects a bypass category.
 
 **Deps:** none
 
-Add `workflows/strategies/contracts.py` with a small `ProofTask`, `ProofOutcome`, and `Strategy` interface plus shared budget/evidence semantics. Do not implement sophisticated strategies yet.
+**Status:** Implemented in Core A (`feat(A4): define bounded proof strategy contracts`).
+`workflows/strategies/contracts.py` provides immutable `ProofTask`,
+`ProofOutcome`, and `Strategy` values. A task fixes the claim, explicitly
+declared assumptions, and validated run-owned strategy ceilings. An outcome is
+only an attempt or submission: it has no formal grade. Optional existing
+verification evidence must name the task's exact claim and toolchain and the
+canonical verifier source rendered from its returned proof, so evidence for a
+different proof of the same claim cannot be attached. Run
+`uv run --extra test pytest tests/unit/test_strategy_contracts.py -q`.
+
+This is an interface only. C5 will adapt iterative proving behind it; no search
+engine, execution provider, token/cost accounting, or formal verification is
+implemented here.
 
 ## A5 — Mechanical manuscript-source model — P0
 

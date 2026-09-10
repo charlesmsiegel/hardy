@@ -1193,8 +1193,11 @@ Priority labels are sequencing hints:
 ## Search and orchestration
 
 - **Now (implemented):** iterative repair—submit, observe Lean feedback, revise, repeat.
-- **Next:** a pluggable strategy seam with shared token, wall-clock, and Lean-CPU
-  budgets.
+- **Now (implemented):** a pluggable proof-strategy contract fixes a frozen claim,
+  explicit declared-assumption scope, and validated run-owned wall-clock/check/process/
+  retrieval ceilings. A strategy returns an attempt or submission; only the independent
+  verifier may assign a formal grade. Shared CPU metering and token/cost reservation
+  accounting remain later work.
 - **Later — Sketch and discharge:** create an informal plan and Lean skeleton,
   then solve holes independently. Its first prerequisite is in place: a skeleton
   with holes in it can now be saved, imported, and built on, so the holes have
