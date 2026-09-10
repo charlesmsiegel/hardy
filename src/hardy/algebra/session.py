@@ -69,6 +69,9 @@ class CasSession:
         self.observe = observe
         self.state: Literal["cold", "live", "dead", "poisoned"] = "cold"
         self.version: str | None = None
+        # This process's spend, and what `cas_session_seconds` bounds: a guard
+        # against a runaway computation, not the session's figure. That is
+        # `total_spent_seconds`, below.
         self.spent_seconds = 0.0
         # One stateful process behind one stdin stream, reachable from chat,
         # staged runs, and MCP. The lock belongs to the resource, not a caller.
@@ -111,6 +114,19 @@ class CasSession:
         # turn or command, exactly as that register is.
         self._stop_level = 0
         self._records: list[CellRecord] = self._load()
+        # The session's own figure: every second of CAS wall clock billed to
+        # this log, across every process that has opened it. Read back from the
+        # last record, which carries the running total as of its append, and
+        # moved with `spent_seconds` from then on. Reported, never enforced: a
+        # research workspace may legitimately be open for months, and a
+        # lifetime cap attached to it would eventually refuse work for reasons
+        # that have nothing to do with the work.
+        #
+        # Spend after the last append -- a rebuild nobody then ran a cell on,
+        # an export -- becomes durable only when the next record is written.
+        self.total_spent_seconds = (
+            self._records[-1].spent_ms / 1_000 if self._records else 0.0
+        )
 
     @contextlib.contextmanager
     def hold(self):
@@ -765,9 +781,14 @@ class CasSession:
         not only the cells a caller asked for: the fresh kernel an export
         replays in is the session's own time too, and an export that could
         spend it unbilled would make `cas_session_seconds` describe nothing.
+
+        Both figures move together: the per-process guard and the session's
+        durable total. Every charge goes through here so they cannot drift.
         """
         with self._lock:
-            self.spent_seconds += max(0.0, seconds)
+            seconds = max(0.0, seconds)
+            self.spent_seconds += seconds
+            self.total_spent_seconds += seconds
 
     def _cell_seconds(self) -> float:
         """The deadline one round trip may have: the smaller of the two limits.
@@ -875,7 +896,7 @@ class CasSession:
             started = time.monotonic()
             outcome = self._send(source, self._cell_seconds())
             elapsed = time.monotonic() - started
-            self.spent_seconds += elapsed
+            self.charge(elapsed)
 
             status = outcome.status
             truncated = outcome.capture_truncated
@@ -941,6 +962,7 @@ class CasSession:
                 stderr=outcome.stderr,
                 value_repr=outcome.value_repr,
                 duration_ms=round(elapsed * 1_000),
+                spent_ms=round(self.total_spent_seconds * 1_000),
                 capture_truncated=truncated,
                 backend=self.backend.name,
                 backend_version=self.version or "",
@@ -1112,6 +1134,7 @@ class CasSession:
                     accepted=False,
                     backend=self.backend.name,
                     backend_version=self.version or "",
+                    spent_ms=round(self.total_spent_seconds * 1_000),
                 )
             )
 

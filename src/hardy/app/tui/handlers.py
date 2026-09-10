@@ -367,7 +367,8 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
             cas_state = cas.state()
             ui.write(
                 f"{cas_state.backend} {cas_state.version or '?'} — kernel {cas_state.kernel}, "
-                f"segment {cas_state.segment}, {cas_state.seconds_remaining}s left"
+                f"segment {cas_state.segment}, {cas_state.seconds_spent}s spent, "
+                f"{cas_state.process_seconds_remaining}s left in this process"
             )
             for line in cas_state.accepted:
                 ui.write(f"  {line}")

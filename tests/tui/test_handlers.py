@@ -233,7 +233,7 @@ class FakeCas:
     def state(self):
         return SimpleNamespace(
             backend="sympy", version="1.12", kernel="warm",
-            segment=0, accepted=("x = 1",), seconds_remaining=120,
+            segment=0, accepted=("x = 1",), seconds_spent=7, process_seconds_remaining=120,
         )
 
     def reset(self, *, author: str) -> None:
@@ -259,6 +259,8 @@ async def test_cas_reports_state(ui, settings, tmp_path):
     await handlers.handle_cas(ui, "state", cas_state(FakeCas(), settings, tmp_path))
     assert "sympy 1.12" in ui.text
     assert "segment 0" in ui.text
+    assert "7s spent" in ui.text
+    assert "120s left in this process" in ui.text
     assert "x = 1" in ui.text
 
 
