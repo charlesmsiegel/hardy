@@ -10,6 +10,8 @@ would just be a new way to hang.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import threading
 import time
 
@@ -17,6 +19,7 @@ import pytest
 
 from hardy.algebra import kernel as cas_module
 from hardy.algebra.cas import CasError, CasSession
+from hardy.foundation.process import child_creation
 
 
 @pytest.fixture
@@ -63,6 +66,25 @@ def _press_when_running(session: CasSession, ready, expect_in_flight: bool = Tru
     assert ready.exists(), "the cell never started"
     reached = session.interrupt()
     assert reached is expect_in_flight
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="console sharing is a Windows concern; POSIX signals a process group"
+)
+def test_the_kernel_shares_hardys_console_so_a_break_can_reach_it() -> None:
+    """`CTRL_BREAK_EVENT` reaches a process group only on the caller's own
+    console. Hardy used to decide whether it had one by asking for its window,
+    which a pseudoconsole -- Windows Terminal, an editor's terminal pane, a CI
+    runner -- does not have; every kernel was then given a console of its own
+    and no press ever reached a cell, though `os.kill` reported success."""
+    import ctypes
+
+    attached = (ctypes.c_uint32 * 1)()
+    if not ctypes.windll.kernel32.GetConsoleProcessList(attached, 1):
+        pytest.skip("this process has no console at all, so there is none to share")
+    flags = child_creation()["creationflags"]
+    assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+    assert not flags & subprocess.CREATE_NO_WINDOW
 
 
 def test_an_interrupted_cell_leaves_the_kernel_and_its_namespace_alive(

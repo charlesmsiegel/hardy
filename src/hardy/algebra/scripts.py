@@ -111,11 +111,22 @@ def run_exported_script(
     out, err = bytearray(), bytearray()
     overflowed = [False]
     left_behind = [False]
+    environment = dict(getattr(backend, "environment", {}))
+    # The capture is decoded as UTF-8 below, so a Python child is told to
+    # write it. On Windows its stdout would otherwise be encoded with the
+    # console codepage, and the markers Hardy prints around the transcript --
+    # `«` and `»` -- came back one byte each and decoded to U+FFFD, so every
+    # export there was reported `diverged` for not printing its own markers.
+    # Not part of `backend.environment`, which the manifest records as the
+    # conditions the file was checked under: this is how Hardy reads the
+    # output, not a condition the program's behaviour depends on. An
+    # interpreter that is not Python ignores it.
+    environment.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         process = subprocess.Popen(
             argv,
             cwd=str(cwd),
-            env=child_environment(dict(getattr(backend, "environment", {}))),
+            env=child_environment(environment),
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

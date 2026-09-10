@@ -133,6 +133,11 @@ def test_a_backend_with_no_digest_says_what_it_could_not_check(cas_session) -> N
 # ------------------------------------------------------ bounds that do not bind
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the address-space limit is set with resource.setrlimit(RLIMIT_AS), which "
+    "does not exist on Windows; the limiter child dies before the driver starts",
+)
 def test_a_cell_printing_far_past_the_cap_does_not_hold_it_all(tmp_path) -> None:
     """The cap has to bound what is *held*, not only what is reported.
 
@@ -424,7 +429,7 @@ def test_a_rebuild_is_unverified_whenever_a_cell_printed_but_carries_no_digest(
 
 
 def test_a_cell_that_rebinds_print_does_not_break_the_transcript_markers(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed
 ) -> None:
     """The closing marker runs after every cell, so it sees their globals.
 
@@ -436,7 +441,7 @@ def test_a_cell_that_rebinds_print_does_not_break_the_transcript_markers(
     sympy_session.execute("print('before')")
     sympy_session.execute("print = lambda *_: None")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    assert script_agreed(report), report.model_dump_json(indent=2)
 
 
 def test_the_script_records_the_environment_it_was_checked_under(
@@ -457,8 +462,31 @@ def test_the_script_records_the_environment_it_was_checked_under(
     assert manifest["environment"] == {"PYTHONHASHSEED": "0"}
 
 
+def _late_helper(done: Path) -> str:
+    """A cell that starts a helper which prints after the cell has returned.
+
+    The helper says when it has printed by writing `done`, and a test waits
+    for that rather than sleeping: an interpreter's startup is not bounded by
+    a fixed pause, and on a slow host a helper that had not yet printed when
+    the next cell ran left nothing for that cell to admit to.
+    """
+    return (
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', "
+        "\"import pathlib, time; time.sleep(0.2); print('late', flush=True); "
+        f"pathlib.Path({done.as_posix()!r}).write_text('done')\"])\n"
+    )
+
+
+def _wait_for(path: Path, what: str, seconds: float = 60) -> None:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and not path.exists():
+        time.sleep(0.01)
+    assert path.exists(), what
+
+
 def test_output_a_helper_writes_after_its_cell_is_not_silently_dropped(
-    sympy_session,
+    sympy_session, tmp_path
 ) -> None:
     """A pipe orders writes already made, not writes still to come.
 
@@ -467,16 +495,13 @@ def test_output_a_helper_writes_after_its_cell_is_not_silently_dropped(
     they are discarded rather than pinned on whoever runs next — and a discard
     is what `capture_truncated` exists to admit to, so the next cell says so.
     """
-    spawned = sympy_session.execute(
-        "import subprocess, sys\n"
-        "subprocess.Popen([sys.executable, '-c', "
-        "\"import time; time.sleep(0.2); print('late')\"])\n"
-    )
+    done = tmp_path / "helper-done"
+    spawned = sympy_session.execute(_late_helper(done))
     assert spawned.status == "ok"
     # Outside any cell, which is the window this is about: the helper writes
     # while nothing is listening, so its bytes belong to a record already on
     # disk and there is nowhere honest to put them.
-    time.sleep(1.0)
+    _wait_for(done, "the helper never printed")
 
     noticed = sympy_session.execute("2 + 2")
     assert noticed.value_repr == "4"
@@ -554,7 +579,7 @@ def test_undecodable_bytes_stay_distinct(sympy_session) -> None:
 
 
 def test_a_cell_that_breaks_import_does_not_break_the_closing_marker(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed
 ) -> None:
     """Every marker that resolves a global *after* the cells is one more name
     to shadow: `print`, then `__import__`, then whatever came next. The closing
@@ -564,7 +589,7 @@ def test_a_cell_that_breaks_import_does_not_break_the_closing_marker(
     sympy_session.execute("__import__ = None")
     sympy_session.execute("print = lambda *_: None")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    assert script_agreed(report), report.model_dump_json(indent=2)
 
 
 def test_a_script_that_prints_after_its_marker_is_not_verified(
@@ -588,19 +613,16 @@ def test_a_script_that_prints_after_its_marker_is_not_verified(
 # ----------------------------------------------------- and the third review's
 
 
-def test_bytes_behind_the_marker_in_one_read_are_admitted_to(sympy_session) -> None:
+def test_bytes_behind_the_marker_in_one_read_are_admitted_to(sympy_session, tmp_path) -> None:
     """One `os.read` can carry the marker and a helper's next write together.
 
     Clearing the buffer dropped that tail with nothing recorded, so whether
     anything admitted to the discard came down to how the pipe happened to
     chunk. It is the same discard as the between-cells one.
     """
-    sympy_session.execute(
-        "import subprocess, sys\n"
-        "subprocess.Popen([sys.executable, '-c', "
-        "\"import time; time.sleep(0.2); print('late')\"])\n"
-    )
-    time.sleep(1.0)
+    done = tmp_path / "helper-done"
+    sympy_session.execute(_late_helper(done))
+    _wait_for(done, "the helper never printed")
     noticed = sympy_session.execute("2 + 2")
     assert noticed.value_repr == "4"
     assert noticed.stdout == ""
@@ -622,7 +644,7 @@ def test_a_capture_that_cannot_be_written_down_exactly_says_so(sympy_session) ->
 
 
 def test_a_cell_that_replaces_stdout_does_not_redirect_the_closing_marker(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed
 ) -> None:
     """`print` with no `file` looks `sys.stdout` up when it runs, so capturing
     the function was not enough — a cell reassigning the stream still carried
@@ -631,7 +653,7 @@ def test_a_cell_that_replaces_stdout_does_not_redirect_the_closing_marker(
     sympy_session.execute("2 + 2")
     sympy_session.execute("import io, sys; sys.stdout = io.StringIO()")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    assert script_agreed(report), report.model_dump_json(indent=2)
 
 
 def test_a_script_whose_output_is_still_arriving_is_not_verified(
@@ -800,13 +822,13 @@ def test_an_export_does_not_call_an_uncompared_namespace_verified(
 
 
 def test_an_export_of_a_fully_fingerprinted_session_still_verifies(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, reproduced
 ) -> None:
     """The refusal above must not have cost every export."""
     sympy_session.execute("x = symbols('x')")
     sympy_session.execute("factor(x**2 - 1)")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.reproduces is True, report.model_dump_json(indent=2)
+    assert reproduced(report), report.model_dump_json(indent=2)
 
 
 def test_a_deleted_preamble_name_is_a_change_to_the_namespace(sympy_session) -> None:
@@ -1155,12 +1177,14 @@ def test_a_script_that_exits_early_has_not_reproduced_anything(
     assert "stopped before it reached its last cell" in report.script_detail
 
 
-def test_a_script_that_runs_to_the_end_still_verifies(sympy_session, tmp_path) -> None:
+def test_a_script_that_runs_to_the_end_still_verifies(
+    sympy_session, tmp_path, script_agreed
+) -> None:
     """The refusal above must not have cost every export."""
     sympy_session.execute("x = symbols('x')")
     sympy_session.execute("factor(x**2 - 1)")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    assert script_agreed(report), report.model_dump_json(indent=2)
 
 
 def test_the_displayed_value_is_fingerprinted_like_any_other_name() -> None:
@@ -1226,6 +1250,12 @@ def test_an_ordinary_namespace_is_still_within_the_payload_bound() -> None:
 # --------------------------------------------------- and the twelfth review's
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the sweep is a process-group probe and kill (os.killpg), which Windows "
+    "has no equivalent of; there the descendant is not stopped and the artifact is "
+    "rewritten, which `can_sweep_descendants` is what admits to",
+)
 def test_a_descendant_cannot_rewrite_the_artifact_after_the_verdict(
     sympy_session, tmp_path
 ) -> None:
@@ -1313,19 +1343,19 @@ def test_the_completion_evidence_is_fresh_for_each_export(
 
 
 def test_a_cell_may_print_something_that_looks_like_hardys_own_sentinel(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed, reproduced
 ) -> None:
     """The first attempt at this used a fixed marker and looked for it anywhere
     in the output, so a cell whose legitimate output happened to equal Hardy's
     sentinel failed a faithful export on the strength of its own text."""
     sympy_session.execute("print('«hardy-transcript-finished-0123456789abcdef»')")
     report = export_session(sympy_session, tmp_path / "cas")
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
-    assert report.reproduces
+    assert script_agreed(report), report.model_dump_json(indent=2)
+    assert reproduced(report), report.model_dump_json(indent=2)
 
 
 def test_a_cell_that_sabotages_the_interpreter_keeps_a_runnable_artifact(
-    sympy_session, tmp_path
+    sympy_session, tmp_path, script_agreed
 ) -> None:
     """Whatever says the file finished runs at the end of the file, where a
     cell has had its turn with every name. An `__import__("builtins").print`
@@ -1337,7 +1367,7 @@ def test_a_cell_that_sabotages_the_interpreter_keeps_a_runnable_artifact(
     sympy_session.execute("print = lambda *_: None")
     directory = tmp_path / "cas"
     report = export_session(sympy_session, directory)
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    assert script_agreed(report), report.model_dump_json(indent=2)
 
     run = subprocess.run(
         [sys.executable, str(directory / "session.py")],
@@ -1450,6 +1480,26 @@ def test_a_platform_that_cannot_sweep_descendants_does_not_claim_verified(
     report = export_session(sympy_session, tmp_path / "cas")
     assert report.script_verdict == "unverified", report.model_dump_json(indent=2)
     assert "cannot account for what a script starts" in report.script_detail
+
+
+def test_a_script_printing_non_ascii_is_read_back_as_written(tmp_path) -> None:
+    """`run_exported_script` decodes the capture as UTF-8, so the child has to
+    write UTF-8. A Python child on Windows encodes stdout with the console
+    codepage unless told otherwise, so the markers Hardy prints around the
+    transcript came back as U+FFFD and every export there was `diverged` for
+    not printing its own markers."""
+    script = tmp_path / "printer.py"
+    script.write_text("print('«∀»')\n", encoding="utf-8")
+    run = scripts.run_exported_script(
+        backend=backend_for("sympy"),
+        command=None,
+        script=script,
+        cwd=tmp_path / "run",
+        timeout=120,
+        max_output_bytes=4096,
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "«∀»"
 
 
 def test_a_platform_that_can_sweep_still_verifies(sympy_session, tmp_path) -> None:

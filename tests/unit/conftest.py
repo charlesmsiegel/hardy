@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from hardy.algebra.cas import CasSession, SympyBackend, _SentinelBackend
+from hardy.algebra.scripts import can_sweep_descendants
 from hardy.workflows.contracts import RunLimits
 
 FAKE_CAS = Path(__file__).parents[1] / "fake_cas.py"
@@ -66,6 +67,44 @@ def cas_session(tmp_path):
     yield make
     for session in sessions:
         session.close()
+
+
+def _script_agreed(report) -> bool:
+    """Whether the exported script ran and printed what the session recorded.
+
+    `verified` where Hardy can sweep a script's descendants. On Windows it
+    cannot (`can_sweep_descendants`), and no script is ever `verified` there:
+    the honest verdict is the `unverified` that names that limit, which is
+    what a matching transcript looks like on that platform. Anything else --
+    `diverged`, `failed`, or an `unverified` for some other reason -- is a
+    real disagreement on every platform.
+    """
+    if can_sweep_descendants():
+        return report.script_verdict == "verified"
+    return (
+        report.script_verdict == "unverified"
+        and "cannot account for what a script starts" in report.script_detail
+    )
+
+
+@pytest.fixture
+def script_agreed():
+    return _script_agreed
+
+
+@pytest.fixture
+def reproduced():
+    """`ExportReport.reproduces`, allowing for the platform's script verdict."""
+
+    def check(report) -> bool:
+        return (
+            report.diverged == 0
+            and report.failed == 0
+            and report.unverified == 0
+            and _script_agreed(report)
+        )
+
+    return check
 
 
 FAKE_SENTINEL = Path(__file__).parents[1] / "fake_sentinel_cas.py"

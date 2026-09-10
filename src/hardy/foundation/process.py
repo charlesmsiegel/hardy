@@ -110,9 +110,22 @@ def child_creation() -> dict[str, object]:
 
 
 def _has_console() -> bool:
-    """Whether this process owns a console a child could share. Windows only."""
+    """Whether this process is attached to a console a child could share. Windows only.
+
+    Asked of the console's process list rather than its window. A console
+    need not have a window: under a pseudoconsole -- Windows Terminal, an
+    editor's terminal pane, a CI runner, anything driving Hardy over ConPTY
+    -- `GetConsoleWindow` is NULL while the console is real and shareable.
+    Reading that as "no console" gave every kernel `CREATE_NO_WINDOW`, which
+    is a console of its own, and `CTRL_BREAK_EVENT` then reached nothing:
+    `GenerateConsoleCtrlEvent` reported success and Esc stopped no cell.
+    `GetConsoleProcessList` is the attachment itself: it counts the processes
+    on this console, and fails with `ERROR_INVALID_HANDLE` when there is none.
+    """
     try:
-        return bool(ctypes.windll.kernel32.GetConsoleWindow())  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        attached = (ctypes.c_uint32 * 1)()
+        return bool(kernel32.GetConsoleProcessList(attached, 1))
     except (AttributeError, OSError):
         return False
 

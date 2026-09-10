@@ -13,7 +13,9 @@ from hardy.algebra.export import export_session
 from hardy.foundation.files import LayoutError
 
 
-def test_export_writes_a_script_a_notebook_and_a_manifest(tmp_path, cas_session) -> None:
+def test_export_writes_a_script_a_notebook_and_a_manifest(
+    tmp_path, cas_session, reproduced
+) -> None:
     session = cas_session()
     try:
         session.execute("a")
@@ -31,7 +33,7 @@ def test_export_writes_a_script_a_notebook_and_a_manifest(tmp_path, cas_session)
     assert notebook["nbformat"] == 4
     assert [cell["cell_type"] for cell in notebook["cells"]] == ["code", "code"]
     assert report.verified == 2
-    assert report.reproduces
+    assert reproduced(report), report.model_dump_json(indent=2)
 
     # The manifest is written last and names both files by digest, so a crash
     # between the two writes leaves a detectably incomplete pair.
@@ -65,7 +67,7 @@ def test_a_cell_that_will_not_reproduce_is_marked_not_hidden(tmp_path, cas_sessi
 
 
 def test_a_session_that_survived_a_restart_still_exports_as_verified(
-    tmp_path, cas_session
+    tmp_path, cas_session, reproduced
 ) -> None:
     """The export's whole claim is that the artifacts reproduce the session.
 
@@ -87,7 +89,7 @@ def test_a_session_that_survived_a_restart_still_exports_as_verified(
         session.close()
 
     assert [verdict.verdict for verdict in report.verdicts] == ["verified", "verified"]
-    assert report.reproduces
+    assert reproduced(report), report.model_dump_json(indent=2)
     assert report.diverged == 0
 
     # And the note is nowhere in the published artifacts either: the notebook
