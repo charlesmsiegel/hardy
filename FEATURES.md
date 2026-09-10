@@ -112,6 +112,21 @@ interactive surface's own live run is still to come.
   primitives live in `foundation`, while formal, document and workflow values
   have their own contract modules.
 
+### Core G manuscript and publication APIs
+
+- Bounded citation depth 0/1/2 reuses exact C2 contracts and ledger obligations;
+  recursive coverage, cutoffs and missing sources stay separate from acceptance.
+- Source-version auditing combines mechanical span correspondence with attributed
+  semantic reading. Unaffected verification survives movement; affected work
+  reopens without replacing historical claims, evidence or trust scope.
+- Section/chapter/book roots use the existing publication planner and assembler,
+  retaining exact containment, shared prerequisites and item-local hypotheses.
+- Explicit exposition refresh updates one selected paragraph and its DOCUMENTS
+  link atomically, with new authorship provenance and preserved old text.
+
+These are shared workflow APIs with deterministic acceptance fixtures. Core E's
+human-guided paper trials and interactive publication wiring remain deferred.
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation

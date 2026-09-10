@@ -4,8 +4,8 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 34 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3 and X1).**
-Checkmarks mean the roadmap records the item as implemented. Core D and F passed their full hermetic landing gates. Unchecked items
+**Completed: 38 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3 and X1).**
+Checkmarks mean the roadmap records the item as implemented. Core D, F and G passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
 
@@ -17,9 +17,12 @@ for validation results and integration limits.
 Core F and X1 verification is tracked in the
 [Core F report](docs/superpowers/reports/2026-09-10-core-f.md).
 
+Core G verification and integration limits are in the
+[Core G report](docs/superpowers/reports/2026-09-10-core-g.md).
+
 ## Available next work
 
-Continue with Core G, then eligible H/I
+Continue with Core H, then eligible I
 work. **Skip all of Core E pending human input.** Independent X, S and V work
 retains its own dependencies; X1 supports strategy comparison and X5 supports
 fixed token/cost budgets.
@@ -146,10 +149,10 @@ flowchart LR
 
 ## Core G: manuscripts and publication
 
-- [ ] [G0 - Recursive citation-audit depth - P1](docs/roadmap.md#g0--recursive-citation-audit-depth--p1) - Deps: [C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0), [D4](docs/roadmap.md#d4--referee-workflow--p0).
-- [ ] [G1 - Paper-version diff auditing - P1](docs/roadmap.md#g1--paper-version-diff-auditing--p1) - Deps: [A5](docs/roadmap.md#a5--mechanical-manuscript-source-model--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0)/[B3](docs/roadmap.md#b3--ledger-derived-views--p0), [D4](docs/roadmap.md#d4--referee-workflow--p0).
-- [ ] [G2 - Chapter/book publication policy - P1](docs/roadmap.md#g2--chapterbook-publication-policy--p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0)-[D6](docs/roadmap.md#d6--publication---document-assembly-adapter--p0p1).
-- [ ] [G3 - Explicit exposition refresh - P1](docs/roadmap.md#g3--explicit-exposition-refresh--p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0) stale detection.
+- [x] [G0 - Recursive citation-audit depth - P1](docs/roadmap.md#g0--recursive-citation-audit-depth--p1) - Deps: [C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0), [D4](docs/roadmap.md#d4--referee-workflow--p0).
+- [x] [G1 - Paper-version diff auditing - P1](docs/roadmap.md#g1--paper-version-diff-auditing--p1) - Deps: [A5](docs/roadmap.md#a5--mechanical-manuscript-source-model--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0)/[B3](docs/roadmap.md#b3--ledger-derived-views--p0), [D4](docs/roadmap.md#d4--referee-workflow--p0).
+- [x] [G2 - Chapter/book publication policy - P1](docs/roadmap.md#g2--chapterbook-publication-policy--p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0)-[D6](docs/roadmap.md#d6--publication---document-assembly-adapter--p0p1).
+- [x] [G3 - Explicit exposition refresh - P1](docs/roadmap.md#g3--explicit-exposition-refresh--p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0) stale detection.
 
 ## Core H: retrieval and reuse
 

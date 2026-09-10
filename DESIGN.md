@@ -194,6 +194,32 @@ controls; the run/todo key includes the selected treatment and reviewer.
 Matching recorded controls alone cannot prove
 causality, independence, fixed token/cost budgets or model improvement.
 
+## Core G manuscript and publication operations
+
+Referee depth 0 retains direct citation checks. Depths 1 and 2 use an attributed
+source-expansion operation over exact C2 source artifacts, then reuse citation
+obligations and policy. File/byte/node bounds, cycles, missing source, unmapped
+uses and depth cutoffs remain explicit. Recursive coverage concerns pinned source
+files; it neither upgrades direct citation acceptance nor certifies a whole paper.
+
+`literature/diff.py` compares bounded source mappings and proposes exact textual
+span correspondences. An attributed version reader must assess changes to meaning,
+including notation outside an unchanged statement. The workflow records source
+versions and assessments, retains historical mathematics and evidence, and reopens
+affected current work through reverse dependencies. It does not adopt new
+mathematical statements or silently revise trust scope. Affected admitted premises
+require an explicit scope revision before invalidation can be represented honestly.
+
+The existing publication planner expands exact CONTAINS relations from section,
+chapter and book roots. Containment selects document members and stays outside
+mathematical dependency closure. Shared prerequisites appear once at first use;
+each theorem retains its own minimal context. The existing assembler consumes
+the resulting structure. `workflows/exposition.py` accepts one exact stale prose
+link and old/new mathematical versions. A text-only operation supplies revised
+prose; one revision-checked append writes it and retargets the link. Old text's
+evidence is not inherited, all history remains available, and mathematical edits
+alone invoke no prose operation.
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

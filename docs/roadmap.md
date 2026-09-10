@@ -2,8 +2,8 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-10):** Core A-D, Core F and X1 are implemented
-and have passed their full hermetic landing gates. Continue with Core G and remaining sections
+**Current execution scope (2026-09-10):** Core A-D, Core F-G and X1 are implemented.
+Their full hermetic landing gates passed. Continue with Core H and remaining sections
 with satisfied dependencies. **Skip all of Core E pending human input.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 
@@ -1023,11 +1023,23 @@ scripted fixtures do not establish model improvement.
 
 Support audit depth 0/1/2 by expanding external citation contracts into cited-paper obligations over the same graph.
 
+**Implemented API:** exact C2 source expansion reuses citation/hypothesis work,
+with file/byte/node bounds, cycles and explicit unavailable/unmapped coverage.
+Recursive receipt authentication is refreshed at final reporting. Traversal
+coverage never upgrades direct contract acceptance or establishes a whole paper.
+
 ## G1 — Paper-version diff auditing — P1
 
 **Deps:** A5, B1/B3, D4
 
 Add later `literature/diff.py`: map changed source spans/statements between versions, preserve unaffected verification, invalidate only affected contracts/claims, and report changed obligations.
+
+**Implemented API:** bounded lexical correspondence plus an attributed semantic
+version reading records exact old/new source mappings and reopens affected current
+work and citation uses through reverse dependencies. Unchanged moved statements
+retain verification. Historical claims and evidence remain intact; new mathematics
+is not automatically adopted. Affected admitted premises require a deliberate
+scope revision; the audit refuses to imply revocation while scope permits them.
 
 ## G2 — Chapter/book publication policy — P1
 
@@ -1035,11 +1047,21 @@ Add later `literature/diff.py`: map changed source spans/statements between vers
 
 Use section/chapter/book roots over the same publication planner. Do not build a separate book architecture.
 
+**Implemented API:** exact CONTAINS links select document members locally in the
+existing planner; shared dependencies are placed once at first use, with distinct
+minimal theorem contexts. The existing assembler respects nested structure and
+reports exact container paths. Containment grants no mathematical evidence.
+
 ## G3 — Explicit exposition refresh — P1
 
 **Deps:** D5 stale detection
 
 When explicitly requested, update stale prose and record that it now documents the new mathematical digest. Mathematical changes alone never trigger automatic prose rewriting.
+
+**Implemented API:** one exact stale prose/link request supplies old/new target
+versions to a text-only operation. A revision-checked append writes new prose and
+retargets DOCUMENTS together, preserving historical text and mathematics and
+recording fresh authorship without inheriting the old text's evidence.
 
 ---
 
@@ -1152,7 +1174,7 @@ Agent 14  X6 eval identity/journal residual audit
 
 **Core B implements B0/B1/B2/B3/B4/B5** against those seams.
 Independent tasks proceed once their own dependencies permit, without waiting
-for unrelated X/S tasks. Core D is implemented and awaiting its clean-test landing gate; eligible work outside Core E follows.
+for unrelated X/S tasks. Core D and F are verified on main; eligible work outside Core E continues.
 
 A2 is shared by the new B5 projection; B4 representation decisions remain an optional semantic step, not a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
 

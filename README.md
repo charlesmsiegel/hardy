@@ -120,6 +120,14 @@ explicit. A failure reported for a different source is quarantined.
 Use `--history-mode replay-full` or `--history-mode compact` with best-first
 to compare replay in fresh contexts; default `full` retains native history.
 
+Core G extends those workflow APIs with bounded recursive citation auditing,
+source-version comparisons, section/chapter/book publication and explicit prose
+refresh. Citation traversal retains exact source provenance and reports missing
+coverage. Text matches never certify unchanged mathematics; named version reads
+reopen affected work while preserving unaffected verification and history.
+Publication containment does not add mathematical dependencies, and only an
+explicit refresh request rewrites stale prose.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.
