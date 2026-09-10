@@ -2,11 +2,9 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-09):** this implementation pass stops after
-reviewed and verified Core A on `implementation/a-contracts-and-shared-primitives`.
-The branch remains for end-of-wave review and validation, then pauses. The
-dependency graph below is an architectural roadmap, not authorization to begin
-Core B or create a B branch during this pass.
+**Current execution scope (2026-09-10):** Core A is complete on `main`. The user
+has authorized Core B (B0–B5), with an individual tested commit for each item.
+This pass stops after Core B review and verification; Core C remains planned.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
@@ -423,13 +421,24 @@ Concrete current defects stay in Issues. Periodically audit all subprocess/resul
 
 # Core B — persistent mathematical project
 
-All Core B tasks depend on the A0 contracts. Their dependency relationship permits
-parallel work when a later implementation pass authorizes it; the current pass
-ends after Core A and does not start B0-B5.
+All Core B tasks depend on the A0 contracts. Core B is the currently authorized
+implementation pass; independent work can proceed against those frozen seams.
 
 ## B0 — Ledger event store — P0
 
 **Deps:** A0
+
+**Status: implemented (2026-09-10).** `ledger/store.py`, `state.py` and
+`validation.py` persist atomic, serialized transaction files under a project's
+`ledger/` directory. Replay authenticates content identities, schema and event
+sequence and validates references, context ownership and immutable local state.
+Exact revisions and activation events survive restart. Trust changes and accepted
+resolutions require an explicit policy validator; B2 supplies authentication.
+Tests cover stale/concurrent writers, failed atomic rename, schema/corruption/gap
+refusal, historical approaches and conjecture/context preservation. Run
+`uv run --extra test pytest tests/unit/test_ledger_store.py tests/unit/test_ledger_contracts.py -q`.
+The durability claim covers process interruption on local filesystems, not every
+power-loss/filesystem failure or hostile edits to the whole history.
 
 Implement durable project-level persistence, preferably append-only. Requirements: stable IDs, restart, retained history, crash-safe append, schema version/refusal, serialized writers, and no conflation with `session.json`.
 
