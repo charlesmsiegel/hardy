@@ -15,8 +15,8 @@ from hardy import __version__
 from hardy.corpus.catalog import load_corpus, manifest_digest
 from hardy.corpus.problems import ProblemSet
 from hardy.evals import sweep
-from hardy.evals.contracts import Condition, RefusedRun
-from hardy.evals.identity import run_procedure_digest_of
+from hardy.evals.contracts import Condition, RefusedRun, proof_treatment
+from hardy.evals.identity import canonical_template_digest_of, run_procedure_digest_of
 from hardy.evals.runner import _batch_runner, limits_for, run_set, source_revision
 from hardy.evals.sweep import Baseline, environment_digest_of
 from hardy.formal.contracts import EnvironmentIdentity
@@ -116,6 +116,8 @@ def add_parser(subparsers: Any) -> None:
     run = verbs.add_parser("run", help="run every entry through batch or staged and write a scoreboard")
     run.add_argument("--label", required=True)
     run.add_argument("--mode", choices=("batch", "staged"), default="batch")
+    run.add_argument("--strategy", choices=("iterative", "best-first"), default=None, help="staged only; default iterative")
+    run.add_argument("--history-mode", choices=("full", "replay-full", "compact"), default=None, help="staged only; nonfull requires best-first")
     run.add_argument("--backend", choices=("claude", "codex"), default="claude")
     # SUPPRESS so that omitting it here leaves the global --model alone rather
     # than overwriting it with this subparser's default (same reason as
@@ -182,6 +184,8 @@ def add_parser(subparsers: Any) -> None:
     # this subparser's default (cli.py:1545).
     todo.add_argument("--model", default=argparse.SUPPRESS)
     todo.add_argument("--mode", choices=("batch", "staged"), default="batch")
+    todo.add_argument("--strategy", choices=("iterative", "best-first"), default=None)
+    todo.add_argument("--history-mode", choices=("full", "replay-full", "compact"), default=None)
     # The same budget and repeat flags `run` takes, with the same types and
     # the same defaults, because all four feed `run_procedure_digest_of`
     # through the shared `limits_for`. Without them `todo` silently reported
@@ -399,6 +403,12 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     if _refuse_staged_budget_overrides(args):
         return 2
     try:
+        treatment = proof_treatment(mode=args.mode, strategy=getattr(args, "strategy", None),
+                                    history_mode=getattr(args, "history_mode", None))
+    except ValueError as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    try:
         identity = _identity(config)
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
@@ -411,7 +421,9 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
         return 2
     model = str(getattr(args, "model", None) or config.model)
     limits = limits_for(args, config)
-    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats)
+    reviewer = getattr(config, "faithfulness_model", None) or model
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats,
+                                         reviewer_model=reviewer, **treatment)
     environment_digest = sweep.environment_digest_of(identity, host_info())
     key = (run_digest, environment_digest)
     print(json.dumps({
@@ -632,13 +644,21 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
     if _refuse_staged_budget_overrides(args):
         return 2
     try:
+        treatment = proof_treatment(mode=args.mode, strategy=getattr(args, "strategy", None),
+                                    history_mode=getattr(args, "history_mode", None))
+    except ValueError as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    try:
         environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
         return 2
     limits = limits_for(args, config)
     model = str(args.model or config.model)
-    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats)
+    reviewer = getattr(config, "faithfulness_model", None) or model
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats,
+                                         reviewer_model=reviewer, **treatment)
 
     problems = load_corpus(args.problems)
     try:
@@ -670,6 +690,9 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
         hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
         source_sha256=run_source_digest_of(),
+        reviewer_model=reviewer if args.mode == "staged" else None,
+        canonical_template_sha256=canonical_template_digest_of() if args.mode == "staged" else None,
+        **treatment,
         selection={"only": only, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
         run_procedure_digest=run_digest,
@@ -677,7 +700,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
     staged = None
     if args.mode == "staged":
         from hardy.evals.staged import staged_runner
-        staged = staged_runner(config, backend=args.backend)
+        staged = staged_runner(config, backend=args.backend, **treatment)
     try:
         out = run_set(label=args.label, problems_path=args.problems, baseline_path=args.baseline, scoreboards_root=args.scoreboards,
                       condition=condition, environment=environment, batch_runner=_batch_runner(config, condition.model), staged_runner=staged,

@@ -151,7 +151,7 @@ def test_staged_mode_refuses_max_turns_or_wall_seconds(monkeypatch, capsys, tmp_
 
 def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch, tmp_path):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
-    monkeypatch.setattr(staged_module, "staged_runner", lambda config, *, backend: (lambda entry, row_dir, model: None))
+    monkeypatch.setattr(staged_module, "staged_runner", lambda config, **kw: (lambda entry, row_dir, model: None))
     monkeypatch.setattr(runner, "source_revision", lambda: None)
     seen = {}
 

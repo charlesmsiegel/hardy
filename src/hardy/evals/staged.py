@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from hardy.corpus.problems import Entry
 from hardy.evals.contracts import CanonicalReview, CanonicalVerdict
+from hardy.evals.identity import canonical_template_digest_of
 from hardy.formal.contracts import FrozenClaim
 from hardy.foundation.values import schema_text
 from hardy.prompts import canonical_prompt, claim_signature
@@ -82,7 +83,8 @@ def compare_canonical(entry: Entry, run_dir: Path, row_dir: Path, *, runtime_fac
     """
     row_dir.mkdir(parents=True, exist_ok=True)
     claim_path = run_dir / "formalization.json"
-    base: dict[str, Any] = dict(entry_id=entry.id, canonical_declaration=entry.declaration(), reviewer_model=model, usage={})
+    base: dict[str, Any] = dict(entry_id=entry.id, canonical_declaration=entry.declaration(), reviewer_model=model,
+                                template_sha256=canonical_template_digest_of(), usage={})
     if not claim_path.exists():
         verdict = CanonicalVerdict(claim_sha256=None, model_signature=None, reviewer_backend="unknown", prompt_sha256=None,
                                    response_schema_sha256=None, outcome="unavailable", detail="the run has no formalization.json to compare", **base)
@@ -114,7 +116,8 @@ def compare_canonical(entry: Entry, run_dir: Path, row_dir: Path, *, runtime_fac
     return verdict
 
 
-def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], None]:
+def staged_runner(config: Any, *, backend: str, strategy: str = "iterative",
+                  history_mode: str = "full") -> Callable[[Entry, Path, str], None]:
     """(entry, row_dir, model): run `hardy prove` non-interactively under `row_dir`, then compare canonically."""
     import dataclasses
 
@@ -125,12 +128,15 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
     # every pooled row is supposed to share.
     from hardy.agents.staged import ClaudeStagedRuntime
     from hardy.app.wiring import build_prove_workflow
+    from hardy.evals.contracts import proof_treatment
     from hardy.workflows.prove import ProveRequest
+
+    treatment = proof_treatment(mode="staged", strategy=strategy, history_mode=history_mode)
 
     def run_one(entry: Entry, row_dir: Path, model: str) -> None:
         scoped = dataclasses.replace(config, runs_root=row_dir)
         workflow = build_prove_workflow(scoped, scoped.config_path, backend=backend)
-        workflow.run(ProveRequest(text=entry.input, model=model, problem_slug=entry.id), ApprovingTerminal())
+        workflow.run(ProveRequest(text=entry.input, model=model, problem_slug=entry.id, **treatment), ApprovingTerminal())
         runs = [p for p in row_dir.iterdir() if p.is_dir() and (p / "manifest.json").exists()]
         if len(runs) != 1:
             return

@@ -15,12 +15,16 @@ from typing import Any
 from hardy.agents.usage import Usage
 from hardy.evals.contracts import Condition, Row, Scoreboard
 from hardy.evals.outstanding import environment_digest_of_board
-from hardy.evals.scoreboard import _nested_run, scoreboard_self_issues
+from hardy.evals.scoreboard import _nested_run, recorded_strategy, scoreboard_self_issues
 
 USAGE_FIELDS = ("cost_usd", *Usage.COUNTERS)
 # The compound run digest is retained as provenance, never treated as a
 # control: changing the model changes that digest even with identical source.
-CONTROL_FIELDS = tuple(name for name in Condition.model_fields if name != "run_procedure_digest") + ("environment", "workers", "strategy_source_sha256")
+CONTROL_FIELDS = tuple(name for name in Condition.model_fields if name != "run_procedure_digest") + (
+    "environment", "workers", "strategy_source_sha256", "context_policy", "shared_tool_budget",
+    "canonical_reviewer_backend", "canonical_response_schema_sha256", "canonical_prompt_sha256",
+    "faithfulness_reviewer_model",
+)
 
 
 class ComparisonRefused(ValueError):
@@ -81,6 +85,9 @@ def _row(path: Path, row: Row, *, authenticated: bool) -> dict[str, Any]:
     data["authenticated"] = authenticated and row.outcome != "invalid"
     proof_usage, canonical_usage = usage_measurements({}), None
     data["strategy_evidence"] = None
+    data["canonical_evidence"] = None
+    data["faithfulness_reviewer_model"] = None
+    data["independent_verifier_calls"] = None
     if data["authenticated"]:
         row_dir = path / row.run_dir  # contained by the existing board audit
         if row.mode == "batch":
@@ -90,11 +97,20 @@ def _row(path: Path, row: Row, *, authenticated: bool) -> dict[str, Any]:
             if nested is None:
                 raise ComparisonRefused(f"{row_dir}: staged run disappeared after audit")
             payload = json.loads((nested / "manifest.json").read_text(encoding="utf-8"))
-            if "strategy.json" in payload.get("artifacts", {}):
-                strategy = json.loads((nested / "strategy.json").read_text(encoding="utf-8"))
+            data["strategy_evidence"] = recorded_strategy(nested)
+            verdict = json.loads((row_dir / "canonical.json").read_text(encoding="utf-8"))
+            data["canonical_evidence"] = {key: verdict.get(key) for key in (
+                "reviewer_model", "reviewer_backend", "template_sha256", "response_schema_sha256", "prompt_sha256",
+            )}
+            data["faithfulness_reviewer_model"] = ((payload.get("grades") or {}).get("faithfulness_review") or {}).get("reviewer_model")
+            if (data["strategy_evidence"] or {}).get("verifier_call_journal") is True:
                 events = [json.loads(line) for line in (nested / "trajectory.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
-                if isinstance(strategy, dict) and any(event.get("kind") == "workflow.strategy" and event.get("payload") == strategy for event in events):
-                    data["strategy_evidence"] = strategy
+                calls = [event.get("payload", {}) for event in events if event.get("kind") == "workflow.verifier_call"]
+                numbers = [call.get("official_check_number") for call in calls]
+                if (all(call.get("claim_sha256") == payload.get("claim_sha256") for call in calls)
+                        and all(type(number) is int and 0 < number <= payload["limits"]["official_checks"] for number in numbers)
+                        and numbers == sorted(set(numbers))):
+                    data["independent_verifier_calls"] = len(calls)
             canonical_usage = _review_usage(row_dir)
         proof_usage = usage_measurements(payload.get("usage") or {})
     else:
@@ -135,7 +151,7 @@ def _side(path: Path, board: Scoreboard, issues: tuple[str, ...]) -> tuple[dict[
     return summary, rows
 
 
-def _controls(board: Scoreboard, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _controls(board: Scoreboard, rows: list[dict[str, Any]], shared_slots: set[tuple[str, int]]) -> dict[str, Any]:
     values = board.condition.model_dump(mode="json")
     values.pop("run_procedure_digest")
     values["environment"] = (environment_digest_of_board(board.model_dump(mode="json")) if board.host else None)
@@ -144,13 +160,27 @@ def _controls(board: Scoreboard, rows: list[dict[str, Any]]) -> dict[str, Any]:
     # A condition label alone cannot establish which strategy ran. Require
     # exact manifest-bound evidence from every proof row; twins use batch.
     proof_rows = [row for row in rows if row["expected"] == "true"]
-    for field in ("strategy", "history_mode", "strategy_source_sha256"):
+    for field in ("strategy", "history_mode", "strategy_source_sha256", "context_policy", "shared_tool_budget"):
         evidence_key = "source_sha256" if field == "strategy_source_sha256" else field
         evidence = [(row["strategy_evidence"] or {}).get(evidence_key) for row in proof_rows]
         actual = evidence[0] if evidence and all(value == evidence[0] for value in evidence) else None
-        if field != "strategy_source_sha256" and values[field] is not None and values[field] != actual:
+        if field in values and values[field] is not None and values[field] != actual:
+            actual = None
+        values[field] = actual if actual is not None and actual != "" else None
+    for field, key in (("reviewer_model", "reviewer_model"), ("canonical_template_sha256", "template_sha256"),
+                       ("canonical_reviewer_backend", "reviewer_backend"), ("canonical_response_schema_sha256", "response_schema_sha256")):
+        evidence = [(row["canonical_evidence"] or {}).get(key) for row in proof_rows]
+        actual = evidence[0] if evidence and all(value == evidence[0] for value in evidence) else None
+        if field in values and values[field] is not None and values[field] != actual:
             actual = None
         values[field] = actual or None
+    readers = [row["faithfulness_reviewer_model"] for row in proof_rows]
+    values["faithfulness_reviewer_model"] = readers[0] if readers and all(value == readers[0] for value in readers) else None
+    # Exact prompts depend on generated signatures: compare only shared slots,
+    # and expose a changed reader input independently of the template identity.
+    shared = [row for row in proof_rows if (row["id"], row["repeat"]) in shared_slots]
+    prompts = {(row["id"], row["repeat"]): (row["canonical_evidence"] or {}).get("prompt_sha256") for row in shared}
+    values["canonical_prompt_sha256"] = [[*key, prompts[key]] for key in sorted(prompts)] if prompts and all(prompts.values()) else None
     return values
 
 
@@ -175,7 +205,8 @@ def compare(left: Path, right: Path, *, varying: Iterable[str], problems_path: P
             summaries[name], sides[name] = summary, rows
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ComparisonRefused(str(error)) from error
-    controls = [_controls(board, sides[name]) for board, name in zip(boards, ("left", "right"), strict=True)]
+    shared_slots = {(row["id"], row["repeat"]) for row in sides["left"]} & {(row["id"], row["repeat"]) for row in sides["right"]}
+    controls = [_controls(board, sides[name], shared_slots) for board, name in zip(boards, ("left", "right"), strict=True)]
     comparisons = {}
     for field in CONTROL_FIELDS:
         a, b = (values[field] for values in controls)
@@ -204,6 +235,7 @@ def compare(left: Path, right: Path, *, varying: Iterable[str], problems_path: P
             "Source, host, concurrency and treatment labels are recorded provenance, not independent attestation.",
             "All recorded attempts contribute usage, including unsolved attempts; absent and partial reports are not zero.",
             "Per-row wall seconds may overlap under concurrency and are not serial runtime.",
+            "lean_checks counts model tool calls only; independent_verifier_calls counts separately journaled verifier starts, which may reject before invoking Lean. Total Lean process work is not measured.",
             "Canonical review usage is separate; provider reports are lower bounds because requested exchanges may be unrecorded.",
             "Duplicate slots prevent pairing; original rows and audit findings are retained.",
         ],

@@ -1,6 +1,7 @@
 """Rows read off run directories, aggregates that are only counts and medians, and the validator."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import statistics
@@ -93,6 +94,25 @@ def _nested_run(row_dir: Path) -> Path | None:
         candidates.append(candidate)
     runs = sorted(candidates)
     return runs[0] if len(runs) == 1 else None
+
+
+def recorded_strategy(run_dir: Path) -> dict[str, Any] | None:
+    """Read treatment identity only when manifest and journal bind the same bytes.
+
+    Call after the recorded-run audit; that audit still owns the run's other
+    artifacts and terminal state. Missing legacy identity stays unknown.
+    """
+    manifest = RunManifest.model_validate_json((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    digest = manifest.artifacts.get("strategy.json")
+    if not digest:
+        return None
+    raw = (run_dir / "strategy.json").read_bytes()
+    if hashlib.sha256(raw).hexdigest() != digest:
+        return None
+    strategy = json.loads(raw)
+    events = [json.loads(line) for line in (run_dir / "trajectory.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    selections = [event.get("payload") for event in events if event.get("kind") == "workflow.strategy"]
+    return strategy if isinstance(strategy, dict) and selections == [strategy] else None
 
 
 def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, repeat: int) -> Row:
@@ -447,7 +467,7 @@ def _self_issues(board: Any, scoreboard_dir: Path, problems: Any, baseline: Base
             if getattr(derived, field) != getattr(row, field):
                 issues.append(f"{where}: {field} is {getattr(row, field)!r} but the run says {getattr(derived, field)!r}")
         if row.mode == "staged":
-            issues.extend(_canonical_issues(entry, run_dir, where))
+            issues.extend(_canonical_issues(entry, run_dir, where, condition=board.condition))
     # 7. selection complete unless interrupted, and -- when interrupted -- a
     # prefix of the order `run_set` would actually have completed (item 4).
     # A committed scoreboard could otherwise delete only its failed rows, set
@@ -545,6 +565,14 @@ def _condition_issues(row: Row, run_dir: Path, condition: Any, environment: Envi
         nested = _nested_run(run_dir)
         if nested is not None:
             manifest = RunManifest.model_validate_json((nested / "manifest.json").read_text(encoding="utf-8"))
+            strategy = recorded_strategy(nested)
+            for field in ("strategy", "history_mode"):
+                expected = getattr(condition, field)
+                if expected is not None and (strategy or {}).get(field) != expected:
+                    issues.append(f"{where}: the run's authenticated strategy.{field} is not the condition's {expected!r}")
+            review = manifest.grades.faithfulness_review
+            if condition.reviewer_model is not None and review is not None and review.reviewer_model != condition.reviewer_model:
+                issues.append(f"{where}: the faithfulness reviewer_model is not the condition's {condition.reviewer_model!r}")
             if manifest.model != condition.model:
                 issues.append(f"{where}: the run's model {manifest.model!r} is not the condition's {condition.model!r}")
             if manifest.prompt_set_sha256 != condition.staged_prompt_set_sha256:
@@ -592,7 +620,7 @@ def _entry_issues(entry: Entry, row: Row, run_dir: Path) -> list[str]:
     return issues
 
 
-def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
+def _canonical_issues(entry: Entry, row_dir: Path, where: str, *, condition: Any = None) -> list[str]:
     """The staged branch of check 5, recomputed rather than trusted (item 1).
 
     The prompt hash used to be checked only against the hash stored in the
@@ -617,6 +645,17 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     except Exception as error:
         return [f"{where}: canonical.json does not validate: {type(error).__name__}"]
     issues = []
+    from hardy.evals.identity import canonical_template_digest_of
+
+    if verdict.template_sha256 is not None and verdict.template_sha256 != canonical_template_digest_of():
+        issues.append(f"{where}: canonical.json's template_sha256 is not the rendered reader template")
+    if condition is not None:
+        if condition.reviewer_model is not None and verdict.reviewer_model != condition.reviewer_model:
+            issues.append(f"{where}: canonical reviewer_model is not the condition's {condition.reviewer_model!r}")
+        if condition.canonical_template_sha256 is not None and verdict.template_sha256 != condition.canonical_template_sha256:
+            issues.append(f"{where}: canonical template_sha256 is not the condition's")
+        if verdict.outcome in {"agreed", "disputed"} and verdict.reviewer_backend != condition.backend:
+            issues.append(f"{where}: canonical reviewer_backend is not the condition's backend")
     if verdict.entry_id != entry.id:
         issues.append(f"{where}: canonical.json's entry_id {verdict.entry_id!r} is not the row's entry {entry.id!r}")
     if verdict.canonical_declaration != entry.declaration():

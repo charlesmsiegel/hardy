@@ -97,6 +97,24 @@ class RefusedRun(RuntimeError):
     """A §3.1 gate: the run did not start, and this is why."""
 
 
+def proof_treatment(*, mode: str, strategy: str | None = None,
+                    history_mode: str | None = None) -> dict[str, str]:
+    """Resolve the same treatment for launching, prediction and run identity."""
+    if mode != "staged":
+        if strategy is not None or history_mode is not None:
+            raise ValueError("--strategy and --history-mode require --mode staged")
+        return {}
+    strategy = strategy or "iterative"
+    history_mode = history_mode or "full"
+    if strategy not in {"iterative", "best-first"}:
+        raise ValueError("unknown proof strategy")
+    if history_mode not in {"full", "replay-full", "compact"}:
+        raise ValueError("unknown proof history mode")
+    if strategy != "best-first" and history_mode != "full":
+        raise ValueError("--history-mode replay-full or compact requires --strategy best-first")
+    return {"strategy": strategy, "history_mode": history_mode}
+
+
 class Condition(FrozenModel):
     model: str
     backend: str
@@ -122,6 +140,8 @@ class Condition(FrozenModel):
     # Legacy absence is unknown; comparison never derives them from labels.
     strategy: str | None = None
     history_mode: str | None = None
+    reviewer_model: str | None = None
+    canonical_template_sha256: str | None = None
     limits: dict[str, float | int]
     repeats: int
     selection: dict[str, Any]
@@ -177,6 +197,7 @@ class CanonicalVerdict(FrozenModel):
     reviewer_backend: str
     prompt_sha256: str | None
     response_schema_sha256: str | None
+    template_sha256: str | None = None
     outcome: Literal["agreed", "disputed", "unavailable"]
     review: CanonicalReview | None = None
     detail: str = ""
