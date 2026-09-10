@@ -140,3 +140,10 @@ def test_configuration_reference_names_every_setting() -> None:
         assert f"`{env}`" in body, f"env var {env} missing"
     for extra in ("HARDY_CONFIG", "HARDY_PLAIN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"):
         assert f"`{extra}`" in page, f"{extra} missing"
+
+
+def test_module_boundaries_page_matches_the_package_list() -> None:
+    page = (ROOT / "docs" / "design" / "module-boundaries.md").read_text(encoding="utf-8")
+    packages = sorted(p.name for p in (ROOT / "src" / "hardy").iterdir() if p.is_dir() and p.name != "__pycache__")
+    for name in packages:
+        assert f"`{name}/`" in page, f"package {name}/ missing from the ownership table"
