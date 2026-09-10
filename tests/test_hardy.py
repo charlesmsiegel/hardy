@@ -772,6 +772,7 @@ def test_a_batch_run_that_cannot_identify_its_toolchain_says_why(tmp_path: Path,
     assert "Not identified" in (tmp_path / "writeup.md").read_text()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the fake lake is a POSIX shell script")
 def test_the_toolchain_is_asked_of_the_lean_the_run_invokes(tmp_path: Path, proof_request: Request):
     """The batch runner's Lean is `lean_command` in `lean_project`, so that is
     what its identity is asked of, not `lake` on PATH."""
