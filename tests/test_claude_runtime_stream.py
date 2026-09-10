@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import types
 
 import pytest
@@ -348,6 +349,49 @@ def test_the_wall_clock_does_not_discard_what_was_drawn():
     # And in that order: the drawn text belongs to the turn, the limit is what
     # ended it.
     assert [event["type"] for event in seen][-1] == "wall_clock_limit"
+
+
+def test_the_deadline_does_not_wait_for_the_sdk_to_tear_down():
+    """Issue #27: a 1.5s budget aborted at 3.5s, because cancelling the
+    exchange still has to close the SDK client, and closing it tears down the
+    Claude Code subprocess. That teardown ran inside the deadline's wait, so
+    the caller learned of the bound only after the provider had finished
+    dying -- and the record then called a bound nobody had kept "hardy".
+
+    The deadline is when Hardy stops. The teardown happens after it, off the
+    clock, and `settle` is how a caller waits for it if it wants to.
+    """
+    seen: list[dict] = []
+
+    class SlowTeardown(FakeClient):
+        async def __aexit__(self, *exception):
+            await asyncio.sleep(1.0)
+            return False
+
+    live, _ = wired(
+        [StreamEvent("Thinking out"), ResultMessage()],
+        stall_after=1,
+        wall_seconds=0.1,
+        observe=seen.append,
+        client_class=SlowTeardown,
+    )
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="0.1s wall-clock budget"):
+        live.ask("go")
+    # Well inside the second the teardown takes: the caller was told at the
+    # deadline, not after the provider had finished shutting down.
+    assert time.monotonic() - started < 0.6
+
+    # What was drawn is still on the record, and still ahead of the limit.
+    assert [event["type"] for event in seen] == ["assistant", "wall_clock_limit"]
+    assert seen[0]["partial"] is True
+    # The bound the record states is the one that fired, at the time it fired.
+    limit = seen[1]
+    assert limit["seconds"] == 0.1
+    assert 0.1 <= limit["elapsed"] < 0.6
+
+    # The teardown was not skipped, only taken off the clock.
+    assert live.settle(timeout=5) is True
 
 
 def test_a_cancelled_turn_is_not_reported_as_a_provider_error():

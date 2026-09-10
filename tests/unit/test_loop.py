@@ -139,7 +139,12 @@ def test_the_wall_clock_is_kept_here_too() -> None:
     with pytest.raises(TimeoutError, match="wall-clock budget"):
         _drain(loop, "keep going")
 
-    assert any(item["type"] == "wall_clock_limit" for item in observed)
+    [limit] = [item for item in observed if item["type"] == "wall_clock_limit"]
+    assert limit["seconds"] == 0.1
+    # When it fired, and not only what it was asked to be (issue #27). A tool
+    # call already running is not interrupted, so the bound lands late by up
+    # to one call -- and the record says by how much.
+    assert limit["elapsed"] >= 0.1
     # Bounded, which is the whole claim: it stopped long before the script did.
     assert provider.calls < 50
 

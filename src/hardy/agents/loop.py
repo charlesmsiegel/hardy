@@ -256,6 +256,9 @@ class Budget:
     started: float = field(default_factory=time.monotonic)
     spent: int = 0
 
+    def elapsed_seconds(self) -> float:
+        return time.monotonic() - self.started
+
     def remaining_seconds(self) -> float | None:
         if not self.wall_seconds:
             return None
@@ -613,7 +616,15 @@ class AgentLoop:
         """
         if not budget.expired():
             return
-        self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
+        # The bound asked for and the moment it fired (issue #27). The fifth
+        # point above means the two differ by up to one tool call, and the
+        # record says by how much rather than reporting the budget back as
+        # though it had been kept to the microsecond.
+        self._observe({
+            "type": "wall_clock_limit",
+            "seconds": self.wall_seconds,
+            "elapsed": round(budget.elapsed_seconds(), 3),
+        })
         raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
 
     def _settle(self, turn: ProviderTurn) -> Iterator[TurnEvent]:
