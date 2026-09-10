@@ -411,9 +411,16 @@ class ClaudeAgentRuntime:
             await self._exchange(text, outbox)
             return
         started = time.monotonic()
+        deadline = started + self.wall_seconds
         exchange = asyncio.ensure_future(self._exchange(text, outbox))
-        done, _ = await asyncio.wait({exchange}, timeout=self.wall_seconds)
-        if done:
+        # Event-loop timers may wake early (notably on Windows). The
+        # monotonic deadline, rather than one timer wakeup, owns the budget.
+        while not exchange.done():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.wait({exchange}, timeout=remaining)
+        if exchange.done():
             exchange.result()
             return
         elapsed = time.monotonic() - started
@@ -431,6 +438,8 @@ class ClaudeAgentRuntime:
         await asyncio.wait({exchange})
 
     async def _exchange(self, text: str, outbox: queue.Queue) -> None:
+        if threading.current_thread() is not self._worker:
+            return
         spoken: list[str] = []
         self.failure = None
         self._loop = asyncio.get_running_loop()
@@ -441,7 +450,10 @@ class ClaudeAgentRuntime:
             # this coroutine where it stands, and a provider error raises out of
             # the middle of a block. Text that was drawn was drawn on any of
             # those paths, and this is the only place left to say so.
-            drawn = self._settle_drawn()
+            # A deadline lets the caller start another turn while this SDK
+            # client is still closing. Its eventual cleanup must not settle
+            # or erase the new turn's deltas from the old worker thread.
+            drawn = self._settle_drawn() if threading.current_thread() is self._worker else ""
             if drawn:
                 spoken.append(drawn)
         reply = "\n\n".join(spoken).strip()
@@ -464,6 +476,10 @@ class ClaudeAgentRuntime:
     async def _ask(self, text: str, outbox: queue.Queue, spoken: list[str]) -> None:
         """The exchange itself, so `_exchange` can settle what it drew."""
         async with self._loaded().ClaudeSDKClient(options=self._options()) as client:
+            # Cancellation may finish connecting after its caller has already
+            # started another turn. Only the current worker owns these fields.
+            if threading.current_thread() is not self._worker:
+                return
             # Published only once the client is connected: `cancel` reaches for
             # it from another thread and must never find a half-built one.
             self._client = client
@@ -479,10 +495,13 @@ class ClaudeAgentRuntime:
                 if not self._cancelled:
                     await client.query(text)
                     async for message in client.receive_response():
+                        if threading.current_thread() is not self._worker:
+                            return
                         for event in self._note(message, spoken):
                             outbox.put(event)
             finally:
-                self._client = None
+                if self._client is client:
+                    self._client = None
 
     def _settle_drawn(self) -> str:
         """Text that was drawn and that no completed block ever superseded.
