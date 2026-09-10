@@ -190,6 +190,9 @@ class LedgerPolicy:
                 self._check_resolution(after, record, frozenset())
             if isinstance(record, Relation) and isinstance(previous, Relation):
                 semantic = DEPENDENCIES | TRANSPORT | {RelationKind.INTERPRETS, RelationKind.REFINES}
+                if ((record.kind in semantic or previous.kind in semantic)
+                        and record.source.id != previous.source.id):
+                    raise ValueError("semantic relation must preserve its stable source identity")
                 if (record.source == previous.source and (record.kind in semantic or previous.kind in semantic)
                         and any(getattr(record, field) != getattr(previous, field)
                                 for field in ("kind", "target", "justification", "mappings"))):
@@ -362,8 +365,13 @@ class LedgerPolicy:
             self._citation(snapshot, obligation, visiting)
         self._transport(snapshot, subject, obligation, visiting)
         for relation in LedgerGraph(snapshot).relations:
-            if (relation.kind in DEPENDENCIES and relation.source == subject.ref
-                    and not self._premise(snapshot, relation.target, obligation.scope, obligation.context, visiting)):
+            if relation.kind not in DEPENDENCIES or relation.source != subject.ref:
+                continue
+            if relation.kind == RelationKind.BLOCKED_BY and isinstance(snapshot.get(relation.target), Obligation):
+                ready = self._completed(snapshot, relation.target, obligation.scope, obligation.context, visiting)
+            else:
+                ready = self._premise(snapshot, relation.target, obligation.scope, obligation.context, visiting)
+            if not ready:
                 raise ValueError("resolution depends on an unestablished premise")
 
     @staticmethod
@@ -394,10 +402,10 @@ class LedgerPolicy:
                 return False
             return value.target is None or self._premise(snapshot, value.target, scope, context, visiting)
         if isinstance(value, Obligation):
-            contexts = {entry.ref for entry in self._contexts(snapshot, context)}
-            if value.context is not None and value.context not in contexts:
+            subject = snapshot.get(value.item)
+            if not isinstance(subject, ProjectItem) or value.kind not in _ESTABLISHES.get(subject.kind, set()):
                 return False
-            return self._resolved(snapshot, ref, scope, visiting)
+            return self._completed(snapshot, ref, scope, context, visiting)
         if not isinstance(value, ProjectItem):
             return False
         self._current_scope(snapshot, scope)
@@ -425,6 +433,17 @@ class LedgerPolicy:
                 self._check_resolution(snapshot, obligation.resolution, visiting)
                 return True
         return False
+
+    def _completed(self, snapshot: LedgerSnapshot, ref: VersionRef, scope: Scope,
+                   context: VersionRef | None, visiting: frozenset[VersionRef]) -> bool:
+        """Completion is enough for BLOCKED_BY, but is not proof of its item."""
+        value = snapshot.get(ref)
+        if not isinstance(value, Obligation):
+            return False
+        contexts = {entry.ref for entry in self._contexts(snapshot, context)}
+        if value.context is not None and value.context not in contexts:
+            return False
+        return self._resolved(snapshot, ref, scope, visiting)
 
     def _resolved(self, snapshot: LedgerSnapshot, ref: VersionRef, scope: Scope,
                   visiting: frozenset[VersionRef], *, kind: ObligationKind | None = None) -> bool:

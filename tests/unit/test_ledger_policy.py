@@ -511,4 +511,74 @@ def test_relation_publication_metadata_does_not_require_a_new_source():
     LedgerPolicy().validate(before, LedgerSnapshot((*before.records, changed)))
 
 
+def test_moving_relation_to_an_unrelated_source_cannot_erase_original_dependency(tmp_path):
+    from hardy.workflows.ledger.graph import LedgerGraph
+    from hardy.workflows.ledger.store import LedgerStore
+
+    theorem, other = item("T"), item("other")
+    guess = item("guess", kind="conjecture", statement="unproved P")
+    edge = Relation(id="dependency", kind="depends_on", source=theorem.ref, target=guess.ref)
+    store = LedgerStore(tmp_path)
+    store.append((theorem, other, guess, edge), expected_revision=0)
+    moved = Relation.model_validate({**edge.model_dump(), "source": other.ref})
+    with pytest.raises(ValueError, match="source"):
+        store.append((moved,), expected_revision=1)
+    assert guess.ref in LedgerGraph(store.read()).dependency_closure(theorem.ref)
+
+
+def blocking_fixture():
+    theorem, prerequisite = item("T"), item("prerequisite")
+    scope = Scope(id="scope")
+    work = Obligation(id="formalize", item=prerequisite.ref, kind="formalize", scope=scope)
+    auth = PolicyAuthority()
+    proposal, receipt = auth.proposal(work, outcomes=("elaborated", "faithful"))
+    state = LedgerSnapshot((theorem, prerequisite, scope, work))
+    accepted = auth.policy.accept(state, proposal, receipt)
+    closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+        "status": ObligationStatus.RESOLVED, "resolution": accepted})
+    target = Obligation(id="prove", item=theorem.ref, kind="prove", scope=scope)
+    edge = Relation(id="blocker", kind="blocked_by", source=theorem.ref, target=work.ref)
+    state = LedgerSnapshot((*state.records, closed, target, edge))
+    target_proposal, target_receipt = auth.proposal(target)
+    return auth, state, work, closed, target, edge, target_proposal, target_receipt
+
+
+@pytest.mark.parametrize("pin_closed", [False, True])
+def test_resolved_blocked_by_obligation_satisfies_completion_without_establishing_its_subject(pin_closed):
+    auth, state, work, closed, target, edge, proposal, receipt = blocking_fixture()
+    if pin_closed:
+        edge = edge.model_copy(update={"target": closed.ref})
+        state = LedgerSnapshot((*state.records[:-1], edge))
+    assert auth.policy.accept(state, proposal, receipt).accepted_by == receipt
+    assert not auth.policy.premise_allowed(state, work.item, scope=target.scope, context=None)
+
+
+@pytest.mark.parametrize("relation_kind", ["depends_on", "uses", "typed_by"])
+def test_resolved_formalization_obligation_is_not_a_proved_premise(relation_kind):
+    auth, state, _, _, _, edge, proposal, receipt = blocking_fixture()
+    edge = Relation.model_validate({**edge.model_dump(), "kind": relation_kind})
+    state = LedgerSnapshot((*state.records[:-1], edge))
+    with pytest.raises(ValueError, match="premise"):
+        auth.policy.accept(state, proposal, receipt)
+
+
+@pytest.mark.parametrize("failure", ["unresolved", "stale_evidence", "wrong_context", "wrong_scope"])
+def test_blocking_obligation_completion_requires_live_exact_authentication(failure):
+    auth, state, work, closed, target, edge, proposal, receipt = blocking_fixture()
+    if failure == "unresolved":
+        state = LedgerSnapshot(tuple(record for record in state.records if record != closed))
+    elif failure == "stale_evidence":
+        auth.evidence.pop(closed.resolution.evidence[0])
+    elif failure == "wrong_context":
+        context = MathematicalContext(id="stronger", label="stronger assumptions", origin="human_authored")
+        altered = Obligation.model_validate({**closed.model_dump(), "context": context.ref})
+        state = LedgerSnapshot((*state.records, context, altered))
+    else:
+        changed_scope = Scope(id="different-scope")
+        altered = Obligation.model_validate({**closed.model_dump(), "scope": changed_scope})
+        state = LedgerSnapshot((*state.records, changed_scope, altered))
+    with pytest.raises(ValueError):
+        auth.policy.accept(state, proposal, receipt)
+
+
 
