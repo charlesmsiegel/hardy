@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
 
 from hardy.documents import export
+
+# POSIX mode bits and fifos have no Windows counterpart: `chmod` there toggles
+# a read-only flag, `umask` is a no-op, and `os.mkfifo` does not exist.
+posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX file modes and fifos")
 
 
 def audit_record(name: str, axioms: list[str], *, assumed: list[str] = ()):
@@ -664,6 +669,7 @@ def test_two_exports_in_one_second_do_not_overwrite_each_other(tmp_path):
     assert second.exists() and second.stat().st_size == 0
 
 
+@posix_only
 def test_an_export_is_not_forced_world_readable(tmp_path, monkeypatch):
     """The page holds the whole conversation and every source, and says in its
     own header that redaction is a filter rather than a proof."""
@@ -678,6 +684,7 @@ def test_an_export_is_not_forced_world_readable(tmp_path, monkeypatch):
     assert not stat.S_IMODE(destination.stat().st_mode) & 0o077
 
 
+@posix_only
 def test_replacing_an_export_keeps_the_mode_it_had(tmp_path):
     import stat
 
@@ -725,6 +732,7 @@ def test_an_identity_shows_its_separators_rather_than_swallowing_them():
     assert "leanprover/lean4:v4.9.0\\0abc123" in page
 
 
+@posix_only
 def test_a_destination_that_is_not_an_ordinary_file_is_refused(tmp_path):
     """`os.replace` onto a fifo unlinks it and puts an HTML file where another
     process's IPC endpoint was."""

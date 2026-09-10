@@ -45,7 +45,9 @@ def saved(tmp_path: Path, name: str = "Main.lean") -> Path:
 
 
 def state(tmp_path: Path) -> dict:
-    return json.loads((tmp_path / "session.json").read_text())
+    # Explicit: Hardy writes the record as UTF-8, and the platform default on
+    # Windows is not, which turned `«first result»` into mojibake on read.
+    return json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
 
 
 def test_a_proof_resting_on_sorry_ax_is_saved_and_recorded_open(tmp_path: Path):
