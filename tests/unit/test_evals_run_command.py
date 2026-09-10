@@ -70,10 +70,15 @@ def _args(**kw) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def test_the_warning_gate_refuses_before_anything_and_run_set_is_never_called(monkeypatch, capsys):
+def test_the_warning_gate_refuses_before_anything_and_run_set_is_never_called(monkeypatch, capsys, tmp_path):
     called = []
     monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
-    code = runner.run_set_command(_args(acknowledge_unsafe_execution=False), _config())
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(acknowledge_unsafe_execution=False, problems=problems_path, baseline=baseline_path,
+              scoreboards=tmp_path / "boards"),
+        _config(),
+    )
     assert code == 2
     assert WARNING in capsys.readouterr().err
     assert called == []
@@ -99,7 +104,7 @@ def test_a_missing_problems_or_baseline_file_is_refused_before_anything_runs(mon
     assert called == []
 
 
-def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeypatch):
+def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeypatch, tmp_path):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
     monkeypatch.setattr(runner, "source_revision", lambda: "deadbeef")
     monkeypatch.setattr(runner, "load_corpus", lambda path: _fake_problems("a", "b"))
@@ -110,7 +115,12 @@ def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeyp
         return Path("evals/scoreboards/x")
 
     monkeypatch.setattr(runner, "run_set", fake_run_set)
-    code = runner.run_set_command(_args(only="a,b", tiers="2,3", no_twins=True), _config())
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(only="a,b", tiers="2,3", no_twins=True, problems=problems_path, baseline=baseline_path,
+              scoreboards=tmp_path / "boards"),
+        _config(),
+    )
     assert code == 0
     condition = seen["condition"]
     assert condition.limits == {"max_turns": 60, "wall_seconds": 1800.0, "lean_timeout": 60.0}
@@ -121,13 +131,18 @@ def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeyp
     assert condition.source_revision == "deadbeef"
 
 
-def test_staged_mode_refuses_max_turns_or_wall_seconds(monkeypatch, capsys):
+def test_staged_mode_refuses_max_turns_or_wall_seconds(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
     called = []
     monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
-    code = runner.run_set_command(_args(mode="staged", max_turns=5), _config())
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(mode="staged", max_turns=5, problems=problems_path, baseline=baseline_path,
+              scoreboards=tmp_path / "boards"),
+        _config(),
+    )
     assert code == 2
-    assert "Refused" in capsys.readouterr().err
+    assert "Refused: --max-turns" in capsys.readouterr().err
     assert called == []
 
 
@@ -176,14 +191,17 @@ def test_a_refused_run_from_run_set_is_reported_and_exits_two(monkeypatch, capsy
     assert "Refused:" in capsys.readouterr().err
 
 
-def test_a_toolchain_that_cannot_be_identified_is_a_refusal_not_a_traceback(monkeypatch, capsys):
+def test_a_toolchain_that_cannot_be_identified_is_a_refusal_not_a_traceback(monkeypatch, capsys, tmp_path):
     def boom(*a, **kw):
         raise ValueError("no lake-manifest.json")
 
     monkeypatch.setattr(lean_module, "environment_identity", boom)
     called = []
     monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
-    code = runner.run_set_command(_args(), _config())
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
     assert code == 2
     assert "Refused: the Lean toolchain could not be identified" in capsys.readouterr().err
     assert called == []
