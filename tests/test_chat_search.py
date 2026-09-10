@@ -144,11 +144,14 @@ def test_the_refusal_is_recorded_in_the_transcript_like_any_other_answer(
     session._dispatch("rank_premises", {"goal": "⊢ True"})
 
     recorded = [
-        entry
+        json.loads(entry)
         for entry in session.transcript_path.read_text(encoding="utf-8").splitlines()
         if json.loads(entry).get("name") == "rank_premises"
     ]
-    assert len(recorded) == 1
+    assert [entry["type"] for entry in recorded] == ["tool_started", "tool"]
+    assert recorded[0]["call_id"] == recorded[1]["call_id"]
+    assert recorded[1]["result"]["ok"] is False
+    assert "lean_project is not set" in recorded[1]["result"]["output"]
 
 
 def test_an_unavailable_search_always_names_a_reason(session_factory) -> None:
