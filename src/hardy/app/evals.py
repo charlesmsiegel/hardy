@@ -211,6 +211,13 @@ def add_parser(subparsers: Any) -> None:
     compare.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
     compare.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     compare.add_argument("--right-baseline", type=Path, default=None)
+    history = verbs.add_parser("history", help="read chronological scoreboard observations without pooling; JSON on stdout")
+    history.add_argument("boards", nargs="+", type=Path)
+    history.add_argument("--vary", action="append", default=[], help="Control intended to vary; does not establish causality")
+    history.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
+    history.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    history.add_argument("--board-baseline", nargs=2, action="append", default=[], type=Path,
+                         metavar=("BOARD", "BASELINE"), help="Explicit baseline override for one selected board; repeatable")
     summary = verbs.add_parser(
         "summary",
         help="write a Markdown report over every scoreboard, one row per model (read-only)",
@@ -511,6 +518,8 @@ def run_summary(args: argparse.Namespace) -> int:
 
 
 def main(args: argparse.Namespace, config: Any) -> int:
+    if args.evals_command == "history":
+        return run_history(args)
     if args.evals_command == "compare":
         return run_compare(args)
     if args.evals_command == "baseline":
@@ -573,6 +582,21 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "summary":
         return run_summary(args)
     raise AssertionError(args.evals_command)
+
+
+def run_history(args: argparse.Namespace) -> int:
+    from hardy.evals.history import HistoryRefused, timeline
+
+    try:
+        result = timeline(args.boards, varying=args.vary, problems_path=args.problems,
+                          baseline_path=args.baseline, board_baselines=args.board_baseline)
+    except HistoryRefused as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    return int(any(point["issues"] for point in (
+        *result["boards"], *result["unplaced"], *result["transitions"],
+    )))
 
 
 def run_compare(args: argparse.Namespace) -> int:

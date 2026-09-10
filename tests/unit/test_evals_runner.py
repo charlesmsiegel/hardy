@@ -547,6 +547,7 @@ def test_run_source_set_excludes_only_the_declared_paths():
     assert "app/corpus_viewer.py" not in paths      # excluded: the review viewer
     assert "evals/summary.py" not in paths     # excluded: reads finished boards
     assert "evals/compare.py" not in paths     # excluded: reads paired boards
+    assert "evals/history.py" not in paths     # excluded: reads chronological boards
     assert "workflows/interactive/summary.py" in paths               # the *chat* summary, which a run does reach
     assert "cli.py" not in paths               # excluded: argument parsing
     assert not any(p.startswith("app/tui/") for p in paths)
@@ -567,7 +568,7 @@ def test_no_module_the_digest_covers_imports_a_downstream_reader_at_module_scope
     offenders = []
     for path in runner.run_source_paths():
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            if line[:1].strip() and re.match(r"^(from|import)\b.*\b(viewer|evals\.(summary|compare))\b", line.strip()):
+            if line[:1].strip() and re.match(r"^(from|import)\b.*\b(viewer|evals\.(summary|compare|history))\b", line.strip()):
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
     assert offenders == []
 

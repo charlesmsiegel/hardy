@@ -33,6 +33,7 @@ RUN_SOURCE_EXCLUDED_FILES = frozenset({
     "app/corpus_viewer.py",    # the corpus review viewer
     "evals/summary.py",   # reads finished boards; cannot reach a run
     "evals/compare.py",   # reads paired finished boards; cannot reach a run
+    "evals/history.py",   # orders audited finished boards; cannot reach a run
 })
 RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/",)
 
