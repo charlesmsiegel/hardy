@@ -105,15 +105,16 @@ def held(tmp_path: Path) -> tuple[arxiv.ArxivClient, arxiv.PaperLibrary, Answers
 def test_a_source_tree_is_admitted_beside_the_record(held) -> None:
     _, library, _ = held
     identifier = arxiv.parse_id(PAPER)
+    bundle = _bundle()
 
     manifest = library.admit_source(
-        identifier, _bundle(), source_url="https://example.invalid/e-print", fetched_at="2026-01-01T00:00:00Z"
+        identifier, bundle, source_url="https://example.invalid/e-print", fetched_at="2026-01-01T00:00:00Z"
     )
 
     assert library.holds_source(identifier)
     assert [item.path for item in manifest.files] == ["main.tex"]
     assert manifest.files[0].sha256 == hashlib.sha256(MAIN).hexdigest()
-    assert manifest.archive_sha256 == hashlib.sha256(_bundle()).hexdigest()
+    assert manifest.archive_sha256 == hashlib.sha256(bundle).hexdigest()
     assert manifest.arxiv_id == PAPER
     assert manifest.source_url == "https://example.invalid/e-print"
     stored = library.path_for(identifier) / "source" / "main.tex"
