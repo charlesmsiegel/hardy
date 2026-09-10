@@ -19,11 +19,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import queue
 import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,14 @@ TEARDOWN_SECONDS = 5.0
 # bounds how many seconds of an answer the user watched arrive a crash can
 # take with it. Per delta would be a line per token; see `_checkpoint`.
 CHECKPOINT_SECONDS = 2.0
+
+
+@dataclass
+class _DrawnBlock:
+    """A streamed block owns its checkpoints, independently of neighboring text."""
+    text: str = ""
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    checkpointed: str | None = None
 
 # Put on the queue by the SDK's thread when it has nothing further to say.
 _FINISHED = object()
@@ -187,6 +197,11 @@ class ClaudeAgentRuntime:
         self.model = model
         self.session_id = session_id
         # `None` turns checkpointing off; `0` checkpoints on every delta.
+        if checkpoint_seconds is not None and (
+            isinstance(checkpoint_seconds, bool) or not isinstance(checkpoint_seconds, (int, float))
+            or not math.isfinite(checkpoint_seconds) or checkpoint_seconds < 0
+        ):
+            raise ValueError("checkpoint interval must be finite and nonnegative, or None")
         self.checkpoint_seconds = checkpoint_seconds
         # The session a runtime that resumes nothing will open, chosen here
         # rather than left to the CLI. Left to the CLI, a `claude` started
@@ -227,7 +242,7 @@ class ClaudeAgentRuntime:
         # While a block is still open, `_checkpoint` copies these entries into
         # the record every `checkpoint_seconds`, so a process that dies before
         # the block arrives leaves them behind rather than nothing.
-        self._drawn: list[str] = []
+        self._drawn: list[_DrawnBlock] = []
         self._drawing: int | None = None
         self._checkpointed_at = 0.0
 
@@ -541,15 +556,22 @@ class ClaudeAgentRuntime:
         if not self._drawn:
             return ""
         # Joined as blocks are joined: each entry was a block of its own.
-        said = "\n\n".join(entry for entry in self._drawn if entry)
+        blocks = self._drawn
+        said = "\n\n".join(block.text for block in blocks if block.text)
         self._drawn, self._drawing = [], None
         if not said:
             return ""
-        self._observe({
-            "type": "assistant",
-            "message": {"role": "assistant", "content": said},
-            "partial": True,
-        })
+        if any(block.checkpointed is not None for block in blocks):
+            for block in blocks:
+                if block.text:
+                    self._observe({"type": "assistant", "block_id": block.id,
+                        "message": {"role": "assistant", "content": block.text}, "partial": True})
+        else:
+            self._observe({
+                "type": "assistant",
+                "message": {"role": "assistant", "content": said},
+                "partial": True,
+            })
         return said
 
     def _draw(self, index: int, text: str) -> None:
@@ -559,9 +581,9 @@ class ClaudeAgentRuntime:
         and each has to be able to recognise the deltas that already drew *it*.
         """
         if not self._drawn or index != self._drawing:
-            self._drawn.append("")
+            self._drawn.append(_DrawnBlock())
             self._drawing = index
-        self._drawn[-1] += text
+        self._drawn[-1].text += text
         if self.checkpoint_seconds == 0:
             self._checkpoint()
 
@@ -587,11 +609,10 @@ class ClaudeAgentRuntime:
         every word of an answer the user had already watched arrive: a lost
         exchange indistinguishable from one that never happened.
 
-        Paced by `checkpoint_seconds` rather than written per delta, because
-        per delta is a line per token. Each checkpoint carries the whole of the
-        text drawn so far for the blocks still open, so the newest one is
-        always the one that matters and `tail -f transcript.jsonl` follows a
-        running answer at this granularity.
+        Paced by `checkpoint_seconds` rather than written per delta. Each open
+        block carries its own identity and complete text so far. Completing one
+        cannot discard another block's unfinished words. Unchanged blocks cost
+        no further writes while the provider stalls.
 
         Marked `partial`, like the text `_settle_drawn` keeps, because no
         provider completed it -- and `checkpoint` besides, because unlike that
@@ -605,16 +626,18 @@ class ClaudeAgentRuntime:
         now = time.monotonic()
         if now - self._checkpointed_at < interval:
             return
-        said = "\n\n".join(entry for entry in self._drawn if entry)
-        if not said:
+        changed = [block for block in self._drawn if block.text and block.text != block.checkpointed]
+        if not changed:
             return
+        for block in changed:
+            self._observe({
+                "type": "assistant", "block_id": block.id,
+                "message": {"role": "assistant", "content": block.text},
+                "partial": True,
+                "checkpoint": True,
+            })
+            block.checkpointed = block.text
         self._checkpointed_at = now
-        self._observe({
-            "type": "assistant",
-            "message": {"role": "assistant", "content": said},
-            "partial": True,
-            "checkpoint": True,
-        })
 
     def _note(self, message: Any, spoken: list[str]) -> Iterator[TurnEvent]:
         """Record what the SDK reports, and say what a watcher should draw.
@@ -644,7 +667,8 @@ class ClaudeAgentRuntime:
             kind = type(block).__name__
             if kind == "TextBlock" and getattr(block, "text", ""):
                 spoken.append(block.text)
-                self._observe({"type": "assistant", "message": {"role": "assistant", "content": block.text}})
+                identity = {"block_id": self._drawn[0].id} if self._drawn and self._drawn[0].checkpointed is not None else {}
+                self._observe({"type": "assistant", **identity, "message": {"role": "assistant", "content": block.text}})
                 if self._drawn:
                     # Deltas already put these words on screen; the block is
                     # the record's copy of them and must not be drawn again.

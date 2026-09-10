@@ -577,22 +577,27 @@ def _superseded(events: Sequence[Mapping[str, Any]]) -> set[int]:
 
     The runtime checkpoints an answer into the record while it is still being
     streamed, so a crash cannot take it; on the ordinary path the block then
-    completes and is recorded whole. Each checkpoint carries everything drawn
-    so far, so within one turn the newest assistant event -- the next
-    checkpoint, the completed block, or the text settled at an interrupt --
-    always contains what the partial before it did. Rendering them all would
-    show one answer several times over, growing. A user message ends the turn:
-    a partial the record ends on, or that the user then spoke after, is the
-    evidence the checkpoints exist to keep, and it stays.
+    completes and is recorded whole. New records identify each streamed block,
+    so only a later event for that exact block can supersede its checkpoint.
+    Legacy records have no block IDs and retain their within-turn fallback.
+    A partial with no successor is evidence of unfinished output and stays.
     """
     superseded: set[int] = set()
     pending: int | None = None
+    blocks: dict[str, int] = {}
     for index, event in enumerate(events):
         kind = event.get("type")
         if kind == "assistant":
-            if pending is not None:
-                superseded.add(pending)
-            pending = index if event.get("partial") else None
+            block_id = event.get("block_id")
+            if isinstance(block_id, str) and block_id:
+                if block_id in blocks:
+                    superseded.add(blocks.pop(block_id))
+                if event.get("partial"):
+                    blocks[block_id] = index
+            else:
+                if pending is not None:
+                    superseded.add(pending)
+                pending = index if event.get("partial") else None
         elif kind in SPEAKERS:
             pending = None
     return superseded

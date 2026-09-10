@@ -1488,3 +1488,17 @@ def test_tool_results_identify_the_call_even_across_turns():
     assert export._unfinished(events) == {0}
     events.append({"type": "tool", "name": "check_lean", "call_id": "old"})
     assert export._unfinished(events) == set()
+
+
+def test_checkpoint_supersession_uses_exact_block_identity():
+    events = [
+        {**_checkpoint("First draft"), "block_id": "first"},
+        {**_checkpoint("Second unfinished"), "block_id": "second"},
+        {"type": "assistant", "block_id": "first", "message": {"content": "First complete"}},
+    ]
+    assert export._superseded(events) == {0}
+    events.append({**_checkpoint("Second further"), "block_id": "second"})
+    assert export._superseded(events) == {0, 1}
+    page = build(transcript=events)
+    assert page.count("First complete") == 1 and page.count("Second further") == 1
+    assert "First draft" not in page and "Second unfinished" not in page

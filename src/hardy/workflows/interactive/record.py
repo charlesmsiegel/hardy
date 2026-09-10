@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from collections.abc import Iterator
@@ -184,9 +185,20 @@ class SessionRecord:
         the only thing it has to make atomic.
         """
         event = {"timestamp": time.time(), **event}
-        line = json.dumps(event, ensure_ascii=False) + "\n"
-        with self._appends, self._workspace_guard.open(TRANSCRIPT, "a", encoding="utf-8") as handle:
+        line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+        with self._appends, self._workspace_guard.open(TRANSCRIPT, "a+b") as handle:
+            # Preserve a crashed writer's bytes, but isolate its unterminated
+            # line. Otherwise this valid event becomes part of the torn JSON
+            # and replay loses both. A complete line lacking only its newline
+            # is preserved as a complete event too. Byte offsets own recovery.
+            handle.seek(0, os.SEEK_END)
+            if handle.tell():
+                handle.seek(-1, os.SEEK_END)
+                if handle.read(1) != b"\n":
+                    handle.write(b"\n")
             handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
             return handle.tell()
 
 

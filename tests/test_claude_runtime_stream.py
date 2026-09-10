@@ -478,7 +478,7 @@ def test_a_timed_out_provider_cannot_publish_into_the_next_turn(late_stage):
         old_worker.join(2)
         assert not old_worker.is_alive()
         assert live._client is new
-        assert live._drawn == ["new"]
+        assert [block.text for block in live._drawn] == ["new"]
         assert not any(event["type"] == "result" for event in seen)
         if late_stage == "connect":
             assert old.asked is None
@@ -617,13 +617,14 @@ def test_partial_messages_are_actually_requested():
     assert runtime()._options().include_partial_messages is True
 
 
-def checkpoint(text: str) -> dict:
+def checkpoint(text: str, block_id: str) -> dict:
     """What an interval checkpoint of drawn text looks like in the record."""
     return {
         "type": "assistant",
         "message": {"role": "assistant", "content": text},
         "partial": True,
         "checkpoint": True,
+        "block_id": block_id,
     }
 
 
@@ -649,9 +650,11 @@ def test_drawn_text_is_checkpointed_while_its_block_is_still_being_written():
             if event.text == "sentence":
                 live.cancel()
 
+    block_id = recorded_when_drawn[0][0]["block_id"]
+    assert block_id
     expected = [
-        [checkpoint("Half a ")],
-        [checkpoint("Half a "), checkpoint("Half a sentence")],
+        [checkpoint("Half a ", block_id)],
+        [checkpoint("Half a ", block_id), checkpoint("Half a sentence", block_id)],
     ]
     # The producer may checkpoint the next delta before the consumer draws
     # this one. What matters is that the displayed prefix is already durable.
@@ -679,7 +682,7 @@ def test_a_stalled_stream_checkpoints_without_another_delta():
     try:
         assert next(events).text == "Visible words"
         assert saved.wait(2), "stalled provider left displayed words unrecorded"
-        assert checkpoint("Visible words") in seen
+        assert checkpoint("Visible words", seen[0]["block_id"]) in seen
     finally:
         live.cancel()
         list(events)
@@ -728,8 +731,54 @@ def test_a_completed_block_is_recorded_after_the_checkpoints_that_drew_it():
     events = list(live.stream("go"))
 
     assert [event.text for event in events if event.kind == "reply"] == ["Lean agrees."]
+    block_id = seen[0]["block_id"]
     assert [event for event in seen if event["type"] == "assistant"] == [
-        checkpoint("Lean "),
-        checkpoint("Lean agrees."),
-        {"type": "assistant", "message": {"role": "assistant", "content": "Lean agrees."}},
+        checkpoint("Lean ", block_id),
+        checkpoint("Lean agrees.", block_id),
+        {"type": "assistant", "block_id": block_id, "message": {"role": "assistant", "content": "Lean agrees."}},
     ]
+
+
+def test_finishing_one_block_preserves_another_blocks_checkpoint():
+    from hardy.documents.export import _conversation
+
+    seen = []
+    live = runtime(observe=seen.append, checkpoint_seconds=0)
+    list(live._note(StreamEvent("First draft", index=0), []))
+    list(live._note(StreamEvent("Second unfinished α", index=1), []))
+    list(live._note(AssistantMessage(TextBlock("First complete")), []))
+    # The process could die here, before settling the second open block.
+    page = _conversation(seen)
+    assert page.count("First complete") == 1
+    assert "First draft" not in page
+    assert "Second unfinished α" in page and "not a completed answer" in page
+    partials = [e for e in seen if e.get("checkpoint")]
+    assert len({e["block_id"] for e in partials}) == 2
+    assert seen[-1]["block_id"] == partials[0]["block_id"]
+
+
+def test_checkpoint_interval_never_writes_unchanged_text_again(monkeypatch):
+    seen = []
+    now = [10.0]
+    monkeypatch.setattr(claude_runtime.time, "monotonic", lambda: now[0])
+    live = runtime(observe=seen.append, checkpoint_seconds=2)
+    live._checkpointed_at = now[0]
+    live._draw(0, "α")
+    now[0] = 11.9
+    live._checkpoint()
+    assert not seen
+    now[0] = 12.0
+    live._checkpoint()
+    assert len(seen) == 1
+    now[0] = 14.0
+    live._checkpoint()
+    assert len(seen) == 1
+    live._draw(0, "β")
+    live._checkpoint()
+    assert len(seen) == 2 and seen[-1]["message"]["content"] == "αβ"
+
+
+@pytest.mark.parametrize("interval", [-1, float("nan"), float("inf"), True])
+def test_invalid_checkpoint_interval_is_refused(interval):
+    with pytest.raises(ValueError, match="checkpoint interval"):
+        runtime(checkpoint_seconds=interval)
