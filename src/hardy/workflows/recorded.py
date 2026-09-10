@@ -1048,6 +1048,9 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     if trajectory.get("terminal_reason") != reason:
         issues.append("terminal reason differs between result.json and trajectory.json")
     issues.extend(budget_record_issues(output_dir, trajectory.get("provider_budget")))
+    from hardy.workflows.batch_recording import attempt_record_issues
+
+    issues.extend(attempt_record_issues(output_dir))
     # A mapping or nothing. `or {}` forgave a falsy value and kept a truthy
     # one of any type, so a hand-edited or half-merged trajectory whose
     # `request` is a string took the validator down with an `AttributeError`

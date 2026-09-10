@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -22,9 +21,11 @@ from hardy.formal import closers as closer_ladder
 from hardy.formal.contracts import Request
 from hardy.formal.latency import manifest_binds
 from hardy.formal.lean import LeanToolResult, LeanTools, environment_identity
+from hardy.foundation.locking import atomic_write_bytes
 from hardy.foundation.values import ToolResult
 from hardy.prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
 from hardy.workflows.batch_contracts import RunResult
+from hardy.workflows.batch_recording import BatchRecorder
 from hardy.workflows.interactive import summary as summary_module
 
 WARNING = "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
@@ -45,9 +46,7 @@ class Runtime(Protocol):
 
 
 def _write_json(path: Path, value: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_write_bytes(path, (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
 def _audited(result: LeanToolResult, lean: LeanTools) -> tuple[ToolResult, audit.Verdict | None, dict[str, Any] | None]:
@@ -176,7 +175,15 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # what it ran against; and asked rather than trusted from the caller when
     # nobody said.
     toolchain = identify_toolchain(lean) if toolchain is None else toolchain
-    events: list[dict[str, Any]] = []
+    recorder = BatchRecorder(output_dir, {
+        "request": {"declaration": request.declaration, "informal_claim": request.informal_claim,
+                    "imports": list(request.imports)},
+        "toolchain": toolchain, "lean_command": list(lean.lean_command),
+        "lean_project": str(lean.project) if lean.project else None,
+        "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "context_window": context_window},
+        "system_prompt": BATCH_SYSTEM_PROMPT, "tools": TOOLS, "closers": list(closers) if closers else [],
+    })
+    events = recorder.events
     found: dict[str, Any] = {"result": None, "proof": None, "verdict": None}
     # A submission Lean accepted and the audit then refused. Kept so the terminal
     # reason can say what happened instead of "nothing was submitted", and so the
@@ -204,7 +211,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
 
     def observe(event: dict[str, Any]) -> None:
         """Keep the event, and bill the run for it if it carries a report."""
-        events.append(event)
+        recorder.append(event)
         if event.get("type") == "result":
             spend["total"] = spend["total"].record(event)
 
@@ -248,7 +255,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         if name != "sketch_proof" and sketched["proof"] is None:
             return
         if closed.is_set() or time.monotonic() > deadline.get("at", float("inf")):
-            events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
+            recorder.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
             return
         sketched["proof"] = proof
         sketched["holes"] = [item.model_dump(mode="json") for item in lean.holes(proof)]
@@ -289,7 +296,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             # where the model never asked for it. Its own type, so nothing that
             # counts submissions or grades attempts reads a refusal Lean never
             # saw as one of them.
-            events.append({"type": "refused_tool", "name": name, "arguments": arguments, "why": why})
+            recorder.append({"type": "refused_tool", "name": name, "arguments": arguments, "why": why})
             return ToolResult(False, why)
         # Bound before the try, because the event below is written on the way
         # out of both the body and the `except`: a `submit_proof` whose
@@ -346,7 +353,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 late = closed.is_set() or time.monotonic() > deadline.get("at", float("inf"))
                 if late:
                     if submitted:
-                        events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
+                        recorder.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
                 elif result.ok:
                     found["result"], found["proof"], found["verdict"] = result, proof, verdict
                 elif record is not None:
@@ -380,7 +387,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             # which, and an honest artifact fails for a skeleton it can see but
             # cannot tie to the Lean run that made it.
             event["lean_accepted"] = submitted
-        events.append(event)
+        recorder.append(event)
         return result
 
     system = BATCH_SYSTEM_PROMPT
@@ -412,7 +419,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         # Recorded because a run that spent four minutes elaborating tactics
         # and then reported a model turn limit is not readable without it.
         ladder = {**outcome.as_dict(), "seconds": round(time.monotonic() - start, 3)}
-        events.append({"type": "closers", **ladder})
+        recorder.append({"type": "closers", **ladder})
     # The ladder spends the run's clock, not a clock of its own. Left to the
     # declared figure, a run whose closers used four of five minutes would then
     # hand the model a fresh five -- so the command could take the ladder's
@@ -436,7 +443,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         """
         if not plan.overflow:
             return
-        events.append({
+        recorder.append({
             "type": "overflow",
             "estimated_tokens": {"before": plan.before, "available": plan.available},
             "context_window": context_window,
@@ -514,7 +521,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         if not settled.needed:
             _record_overflow(settled)
             return None
-        events.append({
+        recorder.append({
             "type": "compaction",
             "summarized_messages": settled.cut,
             "kept_messages": len(messages) - settled.cut,
@@ -531,6 +538,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
 
     runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=observe,
                            max_turns=max_turns, wall_seconds=max(remaining, 0.0))
+    recorder.bind_runtime(provenance(runtime))
     # Offered rather than passed in, and only to a runtime that says it can
     # take one -- the same rule `MathematicsSession._build` follows, and for
     # the same reason: handing a compactor to a backend that would drop it
@@ -574,7 +582,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         # decline -- the run has its proof and needs no further turn -- was
         # being counted as evidence that a ladder ran, which refused an
         # otherwise verified record.
-        events.append({
+        recorder.append({
             "type": "declined_turn",
             "stage": "closers",
             "why": f"closed by `{ladder['closed_by']}` before a model turn was spent",
@@ -595,28 +603,28 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             if ladder["enabled"]
             else "the wall-clock budget was gone before a model turn could be spent"
         )
-        events.append({"type": "limit", "limit": "wall_seconds", "detail": detail})
+        recorder.append({"type": "limit", "limit": "wall_seconds", "detail": detail})
     try:
         if asked:
             runtime.ask(task)
     except SpendLimitReached as error:
         reason = "provider_budget_limit"
         asked = getattr(runtime, "turns", None) != 0
-        events.append({"type": "limit", "limit": error.limit, "detail": str(error)})
+        recorder.append({"type": "limit", "limit": error.limit, "detail": str(error)})
     except TurnLimitReached as error:
         # The bound the caller asked for, reached as asked. Recording it as a
         # provider failure would misreport an expected partial result.
         reason = "turn_limit"
-        events.append({"type": "limit", "limit": "max_turns", "detail": str(error)})
+        recorder.append({"type": "limit", "limit": "max_turns", "detail": str(error)})
     except TimeoutError as error:
         # Running out of time is not a provider fault, and the terminal reason is
         # what an experiment is read by.
         closed.set()
         reason = "wall_clock_limit"
-        events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
+        recorder.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
     except Exception as error:
         reason = "runtime_error"
-        events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
+        recorder.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
     closed.set()
     elapsed = time.monotonic() - start
     final, proof = found["result"], found["proof"]
@@ -693,6 +701,8 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     if sketch is not None:
         writeup += sketch_section(sketch)
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed, context_window, compacted), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason})
+    trajectory = {"schema_version": 2, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed, context_window, compacted), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason}
+    trajectory["attempt_receipt"] = recorder.finish(trajectory, result.as_dict())
+    _write_json(output_dir / "trajectory.json", trajectory)
     _write_json(output_dir / "result.json", result.as_dict())
     return result

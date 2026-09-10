@@ -64,6 +64,17 @@ def _batch(tmp_path: Path, script, *, wall_seconds: float = 300.0, name: str = '
     return output
 
 
+def _as_legacy_record(output: Path) -> None:
+    """Construct an unjournaled historical fixture for legacy semantic checks."""
+    path = output / 'trajectory.json'
+    trajectory = json.loads(path.read_text(encoding='utf-8'))
+    trajectory.pop('attempt_receipt', None)
+    trajectory['schema_version'] = 1
+    path.write_text(json.dumps(trajectory), encoding='utf-8')
+    (output / 'attempt.json').unlink()
+    (output / 'attempt.jsonl').unlink()
+
+
 def _verified(tmp_path: Path) -> Path:
     return _batch(tmp_path, [('submit_proof', {'proof': 'by exact True.intro'})])
 
@@ -149,6 +160,7 @@ def test_a_wall_clock_cancelled_run_may_not_claim_a_turn_count(tmp_path) -> None
     rather than rediscovers."""
     acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
+    _as_legacy_record(output)
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
@@ -389,6 +401,7 @@ def test_a_discard_marker_condemns_only_the_submission_it_precedes(tmp_path) -> 
     valid acceptance is followed by a late one; the valid one still stands."""
     acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
+    _as_legacy_record(output)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     index = next(
         i for i, event in enumerate(trajectory['events'])
@@ -667,6 +680,7 @@ def test_a_record_from_before_closers_existed_still_validates(tmp_path) -> None:
     faked."""
     acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _verified(tmp_path)
+    _as_legacy_record(output)
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
     del trajectory['closers']
     del trajectory['sketch']
@@ -749,6 +763,7 @@ def test_a_harness_counted_timeout_may_report_its_turns(tmp_path) -> None:
     truthful API-backed timeout."""
     acceptance = importlib.import_module('hardy.workflows.acceptance')
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
+    _as_legacy_record(output)
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
     trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
@@ -1246,6 +1261,11 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
         def attach_compactor(self, compact):
             held.append(compact)
 
+        def ask(self, text):
+            reply = super().ask(text)
+            held.append(held[0]([compaction.Message('user', text='x' * 30_000) for _ in range(4)]))
+            return reply
+
     runner.run(
         request,
         lambda model=None, **context: Compacting([('check_proof', {'proof': 'by nonsense'})], **context),
@@ -1260,8 +1280,7 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
     compact = held[0]
     # A conversation far past a 20,000-token window, in a form the cut is legal
     # anywhere in.
-    conversation = [compaction.Message('user', text='x' * 30_000) for _ in range(4)]
-    rebuilt = compact(conversation)
+    rebuilt = held[1]
 
     assert rebuilt is not None
     assert rebuilt[0].text.startswith(compaction.PREAMBLE)
@@ -1308,6 +1327,11 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
         def attach_compactor(self, compact):
             held.append(compact)
 
+        def ask(self, text):
+            reply = super().ask(text)
+            held.append(held[0]([compaction.Message('user', text='x' * 30_000) for _ in range(4)]))
+            return reply
+
     runner.run(
         request,
         lambda model=None, **context: Compacting([('sketch_proof', {'proof': 'by\n  sorry'})], **context),
@@ -1319,7 +1343,7 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
         context_window=20_000,
     )
 
-    rebuilt = held[0]([compaction.Message('user', text='x' * 30_000) for _ in range(4)])
+    rebuilt = held[1]
 
     assert rebuilt is not None
     summary = rebuilt[0].text
