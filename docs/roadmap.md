@@ -481,6 +481,18 @@ Adding another representation for a concept must not invalidate existing users. 
 
 **Deps:** A0
 
+**Status: implemented (2026-09-10).** `ledger/policy.py` is the default append
+validator and the authority used by derived acceptance/premise queries. Named
+capability, decision and admission readers must authenticate exact subject,
+context, scope, source and policy identities on every use, including restart.
+Without these readers the policy denies acceptance/admission. Actual audited
+assumptions are separate from allowed scope and local theorem context. Historical
+dependencies, chosen-object dependencies, citations/hypothesis discharge and exact
+transport endpoints/mappings are checked; semantic relation changes require a
+new source revision. Tests use explicit capability stand-ins. Production reader
+adapters are not implicitly installed: existing records do not bind all ledger
+identities. Run `uv run --extra test pytest tests/unit/test_ledger_policy.py tests/unit/test_ledger_store.py -q`.
+
 Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit trust-scope changes, the rule that model proposals are not evidence, the rule that a mathematical concept is not silently identified with one representation, and the rule that local binders/hypotheses are not external trusted assumptions.
 
 Also enforce:

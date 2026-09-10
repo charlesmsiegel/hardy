@@ -139,17 +139,3 @@ def _context(snapshot: LedgerSnapshot, context: MathematicalContext) -> None:
             if (isinstance(target, ScopedBinding) or isinstance(target, ProjectItem) and target.declaration) and binding.target not in visible:
                 raise ValueError("binding target is outside mathematical context")
 
-
-def proposals_only(before: LedgerSnapshot, after: LedgerSnapshot) -> None:
-    """Without B2, neither a serialized acceptance nor a scope may grant trust."""
-    for record in after.records[len(before.records):]:
-        if isinstance(record, Scope) and (
-            record.allowed_background or record.allowed_interfaces
-            or any(r.id == record.id for r in before.current(Scope))
-        ):
-            raise ValueError("trust scope changes require authenticated policy")
-        resolution = record.resolution if isinstance(record, Obligation) else record
-        if isinstance(resolution, Resolution) and resolution.accepted_by is not None:
-            raise ValueError("accepted resolutions require authenticated policy")
-        if isinstance(record, CitationContract) and record.status == "resolved":
-            raise ValueError("resolved citation requires authenticated policy")

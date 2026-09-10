@@ -17,8 +17,9 @@ from hardy.foundation.files import WriteGuard
 from hardy.foundation.locking import FileLock
 from hardy.foundation.values import json_digest
 from hardy.workflows.ledger.contracts import LedgerRecord, VersionRef
+from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
-from hardy.workflows.ledger.validation import RECORD_TYPES, proposals_only, validate_structure
+from hardy.workflows.ledger.validation import RECORD_TYPES, validate_structure
 
 SCHEMA = "hardy.ledger/transaction/v1"
 Validator = Callable[[LedgerSnapshot, LedgerSnapshot], None]
@@ -109,7 +110,7 @@ class LedgerStore:
             after = LedgerSnapshot(before.records + tuple(values), before.revision + 1,
                                    activate if activate is not None else before.active_context)
             validate_structure(before, after)
-            (validate or proposals_only)(before, after)
+            (validate or LedgerPolicy().validate)(before, after)
             payload = {
                 "schema": SCHEMA, "sequence": after.revision, "previous": previous,
                 "records": [{"type": type(r).__name__, "value": r.model_dump(mode="json"),
