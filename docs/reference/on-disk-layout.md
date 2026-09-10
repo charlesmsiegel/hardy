@@ -149,13 +149,14 @@ A `lean_lib` name is a Lake *target* name; it does not rename the modules beneat
 
 ## Staged runs: `runs/<timestamp>-<slug>-<id>/`
 
-`hardy prove` and a live `hardy accept` write a fresh, uniquely named directory under `runs_root` (`runs/` by default; see [Configuration](configuration.md#settings)) for every attempt, named `<timestamp>-<slug>-<run id>`: a local timestamp as `YYYYMMDDTHHMMSS±HHMM`, the problem's slug, and the first eight hex characters of the run's UUID. A run that goes all the way through leaves everything `write_text`/`write_json` ever wrote it:
+`hardy prove` and a live `hardy accept` write a fresh, uniquely named directory under `runs_root` (`runs/` by default; see [Configuration](configuration.md#settings)) for every attempt, named `<timestamp>-<slug>-<run id>`: a local timestamp as `YYYYMMDDTHHMMSS±HHMM`, the problem's slug, and the first eight hex characters of the run's UUID. A run that goes all the way through leaves the following:
 
 ```
 runs/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8/
 ├── manifest.json               # the run's own record: phase, terminal reason, artifact identities
 ├── trajectory.jsonl              # every tool call and model turn, sequenced and hash-linked
 ├── request.md                     # the request text as given
+├── strategy.json                   # the proof-search strategy selected, and the source digests it was run against
 ├── formalization.json              # the frozen, human-approved claim
 ├── faithfulness-prompt.md           # what the independent faithfulness reader was shown
 ├── faithfulness-schema.json          # the schema its verdict was validated against
@@ -165,11 +166,11 @@ runs/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8/
 │   └── verification.json                # the checker's result: axioms, diagnostics
 └── writeup/
     ├── paper.tex                         # the compiled writeup's source
-    ├── paper.pdf
+    ├── paper.pdf                          # only on successful compilation
     └── compile.log
 ```
 
-This is a real run, listed with `find`; its own directory is `acceptance/recorded/prove-verified/`. A run that stops earlier (a declined unsafe-execution acknowledgment, a failed preflight, a cancelled formalization, a faithfulness gate that disagreed) is finalized where it stopped and carries only what it reached, and a failed Lean attempt writes `lean/last-attempt.lean` beside `lean/verification.json` instead of a `Main.lean` that never verified. `manifest.json`'s phase and terminal reason say where a run stopped; see [the command reference](cli.md#hardy-prove) for what each phase means.
+This is a real run, listed with `find`; its own directory is `acceptance/recorded/prove-verified/`. It predates `strategy.json`, which every run now writes unconditionally on entering `FORMALIZING`, so that one file is not in the fixture but is in the tree above. A run that stops earlier (a declined unsafe-execution acknowledgment, a failed preflight, a cancelled formalization, a faithfulness gate that disagreed) is finalized where it stopped and carries only what it reached, and a failed Lean attempt writes `lean/last-attempt.lean` beside `lean/verification.json` instead of a `Main.lean` that never verified. `manifest.json`'s phase and terminal reason say where a run stopped; see [the command reference](cli.md#hardy-prove) for what each phase means.
 
 Every trajectory event's payload is filtered before it is appended: a key that reads, case-insensitively and with an optional `_` or `-` before the second word, as `authorization`, `apikey`, `accesstoken`, `refreshtoken`, `secret`, or `password` has its value replaced with `[REDACTED]`, recursively through nested objects and lists. This applies only to `trajectory.jsonl`; nothing else written into a run directory goes through it.
 
