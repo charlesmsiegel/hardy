@@ -31,7 +31,7 @@ from hardy.algebra.contracts import (
     unobservable,
 )
 from hardy.algebra.kernel import _Kernel
-from hardy.foundation.files import WriteGuard
+from hardy.foundation.files import LayoutError, WriteGuard
 from hardy.foundation.process import INTERRUPT_GRACE_SECONDS
 from hardy.workflows.contracts import RunLimits
 
@@ -809,7 +809,7 @@ class CasSession:
                     self._spend_name,
                     (json.dumps(self.total_spent_seconds, allow_nan=False) + "\n").encode("utf-8"),
                 )
-            except OSError as error:
+            except (OSError, LayoutError) as error:
                 self._drop_kernel()
                 self.state = "poisoned"
                 raise CasError(f"the CAS spend could not be written ({self._spend_name}): {error}") from error

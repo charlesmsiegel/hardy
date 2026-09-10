@@ -788,6 +788,35 @@ def test_corrupt_spend_is_refused(tmp_path, cas_session, value) -> None:
         cas_session()
 
 
+def test_a_guarded_spend_write_failure_requires_a_reset(tmp_path, cas_session) -> None:
+    session = cas_session()
+    assert session.execute("a").value_repr == "1"
+    sidecar = tmp_path / "cells.jsonl.spend.json"
+    target = tmp_path / "other.json"
+    original = sidecar.read_bytes()
+    target.write_bytes(original)
+    sidecar.unlink()
+    sidecar.symlink_to(target)
+
+    with pytest.raises(CasError, match="spend could not be written"):
+        session.execute("b")
+    assert session.state == "poisoned"
+    assert session._kernel is None
+    assert target.read_bytes() == original
+    assert [record.source for record in session.accepted()] == ["a"]
+
+    # Repairing the path cannot make the unrecorded cell's state usable.
+    sidecar.unlink()
+    sidecar.write_bytes(original)
+    with pytest.raises(CasError, match="poisoned"):
+        session.execute("c")
+    total = session.total_spent_seconds
+    session.reset()
+    assert session.total_spent_seconds == total
+    assert session.execute("c").value_repr == "1"
+    assert [record.source for record in session.accepted()] == ["c"]
+
+
 def test_a_reopened_session_continues_its_own_spend(tmp_path, cas_session) -> None:
     """The spend is the session's figure, and it survives the process.
 
