@@ -48,6 +48,13 @@ if args.bytes:
     sys.stdout.buffer.write(b'x' * args.bytes)
     sys.stdout.buffer.flush()
 if args.ready:
+    # Flushed first, so "ready" means what was said above has actually left
+    # this process. A pipe makes stdout block-buffered, and a Windows
+    # CTRL_BREAK ends the interpreter without the exit-time flush that a
+    # SIGINT's KeyboardInterrupt gets -- so without this, what the child
+    # "said" before the press would never have reached the pipe at all.
+    sys.stdout.flush()
+    sys.stderr.flush()
     with open(args.ready, 'w', encoding='utf-8') as handle:
         handle.write('ready')
 if args.sleep_after:
