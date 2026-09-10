@@ -110,6 +110,8 @@ remains unavailable: recorded acceptance is not proof. E1 exercises a synthetic
 referee manuscript with scripted semantic readings. Applications still supply
 model and capability readers for broader workflows; E0/E2's human-guided trials
 remain deferred. No live-model performance or execution isolation is claimed.
+The [automated roadmap report](docs/superpowers/reports/2026-09-10-automated-roadmap.md)
+records integrated verification and the remaining prerequisites.
 
 Core F adds ranked textual proof search and a shared check/deadline budget.
 `hardy prove --strategy best-first` uses the staged Claude runtime; unsupported

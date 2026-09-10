@@ -31,7 +31,7 @@ coverage gate before fast-forward landing. Tests use trusted disposable fixtures
   detected defects and clean controls, source coverage and restart behavior.
 - [x] S1/S2: read-only capability recheck; record any unresolved host prerequisite.
 - [x] V0/docs: refresh fixture index, roadmap, TODO and the four overview docs.
-- [ ] Review changes, run focused tests before each commit, then full hermetic
+- [x] Review changes, run focused tests before each commit, then full hermetic
   coverage, Ruff and installed-wheel smoke before landing with `--ff-only`.
 
 The status and publication adapters default to unauthenticated ledger evidence.

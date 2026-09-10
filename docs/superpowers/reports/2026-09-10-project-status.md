@@ -17,4 +17,6 @@ are labeled; the planner decides current publication readiness.
 E4 regression gate: **105 passed** across project summary, real session summary,
 compaction, terminal status, pure summary and ledger views. This exercises fake
 external tools, real persistence/restart, stale citations/prose and corrupt-ledger
-refusal. No live-model or new kernel result follows. Integrated full gate pending.
+refusal. No live-model or new kernel result follows. The
+[automated roadmap report](2026-09-10-automated-roadmap.md) records the integrated
+full gates and exact tested implementation.

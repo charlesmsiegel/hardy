@@ -45,6 +45,10 @@ evaluation gate (4,569 tests, 90.08% coverage) are in the
 V0's [fixture index](docs/superpowers/reports/2026-09-10-acceptance-index.md)
 remains an ongoing obligation rather than a completed universal acceptance claim.
 
+The [automated roadmap report](docs/superpowers/reports/2026-09-10-automated-roadmap.md)
+records E1/E3/E4, X4 residuals, V0 regressions and the S1/S2 capability recheck,
+including full local and Linux acceptance and preserved stale evaluation artifacts.
+
 ## Available next work
 
 **E1/E3/E4 and X4's current residuals have automated acceptance; E0/E2 remain deferred.**

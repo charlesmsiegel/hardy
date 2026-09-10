@@ -53,3 +53,8 @@ boundary. Those items remain unaccepted. V0 also covers transcript replacement
 refusal through the portable history regression and the original native-link
 case in [chat tests](../../../tests/test_chat.py); Windows skips the latter when
 its token cannot create symlinks, so Linux CI supplies that platform check.
+
+The [terminal cancellation report](2026-09-10-terminal-cancellation.md) records
+deterministic command teardown and same-batch publication Escape regressions.
+The [automated roadmap report](2026-09-10-automated-roadmap.md) gives the final
+integrated gates, source identity and preserved local-evaluation artifact details.
