@@ -6,6 +6,9 @@
 Their full hermetic landing gates passed. Continue with the remaining X, S and V sections
 with satisfied dependencies. **E1/E3/E4 have automated acceptance; E0/E2 remain deferred.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
+Sections X7-X9, F4, F5 and V4-V10, and the independent-verifier lead recorded under S2,
+come from retired design documents: they describe designs those documents specified and
+nobody built. All of them are not started, and each states its own dependencies.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
@@ -232,9 +235,13 @@ obligations for supplied unresolved requirements or missing/stale selected recor
 stale dependency, alias and required-source explanations preserve expected and supplied
 exact identities. Malformed source records and unknown generated origins still reject. It does
 not resolve them or widen trust. Project-aware Prove input and other workflow callers
-are later B/D integration. Run the Task 3 focused command in
-`docs/superpowers/plans/2026-09-09-core-a.md` and `tests/unit/test_formalization.py`
-for direct contextual/persistence/reader/verifier/MCP coverage.
+are later B/D integration. For direct contextual, persistence, reader, verifier and MCP
+coverage, run:
+
+```
+uv run --extra test pytest tests/unit/test_formalization.py tests/unit/test_faithfulness.py \
+  tests/tui/test_prove_command.py tests/unit/test_workflow.py tests/unit/test_workflow_modulo.py -q
+```
 
 Extract one reusable formalization path over existing Lean checking and independent faithfulness review. It must work without a `MathematicsSession` and be reused by Prove, Research, Referee, Critique probing, and citation-contract construction.
 
@@ -322,7 +329,7 @@ These tasks may start immediately or whenever engineering capacity is available.
 
 ## X0 — Make the save gates one explicit ordered sequence — P0
 
-**Status:** Implemented and characterized: named preflight, staged checks and post-commit publication retain actual refusal order, cached/shared builds and stage/commit/discard behavior. No broader filesystem atomicity claim. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
+**Status:** Implemented and characterized: named preflight, staged checks and post-commit publication retain actual refusal order, cached/shared builds and stage/commit/discard behavior. No broader filesystem atomicity claim.
 
 **Deps:** none
 
@@ -353,7 +360,7 @@ support comparison without causal or fixed-budget certification claims.
 
 ## X2 — Transcript in-flight durability — P1
 
-**Status:** Implemented: independently checkpointed streaming blocks, durable append sequencing and preserved torn tails. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
+**Status:** Implemented: independently checkpointed streaming blocks, durable append sequencing and preserved torn tails.
 
 **Deps:** none
 
@@ -361,7 +368,7 @@ Checkpoint assistant text at an interval, record in-flight tool calls, and prese
 
 ## X3 — Safe interactive assumption prompt presentation — P1
 
-**Status:** Accepted existing implementation: 23 tests verify prompt serialization and stream/approval ordering without changing admission authority. See the [prompt acceptance report](superpowers/reports/2026-09-10-assumption-prompt.md).
+**Status:** Accepted existing implementation: 23 tests verify prompt serialization and stream/approval ordering without changing admission authority.
 
 **Deps:** none
 
@@ -369,7 +376,7 @@ Ensure human trust-widening approval cannot be visually interleaved/confused wit
 
 ## X4 — CAS correctness lane — P1
 
-**Status:** Current residual acceptance complete: hermetic regressions and all 12 real Linux Singular/Macaulay2 tests passed. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain. See the [CAS residual report](superpowers/reports/2026-09-10-cas-residuals.md).
+**Status:** Current residual acceptance complete: hermetic regressions and all 12 real Linux Singular/Macaulay2 tests passed. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain.
 
 **Deps:** none
 
@@ -377,7 +384,7 @@ Continue resolving concrete CAS defect issues independently of the research arch
 
 ## X5 — Token/cost reserve-settle budgets — P1
 
-**Status:** Implemented for API chat/batch: immutable expected-spend policy, request-bound reservations, reported-usage settlement and durable unknown liability. This is not a hard provider token or invoice cap. SDK, staged Prove and evaluation declarations refuse. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
+**Status:** Implemented for API chat/batch: immutable expected-spend policy, request-bound reservations, reported-usage settlement and durable unknown liability. This is not a hard provider token or invoice cap. SDK, staged Prove and evaluation declarations refuse.
 
 **Deps:** harness-owned decision point for the relevant runtime
 
@@ -387,7 +394,7 @@ This is especially important before comparing proof strategies at “equal budge
 
 ## X6 — Complete reproducible run identity/journaling — P1
 
-**Status:** Residual audit and supported batch implementation complete: durable attempt manifests/observations, exact completion receipts and append-only attributed artifact reviews reuse existing digests/readers. Remote immutable model revision, installed provider SDK and full worker-runtime closure remain unestablished; legacy journals are not upgraded. The checkmark records the audit and supported path, not complete identity coverage. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
+**Status:** Residual audit and supported batch implementation complete: durable attempt manifests/observations, exact completion receipts and append-only attributed artifact reviews reuse existing digests/readers. Remote immutable model revision, installed provider SDK and full worker-runtime closure remain unestablished; legacy journals are not upgraded. The checkmark records the audit and supported path, not complete identity coverage.
 
 **Deps:** none for residual audit
 
@@ -400,13 +407,79 @@ Current eval infrastructure already carries substantial identity machinery. Audi
 
 Do not rebuild already-shipped `run_procedure_digest`, environment pooling, or result revalidation.
 
+## X7 — Audit-gate residue: at-audit approval, disclosure, drift — P1
+
+**Deps:** A3; X0 for the save-gate order
+
+**Status:** Not started.
+
+The axiom audit gate ships with its fail-closed unattended path, but four pieces of
+its design remain unbuilt. **At-audit approval:** when the audit finds a non-standard
+axiom nobody approved, interactive `save_lean` prompts the human through the existing
+`confirm` callback, tagged so the prompt reads as an audit finding rather than a model
+request. Approving records the axiom into the session assumptions with
+`status: "user-approved-at-audit"` and the list of dependent declarations, then saves;
+declining refuses the save and names the refused axiom. That record deliberately does
+not join the naming registry, because an audit finding carries no `latex_name` and
+inventing one would make `save_latex` demand a label nobody chose, so a later attempt
+to declare the axiom in source still goes through `request_assumption`. On the prompt
+path only, Hardy spends one extra Lean run on `#print <axiom>` under the audited
+source's own imports so the human reads a statement rather than a bare name, and a
+lookup whose output reaches the truncation limit is reported as possibly truncated
+instead of as the statement. **Disclosure:** a successful audit persists its verdict
+for the `Main.lean` actually written, stamped with the declarations it covered and a
+digest of that source, published after the write rather than before; when the stored
+verdict is `modulo`, `save_latex` requires the writeup to name each assumed axiom
+outside TeX comments, in the shape of the existing registered-label check.
+**Registry-change invalidation:** `record_name` drops the stored verdict, because
+registering a declaration widens the audited set without re-auditing, and `save_latex`
+refuses to grade against a verdict that no longer describes the current registry.
+**Drift detection:** the same audit run re-prints every approved assumption and
+compares its statement against the one recorded at approval, so a mismatch after a
+Mathlib or project upgrade refuses the save and asks for the approval again; a name is
+not an identity. The related declared-axiom text match runs to the next top-level
+declaration rather than to end of line, so a statement split across lines cannot pass
+as an approved bare name.
+
+## X8 — Attribution for an approved assumption — P2
+
+**Deps:** X7
+
+**Status:** Not started.
+
+`request_assumption` records `status: "user-approved"` and no identity, so a versioned
+record cannot attribute a trust decision to a person: the git author is whoever
+committed, not whoever answered. Recording it means first deciding what Hardy knows
+about its user, whether a git `user.email`, a configured name, or nothing at all on a
+single-user tool, and then carrying that identity into both the confirmation event and
+the durable assumption record. That is a change to the assumption record's schema.
+
+## X9 — Namespaced assumptions and prose-only theorem claims — P1
+
+**Deps:** A3; X7 for the audit half
+
+**Status:** Not started.
+
+Two gaps a live chat-honesty run exposed, neither closed by the gates that run
+exercised. First, **a namespaced assumption can never be declared**:
+`request_assumption` registers a bare name such as `prime_order_cyclic`, while
+`save_lean` qualifies by the enclosing namespace and refuses
+`FiniteGroupClassification.prime_order_cyclic` as unapproved. Three of that run's
+eighteen refused saves were this. Request time and save time disagree about the name,
+which is the same family as the double-header defect, and the disagreement reaches the
+axiom audit, so it wants its own change and its own review. Second, **the theorem gate
+is silent on prose**: a writeup that declares no `\newtheorem` and asserts its result
+in `\section` prose and an abstract owes the theorem gate nothing, so only the
+disclosure banner carries the truth. A document claiming a complete proof over zero
+saved theorems is still mechanically unremarkable to Hardy.
+
 ---
 
 # Service-hardening lane S — independent until service readiness
 
 ## S0 — Process-isolation design/spike — HARDEN
 
-**Status:** Completed design/spike: shared acceptance policy, disposable Windows baseline and native capability investigation. The baseline establishes current authority, not confinement. See the [hardening verification report](superpowers/reports/2026-09-10-hardening.md) and [policy](ISOLATION.md).
+**Status:** Completed design/spike: shared acceptance policy, disposable Windows baseline and native capability investigation. The baseline establishes current authority, not confinement. See the [isolation policy](ISOLATION.md).
 
 **Deps:** none
 
@@ -438,9 +511,28 @@ Implement the confinement policy for Lean, TeX, CAS, paper extraction, and helpe
 
 Ensure audited source cannot redefine/intercept the mechanism used to establish its axiom report. This is an acceptance criterion of isolation/audit architecture, not a separate backlog system.
 
+One concrete lead for the independent verifier this item needs: Lean's own
+`leanchecker`, present as `bin/leanchecker` in the installed 4.32.0, 4.32.1,
+4.33.0-rc1 and 4.33.1 toolchains, where a bare `leanchecker` on PATH is only an elan
+shim and says nothing about availability. Read-only examination of the installed 4.33.1
+source shows `LeanChecker.lean`'s `replayFromFresh` importing modules with extensions
+disabled and replaying the loaded constants in an empty environment, while
+`Lean/Replay.lean` sends declarations through the kernel at trust level zero,
+regenerates constructors and recursors, and excludes unsafe and partial constants from
+the initial replay set. Ordinary mode replays only new declarations against imported
+environments, so `--fresh` is the relevant lead for replaying imported declarations
+too. This is a potential building block and not the receipt Hardy requires: the stock
+CLI provides no exact-theorem, complete-axiom-set, pinned-artifact-closure and
+verifier-identity receipt, its own source describes the tool as an environment-hacking
+detector rather than an external verifier, and its handling of every relevant artifact
+and adversarial case is unestablished by reading those functions. Unrecognized flags
+are ignored, so invoking it with `--help` starts default module discovery and replay
+instead of printing help, and no result from such an invocation is evidence of
+anything.
+
 ## S3 — Operational-floor audit — HARDEN/P1
 
-**Status:** Completed current audit: invalid process limits are rejected before launch, compiler output capture is bounded and overflow is classified promptly; truncated probes cannot establish environment success. Existing cancellation, guarded-write and export-redaction paths were reviewed. This is an operational audit, not execution isolation or a guarantee against future defects. See the [hardening verification report](superpowers/reports/2026-09-10-hardening.md).
+**Status:** Completed current audit: invalid process limits are rejected before launch, compiler output capture is bounded and overflow is classified promptly; truncated probes cannot establish environment success. Existing cancellation, guarded-write and export-redaction paths were reviewed. This is an operational audit, not execution isolation or a guarantee against future defects.
 
 Concrete current defects stay in Issues. Periodically audit all subprocess/result paths for deterministic timeout semantics, bounded outputs, durable atomic writes, and secret redaction; open/retain Issues only for observable failures in the current tree.
 
@@ -977,12 +1069,13 @@ UI edits/queries the ledger; it does not reimplement planning.
 `/project link SOURCE illustrates|documents TARGET` and `/project mark ITEM
 internal|public|omitted` delegate to the shared ledger, planner and document
 owners. Exact mathematical references survive presentation changes; compilation
-and mathematical readiness remain separate. See the
-[E3 verification report](superpowers/reports/2026-09-10-project-publication.md).
+and mathematical readiness remain separate.
 
 ## E4 — Ledger-aware `/status --full` / context summary — P1
 
 **Deps:** B0, B3, B5
+
+**Status:** Implemented: the same summary reaches `/status --full` and compaction; corrupt ledgers refuse; the terminal has no configured ledger capability reader and says so.
 
 Show target/research focus, active mathematical context/declarations/bindings, open questions/conjectures/goals, approaches with blocked/failed reasons, concepts, known representations, unresolved declaration/representation/transport choices, blockers, project items, exact external trust boundary, citation status, stale exposition, and publication readiness from shared views.
 
@@ -1040,6 +1133,93 @@ quarantine. Replay reauthenticates the task, artifacts and recorded event prefix
 Fresh-context replay comparisons measure the two history conditions separately;
 scripted fixtures do not establish model improvement.
 
+## F4 — Retrieval query ladder and hypothesis-aware premise search — P1
+
+**Deps:** none; V4 measures whether it worked
+
+**Status:** Not started.
+
+`rank_premises` asks one goal several differently shaped questions instead of one.
+Today `search_query` reduces a goal to its first conclusion with locals wildcarded,
+Loogle receives that string unchanged and `#find` receives it with the turnstile
+stripped, so reciprocal rank fusion runs over two sources that agree by construction,
+and everything above the turnstile is discarded even though a weak model's signal
+lives in the hypotheses. A `QueryShape` carries a name, the query, and one sentence
+recording how it was taken from the goal. `conclusion` is exactly today's shape,
+unchanged and still tried first. `constants` is the global constant names appearing
+anywhere in the goal, hypotheses included, comma-separated for Loogle's constant-list
+syntax, which is Loogle's strongest mode and one Hardy has never issued: a hypothesis
+`hK : IsCompact K` names `IsCompact` where the conclusion may never mention it.
+Constants are extracted textually rather than elaborated, a token counting when it is
+not a local binder name and either begins with a capital or contains a dot; being
+wrong is survivable, because a query naming a non-constant comes back as a source that
+did not answer and the provenance records that. `description` is a natural-language
+sentence the caller supplies as a new optional argument, since Hardy cannot turn a
+goal into English and the model can; when absent the shape is not produced. Each
+`PremiseSource` declares an `accepts` set and a `query_for`, so `lean-find` takes
+`conclusion` only, Loogle takes `conclusion` and `constants`, and a new unpinned
+leansearch.net source takes `description` under its own source kind, which keeps
+local-signature precedence tied to `lean-find` rather than letting an unpinned service
+override the signature the model's own Lean is about to elaborate. Fusion iterates
+`(source, shape)` pairs with pinned `lean-find`/`conclusion` first, so its rendering is
+the last thing dropped for budget. The ranking carries every question it asked rather
+than one of them, which moves `PremiseRanking.query` and the provenance query digest
+together. The existing `LeanSearchSource` is renamed to `LeanFindSource`, matching the
+identity it already carries, and no name is reused with a changed meaning. Dot-notation
+goals are rescued only partly: recovering `List.reverse` from `xs.reverse.length` needs
+the elaborator this design declines to reimplement, so whether the surviving weak query
+earns its call is a question for V4's per-shape metric.
+
+## F5 — `try_tactics` with a narrow automation meter — P2
+
+**Deps:** F4 desirable, not required; X5 for the meter
+
+**Status:** Not started.
+
+A separate tool rather than a retrieval source, because its results have a different
+evidential status. `try_tactics(statement, tactics, stop_on_first)` takes a complete
+Lean theorem signature, appends `:= by <tactic>` for each tactic in turn, elaborates it
+in a scratch file and parses `Try this:` out of the info diagnostics. The default menu
+is `exact?`, `apply?`, `hint` and `simp?`, cheap first, with `rw?`, `omega`, `norm_num`,
+`decide`, `aesop` and `positivity` available by name; the menu is an allowlist that
+bounds cost and keeps the tool's meaning, not a capability the model lacks. The result
+reports per tactic what was tried, whether it closed the statement, the suggestion
+text, the diagnostics and the duration, carries the exact statement and its digest, and
+carries the truncation envelope every other observation carries, dropping whole
+attempts from the tail so what survives is a prefix rather than an edited version. A
+suggestion is a term Lean elaborated and so a far stronger signal than a ranked name,
+but the model wrote the statement and the statement may not be the frozen claim, so
+submission still goes through the ordinary save path and the final verifier still
+rebuilds and rechecks. The scratch file carries the caller's environment rather than
+only Mathlib: on the chat surface the call takes the workspace `LEAN_PATH` and the
+workspace imports, so the tool searches the environment the model is working in.
+Spend is metered against a new `RunLimits.tactic_search_seconds`, default 300,
+separate from `retrieval_seconds` so neither search can starve the other, cumulative
+across the run rather than per call, with serialised admission; the `RunLimits` shape
+change moves the run manifest schema version.
+
+An `AutomationAttribution` record counts `try_tactics` calls, the calls that closed
+their statement, suggestions offered, and suggestions reused, where reuse is a textual
+substring match against the accepted proof body and therefore evidence of reuse rather
+than a claim about causation. **The meter and the log cover `try_tactics` only.** A
+model can run `exact?` through the scratch check, through a submitted proof body, or
+through the interactive chat check; three attempts at catching every route each closed
+one hole and opened another, an admission lock deadlocking against the tool's own
+scratch calls and a word-boundary scan firing on `exact?` in a comment. So a zero means
+this run did not use the tactic-search tool, never that the run was unaided, and the
+field documentation says so rather than letting a reader infer more. The figure also
+crosses a process boundary: on the Codex backend the tool runs in the MCP child while
+the parent builds the run manifest, so the runtime appends one record per tactic search
+as it happens and finalization aggregates those records before hashing artifacts. The
+log lives beside the run directory rather than in it, because the agent's working
+directory is the run directory under a write grant and a log the model can rewrite is
+worthless for a figure whose whole point is not depending on the model's account of
+itself; its path travels to the MCP process by environment variable the way the run
+directory and config already do. The parent creates the log empty before launch, so an
+existing empty file means measured with zero calls and a missing file means the
+measurement failed, and an unset or unreadable path reports no attribution at all
+rather than a record of zeros.
+
 ---
 
 # Core G — manuscript/publication sophistication
@@ -1096,7 +1276,7 @@ recording fresh authorship without inheriting the old text's evidence.
 
 ## H0 — Project/shared-library retrieval source — P1
 
-**Status:** Implemented: content-identified project/shared-library index and bounded delivery with current evidence, scope, context, artifact and environment authentication. See the [Core H verification report](superpowers/reports/2026-09-10-core-h.md).
+**Status:** Implemented: content-identified project/shared-library index and bounded delivery with current evidence, scope, context, artifact and environment authentication.
 
 **Deps:** A0/B0 + stable project artifacts
 
@@ -1106,7 +1286,7 @@ Do not treat transient local symbols as globally reusable concepts merely becaus
 
 ## H1 — Re-evaluate whether a separate proof-memory store is needed — P1
 
-**Status:** Implemented: six-category deterministic ledger/index restart fixture; the measured cases do not justify an additional memory store. No live-model gain is claimed. See the [Core H verification report](superpowers/reports/2026-09-10-core-h.md).
+**Status:** Implemented: six-category deterministic ledger/index restart fixture; the measured cases do not justify an additional memory store. No live-model gain is claimed.
 
 **Deps:** H0 + ledger
 
@@ -1114,7 +1294,7 @@ First measure whether verified Lean + project ledger + retrieval index already s
 
 ## H2 — Contamination-aware evaluation — P1
 
-**Status:** Implemented: immutable retrieval/exposure conditions, owner-bound actual forwarding receipts and separate exact-repeat, related-transfer, declared-local-held-out and unknown cohorts. See the [Core H verification report](superpowers/reports/2026-09-10-core-h.md).
+**Status:** Implemented: immutable retrieval/exposure conditions, owner-bound actual forwarding receipts and separate exact-repeat, related-transfer, declared-local-held-out and unknown cohorts.
 
 **Deps:** H0/H1 + eval identity
 
@@ -1126,7 +1306,7 @@ Report exact-repeat retrieval, transfer from related prior work, and held-out un
 
 ## I0 — Conversation tree/history — P1
 
-**Status:** Implemented: durable conversation IDs/parents and branch epochs, selected visible replay, explicit abandonment lessons, stale-worker refusal and all-branch spend. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
+**Status:** Implemented: durable conversation IDs/parents and branch epochs, selected visible replay, explicit abandonment lessons, stale-worker refusal and all-branch spend.
 
 **Deps:** X2 recommended + stable interactive record
 
@@ -1145,7 +1325,7 @@ A conversation fork does not automatically fork the mathematical context; a math
 
 ## I1 — Prompt templates/project commands — P2
 
-**Status:** Implemented: bundled audit/formalize/publish/restyle requests use existing project templates and recorded transcript input; project overrides remain supported. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
+**Status:** Implemented: bundled audit/formalize/publish/restyle requests use existing project templates and recorded transcript input; project overrides remain supported.
 
 Useful conveniences such as `/audit`, `/formalize`, `/publish`, `/restyle`. Expanded text is transcript input, never evidence.
 
@@ -1153,7 +1333,7 @@ Do not solve concept/representation/declaration/goal handling by stuffing domain
 
 ## I2 — Model-menu/catalog polish — P2
 
-**Status:** Implemented: configured model identities remain visible and catalog suggestions disclose curated provenance, unknown capabilities and unverified availability. See the [Core I verification report](superpowers/reports/2026-09-10-core-i.md).
+**Status:** Implemented: configured model identities remain visible and catalog suggestions disclose curated provenance, unknown capabilities and unverified availability.
 
 The current backend-blind menu is a defect and remains in Issues. Longer-term live/curated model-catalog discoverability belongs here rather than in that bug.
 
@@ -1165,13 +1345,13 @@ These tasks run alongside the core and should be added as the corresponding prim
 
 ## V0 — Acceptance fixtures for every new primitive — P0
 
-**Status:** Ongoing obligation. The [acceptance fixture index](superpowers/reports/2026-09-10-acceptance-index.md) maps current primitives, including I/X6; it does not accept future behavior or deferred Core E trials.
+**Status:** Ongoing obligation. The current acceptance fixtures map every shipped primitive, including the I lane and X6; they do not accept future behavior or the deferred Core E trials.
 
 Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, declaration/context/notation semantics, research-goal/conjecture/approach semantics, representation resolution, context branching, transport/WLOG justification, arbitrary-vs-chosen declarations, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, `Let X be ...` workflows, counterexamples, and Referee coverage.
 
 ## V1 — Regression tracking — P1
 
-**Status:** Implemented: bounded read-only chronological exact-slot comparisons retain unknown controls, missing observations and descriptive deltas without causal attribution. See the [evaluation report](superpowers/reports/2026-09-10-evaluation.md).
+**Status:** Implemented: bounded read-only chronological exact-slot comparisons retain unknown controls, missing observations and descriptive deltas without causal attribution.
 
 **Deps:** X1 recommended
 
@@ -1179,7 +1359,7 @@ Provide the across-time view over comparable scoreboards. Never attribute a hist
 
 ## V2 — Certified fixed-budget pass@k — P1
 
-**Status:** Implemented in the declared scope: prospective observed-first-k reports with exact universe/attempt receipts and a per-attempt independent-verifier-call cap. Batch enforcement, Lean CPU and hard provider caps remain unestablished; incomplete evidence is provisional. No IID estimate or independent kernel replay is claimed. See the [evaluation report](superpowers/reports/2026-09-10-evaluation.md).
+**Status:** Implemented in the declared scope: prospective observed-first-k reports with exact universe/attempt receipts and a per-attempt independent-verifier-call cap. Batch enforcement, Lean CPU and hard provider caps remain unestablished; incomplete evidence is provisional. No IID estimate or independent kernel replay is claimed.
 
 **Deps:** stable run budgets/identities; especially relevant after F1
 
@@ -1187,9 +1367,239 @@ Separate provisional from certified results. Report pass@1/pass@k with explicit 
 
 ## V3 — External Lean benchmark importers — P2
 
-**Status:** Implemented: pinned miniF2F/PutnamBench/ProofNet archives retain exact source/context/split/toolchain/license identities and lexical coverage findings, with semantic coverage unverified. No execution, porting or corpus adoption. See the [evaluation report](superpowers/reports/2026-09-10-evaluation.md).
+**Status:** Implemented: pinned miniF2F/PutnamBench/ProofNet archives retain exact source/context/split/toolchain/license identities and lexical coverage findings, with semantic coverage unverified. No execution, porting or corpus adoption.
 
 Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Hardy's own classified corpus remains strategically primary.
+
+## V4 — Retrieval evaluation harness with cassettes and per-shape ablation — P2
+
+**Deps:** F4
+
+**Status:** Not started. Planned alongside the query ladder and never built.
+
+A checked-in retrieval evaluation living in `eval/`, outside `src/`, outside the pytest
+suite and outside the coverage floor, holding the fixture, recorded engine cassettes
+and one runner. It is not production code and must not become a dependency of any. A
+case is a goal, an optional description, and the lemma names that should be found,
+with the provenance of each and a note saying why it is there. Roughly 25 cases drawn
+from real Mathlib proofs by taking a lemma used in one and the goal state it was
+applied to, spanning arithmetic, lists, topology, algebra and order, and deliberately
+including the two shapes that fail today: goals whose signal is in the hypotheses, and
+goals written with dot notation. Metrics are recall@1, recall@5, recall@10 and MRR,
+plus the one that says whether F4 was right: what each shape added that the others did
+not. Counting every shape that surfaced the expected lemma cannot answer that, because
+a constants query often returns a superset of the conclusion query and both counters
+rise together, making a shape look valuable in exactly the case where it changed
+nothing. So the run is an ablation: rank each case with the conclusion shape alone,
+then with each additional shape, and report per shape the cases it **rescued**, found
+where the conclusion-only ranking missed, and **promoted**, moved into the top 5 or top
+1. Raw co-occurrence is reported beside those and clearly labelled. A shape that
+rescues nothing and promotes nothing did not earn its complexity and comes out, a
+decision the ablation supports and a co-occurrence count cannot. The run is hermetic by
+default: engine responses are recorded once against the live services and checked in,
+so it runs in CI with no network and no Lean toolchain, and `--live` re-records. A
+replayed source is built from the recorded identity rather than a live source wrapped
+around a missing service, which would crash on the first case. Every cassette records
+the identity of what answered it, the endpoint for a remote engine and the toolchain
+pin plus manifest digest for `#find`, and the runner refuses to replay a set whose
+recorded identities disagree with each other, printing them beside the metrics; without
+that, a re-recording against a moved Mathlib keeps the same filenames and case ids
+while measuring a different corpus. Seconds are recorded with the answer and replayed
+with it rather than measured off the replay, because a cassette read takes microseconds
+where the live call took twenty seconds and the ladder's cost is one of the things this
+watches. What a hermetic run cannot report is drift since recording, which is what
+`--live` is for.
+
+## V5 — Corpus fixtures and antecedent policy enforcement — P1
+
+**Deps:** the active corpus schema; A4 and A5 sweeps
+
+**Status:** Not started.
+
+Fixtures supply the prior results a text expects a reader to have and Mathlib lacks, so
+that fixtured and bare conditions can be compared. What counts as a reasonable
+antecedent sets the scale of the entire uplift measurement, so the rule is fixed once
+and applies everywhere: an antecedent is a prior result from the same text, preferring
+the same chapter and reaching earlier only when needed, that Mathlib does not have.
+That rule is objective and auditable by anyone with the book, it mirrors how the
+problem was meant to be solved, and intersecting with Mathlib keeps the antecedent set
+small, so the uplift report measures how much of the standard curriculum up to that
+point Mathlib is missing. The intersection follows the text's order rather than
+Mathlib's, because the book defines the reader's competence at that point.
+
+**An antecedent never goes in an entry's binders.** Binders are part of the canonical
+declaration and reach every run including the bare condition, so a hypothesis-encoded
+antecedent would sit inside the supposedly bare condition, drive the uplift difference
+to zero for exactly the gaps the mechanism exists to cover, and state a stronger
+theorem than the source did. The soundness argument for binders is correct and
+irrelevant: the harness decides this, not the logic. So a missing lemma becomes a
+fixture stating it and a missing definition or structure becomes a fixture carrying a
+real preamble, possibly including an axiom, both injected only under the fixtured
+condition, and a validator forbids an entry's binders from mentioning a fixture's
+declared name. Because the eval verifier refuses every non-standard axiom and a
+submitted proof may not declare one at all, a fixture set is an explicit, per-entry,
+corpus-declared widening of that allowlist, held by four gates: fixtures must not prove
+`False`; they must not close the goal, since a goal that now falls to `exact?` measures
+nothing; an accepted proof's axiom set must be a subset of the standard axioms plus
+that entry's declared fixture axioms rather than equal to it, since a constructive
+proof reports none of the standard three; and every fixture must have an occurrence in
+the entry's primary source at a locator strictly earlier than the entry's own.
+
+The locator check rejects a fixture reaching forward in the text, one sharing the
+entry's own locator, and one appearing only in some other book. The ordering is strict
+because prior means prior: a multi-part exercise's sibling lemma shares its locator, is
+not earlier curriculum, and can materially shorten the fixtured run while the strength
+sweep still passes. The check reads the primary occurrence specifically, because an
+existential over all occurrences would let the choice of books relax the policy, and an
+authored entry has no primary occurrence at all, so authored entries cannot carry
+fixtures and an entry with no occurrences and non-empty fixtures is rejected. The check
+narrows curator judgement to a checkable envelope without removing it: it cannot
+enforce preferring the same chapter, so a fixture from outside the entry's own chapter
+carries a persisted justification, reviewed with the entry, recording why the nearer
+material was insufficient. Fixtures are shared and referenced by id, and their
+retirement when Mathlib gains the lemma is itself a datum, which needs a fixture
+status, a retirement reason, the Mathlib revision that superseded it, and a rule for
+whether dependent entries drop the reference or skip it.
+
+## V6 — Corpus analysis plan and the derived corpus reports — P1
+
+**Deps:** V5 for the fixtured reports; complete scoreboards over a planned selection
+
+**Status:** Not started.
+
+Seven derived reports computed over recorded runs, with no Lean involved: a per-field
+solve rate as a Wilson interval over item-level outcomes; a paired model comparison by
+McNemar with a confidence interval, which refuses a ranking claim when the interval
+crosses zero and prints a power curve under a stated effect-size assumption instead of
+a bare count of missing pairs; item discrimination as variance across models, which
+feeds the spot-audit queue and the difficulty strata and never filters the scored
+corpus; a tier profile per field, saying how much of a field Mathlib's automation
+already covers; a contamination signal comparing the twin refusal rate against the
+true-statement solve rate; fixture-assisted uplift as the difference between the
+fixtured and bare conditions; and a ceiling and floor census of items no model solves
+and items every model solves, reported as strata rather than removed. Reporting is
+restricted to tier 2 and above and to active entries, so automation-solvable, candidate
+and retired entries never reach a headline number.
+
+Four constraints carry most of the honesty. The uplift report is named uplift and not
+coverage: a fixture can help because Mathlib lacks the result, but equally because the
+model failed to find a route that exists or because the fixture shortened the
+reasoning, and reading uplift as coverage needs a per-fixture causal classification
+nothing performs; it is reported stratified by the primary source's level, never
+aggregated, with core and peripheral results apart. The contamination signal must not
+read failure to prove as recognising a false claim, and the current refusal outcome is
+not narrow enough to carry that reading, so until the harness emits an explicit
+semantic refusal the three terminal classes, semantic refusal, rejected attempt and
+exhaustion, are reported side by side and only the first carries the contamination
+reading. Repeats collapse to one declared item-level outcome per model and entry before
+any interval or test, because feeding rows straight in treats correlated attempts at
+one theorem as independent samples; where repeat-level variation is itself the question
+it is reported as a separate per-item statistic, not as extra sample size. Items are
+not independent either, since a field's entries come from as few as two texts, so
+intervals and tests are clustered on the source text, every field report states its
+effective sample size beside its item count, and a field drawn from a single text
+carries no ranking claim at all.
+
+The family of comparisons and the primary comparison live in a versioned analysis plan
+committed alongside the corpus, naming the models and fields in advance, because the
+family cannot be whatever one invocation was passed: running each pair separately would
+make every family size one and license exactly the unadjusted claims the gate refuses.
+The multiplicity adjustment is computed against that plan however the runs are split
+across invocations, and a comparison outside the plan is reported as exploratory and
+never as a ranking. Naming models and fields is not enough: the plan also binds mode,
+limits, repeats, fixture condition, selection and the repeat-to-item outcome rule, or
+else an analyst can publish whichever internally consistent configuration crosses the
+threshold while the multiplicity denominator still counts one hypothesis. A ranking
+claim requires complete scoreboards covering the plan's full selected set, since shards
+are ordered by MSC class and an interrupted prefix, which the validator accepts, is not
+a representative sample of a field. A pending spot audit withholds the affected field's
+ranking claim entirely rather than dropping the flagged entry, because dropping it
+would filter on the outcome being measured. Cross-field level comparisons carry the
+formalization-standard caveat, which within-field model comparison cancels out.
+
+## V7 — Corpus selection and export flags — P2
+
+**Deps:** the active corpus schema
+
+**Status:** Not started.
+
+Selection filters move into one shared `select()` so every corpus command takes the
+same ones: `--msc` by prefix, so `13` catches `13A15`, `--arxiv`, and new
+`--difficulty`, `--status`, `--source` and `--level` beside the existing tier and twin
+filters. `--source` matches any occurrence, so every problem in a given textbook
+selects regardless of which text was primary, while `--level` reads the primary
+occurrence, because the primary occurrence is what the uplift report stratifies on.
+That asymmetry is deliberate and is the one place a reader expects the two flags to
+behave alike. A shared `describe_selection()` prints the count and an honest upper
+bound on **runtime**, derived per row from the mode's own limits rather than from a
+single wall-clock figure: batch rows are governed by turn and wall-clock limits, staged
+runs reject a wall-clock flag outright and are governed by active, proof and check
+limits, and a twin inside a staged condition runs batch under its own wall clock, so a
+single formula has no valid value for a mixed staged selection. The bound is labelled
+runtime everywhere it appears and deliberately not spend: the mode limits bound elapsed
+time, turns and Lean checks, none of them bounds money, and a monetary ceiling would
+need per-provider token limits and current pricing that the runner does not record, so
+a real spend gate stays unbuilt rather than faked. `export` prints the bound and `run`
+additionally requires `--yes` above a threshold, a coarse guard on a long run rather
+than a spend cap. `hardy evals export` emits one prove task per selected entry as
+JSONL for programmatic use, Markdown for reading, or a shell wrapper script; the shell
+format cannot be bare run lines, because a label is required, the runner refuses
+without the unsafe-execution acknowledgement, and an already-used label is refused, so
+the wrapper supplies a derived unique label per row and carries the acknowledgement
+once at the top where a human reads it before running.
+
+## V8 — Multi-backend evaluation runner — P1
+
+**Deps:** none; V6's cross-provider claims wait on it
+
+**Status:** Not started.
+
+The evals runner refuses any backend but Claude outright, because the batch runner, the
+canonical reader and staged tool-event counting are all Claude-shaped, so no
+cross-provider comparison can be run today even though asking which model is better at
+a field is what the corpus is for. The limit is narrower than it first appears and
+worth stating precisely: the model varies freely within the Claude backend, so Opus
+against Sonnet against Haiku is reachable now and exercises the paired comparison,
+discrimination and census reports in full. What is blocked is specifically
+cross-provider. Making the runner genuinely multi-backend needs a second canonical
+reader, backend-shaped tool-event counting and a grading path that is not
+Claude-specific; its size is unknown and it is not scoped here. One design consequence
+binds the comparison tool now: requiring backend equality would forbid the motivating
+comparison even once the runner allows it, because a cross-provider comparison
+necessarily varies runtime as well as weights. The compared intervention is the backend
+and model together, and that inseparable confound is recorded rather than refused, so
+`compare` treats a cross-backend pair as a declared mode that labels the confound while
+still requiring every other non-model condition to match.
+
+## V9 — Review origin binding and scoreboard prompt digests — P2
+
+**Deps:** the active corpus schema
+
+**Status:** Not started.
+
+Two recorded gaps in the corpus schema, each deliberately left to the phase that needs
+it. A review does not bind the origin it was read against: an entry's occurrences and
+rationale are in no component digest, so changing an entry's primary citation leaves an
+approval current although the reviewer no longer attests the stated origin. Adding an
+origin digest is a schema change rather than an implementation fix, and no review
+records existed when the gap was recorded. Separately, scoreboard rows carry no prompt
+digest. Nothing reuses a model run yet, since every run is fresh, so there is no reuse
+decision for a prompt digest to govern; it belongs with the reporting work that pools
+runs.
+
+## V10 — Invalid scoreboard rows excluded from ranking-capable reports — P1
+
+**Deps:** none
+
+**Status:** Not started.
+
+`_tier_aggregate` puts every true row in `n` and only solved rows in the numerator, so
+a row marked `invalid`, meaning an unreadable or unauditable artifact or a harness
+fault, is scored exactly as a model that failed to prove the theorem. Reusing that
+machinery in a ranking-capable report would let harness corruption depress a solve rate
+and manufacture discordance that reads as a model difference. Invalid items belong in
+such reports as missing measurements with their own count, and a field whose invalid
+rate exceeds a declared threshold cannot carry a ranking claim at all.
 
 ---
 
