@@ -35,6 +35,28 @@ def test_prove_accepts_a_selectable_strategy() -> None:
     assert cli.build_parser().parse_args(['prove', 'True']).strategy == 'iterative'
 
 
+def test_prove_accepts_explicit_history_treatment() -> None:
+    cli = importlib.import_module('hardy.app.cli')
+    args = cli.build_parser().parse_args([
+        'prove', '--strategy', 'best-first', '--history-mode', 'compact', 'True',
+    ])
+    assert args.history_mode == 'compact'
+    assert cli.build_parser().parse_args(['prove', 'True']).history_mode == 'full'
+
+
+def test_prove_refuses_replay_with_iterative_before_building_workflow(capsys) -> None:
+    cli = importlib.import_module('hardy.app.cli')
+
+    def refuse(*args, **kwargs):
+        raise AssertionError('invalid treatment must not build a workflow')
+
+    result = cli.run_prove(SimpleNamespace(
+        strategy='iterative', history_mode='compact', claim='True', model='fixture',
+    ), workflow_factory=refuse)
+    assert result == 2
+    assert 'best-first' in capsys.readouterr().out
+
+
 def test_console_terminal_requires_exact_unsafe_ack_and_labels_elaboration() -> None:
     cli = importlib.import_module('hardy.app.cli')
     answers = iter(['almost', 'I UNDERSTAND'])
@@ -89,6 +111,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
             model='gpt-test',
             claim='For every n, n plus zero is n.',
             strategy='best-first',
+            history_mode='replay-full',
         ),
         workflow_factory=lambda config, path, backend='claude': Workflow(),
         input_fn=lambda _: 'unused',
@@ -98,6 +121,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
     assert seen[0].model == 'gpt-test'
     assert seen[0].text == 'For every n, n plus zero is n.'
     assert seen[0].strategy == 'best-first'
+    assert seen[0].history_mode == 'replay-full'
 
 
 def _staged_config(tmp_path, **overrides):

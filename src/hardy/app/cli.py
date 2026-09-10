@@ -497,6 +497,11 @@ def run_prove(
 ) -> int:
     from hardy.workflows.prove import ProveRequest
 
+    strategy = getattr(args, "strategy", "iterative")
+    history_mode = getattr(args, "history_mode", "full")
+    if history_mode != "full" and strategy != "best-first":
+        print("History replay requires --strategy best-first.")
+        return 2
     config, config_path = _load_config_argument(getattr(args, "config", None))
     # Flags outrank the config file, the way every other setting resolves.
     reviewer = getattr(args, "faithfulness_model", None)
@@ -527,7 +532,8 @@ def run_prove(
             model=str(args.model or config.model),
             problem_slug=slug,
             assumptions=assumptions,
-            strategy=getattr(args, "strategy", "iterative"),
+            strategy=strategy,
+            history_mode=history_mode,
         ),
         terminal,
     )
@@ -881,6 +887,10 @@ def build_parser() -> argparse.ArgumentParser:
     prove.add_argument("claim", nargs="?", help="the claim in ordinary language")
     prove.add_argument("--backend", choices=("claude", "codex"), default="claude")
     prove.add_argument("--strategy", choices=("iterative", "best-first"), default="iterative")
+    prove.add_argument(
+        "--history-mode", choices=("full", "replay-full", "compact"), default="full",
+        help="native full history, or authenticated full/compact replay in fresh proof contexts",
+    )
     prove.add_argument(
         "--assume",
         type=Path,

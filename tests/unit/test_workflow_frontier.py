@@ -6,7 +6,8 @@ from test_workflow import Terminal, _scripted_controller
 
 
 def _runtime(controller, state, *, consume_tools=False, backend='fixture-backend',
-             on_candidates=lambda: None, after_faithfulness=lambda: None):
+             on_candidates=lambda: None, after_faithfulness=lambda: None,
+             failed_informal_proof=''):
     original = controller._runtime_factory
 
     class Runtime:
@@ -30,11 +31,14 @@ def _runtime(controller, state, *, consume_tools=False, backend='fixture-backend
 
         def run_structured(self, thread, stage, prompt, output_type):
             if stage != 'proof-candidates':
+                if stage == 'writeup':
+                    state.writeup_thread = thread
                 result = self.inner.run_structured(thread, stage, prompt, output_type)
                 if stage == 'faithfulness':
                     after_faithfulness()
                 return result
             state.prompts.append((stage, prompt))
+            state.candidate_threads = [*getattr(state, 'candidate_threads', []), thread]
             on_candidates()
             if consume_tools:
                 state.bound_budget.acquire()
@@ -43,7 +47,8 @@ def _runtime(controller, state, *, consume_tools=False, backend='fixture-backend
             return output_type.model_validate({'candidates': [
                 {'submission': {'proof_body': 'by rfl', 'informal_proof': 'Reflexivity.'},
                  'priority': 1},
-                {'submission': {'proof_body': 'by exact True.intro', 'informal_proof': ''},
+                {'submission': {'proof_body': 'by exact True.intro',
+                                'informal_proof': failed_informal_proof},
                  'priority': 0},
             ]})
 

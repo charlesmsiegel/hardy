@@ -28,7 +28,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from hardy.app.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
@@ -72,6 +72,7 @@ from hardy.workflows.strategies.best_first import (
 )
 from hardy.workflows.strategies.contracts import ProofTask, run_strategy
 from hardy.workflows.strategies.iterative import IterativeStrategy, declared_note
+from hardy.workflows.strategies.lessons import record_replay, replay_history
 
 ALLOWED = {
     RunPhase.SETUP: {RunPhase.FORMALIZING},
@@ -92,11 +93,18 @@ class ProveRequest(FrozenModel):
     model: str
     problem_slug: str = "theorem"
     strategy: Literal["iterative", "best-first"] = "iterative"
+    history_mode: Literal["full", "replay-full", "compact"] = "full"
     #: What this run is allowed to stand on. Empty is the ordinary case and
     #: the strict one: with nothing declared, any axiom beyond Lean's own
     #: refuses the proof. A run that declares a set is graded *verified
     #: modulo* exactly the members it actually used.
     assumptions: tuple[DeclaredAssumption, ...] = ()
+
+    @model_validator(mode="after")
+    def replay_requires_frontier(self) -> ProveRequest:
+        if self.history_mode != "full" and self.strategy != "best-first":
+            raise ValueError("history replay requires the best-first strategy")
+        return self
 
 
 class _CandidateBatch(FrozenModel):
@@ -109,11 +117,14 @@ def _strategy_record(request: ProveRequest, *, shared_tool_budget: bool) -> dict
     modules = (
         "workflows/prove.py", "agents/staged.py", "formal/tools.py", "formal/budget.py",
         "workflows/strategies/contracts.py", "workflows/strategies/iterative.py",
-        "workflows/strategies/best_first.py",
+        "workflows/strategies/best_first.py", "workflows/strategies/lessons.py",
     )
     return {
         "strategy": request.strategy,
-        "history_mode": "full",
+        "history_mode": request.history_mode,
+        "context_policy": (
+            "native-thread" if request.history_mode == "full" else "fresh-per-expansion"
+        ),
         "shared_tool_budget": shared_tool_budget,
         "prompt_set_sha256": PROMPT_SET_SHA256,
         "source_sha256": {
@@ -766,21 +777,22 @@ class ProveWorkflow:
             )
             if callable(bind_budget):
                 bind_budget(budget.reserved(checks=1))
-            active_thread = self._track(
-                runtime.start(
-                    model=request.model,
-                    run_dir=store.path,
-                    claim=approved_claim,
-                    # The thread that writes the proof gets the same declared
-                    # set the verifier will render, because `declared_note`
-                    # below tells the model they "are already in scope in the
-                    # file you are proving" -- and without this they were not.
-                    # The model cited one, every official check answered
-                    # `unknown identifier`, and the budget went on an
-                    # environment mismatch Hardy had created itself.
-                    allowed=request.assumptions,
+            def open_proof_thread() -> None:
+                nonlocal active_thread
+                self._refuse_if_cancelled()
+                active_thread = self._track(
+                    runtime.start(
+                        model=request.model,
+                        run_dir=store.path,
+                        claim=approved_claim,
+                        # Tools and final verification must see the same explicit
+                        # assumptions, including when replay opens a fresh context.
+                        allowed=request.assumptions,
+                    )
                 )
-            )
+                self._refuse_if_cancelled()
+
+            open_proof_thread()
             def verify(task, submission, _candidate_store=None):
                 # A candidate's check belongs to this canonical run. The frontier
                 # retains a separate source/result copy, while recorded acceptance
@@ -805,7 +817,25 @@ class ProveWorkflow:
                     "Priorities are heuristic, not verification evidence. Do not repeat "
                     "previous candidates. Return an empty list if no useful candidate remains."
                 )
-                if parent is not None:
+                if request.history_mode != "full":
+                    # Both replay treatments use fresh conversations and the same
+                    # authenticated failed attempts. Only their rendered history
+                    # differs. The native full-history mode retains its thread.
+                    replay = replay_history(
+                        store, task,
+                        mode="compact" if request.history_mode == "compact" else "full",
+                    )
+                    self._refuse_if_cancelled()
+                    record_replay(store, replay)
+                    self._refuse_if_cancelled()
+                    budget.ensure()
+                    if parent is not None:
+                        # run_structured drains the prior provider turn before it
+                        # returns. Cancelling here would cancel the whole run and
+                        # its shared tools, rather than just discard conversation.
+                        open_proof_thread()
+                    prompt += "\n" + replay.text
+                elif parent is not None:
                     prompt += "\nThe last independently checked candidate and Lean feedback:\n"
                     prompt += json.dumps(parent.model_dump(mode="json"), sort_keys=True)
                 return runtime.run_structured(
