@@ -161,7 +161,9 @@ def resolve_input(request: FormalizationInput) -> FormalizationContext | Semanti
         if source is None:
             missing(kind, f"Missing semantic source {ref.id}@{ref.digest}")
         elif source.ref != ref:
-            raise ValueError("required semantic reference differs from supplied source")
+            missing(kind, f"Stale semantic source: expected {ref.id}@{ref.digest}; "
+                    f"supplied {source.ref.id}@{source.ref.digest}")
+            return None
         return source
 
     roles: dict[str, str] = {}

@@ -346,8 +346,7 @@ def test_selected_declaration_dependency_requires_exact_record(mode):
     request = request.model_copy(update={"sources": sources, "required_binders": (declaration.ref,),
         "context": context, "subject": request.subject.model_copy(update={"context": context.ref})})
     if mode == "stale":
-        with pytest.raises(ValueError, match="reference"):
-            service.resolve_input(request)
+        _assert_stale_blocker(request, dependency.ref, supplied.ref, "resolve_declaration")
     elif mode == "absent":
         assert service.resolve_input(request).obligations[0].kind.value == "resolve_declaration"
     else:
@@ -382,3 +381,72 @@ def test_direct_frozen_read_rejects_unknown_or_missing_origins(missing):
         payload["semantic_context"]["generated_binders"][0]["declaration_ref"]["digest"] = "f" * 64
     with pytest.raises(ValueError, match="origin"):
         formal.FrozenClaim.model_validate(payload)
+
+
+def _assert_stale_blocker(request, expected, supplied, kind):
+    from hardy.workflows import formalization as service
+    lean = Lean()
+    blocked = service.prepare_candidate(request, contextual_proposal(request), environment(), NOW, lean=lean)
+    assert lean.calls == []
+    assert len(blocked.obligations) == 1
+    obligation = blocked.obligations[0]
+    assert obligation.kind.value == kind
+    assert obligation.status == ledger.ObligationStatus.OPEN
+    assert obligation.item == request.subject.ref
+    assert obligation.context == request.context.ref
+    assert obligation.scope == request.scope
+    assert f"{expected.id}@{expected.digest}" in obligation.reason
+    assert f"{supplied.id}@{supplied.digest}" in obligation.reason
+    with pytest.raises(service.SemanticBlocked) as caught:
+        service.formalization_prompt(request)
+    assert caught.value.obligations == blocked.obligations
+
+
+def test_selected_alias_target_stale_returns_typed_blocker():
+    from hardy.workflows import formalization as service
+    request = contextual()
+    expected = ledger.ProjectItem(id="M", kind="concept", name="Manifold", origin="human_authored",
+                                  statement="compact manifold")
+    supplied = expected.model_copy(update={"statement": "connected manifold"})
+    binding = ledger.ScopedBinding(id="notation", context_id="C", kind="alias", symbol="M",
+                                  meaning="the selected manifold", target=expected.ref)
+    context = request.context.model_copy(update={"bindings": (binding.ref,)})
+    request = request.model_copy(update={
+        "sources": (request.sources[0], service.SemanticSource(ref=binding.ref, record=binding),
+                    service.SemanticSource(ref=supplied.ref, record=supplied)),
+        "required_sources": (binding.ref,), "context": context,
+        "subject": request.subject.model_copy(update={"context": context.ref}),
+    })
+    _assert_stale_blocker(request, expected.ref, supplied.ref, "resolve_declaration")
+
+
+@pytest.mark.parametrize("field, item_kind, obligation_kind", [
+    ("required_sources", "concept", "resolve_declaration"),
+    ("required_representations", "representation", "resolve_representation"),
+    ("required_transports", "claim", "justify_transport"),
+])
+def test_required_semantic_source_stale_returns_specific_blocker(field, item_kind, obligation_kind):
+    from hardy.workflows import formalization as service
+    request = contextual()
+    expected = ledger.ProjectItem(id="selected", kind=item_kind, name="Selected", origin="human_authored",
+                                  statement="original meaning")
+    supplied = expected.model_copy(update={"statement": "revised meaning"})
+    request = request.model_copy(update={
+        "sources": (*request.sources, service.SemanticSource(ref=supplied.ref, record=supplied)),
+        field: (*getattr(request, field), expected.ref),
+    })
+    _assert_stale_blocker(request, expected.ref, supplied.ref, obligation_kind)
+
+
+def test_required_binder_stale_returns_typed_blocker():
+    from hardy.workflows import formalization as service
+    request = contextual()
+    expected = request.sources[0].record
+    supplied = expected.model_copy(update={"declaration": expected.declaration.model_copy(
+        update={"semantic_type": "compact manifold"})})
+    context = request.context.model_copy(update={"declarations": (supplied.ref,)})
+    request = request.model_copy(update={
+        "sources": (service.SemanticSource(ref=supplied.ref, record=supplied), request.sources[1]),
+        "context": context, "subject": request.subject.model_copy(update={"context": context.ref}),
+    })
+    _assert_stale_blocker(request, expected.ref, supplied.ref, "resolve_declaration")

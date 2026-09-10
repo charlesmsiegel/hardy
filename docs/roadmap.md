@@ -223,7 +223,9 @@ proposal schemas remain unchanged. Verifier and MCP reconstruct contextual hashe
 
 B0/B4/B5 still own ledger reachability, semantic/minimal-closure discovery,
 representation adequacy, and justification/transport acceptance. A2 returns open typed
-obligations for supplied unresolved requirements or missing selected records; it does
+obligations for supplied unresolved requirements or missing/stale selected records;
+stale dependency, alias and required-source explanations preserve expected and supplied
+exact identities. Malformed source records and unknown generated origins still reject. It does
 not resolve them or widen trust. Project-aware Prove input and other workflow callers
 are later B/D integration. Run the Task 3 focused command in
 `docs/superpowers/plans/2026-09-09-core-a.md` and `tests/unit/test_formalization.py`
