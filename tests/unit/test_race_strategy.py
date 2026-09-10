@@ -236,3 +236,21 @@ def test_failed_open_is_recorded_with_unknown_spend(tmp_path):
     assert report["attempts"]["b"]["status"] == "open_failed"
     assert report["usage"]["unknown_attempts"] == 1
     assert report["winner"] is None
+
+
+def test_factory_can_journal_immediately_in_its_initialized_attempt_store(tmp_path):
+    from hardy.workflows.contracts import RunPhase
+    task = _task(limits=RunLimits(official_checks=3))
+    store = _store(tmp_path)
+    opened = []
+    def open_attempt(context):
+        context.store.append("attempt.opened", {"name": context.name}, phase=RunPhase.PROVING)
+        assert json.loads((context.store.path / "task.json").read_text()) == task.model_dump(mode="json")
+        opened.append(context.store.path)
+        return RaceAttempt(context_id=context.name,
+            strategy=_Strategy(lambda task: _submission(task, "by rfl")),
+            cancel=lambda: None, usage=lambda: Usage())
+    result = run_strategy(RaceStrategy(names=("a", "b"), open_attempt=open_attempt, store=store,
+        verify=lambda task, submission, _: _result(task, submission.proof_body, accepted=True)), task)
+    assert result.status == "submitted" and len(opened) == 2
+    assert all((path / "trajectory.jsonl").is_file() for path in opened)

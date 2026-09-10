@@ -135,6 +135,7 @@ class RaceStrategy:
 
                 child = RunStore.open(race_path / "attempts" / str(index),
                                       run_id=self._store.run_id)
+                child.write_json(PurePosixPath("task.json"), task)
                 records[name] = {"status": "opening", "context_id": None,
                                  "artifacts": child.path.relative_to(self._store.path).as_posix()}
                 try:
