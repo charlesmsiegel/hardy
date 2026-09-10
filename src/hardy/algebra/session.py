@@ -137,8 +137,10 @@ class CasSession:
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError("expected finite nonnegative seconds")
             return float(value)
-        except FileNotFoundError:
-            return 0.0  # Older logs predate the sidecar.
+        except (FileNotFoundError, NotADirectoryError):
+            # No sidecar exists. An unusable log parent is refused on write,
+            # just as it was before accounting was persisted separately.
+            return 0.0
         except (OSError, ValueError, OverflowError) as error:
             raise CasError(f"the CAS spend could not be read ({self._spend_name}): {error}") from error
 

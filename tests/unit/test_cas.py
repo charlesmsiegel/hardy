@@ -26,7 +26,7 @@ from hardy.algebra.cas import (
     run_exported_script,
 )
 from hardy.algebra.export import export_session
-from hardy.foundation.files import LayoutError
+from hardy.foundation.files import LayoutError, WriteGuard
 from hardy.workflows.contracts import RunLimits
 
 
@@ -640,7 +640,10 @@ def test_corruption_before_the_final_record_is_still_refused(tmp_path, cas_sessi
         cas_session()
 
 
-def test_a_record_that_could_not_be_saved_is_not_in_memory(tmp_path, cas_session) -> None:
+@pytest.mark.parametrize("missing_error", [FileNotFoundError, NotADirectoryError])
+def test_a_record_that_could_not_be_saved_is_not_in_memory(
+    tmp_path, cas_session, monkeypatch, missing_error,
+) -> None:
     """A long-lived server must not number cells after one that never landed.
 
     The log directory here is a file, so the append cannot even be opened. The
@@ -650,6 +653,16 @@ def test_a_record_that_could_not_be_saved_is_not_in_memory(tmp_path, cas_session
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory\n", encoding="utf-8")
     template = cas_session()
+    original_open = WriteGuard.open
+
+    def open_log(guard, name, *args, **kwargs):
+        if name == "cells.jsonl.spend.json":
+            # Windows reports ENOENT here; POSIX reports ENOTDIR. Neither
+            # means a sidecar exists, and both must reach the write refusal.
+            raise missing_error("the log parent is a file")
+        return original_open(guard, name, *args, **kwargs)
+
+    monkeypatch.setattr(WriteGuard, "open", open_log)
     session = CasSession(
         backend=template.backend,
         command=None,
