@@ -23,10 +23,13 @@ hardy chat --root ~/proofs --project sylow
 
 Either flag alone still narrows the choice, and both default to the current
 directory and to whichever problem is already active there. With only one
-problem in the root, Hardy opens it without asking; a root with none starts one
-called `main`. See [`hardy chat`](../reference/cli.md#hardy-chat) for the full
-flag table and [on-disk layout](../reference/on-disk-layout.md) for what a
-problem directory contains.
+problem in the root, Hardy opens it without asking; a root with none starts
+one called `main`. With several recorded and none configured as active, a
+launch with a terminal on both ends asks which to open, "Which one? [number,
+name, or Enter for main]", rather than silently opening or creating `main`
+the way it used to. See [`hardy chat`](../reference/cli.md#hardy-chat) for
+the full flag table and [on-disk layout](../reference/on-disk-layout.md) for
+what a problem directory contains.
 
 From inside a session:
 
@@ -78,17 +81,18 @@ them:
 - **Computer algebra**: the `cas_*` tools, offered only when a backend actually
   started.
 
-On the default Claude backend, anything that is not one of Hardy's own tools is
-refused. Claude Code's own `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
-`WebFetch` and `WebSearch` are disallowed outright, and a default-deny gate
-refuses everything else regardless of name, so a built-in the CLI grows later is
-refused too rather than slipping through. A staged run under `--backend codex`
-does not carry this gate: that SDK keeps its own file and shell tools over the
-run directory, auto-approved. Hardy's own tools are still the only way to reach
-Lean, TeX and the record on that backend, but they are not the only tools in the
-conversation. See [the trust boundary](../design/trust-boundary.md) for the full
-account, including what none of this controls: generated Lean, LaTeX, and
-computer algebra cells all run unsandboxed once a tool call reaches them.
+On the default Claude backend, anything that is not one of Hardy's own tools
+is refused. Claude Code's own built-in tools, `Bash`, `Read`, `Glob`, `Grep`,
+`WebFetch` and `WebSearch` among them, are disallowed outright, and a
+default-deny gate refuses everything else regardless of name, so a built-in
+the CLI grows later is refused too rather than slipping through. A staged
+run under `--backend codex` does not carry this gate: that SDK keeps its own
+file and shell tools over the run directory, auto-approved. Hardy's own
+tools are still the only way to reach Lean, TeX and the record on that
+backend, but they are not the only tools in the conversation. See
+[the trust boundary](../design/trust-boundary.md) for the full account,
+including what none of this controls: generated Lean, LaTeX, and computer
+algebra cells all run unsandboxed once a tool call reaches them.
 
 You see each tool call as it starts, not only once it returns, so a Lean check
 that takes a while reports what it is doing instead of going quiet for the
@@ -118,8 +122,12 @@ undocumented theorems; repairing, restating, or deleting an existing one is
 always allowed, so the model is never trapped by debt it cannot pay off in the
 same save. `lemma`, `def`, `instance`, `abbrev` and `example` are exempt from
 all of this, which is why scaffolding is written as `lemma` rather than
-`theorem`: a skeleton that is still being built up owes nothing until the model
-is ready to call it a result. An open theorem, one still resting on a hole, owes
+`theorem`: a skeleton that is still being built up owes nothing until the
+model is ready to call it a result. This is not merely encouraged: `save_lean`
+refuses outright to save any new `theorem` whose name `record_name` has not
+already mapped to a place in the document, and the refusal tells the model to
+state it as a `lemma` instead if it is scaffolding, or to call `record_name`
+first if it is a result. An open theorem, one still resting on a hole, owes
 nothing yet either; the debt attaches the moment the hole closes.
 
 The usual order is: call `record_name` to register the correspondence between a
@@ -146,8 +154,9 @@ exactly what counts and why, and
 for the page-one stamp: every compile reports how many theorems Lean checked,
 how many assumptions were approved, how many of the document's own theorem
 environments rest on neither, and which saved statements a single automation
-call closes outright. `/status` and `/status --full` show the same figures
-without opening the PDF; see "The workspace summary" below.
+call closes outright. `/status` shows that same automation-call disclosure,
+and `/status --full` itemizes the theorems and assumptions behind the other
+figures, without opening the PDF; see "The workspace summary" below.
 
 ## Assumptions
 
@@ -329,19 +338,14 @@ bytes a citation was made against, by digest.
 ```
 
 `/project publish` prepares a local publication draft, nothing more: a fresh
-bundle under `publications/<output>/` holding the frozen plan in
-`publication.json`, the assembled `writeup.tex`, and `compile.log`, with the
-readiness and any gaps printed to the terminal. Item and scope selectors are
-stable ids or `ID@FULL_SHA256`, never a guessed name, and both `--scope` and
-`--output` are required. An existing bundle at that output name is refused,
-including after restart, so a later publication can never overwrite one already
-made. `/project link SOURCE illustrates|documents TARGET` records that one item
-bears on another (`documents` needs an exposition or document-fragment source,
-`illustrates` needs an example); `/project mark ITEM internal|public|omitted`
-sets an item's visibility, refused for an item already admitted as trusted
-background, since that pins its exact digest and this command does not migrate
-trust. The full selector syntax and what each verb refuses is in
-[project publication commands](../reference/cli.md#project-publication-commands).
+bundle under `publications/<output>/` with the readiness and any gaps
+printed to the terminal, never overwriting a bundle already made at that
+name. `/project link` records that one item illustrates or documents
+another, and `/project mark` sets an item's visibility, refused once an item
+is already trusted background. The exact selector syntax, what is required,
+and what each verb refuses is in
+[project publication commands](../reference/cli.md#project-publication-commands),
+rather than repeated here.
 
 All three verbs are refused while a turn is running, for the same reason
 `/project switch` is. `/publish <selection>` is a separate, older prompt
@@ -382,24 +386,25 @@ active.
 ```
 
 Plain `/status` reads the model, the spend ledger, and the workspace's paths
-from the artifacts themselves. `--full` adds a summary assembled the same way:
-the goal, every approved assumption with its source, stated reason and approval
-date, every saved theorem under the verdict its own stored audit gives it, what
-is still open, what tool calls were refused and what Lean said, the naming
-registry, and what remains before anything here may be reported as finished. A
-theorem whose audit never ran, has expired, or whose name collides with another
-module's appears under "Not established" rather than under "Proved", because
-printing both headings would make one of them a claim on its own. It carries no
-spend figures; that section is `/status`'s own, for you, and is withheld from
-the model on purpose.
+from the artifacts themselves, and already carries a "Work" section: if no
+theorem is saved it says so outright, "No theorem is saved: nothing here is
+reportable."; if every saved theorem is written up it says "Nothing
+outstanding: every saved theorem is written up."; otherwise it lists what has
+to happen before anything here may be reported as done. Beside it, plain
+`/status` also names any theorem closed by a single automation call, one
+tactic that happened to finish the whole statement: it is still a saved
+theorem, but it may assert far less than its name or the prose around it
+suggests, and only you can weigh that.
 
-A theorem closed by a single automation call, one tactic that happened to
-finish the whole statement, is named along with the tactic that closed it: it
-is still a saved theorem, but it may assert far less than its name or the
-prose around it suggests. And if nothing is saved at all, `--full` says
-exactly that, "No theorem is saved: nothing here is reportable.", rather than
-the separate "Nothing outstanding: every saved theorem is written up." it
-prints when saved theorems exist and none owe anything.
+`--full` adds a fuller summary on top: the goal, every approved assumption
+with its source, stated reason and approval date, every saved theorem under
+the verdict its own stored audit gives it, what is still open, what tool
+calls were refused and what Lean said, and the naming registry. A theorem
+whose audit never ran, has expired, or whose name collides with another
+module's appears under "Not established" rather than under "Proved", because
+printing both headings would make one of them a claim on its own. None of
+this carries spend figures; that section is `/status`'s own, for you, and is
+withheld from the model on purpose.
 
 ## Exporting a session
 
@@ -468,11 +473,14 @@ than left running to its own timeout. On the subscription backends this is
 exact, the SDK genuinely stops the model; on `backend = "api"` the in-flight
 request cannot be aborted, so it runs to its answer, which is discarded rather
 than shown, and no tool call runs either way. A second Esc stops waiting and
-kills whatever had not taken the first hint, at the cost of that child's state,
-such as a computer algebra kernel's namespace; on Windows, that kill reaches the
-process Hardy started and not the tree beneath it. Against a command that owns a
-child of its own, a running `/cas` cell or a `/prove` run, Esc reaches that
-instead, with the same two presses.
+kills whatever had not taken the first hint, at the cost of that child's
+state, such as a computer algebra kernel's namespace; on Windows this reaches
+the whole tree Hardy started, not only its leader, through a job object every
+tracked child is placed in. The residue is narrower: a grandchild spawned in
+the brief window before that job assignment lands, and any child Hardy never
+tracked in the first place, are reached only at the leader. Against a
+command that owns a child of its own, a running `/cas` cell or a `/prove`
+run, Esc reaches that instead, with the same two presses.
 
 A computer algebra cell that answers the first Esc costs only itself: the kernel
 survives, and everything earlier cells put in its namespace survives with it,
