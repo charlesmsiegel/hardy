@@ -177,3 +177,9 @@ def test_output_contract_records_what_the_theorem_gate_does_not_cover() -> None:
     assert 'which' in body and 'count' in body, (
         'the page does not say the banner counts and never points at a claim'
     )
+
+
+def test_computer_algebra_page_states_that_computation_is_not_evidence() -> None:
+    page = (ROOT / "docs" / "design" / "computer-algebra.md").read_text(encoding="utf-8")
+    assert "no computation is evidence" in page.lower()
+    assert "os.system" in page, "the escape hatches a cell has must be named"
