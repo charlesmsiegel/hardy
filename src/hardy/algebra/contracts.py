@@ -154,6 +154,13 @@ class RebuildReport(FrozenModel):
     digestless: tuple[int, ...] = ()
     unfingerprintable: tuple[int, ...] = ()
     clipped: tuple[int, ...] = ()
+    # Cells of the live segment that ran and were not accepted, and so were
+    # not replayed: an errored or interrupted cell can have changed the
+    # namespace on its way to failing (`x = 41; 1 / 0`), and the cells after
+    # it were built on that change. Where the backend fingerprints its
+    # namespace, `reproduces` catches the difference; where it does not, this
+    # is the only way the rebuild can say what it left out.
+    unreplayed: tuple[int, ...] = ()
 
 
 def normalise(text: str) -> str:

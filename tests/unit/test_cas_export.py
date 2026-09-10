@@ -375,3 +375,80 @@ def test_a_symlinked_replay_directory_does_not_become_a_kernel_cwd(tmp_path, cas
     finally:
         session.close()
     assert list(elsewhere.iterdir()) == []
+
+
+def test_an_export_holds_the_session_lock_while_it_runs(tmp_path, cas_session, monkeypatch) -> None:
+    """Issue #36: `export_session` never took `CasSession._lock`, so an export
+    running concurrently with a cell read a log the cell was appending to and
+    replayed a segment that was still changing."""
+    import threading
+
+    from hardy.algebra import export as export_module
+    from hardy.algebra.contracts import CellOutcome
+
+    session = cas_session()
+    session.execute("a")
+    seen: dict[str, bool] = {}
+
+    def replay_that_probes_the_lock(**kwargs):
+        acquired: list[bool] = []
+
+        def probe() -> None:
+            got = session._lock.acquire(blocking=False)
+            acquired.append(got)
+            if got:
+                session._lock.release()
+
+        prober = threading.Thread(target=probe)
+        prober.start()
+        prober.join()
+        seen["held"] = not acquired[0]
+        return [
+            CellOutcome(status="ok", stdout="", stderr="", value_repr=record.value_repr)
+            for record in kwargs["cells"]
+        ]
+
+    monkeypatch.setattr(export_module, "replay_in_fresh_kernel", replay_that_probes_the_lock)
+    try:
+        export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+    assert seen["held"], "another thread could take the session lock mid-export"
+
+
+def test_an_export_replays_kernel_start_is_charged_too(tmp_path, cas_session, monkeypatch) -> None:
+    """Issue #37: `_start` inside `replay_in_fresh_kernel` was outside the
+    budget accounting, so every export cost one unbilled kernel start."""
+    import time
+
+    from hardy.algebra.session import CasSession
+
+    original = CasSession._start
+
+    def slow_start(self) -> None:
+        time.sleep(0.05)
+        original(self)
+
+    from hardy.algebra.replay import replay_in_fresh_kernel
+
+    session = cas_session(cas_cell_seconds=30)
+    try:
+        session.execute("a")
+        session.execute("b")
+        monkeypatch.setattr(CasSession, "_start", slow_start)
+        charges: list[float] = []
+        replay_in_fresh_kernel(
+            backend=session.backend,
+            command=None,
+            cells=session.accepted(),
+            limits=session.limits,
+            cwd=tmp_path / "replay",
+            charge=charges.append,
+        )
+        # One charge per replayed cell, and one more for the kernel the replay
+        # started: the fake interpreter's own boot lands in the first cell's
+        # wall clock either way, so the count is what tells the two apart.
+        assert len(charges) == len(session.accepted()) + 1
+        assert charges[0] >= 0.05
+    finally:
+        session.close()

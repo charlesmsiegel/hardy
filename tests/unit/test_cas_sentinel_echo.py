@@ -93,3 +93,24 @@ def test_state_still_persists_across_cells_despite_the_echo(
     assert second.status == "ok"
     assert "second;" in second.stdout
     assert "hardy-begin" not in second.stdout
+
+
+
+def test_an_error_that_lands_on_stderr_after_the_end_marker_still_classifies_the_cell(
+    echoing_sentinel_session,
+) -> None:
+    """Issue #36: the hermetic regression test for the stderr quiet-window bug.
+
+    stdout and stderr are two pipes drained by two threads, and nothing ties
+    their delivery together: an error the interpreter wrote *before* it
+    echoed the end marker can still reach Hardy after the marker has. Reading
+    stderr the instant the marker is found read a broken cell as clean.
+    `laterror;` in the fake writes the stdout end marker immediately and only
+    then, after `STDERR_DELAY`, the error -- inside the quiet window
+    `stderr_settled` waits out, so the settle is what has to catch it.
+    """
+    session = echoing_sentinel_session()
+    record = session.execute("laterror;")
+    assert record.status == "error"
+    assert record.accepted is False
+    assert "error:" in record.stderr

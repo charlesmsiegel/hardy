@@ -112,6 +112,20 @@ class CasSession:
         self._stop_level = 0
         self._records: list[CellRecord] = self._load()
 
+    @contextlib.contextmanager
+    def hold(self):
+        """Keep the session to one caller for the duration.
+
+        The lock is the kernel's, and `execute` takes it per cell. An export
+        is longer than a cell and reads the log and the budget throughout:
+        held only per call, a cell could land between its replay and its
+        render and the manifest would describe a session that had already
+        moved on. Public because the export lives in another module and the
+        lock does not.
+        """
+        with self._lock:
+            yield
+
     # ------------------------------------------------------------------ log
 
     def _load(self) -> list[CellRecord]:
@@ -842,6 +856,19 @@ class CasSession:
                         f"record: {because} The state is reconstructed, not "
                         "verified: rerun anything you mean to build on.]"
                     )
+                if report.unreplayed:
+                    # A failed cell is outside the accepted set by design, and
+                    # so is whatever it changed before it failed. On a backend
+                    # that fingerprints its namespace a later cell built on
+                    # that change fails to reproduce and poisons the rebuild;
+                    # on one that does not, this note is the only place the
+                    # gap is said out loud.
+                    notes = (notes + " " if notes else "") + (
+                        f"[cell(s) {list(report.unreplayed)} failed before being "
+                        "accepted and were not replayed: anything they changed on "
+                        "the way to failing is not in the rebuilt state. Rerun them "
+                        "if you meant to build on it.]"
+                    )
                 # The rebuild is billed, so it can be what exhausts the budget.
                 self._guard()
 
@@ -938,10 +965,23 @@ class CasSession:
 
     def _restore(self) -> RebuildReport:
         """Rebuild live state after a death, and verify what was rebuilt."""
+        # The start is the session's time too. Unbilled, a recovery cost one
+        # kernel start the budget never saw, and `cas_session_seconds` bounded
+        # total wall clock plus a start per death rather than total wall clock.
+        started = time.monotonic()
         self._start()
+        self.charge(time.monotonic() - started)
         pending = self.accepted()
+        # What ran in this segment and is not being replayed. `cells()` is
+        # every executed record of the live segment; the reset boundary and
+        # empty sources are already outside it.
+        unreplayed = tuple(
+            record.seq
+            for record in self.cells()
+            if not record.accepted and record.status in {"error", "interrupted"}
+        )
         if not pending:
-            return RebuildReport()
+            return RebuildReport(unreplayed=unreplayed)
         diverged: list[int] = []
         # A replay that overran the cap compared on a prefix just as a
         # truncated record does, and the truncation can be on either side: an
@@ -1040,6 +1080,7 @@ class CasSession:
                 for record in pending
                 if record.capture_truncated or record.seq in set(clipped)
             ),
+            unreplayed=unreplayed,
         )
 
     def reset(self, *, author: str = "model") -> None:

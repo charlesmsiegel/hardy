@@ -284,3 +284,25 @@ def test_the_codex_ledger_counts_turns_and_states_no_figures(tmp_path) -> None:
     assert usage['exchanges'] == 1
     assert usage['cost_usd'] is None and usage['input_tokens'] is None
     assert usage['reported']['cost_usd'] == 0
+
+
+
+def test_a_thread_started_before_any_claim_exists_still_gets_hardys_server(tmp_path) -> None:
+    """Issue #37: the MCP server was launched only once a `FrozenClaim`
+    existed, but the formalization thread starts with `claim=None`, so a
+    Codex user could not compute examples while deciding what to formalize.
+    The Claude staged runtime offers CAS in every stage; so does this now.
+    The claim hash is simply absent from the environment, and the server
+    serves the CAS tools alone."""
+    _, runtime, client, store = _runtime(tmp_path, _events('formalization-events.json'))
+
+    runtime.start(model='gpt-test', run_dir=store.path, claim=None)
+
+    call = client.start_calls[0]
+    mcp = call['config']['mcp_servers']['hardy']
+    assert mcp['args'] == ['-m', 'hardy.mcp_server']
+    assert mcp['env'] == {
+        'HARDY_RUN_DIR': str(store.path),
+        'HARDY_CONFIG': str(tmp_path / 'hardy.json'),
+    }
+    assert 'HARDY_CLAIM_SHA256' not in mcp['env']

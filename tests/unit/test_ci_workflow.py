@@ -70,3 +70,16 @@ def test_the_coverage_floor_is_configured() -> None:
     text = (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
     assert '[tool.coverage.report]' in text
     assert re.search(r'(?m)^fail_under\s*=\s*\d+', text)
+
+
+
+def test_the_real_backend_job_pins_its_runner_image_and_packages() -> None:
+    """Issue #36: the obsolete `-s` flag that broke the first real run was the
+    evidence that drift matters here -- the adapter was written against one
+    Macaulay2 and met another. Pinned, a red run means "we broke it" rather
+    than "something moved"."""
+    text = (WORKFLOWS / 'cas-backends.yml').read_text(encoding='utf-8')
+    assert 'ubuntu-latest' not in text
+    assert 'runs-on: ubuntu-24.04' in text
+    install = text[text.index('apt-get install'):]
+    assert 'singular=' in install and 'macaulay2=' in install

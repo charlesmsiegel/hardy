@@ -192,3 +192,37 @@ def test_sympy_parse_version_is_identity() -> None:
     be a no-op, since `probe_version` calls it unconditionally."""
     backend = backend_for("sympy")
     assert backend.parse_version("1.13.0") == "1.13.0"
+
+
+
+def test_macaulay2_sanitize_keeps_output_equal_to_an_earlier_lines_source() -> None:
+    """Issue #37: `echoed` was a set over the whole fed script, so a cell whose
+    genuine output happened to equal a *different* line's source had it
+    silently dropped. The echo arrives in the order it was fed, so a cursor
+    into the fed script rejects that match and is strictly stronger."""
+    backend = backend_for("macaulay2")
+    fed = 'x^2 + y^2\nprint "     x^2 + y^2"\n'
+    transcript = (
+        "i1 : x^2 + y^2\n"
+        "\n"
+        "      2    2\n"
+        "o1 = x  + y\n"
+        "\n"
+        "o1 : R\n"
+        "\n"
+        'i2 : print "     x^2 + y^2"\n'
+        "     x^2 + y^2\n"
+    )
+    sanitized = backend.sanitize(transcript, fed)
+    assert sanitized.endswith("     x^2 + y^2\n")
+
+
+def test_macaulay2_sanitize_still_strips_a_multi_line_cells_continuation_echo() -> None:
+    """The cursor must not break the case the set handled: a cell's second
+    line comes back under the prompt's indent and is an echo."""
+    backend = backend_for("macaulay2")
+    fed = "f = (\nx^2 + y^2)\n"
+    transcript = "i1 : f = (\n     x^2 + y^2)\n\n      2    2\no1 = x  + y\n"
+    sanitized = backend.sanitize(transcript, fed)
+    assert "x^2 + y^2)" not in sanitized
+    assert "o = x  + y" in sanitized

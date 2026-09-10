@@ -767,7 +767,19 @@ def render_notebook(
 
 
 def export_session(session: CasSession, directory: Path) -> ExportReport:
-    """Render, replay, compare, and publish the pair under one manifest."""
+    """Render, replay, compare, and publish the pair under one manifest.
+
+    Under the session's own hold from the first read of the log to the last
+    write of the manifest. Within one process the bindings serialise a cell
+    against a cell; an export running beside a cell was the one interleaving
+    nothing serialised, and it replayed and published a segment that was
+    still being appended to.
+    """
+    with session.hold():
+        return _export_held(session, directory)
+
+
+def _export_held(session: CasSession, directory: Path) -> ExportReport:
     cells = session.accepted()
     if not cells:
         raise CasError("nothing to export: the session has no accepted cells")

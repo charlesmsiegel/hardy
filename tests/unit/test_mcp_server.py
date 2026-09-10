@@ -236,3 +236,35 @@ def test_declaration_search_observation_is_bounded(tmp_path) -> None:
     assert result.output_artifact is not None
     assert len(result.model_dump_json().encode('utf-8')) <= 600
     assert (store.path / result.output_artifact).exists()
+
+
+
+async def test_the_loader_serves_cas_alone_before_a_claim_exists(tmp_path) -> None:
+    """Issue #37: a server started for the formalization stage has no Frozen
+    Claim to scope Lean tools to, and must not advertise tools that can only
+    fail -- but the computer algebra session does not depend on a claim, and
+    it is what that stage needs."""
+    server = importlib.import_module('hardy.app.mcp')
+    config = importlib.import_module('hardy.app.config')
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    config_path = tmp_path / 'hardy.toml'
+    config.write_setting(config_path, 'lake', str(tmp_path / 'lake.exe'))
+    lean_tools = [
+        tool for tool in await server.mcp.list_tools() if tool.name.startswith(('lean_', 'rank_'))
+    ]
+    assert lean_tools, 'the Lean tools are registered at import'
+
+    try:
+        runtime = server.load_runtime({'HARDY_RUN_DIR': str(run_dir), 'HARDY_CONFIG': str(config_path)})
+        assert runtime is None
+        names = {tool.name for tool in await server.mcp.list_tools()}
+        assert 'cas_run' in names and 'cas_state' in names
+        assert not any(name.startswith(('lean_', 'rank_')) for name in names)
+    finally:
+        # Module state is shared with every other test in this process.
+        if server._cas is not None:
+            server._cas.session.close()
+        for name in ('lean_check_proof', 'lean_check_scratch', 'lean_inspect_declarations',
+                     'lean_search_declarations', 'rank_premises'):
+            server.mcp.add_tool(getattr(server, name))

@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Literal
 
-from hardy.app.config import Config
+from hardy.app.config import DEFAULT_CAS_BACKEND, Config
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
 
@@ -198,8 +198,14 @@ def discover_environment(
     cas_status = _cas_status(config)
     tools = (backend_status, elan_status, lean_status, lake_status, tectonic_status)
     healthy = authenticated and mathlib_ready and all(tool.healthy for tool in tools)
-    # A run is healthy without computer algebra. The status is reported so a
-    # result records which kernel was reachable, not to gate the run on one.
+    # A run is healthy without computer algebra *on the default backend*: SymPy
+    # is a dependency, and its status is reported so a result records which
+    # kernel was reachable. A backend the user named is a different matter --
+    # `doctor` treats it as required, and a setup that called the machine
+    # ready while the configured Singular or Macaulay2 could not start was
+    # the two paths disagreeing.
+    if config.cas_backend != DEFAULT_CAS_BACKEND:
+        healthy = healthy and cas_status.healthy
     tools = tools + (cas_status,)
     return EnvironmentReport(
         tools=tools,
