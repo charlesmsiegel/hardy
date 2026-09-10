@@ -1,4 +1,5 @@
 """Project retrieval rebuilds discovery but authenticates delivery with real B2 policy."""
+import json
 from hashlib import sha256
 
 import pytest
@@ -59,7 +60,7 @@ def test_verified_lemma_is_authenticated_after_restart_and_index_is_only_discove
     assert hit.formal.declaration == "Fixture.fixture"
     assert hit.formal.artifact in theorem.artifacts
     assert hit.formal.environment == ENV
-    assert len(observed) == 2  # Initial authentication and the final delivery boundary.
+    assert len(observed) == 1  # The final boundary checks B2 without reinvoking the formal reader.
     assert result.index_digest == index.digest
     assert result.total_candidates == 1 and not result.truncated
 
@@ -334,8 +335,9 @@ def test_shared_global_name_search_works_inside_requesting_project_local_context
     assert hit.entry.source_id == "library" and hit.formal.context == context.ref
 
 
-def test_later_hit_revocation_is_reauthenticated_before_returning_earlier_proof(tmp_path):
-    store, theorem, scope, authority, _, _, _, make, query = project(tmp_path)
+@pytest.mark.parametrize("revoke_on_read", [1, 2])
+def test_later_hit_revocation_is_reauthenticated_before_returning_earlier_proof(tmp_path, revoke_on_read):
+    store, theorem, scope, authority, _, observed, _, make, query = project(tmp_path)
     second = theorem.model_copy(update={"id": "zz-second", "name": "Reusable second"})
     work = Obligation(id="second-proof", item=second.ref, scope=scope, kind="prove")
     store.append((second, work), expected_revision=store.read().revision)
@@ -348,15 +350,60 @@ def test_later_hit_revocation_is_reauthenticated_before_returning_earlier_proof(
     original = service.read_formal
     def revoke_previous(request):
         result = original(request)
-        if request.subject.ref == second.ref:
+        if request.subject.ref == second.ref and sum(r.subject.ref == second.ref for r in observed) == revoke_on_read:
             for ref in tuple(authority.evidence):
                 if ref.subject == theorem.ref:
                     del authority.evidence[ref]
         return result
     service.read_formal = revoke_previous
     result = service.retrieve(query.model_copy(update={"text": "Reusable"}))
-    assert [hit.entry.ref for hit in result.delivered] == [second.ref]
-    assert result.rejected[0].entry.ref == theorem.ref
+    assert all(any(ref.subject == hit.entry.ref for ref in authority.evidence) for hit in result.delivered)
+    assert [hit.entry.ref for hit in result.delivered] == ([second.ref] if revoke_on_read == 1 else [theorem.ref, second.ref])
+    assert len(observed) == 2  # One formal reader invocation per candidate; final B2 checks are separate.
+
+
+def test_delivery_budget_counts_complete_serialized_formal_payload(tmp_path):
+    _, _, _, _, _, _, _, make, query = project(tmp_path)
+    complete = make().retrieve(query)
+    payload = json.dumps({"index_digest": complete.index_digest, "query_digest": complete.query.digest,
+        "delivered": [hit.model_dump(mode="json") for hit in complete.delivered]}, ensure_ascii=False, sort_keys=True)
+    assert complete.characters_delivered == len(payload)
+    result = make().retrieve(query.model_copy(update={"max_characters": len(complete.delivered[0].entry.summary) + 50}))
+    assert not result.delivered and result.truncated and result.characters_delivered == 0
+
+
+def test_large_historical_assessment_cannot_bypass_delivery_budget(tmp_path):
+    from hardy.workflows.ledger.contracts import ResearchState
+    store = LedgerStore(tmp_path)
+    old = ProjectItem(id="route", name="Route", kind="approach", origin="human_authored",
+        research=ResearchState(status="blocked", reason="x" * 100000, author="reader"))
+    scope = Scope(id="scope")
+    store.append((old, scope), expected_revision=0)
+    current = old.model_copy(update={"research": ResearchState(status="investigating", reason="retry", author="reader")})
+    store.append((current,), expected_revision=1)
+    def source(_):
+        return retrieval.ledger_source("p", store)
+    service = retrieval.ProjectRetriever(retrieval.build_index((source("p"),)), read_source=source)
+    result = service.retrieve(retrieval.RetrievalQuery(project_source="p", text="route", scope=scope.ref, max_characters=8192))
+    assert not result.delivered and result.truncated and result.characters_delivered == 0
+    assert "budget" in result.rejected[0].reason
+
+
+def test_rejected_diagnostic_text_does_not_spend_later_delivery_budget(tmp_path):
+    store = LedgerStore(tmp_path)
+    rejected = ProjectItem(id="a-rejected", name="Reusable rejected", kind="lemma", origin="human_authored",
+        statement="x" * 1500)
+    accepted = ProjectItem(id="b-accepted", name="Reusable accepted", kind="concept", origin="human_authored",
+        statement="y" * 500)
+    scope = Scope(id="scope")
+    store.append((rejected, accepted, scope), expected_revision=0)
+    def source(_):
+        return retrieval.ledger_source("p", store)
+    service = retrieval.ProjectRetriever(retrieval.build_index((source("p"),)), read_source=source)
+    result = service.retrieve(retrieval.RetrievalQuery(project_source="p", text="Reusable", scope=scope.ref, max_characters=2000))
+    assert [hit.entry.ref for hit in result.delivered] == [accepted.ref]
+    assert result.rejected[0].entry.ref == rejected.ref and "reader" in result.rejected[0].reason
+    assert result.characters_delivered <= 2000 and not result.truncated
 
 
 def test_goal_identity_recovers_linked_approach_and_earlier_blocked_assessment(tmp_path):

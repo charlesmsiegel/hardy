@@ -11,6 +11,7 @@ summaries remain attributed records, including unresolved goals and dead ends.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -111,6 +112,10 @@ class ProjectRetrievalIndex(FrozenModel):
 
 
 class RetrievalQuery(FrozenModel):
+    """max_characters bounds the serialized nonempty delivered-match envelope.
+
+    The fixed empty-result control envelope and rejected diagnostics are excluded.
+    """
     project_source: str
     text: str = Field(min_length=1, max_length=512)
     scope: VersionRef
@@ -190,6 +195,13 @@ class RetrievalResult(FrozenModel):
     @property
     def rejected(self) -> tuple[RetrievalMatch, ...]:
         return tuple(hit for hit in self.matches if not hit.accepted)
+
+
+def render_delivery(query: RetrievalQuery, index_digest: str, matches: tuple[RetrievalMatch, ...]) -> str:
+    """Exact consumer text, including all accepted metadata and its identity."""
+    return json.dumps({"index_digest": index_digest, "query_digest": query.digest,
+        "delivered": [hit.model_dump(mode="json") for hit in matches if hit.accepted]},
+        ensure_ascii=False, sort_keys=True)
 
 
 def ledger_source(id: str, store: LedgerStore, *, enabled: bool = True,
@@ -356,18 +368,24 @@ class ProjectRetriever:
             return 4
         return None
 
-    def _formal(self, source: SourceIdentity, snapshot: LedgerSnapshot, subject: ProjectItem,
-                query: RetrievalQuery, scope: Scope, policy: LedgerPolicy | None) -> FormalReading:
-        if self.read_formal is None or self.read_artifact is None or query.environment is None:
-            raise ValueError("formal evidence/artifact reader or verifier environment unavailable")
+    @staticmethod
+    def _proof_works(source: SourceIdentity, snapshot: LedgerSnapshot, subject: ProjectItem,
+                     query: RetrievalQuery, scope: Scope, policy: LedgerPolicy | None) -> tuple[Obligation, ...]:
         if policy is None:
             raise ValueError("current source ledger policy is unavailable")
         context = query.context if source.kind == "project" else None
-        works = tuple(work for work in snapshot.current(Obligation)
+        return tuple(work for work in snapshot.current(Obligation)
             if work.item == subject.ref and (source.kind == "shared_library" or work.scope == scope)
             and work.kind in {"prove", "resolve_goal"} and work.status == "resolved"
             and work.resolution is not None and policy.is_accepted(snapshot, work.resolution)
             and policy.premise_allowed(snapshot, subject.ref, scope=work.scope, context=context))
+
+    def _formal(self, source: SourceIdentity, snapshot: LedgerSnapshot, subject: ProjectItem,
+                query: RetrievalQuery, scope: Scope, policy: LedgerPolicy | None) -> FormalReading:
+        if self.read_formal is None or self.read_artifact is None or query.environment is None:
+            raise ValueError("formal evidence/artifact reader or verifier environment unavailable")
+        works = self._proof_works(source, snapshot, subject, query, scope, policy)
+        context = query.context if source.kind == "project" else None
         evidence = tuple((work, reference) for work in works for reference in work.resolution.evidence
                          if reference.kind == "formal")
         for work, reference in evidence:
@@ -389,6 +407,20 @@ class ProjectRetriever:
                     and policy.premise_allowed(snapshot, subject.ref, scope=work.scope, context=context)):
                 return reading
         raise ValueError("exact kernel proof, declaration, artifact or importability could not be authenticated")
+
+    def _check_current_evidence(self, match: RetrievalMatch, source: RetrievalSource,
+                                identity: SourceIdentity, project: RetrievalSource, query: RetrievalQuery) -> None:
+        """Check cached formal readings after every declaration/artifact reader ran."""
+        scope = project.snapshot.get(query.scope)
+        policy = self.policies.get(source.id)
+        if match.formal is not None:
+            subject = source.snapshot.get(match.entry.ref)
+            works = self._proof_works(identity, source.snapshot, subject, query, scope, policy)
+            if not any(match.formal.evidence in work.resolution.evidence for work in works):
+                raise ValueError("kernel evidence revoked before retrieval delivery")
+        elif match.group == "approved_external_assumptions":
+            if policy is None or not policy.premise_allowed(source.snapshot, match.entry.ref, scope=scope, context=query.context):
+                raise ValueError("external assumption revoked before retrieval delivery")
 
     def _deliver(self, entry: IndexEntry, source: RetrievalSource, identity: SourceIdentity,
                  project: RetrievalSource, query: RetrievalQuery) -> FormalReading | None:
@@ -448,10 +480,9 @@ class ProjectRetriever:
             and (rank := self._rank(entry, live[entry.source_id], query)) is not None]
         candidates.sort(key=lambda pair: (pair[0], pair[1].source_id, pair[1].ref.id, pair[1].ref.digest))
         matches = []
-        characters = 0
         truncated = len(candidates) > query.limit or any(entry.summary_truncated or entry.metadata_truncated for _, entry in candidates[:query.limit])
         for rank, entry in candidates[:query.limit]:
-            if characters + len(entry.summary) > query.max_characters:
+            if len(entry.summary) > query.max_characters:
                 truncated = True
                 matches.append(RetrievalMatch(entry=entry.model_copy(update={"summary": ""}), group=entry.group,
                     accepted=False, reason="retrieval text budget exhausted", rank=rank))
@@ -462,17 +493,16 @@ class ProjectRetriever:
                 accepted, reason = True, "Authenticated kernel declaration" if formal else "Recorded " + entry.group
             except (OSError, ValueError, TypeError) as error:
                 formal, accepted, reason = None, False, str(error)
-            characters += len(entry.summary)
             matches.append(RetrievalMatch(entry=entry, group=entry.group, accepted=accepted, reason=reason, rank=rank, formal=formal))
-        # Later readers can revoke an earlier capability receipt without a
-        # ledger edit. Reauthenticate accepted deliveries at the return boundary.
+        # Later declaration/artifact readers can revoke an earlier capability
+        # receipt without a ledger edit. Audit cached readings after all such
+        # calls; calling those readers again here would reopen the same gap.
         for position, match in enumerate(matches):
             if not match.accepted:
                 continue
             try:
-                formal = self._deliver(match.entry, live[match.entry.source_id], identities[match.entry.source_id],
-                                       live[query.project_source], query)
-                matches[position] = match.model_copy(update={"formal": formal})
+                self._check_current_evidence(match, live[match.entry.source_id], identities[match.entry.source_id],
+                                             live[query.project_source], query)
             except (OSError, ValueError, TypeError) as error:
                 matches[position] = match.model_copy(update={"accepted": False, "formal": None, "reason": str(error)})
         # Readers may mutate durable sources while authenticating. Never deliver
@@ -482,8 +512,21 @@ class ProjectRetriever:
                 matches = [match.model_copy(update={"accepted": False, "formal": None,
                     "reason": "source changed during retrieval authentication"}) for match in matches]
                 break
+        delivered: list[RetrievalMatch] = []
+        characters = 0
+        for position, match in enumerate(matches):
+            if not match.accepted:
+                continue
+            size = len(render_delivery(query, self.index.digest, (*delivered, match)))
+            if size > query.max_characters:
+                truncated = True
+                matches[position] = match.model_copy(update={"accepted": False, "formal": None,
+                    "reason": "serialized retrieval delivery budget exhausted"})
+            else:
+                delivered.append(match)
+                characters = size
         return RetrievalResult(query=query, index_digest=self.index.digest,
             sources=tuple(identities.values()), matches=tuple(matches), total_candidates=len(candidates),
-            truncated=truncated, characters_delivered=sum(len(match.entry.summary) for match in matches if match.accepted))
+            truncated=truncated, characters_delivered=characters)
 
 
