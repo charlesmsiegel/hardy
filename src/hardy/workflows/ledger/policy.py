@@ -362,13 +362,37 @@ class LedgerPolicy:
         if decision != expected:
             raise ValueError("acceptance decision does not match exact proposal and policy")
         outcomes = {self._evidence(ref, obligation).outcome for ref in resolution.evidence}
-        if not _REQUIRED[obligation.kind].issubset(outcomes):
+        # Generic acquisition can finish through a separately authenticated
+        # typed proof/definition/interface, without inventing a paper citation.
+        # The exact child remains authoritative on every later read.
+        history = {value.ref for value in snapshot.records if isinstance(value, Obligation)
+                   and (value.id, value.item, value.kind, value.scope, value.context)
+                   == (obligation.id, obligation.item, obligation.kind, obligation.scope, obligation.context)}
+        relations = LedgerGraph(snapshot).relations
+        acquired_local = False
+        if obligation.kind == ObligationKind.ACQUIRE_PREREQUISITE:
+            for relation in relations:
+                if relation.source not in history or relation.kind != RelationKind.BLOCKED_BY:
+                    continue
+                child = snapshot.get(relation.target)
+                if not isinstance(child, Obligation):
+                    continue
+                current = snapshot.head(child.id)
+                if (child.item == subject.ref and child.context == obligation.context
+                        and child.scope == obligation.scope
+                        and child.kind in _ESTABLISHES.get(subject.kind, set())
+                        and isinstance(current, Obligation) and current.resolution is not None
+                        and current.resolution.evidence == resolution.evidence
+                        and self._resolved(snapshot, child.ref, obligation.scope, visiting)):
+                    acquired_local = True
+                    break
+        if not acquired_local and not _REQUIRED[obligation.kind].issubset(outcomes):
             raise ValueError("illegal evidence combination for obligation category")
-        if obligation.kind in {ObligationKind.CHECK_CITATION, ObligationKind.ACQUIRE_PREREQUISITE}:
+        if not acquired_local and obligation.kind in {ObligationKind.CHECK_CITATION, ObligationKind.ACQUIRE_PREREQUISITE}:
             self._citation(snapshot, obligation, visiting)
         self._transport(snapshot, subject, obligation, visiting)
-        for relation in LedgerGraph(snapshot).relations:
-            if relation.kind not in DEPENDENCIES or relation.source != subject.ref:
+        for relation in relations:
+            if relation.kind not in DEPENDENCIES or relation.source not in history | {subject.ref}:
                 continue
             blocker = snapshot.get(relation.target)
             if relation.kind == RelationKind.BLOCKED_BY and isinstance(blocker, Obligation):
