@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from hardy.algebra.contracts import CasError
 from hardy.algebra.export import export_session
 
 
@@ -77,6 +80,11 @@ def test_a_truncated_capture_is_not_accepted_as_a_success(sentinel_session) -> N
     assert record.accepted is False
     assert record.restart_note  # and the reason is on the record, not silent
     assert session.accepted() == ()
+    assert record.kernel_lost is False
+    assert session.execute("silent;").accepted
+    session._drop_kernel()
+    with pytest.raises(CasError, match="unaccepted cell"):
+        session.execute("hello;")
 
 
 def test_a_silent_cell_still_completes(sentinel_session) -> None:

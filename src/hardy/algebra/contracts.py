@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from hardy.foundation.values import FrozenModel
 
@@ -50,10 +50,8 @@ class CellOutcome(FrozenModel):
     # interrupt is the only status that goes both ways: a kernel that answers
     # one is still a kernel, with its namespace intact, which is the entire
     # reason for interrupting instead of timing out -- and one that does not
-    # answer has to be stopped like any other unreachable kernel. This is not
-    # on `CellRecord`: the durable log records what the cell did, and whether
-    # the kernel survived is the session's live state, reported by
-    # `cas_state` and by the restart note on the next cell.
+    # answer has to be stopped like any other unreachable kernel. CellRecord
+    # retains this distinction so recovery after reopening has the same policy.
     kernel_lost: bool = False
     # The kernel's fingerprint of its own namespace once this cell was done.
     # Empty when the backend cannot produce one -- a sentinel interpreter has
@@ -92,6 +90,10 @@ class CellRecord(FrozenModel):
     # set, exactly as an errored cell's is.
     status: Literal["ok", "error", "timeout", "kernel_died", "interrupted"]
     accepted: bool
+    # None on legacy records: an interrupted/otherwise unaccepted cell may
+    # have left live mutations. Only known terminal cells can be rolled back
+    # without silently dropping effects that later accepted cells used.
+    kernel_lost: bool | None = Field(default=None, strict=True)
     stdout: str = ""
     stderr: str = ""
     value_repr: str = ""
@@ -161,12 +163,8 @@ class RebuildReport(FrozenModel):
     digestless: tuple[int, ...] = ()
     unfingerprintable: tuple[int, ...] = ()
     clipped: tuple[int, ...] = ()
-    # Cells of the live segment that ran and were not accepted, and so were
-    # not replayed: an errored or interrupted cell can have changed the
-    # namespace on its way to failing (`x = 41; 1 / 0`), and the cells after
-    # it were built on that change. Where the backend fingerprints its
-    # namespace, `reproduces` catches the difference; where it does not, this
-    # is the only way the rebuild can say what it left out.
+    # Retained for existing report consumers. Current recovery refuses live
+    # unaccepted cells instead of returning a report that omits their effects.
     unreplayed: tuple[int, ...] = ()
 
 

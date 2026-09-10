@@ -195,7 +195,8 @@ def test_a_kernel_that_refuses_the_interrupt_is_stopped(cas_session, tmp_path) -
         session.close()
 
 
-def test_the_session_rebuilds_from_accepted_cells_after_a_refused_interrupt(cas_session, tmp_path) -> None:
+@pytest.mark.parametrize("reopen", [False, True])
+def test_the_session_rebuilds_from_accepted_cells_after_a_refused_interrupt(cas_session, tmp_path, reopen) -> None:
     session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
     try:
         session.execute("a")
@@ -204,8 +205,12 @@ def test_the_session_rebuilds_from_accepted_cells_after_a_refused_interrupt(cas_
         threading.Thread(
             target=_press_when_running, args=(session, ready), daemon=True
         ).start()
-        session.execute(f"deaf {ready}")
+        stopped = session.execute(f"deaf {ready}")
+        assert stopped.kernel_lost is True
         session.resume()
+        if reopen:
+            session.close()
+            session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
 
         record = session.execute("c")
 
@@ -213,9 +218,50 @@ def test_the_session_rebuilds_from_accepted_cells_after_a_refused_interrupt(cas_
         # is after any other death, and the interrupted cell is not among them.
         assert record.status == "ok"
         assert record.value_repr == "3"
-        assert "kernel restarted" in record.restart_note
+        assert ("saved session reopened" if reopen else "kernel restarted") in record.restart_note
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("source", ["hang", "swallow"])
+@pytest.mark.parametrize("reopen", [False, True])
+def test_live_unaccepted_cells_block_recovery_even_after_a_later_kernel_death(
+    cas_session, tmp_path, patient_grace, source, reopen
+) -> None:
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    try:
+        session.execute("a")
+        ready = tmp_path / "cell-running"
+        threading.Thread(target=_press_when_running, args=(session, ready), daemon=True).start()
+        interrupted = session.execute(f"{source} {ready}")
+        assert not interrupted.accepted and interrupted.kernel_lost is False
+        session.resume()
+        assert session.execute("b").accepted
+        assert session.execute("die").kernel_lost is True
+        if reopen:
+            session.close()
+            session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+        with pytest.raises(CasError, match="unaccepted cell"):
+            session.execute("c")
+        assert session.state == "poisoned"
+    finally:
+        session.close()
+
+
+def test_legacy_interrupted_kernel_survival_is_unknown_and_refuses_recovery(cas_session):
+    import json
+
+    session = cas_session()
+    session.execute("a")
+    path = session.log_path
+    session.close()
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    record.update(status="interrupted", accepted=False)
+    record.pop("kernel_lost", None)
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    reopened = cas_session()
+    with pytest.raises(CasError, match="unaccepted cell"):
+        reopened.execute("b")
 
 
 def test_interrupting_an_idle_session_reports_that_it_reached_nothing(cas_session) -> None:

@@ -1036,7 +1036,7 @@ def test_a_rebuild_refuses_failed_cells_whose_effects_it_cannot_replay(tmp_path,
         session.execute("hang")
         assert session.state == "dead"
 
-        with pytest.raises(CasError, match=rf"failed or interrupted cell\(s\) \[{failed.seq}\]"):
+        with pytest.raises(CasError, match=rf"unaccepted cell\(s\) \[{failed.seq}\]"):
             session.execute("d")
         assert session.state == "poisoned"
         assert session.records()[-1].source == "hang"

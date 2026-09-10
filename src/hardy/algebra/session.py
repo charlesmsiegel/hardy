@@ -961,19 +961,6 @@ class CasSession:
                         f"record: {because} The state is reconstructed, not "
                         "verified: rerun anything you mean to build on.]"
                     )
-                if report.unreplayed:
-                    # A failed cell is outside the accepted set by design, and
-                    # so is whatever it changed before it failed. On a backend
-                    # that fingerprints its namespace a later cell built on
-                    # that change fails to reproduce and poisons the rebuild;
-                    # on one that does not, this note is the only place the
-                    # gap is said out loud.
-                    notes = (notes + " " if notes else "") + (
-                        f"[cell(s) {list(report.unreplayed)} failed before being "
-                        "accepted and were not replayed: anything they changed on "
-                        "the way to failing is not in the rebuilt state. Rerun them "
-                        "if you meant to build on it.]"
-                    )
                 # The rebuild is billed, so it can be what exhausts the budget.
                 self._guard()
 
@@ -1042,6 +1029,7 @@ class CasSession:
                 source=source,
                 status=status,  # type: ignore[arg-type]
                 accepted=status == "ok" and not unverifiable and not perturbed,
+                kernel_lost=outcome.kernel_lost or status in {"timeout", "kernel_died"},
                 stdout=outcome.stdout,
                 stderr=outcome.stderr,
                 value_repr=outcome.value_repr,
@@ -1071,19 +1059,20 @@ class CasSession:
 
     def _restore(self) -> RebuildReport:
         """Rebuild live state after a death, and verify what was rebuilt."""
-        # Failed live cells can mutate the namespace before raising. Replaying
+        # Unaccepted live cells can mutate the namespace before returning. Replaying
         # only accepted cells cannot recover those effects, even when later
         # accepted cells produce the same output. Require an explicit reset.
         unreplayed = tuple(
             record.seq
             for record in self.cells()
-            if not record.accepted and record.status in {"error", "interrupted"}
+            if not record.accepted and record.kernel_lost is not True
+            and record.status not in {"timeout", "kernel_died"}
         )
         if unreplayed:
             self._drop_kernel()
             self.state = "poisoned"
             raise CasError(
-                "CAS state did not reproduce: failed or interrupted cell(s) "
+                "CAS state did not reproduce: unaccepted cell(s) "
                 f"{list(unreplayed)} may have changed the live state. "
                 "Reset the session to start clean."
             )
