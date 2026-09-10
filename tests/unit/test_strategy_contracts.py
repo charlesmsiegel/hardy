@@ -16,7 +16,12 @@ from hardy.formal.contracts import (
 )
 from hardy.formal.verifier import verification_source
 from hardy.workflows.contracts import ProofSubmission, RunLimits
-from hardy.workflows.strategies.contracts import ProofOutcome, ProofTask, Strategy
+from hardy.workflows.strategies import run_strategy
+from hardy.workflows.strategies.contracts import (
+    ProofOutcome,
+    ProofTask,
+    Strategy,
+)
 
 
 NOW = datetime(2026, 9, 9, tzinfo=UTC)
@@ -70,17 +75,42 @@ class DeterministicStrategy:
         )
 
 
+class WrongTaskStrategy:
+    """Internally valid B evidence must not become A's result."""
+
+    def __init__(self, outcome: ProofOutcome) -> None:
+        self.outcome = outcome
+
+    def run(self, task: ProofTask) -> ProofOutcome:
+        return self.outcome
+
+
 def test_a_deterministic_strategy_returns_a_submission_not_a_grade() -> None:
     task = _task()
     strategy: Strategy = DeterministicStrategy()
 
-    outcome = strategy.run(task)
+    outcome = run_strategy(strategy, task)
 
     assert outcome.task == task
     assert outcome.status == "submitted"
     assert outcome.submission is not None
     assert outcome.submission.proof_body == "by norm_num"
     assert "formal" not in ProofOutcome.model_fields
+
+
+def test_strategy_invocation_rejects_an_internally_valid_outcome_for_another_task() -> None:
+    requested = _task()
+    other = _task(claim=_claim(theorem_name="another_name"))
+    submission = ProofSubmission(proof_body="by norm_num", informal_proof="Arithmetic.")
+    returned = ProofOutcome(
+        task=other,
+        status="submitted",
+        submission=submission,
+        evidence=_evidence(other, submission.proof_body),
+    )
+
+    with pytest.raises(ValueError, match="requested task"):
+        run_strategy(WrongTaskStrategy(returned), requested)
 
 
 @pytest.mark.parametrize("status", ["partial", "cancelled", "exhausted"])

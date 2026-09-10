@@ -99,3 +99,16 @@ class Strategy(Protocol):
 
     def run(self, task: ProofTask) -> ProofOutcome:
         """Return a descriptive attempt outcome without assigning a formal grade."""
+
+
+def run_strategy(strategy: Strategy, task: ProofTask) -> ProofOutcome:
+    """Invoke a strategy and bind its returned outcome to the requested task.
+
+    Callers use this boundary rather than calling ``strategy.run`` directly.
+    An internally valid outcome for another frozen claim is not a result for
+    this task, even if its proof and verification evidence match each other.
+    """
+    outcome = strategy.run(task)
+    if outcome.task != task:
+        raise ValueError("strategy outcome does not match the requested task")
+    return outcome
