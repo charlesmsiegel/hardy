@@ -14,6 +14,7 @@ from typing import Any
 
 from hardy.agents.usage import Usage
 from hardy.evals.contracts import Condition, Row, Scoreboard
+from hardy.evals.exposure import COHORTS, read_exposure
 from hardy.evals.outstanding import environment_digest_of_board
 from hardy.evals.scoreboard import _nested_run, recorded_strategy, scoreboard_self_issues
 
@@ -137,6 +138,11 @@ def _usage_totals(rows: list[dict[str, Any]], key: str) -> dict[str, Any]:
 
 def _side(path: Path, board: Scoreboard, issues: tuple[str, ...]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     rows = [_row(path, row, authenticated=not issues) for row in board.rows]
+    for row, recorded in zip(rows, board.rows, strict=True):
+        row["exposure"] = read_exposure(path / recorded.run_dir, plan=board.condition.exposure if row["authenticated"] else None,
+                                       run_procedure_digest=board.condition.run_procedure_digest,
+                                       problem_id=recorded.id, repeat=recorded.repeat,
+                                       expected_digest=recorded.exposure_sha256 if row["authenticated"] else None)
     summary = {
         "path": str(path.resolve()), "label": board.label,
         "started_at": board.started_at.isoformat(),
@@ -145,6 +151,9 @@ def _side(path: Path, board: Scoreboard, issues: tuple[str, ...]) -> tuple[dict[
         "condition": board.condition.model_dump(mode="json"),
         "environment": board.environment.model_dump(mode="json"), "host": board.host,
         "rows": len(rows),
+        "exposure_cohorts": {cohort: {"rows": sum(r["exposure"]["cohort"] == cohort for r in rows),
+            "solved": sum(r["exposure"]["cohort"] == cohort and r["authenticated"] and r["outcome"] == "solved" for r in rows)}
+            for cohort in COHORTS},
         "proof_usage": _usage_totals(rows, "proof_usage"),
         "canonical_review_usage": _usage_totals([r for r in rows if r["mode"] == "staged"], "canonical_review_usage"),
     }
@@ -238,5 +247,6 @@ def compare(left: Path, right: Path, *, varying: Iterable[str], problems_path: P
             "lean_checks counts model tool calls only; independent_verifier_calls counts separately journaled verifier starts, which may reject before invoking Lean. Total Lean process work is not measured.",
             "Canonical review usage is separate; provider reports are lower bounds because requested exchanges may be unrecorded.",
             "Duplicate slots prevent pairing; original rows and audit findings are retained.",
+            "Exposure cohorts concern the explicitly declared local source universe; provider pretraining is unknown. Split relationships are attributed declarations, not inferred semantic equivalence.",
         ],
     }

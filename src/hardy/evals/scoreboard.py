@@ -12,6 +12,7 @@ from typing import Any
 from hardy.corpus.problems import Entry
 from hardy.evals.contracts import Aggregates, Row, TierAggregate, Totals
 from hardy.evals.contracts import Outcome as Outcome
+from hardy.evals.exposure import exposure_digest, read_exposure
 from hardy.evals.sweep import Baseline, baseline_entries_mismatch, staleness
 from hardy.formal.contracts import EnvironmentIdentity, FormalStatus
 from hardy.workflows import recorded as acceptance
@@ -42,7 +43,7 @@ def _read(path: Path) -> Any:
 
 def batch_row(entry: Entry, tier: int, run_dir: Path, scoreboard_dir: Path, *, repeat: int) -> Row:
     base = dict(id=entry.id, tier=tier, twin_of=entry.twin_of, expected=entry.expected, mode="batch", repeat=repeat,
-                run_dir=_relative(run_dir, scoreboard_dir))
+                run_dir=_relative(run_dir, scoreboard_dir), exposure_sha256=exposure_digest(run_dir))
     # Asked before anything here is read: a run the audit cannot make sense of
     # is a finding for it to report, not a missing file for this function to
     # raise over.
@@ -118,7 +119,8 @@ def recorded_strategy(run_dir: Path) -> dict[str, Any] | None:
 def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, repeat: int) -> Row:
     run_dir = _nested_run(row_dir)
     base: dict[str, Any] = dict(id=entry.id, tier=tier, twin_of=entry.twin_of, expected=entry.expected, mode="staged", repeat=repeat,
-                                run_dir=_relative(row_dir, scoreboard_dir), approval="automatic")
+                                run_dir=_relative(row_dir, scoreboard_dir), approval="automatic",
+                                exposure_sha256=exposure_digest(row_dir))
     # Asked before anything here is read: a run the audit cannot make sense of
     # (including one with no nested run to find) is a finding for it to
     # report, not a missing or malformed file for this function to raise over.
@@ -456,6 +458,10 @@ def _self_issues(board: Any, scoreboard_dir: Path, problems: Any, baseline: Base
         # make sense of has nothing trustworthy for this to read (item 2).
         issues.extend(_condition_issues(row, run_dir, board.condition, board.environment, where))
         issues.extend(_entry_issues(entry, row, run_dir))
+        exposure = read_exposure(run_dir, plan=board.condition.exposure, problem_id=row.id, repeat=row.repeat,
+                                 run_procedure_digest=board.condition.run_procedure_digest,
+                                 statement_sha256=entry.statement_digest(), expected_digest=row.exposure_sha256)
+        issues.extend(f"{where}: {issue}" for issue in exposure["issues"])
         for field in Row.model_fields:
             # `workers` names the concurrency the run itself was made under,
             # not something a run directory's own artifacts record -- unlike

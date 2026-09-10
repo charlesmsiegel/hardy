@@ -242,8 +242,10 @@ def test_contemporaneous_scripted_staged_arms_authenticate_and_compare(tmp_path,
     boards, states, kwargs = _paired_staged_boards(tmp_path, treatments)
     result = compare(*boards, varying=(varying,), **kwargs)
     assert result["comparability"]["differences"] == [varying]
-    assert result["comparability"]["recorded_controls_match"]
-    assert result["comparability"]["unknown"] == []
+    # These F fixtures predate prospective local-exposure recording. Their
+    # proof controls still match, but absent memory provenance is unknown.
+    assert not result["comparability"]["recorded_controls_match"]
+    assert result["comparability"]["unknown"] == ["exposure"]
     assert all(side["audit_issues"] == [] for side in result["sides"].values())
     pair = result["pairs"][0]
     assert pair["left"]["outcome"] == pair["right"]["outcome"] == "solved"

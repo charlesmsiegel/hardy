@@ -16,6 +16,7 @@ from hardy.corpus.catalog import load_corpus, manifest_digest
 from hardy.corpus.problems import Entry, sha256_of
 from hardy.corpus.problems import ProblemSet as ProblemSet
 from hardy.evals.contracts import Condition, RefusedRun, Scoreboard
+from hardy.evals.exposure import ExposureRecorder
 from hardy.evals.identity import RUN_SOURCE_EXCLUDED_DIRS as RUN_SOURCE_EXCLUDED_DIRS
 from hardy.evals.identity import RUN_SOURCE_EXCLUDED_FILES as RUN_SOURCE_EXCLUDED_FILES
 from hardy.evals.identity import RUN_SOURCE_ROOT as RUN_SOURCE_ROOT
@@ -109,7 +110,17 @@ def _write(path: Path, board: Scoreboard) -> None:
 
 def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards_root: Path, condition: Condition,
             environment: EnvironmentIdentity, batch_runner: BatchRunner, staged_runner: StagedRunner | None = None,
-            now: Callable[[], datetime], report: Callable[[str], None], workers: int = 1) -> Path:
+            now: Callable[[], datetime], report: Callable[[str], None], workers: int = 1,
+            run_exposed: Callable[[Entry, Path, str, ExposureRecorder], None] | None = None) -> Path:
+    condition = Condition.model_validate(condition.model_dump())
+    if (condition.exposure is None) != (run_exposed is None):
+        raise RefusedRun("exposure condition requires its named exposure-aware runner")
+    if condition.exposure is not None:
+        expected_digest = run_procedure_digest_of(model=condition.model, mode=condition.mode,
+            limits=condition.limits, repeats=condition.repeats, strategy=condition.strategy,
+            history_mode=condition.history_mode, reviewer_model=condition.reviewer_model, exposure=condition.exposure)
+        if condition.run_procedure_digest != expected_digest:
+            raise RefusedRun("run identity does not bind the exposure treatment")
     if not LABEL_RE.fullmatch(label):
         # Before anything is read or created: `scoreboards_root / label`
         # would otherwise resolve outside `evals/scoreboards` for a label
@@ -125,6 +136,10 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     # an entry that never runs needs none. Asking for whole-corpus coverage
     # made a 1166-entry corpus demand a 1166-entry sweep before a run of 11.
     entries = select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True))
+    if condition.exposure is not None:
+        assignments = {a.problem_id: a.statement_sha256 for a in condition.exposure.assignments}
+        if any(assignments.get(entry.id) != entry.statement_digest() for entry in entries):
+            raise RefusedRun("exposure split must identify every selected exact statement")
     if not entries:
         # Before `out` is created: `--tiers 2` against a baseline with no
         # tier-2 entries, or `--only <twin> --no-twins`, would otherwise
@@ -159,7 +174,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     out = scoreboards_root / label
     if out.exists():
         raise RefusedRun(f"{out} already exists; a label is one condition on one day")
-    if condition.mode == "staged" and staged_runner is None:
+    if condition.mode == "staged" and staged_runner is None and run_exposed is None:
         raise RefusedRun("staged mode needs a staged runner")
     out.mkdir(parents=True)
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),
@@ -185,7 +200,15 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
         mode = "batch" if entry.expected == "false" else condition.mode
         report(f"{entry.id} [{mode} {repeat}]")
         row_dir = out / "runs" / entry.id / f"{mode}-{repeat}"
-        if mode == "batch":
+        if run_exposed is not None:
+            recorder = ExposureRecorder(row_dir, condition.exposure, problem_id=entry.id,
+                                        repeat=repeat, statement_sha256=entry.statement_digest(),
+                                        run_procedure_digest=condition.run_procedure_digest)
+            run_exposed(entry, row_dir, mode, recorder)
+            recorder.finish()
+            row = (batch_row(entry, tier, row_dir, out, repeat=repeat) if mode == "batch"
+                   else staged_row(entry, tier, row_dir, out, repeat=repeat))
+        elif mode == "batch":
             # A batch-mode condition's own limits govern a batch row. A twin
             # under a staged condition still runs batch (the loop grades
             # every unverified staged run partial, #23), but staged limits

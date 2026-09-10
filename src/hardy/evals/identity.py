@@ -7,6 +7,7 @@ from pathlib import Path
 from hardy import __version__
 from hardy.evals import digests
 from hardy.evals.contracts import proof_treatment
+from hardy.evals.exposure import ExposurePlan
 
 RUN_SOURCE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,7 +54,7 @@ def run_source_paths() -> tuple[Path, ...]:
 
 def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | int], repeats: int,
                            strategy: str | None = None, history_mode: str | None = None,
-                           reviewer_model: str | None = None) -> str:
+                           reviewer_model: str | None = None, exposure: ExposurePlan | None = None) -> str:
     """What a pooled row must share: the deciding source, the prompts, the model, its budgets and its repeats.
 
     The mirror of `sweep.procedure_digest_of`, for the run rather than the
@@ -84,6 +85,7 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
         "mode": mode,
         "limits": limits,
         "repeats": repeats,
+        **({"exposure": ExposurePlan.model_validate(exposure.model_dump()).digest} if exposure is not None else {}),
         **proof_treatment(mode=mode, strategy=strategy, history_mode=history_mode),
         **({"reviewer_model": reviewer_model or model,
             "canonical_template_sha256": canonical_template_digest_of()} if mode == "staged" else {}),

@@ -55,6 +55,9 @@ def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> l
                 continue
             if (run_digest, environment_digest_of_board(board)) != key:
                 continue
+            from hardy.evals.exposure import board_exposure_issues
+            if board_exposure_issues(board_path.parent, board):
+                continue
         except (OSError, ValueError, KeyError, TypeError):
             continue
         matched.append(board_path.parent.name)

@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import model_validator
 
+from hardy.evals.exposure import ExposurePlan
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.foundation.values import FrozenModel
 
@@ -42,6 +43,7 @@ class Row(FrozenModel):
     # self-describing: a contended figure summed across rows overstates serial
     # wall clock, and a bare number invites a later reader to mistake it for one.
     workers: int | None = None
+    exposure_sha256: str | None = None
 
 
 class TierAggregate(FrozenModel):
@@ -142,6 +144,7 @@ class Condition(FrozenModel):
     history_mode: str | None = None
     reviewer_model: str | None = None
     canonical_template_sha256: str | None = None
+    exposure: ExposurePlan | None = None
     limits: dict[str, float | int]
     repeats: int
     selection: dict[str, Any]
