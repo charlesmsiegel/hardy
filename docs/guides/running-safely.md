@@ -8,8 +8,7 @@ Hardy executes model-generated code, Lean, LaTeX, and computer algebra
 cells, directly on your machine, with no sandbox between that code and your
 files, your credentials, and your network. Every surface that can execute a
 cell says so; this page is the other half of that warning, and it holds
-until the confinement policy in [ISOLATION.md](../ISOLATION.md)
-<!-- relink to ../isolation.md after the rename --> is built.
+until the confinement policy in [isolation.md](../isolation.md) is built.
 
 The one-line version: **treat the machine Hardy runs on as disposable, and
 make that literally true by running Hardy inside a container or virtual
@@ -105,8 +104,7 @@ is the bad assumption this document exists to prevent.
   host that refuses the assignment, leaves the started process as all a
   stop can reach, which is what every Windows stop was before this
   existed. Any process this launcher never tracked at all is untouched
-  either way. See [ISOLATION.md](../ISOLATION.md)
-  <!-- relink to ../isolation.md after the rename --> for the confinement
+  either way. See [isolation.md](../isolation.md) for the confinement
   policy this gap is measured against.
 
 ## Prompt injection is not prevented
@@ -163,8 +161,7 @@ subprocess is a process seam but not a usable boundary: it runs on the
 same unconfined host, and that SDK's agent reaches the filesystem on its
 own anyway. Either way, isolating Hardy means isolating all of it, model
 loop and executors together, until the confinement policy in
-[ISOLATION.md](../ISOLATION.md)
-<!-- relink to ../isolation.md after the rename --> is built.
+[isolation.md](../isolation.md) is built.
 
 Whatever the platform, the pattern is the same:
 
@@ -266,8 +263,7 @@ changes what the artifacts mean: the audit still runs inside the
 environment it audits, and the independent re-check that would close
 that gap does not exist yet.
 
-Until the confinement policy in [ISOLATION.md](../ISOLATION.md)
-<!-- relink to ../isolation.md after the rename --> is implemented (no
+Until the confinement policy in [isolation.md](../isolation.md) is implemented (no
 network by default, read-only inputs, quota-limited scratch space, and
 resource limits, exercised against deliberately hostile inputs), the
 isolation is yours to provide, and this document is how.

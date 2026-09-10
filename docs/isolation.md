@@ -1,9 +1,10 @@
 # Confinement policy and implementation acceptance
 
-S0 design/spike, 2026-09-10. This document specifies the boundary S1 must
-implement. Current Hardy execution is not confined. The baseline probe records
-that its child can read and write outside its working directory and connect to
-a local listener. All targets are disposable fixtures owned by the probe.
+Design and spike, 2026-09-10. This document specifies the boundary process
+isolation ([roadmap](roadmap.md)) must implement. Current Hardy execution is not
+confined. The baseline probe records that its child can read and write outside its
+working directory and connect to a local listener. All targets are disposable
+fixtures owned by the probe.
 
 ## One owner and an explicit launch contract
 
@@ -85,9 +86,10 @@ Job Objects provide aggregate committed-memory and user-mode CPU-time limits,
 but these do not supply a filesystem quota.
 [Job limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information).
 
-No complete native Windows S1 boundary was established under the available
-capabilities and authorized setup. No profiles, ACLs, services or machine
-configuration were changed by this investigation. S1 and S2 remain incomplete.
+No complete native Windows confinement boundary was established under the
+available capabilities and authorized setup. No profiles, ACLs, services or
+machine configuration were changed by this investigation. Process isolation and
+the independent audit ([roadmap](roadmap.md)) remain incomplete.
 
 ## Capability integration and independent audit
 
@@ -99,27 +101,115 @@ scratch and read-only archive; its validated output becomes a new immutable inpu
 Every helper process must enter the same policy, including descendants created by
 compilers and interpreter libraries. Network acquisition remains a distinct owner.
 
-S2 requires a separate trusted verifier, not another `#print axioms` appended to
-the audited environment. It must read the exact compiled declaration and its
+The independent audit ([roadmap](roadmap.md)) requires a separate trusted
+verifier, not another `#print axioms` appended to the audited environment. It must read the exact compiled declaration and its
 dependencies as data, recheck their kernel terms in a trusted fixed implementation,
 and enumerate axioms without executing source-provided elaborators or initialization
 hooks. Replacing the audited claim, importing an unauthenticated compiled file or
 trusting stdout emitted by the audited process would invalidate the result.
 Record verifier/toolchain identity, theorem identity and the complete imported
-artifact closure. S1's OS boundary protects the host; it does not by itself make
-an in-environment axiom reporter authoritative.
+artifact closure. The operating-system boundary protects the host; it does not by
+itself make an in-environment axiom reporter authoritative.
 
 ## Reproduce the baseline
 
-```powershell
+```sh
 uv run --extra test python scripts/probe_isolation.py
 uv run --extra test pytest tests/unit/test_process.py -q
 ```
 
+The recorded baseline was taken on Windows; the commands are the same on every
+platform, and a run elsewhere records that platform's own observations.
+
 The probe exercises the existing `run_process` owner with a trusted Python child.
 It sends no credentials and contacts no external server. Its source digest and
 machine observations are recorded in the accompanying
-[baseline report](superpowers/reports/2026-09-10-isolation-baseline.json).
+[baseline report](isolation-baseline.json). Its `probe_sha256` binds the record
+to the bytes of the `scripts/probe_isolation.py` that produced it, so a probe
+that has since changed no longer matches its own baseline.
 Successful access proves the current launcher grants that authority. Denial could
 come from the surrounding host and does not establish an implemented Hardy policy.
-S1 and S2 remain incomplete until their real acceptance attacks pass.
+Process isolation and the independent audit remain incomplete until their real
+acceptance attacks pass.
+
+## Independent verifier: a lead
+
+`Get-Command leanchecker` finds an elan shim. Its SHA-256 equals `elan.exe`'s, so
+its presence on PATH says nothing at all about verifier availability. Direct file
+checks find a real `bin/leanchecker` in the installed toolchains
+`leanprover--lean4---v4.32.0`, `leanprover--lean4---v4.32.1`,
+`leanprover--lean4---v4.33.0-rc1` and `leanprover--lean4---v4.33.1`.
+
+Read-only examination of the installed 4.33.1 official source establishes a
+concrete lead. `LeanChecker.lean`'s `replayFromFresh` uses `withImportModules` and
+replays the loaded constants in `mkEmptyEnvironment`. In `Lean/Environment.lean`,
+`withImportModules` forces `loadExts := false`. `Lean/Replay.lean` sends
+declarations through `addDeclCore` at trust level zero, checks regenerated
+constructors and recursors, and excludes unsafe and partial constants from the
+initial replay set. That is a possible building block, not a result: its handling
+of every relevant artifact and adversarial case is not established by reading
+these functions.
+
+The stock CLI does not provide Hardy's required exact-theorem, complete axiom
+set, pinned artifact-closure and verifier-identity receipt. Ordinary mode replays
+new declarations against imported environments, and `--fresh` is the relevant
+lead because it replays imported declarations too. The source describes the tool
+as an environment-hacking detector rather than an external verifier, and a
+distinct implementation is not inferred from its name.
+
+A direct invocation of the installed 4.33.1 binary with `--help` produces no help
+output. Source inspection explains why: unrecognized flags are ignored, so
+`--help` starts default module discovery and replay instead. No result from such
+an invocation counts as evidence. A probe reads the CLI source before choosing
+flags, and passes an explicit trusted module and a deadline.
+
+File identities under the 4.33.1 toolchain directory
+(`.elan/toolchains/leanprover--lean4---v4.33.1/`):
+
+| File | SHA-256 |
+| --- | --- |
+| `bin/leanchecker.exe` | `31b506f83737b7d629fd11699df5aaf88c3b50be23c28219e6b283f0de98f85c` |
+| `src/lean/LeanChecker.lean` | `eb5dee411837629f09c5c18d63cc833d30335a46048bc586642742e90aa65d5f` |
+| `src/lean/Lean/Replay.lean` | `5ea88ea9b6c374ad74b8c6f5d36117cec00ec64202aff37f7cff0c6765fb746d` |
+| `src/lean/Lean/Environment.lean` | `ee364e4788ce0560c87f621eeb3c4c3dfec62e8db4e15e099fd80e6adc533b86` |
+
+### Remaining work, in order
+
+1. Establish an enforceable Windows scratch-byte and file-count mechanism in an
+   authorized disposable environment, or obtain another actual test platform.
+   Installing a Linux runtime alone does not establish the native Windows policy.
+2. Implement the complete fail-closed launch contract and run the real acceptance
+   attacks, including descendant writers and positive network controls. Process
+   isolation stays incomplete until those pass.
+3. Only then evaluate a fixed trusted verifier built around replay without
+   loading audited extensions. Bind its receipt to the exact compiled
+   declaration, the imported artifact closure, the axiom enumeration and pinned
+   verifier and toolchain identities, and test it adversarially. Stock
+   `leanchecker` availability alone does not complete the independent audit.
+
+This section is inventory and source inspection, not an integration-test pass. No
+host profiles, ACLs, services, installations or machine configuration were
+changed to produce it, and no new isolation attacks, generated Lean or corpus
+workloads were run.
+
+## Process bounds established
+
+The shared process owner rejects invalid requests before launching a child,
+bounds captured stdout and stderr, and detects a one-byte overflow without
+waiting for the deadline. Overflow stays distinct from timeout and does not become
+a success even when the child exits successfully. Two concrete regressions are
+covered: invalid bounds accepted by `ProcessSpec`, and compiler capture that
+accumulated unbounded output. Doctor and interactive Lean-path probes refuse
+truncated answers, and TeX diagnostics disclose the overflow. The existing write,
+locking and redaction owners remain in place, and credential filtering does not
+prove the absence of every secret shape.
+
+## What remains unconfined
+
+The launch contract has no accepted implementation. A trusted independent verifier
+of the exact compiled declaration and imported artifact closure still does not
+exist, and the current axiom reporter runs inside the audited Lean environment.
+Process termination and output bounds establish neither filesystem and network
+confinement nor independent mathematical authority. Lean, TeX, CAS and helper
+processes remain unconfined, and no safety or shared-service readiness claim
+follows from the process work.

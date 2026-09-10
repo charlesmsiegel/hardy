@@ -1,6 +1,6 @@
 # Hardy architecture: reusable primitives for research, auditing, and publication
 
-**Status:** architecture direction
+**Status:** as built, with the remaining seams noted
 
 Hardy should maintain **one persistent mathematical project model** and expose a small number of trustworthy primitives over it. Research, Referee, Critique, Repair, Publication, Prove, and Explore should be different compositions of those primitives, not separate systems with their own state.
 
@@ -27,6 +27,7 @@ The current top-level packages remain the right owners:
 | `documents/` | TeX parsing/checking/compilation/rendering/export |
 | `algebra/` | persistent CAS execution and replay/export |
 | `corpus/` | evaluation problem data |
+| `prompts/` | prompt rendering, prompt identity and packaged templates |
 | `evals/` | experiments, scoreboards, comparisons |
 | `workflows/` | composition of capabilities into mathematical work |
 | `app/` | CLI/TUI/MCP/construction adapters |
@@ -659,42 +660,50 @@ Dependency-level parallelism comes from independent ready obligations/goals in t
 
 ## 17. Target source tree
 
+Every module below exists under `src/hardy/`, except the single line still marked
+`+`.
+
 ```text
 src/hardy/
 ├── literature/
 │   ├── existing modules...
-│   ├── manuscript.py                  +
-│   └── diff.py                        + later
+│   ├── manuscript.py
+│   └── diff.py
 ├── workflows/
-│   ├── context.py                     +
-│   ├── representation.py              +
-│   ├── formalization.py               +
-│   ├── admission.py                   +
-│   ├── publication.py                 +
-│   ├── critique.py                    +
-│   ├── repair.py                      +
-│   ├── research.py                    +
-│   ├── referee.py                     +
-│   ├── ledger/                        +
+│   ├── context.py
+│   ├── representation.py
+│   ├── formalization.py
+│   ├── admission.py
+│   ├── publication.py
+│   ├── critique.py
+│   ├── repair.py
+│   ├── research.py
+│   ├── referee.py
+│   ├── ledger/
 │   │   ├── contracts.py
 │   │   ├── store.py
+│   │   ├── state.py
 │   │   ├── graph.py
 │   │   ├── policy.py
+│   │   ├── validation.py
 │   │   └── views.py
-│   ├── acquisition/                   +
-│   │   ├── classify.py
+│   ├── acquisition/
+│   │   ├── contracts.py
+│   │   ├── classifier.py
 │   │   ├── definitions.py
 │   │   ├── literature.py
 │   │   ├── interfaces.py
-│   │   └── resolve.py
-│   ├── strategies/                    +
+│   │   └── resolver.py
+│   ├── strategies/
 │   │   ├── contracts.py
 │   │   ├── iterative.py
 │   │   ├── sketch.py
-│   │   ├── best_first.py              + later
-│   │   └── parallel.py                + later
-│   ├── prove.py                       modify
-│   ├── batch.py                       modify
+│   │   ├── escalating.py
+│   │   ├── lessons.py
+│   │   ├── best_first.py
+│   │   └── race.py
+│   ├── prove.py
+│   ├── batch.py
 │   └── interactive/
 │       ├── session.py                 shrink over time
 │       ├── admission.py               adapter
@@ -702,11 +711,11 @@ src/hardy/
 │       ├── documents.py
 │       ├── record.py
 │       ├── summary.py                 ledger-aware
-│       └── history.py                 + later
+│       └── history.py
 ├── evals/
-│   └── compare.py                     + later
+│   └── compare.py
 └── foundation/
-    └── isolation.py                   + later
+    └── isolation.py                   +
 ```
 
 No separate `goals.py`, `approaches.py`, or `notation.py` module is required initially. Goal/approach state is ordinary ledger state governed by `ledger/policy.py`; notation/transport is mathematical context state governed by `workflows/context.py`. Add a new module only if implementation exposes a real independent seam.
@@ -739,9 +748,9 @@ Enforce these with tests:
 22. user/model-written Lean still passes the existing guarded save/audit path;
 23. CAS results never change a formal grade.
 
-## 19. First seams to freeze
+## 19. Seams, as frozen
 
-Before the high-level workflows proliferate, stabilize:
+These are the seams the rest of the work is built over, and they are frozen:
 
 1. `workflows/ledger/` contracts/store/graph/policy, including concept/representation/declaration/context/question/conjecture/goal/approach semantics;
 2. `workflows/context.py`, including notation/conventions and justified transport;
@@ -753,4 +762,4 @@ Before the high-level workflows proliferate, stabilize:
 8. `literature/manuscript.py`;
 9. `workflows/publication.py` plan contracts.
 
-Once these exist, Research, Referee, Critique, Repair, Publication, and exploratory mathematical work can be built largely independently over one mathematical project model.
+With these in place, Research, Referee, Critique, Repair, Publication, and exploratory mathematical work are built largely independently over one mathematical project model.

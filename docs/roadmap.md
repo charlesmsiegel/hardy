@@ -12,7 +12,7 @@ nobody built. All of them are not started, and each states its own dependencies.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
-[Supporting evaluation protocols and audit procedures](ideas/README.md) retain
+[Supporting evaluation protocols and audit procedures](archive/ideas/README.md) retain
 measurement controls, concrete failure cases, and source rationale from earlier
 planning. They support this roadmap; their historical priorities and task
 sequencing do not override it.
@@ -478,7 +478,7 @@ saved theorems is still mechanically unremarkable to Hardy.
 
 ## S0 — Process-isolation design/spike — HARDEN
 
-**Status:** Completed design/spike: shared acceptance policy, disposable Windows baseline and native capability investigation. The baseline establishes current authority, not confinement. See the [isolation policy](ISOLATION.md).
+**Status:** Completed design/spike: shared acceptance policy, disposable Windows baseline and native capability investigation. The baseline establishes current authority, not confinement. See the [isolation policy](isolation.md).
 
 **Deps:** none
 
@@ -496,7 +496,7 @@ The later anti-cheat audit must execute where audited Lean source cannot modify 
 
 ## S1 — Process isolation implementation — HARDEN
 
-**Status:** Unaccepted: the tested native Windows capabilities do not establish the required aggregate scratch byte and file-count quotas. No complete policy implementation or confinement claim. See the [capability findings](ISOLATION.md#native-windows-capability-findings-2026-09-10).
+**Status:** Unaccepted: the tested native Windows capabilities do not establish the required aggregate scratch byte and file-count quotas. No complete policy implementation or confinement claim. See the [capability findings](isolation.md#native-windows-capability-findings-2026-09-10).
 
 **Deps:** S0
 

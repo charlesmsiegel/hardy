@@ -1,7 +1,10 @@
 # Research strategy and supporting checks
 
-Start with the [canonical roadmap](../roadmap.md) and
-[research architecture](../research-architecture.md). They control delivery
+Archived planning material. Nothing here describes the current tree; see
+[`docs/README.md`](../../README.md).
+
+Start with the [canonical roadmap](../../roadmap.md) and
+[research architecture](../../research-architecture.md). They control delivery
 order, task IDs, ownership, and issue policy. The older root `ROADMAP.md` is
 superseded and is not carried into this branch.
 
@@ -12,10 +15,9 @@ implementation plan. Its sequencing, issue dispositions, and architectural
 recommendations yield to the current roadmap and research architecture.
 
 These are proposals, not implemented features or a delivery commitment. The
-[README](../../README.md), [design](../../DESIGN.md),
-[feature inventory](../../FEATURES.md), [architecture overview](../../ARCHITECTURE.html),
-and [installation guide](../INSTALL.md) describe the existing implementation
-and its limits. Their older future sequencing yields to the roadmap; the
+[README](../../../README.md), the [design overview](../../design/overview.md),
+and the [installation guide](../../install.md) describe the existing
+implementation and its limits. Their older future sequencing yields to the roadmap; the
 first-experiment acceptance contract remains the regression floor.
 
 ## Historical context

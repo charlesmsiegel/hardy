@@ -62,8 +62,8 @@ coverage intent, not a statistical guarantee.
 
 ## Coverage and strategy alignment
 
-The [canonical roadmap](../../roadmap.md) and
-[research architecture](../../research-architecture.md) control current work.
+The [canonical roadmap](../../../roadmap.md) and
+[research architecture](../../../research-architecture.md) control current work.
 The retained protocols add concrete measurement and review detail; the
 [strategy synthesis](../HARDY_STRATEGY_SYNTHESIS_2026-09-08.md) supplies historical
 rationale and suite definitions:

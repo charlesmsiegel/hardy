@@ -376,6 +376,5 @@ only with model output you are willing to trust.
 disposability real, install into a container or VM that holds only the
 work, and what the trust boundary is and is not;
 [Trust boundary](design/trust-boundary.md) carries the design argument.
-[ISOLATION.md](ISOLATION.md)
-<!-- relink to isolation.md once it exists -->
+[isolation.md](isolation.md)
 tracks the confinement work that will narrow this boundary.

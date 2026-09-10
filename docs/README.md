@@ -41,10 +41,8 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 
 - [Roadmap](roadmap.md): tracks the work that remains and is the one place status lives.
 - [Research architecture](research-architecture.md): sets out the direction for research, auditing, and publication features built on shared primitives.
-- [Isolation](ISOLATION.md): specifies the confinement boundary a sandboxed run must implement.
-  <!-- relink to isolation.md after the rename -->
+- [Isolation](isolation.md): specifies the confinement boundary a sandboxed run must implement.
 
 ## Archive
 
-- [Ideas](ideas/README.md): collects retained research and audit proposals that do not override the roadmap.
-  <!-- relink to archive/ideas/README.md after the move -->
+- [Ideas](archive/ideas/README.md): collects retained research and audit proposals that do not override the roadmap.
