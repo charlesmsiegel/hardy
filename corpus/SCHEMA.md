@@ -5,8 +5,8 @@ Mathlib, for measuring what automated provers and language models can do — and
 where the library they depend on falls short.
 
 Licensed CC-BY-4.0 (see `LICENSE`). The design and its reasoning are in
-`docs/superpowers/specs/2026-09-03-corpus-design.md` in the Hardy repository;
-this file is the reader's guide to the data.
+`docs/design/corpus.md` in the Hardy repository, and the measurements over it in
+`docs/design/evaluation.md`; this file is the reader's guide to the data.
 
 ## What is here
 
@@ -53,6 +53,23 @@ the antecedent rule.
 | `review` | the recorded human read that promoted the entry, bound to its digests *and* its classification |
 | `audit` | spot-audit verdicts, each bound to the measurement panel that raised it |
 | `fixtures` | ids of antecedents injected only in the fixtured condition |
+
+Three rules the table has no room for:
+
+**Canonicity counts distinct sources, and its numerator and denominator range
+over the same population.** Only occurrences in source and field pairs marked
+fully surveyed count toward the numerator, against a denominator of the texts
+surveyed for that field: counting every citation against a surveyed-only
+denominator mixes populations, can put the numerator above the denominator, and
+misclassifies entries as core.
+
+**`title` and `name` are asymmetric on purpose.** A title is a retrieval cue and
+never reaches a model; a Lean identifier is a label the declaration cannot omit,
+so `name` does reach it.
+
+**No reference proofs are stored.** The entry gate is the mechanical checks plus
+a human faithfulness read, so nobody has to be able to prove an entry for it to
+enter, and broken problems are expected.
 
 ## Writing a witness
 
