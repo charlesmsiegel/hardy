@@ -151,6 +151,49 @@ fixtures. Application-specific model/readers and terminal wiring remain separate
 Core E is deferred for human input. No real-paper acceptance or live-model result
 is inferred from deterministic software tests.
 
+## Core F proof search and comparison
+
+`formal/budget.py` owns synchronized check allocation and a single deadline.
+Restricted views reserve checks without restarting either ceiling. Iterative,
+sketch and best-first strategies can share this owner with model-facing Lean
+tools. A reservation meters operation starts; runtime owners still bound and
+cancel work already in flight. Token/cost reserve-settle accounting remains X5.
+
+The best-first frontier contains exact textual proof candidates, parent links,
+heuristic priorities and full verifier observations. It is not a saved Lean
+elaborator state. Stable ties and source deduplication bound repeated work;
+proposal limits stop expansion while queued candidates can still be checked.
+Staged Claude binds the owner after faithfulness approval and shares one tool
+runtime/retriever across proof threads. Canonical verifier artifacts keep the
+existing recorded-result audit path. An unsupported transport cannot opt into
+best-first by silently allocating independent tool budgets.
+
+Race attempts use distinct provider contexts, branch-local cancellation and
+separate artifact stores. The coordinator freshly verifies a candidate before
+choosing it and drains losers before collecting total usage. Failed opens and
+missing reports remain unknown spend. Escalation gives each stage an allotment
+from the same owner; an unverified stage advances, while near exhaustion a
+configured cheap stage takes precedence. A stage cutoff does not reset or end
+the remaining run budget. Neither workflow modifies the frozen mathematical task.
+
+`strategies/lessons.py` derives compact tried/Lean-response/do-not-repeat notes
+from authenticated frontier artifacts and recorded checks. It binds the exact
+task, environment, assumptions and proof source, retains complete artifact
+references and marks shortened fields or omitted attempts. A response for a
+different source is quarantined. Replay is rederived before being journaled;
+invented lesson text or changed evidence is refused. These are tactic-level
+observations, not a second mathematical approach store or theorem judgments.
+
+The X1 comparison reader authenticates existing scoreboard evidence and pairs
+exact problem/repeat slots. It retains invalid/unmatched rows and reports
+complete, partial and missing measurement coverage, with canonical reader cost
+separate from proof cost. Source/treatment identity is recorded prospectively;
+missing identity stays unknown. Strategy/history, provider context policy,
+shared-tool budgeting and canonical reviewer/template identities remain separate
+controls; the run/todo key includes the selected treatment and reviewer.
+Matching recorded controls alone cannot prove
+causality, independence, fixed token/cost budgets or model improvement.
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

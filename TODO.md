@@ -4,8 +4,8 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 29 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6 and D0-D9).**
-Checkmarks mean the roadmap records the item as implemented. Core D passed its full hermetic landing gate. Unchecked items
+**Completed: 34 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3 and X1).**
+Checkmarks mean the roadmap records the item as implemented. Core D and F passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
 
@@ -14,9 +14,12 @@ capability/model/search adapters and CLI/UI wiring remain later work. See the
 [Core D verification report](docs/superpowers/reports/2026-09-10-core-d.md)
 for validation results and integration limits.
 
+Core F and X1 verification is tracked in the
+[Core F report](docs/superpowers/reports/2026-09-10-core-f.md).
+
 ## Available next work
 
-Continue with Core F, then eligible G/H/I
+Continue with Core G, then eligible H/I
 work. **Skip all of Core E pending human input.** Independent X, S and V work
 retains its own dependencies; X1 supports strategy comparison and X5 supports
 fixed token/cost budgets.
@@ -63,6 +66,26 @@ flowchart LR
     D4 --> E1["E1 Synthetic referee manuscript - deferred"] & E2["E2 Real paper audit - deferred"]
     E1 --> E2
     D5 & D6 --> E3["E3 Publish selected theorem - deferred"]
+```
+
+The next sections can proceed without Core E. Dotted edges remain recommended
+or measurement dependencies rather than additional mandatory prerequisites.
+
+```mermaid
+flowchart LR
+    A4C5["A4 / C5 - done"] --> F0["F0 Frontier - done"] & F1["F1 Race - done"]
+    F0 --> F2["F2 Escalation - done"]
+    X1["X1 Comparison - done"] -.-> F1
+    X1 --> F3["F3 Failed-attempt lessons - done"]
+    C2D4["C2 / D4 - done"] --> G0["G0 Citation depth"]
+    A5B1B3D4["A5 / B1 / B3 / D4 - done"] --> G1["G1 Paper version diff"]
+    D5D6["D5 / D6 - done"] --> G2["G2 Chapters and books"]
+    D5["D5 - done"] --> G3["G3 Exposition refresh"]
+    Ledger["Ledger and stable artifacts"] --> H0["H0 Project retrieval"]
+    H0 --> H1["H1 Reuse measurement"] --> H2["H2 Contamination-aware evaluation"]
+    X2["X2 Transcript durability"] -.-> I0["I0 Conversation history"]
+    X1 -.-> V1["V1 Regression tracking"]
+    Budgets["Stable budgets and identities"] --> V2["V2 Certified pass at k"]
 ```
 
 ## Core A: contracts and seams
@@ -116,10 +139,10 @@ flowchart LR
 
 ## Core F: proof search
 
-- [ ] [F0 - Best-first proof search - P1/P2](docs/roadmap.md#f0--best-first-proof-search--p1p2) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0).
-- [ ] [F1 - Diverse parallel proof attempts - P1/P2](docs/roadmap.md#f1--diverse-parallel-proof-attempts--p1p2) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0); [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) desirable.
-- [ ] [F2 - Strategy escalation/degradation - P2](docs/roadmap.md#f2--strategy-escalationdegradation--p2) - Deps: at least two working strategies + shared budgets.
-- [ ] [F3 - Compact lessons from failed attempts - P2](docs/roadmap.md#f3--compact-lessons-from-failed-attempts--p2) - Deps: stable strategy trajectories; [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) for measurement.
+- [x] [F0 - Best-first proof search - P1/P2](docs/roadmap.md#f0--best-first-proof-search--p1p2) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0).
+- [x] [F1 - Diverse parallel proof attempts - P1/P2](docs/roadmap.md#f1--diverse-parallel-proof-attempts--p1p2) - Deps: [A4](docs/roadmap.md#a4--proof-strategy-contract--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0); [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) desirable.
+- [x] [F2 - Strategy escalation/degradation - P2](docs/roadmap.md#f2--strategy-escalationdegradation--p2) - Deps: at least two working strategies + shared budgets.
+- [x] [F3 - Compact lessons from failed attempts - P2](docs/roadmap.md#f3--compact-lessons-from-failed-attempts--p2) - Deps: stable strategy trajectories; [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) for measurement.
 
 ## Core G: manuscripts and publication
 
@@ -143,7 +166,7 @@ flowchart LR
 ## Engineering lane X
 
 - [ ] [X0 - Make the save gates one explicit ordered sequence - P0](docs/roadmap.md#x0--make-the-save-gates-one-explicit-ordered-sequence--p0) - Deps: none.
-- [ ] [X1 - Evaluation comparison primitive - P1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) - Deps: none.
+- [x] [X1 - Evaluation comparison primitive - P1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) - Deps: none.
 - [ ] [X2 - Transcript in-flight durability - P1](docs/roadmap.md#x2--transcript-in-flight-durability--p1) - Deps: none.
 - [ ] [X3 - Safe interactive assumption prompt presentation - P1](docs/roadmap.md#x3--safe-interactive-assumption-prompt-presentation--p1) - Deps: none.
 - [ ] [X4 - CAS correctness lane - P1](docs/roadmap.md#x4--cas-correctness-lane--p1) - Deps: none.
@@ -159,7 +182,7 @@ flowchart LR
 
 ## Evaluation lane V
 
-V0 is ongoing: A/B fixtures exist; later primitives still need their own.
+V0 is ongoing: A-D and F fixtures exist; later primitives still need their own.
 
 - [ ] [V0 - Acceptance fixtures for every new primitive - P0](docs/roadmap.md#v0--acceptance-fixtures-for-every-new-primitive--p0) - Deps: not specified.
 - [ ] [V1 - Regression tracking - P1](docs/roadmap.md#v1--regression-tracking--p1) - Deps: [X1](docs/roadmap.md#x1--evaluation-comparison-primitive--p1) recommended.

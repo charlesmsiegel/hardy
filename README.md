@@ -107,6 +107,19 @@ flows are not wired into the terminal UI. Core E's human-guided trials and UI
 integration are explicitly deferred. No new live-model performance or execution
 isolation is claimed. See the [roadmap](docs/roadmap.md).
 
+Core F adds ranked textual proof search and a shared check/deadline budget.
+`hardy prove --strategy best-first` uses the staged Claude runtime; unsupported
+transports refuse this selection. Independent race and escalation APIs retain
+partial attempts, reserve final verification and account for losing branches.
+`hardy evals compare LEFT RIGHT --vary FIELD` compares recorded evaluation
+conditions and exact problem/repeat slots, including missing usage coverage.
+These controls do not establish a live-model performance improvement.
+Failed-attempt replay can retain full evidence or compact source-bound lessons;
+each lesson concerns one exact failed proof, with truncation and omissions
+explicit. A failure reported for a different source is quarantined.
+Use `--history-mode replay-full` or `--history-mode compact` with best-first
+to compare replay in fresh contexts; default `full` retains native history.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

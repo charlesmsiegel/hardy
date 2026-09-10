@@ -81,6 +81,18 @@ interactive surface's own live run is still to come.
   supply named capability readers, model/search and guarded-save operations.
   Terminal wiring and Core E's human-guided trials remain deferred. There is no
   new live-model performance claim or execution isolation from this work.
+- Core F adds a persisted ranked proof-candidate frontier, shared atomic check
+  budgets and deadlines, independent proof races with all-attempt usage, and
+  bounded escalation with honest partial output. Staged Claude exposes
+  `prove --strategy best-first`; race/escalation remain named-operation APIs.
+  Unsupported transports refuse best-first instead of resetting tool budgets.
+- F3 derives compact failed-attempt lessons and full evidence replay from exact
+  frontier sources. Changed artifacts are refused, source mismatches quarantined,
+  and every shortened field or omitted attempt remains explicit. A failed proof
+  does not imply its theorem or tactic family is impossible.
+- X1 adds read-only `evals compare` over authenticated evidence, exact paired
+  slots, explicit varying conditions and partial/missing measurement coverage.
+  Scripted comparisons establish controls and accounting, not model improvement.
 - Algebra backend/kernel/session/replay/script owners and literature
   metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
   points, `app/tui`, configuration, setup, project construction and terminal

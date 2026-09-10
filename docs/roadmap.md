@@ -2,8 +2,8 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-10):** Core A-D are implemented and have passed
-their full hermetic landing gates. Continue with Core F and remaining sections
+**Current execution scope (2026-09-10):** Core A-D, Core F and X1 are implemented
+and have passed their full hermetic landing gates. Continue with Core G and remaining sections
 with satisfied dependencies. **Skip all of Core E pending human input.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 
@@ -343,6 +343,11 @@ Keep refusal text and stage/commit/discard semantics unchanged.
 Add a shared comparison surface (likely `evals/compare.py`) for contemporaneous model/prompt/runtime/tool configurations. Report per-problem results, cost, turns, and comparability; do not reduce a small correlated set to one misleading mean.
 
 This also becomes the measurement substrate for prompt cleanup and later strategy comparisons.
+
+**Implemented:** `evals/compare.py` and the read-only comparison CLI retain exact
+paired slots, audit findings, explicit condition differences and measurement
+coverage. Recorded source/treatment controls and separate canonical review cost
+support comparison without causal or fixed-budget certification claims.
 
 ## X2 — Transcript in-flight durability — P1
 
@@ -966,6 +971,12 @@ The UI must distinguish local hypotheses from trusted assumptions, conjectures f
 
 Implement a ranked proof-state frontier behind the same `ProofTask`/budget contract. Compare contemporaneously with iterative search.
 
+**Implemented:** a source-linked textual proof frontier, shared atomic check and
+deadline owner, and staged Claude `prove --strategy best-first`. Proposal bounds
+preserve queued work. The verifier remains independent; unsupported transports
+refuse this strategy. Contemporaneous scripted comparisons validate controls,
+not live-model improvement.
+
 ## F1 — Diverse parallel proof attempts — P1/P2
 
 **Deps:** A4, C5; X1 desirable
@@ -974,17 +985,33 @@ Race genuinely independent approaches to one claim, accept first kernel-verified
 
 This is **proof-search** parallelism, not high-level mathematical approach tracking and not dependency-level parallelism.
 
+**Implemented API:** distinct provider contexts, separate artifacts, branch-local
+cancellation, fresh canonical verification and drained all-attempt usage. Failed
+opens and partial/missing usage remain explicit. Applications configure named
+independent approach runtimes; no provider race is launched by a label alone.
+
 ## F2 — Strategy escalation/degradation — P2
 
 **Deps:** at least two working strategies + shared budgets
 
 Escalate after defined lack of progress; narrow/prefer cheap work near budget exhaustion and return honest partial artifacts instead of dying mid-attempt.
 
+**Implemented API:** per-stage check allotments use one shared owner; an
+unverified attempt advances to the next strategy, with configured cheap stages
+preferred near exhaustion. Final verification is reserved and partial artifacts
+survive cutoff or interruption. A local cutoff preserves remaining global work.
+
 ## F3 — Compact lessons from failed attempts — P2
 
 **Deps:** stable strategy trajectories; X1 for measurement
 
 Derive compact “tried / Lean said / do not repeat” lessons from recorded proof-search evidence and compare against full-history replay. Do not duplicate high-level mathematical approaches: tactic/solver lessons remain strategy/runtime memory candidates; durable semantic approaches/dead ends already live in the ledger.
+
+**Implemented:** source-bound lessons over best-first trajectories, with matching
+full/compact attempt selection, explicit truncation/omissions and source-mismatch
+quarantine. Replay reauthenticates the task, artifacts and recorded event prefix.
+Fresh-context replay comparisons measure the two history conditions separately;
+scripted fixtures do not establish model improvement.
 
 ---
 
