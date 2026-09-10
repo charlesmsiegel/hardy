@@ -17,7 +17,7 @@ def test_the_registry_holds_the_specified_commands():
     names = [c.name for c in handlers.build_registry()]
     assert names == [
         "help", "model", "cas", "goal", "assume", "import", "project", "status", "prove",
-        "export", "doctor", "clear", "exit", "quit",
+        "export", "doctor", "clear", "tree", "fork", "abandon", "exit", "quit",
     ]
 
 
@@ -33,7 +33,7 @@ def test_only_read_only_commands_are_safe_while_a_turn_runs():
     locked kernel process a mid-turn model tool call may already be using.
     """
     safe = {c.name for c in handlers.build_registry() if c.safe_in_flight}
-    assert safe == {"help", "status", "clear", "exit", "quit"}
+    assert safe == {"help", "status", "clear", "tree", "exit", "quit"}
     assert "cas" not in safe
 
 

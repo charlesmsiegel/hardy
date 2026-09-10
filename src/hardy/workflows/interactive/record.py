@@ -18,12 +18,15 @@ from typing import Any
 
 from hardy.agents.usage import Usage
 from hardy.foundation.files import WriteGuard
+from hardy.foundation.locking import FileLock
+from hardy.workflows.interactive.history import History, HistorySnapshot, identify
 from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT
 
 USAGE_KEY = "usage"
 CURSOR_KEY = "usage_cursor"
 THREAD_KEY = "provider_session"
 RECOVERED_KEY = "usage_recovered_turns"
+_UNBOUND = object()
 
 class SchemaError(ValueError):
     """A record whose schema or encoding this build cannot read."""
@@ -39,6 +42,9 @@ class SessionRecord:
         # Separate from `_writes`: an append must never wait behind a rewrite
         # of `session.json`, and a rewrite has nothing to fear from an append.
         self._appends = threading.Lock()
+        self._history = History()
+        self._history_stamp: tuple[int, int] | None = None
+        self._writer_epoch: str | None | object = _UNBOUND
         self.state: dict[str, Any] = {}
         self.local: dict[str, Any] = {}
         self.usage = Usage()
@@ -46,6 +52,7 @@ class SessionRecord:
     def load(self) -> None:
         self.state = self._read_state()
         self.local = self._read_local()
+        self.history()
 
     def snapshot(self, *without: str) -> dict[str, Any]:
         return deepcopy({key: value for key, value in self.state.items() if key not in without})
@@ -184,9 +191,63 @@ class SessionRecord:
         a torn line silently. The lock is held for one line's write, which is
         the only thing it has to make atomic.
         """
-        event = {"timestamp": time.time(), **event}
+        with self._appends, self._history_lock():
+            self._refresh_history()
+            return self._append_history(event)
+
+    def _history_lock(self) -> FileLock:
+        return FileLock(self._local_guard.reserve("transcript.lock"))
+
+    def _refresh_history(self) -> None:
+        stamp = self._history_identity()
+        if stamp != self._history_stamp:
+            try:
+                self._history = History(self._recorded())
+            except ValueError as error:
+                raise SchemaError(f"Transcript history is invalid: {error}") from error
+            self._history_stamp = stamp
+        if self._writer_epoch is _UNBOUND:
+            self._writer_epoch = self._history.epoch
+
+    def _history_identity(self) -> tuple[int, int]:
+        if not self.transcript_path.exists():
+            return (0, 0)
+        stat = self.transcript_path.stat()
+        return (stat.st_size, stat.st_mtime_ns)
+
+    def history(self) -> HistorySnapshot:
+        with self._appends, self._history_lock():
+            self._refresh_history()
+            return self._history.snapshot()
+
+    def branch(self, parent: str | None, *, expected_leaf: str | None,
+               action: str = "fork", summary: str = "") -> str:
+        """Durably move the cursor; a crash needs no separate cursor-file repair."""
+        with self._appends, self._history_lock():
+            self._refresh_history()
+            event: dict[str, Any] = {
+                "type": "conversation_branch", "action": action,
+                "from_leaf": expected_leaf, "parent_id": parent,
+            }
+            if action == "abandon":
+                event["summary"] = {"text": summary, "author": "human",
+                                    "status": "unverified", "from_leaf": expected_leaf}
+            self._append_history(event, branch=True)
+            assert self._history.active_leaf is not None
+            return self._history.active_leaf
+
+    def _append_history(self, event: dict[str, Any], *, branch: bool = False) -> int:
+        if not branch and self._writer_epoch != self._history.epoch:
+            raise ValueError("Conversation branch changed; this writer must reopen before continuing.")
+        if "entry_id" in event or ("parent_id" in event and not branch):
+            raise ValueError("Transcript ancestry is assigned by SessionRecord.")
+        event = {"timestamp": time.time(), "parent_id": self._history.active_leaf, **event}
+        event["entry_id"] = identify(event)
+        entry = self._history.validate(event)
+        if branch:
+            HistorySnapshot((*self._history.entries.values(), entry), entry.entry_id, entry.entry_id).replay()
         line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-        with self._appends, self._workspace_guard.open(TRANSCRIPT, "a+b") as handle:
+        with self._workspace_guard.open(TRANSCRIPT, "a+b") as handle:
             # Preserve a crashed writer's bytes, but isolate its unterminated
             # line. Otherwise this valid event becomes part of the torn JSON
             # and replay loses both. A complete line lacking only its newline
@@ -199,7 +260,12 @@ class SessionRecord:
             handle.write(line)
             handle.flush()
             os.fsync(handle.fileno())
-            return handle.tell()
+            offset = handle.tell()
+        self._history.append(event)
+        if branch:
+            self._writer_epoch = self._history.epoch
+        self._history_stamp = self._history_identity()
+        return offset
 
 
     def _without(self, *keys: str) -> dict[str, Any]:
@@ -240,6 +306,8 @@ class SessionRecord:
         """
         thread = self.local.get(THREAD_KEY)
         if not thread:
+            return None
+        if self.local.get("provider_branch_epoch") != self.history().epoch:
             return None
         length = self.local.get("transcript_length")
         if not isinstance(length, int) or isinstance(length, bool) or length < 0:
@@ -452,6 +520,9 @@ class SessionRecord:
         the thread would describe some other moment, and a thread with no
         identity cannot be checked at all.
         """
+        epoch = self.history().epoch
+        if epoch != self._writer_epoch:
+            raise ValueError("Conversation branch changed; refusing the old provider thread.")
         if not thread:
             # A backend with no thread to remember has just appended a turn the
             # stored one cannot account for. Dropped rather than left: the
@@ -473,6 +544,7 @@ class SessionRecord:
         if self.local.get(THREAD_KEY) == thread and self.local.get("transcript_length") == identity["transcript_length"]:
             return
         self.local[THREAD_KEY] = thread
+        self.local["provider_branch_epoch"] = epoch
         self.local.update(identity)
         self._save_local()
 

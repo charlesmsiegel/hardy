@@ -1078,6 +1078,50 @@ async def _project(ui: Ui, argument: str, state: State) -> State:
     return await _switch(ui, slug, state, creating=True)
 
 
+async def handle_tree(ui: Ui, argument: str, state: State) -> State:
+    try:
+        history = state.session.conversation_tree()
+        ui.write("Conversation tree (root is the empty conversation)")
+        for entry in history.entries:
+            event = entry.event()
+            marker = "*" if entry.entry_id == history.active_leaf else " "
+            summary = event.get("summary")
+            detail = summary.get("text", "") if event.get("type") == "conversation_branch" and isinstance(summary, dict) else ""
+            ui.write(f"{marker} {entry.entry_id} <- {entry.parent_id or 'root'}  {event.get('type', '')}")
+            if detail:
+                ui.write(f"    Human lesson (unverified): {detail}")
+    except ValueError as error:
+        ui.write(str(error), style="error")
+    return state
+
+
+async def handle_fork(ui: Ui, argument: str, state: State) -> State:
+    parent = argument.strip()
+    if not parent or len(parent.split()) != 1:
+        ui.write("Usage: /fork <entry-id|root>", style="error")
+        return state
+    try:
+        entry = state.session.fork_conversation(None if parent == "root" else parent)
+        ui.write(f"Conversation forked: {entry}. Mathematical workspace unchanged.")
+    except ValueError as error:
+        ui.write(str(error), style="error")
+    return state
+
+
+async def handle_abandon(ui: Ui, argument: str, state: State) -> State:
+    parts = argument.strip().split(maxsplit=1)
+    if len(parts) != 2:
+        ui.write("Usage: /abandon <entry-id|root> <human lesson>", style="error")
+        return state
+    parent, summary = parts
+    try:
+        entry = state.session.abandon_conversation(None if parent == "root" else parent, summary)
+        ui.write(f"Branch abandoned with an unverified human lesson: {entry}. Mathematical workspace unchanged.")
+    except ValueError as error:
+        ui.write(str(error), style="error")
+    return state
+
+
 def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Command]:
     """Hardy's own commands, and then the user's.
 
@@ -1121,6 +1165,9 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
         ),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),
+        Command("tree", "show conversation entries and the active leaf", handle_tree, safe_in_flight=True),
+        Command("fork", "continue from a conversation entry", handle_fork, argument_hint="<entry-id|root>"),
+        Command("abandon", "leave a branch with a human lesson", handle_abandon, argument_hint="<entry-id|root> <lesson>"),
         exit_command,
         Command(
             "quit", "leave the session", exit_command.handler,

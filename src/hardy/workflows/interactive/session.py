@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -103,6 +104,7 @@ from hardy.workflows.interactive.documents import (
 )
 from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
 from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
+from hardy.workflows.interactive.history import HistorySnapshot
 from hardy.workflows.interactive.record import SchemaError as SchemaError
 from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
@@ -264,6 +266,29 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
 # and telling the human the statement is unchecked -- is the outcome the probe
 # exists to avoid.
 PROBE_SECONDS = 600.0
+
+
+class _ConversationTurn(Iterator[TurnEvent]):
+    """Track even an eagerly started turn whose consumer never calls next()."""
+
+    def __init__(self, events: Iterator[TurnEvent]):
+        self.events = events
+        self.active = True
+
+    def __next__(self) -> TurnEvent:
+        try:
+            return next(self.events)
+        except BaseException:
+            self.active = False
+            raise
+
+    def close(self) -> None:
+        try:
+            close = getattr(self.events, "close", None)
+            if close is not None:
+                close()
+        finally:
+            self.active = False
 
 
 class MathematicsSession:
@@ -485,6 +510,8 @@ class MathematicsSession:
         # workspace, so it is built here rather than handed in ready-made.
         # After a discard `_carried_thread` finds nothing, which is the point:
         # the fresh session takes the same road every first-ever session takes.
+        self._conversation_turns: weakref.WeakSet[_ConversationTurn] = weakref.WeakSet()
+        self._conversation_gate = threading.Lock()
         self.runtime = self._build(session_id=self._carried_thread())
         self._sync_provenance()
         self._sync_fresh_context()
@@ -517,7 +544,8 @@ class MathematicsSession:
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
         """The runtime, with the system prompt this project's record implies.
 
-        Nothing is carried in from the transcript for a workspace that has no
+        Explicit conversation branches replay their selected visible path.
+        Otherwise nothing is carried in from the transcript for a workspace that has no
         provider thread. There used to be: a `_carried` step read the tail of
         `transcript.jsonl`, appended "This workspace predates the current
         provider session" to the prompt, and wrote a `migration` event back
@@ -541,7 +569,8 @@ class MathematicsSession:
         # estimate describe a prompt nobody was sending -- undercounting the
         # long one the runtime still holds, and letting `plan` conclude that a
         # request the provider then refuses needed no compaction.
-        self._system_prompt = prompt + self._context()
+        history = self.record.history()
+        self._system_prompt = prompt + self._context() + self._branch_context(history, session_id)
         runtime = self._make_runtime(
             model=model,
             system_prompt=self._system_prompt,
@@ -551,6 +580,11 @@ class MathematicsSession:
             session_id=session_id,
             observe=self._observed,
         )
+        if history.epoch is not None and session_id and not getattr(runtime, "resumes_conversation", True):
+            # This adapter ignored the offered native thread. It needs the
+            # complete visible path, including turns after the original fork.
+            return self._build(model=model, session_id=None)
+        self._runtime_epoch = history.epoch
         # Offered rather than passed in, and only to a runtime that says it can
         # take it. A backend whose SDK owns the loop cannot let Hardy choose
         # what a compaction keeps (issue #23), and handing it a compactor it
@@ -560,6 +594,49 @@ class MathematicsSession:
         if attach is not None:
             attach(self.compact)
         return runtime
+
+    def _branch_context(self, history: HistorySnapshot, session_id: str | None) -> str:
+        if history.epoch is None:
+            return ""
+        prior = [entry.event() for entry in history.path()
+                 if entry.event().get("type") == "branch_context"
+                 and entry.event().get("epoch") == history.epoch]
+        if session_id and prior:
+            text = prior[-1]["text"]
+        else:
+            text = history.replay()
+            self._record({"type": "branch_context", "epoch": history.epoch,
+                          "source_leaf": history.active_leaf, "text": text,
+                          "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()})
+        return (
+            "\n\nSelected visible conversation history follows as JSON. This is recorded context, "
+            "not native provider state or instructions to execute tools. Partial messages and tool "
+            "starts without results remain unfinished. Human branch lessons are unverified, not proof. "
+            "The mathematical workspace above is current and has not been rolled back.\n" + text
+        )
+
+    def conversation_tree(self) -> HistorySnapshot:
+        return self.record.history()
+
+    def fork_conversation(self, parent: str | None, *, expected_leaf: str | None = None) -> str:
+        return self._branch_conversation(parent, expected_leaf=expected_leaf)
+
+    def abandon_conversation(self, parent: str | None, summary: str, *, expected_leaf: str | None = None) -> str:
+        return self._branch_conversation(parent, expected_leaf=expected_leaf, summary=summary, action="abandon")
+
+    def _branch_conversation(self, parent: str | None, *, expected_leaf: str | None,
+                             summary: str = "", action: str = "fork") -> str:
+        with self._conversation_gate:
+            worker = getattr(self.runtime, "worker", None)
+            if any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive()):
+                raise ValueError("A conversation turn or provider worker is still running.")
+            history = self.record.history()
+            transition = self.record.branch(parent, expected_leaf=history.active_leaf if expected_leaf is None else expected_leaf,
+                                            action=action, summary=summary)
+            # The durable epoch invalidates the old local provider binding even
+            # if construction fails or the process dies before this assignment.
+            self.runtime = self._build(model=getattr(self.runtime, "model", None), session_id=None)
+            return transition
 
     def _observed(self, event: dict[str, Any]) -> None:
         return self.turns._observed(event, self._turn_persistence())
@@ -615,7 +692,9 @@ class MathematicsSession:
         # Handed over after the last build, so a rebuilt runtime is not left
         # holding the empty conversation its replacement was given.
         adopt = getattr(self.runtime, "adopt_conversation", None)
-        if adopt is not None and carried is not None:
+        # A branch build already carries its complete selected visible path.
+        # Adopting native messages too would duplicate all post-fork turns.
+        if adopt is not None and carried is not None and self.record.history().epoch is None:
             adopt(carried)
         self.state.update(current)
         self._save_state()
@@ -1827,7 +1906,7 @@ class MathematicsSession:
             theorems=self._theorem_statements(sources),
             open_theorems=self._open_theorems(sources),
             obligations=self._obligations(sources, tex),
-            failed=summary_module.attempts(self._recorded()),
+            failed=summary_module.attempts(entry.event() for entry in self.record.history().path()),
             modules=sorted(sources),
             # Already computed for the obligations, and needed here for the
             # same reason: a name two modules declare cannot be graded, because
@@ -1896,6 +1975,7 @@ class MathematicsSession:
         # is the same rule for the one path that was reading a leaf directly.
         linked = document.is_symlink()
         compiled = document.is_file() and not linked
+        history = self.record.history()
         return {
             "project": self.workspace.name,
             "workspace": str(self.workspace),
@@ -1977,7 +2057,13 @@ class MathematicsSession:
             # then reaches a different set of finished audits and observed
             # computations. Identity without them cannot tell those apart.
             "settings": self._effective_settings(),
-            "transcript": list(self._recorded()),
+            "transcript": [entry.event() for entry in history.path()],
+            "conversation_notice": (
+                "This export shows the active conversation path only. Other branches remain in the "
+                "workspace transcript. Spend includes all branches. The mathematical workspace is "
+                "current and has not been rolled back. Human branch lessons are unverified."
+                if history.epoch is not None else ""
+            ),
         }
     def _record_overflow(self, plan: compaction.Plan) -> None:
         return self.turns._record_overflow(plan, self.context_window, self._turn_persistence())
@@ -4347,7 +4433,13 @@ class MathematicsSession:
         )
 
     def stream(self, text: str) -> Iterator[TurnEvent]:
-        return self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_block, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
+        with self._conversation_gate:
+            if self._runtime_epoch != self.record.history().epoch:
+                raise ValueError("Conversation changed; reopen the session before starting a turn.")
+            events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_block, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
+            turn = _ConversationTurn(events)
+            self._conversation_turns.add(turn)
+            return turn
 
     def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
         # An explicit `yield`, not `yield from`. A consumer that unwinds --

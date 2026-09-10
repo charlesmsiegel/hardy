@@ -653,6 +653,13 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                     f'<div class="turn"><div class="who">{html.escape(who)}</div>'
                     f"{_block(text)}</div>"
                 )
+        elif kind == "conversation_branch":
+            parts.append('<div class="turn"><div class="who">Conversation branch</div>')
+            parts.append(_block(f"{event.get('action', 'fork')} from {event.get('parent_id') or 'root'}. Mathematical workspace unchanged."))
+            summary = event.get("summary")
+            if isinstance(summary, Mapping) and summary.get("text"):
+                parts.append(_block(f"Human lesson (unverified, not proof): {summary['text']}"))
+            parts.append("</div>")
         elif kind == "tool_started":
             # Only when nothing answered it: a call that finished is rendered
             # from its `tool` event, with the result. One that did not is the
@@ -1107,6 +1114,7 @@ the same reason the audited Lean is.</p>
 <h2>Conversation</h2>
 <p class="sub">Everything below is what was said. None of it is evidence for
 anything above.</p>
+{_block(str(material['conversation_notice'])) if material.get('conversation_notice') else ''}
 {_conversation(material.get("transcript", ()))}
 
 <footer>Written by Hardy. One file, no external assets, nothing fetched when

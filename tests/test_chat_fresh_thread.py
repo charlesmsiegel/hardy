@@ -81,7 +81,7 @@ def test_starting_fresh_is_recorded_as_a_change_of_condition(tmp_path: Path):
 
     written = recorded(tmp_path)
     assert [event["reason"] for event in written] == ["fresh"]
-    assert set(written[0]) == {"timestamp", "type", "reason"}
+    assert set(written[0]) == {"timestamp", "type", "reason", "entry_id", "parent_id"}
     assert "thread-1" not in (tmp_path / "transcript.jsonl").read_text(encoding="utf-8")
 
 

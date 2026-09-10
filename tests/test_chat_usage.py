@@ -582,10 +582,19 @@ def test_a_divergent_transcript_of_the_same_length_clears_it_too(tmp_path: Path)
 
     transcript = tmp_path / "transcript.jsonl"
     original = transcript.read_bytes()
-    # Same length, different content: flip one byte deep in the file.
-    diverged = bytearray(original)
-    diverged[len(diverged) // 2] ^= 0x20
-    transcript.write_bytes(bytes(diverged))
+    # A valid alternate tree of exactly the same length. Corrupting a linked
+    # entry without updating its hash/children is now refused as bad history.
+    from hardy.workflows.interactive.history import identify
+
+    events = [json.loads(line) for line in original.decode("utf-8").splitlines()]
+    parent = None
+    for event in events:
+        event.pop("entry_id")
+        event["parent_id"] = parent
+        if event.get("type") == "user":
+            event["message"]["content"] = "other"
+        event["entry_id"] = parent = identify(event)
+    transcript.write_bytes(("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n").encode("utf-8"))
     assert len(transcript.read_bytes()) == len(original)
 
     reopened = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "two"}]))
