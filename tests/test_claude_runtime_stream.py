@@ -649,10 +649,15 @@ def test_drawn_text_is_checkpointed_while_its_block_is_still_being_written():
             if event.text == "sentence":
                 live.cancel()
 
-    assert recorded_when_drawn == [
+    expected = [
         [checkpoint("Half a ")],
         [checkpoint("Half a "), checkpoint("Half a sentence")],
     ]
+    # The producer may checkpoint the next delta before the consumer draws
+    # this one. What matters is that the displayed prefix is already durable.
+    assert len(recorded_when_drawn) == len(expected)
+    for recorded, required in zip(recorded_when_drawn, expected, strict=True):
+        assert recorded[:len(required)] == required
 
 
 def test_a_stalled_stream_checkpoints_without_another_delta():
