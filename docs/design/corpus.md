@@ -6,8 +6,9 @@ statements to it or to read a number measured over it. The field-by-field guide
 to the data itself is [`corpus/SCHEMA.md`](../../corpus/SCHEMA.md); this page is
 the reasoning behind it. What the measurements over it look like on disk is
 [the artifacts reference](../reference/artifacts.md), and the commands that read
-and check it are in [the CLI reference](../reference/cli.md).
-<!-- link design/evaluation.md once it exists -->
+and check it are in [the CLI reference](../reference/cli.md). How those
+measurements are decided, and what each of their numbers is worth, is
+[the evaluation page](evaluation.md).
 
 ## An instrument with two outputs
 
@@ -382,8 +383,9 @@ because the alternative is a measurement silently attributed to code that did
 not produce it. The sweep budgets are in there beside the ladder for the same
 reason, since the wall backstop moves attempts between timed out and closed,
 which moves tiers. Model runs have their own counterpart digest over Hardy's
-deciding source, recorded on a scoreboard's condition and described in
-[the artifacts reference](../reference/artifacts.md).
+deciding source, recorded on a scoreboard's condition, described in
+[the artifacts reference](../reference/artifacts.md), and reasoned about on
+[the evaluation page](evaluation.md).
 
 Source bytes are hashed with line endings normalised
 (`source_digest`, `src/hardy/evals/digests.py`). `.gitattributes` pins
