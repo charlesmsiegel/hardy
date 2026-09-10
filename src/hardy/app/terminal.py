@@ -19,7 +19,9 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
     (`chat.py`'s `_tool`, itself dispatched from whichever thread the SDK ran
     the tool on), so it must not touch the terminal application directly --
     it goes through `ui.from_thread`, which marshals the prompt onto the
-    event loop and blocks this thread for the answer. A decline still
+    event loop and blocks this thread for the answer. The details and the
+    selector travel together as one prompt, so output is suspended before
+    even the goal is printed. A decline still
     hard-gates the assumption: `picked is None` (Esc, or the prompt could not
     be shown at all) is treated exactly like an explicit "No", never as
     approval. Every non-approval path returns `False`, including an
@@ -29,6 +31,11 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
 
     def confirm(proposal: dict[str, Any]) -> bool:
         blocking = ui.from_thread
+        preamble: list[tuple[str, str]] = []
+
+        def write(text: str, *, style: str = "system") -> None:
+            preamble.append((text, style))
+
         try:
             # The goal first, and the absence of one shown rather than hidden.
             # Nobody can judge whether an assumption is too strong without the
@@ -37,35 +44,36 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
             # -- the assignment itself, for 28 of the orders -- spent 170
             # seconds on a well-argued paragraph with nothing beside it.
             goal = proposal.get("goal") or ""
-            blocking.write("Goal, as you stated it:", style="normal")
-            blocking.write(f"  {goal}" if goal else "  not set -- /goal sets one")
-            blocking.write("Hardy wants to introduce an assumption:", style="warning")
-            blocking.write(f"  Informal: {proposal['informal_statement']}")
+            write("Goal, as you stated it:", style="normal")
+            write(f"  {goal}" if goal else "  not set -- /goal sets one")
+            write("Hardy wants to introduce an assumption:", style="warning")
+            write(f"  Informal: {proposal['informal_statement']}")
             # `keyword` rather than a literal `axiom`: an assumed definition
             # is written as `opaque`, and this is the single line a person
             # reads before deciding. Defaulted for a caller that predates the
             # field -- `request_assumption` produces only axioms.
             keyword = proposal.get("keyword") or "axiom"
-            blocking.write(
+            write(
                 f"  Lean: {keyword} {proposal['formal_name']} : {proposal['lean_statement']}"
             )
-            blocking.write(f"  Source: {proposal['source']}")
-            blocking.write(f"  Reason: {proposal['reason']}")
-            blocking.write(f"  Checked: {proposal.get('checked', 'not checked')}")
+            write(f"  Source: {proposal['source']}")
+            write(f"  Reason: {proposal['reason']}")
+            write(f"  Checked: {proposal.get('checked', 'not checked')}")
             # A name refused or declined earlier this session is shown beside
             # the new statement, so a weakening between the two is seen rather
             # than approved sight unseen.
             if proposal.get("previous"):
-                blocking.write(f"  Previously requested as: {proposal['previous']}", style="warning")
+                write(f"  Previously requested as: {proposal['previous']}", style="warning")
             # What has been searched since the last request -- proof the
             # `reason` given is not free text alone, since the search-first
             # gate that required it is otherwise invisible at the prompt.
             if proposal.get("searched"):
-                blocking.write(f"  Searched since the last request: {', '.join(proposal['searched'])}")
+                write(f"  Searched since the last request: {', '.join(proposal['searched'])}")
             picked = blocking.choose(
                 f"Approve the assumption {proposal['formal_name']}?",
                 [Choice("no", "No, decline it"), Choice("yes", "Yes, approve it")],
                 current=0,
+                preamble=preamble,
             )
         except Exception:  # noqa: BLE001 - every non-approval path is a decline, never a crash
             return False

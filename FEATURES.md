@@ -241,7 +241,8 @@ interactive surface's own live run is still to come.
 - **Now (implemented):** the assumption prompt stands alone while a turn is in
   flight (issue #29). The SDK runs a tool on its own thread, so the question is
   asked from that thread while the model's output is still being drawn. In the
-  real shell the prompt is marshalled onto the event loop and the shell's own
+  real shell the whole prompt, including the goal and assumption details,
+  is marshalled onto the event loop and the shell's own
   renderer is suspended for as long as it is open; in `--plain` the session's
   output lock is held from the first line of the question to the answer, so a
   line that arrives while the human is deciding — a second tool call the SDK

@@ -156,7 +156,9 @@ def test_the_approval_declines_by_default(settings):
         def write(self, text, *, style="system"):
             self.written.append(text)
 
-        def choose(self, title, rows, *, current=0, subtitle=""):
+        def choose(self, title, rows, *, current=0, subtitle="", preamble=()):
+            for text, style in preamble:
+                self.write(text, style=style)
             return None  # Esc
 
         def ask_line(self, prompt):
@@ -186,7 +188,9 @@ def test_the_prompt_shows_previous_and_searched_when_the_proposal_carries_them(s
         def write(self, text, *, style="system"):
             self.written.append(text)
 
-        def choose(self, title, rows, *, current=0, subtitle=""):
+        def choose(self, title, rows, *, current=0, subtitle="", preamble=()):
+            for text, style in preamble:
+                self.write(text, style=style)
             return None  # Esc; only what was written is under test here
 
         def ask_line(self, prompt):
@@ -216,7 +220,9 @@ def test_the_prompt_omits_previous_and_searched_when_the_proposal_lacks_them(set
         def write(self, text, *, style="system"):
             self.written.append(text)
 
-        def choose(self, title, rows, *, current=0, subtitle=""):
+        def choose(self, title, rows, *, current=0, subtitle="", preamble=()):
+            for text, style in preamble:
+                self.write(text, style=style)
             return None
 
         def ask_line(self, prompt):
@@ -329,6 +335,11 @@ async def test_axiom_prompt_from_a_tool_thread_does_not_paint_under_the_spinner(
                 await driving
     assert code == 0
     assert answers == [True]
+    rendered = buffer.getvalue()
+    details = ["Goal, as you stated it:", "Informal:", "Lean:", "Source:", "Reason:", "Checked:"]
+    positions = [rendered.index(text) for text in details]
+    assert positions == sorted(positions)
+    assert positions[-1] < rendered.index("Approve the assumption")
 
 
 async def test_a_request_posted_after_the_drainer_exits_idle_declines_promptly(settings):
@@ -427,7 +438,9 @@ def test_confirm_assumption_declines_when_the_prompt_itself_raises(settings):
         def write(self, text, *, style="system"):
             raise RuntimeError("boom")
 
-        def choose(self, title, rows, *, current=0, subtitle=""):
+        def choose(self, title, rows, *, current=0, subtitle="", preamble=()):
+            for text, style in preamble:
+                self.write(text, style=style)
             raise AssertionError("must not be reached; write already raised")
 
         def ask_line(self, prompt):

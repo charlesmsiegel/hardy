@@ -8,7 +8,7 @@ loop from a tool thread.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from prompt_toolkit.application import Application, in_terminal
 from prompt_toolkit.formatted_text import FormattedText
@@ -71,6 +71,7 @@ async def choose(
     *,
     current: int = 0,
     subtitle: str = "",
+    before: Callable[[], None] | None = None,
     input=None,
     output=None,
 ) -> Choice | None:
@@ -119,4 +120,6 @@ async def choose(
     # later paint by a row. `in_terminal()` is a no-op when no app is running,
     # so callers with explicit input/output (tests) are unaffected.
     async with in_terminal():
+        if before is not None:
+            before()
         return await application.run_async()

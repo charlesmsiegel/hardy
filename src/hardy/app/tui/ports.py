@@ -48,7 +48,11 @@ class State:
 
 
 class BlockingUi(Protocol):
-    """The same operations as `Ui`, synchronous, for callers off the UI thread."""
+    """The same operations as `Ui`, synchronous, for callers off the UI thread.
+
+    A choice's preamble contains (text, style) lines shown under the same
+    output protection as its selector and input read.
+    """
 
     def write(self, text: str, *, style: str = "system") -> None: ...
 
@@ -59,6 +63,7 @@ class BlockingUi(Protocol):
         *,
         current: int = 0,
         subtitle: str = "",
+        preamble: Sequence[tuple[str, str]] = (),
     ) -> Choice | None: ...
 
     def ask_line(self, prompt: str) -> str | None: ...
@@ -83,6 +88,7 @@ class Ui(Protocol):
         *,
         current: int = 0,
         subtitle: str = "",
+        preamble: Sequence[tuple[str, str]] = (),
     ) -> Choice | None: ...
 
     async def ask_line(self, prompt: str) -> str | None: ...
