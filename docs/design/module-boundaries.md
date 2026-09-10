@@ -190,21 +190,34 @@ split across two owners is a partial write nobody planned.
 ## Digest coupling
 
 Two digests tie measurement identity to the source tree, and editing the wrong
-file invalidates recorded evidence. Both are conservative by design: they
-include a file unless it is proven unreachable, because an omission silently
-pools rows that are not comparable, while an over-inclusion only costs work.
+file invalidates recorded evidence. They are built in opposite ways, and only
+one of them is conservative.
 
-- The sweep's `procedure_digest` covers the deciding sources listed in
-  `evals/sweep.py`: the sweep itself, `formal/audit.py`, `formal/lean.py`,
-  `formal/syntax.py`, `corpus/problems.py` and `corpus/identity.py`. Editing
-  any of them makes the whole tier file non-reusable, and the next sweep
-  re-elaborates every entry.
+- The sweep's `procedure_digest` covers the deciding sources named in
+  `DECIDING_SOURCES` in `evals/sweep.py`: the sweep itself, `formal/audit.py`,
+  `formal/lean.py`, `formal/syntax.py`, `corpus/problems.py` and
+  `corpus/identity.py`. That is an allowlist of six entries, extended by hand.
+  A module that starts deciding what a sweep outcome means is not covered until
+  someone adds it there, which is the failure the run digest was deliberately
+  shaped to avoid: an allowlist drawn from the obvious imports once left out
+  the module deciding whether a proof closes, and the one computing the token
+  counts a pool aggregates. Editing any listed source makes the whole tier file
+  non-reusable, and the next sweep re-elaborates every entry.
 - The `run_procedure_digest` covers everything under `src/hardy/` that is not
   excluded by `RUN_SOURCE_EXCLUDED_FILES` or `RUN_SOURCE_EXCLUDED_DIRS` in
   `evals/identity.py`. Editing anything else orphans every scoreboard on disk:
   boards stop pooling and `evals todo` reports `boards_counted: 0`. The
-  exclusion list is a denylist, so a module added tomorrow counts without
-  anyone remembering to list it.
+  exclusion list is a denylist, so inclusion is the default and a module added
+  tomorrow counts without anyone remembering to list it.
+
+Getting either digest wrong costs in both directions, and not symmetrically. A
+module wrongly left out lets a run change while the key claims it did not, so
+rows that are not comparable pool silently. A module wrongly included is
+quieter and has been the more expensive mistake in practice: adding a column to
+a report that only reads finished boards moved the run key and orphaned every
+scoreboard on disk, and topping the affected models back up became a full
+re-baseline. That is why the run digest excludes a file only after proving no
+run path reaches it, rather than because its name sounds ancillary.
 
 The test asserts that the run digest still covers every relocated owner,
 `foundation/`, `agents/`, `formal/`, `documents/`, `algebra/`, `literature/`,

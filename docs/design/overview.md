@@ -27,11 +27,12 @@ flowchart TD
     kernel["Lean kernel"]
     audit["Axiom audit"]
     grades["Grades"]
+    stopped["Run stops, graded"]
     artifacts["Run artifacts"]
 
     claim -->|human approves| frozen
     frozen -->|Hardy runs the read| reader
-    reader -->|disputed, the run stops| claim
+    reader -->|disputed or unreachable| stopped
     reader -->|accepted| turn
     turn -.->|the model chooses the call| tools
     tools -.->|result returns to the model| turn
@@ -39,6 +40,7 @@ flowchart TD
     kernel -->|Hardy reads the axiom report| audit
     audit -->|Hardy scores| grades
     grades -->|Hardy writes| artifacts
+    stopped -->|still recorded| artifacts
 ```
 
 Dashed arrows are the model's: it decides when a tool is called and what to
@@ -74,7 +76,10 @@ reads the translation first. Independence here is independence of context, not
 just of weights: a reader handed the account that produced a translation reads
 the translation through that account. The gate is fail-closed. A dispute stops
 the run, and so does a reader that could not be reached or that answered with
-something which is not a review; there is no third option that proceeds.
+something which is not a review; there is no third option that proceeds. A run
+that stops here is not discarded: it is finalized as cancelled, and the reason
+recorded distinguishes a translation that was refused from a read that could
+not be obtained, because automation acts on the two differently.
 
 **The audit reads what the proof spent, not what the run permitted.** Declared
 assumptions say what a run was allowed to use. Only the kernel's own axiom
@@ -92,8 +97,12 @@ verbs query Mathlib declarations and modules, inspect named declarations and
 rank premises; paper verbs fetch, read and cite literature and list what a
 source states; computer algebra verbs run, inspect, reset and export a
 persistent kernel session. Two of them, requesting an assumption and assuming
-a paper statement, do not act at all: they ask a human, and never assume
-approval. Reporting a result is refused unless the artifacts support it. The
+a paper statement, end in a question rather than in a change. Assuming a paper
+statement does substantial work first: Hardy elaborates the statement, searches
+for a counterexample, and has an independent reader compare the Lean against
+the paper's own words. What none of that work does is grant the approval. Only
+a human does, one statement at a time, and approval is never assumed.
+Reporting a result is refused unless the artifacts support it. The
 same bounded runtime backs both the in-process tools and the MCP server, so a
 client on the outside gets the same checks and the same records as the session
 on the inside.
@@ -105,11 +114,11 @@ flowchart TD
     app["app/"]
     evals["evals/"]
     workflows["workflows/"]
+    agents["agents/"]
     prompts["prompts/"]
     foundation["foundation/"]
 
     subgraph capabilities [Capabilities]
-        agents["agents/"]
         formal["formal/"]
         documents["documents/"]
         algebra["algebra/"]
@@ -122,8 +131,10 @@ flowchart TD
     evals -->|runs| workflows
     evals -->|reads statements| corpus
     workflows -->|calls| capabilities
+    workflows -->|dispatches through| agents
     workflows -->|renders| prompts
     capabilities -->|uses| foundation
+    agents -->|uses| foundation
     workflows -->|uses| foundation
     prompts -->|uses| foundation
 ```
@@ -133,6 +144,15 @@ owners, not deployables, and the arrows only ever point down: the construction
 layer knows concrete implementations, workflows know capability APIs and narrow
 runtime interfaces, capabilities do not import workflows or entry points, and
 foundations import no capability at all.
+
+`agents/` sits beside the capabilities rather than among them, because it is
+the one owner workflows dispatch *through* rather than call. Provider code does
+import a few things from `workflows/`, all of them value contracts, the run
+store or a pure assembler, and it imports no controller and no entry point: a
+provider that could reach the interactive session would be able to write the
+record it is supposed to be a witness to. [Module
+boundaries](module-boundaries.md) names the exact modules on both sides of that
+line.
 
 Paths below are relative to `src/hardy/`.
 
