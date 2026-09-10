@@ -190,6 +190,16 @@ The fixture must prove that extending C0 does not mutate/invalidate C0; compactn
 
 **Deps:** none
 
+**Status:** Implemented in Core A (`test(A1): enforce shared workflow and ledger boundaries`).
+The boundary graph now includes package-initializer edges, so an import through a
+submodule cannot evade dependencies owned by its package. Synthetic direct,
+transitive and package-import cases exercise the pure query helper. Capability
+packages may retain the existing read-only workflow value/layout/storage seams
+and the pure interactive summary used by compaction, but cannot reach ledger or
+other workflow orchestration. Ledger modules cannot reach model transports,
+application assembly or execution controllers. Run
+`uv run --extra test pytest tests/unit/test_module_boundaries.py -q`.
+
 Prepare boundary tests so new workflow packages may depend on `formal/`, `literature/`, `documents/`, and `algebra/` while capability packages still cannot depend on workflow controllers. The ledger must not depend on model transports.
 
 ## A2 — Shared statement formalization — P0

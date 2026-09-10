@@ -45,9 +45,10 @@ def import_graph():
         if parts[-1] == '__init__':
             parts.pop()
         paths['.'.join(parts)] = path
-    return {name: _imports(name, ast.parse(path.read_text(encoding='utf-8')), paths,
-                          package=path.name == '__init__.py')
-            for name, path in paths.items()}
+    graph = {name: _imports(name, ast.parse(path.read_text(encoding='utf-8')), paths,
+                            package=path.name == '__init__.py')
+             for name, path in paths.items()}
+    return _with_parent_package_imports(graph)
 
 
 def _reachable(graph, start):
@@ -59,6 +60,107 @@ def _reachable(graph, start):
             reached.add(module)
             todo.extend(graph[module] - reached)
     return reached
+
+
+def _with_parent_package_imports(graph):
+    """Model package initializers executed before an imported child module."""
+    return {
+        module: dependencies | {
+            '.'.join(module.split('.')[:index])
+            for index in range(1, len(module.split('.')))
+            if '.'.join(module.split('.')[:index]) in graph
+        }
+        for module, dependencies in graph.items()
+    }
+
+
+def _boundary_violations(graph, modules, forbidden):
+    """Return each module's direct or transitive forbidden dependencies."""
+    return {
+        module: _reachable(graph, module) & forbidden
+        for module in modules
+        if _reachable(graph, module) & forbidden
+    }
+
+
+@pytest.mark.parametrize(
+    ("graph", "module", "forbidden", "expected"),
+    [
+        (
+            {
+                "hardy.workflows.ledger": {"hardy.agents.claude"},
+                "hardy.agents.claude": set(),
+            },
+            "hardy.workflows.ledger",
+            {"hardy.agents.claude"},
+            {"hardy.workflows.ledger": {"hardy.agents.claude"}},
+        ),
+        (
+            {
+                "hardy.workflows.ledger": {"hardy.formal.tools"},
+                "hardy.formal.tools": {"hardy.workflows.prove"},
+                "hardy.workflows.prove": set(),
+            },
+            "hardy.workflows.ledger",
+            {"hardy.workflows.prove"},
+            {"hardy.workflows.ledger": {"hardy.workflows.prove"}},
+        ),
+        (
+            {
+                "hardy.workflows.ledger": {"hardy.agents.claude"},
+                "hardy.workflows.ledger.contracts": set(),
+                "hardy.agents.claude": set(),
+            },
+            "hardy.workflows.ledger.contracts",
+            {"hardy.agents.claude"},
+            {"hardy.workflows.ledger.contracts": {"hardy.agents.claude"}},
+        ),
+    ],
+    ids=("direct", "transitive", "package-init"),
+)
+def test_boundary_violations_detect_direct_transitive_and_package_imports(
+    graph, module, forbidden, expected,
+):
+    assert _boundary_violations(_with_parent_package_imports(graph), {module}, forbidden) == expected
+
+
+def test_shared_workflow_and_ledger_boundaries(import_graph):
+    capabilities = {
+        name for name in import_graph
+        if name.startswith((
+            'hardy.formal.', 'hardy.documents.', 'hardy.algebra.',
+            'hardy.literature.', 'hardy.corpus.',
+        ))
+    }
+    permitted_workflow_primitives = {
+        'hardy.workflows.contracts', 'hardy.workflows.batch_contracts',
+        'hardy.workflows.layout', 'hardy.workflows.storage',
+        # formal.search reaches this pure assembler through app.config's
+        # compaction defaults; it does not initiate an interactive session.
+        'hardy.workflows.interactive', 'hardy.workflows.interactive.summary',
+    }
+    shared_orchestration = {
+        name for name in import_graph
+        if name.startswith('hardy.workflows.')
+    } - permitted_workflow_primitives
+    assert not _boundary_violations(import_graph, capabilities, shared_orchestration)
+
+    ledger = {name for name in import_graph if name.startswith('hardy.workflows.ledger')}
+    transports = {
+        'hardy.agents.api', 'hardy.agents.claude', 'hardy.agents.codex',
+        'hardy.agents.loop', 'hardy.agents.staged',
+    }
+    application_assembly = {
+        'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp',
+        'hardy.app.wiring',
+    }
+    execution_controllers = {
+        'hardy.workflows.acceptance', 'hardy.workflows.batch',
+        'hardy.workflows.interactive.session', 'hardy.workflows.prove',
+        'hardy.evals.runner',
+    }
+    forbidden = transports | application_assembly | execution_controllers
+    assert not _boundary_violations(import_graph, ledger, forbidden)
 
 
 def test_import_resolver_catches_absolute_relative_and_local_aliases():
