@@ -527,6 +527,7 @@ def run_prove(
             model=str(args.model or config.model),
             problem_slug=slug,
             assumptions=assumptions,
+            strategy=getattr(args, "strategy", "iterative"),
         ),
         terminal,
     )
@@ -879,6 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
     prove = subparsers.add_parser("prove", help="stage one claim from statement to document")
     prove.add_argument("claim", nargs="?", help="the claim in ordinary language")
     prove.add_argument("--backend", choices=("claude", "codex"), default="claude")
+    prove.add_argument("--strategy", choices=("iterative", "best-first"), default="iterative")
     prove.add_argument(
         "--assume",
         type=Path,

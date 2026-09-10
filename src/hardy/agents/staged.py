@@ -28,6 +28,7 @@ from hardy.agents.usage import Usage
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from hardy.formal.budget import CheckBudget, ReservedBudget
 from hardy.formal.contracts import FrozenClaim
 from hardy.foundation.values import ToolResult, schema_text
 from hardy.prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
@@ -181,6 +182,22 @@ class ClaudeStagedRuntime:
         # still sent and may still have been billed; the batch runner counts
         # such an exchange with nothing stated about it, and so does this.
         self._asked = 0
+        self._proof_budget: CheckBudget | ReservedBudget | None = None
+        self._proof_tools: tuple[Any, tuple[Any, ...], Any] | None = None
+
+    def bind_proof_budget(self, budget: CheckBudget | ReservedBudget) -> None:
+        """Bind after approval, before opening proof tools, without replacing factories.
+
+        A bound run reuses its tools and retriever across proof threads. Creating
+        a second provider conversation must not replenish either tool allowance.
+        """
+        if self._proof_budget is budget:
+            return
+        if self._proof_budget is not None:
+            raise ValueError("this staged runtime already has a proof budget")
+        if any(thread.claim is not None for thread in self._threads):
+            raise ValueError("bind the proof budget before opening proof threads")
+        self._proof_budget = budget
 
     @property
     def usage(self) -> dict[str, Any]:
@@ -226,13 +243,17 @@ class ClaudeStagedRuntime:
         # Without them `lean_check_proof` answered `unknown identifier` for
         # every axiom the run was standing on, which tells a model its proof
         # is wrong when the environment is what differed.
-        lean_runtime = (
-            None
-            if isolated
-            else self._lean_runtime_factory(claim, tuple(allowed))
-            if claim
-            else None
-        )
+        lean_runtime = None
+        if claim is not None and not isolated:
+            if self._proof_tools is not None:
+                prior_claim, prior_allowed, lean_runtime = self._proof_tools
+                if claim != prior_claim or tuple(allowed) != prior_allowed:
+                    raise ValueError("a bound proof runtime cannot change its frozen claim or assumptions")
+            else:
+                lean_runtime = self._lean_runtime_factory(claim, tuple(allowed))
+                if self._proof_budget is not None:
+                    lean_runtime.bind_budget(self._proof_budget)
+                    self._proof_tools = (claim, tuple(allowed), lean_runtime)
         specs: list[Any] = [] if isolated else list(TOOLS) if lean_runtime is not None else []
         if self._cas is not None and not isolated:
             specs = specs + CAS_TOOLS
@@ -387,6 +408,9 @@ class ClaudeStagedRuntime:
                 # cancelled and its manifest hashed.
                 if self._cancelled.is_set():
                     return REFUSED
+                if (lean_runtime is not None and self._proof_budget is not None
+                        and self._proof_budget.remaining_seconds <= 0):
+                    return ToolResult(False, "the shared proof deadline is exhausted")
                 return run(name, arguments)
 
         return dispatch

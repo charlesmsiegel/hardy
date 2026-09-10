@@ -19,6 +19,7 @@ model its proving time.
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -27,9 +28,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
+from pydantic import Field
+
 from hardy.app.config import Config
 from hardy.documents.contracts import DocumentStatus, InformalStatus
 from hardy.documents.writeup import DocumentResult, WriteupContent
+from hardy.formal.budget import CheckBudget
 from hardy.formal.contracts import (
     DeclaredAssumption,
     EnvironmentIdentity,
@@ -40,7 +44,7 @@ from hardy.formal.contracts import (
 from hardy.formal.lean import LeanCheckResult
 from hardy.formal.verifier import VerificationResult
 from hardy.foundation.values import FrozenModel
-from hardy.prompts import PROMPT_SET_SHA256, writeup_prompt
+from hardy.prompts import PROMPT_SET_SHA256, proof_prompt, writeup_prompt
 from hardy.workflows.admission import AdmissionPolicy, refutation_probe
 from hardy.workflows.contracts import (
     FaithfulnessOutcome,
@@ -61,8 +65,13 @@ from hardy.workflows.formalization import (
     review_translation,
 )
 from hardy.workflows.storage import RunStore
+from hardy.workflows.strategies.best_first import (
+    BestFirstStrategy,
+    CandidateObservation,
+    ProofCandidate,
+)
 from hardy.workflows.strategies.contracts import ProofTask, run_strategy
-from hardy.workflows.strategies.iterative import IterativeStrategy
+from hardy.workflows.strategies.iterative import IterativeStrategy, declared_note
 
 ALLOWED = {
     RunPhase.SETUP: {RunPhase.FORMALIZING},
@@ -82,11 +91,35 @@ class ProveRequest(FrozenModel):
     text: str
     model: str
     problem_slug: str = "theorem"
+    strategy: Literal["iterative", "best-first"] = "iterative"
     #: What this run is allowed to stand on. Empty is the ordinary case and
     #: the strict one: with nothing declared, any axiom beyond Lean's own
     #: refuses the proof. A run that declares a set is graded *verified
     #: modulo* exactly the members it actually used.
     assumptions: tuple[DeclaredAssumption, ...] = ()
+
+
+class _CandidateBatch(FrozenModel):
+    candidates: tuple[ProofCandidate, ...] = Field(max_length=8)
+
+
+def _strategy_record(request: ProveRequest, *, shared_tool_budget: bool) -> dict[str, Any]:
+    """Prospective identity, bound into the manifest and the sequenced journal."""
+    root = Path(__file__).resolve().parents[1]
+    modules = (
+        "workflows/prove.py", "agents/staged.py", "formal/tools.py", "formal/budget.py",
+        "workflows/strategies/contracts.py", "workflows/strategies/iterative.py",
+        "workflows/strategies/best_first.py",
+    )
+    return {
+        "strategy": request.strategy,
+        "history_mode": "full",
+        "shared_tool_budget": shared_tool_budget,
+        "prompt_set_sha256": PROMPT_SET_SHA256,
+        "source_sha256": {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in modules
+        },
+    }
 
 
 class Terminal(Protocol):
@@ -398,6 +431,12 @@ class ProveWorkflow:
             state.transition(RunPhase.FORMALIZING)
             runtime = self._runtime_factory(store)
             self._runtime_in_flight = runtime
+            bind_budget = getattr(runtime, "bind_proof_budget", None)
+            selection = _strategy_record(request, shared_tool_budget=callable(bind_budget))
+            store.write_json(PurePosixPath("strategy.json"), selection)
+            store.append("workflow.strategy", selection, phase=state.phase)
+            if request.strategy == "best-first" and not callable(bind_budget):
+                raise RuntimeError("best-first requires a runtime with a shared proof-tool budget")
             # `active_thread` too, not only once proving starts: it is the handle
             # the cancellation path below reaches for, and a Ctrl+C while
             # formalizing has just as much running behind it. Without this the
@@ -715,6 +754,18 @@ class ProveWorkflow:
                     approved_claim,
                 )
 
+            def active_elapsed() -> float:
+                return self._monotonic() - active_started - user_wait
+
+            budget = CheckBudget(
+                official_checks=self._config.limits.official_checks,
+                active_seconds=self._config.limits.active_seconds,
+                proof_seconds=self._config.limits.proof_seconds,
+                active_elapsed=active_elapsed,
+                monotonic=self._monotonic,
+            )
+            if callable(bind_budget):
+                bind_budget(budget.reserved(checks=1))
             active_thread = self._track(
                 runtime.start(
                     model=request.model,
@@ -730,24 +781,65 @@ class ProveWorkflow:
                     allowed=request.assumptions,
                 )
             )
-            strategy = IterativeStrategy(
-                propose=lambda prompt: runtime.run_proof(active_thread, prompt),
-                verify=lambda task, submission: self._verifier.verify(
+            def verify(task, submission, _candidate_store=None):
+                # A candidate's check belongs to this canonical run. The frontier
+                # retains a separate source/result copy, while recorded acceptance
+                # continues reading lean/Main.lean and lean/verification.json.
+                nonlocal verification
+                if request.strategy == "best-first":
+                    state.transition(RunPhase.FINAL_VERIFICATION)
+                verification = self._verifier.verify(
                     task.claim, submission.proof_body, store,
                     allowed=task.declared_assumptions,
-                ),
-                transition=state.transition,
-                check_cancelled=self._refuse_if_cancelled,
-                active_elapsed=lambda: self._monotonic() - active_started - user_wait,
-                monotonic=self._monotonic,
-            )
+                )
+                self._refuse_if_cancelled()
+                if request.strategy == "best-first" and not verification.verified:
+                    state.transition(RunPhase.PROVING)
+                return verification
+
+            def propose_candidates(task: ProofTask, parent: CandidateObservation | None):
+                prompt = proof_prompt(task.claim) + declared_note(task.declared_assumptions)
+                prompt += (
+                    "\nPropose up to eight distinct complete proof candidates for this exact "
+                    "Frozen Claim. Give each a finite priority; smaller is tried first. "
+                    "Priorities are heuristic, not verification evidence. Do not repeat "
+                    "previous candidates. Return an empty list if no useful candidate remains."
+                )
+                if parent is not None:
+                    prompt += "\nThe last independently checked candidate and Lean feedback:\n"
+                    prompt += json.dumps(parent.model_dump(mode="json"), sort_keys=True)
+                return runtime.run_structured(
+                    active_thread, "proof-candidates", prompt, _CandidateBatch,
+                ).candidates
+
+            if request.strategy == "best-first":
+                strategy = BestFirstStrategy(
+                    propose=propose_candidates, verify=verify, store=store,
+                    check_cancelled=self._refuse_if_cancelled,
+                    active_elapsed=active_elapsed, monotonic=self._monotonic, budget=budget,
+                )
+            else:
+                strategy = IterativeStrategy(
+                    propose=lambda prompt: runtime.run_proof(active_thread, prompt),
+                    verify=verify, transition=state.transition,
+                    check_cancelled=self._refuse_if_cancelled,
+                    active_elapsed=active_elapsed, monotonic=self._monotonic, budget=budget,
+                )
             outcome = run_strategy(strategy, ProofTask(
                 claim=approved_claim,
                 declared_assumptions=request.assumptions,
                 limits=self._config.limits,
             ))
             last_submission = outcome.submission
-            verification = strategy.last_verification
+            if outcome.status == "cancelled":
+                raise KeyboardInterrupt
+            self._refuse_if_cancelled()
+            # The iterative adapter owns its historical transitions; the frontier
+            # adapter closes an empty or exhausted search through the same stages.
+            if state.phase is RunPhase.PROVING:
+                state.transition(RunPhase.FINAL_VERIFICATION)
+            if state.phase is RunPhase.FINAL_VERIFICATION:
+                state.transition(RunPhase.WRITEUP)
             if outcome.status == "exhausted":
                 terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             verified = verification is not None and verification.verified

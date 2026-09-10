@@ -28,6 +28,13 @@ def test_prove_accepts_an_ordinary_language_claim_and_exact_model() -> None:
     assert args.claim == 'For every n, n plus zero is n.'
 
 
+def test_prove_accepts_a_selectable_strategy() -> None:
+    cli = importlib.import_module('hardy.app.cli')
+    args = cli.build_parser().parse_args(['prove', '--strategy', 'best-first', 'True'])
+    assert args.strategy == 'best-first'
+    assert cli.build_parser().parse_args(['prove', 'True']).strategy == 'iterative'
+
+
 def test_console_terminal_requires_exact_unsafe_ack_and_labels_elaboration() -> None:
     cli = importlib.import_module('hardy.app.cli')
     answers = iter(['almost', 'I UNDERSTAND'])
@@ -81,6 +88,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
             config=str(config_path),
             model='gpt-test',
             claim='For every n, n plus zero is n.',
+            strategy='best-first',
         ),
         workflow_factory=lambda config, path, backend='claude': Workflow(),
         input_fn=lambda _: 'unused',
@@ -89,6 +97,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
     assert result == 0
     assert seen[0].model == 'gpt-test'
     assert seen[0].text == 'For every n, n plus zero is n.'
+    assert seen[0].strategy == 'best-first'
 
 
 def _staged_config(tmp_path, **overrides):
