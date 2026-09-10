@@ -53,7 +53,14 @@ async def handle_help(ui: Ui, argument: str, state: State) -> State:
         ui.write(f"  {name:24} {command.summary}")
     ui.write("  /clear deletes nothing: it clears the screen only. Your scrollback,")
     ui.write("  your transcript on disk, and the model's conversation all continue.")
-    yours = [command for command in registry if command.template is not None]
+    shortcuts = [command for command in registry if command.template is not None and command.template.bundled]
+    if shortcuts:
+        ui.write("Prompt shortcuts", style="normal")
+        for command in shortcuts:
+            name = f"/{command.name} {command.argument_hint}".rstrip()
+            ui.write(f"  {name:24} {command.summary}")
+        ui.write("  These send and record the expanded text as a request, not verification evidence.")
+    yours = [command for command in registry if command.template is not None and not command.template.bundled]
     if yours:
         ui.write("Your prompts", style="normal")
         for command in yours:
@@ -1123,7 +1130,7 @@ async def handle_abandon(ui: Ui, argument: str, state: State) -> State:
 
 
 def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Command]:
-    """Hardy's own commands, and then the user's.
+    """Operations, bundled prompt defaults, and then project prompts.
 
     Built-ins first and refused as names for a template (`load` enforces it),
     so a file in a checkout can never change what `/exit` or `/status` does.
@@ -1131,6 +1138,7 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
     exit_command = Command(
         "exit", "leave the session", handle_exit, safe_in_flight=True
     )
+    project_names = {template.name for template in templates}
     return [
         Command("help", "list these commands", handle_help, safe_in_flight=True),
         Command("model", "switch the model", handle_model, argument_hint="[identity]"),
@@ -1173,13 +1181,14 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
             "quit", "leave the session", exit_command.handler,
             alias_of="exit", safe_in_flight=True,
         ),
+        *(from_template(template) for template in user_prompts.SHORTCUTS if template.name not in project_names),
         *(from_template(template) for template in templates),
     ]
 
 
 def builtin_names() -> frozenset[str]:
-    """Every name Hardy owns, template or not. What `load` refuses to shadow."""
-    return frozenset(command.name for command in build_registry())
+    """Operational names a project cannot shadow; prompt defaults may be replaced."""
+    return frozenset(command.name for command in build_registry() if command.template is None)
 
 
 def load_templates(config) -> tuple[list[user_prompts.Template], list[str]]:

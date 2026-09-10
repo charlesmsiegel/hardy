@@ -18,6 +18,7 @@ def test_the_registry_holds_the_specified_commands():
     assert names == [
         "help", "model", "cas", "goal", "assume", "import", "project", "status", "prove",
         "export", "doctor", "clear", "tree", "fork", "abandon", "exit", "quit",
+        "audit", "formalize", "publish", "restyle",
     ]
 
 

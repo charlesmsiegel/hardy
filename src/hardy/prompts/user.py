@@ -73,7 +73,7 @@ class TemplateError(ValueError):
 
 @dataclass(frozen=True)
 class Template:
-    """One `.hardy/prompts/<name>.md`, parsed."""
+    """One project prompt or bundled shortcut, expanded through the same path."""
 
     name: str
     body: str
@@ -81,10 +81,57 @@ class Template:
     argument_hint: str = ""
     #: Where it came from, so `/help` can say which file to edit.
     path: Path | None = None
+    bundled: bool = False
+    #: An explicitly supplied default; project placeholders stay required.
+    default_argument: str = ""
 
     @property
     def summary(self) -> str:
         return self.description or f"your own prompt ({self.name}.md)"
+
+
+# Convenience input, never a workflow invocation or verification record.
+# Project templates of the same name override these defaults.
+SHORTCUTS = (
+    Template(
+        "audit",
+        "Audit the following selection against the current workspace records and artifacts:\n$@\n\n"
+        "Report exact statements and scopes, proof status, remaining holes, assumptions, citation "
+        "obligations, and stale evidence. Distinguish kernel checks from heuristic review. "
+        "This audit request does not approve assumptions or establish any claim.",
+        description="ask for an audit of the workspace or a selection",
+        argument_hint="[selection]", bundled=True, default_argument="the current workspace",
+    ),
+    Template(
+        "formalize",
+        "Propose a faithful formal statement for:\n$@\n\n"
+        "Preserve its mathematical identity, scope, quantifiers, and hypotheses. Resolve notation "
+        "through the recorded context and reuse an adequate existing representation. List "
+        "interpretation choices and unresolved ambiguities. Keep this proposal distinct from a "
+        "proof or an accepted representation; do not silently replace the original claim.",
+        description="ask for a faithful formalization proposal", argument_hint="<claim>", bundled=True,
+    ),
+    Template(
+        "publish",
+        "Prepare a local publication draft for this selection:\n$@\n\n"
+        "Preserve the exact statements, hypotheses, scope, and citations. Base verified labels "
+        "on existing accepted evidence, disclose remaining holes and assumptions, and identify "
+        "stale or missing exposition. Keep conjectures and heuristic arguments visibly distinct "
+        "from verified results. Report what the draft still needs; this request grants no "
+        "assumption approval or permission to distribute it externally.",
+        description="ask for a local publication draft", argument_hint="<selection>", bundled=True,
+    ),
+    Template(
+        "restyle",
+        "Revise the exposition using these style instructions:\n$@\n\n"
+        "Preserve mathematical meaning, exact claims, hypotheses, scope, notation bindings, "
+        "citations, and proof-status disclosures. Identify any requested change that would "
+        "change the mathematics instead of silently making it. A prose revision is not new "
+        "verification evidence.",
+        description="ask for a prose revision preserving the mathematics",
+        argument_hint="<style instructions>", bundled=True,
+    ),
+)
 
 
 def unquoted(word: str) -> str:
@@ -157,8 +204,8 @@ def _frontmatter(text: str) -> tuple[dict[str, str], str]:
 
 def expand(template: Template, argument: str) -> str:
     """The text this command actually sends, or a refusal naming what is missing."""
-    words = tokenize(argument)
-    rest = argument.strip()
+    rest = argument.strip() or template.default_argument
+    words = tokenize(rest)
     missing: list[str] = []
 
     def substitute(found: re.Match[str]) -> str:
