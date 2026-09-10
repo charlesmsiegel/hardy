@@ -459,9 +459,13 @@ class ClaudeAgentRuntime:
         spoken: list[str] = []
         self.failure = None
         self._loop = asyncio.get_running_loop()
+        checkpoints = asyncio.create_task(self._checkpoint_loop())
         try:
             await self._ask(text, outbox, spoken)
         finally:
+            checkpoints.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await checkpoints
             # Every way out, not just the ordinary one: the wall clock cancels
             # this coroutine where it stands, and a provider error raises out of
             # the middle of a block. Text that was drawn was drawn on any of
@@ -558,7 +562,19 @@ class ClaudeAgentRuntime:
             self._drawn.append("")
             self._drawing = index
         self._drawn[-1] += text
-        self._checkpoint()
+        if self.checkpoint_seconds == 0:
+            self._checkpoint()
+
+    async def _checkpoint_loop(self) -> None:
+        """Persist displayed text even while the provider stops sending deltas."""
+        interval = self.checkpoint_seconds
+        if interval is None or interval <= 0:
+            return
+        while True:
+            await asyncio.sleep(interval)
+            if threading.current_thread() is not self._worker:
+                return  # An abandoned turn no longer owns the shared drawn text.
+            self._checkpoint()
 
     def _checkpoint(self) -> None:
         """Copy the drawn text into the record, at most once per interval.

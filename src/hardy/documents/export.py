@@ -601,20 +601,23 @@ def _superseded(events: Sequence[Mapping[str, Any]]) -> set[int]:
 def _unfinished(events: Sequence[Mapping[str, Any]]) -> set[int]:
     """The tool calls the record says started and never says finished.
 
-    `tool_started` is written before a call runs and `tool` after it; a start
-    with no `tool` for the same name after it is a call the session died in.
-    Matched by name, oldest first, because the two events carry no shared id
-    -- and two calls to one tool in flight together are told apart well enough
-    by that for a page whose point is that *something* did not finish.
+    Calls carry a shared id, so a later turn's same-named call cannot finish
+    an earlier one. Older events without ids match by name within their user
+    turn only; their ordering cannot establish a match across turns.
     """
-    pending: dict[str, list[int]] = {}
+    pending: dict[tuple[int | None, str], list[int]] = {}
+    turn = 0
     for index, event in enumerate(events):
         kind = event.get("type")
+        if kind == "user":
+            turn += 1
         name = str(event.get("name", ""))
+        call_id = event.get("call_id")
+        key = (None, str(call_id)) if call_id else (turn, name)
         if kind == "tool_started":
-            pending.setdefault(name, []).append(index)
-        elif kind == "tool" and pending.get(name):
-            pending[name].pop(0)
+            pending.setdefault(key, []).append(index)
+        elif kind == "tool" and pending.get(key):
+            pending[key].pop(0)
     return {index for indexes in pending.values() for index in indexes}
 
 

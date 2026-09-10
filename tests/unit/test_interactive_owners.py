@@ -180,6 +180,9 @@ def test_turn_owner_records_a_tool_call_started_before_running_it(tmp_path):
     assert recorded_when_running[0]["name"] == "check_lean"
     assert recorded_when_running[0]["arguments"] == {"module": "Sylow"}
     assert [event["type"] for event in record._recorded()] == ["tool_started", "tool"]
+    started, finished = list(record._recorded())
+    assert started["call_id"] == finished["call_id"]
+    assert started["call_id"]
 
 
 def test_record_appends_from_many_threads_stay_whole_lines(tmp_path):

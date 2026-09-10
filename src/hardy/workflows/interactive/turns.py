@@ -12,6 +12,7 @@ import threading
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from hardy.agents import compaction
 from hardy.agents.contracts import ChatRuntime, TurnEvent
@@ -364,13 +365,17 @@ class TurnCoordinator:
             # own `tool_use` event is not ordered against this thread. This is
             # the durable record that the call started; a `tool` event that
             # never follows it is the record that it did not finish.
-            persistence.event({"type": "tool_started", "name": name, "arguments": arguments})
+            call_id = uuid4().hex
+            persistence.event({"type": "tool_started", "name": name, "arguments": arguments, "call_id": call_id})
             try:
                 result = tool(name, arguments)
             except (KeyError, TypeError, ValueError) as error:
                 result = ToolResult(False, f"invalid tool call: {error}")
             self._tally(name, result.ok)
-            persistence.event({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+            persistence.event({
+                "type": "tool", "name": name, "arguments": arguments,
+                "result": result.as_dict(), "call_id": call_id,
+            })
             return result
 
 
