@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from hardy.algebra.cas import CasError, CasSession, CellRecord, backend_for
+from hardy.algebra.contracts import MERGED_CAPTURE_NOTE
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import cas_spill_note
 from hardy.workflows.contracts import RunLimits
@@ -142,6 +143,7 @@ class CasCellResult(FrozenModel):
     value_repr: str = ""
     duration_ms: int = 0
     capture_truncated: bool = False
+    capture_mode: Literal["separate", "merged"] = "separate"
     observation_truncated: bool = False
     output_artifact: str | None = None
     note: str | None = None
@@ -249,6 +251,8 @@ class CasToolRuntime:
             value_repr=record.value_repr,
             duration_ms=record.duration_ms,
             capture_truncated=record.capture_truncated,
+            capture_mode=record.capture_mode,
+            note=MERGED_CAPTURE_NOTE if record.capture_mode == "merged" else None,
             restart_note=record.restart_note,
         )
         if self._size(result) <= self.observation_bytes:
@@ -260,6 +264,8 @@ class CasToolRuntime:
             self._artifact_sequence += 1
             artifact = self._spill(name, record.model_dump_json(indent=2))
         note = cas_spill_note(artifact=artifact, capture_truncated=record.capture_truncated)
+        if result.note:
+            note = result.note + "\n" + note
         # `room` is characters and the cap is bytes, so the slice is a first
         # guess and the encoded envelope is what decides: multibyte output
         # sliced to a byte-derived character count came back several times

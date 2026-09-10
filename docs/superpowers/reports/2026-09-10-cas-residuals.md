@@ -101,8 +101,22 @@ unaccepted live error now asserts the existing recovery refusal and explicit res
 An additional real-interpreter test deliberately delays a separate parent stderr
 reader to reproduce the attribution race, then checks a clean following cell.
 These scripted tests are prepared but have not executed against Macaulay2 here;
-the existing Linux CAS-backends CI job is the next platform acceptance gate.
+the existing Linux CAS-backends CI job supplies the platform acceptance gate.
 Ruff passed for all changed CAS sources and tests using `uvx ruff check`.
+
+The subsequent [Linux real-backends run](https://github.com/charlesmsiegel/hardy/actions/runs/34488278367)
+on `314b2f4` passed **12 tests in 12.72 seconds**, including both new Macaulay2
+cases, two-digit counter replay, live-error recovery refusal and Singular.
+The pinned packages are Singular `1:4.3.2-p10+ds-1.1build1` and Macaulay2
+`1.26.06+ds-2~ubuntu24.04.1` on Ubuntu 24.04. This closes the current X4 residual
+platform acceptance; future defects remain ordinary CAS lane work.
+
+Final disclosure review also found that a notebook copied without its bundle
+manifest, or a bounded tool observation, lost the capture mode. Notebook cells
+now retain it and a visible markdown note explains merged output; tool results
+retain it and the existing terminal note describes lost stream origin. The
+focused export/tools/sentinel gate passed **46 tests with 2 skips**. Notebook
+format remains unchanged. This adds disclosure, not a new ordering guarantee.
 
 ## Theory and limits
 

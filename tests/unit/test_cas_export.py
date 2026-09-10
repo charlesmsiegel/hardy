@@ -13,6 +13,22 @@ from hardy.algebra.export import export_session
 from hardy.foundation.files import LayoutError
 
 
+def test_standalone_notebook_discloses_merged_stream_origin(tmp_path, sentinel_session):
+    session = sentinel_session()
+    session.execute("warning;")
+    export_session(session, tmp_path / "cas")
+    notebook = json.loads((tmp_path / "cas" / "session.ipynb").read_text(encoding="utf-8"))
+    code = next(cell for cell in notebook["cells"] if cell["cell_type"] == "code")
+    assert code["metadata"]["hardy"]["capture_mode"] == "merged"
+    assert code["outputs"][0]["name"] == "stdout"
+    assert "warning from stderr" in "".join(code["outputs"][0]["text"])
+    visible = "\n".join("".join(cell["source"]) for cell in notebook["cells"]
+                        if cell["cell_type"] == "markdown")
+    assert "stdout and stderr" in visible
+    assert "stream origin" in visible
+    assert notebook["nbformat"] == 4
+
+
 def test_export_writes_a_script_a_notebook_and_a_manifest(
     tmp_path, cas_session, reproduced
 ) -> None:
@@ -32,6 +48,7 @@ def test_export_writes_a_script_a_notebook_and_a_manifest(
     assert "a" in script and "b" in script
     assert notebook["nbformat"] == 4
     assert [cell["cell_type"] for cell in notebook["cells"]] == ["code", "code"]
+    assert {cell["metadata"]["hardy"]["capture_mode"] for cell in notebook["cells"]} == {"separate"}
     assert report.verified == 2
     assert reproduced(report), report.model_dump_json(indent=2)
 

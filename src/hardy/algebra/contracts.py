@@ -8,6 +8,10 @@ from pydantic import Field, model_validator
 from hardy.foundation.values import FrozenModel
 
 HEADER_BYTES = 10
+MERGED_CAPTURE_NOTE = (
+    "Sentinel output combines stdout and stderr in the stdout transcript; "
+    "the original stream origin is unavailable."
+)
 # A cell is bracketed by two markers, not trailed by one. A pipe preserves
 # write order, so whatever the interpreter printed for the *previous* cell is
 # necessarily before this cell's begin marker in the stream, however late it

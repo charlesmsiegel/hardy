@@ -157,7 +157,7 @@ Engineering X0 makes the existing formal-save order explicit without changing
 refusals or stage/commit/discard behavior. X3 verifies serialized assumption
 approval presentation. X4 has tested prompt-output, writer-lease and recovery
 fixes. Ordered merged capture and split-marker handling now address late stderr
-and prompt timing; real Macaulay2 CI remains pending. Legacy separate captures
+and prompt timing; the real Linux CAS gate passed all 12 tests. Legacy separate captures
 require a fresh session before the new transport can certify replay. Recovery distinguishes known terminal rollback from unaccepted
 live/unknown mutations, including after reopening. X6 adds durable batch attempt
 journals and append-only attributed
@@ -232,7 +232,7 @@ changed corpus/baseline inputs refuse. Batch records do not establish this
 verifier-call cap. Lean CPU time and hard provider token/invoice caps remain
 unknown. See the [evaluation report](docs/superpowers/reports/2026-09-10-evaluation.md)
 for acceptance scope and gate status. V0's fixture obligation continues; E0/E2,
-S1/S2 and X4's remaining work are not accepted by these measurements.
+S1/S2 remain unaccepted by these measurements.
 
 ## What this cannot establish
 

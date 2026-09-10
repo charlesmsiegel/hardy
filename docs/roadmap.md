@@ -369,7 +369,7 @@ Ensure human trust-widening approval cannot be visually interleaved/confused wit
 
 ## X4 — CAS correctness lane — P1
 
-**Status:** Local residual fixes tested; real-platform gate pending. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain. See the [CAS residual report](superpowers/reports/2026-09-10-cas-residuals.md).
+**Status:** Current residual acceptance complete: hermetic regressions and all 12 real Linux Singular/Macaulay2 tests passed. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain. See the [CAS residual report](superpowers/reports/2026-09-10-cas-residuals.md).
 
 **Deps:** none
 
@@ -1230,7 +1230,7 @@ Core C followed this dependency order: C0/C1/C2/C5 could proceed independently; 
 As soon as the core loop works, run D0/D1/D2/D5/D7/D8/D9 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
 E1/E3/E4 have automated fixtures and terminal integration; E0/E2 remain deferred for human input.
-Continue X4's CAS residuals and V0's fixture obligation; S1's confinement
+Continue V0's fixture obligation and future concrete CAS defects; S1's confinement
 capability gap and the dependent S2 audit remain unaccepted. V1-V3 implementations
 retain their scoped measurement limits; the integrated full landing gate passed.
 

@@ -48,6 +48,7 @@ from hardy.algebra.cas import (
     state_unchecked,
     unobservable,
 )
+from hardy.algebra.contracts import MERGED_CAPTURE_NOTE
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.layout import CAS_SCRATCH
@@ -708,6 +709,11 @@ def render_notebook(
     """
     backend = session.backend
     notebook_cells: list[dict[str, Any]] = []
+    if any(record.capture_mode == "merged" for record in cells):
+        notebook_cells.append({
+            "cell_type": "markdown", "id": "hardy-capture", "metadata": {},
+            "source": [MERGED_CAPTURE_NOTE],
+        })
     for record, verdict in zip(cells, verdicts, strict=True):
         outputs: list[dict[str, Any]] = []
         if record.stdout:
@@ -738,6 +744,7 @@ def render_notebook(
                         "verification": verdict.verdict,
                         "detail": verdict.detail,
                         "capture_truncated": record.capture_truncated,
+                        "capture_mode": record.capture_mode,
                     }
                 },
                 "outputs": outputs,

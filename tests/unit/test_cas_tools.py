@@ -31,6 +31,16 @@ def test_a_normal_result_is_returned_whole(tmp_path, cas_session) -> None:
     assert spilled == {}
 
 
+@pytest.mark.parametrize("source", ["warning;", "flood;"])
+def test_merged_capture_is_disclosed_in_results_and_human_notes(sentinel_session, source):
+    runtime = make_runtime(sentinel_session(), {}, observation_bytes=2048)
+    result = runtime.run(source)
+    assert result.model_dump()["capture_mode"] == "merged"
+    assert "stdout and stderr" in (result.note or "")
+    assert "stream origin" in (result.note or "")
+    assert result.observation_truncated == (source == "flood;")
+
+
 def test_an_oversized_answer_is_spilled_and_points_at_the_live_value(tmp_path, cas_session) -> None:
     """The model cannot open files, so the summary has to leave it a way back in."""
     spilled: dict = {}

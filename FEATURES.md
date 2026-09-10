@@ -180,7 +180,9 @@ trials remain deferred.
 - X4 adds conservative prompt-output handling, exclusive CAS journal ownership
   and durable terminal/live recovery distinctions across reloads. Unaccepted live
   or unknown mutations refuse recovery. Ordered capture and split-marker
-  regressions cover late stderr and prompt timing; real Macaulay2 CI is pending.
+  regressions cover late stderr and prompt timing; the real Linux CAS gate passed all 12 tests.
+  Sentinel streams are merged, so per-stream origin is unavailable; bounded
+  EOF/timeout diagnostics are retained.
 - X5's `provider_budget` policy supports expected-spend reserve/settle admission
   for API chat and batch, including auxiliary calls and restart liability. It is
   not a hard token or invoice cap. SDK, staged Prove and eval declarations refuse.
@@ -2110,7 +2112,3 @@ then a commit of the scoreboard directory).
 - **Now (implemented) — Acceptance:** `hardy accept` cross-checks a run's manifest,
   trajectory, Lean source and document against each other, and its deterministic
   path needs no model, network, or toolchain.
-
-X4 late-stderr attribution and split-marker timing have automated regressions.
-Sentinel streams are merged, so per-stream origin is unavailable; EOF/timeout
-diagnostics remain bounded and preserved. Real Macaulay2 CI is pending.

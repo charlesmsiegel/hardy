@@ -312,7 +312,13 @@ retains ambiguous nonempty output. Persisted nullable `kernel_lost` distinguishe
 terminal rollback from unaccepted live/unknown cell mutations across reloads.
 Known lost interrupts may rebuild accepted state; a later kernel death cannot
 erase earlier live unaccepted effects. Ordered merged capture addresses late stderr
-and split-marker timing; real Macaulay2 platform checks remain pending.
+and split-marker timing; the real Linux CAS gate passed all 12 tests.
+
+X4 sentinel capture now combines stdout/stderr into one ordered pipe. Capture
+mode is recorded and incompatible legacy captures cannot establish replay or
+export agreement. The protocol assumes synchronous flushed writes before each
+marker; it cannot attribute asynchronous output after completion. See the
+[CAS residual report](docs/superpowers/reports/2026-09-10-cas-residuals.md).
 
 `agents/spend_budget.py` owns X5's immutable quote policy and shared append-only
 reserve/settle journal. API chat and batch bind one owner across auxiliary readers,
@@ -1206,9 +1212,3 @@ true.
 
 The complete feature inventory is in [FEATURES.md](FEATURES.md), and the visual
 map is [ARCHITECTURE.html](ARCHITECTURE.html).
-
-X4 sentinel capture now combines stdout/stderr into one ordered pipe. Capture
-mode is recorded and incompatible legacy captures cannot establish replay or
-export agreement. The protocol assumes synchronous flushed writes before each
-marker; it cannot attribute asynchronous output after completion. See the
-[CAS residual report](docs/superpowers/reports/2026-09-10-cas-residuals.md).
