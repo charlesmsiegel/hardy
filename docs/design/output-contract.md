@@ -153,7 +153,7 @@ LaTeX never acts on rather than documentation.
 
 `save_lean` then refuses, before writing, when both of these hold:
 
-1. the committed tree already contains an undocumented theorem, and
+1. the committed tree already owes a writeup, and
 2. this save would introduce a theorem name not already in the committed tree.
 
 Both conditions are needed. Condition 1 alone traps the session: a model that
@@ -164,9 +164,20 @@ forever by saving new theorems into the file it just saved. Together they permit
 any amount of repair to existing work while blocking accumulation of new
 undocumented claims. The first save always passes, so a session can prove one
 thing freely and is only made to catch up before proving the next. `lemma`,
-`def`, `instance`, `abbrev` and `example` are exempt, and `open` obligations do
-not feed the ratchet, since a development may legitimately hold two open results
-at once and neither can be written up yet.
+`def`, `instance`, `abbrev` and `example` are exempt.
+
+What condition 1 counts is narrower than the whole obligation list, and three
+kinds of debt are deliberately left out of it (`workflows/interactive/session.py`).
+An `open` obligation does not feed the ratchet, since a development may
+legitimately hold two open results at once and neither can be written up yet. An
+appendix or assumption obligation for an axiom only an *unfinished* proof leans
+on does not either: it is not a claim owed to a reader yet, though it stays in
+the obligations, on the screen, and in what a report refuses over the moment the
+open theorem is named. And a banner that is out of date only because a theorem
+opened does not count, because it made every second skeleton wait on a LaTeX
+recompile that no obligation about a closed theorem asked for. Each exclusion is
+a debt that is still reported and still blocks a report; what it does not do is
+block the next save.
 
 The ratchet is the single hard gate, which is why the writeup side is an
 advisory. A refusal to save a writeup that does not yet cover every registered
@@ -209,17 +220,35 @@ machine-checked either, and open theorems are named rather than counted, because
 that clause is about particular claims printed on the pages in front of the
 reader and "one theorem is still open" leaves them unable to tell which.
 
-**The stamp is part of what makes a writeup stale.** Its text depends on session
-state that hashing the sources alone does not cover, so the stamp text is hashed
-into the writeup signature: a change to what the banner would say makes the
-writeup stale exactly as an edit to the source does. That is also why the
-shipped banner says nothing about whether a result has been *reported*. An
-earlier draft carried a "no result has been reported" clause, and since a report
-changes what the banner would say, accepting one staled every published PDF and
-blocked a second report behind a recompile that changed no source. Whether a
-result was reported is the session's own bookkeeping rather than a property of
-the document; what a reader needs is how much Lean checked, how much was
-assumed, and how much the document asserts on neither footing.
+**The stamp is part of what makes a writeup stale.** What the banner would say
+depends on session state that hashing the `.tex` sources alone does not cover,
+so the writeup signature hashes the banner's *inputs* alongside those sources
+(`workflows/interactive/documents.py`). The inputs rather than the banner text,
+because computing the text would recurse: the banner asks for the obligations,
+staleness is one of them, and that asks for the signature.
+
+Only the inputs a stale banner would *overstate* on are hashed
+(`_stamp_inputs`): the goal, the approved assumptions, the automation-closed
+flags, and the set of open theorems. An assumption approved after the compile is
+the overstating direction, since the published banner goes on saying nothing was
+assumed while the work rests on something, and a changed goal prints the wrong
+assignment. A theorem machine-checked after the compile is the other direction:
+the banner *understates*, saying one theorem where there are now two, and the
+ratchet already forces the writeup to carry that theorem before anything is
+reportable, so counting it in the signature bought nothing and cost a recompile
+after every Lean save. The signature cannot tell the two directions apart within
+one input, which is why closing a hole stales the writeup even though it
+understates; that costs nothing, because a theorem that has just closed owes the
+document a label and its statement anyway.
+
+The same reasoning is why the shipped banner says nothing about whether a result
+has been *reported*. An earlier draft carried a "no result has been reported"
+clause, and since a report changes what the banner would say, accepting one
+staled every published PDF and blocked a second report behind a recompile that
+changed no source. Whether a result was reported is the session's own
+bookkeeping rather than a property of the document; what a reader needs is how
+much Lean checked, how much was assumed, and how much the document asserts on
+neither footing.
 
 **An asserted theorem owes the reader something to check it against.** Every
 environment declared with `\newtheorem{...}{Theorem}` must carry a `\label` for a
@@ -315,7 +344,8 @@ identifier and DOI together, with a cite key that is a function of the paper and
 of nothing else, so the same paper is the same key in every run and in every
 workspace whatever order it was cited in.
 
-`Bibliography.cite` is the only code path that writes it, and it regenerates
+`Bibliography.cite`, reached from the model's `cite_paper` tool and from
+nowhere else, is the only code path that writes it, and it regenerates
 `tex/references.tex` whole from the store, so a hand edit to the generated file
 is undone rather than merged. That file is Hardy's, may be neither written nor
 deleted by hand, and is the one file at the root of the writeup tree held that
@@ -327,7 +357,7 @@ characters the engine can set.
 The document may not write its own bibliography either. Every key the compile
 touched, both what the reference list defined and what the text cited, is read
 from every auxiliary file the compilation wrote rather than the root's alone,
-and each must be a key the citation tool put in the store. A `\bibitem`, a
+and each must be a key `cite_paper` put in the store. A `\bibitem`, a
 `thebibliography`, a `\bibliography` or an `\addbibresource` in any saved
 writeup file is refused at the check and at the save, where the refusal can say
 something useful, and so is building a control sequence by name, since a command
