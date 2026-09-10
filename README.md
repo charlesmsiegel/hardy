@@ -94,11 +94,18 @@ tries cheap closers before iterative repair, shares verification/time ceilings,
 and rechecks the assembled original claim. Partial holes and per-attempt artifacts
 remain explicit; each sketch attempt requires a fresh run store.
 
-These primitives have hermetic persistence and integration tests. Production
-capability readers, model/search adapters and CLI/UI wiring for the new project
-operations remain unconfigured and belong to later workflow and integration
-stages. Core B adds no live model/Lean validation, performance result or execution
-isolation. The literal manuscript inventory remains available. See the [roadmap](docs/roadmap.md).
+Core D composes these owners into Research, Explore, Critique, Repair, Referee
+and publication APIs. Research schedules statement preparation before proof;
+Explore persists setup, representations and research history before a theorem
+exists. Critique records typed gaps, Repair preserves the stored frozen claim,
+and Referee reports exact manuscript coverage and external contracts. Publication
+selects minimal context and recorded prose, then delegates mechanical compilation.
+
+These workflows have hermetic owner-composition tests. Applications still supply
+the named model, capability-reader and guarded-save operations; the new project
+flows are not wired into the terminal UI. Core E's human-guided trials and UI
+integration are explicitly deferred. No new live-model performance or execution
+isolation is claimed. See the [roadmap](docs/roadmap.md).
 
 ## What this cannot establish
 

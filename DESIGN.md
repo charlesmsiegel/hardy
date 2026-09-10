@@ -69,9 +69,9 @@ blocks, labels, citations, spans, and digests from supplied text. It does not
 read paths, execute TeX, expand macros, or decide semantic claim boundaries.
 
 Hermetic tests exercise these mechanisms, persistence/restart and import ownership.
-Production capability readers, model/search adapters and CLI/UI wiring for the
-new project operations remain unconfigured; later workflow and integration stages
-will connect them. There is no project-aware Prove UI yet. Core B adds no live
+Core D now composes these owners through named capability/model operations;
+application-specific reader adapters and CLI/UI wiring remain unconfigured.
+There is no project-aware Prove UI yet. Core B adds no live
 model/Lean validation, execution isolation or mathematical benchmark improvement. The exact
 implementation status and later owners are maintained in
 [docs/roadmap.md](docs/roadmap.md).
@@ -95,7 +95,7 @@ generic acquisition can finish through an exact typed proof/definition/interface
 instead of a citation. B2 reauthenticates those children on later reads, including
 after restart. Cycles, missing resolvers, unavailable decisions and exhausted
 attempt/depth bounds remain unresolved. Mathematical choices still require supplied
-model/capability operations; user-facing Research/Explore workflows are Core D.
+model/capability operations; shared Research/Explore orchestration is Core D.
 
 `strategies/iterative.py` owns Prove's existing retry order and feedback while the
 run retains provider thread, storage, tool budgets and cancellation. The sketch
@@ -110,8 +110,46 @@ remain explicit; helper success never substitutes for final parent verification.
 These APIs have hermetic tests using named capability stand-ins and actual local
 persistence/verification code. A bounded native Lean fixture also compiled the
 generated definition, interface and assembled sketch without axioms. Live model
-results, strategy improvement,
-execution isolation and production project-workflow adapters are not claimed.
+results, strategy improvement and execution isolation are not claimed.
+
+## Core D mathematical workflows
+
+`research.py` records an exact request and model-proposed mathematical plan,
+then uses C4 to schedule prerequisite acquisition, A2 statement preparation and
+the selected proof/refutation/computation operation. Prepared statements retain
+their frozen content and semantic projection. Completed inspection is separate
+from an established theorem; B2 still supplies acceptance and actual used trust.
+Restart reuses the original request and reauthenticates the underlying evidence.
+
+`explore.py` composes B4/B5 to record concepts and representations, interpret
+conversational setup into declarations and bindings, and return to weaker contexts
+without deleting stronger branches. Minimal materialization preserves generated
+binder origins. Questions, conjectures, goals and semantic approaches share the
+ledger; refutations and corrected conjectures preserve historical identities.
+Normalized work cannot close an original goal without authenticated transport.
+
+`critique.py` reports which review layers ran and persists typed findings without
+repairing them. `repair.py` compares against the capability owner's stored frozen
+claim, checkpoints open work, delegates guarded saving, and rechecks B1's reverse
+closure. Failed checks become visible work; overlapping edits cannot close the gap.
+Save owners retain their existing staging, audit and artifact comparison gates.
+
+`referee.py` binds A5 source spans to exact claims, contexts and citation uses,
+selects main dependency paths, composes Critique and C2, and reports omitted,
+unresolved, probed and authenticated results separately. Structural observations
+are distinct from an actual adversarial reviewer. Source interpretation remains
+an explicit semantic reading; the lexical inventory does not infer mathematics.
+
+`publication.py` derives immutable plans from B1/B3, including hidden proof
+dependencies for auditing, minimal local context, citations and missing/stale
+exposition. `publish.py` renders recorded text into a fresh guarded output bundle
+and delegates compilation to existing document tools. Human prose is not generated
+or overwritten. A compiled draft is not a mathematical verification result.
+
+These are shared workflow APIs with actual persistence and capability composition
+fixtures. Application-specific model/readers and terminal wiring remain separate;
+Core E is deferred for human input. No real-paper acceptance or live-model result
+is inferred from deterministic software tests.
 
 ## Output contract
 

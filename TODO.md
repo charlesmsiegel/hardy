@@ -4,23 +4,22 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 19 of 63 implementation/lane items (A0-A5, B0-B5 and C0-C6).**
-Checkmarks mean the roadmap records the item as implemented. Core C passed its full hermetic test gate. Unchecked items
+**Completed: 29 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6 and D0-D9).**
+Checkmarks mean the roadmap records the item as implemented. Core D passed its full hermetic landing gate. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
 
-Core A-C provide reusable primitives; production project capability/model/search
-adapters and CLI/UI workflow composition remain later work. See the
-[Core C verification report](docs/superpowers/reports/2026-09-10-core-c.md)
+Core A-D provide shared primitives and workflow APIs; application-specific
+capability/model/search adapters and CLI/UI wiring remain later work. See the
+[Core D verification report](docs/superpowers/reports/2026-09-10-core-d.md)
 for validation results and integration limits.
 
 ## Available next work
 
-Core D entry points D0, D1, D2, D3, D5, D7, D8 and D9 have their required
-primitives implemented; D3 uses D2 for realistic inputs. D4 follows D2; D6 follows
-D5. The authorized sequence is Core D, then the remaining sections whose
-dependencies are satisfied. **Skip all of Core E pending human input.**
-Independent X, S and V work does not delay the next eligible core stage.
+Continue with Core F, then eligible G/H/I
+work. **Skip all of Core E pending human input.** Independent X, S and V work
+retains its own dependencies; X1 supports strategy comparison and X5 supports
+fixed token/cost budgets.
 
 ## Dependency map
 
@@ -51,7 +50,7 @@ do not add requirements to them.
 
 ```mermaid
 flowchart LR
-    AB["Completed A/B primitives"] --> D0["D0 Literature-gap fixture"] & D1["D1 Research"] & D2["D2 Critique"] & D3["D3 Repair"] & D4["D4 Referee"] & D5["D5 Publication planner"] & D7["D7 Concepts"] & D8["D8 Declarations"] & D9["D9 Goals and transport"] & E4["E4 Full status"]
+    AB["Completed A/B primitives"] --> D0["D0 Literature-gap fixture - done"] & D1["D1 Research - done"] & D2["D2 Critique - done"] & D3["D3 Repair - done"] & D4["D4 Referee - done"] & D5["D5 Publication planner - done"] & D7["D7 Concepts - done"] & D8["D8 Declarations - done"] & D9["D9 Goals and transport - done"] & E4["E4 Full status - deferred"]
     C01245["C0-C2, C4, C5"] --> D0
     C0to5["C0-C5"] --> D1
     C5["C5"] --> D3
@@ -59,11 +58,11 @@ flowchart LR
     C2["C2"] & D2 --> D4
     C5 -.-> D4 & D9
     C3["C3"] -.-> D7
-    D5 --> D6["D6 Document assembly"]
-    D0 & D1 & D7 & D8 & D9 & C3 --> E0["E0 Jacobian/Prym prototype"]
-    D4 --> E1["E1 Synthetic referee manuscript"] & E2["E2 Real paper audit"]
+    D5 --> D6["D6 Document assembly - done"]
+    D0 & D1 & D7 & D8 & D9 & C3 --> E0["E0 Jacobian/Prym prototype - deferred"]
+    D4 --> E1["E1 Synthetic referee manuscript - deferred"] & E2["E2 Real paper audit - deferred"]
     E1 --> E2
-    D5 & D6 --> E3["E3 Publish selected theorem"]
+    D5 & D6 --> E3["E3 Publish selected theorem - deferred"]
 ```
 
 ## Core A: contracts and seams
@@ -96,16 +95,16 @@ flowchart LR
 
 ## Core D: workflows
 
-- [ ] [D0 - Synthetic literature-gap acceptance fixture - P0](docs/roadmap.md#d0--synthetic-literature-gap-acceptance-fixture--p0) - Deps: [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B2](docs/roadmap.md#b2--ledger-policy--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)-[A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0), [C0](docs/roadmap.md#c0--gap-classifier--p0)-[C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0), [C4](docs/roadmap.md#c4--recursive-obligation-resolver--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0).
-- [ ] [D1 - Research workflow - P0](docs/roadmap.md#d1--research-workflow--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)-[A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0), [C0](docs/roadmap.md#c0--gap-classifier--p0)-[C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0).
-- [ ] [D2 - Critique workflow - P0/P1](docs/roadmap.md#d2--critique-workflow--p0p1) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0).
-- [ ] [D3 - Repair workflow - P1](docs/roadmap.md#d3--repair-workflow--p1) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B2](docs/roadmap.md#b2--ledger-policy--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0); [D2](docs/roadmap.md#d2--critique-workflow--p0p1) for realistic inputs.
-- [ ] [D4 - Referee workflow - P0](docs/roadmap.md#d4--referee-workflow--p0) - Deps: [A5](docs/roadmap.md#a5--mechanical-manuscript-source-model--p0), [A0](docs/roadmap.md#a0--ledger-contracts--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)-[A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0), [C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0), [D2](docs/roadmap.md#d2--critique-workflow--p0p1); [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0) for formal checks.
-- [ ] [D5 - Publication planner - P0](docs/roadmap.md#d5--publication-planner--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0), [B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0).
-- [ ] [D6 - Publication -> document assembly adapter - P0/P1](docs/roadmap.md#d6--publication---document-assembly-adapter--p0p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0).
-- [ ] [D7 - Exploratory concept/representation flow - P0](docs/roadmap.md#d7--exploratory-conceptrepresentation-flow--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0); [C3](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0) only for the step that materializes Lean.
-- [ ] [D8 - Exploratory declaration/context flow - P0](docs/roadmap.md#d8--exploratory-declarationcontext-flow--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0); [B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0)/[A2](docs/roadmap.md#a2--shared-statement-formalization--p0) when representation/formalization is requested.
-- [ ] [D9 - Exploratory goals, notation, transport, and approaches - P0](docs/roadmap.md#d9--exploratory-goals-notation-transport-and-approaches--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0); [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)/[B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0)/[C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0) as needed for formal/proof work.
+- [x] [D0 - Synthetic literature-gap acceptance fixture - P0](docs/roadmap.md#d0--synthetic-literature-gap-acceptance-fixture--p0) - Deps: [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B2](docs/roadmap.md#b2--ledger-policy--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)-[A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0), [C0](docs/roadmap.md#c0--gap-classifier--p0)-[C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0), [C4](docs/roadmap.md#c4--recursive-obligation-resolver--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0).
+- [x] [D1 - Research workflow - P0](docs/roadmap.md#d1--research-workflow--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)-[A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0), [C0](docs/roadmap.md#c0--gap-classifier--p0)-[C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0).
+- [x] [D2 - Critique workflow - P0/P1](docs/roadmap.md#d2--critique-workflow--p0p1) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0).
+- [x] [D3 - Repair workflow - P1](docs/roadmap.md#d3--repair-workflow--p1) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B2](docs/roadmap.md#b2--ledger-policy--p0), [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0); [D2](docs/roadmap.md#d2--critique-workflow--p0p1) for realistic inputs.
+- [x] [D4 - Referee workflow - P0](docs/roadmap.md#d4--referee-workflow--p0) - Deps: [A5](docs/roadmap.md#a5--mechanical-manuscript-source-model--p0), [A0](docs/roadmap.md#a0--ledger-contracts--p0), [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)-[A3](docs/roadmap.md#a3--generic-assumption-admission-policy--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0), [C2](docs/roadmap.md#c2--goal-directed-literature-resolver-and-citation-contracts--p0), [D2](docs/roadmap.md#d2--critique-workflow--p0p1); [C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0) for formal checks.
+- [x] [D5 - Publication planner - P0](docs/roadmap.md#d5--publication-planner--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B1](docs/roadmap.md#b1--ledger-graph-algorithms--p0), [B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0).
+- [x] [D6 - Publication -> document assembly adapter - P0/P1](docs/roadmap.md#d6--publication---document-assembly-adapter--p0p1) - Deps: [D5](docs/roadmap.md#d5--publication-planner--p0).
+- [x] [D7 - Exploratory concept/representation flow - P0](docs/roadmap.md#d7--exploratory-conceptrepresentation-flow--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0); [C3](docs/roadmap.md#c3--standard-object-lean-interface-materialization--p0) only for the step that materializes Lean.
+- [x] [D8 - Exploratory declaration/context flow - P0](docs/roadmap.md#d8--exploratory-declarationcontext-flow--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0); [B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0)/[A2](docs/roadmap.md#a2--shared-statement-formalization--p0) when representation/formalization is requested.
+- [x] [D9 - Exploratory goals, notation, transport, and approaches - P0](docs/roadmap.md#d9--exploratory-goals-notation-transport-and-approaches--p0) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0), [B0](docs/roadmap.md#b0--ledger-event-store--p0)-[B3](docs/roadmap.md#b3--ledger-derived-views--p0), [B5](docs/roadmap.md#b5--shared-mathematical-contextdeclaration-management--p0); [A2](docs/roadmap.md#a2--shared-statement-formalization--p0)/[B4](docs/roadmap.md#b4--shared-conceptrepresentation-resolution--p0)/[C5](docs/roadmap.md#c5--iterative-strategy-adapter--p0) as needed for formal/proof work.
 
 ## Core E: prototypes and interaction
 

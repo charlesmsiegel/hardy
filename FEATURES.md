@@ -66,13 +66,21 @@ interactive surface's own live run is still to come.
   runtime thread, trajectories and final verification. The sketch strategy API
   supports independent local lemmas, cheap closers then iterative repair, shared
   verification/time ceilings, persistent open holes, and exact final parent
-  verification. Each attempt uses a fresh run store. Production project workflow
-  adapters and a sketch CLI remain later integration; no new live result is claimed.
-- Core B is covered by hermetic persistence and integration tests. Production
-  capability readers, model/search adapters and CLI/UI wiring for these new
-  project operations remain unconfigured and belong to later workflow/integration
-  stages. There is no project-aware Prove UI, new live model/Lean validation,
-  performance claim or execution isolation from this work.
+  verification. Each attempt uses a fresh run store. A sketch CLI remains later
+  integration; the bounded native Lean fixture is separate from model performance.
+- Core D adds shared Research, Explore, Critique, Repair and Referee workflows:
+  exact request/checkpoint reuse, prerequisite-before-proof scheduling, semantic
+  setup and research history, layered findings, original-claim repair, and exact
+  manuscript coverage/trust reports. Structural checking is distinct from model
+  review; a completed refutation/computation inspection does not prove its target.
+- Publication planning selects minimal context, visible mathematics, examples,
+  citations and exact author prose while reporting stale/missing exposition.
+  Assembly writes a fresh bundle and uses existing document checks; compilation
+  does not certify mathematics and human prose is never silently rewritten.
+- Core A-D have hermetic persistence and owner-composition tests. Applications
+  supply named capability readers, model/search and guarded-save operations.
+  Terminal wiring and Core E's human-guided trials remain deferred. There is no
+  new live-model performance claim or execution isolation from this work.
 - Algebra backend/kernel/session/replay/script owners and literature
   metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
   points, `app/tui`, configuration, setup, project construction and terminal
@@ -542,10 +550,11 @@ Priority labels are sequencing hints:
   the guarantee, or is null where there is none. Closing this needs the
   deferred process confinement, or a readable-root control that SDK does not
   have.
-- **Next — Critique workflow:** inspect user, literature, or generated proofs and
-  produce a structured ledger of gaps.
-- **Next — Repair workflow:** patch one gap locally, without changing the claim,
-  then recheck the patch's blast radius.
+- **Now (shared API) — Critique workflow:** compose named formal, formalization
+  and adversarial checks into exact typed ledger gaps; list skipped layers.
+- **Now (shared API) — Repair workflow:** retain the stored frozen claim, pass a
+  verified candidate through the guarded save owner, and recheck its blast radius.
+  Failed checks and overlapping edits keep the obligation open.
 
 ## Lean interaction and proof tools
 
@@ -1263,15 +1272,18 @@ Priority labels are sequencing hints:
 
 ## Critique and repair details
 
-- **Next:** persistent ledger entries with `open`, `patched`, `verified-closed`,
-  `dismissed`, and `abandoned` states plus evidence and stable identity.
-- **Next:** three critique layers: kernel checking, formalization probing, and
-  adversarial skeptics checking edge cases, intermediate claims, and citations.
-- **Next:** crash-safe patch history; overlapping changes reopen affected holes
-  instead of creating misleading new identities.
-- **Next:** resolved entries remain as history; budget expiry marks and reports all
-  unresolved entries; critique-only requests never repair automatically.
-- **Later:** reuse ledger holes as the work units for sketch-and-discharge.
+- **Now (shared API):** versioned obligations have `open`, `investigating`,
+  `blocked`, `resolved`, `dismissed` and `abandoned` states, evidence and stable
+  identity. Recorded resolution still requires authenticated evidence on reuse.
+- **Now (shared API):** three critique layers cover formal checking, formalization
+  probing and adversarial mathematical/citation review. Reports identify the
+  layers that actually ran; structural Referee observations are separate.
+- **Now (shared API):** Repair checkpoints open work before its strategy/save
+  operations, preserves the stored frozen claim and records dependency rechecks.
+  Overlaps keep the gap open; historical obligations are not silently replaced.
+- **Now (shared API):** bounded acquisition and strategy outcomes retain unresolved
+  work; Critique never repairs automatically. C6 can record independent sketch
+  lemmas as ordinary ledger holes. Terminal workflow wiring remains deferred.
 
 ## Writeups, papers, and bibliography
 

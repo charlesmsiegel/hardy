@@ -2,10 +2,9 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-10):** Core A-C are implemented, with Core C
-passing the full hermetic test gate, lint, wheel smoke test and a bounded native
-Lean check. Continue with Core D, then remaining sections with satisfied
-dependencies. **Skip all of Core E pending human input.** Keep an individual
+**Current execution scope (2026-09-10):** Core A-D are implemented and have passed
+their full hermetic landing gates. Continue with Core F and remaining sections
+with satisfied dependencies. **Skip all of Core E pending human input.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
@@ -696,6 +695,8 @@ Create a Lean skeleton and independent per-hole proof tasks. Cheap closers run a
 
 **Deps:** B0-B2, A2-A3, C0-C2, C4, C5
 
+**Status: implemented (2026-09-10).** `tests/unit/test_core_d_acceptance.py` composes four acquisition routes through Research, exact source admission and verification, restart reuse, self-assumption refusal and evidence revocation. External judgments are scripted; source/artifact/ledger handling and capability orchestration are real.
+
 Construct:
 
 ```text
@@ -711,6 +712,8 @@ Hardy must choose four distinct resolution kinds, widen trust only for the exter
 ## D1 — Research workflow — P0
 
 **Deps:** A0, A2-A3, B0-B5, C0-C5
+
+**Status: implemented (2026-09-10).** `workflows/research.py` composes exact request checkpoints, model plans, A2 statement preparation, C4 prerequisites and named target operations. Restart structure and final report revisions are checked; only B2 authenticates theorem establishment.
 
 Thin orchestration:
 
@@ -728,6 +731,8 @@ No duplicated context/representation/Lean/literature logic.
 
 **Deps:** A0, A2, B0-B5
 
+**Status: implemented (2026-09-10).** `workflows/critique.py` records typed gaps and counterexamples with explicit formal, formalization and adversarial layer coverage. Missing layers stay skipped; critique does not repair or grant acceptance.
+
 Implement three layers:
 
 1. kernel/formal defects;
@@ -740,6 +745,8 @@ Findings become shared ledger obligations/relations. Critique never repairs auto
 
 **Deps:** A0, B0-B2, C5; D2 for realistic inputs
 
+**Status: implemented (2026-09-10).** `workflows/repair.py` retains the owner-stored frozen claim, delegates guarded saving, rechecks reverse dependencies and preserves open work on refusal, overlap or failed checks. Exact evidence and independent policy decisions close the obligation.
+
 Repair one obligation while preserving the claim. Apply through guarded save, compute reverse dependency closure, recheck affected artifacts, retain stable obligation identity/history, and reopen rather than silently replace a gap after overlapping changes.
 
 Changing hypotheses/conclusion creates a revised claim, not a repair. Changing which representation or mathematical context a claim uses is also an explicit semantic change with a computed blast radius. Correcting a disproved conjecture creates a new/superseding conjecture rather than mutating history.
@@ -747,6 +754,8 @@ Changing hypotheses/conclusion creates a revised claim, not a repair. Changing w
 ## D4 — Referee workflow — P0
 
 **Deps:** A5, A0, A2-A3, B0-B5, C2, D2; C5 for formal checks
+
+**Status: implemented (2026-09-10).** `workflows/referee.py` binds actual manuscript spans to exact claims, contexts and citation uses, checks the selected path and reports unresolved coverage and trust. Structural observations are separate from provider review; citation acceptance belongs to the exact use.
 
 Minimum paper-audit flow:
 
@@ -769,6 +778,8 @@ Primary contract: “verified/probed modulo these exact external contracts, with
 
 **Deps:** A0, B1, B3, B5
 
+**Status: implemented (2026-09-10).** `workflows/publication.py` selects exact mathematics, minimal local context, visible examples, citations and current author prose while retaining hidden prerequisites for audit and reporting missing/stale exposition.
+
 Implement `PublicationRequest`/`PublicationPlan`, publication closure, minimal declaration/hypothesis/convention closure, visibility policy, examples, citations, stale exposition, and missing exposition.
 
 Fixture:
@@ -790,11 +801,15 @@ Expected: include Main + its required local hypothesis/convention + meaningful l
 
 **Deps:** D5
 
+**Status: implemented (2026-09-10).** `workflows/publish.py` assembles a frozen plan into a fresh guarded bundle and uses existing mechanical document checks. Existing output directories are refused; author prose is not generated or overwritten.
+
 Feed `PublicationPlan` into existing document machinery. `documents/` remains mechanical and never traverses the project graph. Human prose is never silently regenerated.
 
 ## D7 — Exploratory concept/representation flow — P0
 
 **Deps:** A0, B0-B4; C3 only for the step that materializes Lean
+
+**Status: implemented (2026-09-10).** `workflows/explore.py` records concepts before theorem targets and composes B4 representation choices/refinement. Existing uses and exact reverse-dependency history remain inspectable across restart.
 
 Add the shared behavior needed for Explore to persist mathematical progress before there is a theorem-shaped target. It should be thin orchestration over the ledger and `workflows/representation.py`, not a new domain engine in `interactive/session.py`.
 
@@ -821,6 +836,8 @@ The same concept and representation graph must survive restart. If a representat
 ## D8 — Exploratory declaration/context flow — P0
 
 **Deps:** A0, B0-B3, B5; B4/A2 when representation/formalization is requested
+
+**Status: implemented (2026-09-10).** Explore composes model-normalized setup with B5 context extensions and A2 materialization. Minimal binder origins, full semantic closure and original text stay exact; returning to an ancestor preserves stronger branches.
 
 Add the shared behavior needed for mathematicians to establish local setup conversationally before stating a theorem.
 
@@ -854,6 +871,8 @@ Add a theorem-export assertion that selecting S emits only the declarations/loca
 ## D9 — Exploratory goals, notation, transport, and approaches — P0
 
 **Deps:** A0, B0-B3, B5; A2/B4/C5 as needed for formal/proof work
+
+**Status: implemented (2026-09-10).** Explore persists questions, conjectures, goals, approaches, blocked reasons/products, scoped bindings, chosen witnesses and transport. Counterexamples and corrected conjectures preserve history; normalized work cannot prove the original goal without its own evidence.
 
 Exercise the remaining basic mathematician behaviors through the same ledger/context primitives rather than new stores.
 
@@ -1106,7 +1125,7 @@ Agent 14  X6 eval identity/journal residual audit
 
 **Core B implements B0/B1/B2/B3/B4/B5** against those seams.
 Independent tasks proceed once their own dependencies permit, without waiting
-for unrelated X/S tasks. Core C passed verification; Core D is the next authorized stage, followed by eligible work outside Core E.
+for unrelated X/S tasks. Core D is implemented and awaiting its clean-test landing gate; eligible work outside Core E follows.
 
 A2 is shared by the new B5 projection; B4 representation decisions remain an optional semantic step, not a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
 
@@ -1114,7 +1133,9 @@ Core C followed this dependency order: C0/C1/C2/C5 could proceed independently; 
 
 As soon as the core loop works, run D0/D1/D2/D5/D7/D8/D9 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
-Then run E0/E1/E3/E4 concurrently. V0 acceptance work should accompany each primitive rather than wait for Core E.
+Core E is deferred for human input under the current execution instruction.
+Continue with eligible Core F-I work; X/S/V lanes retain their own dependencies.
+V0 acceptance work accompanies each primitive rather than waiting for Core E.
 
 ---
 
