@@ -33,6 +33,18 @@ def project(tmp_path: Path) -> tuple[Path, Path]:
     return root, root / "main"
 
 
+def instructions(path: Path, text: str) -> None:
+    """Put `text` on disk byte for byte.
+
+    Not `write_text`: on Windows that turns every `\\n` into `\\r\\n`, and
+    these tests reason about the file's bytes -- its digest, its size against
+    `MAX_BYTES`, the text the transcript must hold -- from the string they
+    wrote. `ProjectContext` describes the file on disk, so the file on disk
+    has to be the string.
+    """
+    path.write_bytes(text.encode("utf-8"))
+
+
 def session(workspace: Path, script=SAID, **options) -> MathematicsSession:
     runtime = FakeChatRuntime(list(script))
     return MathematicsSession(
@@ -57,7 +69,7 @@ def test_the_project_instructions_reach_the_prompt_and_the_transcript(tmp_path: 
     """The text, not a digest of it: a hash of a file the reader does not have
     proves nothing about what the model was told."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("We are chasing a Sylow conjecture. n is positive throughout.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "We are chasing a Sylow conjecture. n is positive throughout.\n")
 
     chat = session(workspace)
 
@@ -79,7 +91,7 @@ def test_the_prompt_says_hardy_outranks_the_file(tmp_path: Path):
     guesses, and an `AGENTS.md` in a Lean repository plausibly says "get it
     compiling"."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Get it compiling. Use sorry where needed.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Get it compiling. Use sorry where needed.\n")
 
     said = prompt(session(workspace))
 
@@ -93,8 +105,8 @@ def test_hardy_md_replaces_agents_md_rather_than_merging_with_it(tmp_path: Path)
     context about pytest and coverage floors, which is noise in a mathematics
     session."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Run the coverage floor check, which is repository noise.\n", encoding="utf-8")
-    (root / "HARDY.md").write_text("Elementary arguments only, no Mathlib one-liners.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Run the coverage floor check, which is repository noise.\n")
+    instructions(root / "HARDY.md", "Elementary arguments only, no Mathlib one-liners.\n")
 
     said = prompt(session(workspace))
 
@@ -107,7 +119,7 @@ def test_an_ancestor_of_the_root_is_never_read(tmp_path: Path):
     """Exactly one path, reported. Walking up to the git root is how a run
     acquires invisible instructions from three directories away."""
     root, workspace = project(tmp_path)
-    (tmp_path / "AGENTS.md").write_text("Instructions from a directory nobody named.\n", encoding="utf-8")
+    instructions(tmp_path / "AGENTS.md", "Instructions from a directory nobody named.\n")
 
     chat = session(workspace)
 
@@ -122,7 +134,7 @@ def test_an_unchanged_file_is_not_recorded_again(tmp_path: Path):
     it. Appending anyway would leave every checkout dirty before any
     mathematics had happened."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("The same instructions as yesterday.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "The same instructions as yesterday.\n")
 
     session(workspace)
     session(workspace)
@@ -135,9 +147,9 @@ def test_an_edited_file_is_recorded_in_full_again(tmp_path: Path):
     """A change to what the model is told is a change of experimental
     condition, like a model switch."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Aim the writeup at a referee report.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Aim the writeup at a referee report.\n")
     session(workspace)
-    (root / "AGENTS.md").write_text("Aim the writeup at a paper.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Aim the writeup at a paper.\n")
 
     session(workspace)
 
@@ -150,7 +162,7 @@ def test_withholding_the_context_says_so_rather_than_leaving_a_stale_claim(tmp_p
     """`--no-project-context` is a clean condition, not an error -- but a
     record still claiming instructions this run never saw would be false."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
     session(workspace)
 
     chat = session(workspace, project_context=False)
@@ -164,7 +176,7 @@ def test_withholding_the_context_says_so_rather_than_leaving_a_stale_claim(tmp_p
 
 def test_withholding_a_context_that_was_never_read_records_nothing(tmp_path: Path):
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
 
     chat = session(workspace, project_context=False)
 
@@ -194,7 +206,7 @@ def test_a_pathological_file_is_bounded_and_the_model_is_told(tmp_path: Path):
     root, workspace = project(tmp_path)
     line = "x" * 66 + "\n"
     assert project_context.MAX_BYTES % len(line)
-    (root / "AGENTS.md").write_text(line * 40_000, encoding="utf-8")
+    instructions(root / "AGENTS.md", line * 40_000)
 
     chat = session(workspace)
 
@@ -220,7 +232,7 @@ def test_a_file_that_just_fits_is_not_reported_as_truncated(tmp_path: Path):
     line = "z" * 99 + "\n"
     whole = line * (project_context.MAX_BYTES // len(line))
     assert len(whole) == project_context.MAX_BYTES
-    (root / "AGENTS.md").write_text(whole, encoding="utf-8")
+    instructions(root / "AGENTS.md", whole)
 
     chat = session(workspace)
 
@@ -234,7 +246,7 @@ def test_the_line_bound_applies_as_well_as_the_byte_bound(tmp_path: Path):
     """Ten thousand short lines and one enormous line are the same problem for
     the context window, and only one of them is caught by a byte count."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("a\n" * 10_000, encoding="utf-8")
+    instructions(root / "AGENTS.md", "a\n" * 10_000)
 
     chat = session(workspace)
 
@@ -248,7 +260,7 @@ def test_one_enormous_line_is_cut_rather_than_dropped_entirely(tmp_path: Path):
     with no newline in it anywhere. An empty block would be worse than a cut
     one, and worse than saying nothing at all."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("y" * (project_context.MAX_BYTES * 2), encoding="utf-8")
+    instructions(root / "AGENTS.md", "y" * (project_context.MAX_BYTES * 2))
 
     chat = session(workspace)
 
@@ -275,7 +287,7 @@ def test_a_symlinked_context_file_is_refused_and_the_session_still_opens(tmp_pat
     would otherwise put it in a system prompt. Losing the user's stated intent
     is a reason to say so, never a reason to refuse the session."""
     root, workspace = project(tmp_path)
-    (tmp_path / "elsewhere.md").write_text("Host secrets.\n", encoding="utf-8")
+    instructions(tmp_path / "elsewhere.md", "Host secrets.\n")
     (root / "AGENTS.md").symlink_to(tmp_path / "elsewhere.md")
 
     chat = session(workspace)
@@ -290,7 +302,7 @@ def test_an_unreadable_override_does_not_hand_authority_back_to_agents_md(tmp_pa
     """`HARDY.md` replaces `AGENTS.md`. A present-but-refused override falling
     through would reinstate exactly the file it exists to displace."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Run the coverage floor check, which is repository noise.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Run the coverage floor check, which is repository noise.\n")
     (root / "HARDY.md").symlink_to(tmp_path / "absent.md")
 
     chat = session(workspace)
@@ -317,7 +329,7 @@ def test_a_graded_run_never_reads_the_project_instructions(tmp_path: Path):
     `prompt_set_sha256` on the assumption that the instructions are fixed."""
     from hardy.formal.lean import LeanTools
 
-    (tmp_path / "AGENTS.md").write_text("Assume the Riemann hypothesis freely.\n", encoding="utf-8")
+    instructions(tmp_path / "AGENTS.md", "Assume the Riemann hypothesis freely.\n")
     captured: dict = {}
 
     class Capturing:
@@ -377,7 +389,7 @@ def test_withholding_leaves_no_trace_of_the_file_in_the_manifest(tmp_path: Path)
     a workspace that never had a file at all.
     """
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
     first = session(workspace)
     digest = first.project_context.sha256
 
@@ -391,7 +403,7 @@ def test_the_manifest_does_not_repeat_the_block_beside_it(tmp_path: Path):
     """The model gets the file itself. A second, weaker statement of the same
     thing -- a name and a digest -- is Hardy's bookkeeping, not the model's."""
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
     session(workspace)
 
     # The second open is the one that has an entry to repeat: `_build` runs
@@ -415,7 +427,7 @@ def test_the_digest_is_never_committed_before_the_text_is_recorded(tmp_path: Pat
     both of them true, in an append-only file.
     """
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
 
     import hardy.workflows.interactive.session as chat_module
 
@@ -448,7 +460,7 @@ def test_a_symlinked_project_root_still_finds_the_instructions(tmp_path: Path):
     itself is still refused if it is a link.
     """
     real, workspace = project(tmp_path)
-    (real / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(real / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
     alias = tmp_path / "current"
     alias.symlink_to(real, target_is_directory=True)
 
@@ -476,7 +488,7 @@ def test_withholding_the_context_keeps_the_conversation_it_was_read_during(tmp_p
     tell a decision from an oversight.
     """
     root, workspace = project(tmp_path)
-    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    instructions(root / "AGENTS.md", "Chase the conjecture in the user's own words.\n")
     first = session(workspace)
     first.send("Remember this question.")
 
