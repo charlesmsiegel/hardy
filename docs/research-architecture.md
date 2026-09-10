@@ -121,7 +121,7 @@ ambient     -- all schemes are over C / characteristic zero / etc.
 
 Bindings point at stable project/declaration IDs where possible. Printed symbols are presentation; stable declaration identity is semantic. Renaming or shadowing `X` must not change which object an older theorem used.
 
-Do not conflate `MathematicalContext` with the existing `Scope` contract. `Scope` controls project/trust policy such as `must_prove` versus allowed background assumptions. `MathematicalContext` controls ordinary binders, local hypotheses, notation, and conventions such as arbitrary `X`, `f`, `p`, compactness, orientation, characteristic, or a chosen basis.
+Do not conflate `MathematicalContext` with the proposed `Scope` contract. `Scope` controls project/trust policy such as `must_prove` versus allowed background assumptions. `MathematicalContext` controls ordinary binders, local hypotheses, notation, and conventions such as arbitrary `X`, `f`, `p`, compactness, orientation, characteristic, or a chosen basis.
 
 Declaration role should be recorded generically enough to distinguish at least `arbitrary`, `chosen`, `derived`, and `local_hypothesis`. “Let x ∈ X” and “choose x satisfying P” are not the same: a chosen declaration may depend on an existence result/obligation.
 
