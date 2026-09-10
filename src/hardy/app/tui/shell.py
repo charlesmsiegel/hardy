@@ -478,11 +478,22 @@ class Shell:
     # -- Ui ---------------------------------------------------------------
 
     async def choose(
-        self, title: str, rows: Sequence[Choice], *, current: int = 0, subtitle: str = ""
+        self, title: str, rows: Sequence[Choice], *, current: int = 0, subtitle: str = "",
+        preamble: Sequence[tuple[str, str]] = ()
     ) -> Choice | None:
         # select.choose suspends this application itself (in_terminal); a
         # second wrapper here would be redundant, not harmful.
-        return await select.choose(title, rows, current=current, subtitle=subtitle)
+        def show_preamble() -> None:
+            # Already inside select.choose's in_terminal block. Bypass
+            # patch_stdout: it queues print() calls and can otherwise show
+            # the approval selector before the statement being approved.
+            for text, style in preamble:
+                lines = [text] if style in {"normal", "warning"} else transcript.notice_lines(text, self._size().columns) or [""]
+                for line in lines:
+                    self._app.output.write(line.replace("\n", "\r\n") + "\r\n")
+            self._app.output.flush()
+
+        return await select.choose(title, rows, current=current, subtitle=subtitle, before=show_preamble)
 
     async def ask_line(self, prompt: str) -> str | None:
         # in_terminal() is mandatory. Without it this application's own
@@ -1229,10 +1240,11 @@ class _FromThread:
         self._shell.write(text, style=style)
 
     def choose(
-        self, title: str, rows: Sequence[Choice], *, current: int = 0, subtitle: str = ""
+        self, title: str, rows: Sequence[Choice], *, current: int = 0, subtitle: str = "",
+        preamble: Sequence[tuple[str, str]] = ()
     ) -> Choice | None:
         try:
-            return self._run(self._shell.choose(title, rows, current=current, subtitle=subtitle))
+            return self._run(self._shell.choose(title, rows, current=current, subtitle=subtitle, preamble=preamble))
         except _PromptUnavailable:
             return None
 

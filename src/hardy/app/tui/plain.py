@@ -66,10 +66,12 @@ class PlainUi:
     # loop -- see its docstring.
 
     def choose_now(
-        self, title, rows: Sequence[Choice], *, current=0, subtitle=""
+        self, title, rows: Sequence[Choice], *, current=0, subtitle="", preamble=()
     ) -> Choice | None:
         # Held from the first line of the question to the answer: see `_lock`.
         with self._lock:
+            for text, style in preamble:
+                self.write(text, style=style)
             self._out("")
             self._out(f"  {title}")
             if subtitle:
@@ -108,9 +110,9 @@ class PlainUi:
         return (answer or "").strip().lower() in {"y", "yes"}
 
     async def choose(
-        self, title, rows: Sequence[Choice], *, current=0, subtitle=""
+        self, title, rows: Sequence[Choice], *, current=0, subtitle="", preamble=()
     ) -> Choice | None:
-        return self.choose_now(title, rows, current=current, subtitle=subtitle)
+        return self.choose_now(title, rows, current=current, subtitle=subtitle, preamble=preamble)
 
     async def ask_line(self, prompt: str) -> str | None:
         return self.ask_line_now(prompt)
@@ -153,8 +155,8 @@ class _Straight:
     def write(self, text: str, *, style: str = "system") -> None:
         self._ui.write(text, style=style)
 
-    def choose(self, title, rows, *, current=0, subtitle=""):
-        return self._ui.choose_now(title, rows, current=current, subtitle=subtitle)
+    def choose(self, title, rows, *, current=0, subtitle="", preamble=()):
+        return self._ui.choose_now(title, rows, current=current, subtitle=subtitle, preamble=preamble)
 
     def ask_line(self, prompt: str):
         return self._ui.ask_line_now(prompt)

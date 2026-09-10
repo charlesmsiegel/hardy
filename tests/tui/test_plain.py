@@ -215,3 +215,45 @@ def test_an_approval_prompt_from_a_tool_thread_stands_alone_in_the_output(settin
     between = written[first:answered]
     assert not any("check_lean" in line for line in between), between
     assert any("check_lean" in line for line in written[answered:])
+
+
+def test_streamed_output_cannot_split_the_assumption_details(monkeypatch):
+    """The protected question starts at the goal, before the selector opens."""
+    import threading
+
+    from hardy.app import terminal
+
+    from .test_marshalling import PROPOSAL
+
+    written = []
+    started = threading.Event()
+    attempted = threading.Event()
+    painted = threading.Event()
+    ui = plain.PlainUi(written.append, lambda _: "2")
+    write = ui.write
+
+    def pause_between_details(text, **kwargs):
+        write(text, **kwargs)
+        if text == "Goal, as you stated it:":
+            started.set()
+            assert attempted.wait(2)
+            # Give a painter already at the output call an opportunity to run.
+            painted.wait(0.2)
+
+    monkeypatch.setattr(ui, "write", pause_between_details)
+
+    def paint():
+        assert started.wait(2)
+        attempted.set()
+        ui.line("concurrent model output")
+        painted.set()
+
+    worker = threading.Thread(target=paint)
+    worker.start()
+    try:
+        assert terminal.confirm_assumption(ui)(PROPOSAL) is True
+    finally:
+        worker.join(2)
+    assert not worker.is_alive()
+    checked = next(i for i, line in enumerate(written) if "Checked:" in line)
+    assert written.index("concurrent model output") > checked

@@ -41,7 +41,9 @@ class ScriptedUi:
     def write(self, text: str, *, style: str = "system") -> None:
         self.written.append((style, text))
 
-    async def choose(self, title, rows: Sequence[Choice], *, current=0, subtitle="") -> Choice | None:
+    async def choose(self, title, rows: Sequence[Choice], *, current=0, subtitle="", preamble=()) -> Choice | None:
+        for text, style in preamble:
+            self.write(text, style=style)
         self.asked.append(title)
         self.subtitles.append(subtitle)
         index = self.choices.pop(0) if self.choices else None
@@ -77,10 +79,10 @@ class _Blocking:
     def write(self, text: str, *, style: str = "system") -> None:
         self._ui.write(text, style=style)
 
-    def choose(self, title, rows, *, current=0, subtitle=""):
+    def choose(self, title, rows, *, current=0, subtitle="", preamble=()):
         import asyncio
 
-        return asyncio.run(self._ui.choose(title, rows, current=current, subtitle=subtitle))
+        return asyncio.run(self._ui.choose(title, rows, current=current, subtitle=subtitle, preamble=preamble))
 
     def ask_line(self, prompt: str):
         import asyncio
