@@ -29,6 +29,8 @@ class _Kernel:
         cwd: Path,
         max_output_bytes: int,
         environment: dict[str, str] | None = None,
+        *,
+        merge_stderr: bool = False,
     ) -> None:
         self.argv = tuple(argv)
         self.max_output_bytes = max_output_bytes
@@ -36,6 +38,7 @@ class _Kernel:
         self.err = bytearray()
         self.truncated = False
         self._finished = 0
+        self._reader_count = 1 if merge_stderr else 2
         self._marker = b""
         self.marker_seen = False
         self._tail = b""
@@ -51,11 +54,12 @@ class _Kernel:
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
             **child_creation(),
         )
         for pipe, destination in ((self.process.stdout, self.out), (self.process.stderr, self.err)):
-            threading.Thread(target=self._drain, args=(pipe, destination), daemon=True).start()
+            if pipe is not None:
+                threading.Thread(target=self._drain, args=(pipe, destination), daemon=True).start()
 
     def _drain(self, pipe, destination: bytearray) -> None:
         # read1, not read: a buffered `read(n)` blocks until it has all n bytes
@@ -175,7 +179,7 @@ class _Kernel:
                 # rather than as what the user asked for a moment too late.
                 if found is not None:
                     return found
-                if self._finished >= 2:
+                if self._finished >= self._reader_count:
                     return None
                 now = time.monotonic()
                 if interrupted is not None and interrupted.is_set() and grace_deadline is None:
@@ -199,45 +203,9 @@ class _Kernel:
         with self._changed:
             return bytes(self.err).decode("utf-8", errors="replace")
 
-    def stderr_settled(self, timeout: float = 0.2, quiet: float = 0.02) -> str:
-        """Stderr once it has stopped growing, not just whatever is in yet.
-
-        A sentinel cell's own interpreter is single-threaded: an error for
-        the cell is necessarily written to stderr before the interpreter goes
-        on to process the end-marker echo that shows up on stdout, which is
-        what `read_reply` waits for. But that ordering is *inside the child*
-        -- stdout and stderr are two independent pipes drained by two
-        independent threads here, and nothing ties their delivery to Hardy
-        together. Reading stderr the instant the stdout marker is found (as
-        this used to do) can win a race against the drain thread that has not
-        yet appended bytes already sitting in the OS pipe, silently reading a
-        broken M2 cell as clean.
-
-        `quiet` seconds have to pass with no growth in `self.err`, measured
-        against the wall clock -- not "the next wakeup shows no growth",
-        which the stdout drain thread's `notify_all()` on every chunk
-        defeats: it wakes this wait long before `quiet` has actually
-        elapsed, so a between-wakeups check would report "settled" on a
-        stdout-driven spurious wakeup microseconds in, never having waited
-        at all.
-        """
+    def stdout_text(self) -> str:
         with self._changed:
-            deadline = time.monotonic() + timeout
-            last_growth = time.monotonic()
-            last_len = len(self.err)
-            while True:
-                now = time.monotonic()
-                if now - last_growth >= quiet:
-                    break
-                remaining = deadline - now
-                if remaining <= 0:
-                    break
-                self._changed.wait(min(quiet - (now - last_growth), remaining))
-                current_len = len(self.err)
-                if current_len != last_len:
-                    last_len = current_len
-                    last_growth = time.monotonic()
-            return bytes(self.err).decode("utf-8", errors="replace")
+            return bytes(self.out).decode("utf-8", errors="replace")
 
     def interrupt(self) -> bool:
         """Ask the cell in flight to stop, leaving the kernel alive to say so."""

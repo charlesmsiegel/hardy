@@ -130,7 +130,11 @@ def run_exported_script(
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=(
+                subprocess.STDOUT
+                if getattr(backend, "framing", "length") == "sentinel"
+                else subprocess.PIPE
+            ),
             **child_creation(),
         )
     except (OSError, ValueError) as error:
@@ -141,8 +145,9 @@ def run_exported_script(
     workers = [
         threading.Thread(target=_drain_capped, args=(pipe, buffer, cap, overflowed), daemon=True)
         for pipe, buffer in ((process.stdout, out), (process.stderr, err))
+        if pipe is not None
     ]
-    stdout_worker, stderr_worker = workers
+    readers = tuple(workers)
     # Feeding stdin is a third concurrent job, not a preamble to the other two.
     # `subprocess.run(input=...)` multiplexes all three inside `communicate()`;
     # writing the payload straight through on this thread instead re-created
@@ -178,7 +183,7 @@ def run_exported_script(
         # keeps its worker alive past the join, and snapshotting the buffer
         # there and calling the capture complete let an export compare against
         # a transcript that was still arriving -- and report `verified` for it.
-        if stdout_worker.is_alive() or stderr_worker.is_alive():
+        if any(reader.is_alive() for reader in readers):
             overflowed[0] = True
         # Whatever the script started is stopped here, before the caller reads
         # the published file back. A descendant that redirected its own output
@@ -210,9 +215,9 @@ def run_exported_script(
         # child is already dead, so its end of the pipe is gone regardless and
         # nothing is kept alive by the wait.
         closing = []
-        if not stdout_worker.is_alive():
+        if not readers[0].is_alive():
             closing.append(process.stdout)
-        if not stderr_worker.is_alive():
+        if len(readers) > 1 and not readers[1].is_alive():
             closing.append(process.stderr)
         if not feeder.is_alive():
             closing.append(process.stdin)

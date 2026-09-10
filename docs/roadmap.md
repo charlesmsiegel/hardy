@@ -369,7 +369,7 @@ Ensure human trust-widening approval cannot be visually interleaved/confused wit
 
 ## X4 — CAS correctness lane — P1
 
-**Status:** Ongoing. Tested fixes preserve ambiguous prompt-shaped output, enforce lifetime OS writer leases and distinguish known terminal rollback from unaccepted live/unknown mutations across reloads. Late-stderr attribution, prompt timing and real Macaulay2 platform checks remain. See the [engineering report](superpowers/reports/2026-09-10-engineering.md).
+**Status:** Local residual fixes tested; real-platform gate pending. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain. See the [CAS residual report](superpowers/reports/2026-09-10-cas-residuals.md).
 
 **Deps:** none
 

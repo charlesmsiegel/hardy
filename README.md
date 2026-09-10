@@ -158,8 +158,9 @@ See the [hardening report](docs/superpowers/reports/2026-09-10-hardening.md).
 Engineering X0 makes the existing formal-save order explicit without changing
 refusals or stage/commit/discard behavior. X3 verifies serialized assumption
 approval presentation. X4 has tested prompt-output, writer-lease and recovery
-fixes but remains ongoing for late stderr, prompt timing and real Macaulay2
-platform checks. Recovery distinguishes known terminal rollback from unaccepted
+fixes. Ordered merged capture and split-marker handling now address late stderr
+and prompt timing; real Macaulay2 CI remains pending. Legacy separate captures
+require a fresh session before the new transport can certify replay. Recovery distinguishes known terminal rollback from unaccepted
 live/unknown mutations, including after reopening. X6 adds durable batch attempt
 journals and append-only attributed
 evaluation reviews; legacy records and unknown runtime identities remain explicit.

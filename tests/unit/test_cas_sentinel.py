@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import sys
+
 import pytest
 
 from hardy.algebra.contracts import CasError
@@ -90,6 +93,47 @@ def test_a_truncated_capture_is_not_accepted_as_a_success(sentinel_session) -> N
 def test_a_silent_cell_still_completes(sentinel_session) -> None:
     session = sentinel_session()
     assert session.execute("silent;").status == "ok"
+
+
+def test_an_export_keeps_merged_stderr_in_the_same_transcript(
+    tmp_path, sentinel_session, script_agreed,
+) -> None:
+    session = sentinel_session()
+    record = session.execute("warning;")
+    assert record.accepted
+    assert record.stdout.strip() == "warning from stderr"
+    report = export_session(session, tmp_path / "cas")
+    assert script_agreed(report), report.script_detail
+    manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
+    assert manifest["capture_mode"] == "merged"
+
+
+def test_a_failed_export_reports_merged_process_diagnostics(
+    tmp_path, sentinel_session, monkeypatch,
+) -> None:
+    session = sentinel_session()
+    session.execute("hello;")
+    monkeypatch.setattr(session.backend, "script_argv", lambda command, script: (
+        sys.executable, "-c",
+        'import sys; sys.stderr.write("fatal fixture diagnostic\\n"); sys.exit(2)',
+    ))
+    report = export_session(session, tmp_path / "cas")
+    assert report.script_verdict == "failed"
+    assert "fatal fixture diagnostic" in report.script_detail
+
+
+def test_export_does_not_certify_a_legacy_separate_capture(tmp_path, sentinel_session):
+    session = sentinel_session()
+    session.execute("hello;")
+    session.close()
+    legacy = json.loads(session.log_path.read_text(encoding="utf-8"))
+    del legacy["capture_mode"]
+    session.log_path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+    reopened = sentinel_session()
+    report = export_session(reopened, tmp_path / "cas")
+    assert not report.reproduces
+    assert report.script_verdict == "unverified"
+    assert "capture mode" in report.script_detail
 
 
 def test_an_exported_sentinel_script_is_run_and_compared(

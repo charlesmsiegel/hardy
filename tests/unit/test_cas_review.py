@@ -225,17 +225,8 @@ def test_a_broken_repr_is_reported_rather_than_fatal() -> None:
     assert "RuntimeError" in rendered
 
 
-def test_a_late_stderr_overflow_is_not_lost_before_it_is_read(sentinel_session) -> None:
-    """The flag was snapshotted before stderr had settled, then cleared.
-
-    A sentinel backend has no status of its own: Hardy classifies the cell by
-    looking for an error banner in what it captured. When the capture was cut
-    it must not then assert success -- and here the cut lands on stderr, after
-    the stdout end marker has already been found, so `consume()` reset the flag
-    between the snapshot and the wait that finally read the bytes. An error
-    banner in the discarded tail was then classified from a clean prefix and
-    accepted into the state recovery replays and export publishes.
-    """
+def test_a_stderr_overflow_is_not_accepted_from_its_clean_prefix(sentinel_session) -> None:
+    """Merged capture must retain stderr overflow even when its banner is lost."""
     session = sentinel_session(cas_output_bytes=4_096)
     record = session.execute("latestderr;")
     assert record.capture_truncated is True, record.model_dump_json(indent=2)

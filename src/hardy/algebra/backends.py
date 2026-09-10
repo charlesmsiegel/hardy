@@ -206,6 +206,12 @@ class _SentinelBackend:
     Less trustworthy than the driver protocol and unavoidable: neither Singular
     nor Macaulay2 offers a way to be spoken to in frames. The nonce is fresh
     per cell so a cell that echoes text cannot forge the end of its own reply.
+
+    Both child descriptors share one pipe, so synchronous writes preceding the
+    end marker stay in its cell regardless of parent scheduling. The combined
+    transcript lives in stdout, with capture_mode="merged"; stream origin is
+    unavailable. Background writers and unflushed output after the marker are
+    outside this protocol, which does not isolate or certify computations.
     """
 
     framing = "sentinel"
@@ -297,8 +303,10 @@ class SingularBackend(_SentinelBackend):
     # Singular indents its `?` error banner by call-stack depth, not a fixed
     # maximum -- an error raised inside a nested procedure can be indented
     # arbitrarily far. Any run of leading horizontal whitespace counts;
-    # newlines are excluded so this stays anchored to one line's own start.
-    error_pattern = re.compile(r"(?m)^[ \t]*\? ")
+    # The usual three-space banner can also follow an unterminated stdout
+    # write in combined capture. Such banner-shaped user text is conservative
+    # failure too; a lone question mark in prose is still ordinary output.
+    error_pattern = re.compile(r"(?m)(?:^[ \t]*|[ \t]{3,})\? ")
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (str(command) if command else "Singular", "-q")
@@ -328,7 +336,9 @@ class Macaulay2Backend(_SentinelBackend):
     # "error". A false negative here is accepted into replayable state and
     # the session rebuilds from a cell that never worked, which is strictly
     # worse than a false positive; there is no cost to the wider pattern.
-    error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
+    # In combined capture a preceding stdout write need not end in a newline.
+    # A full banner embedded in ordinary text is conservatively an error too.
+    error_pattern = re.compile(r"stdio:\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
     # M2 echoes each `iN : ` input prompt (and the source line behind it) even
     # when stdin is not a tty, and prints an `oN` counter before every
     # non-suppressed statement's value. Observed verbatim in the same run: a

@@ -9,11 +9,14 @@ sentinel protocol and are unverified until this runs somewhere they exist.
 from __future__ import annotations
 
 import shutil
+import threading
 
 import pytest
 
 from hardy.algebra.cas import CasSession, backend_for
+from hardy.algebra.contracts import CasError
 from hardy.algebra.export import export_session
+from hardy.algebra.kernel import _Kernel
 from hardy.workflows.contracts import RunLimits
 
 pytestmark = pytest.mark.real_toolchain
@@ -119,16 +122,8 @@ def test_macaulay2_exports_cleanly_once_the_output_counter_reaches_two_digits(
         session.close()
 
 
-def test_macaulay2_rebuilds_a_session_whose_counter_passed_nine(tmp_path) -> None:
-    """The same defect, on the path where it costs the live session.
-
-    A rebuild replays the accepted cells only, so a cell that ran and was
-    refused leaves the live counter three statements ahead of the one the
-    replay reaches. Once that gap straddles the ninth counter, one side prints
-    its alignment row one column further out than the other, `reproduces` is
-    false for a cell that computed exactly the same polynomial, and `_restore`
-    poisons a session that was perfectly healthy.
-    """
+def test_macaulay2_refuses_rebuild_after_an_unaccepted_live_error(tmp_path) -> None:
+    """Errors can mutate state, even if later polynomial output looks clean."""
     session = session_for("macaulay2", "M2", tmp_path)
     try:
         session.probe_version()
@@ -139,11 +134,62 @@ def test_macaulay2_rebuilds_a_session_whose_counter_passed_nine(tmp_path) -> Non
         for power in range(2, 8):
             assert session.execute(f"x^{power} + y^{power}").status == "ok"
         session._drop_kernel()
-        rebuilt = session.execute("x^99 + y^99")
-        assert rebuilt.status == "ok", rebuilt.model_dump_json(indent=2)
-        assert "kernel restarted" in rebuilt.restart_note
-        assert session.state == "live"
+        with pytest.raises(CasError, match="unaccepted cell"):
+            session.execute("x^99 + y^99")
+        session.reset()
+        assert session.execute("R = QQ[x, y]; x^99 + y^99").accepted
     finally:
+        session.close()
+
+
+def test_macaulay2_scripted_ordered_capture_acceptance(tmp_path) -> None:
+    """No model: state, prompt-shaped output, ordered errors and recovery."""
+    session = session_for("macaulay2", "M2", tmp_path)
+    try:
+        assert session.probe_version()
+        assert session.execute("R = QQ[x, y]").accepted
+        for power in range(2, 14):
+            record = session.execute(f"x^{power} + y^{power}")
+            assert record.accepted, record.model_dump_json(indent=2)
+            assert record.capture_mode == "merged"
+        printed = session.execute('print "i123 : this is output";')
+        assert "i123 : this is output" in printed.stdout
+        session._drop_kernel()
+        assert session.execute("x + y").accepted
+        broken = session.execute("1/0")
+        assert broken.status == "error"
+        assert "error:" in broken.stdout
+        assert broken.stderr == ""
+        clean = session.execute("x + y")
+        assert clean.accepted
+        assert "error:" not in clean.stdout
+    finally:
+        session.close()
+
+
+def test_macaulay2_error_attribution_with_a_delayed_stderr_reader(tmp_path, monkeypatch):
+    """Real interpreter writes; force the parent-reader race deterministically."""
+    release = threading.Event()
+    drain = _Kernel._drain
+
+    def delayed_stderr(self, pipe, destination):
+        if pipe is self.process.stderr:
+            release.wait(3)
+        drain(self, pipe, destination)
+
+    monkeypatch.setattr(_Kernel, "_drain", delayed_stderr)
+    session = session_for("macaulay2", "M2", tmp_path)
+    try:
+        broken = session.execute("1/0")
+        assert broken.status == "error", broken.model_dump_json(indent=2)
+        assert not broken.accepted
+        assert "error:" in broken.stdout
+        release.set()
+        clean = session.execute("2+2")
+        assert clean.accepted
+        assert "error:" not in clean.stdout
+    finally:
+        release.set()
         session.close()
 
 

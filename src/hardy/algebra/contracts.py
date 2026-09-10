@@ -44,6 +44,7 @@ class CellOutcome(FrozenModel):
     status: Literal["ok", "error", "kernel_died", "timeout", "interrupted"]
     stdout: str = ""
     stderr: str = ""
+    capture_mode: Literal["separate", "merged"] = "separate"
     value_repr: str = ""
     capture_truncated: bool = False
     # Whether the kernel has to be dropped because of this outcome. An
@@ -96,6 +97,10 @@ class CellRecord(FrozenModel):
     kernel_lost: bool | None = Field(default=None, strict=True)
     stdout: str = ""
     stderr: str = ""
+    # Sentinel backends retain one ordered stdout/stderr transcript in stdout.
+    # Old journals used separate pipes; matching bytes alone cannot establish
+    # that those timing-dependent captures observed all diagnostics.
+    capture_mode: Literal["separate", "merged"] = "separate"
     value_repr: str = ""
     duration_ms: int = 0
     # The session's running total of billed CAS wall clock as of this append,
@@ -263,7 +268,8 @@ def same_output(record: CellRecord, outcome: CellOutcome) -> bool:
     notebook the opposite of what happened.
     """
     return (
-        normalise(outcome.stdout) == normalise(record.stdout)
+        outcome.capture_mode == record.capture_mode
+        and normalise(outcome.stdout) == normalise(record.stdout)
         and normalise(outcome.stderr) == normalise(record.stderr)
         and normalise(outcome.value_repr) == normalise(record.value_repr)
     )

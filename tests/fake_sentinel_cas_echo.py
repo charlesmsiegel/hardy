@@ -2,7 +2,7 @@
 """A stand-in interpreter that echoes stdin and writes errors to stderr.
 
 `fake_sentinel_cas.py` is modelled on Singular in `-q` mode: it never echoes
-what it is fed and never writes to stderr. Macaulay2 does both, and two real
+what it is fed. Macaulay2 echoes source and writes errors to stderr; two real
 bugs were only ever found by running against the real binary in CI because
 of it: the sentinel marker's own echoed source line contains the marker text
 a second time, ahead of the bare copy the interpreter actually answers with
@@ -13,7 +13,6 @@ notices a regression in either.
 """
 
 import sys
-import threading
 import time
 
 ECHO_PREFIX = 'ECHO "'
@@ -23,13 +22,8 @@ ECHO_TAIL = '";'
 # first, so a reader that ends the cell on the echoed end marker ends it
 # before this output exists.
 DEFER_DELAY = 0.05
-# How long after the end marker has gone out on stdout a `laterror;` cell's
-# error reaches stderr. Two pipes, two drain threads on the parent, nothing
-# ordering their delivery: this is the shape in which an error written before
-# the marker can still arrive after it. Inside the quiet window
-# `stderr_settled` waits out (20 ms), so the settle is what has to catch it;
-# reading stderr the instant the marker was found did not.
-STDERR_DELAY = 0.005
+# A synchronous diagnostic may be slow but precedes the next statement.
+STDERR_DELAY = 0.05
 
 
 def main() -> None:
@@ -39,8 +33,8 @@ def main() -> None:
     # the statement that follows it -- including after the echo of the end
     # marker, which is what makes trusting that echo cut a cell short.
     pending: list[str] = []
-    # An error owed to stderr but not yet written: paid after the next end
-    # marker has gone out, on its own thread, so it lands late.
+    # An error owed before the next marker executes. Parent-side delivery
+    # delays are tested at the reader, not by reversing the child's writes.
     late_error = False
 
     def write_late_error() -> None:
@@ -68,14 +62,14 @@ def main() -> None:
             continue
         if line.startswith(ECHO_PREFIX) and line.endswith(ECHO_TAIL):
             marker = line[len(ECHO_PREFIX) : -len(ECHO_TAIL)]
-            sys.stdout.write(marker + "\n")
-            sys.stdout.flush()
             if late_error and "hardy-end" in marker:
                 late_error = False
-                threading.Thread(target=write_late_error, daemon=True).start()
+                write_late_error()
+            sys.stdout.write(marker + "\n")
+            sys.stdout.flush()
         elif line == "laterror;":
-            # The error is real and belongs to this cell; it just reaches the
-            # parent after the parent has seen the cell end on stdout.
+            # The error is emitted after the echoed marker source, before
+            # the actual marker is executed.
             late_error = True
         elif line == "error;":
             # Nothing on stdout for a failed statement -- exactly what a
@@ -83,6 +77,14 @@ def main() -> None:
             # only on stderr.
             sys.stderr.write("stdio:1:1:(1): error: fake division by zero\n")
             sys.stderr.flush()
+        elif line == "die;":
+            return
+        elif line == "hang;":
+            time.sleep(10)
+        elif line == "flooddie;":
+            sys.stderr.write("diagnostic-prefix\n" + "x" * 20_000)
+            sys.stderr.flush()
+            return
         elif line:
             sys.stdout.write(f"{line}\n")
         sys.stdout.flush()

@@ -2109,3 +2109,7 @@ then a commit of the scoreboard directory).
 - **Now (implemented) — Acceptance:** `hardy accept` cross-checks a run's manifest,
   trajectory, Lean source and document against each other, and its deterministic
   path needs no model, network, or toolchain.
+
+X4 late-stderr attribution and split-marker timing have automated regressions.
+Sentinel streams are merged, so per-stream origin is unavailable; EOF/timeout
+diagnostics remain bounded and preserved. Real Macaulay2 CI is pending.

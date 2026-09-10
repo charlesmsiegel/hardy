@@ -420,7 +420,8 @@ class CasSession:
         retain = cap if self.backend.framing == "sentinel" else cap * 6 + 65_536
         try:
             self._kernel = _Kernel(
-                argv, self.cwd, retain, getattr(self.backend, "environment", {})
+                argv, self.cwd, retain, getattr(self.backend, "environment", {}),
+                merge_stderr=self.backend.framing == "sentinel",
             )
         except (OSError, ValueError) as error:
             self.state = "dead"
@@ -522,7 +523,12 @@ class CasSession:
             pos = after
             while (hit := raw.find(marker, pos)) != -1:
                 echoed_end = hit + len(marker)
-                if raw[echoed_end : echoed_end + len(tail)] == tail:
+                following = raw[echoed_end : echoed_end + len(tail)]
+                # A read boundary is not a language boundary. Until a byte
+                # distinguishes a bare marker from its echoed source, wait.
+                if tail.startswith(following) and len(following) < len(tail):
+                    return -1
+                if following == tail:
                     pos = echoed_end
                     continue
                 return hit
@@ -566,13 +572,11 @@ class CasSession:
                 consumed = len(raw)
             body = self.backend.sanitize(body, fed)
             outcome = CellOutcome(
-                # Provisional, and never read: `_send` reclassifies every
-                # sentinel reply once stderr has settled, because a Macaulay2
-                # error leaves nothing error-shaped on stdout at all.
-                # Classifying here as well would only be a second answer to a
-                # question that already has one.
-                status="ok",
+                # Both child descriptors share one OS pipe. Errors written
+                # before the marker cannot arrive behind it in another drain.
+                status=self.backend.classify(body),
                 stdout=body,
+                capture_mode="merged",
                 capture_truncated=bool(kernel and kernel.truncated),
             )
             return outcome, consumed
@@ -589,6 +593,17 @@ class CasSession:
         limit = self.limits.cas_cell_seconds if seconds is None else seconds
         kernel = self._kernel
         assert kernel is not None
+
+        def incomplete(**fields: Any) -> CellOutcome:
+            # Without a closing marker this is a bounded partial transcript,
+            # including framing. Preserve it as diagnostics, never as success.
+            if self.backend.framing == "sentinel":
+                fields.update(
+                    stdout=kernel.stdout_text(), capture_mode="merged",
+                    capture_truncated=kernel.truncated,
+                )
+            return CellOutcome(**fields)
+
         nonce = f"{time.monotonic_ns():x}"
         if self.backend.framing == "length":
             kernel.clear()
@@ -637,7 +652,7 @@ class CasSession:
                     # a kernel that has stopped reading. Hardy stopped this, so
                     # the record says so; `kernel_died` would blame the
                     # toolchain for what Esc did.
-                    return CellOutcome(
+                    return incomplete(
                         status="interrupted",
                         stderr=(
                             "the kernel was not reading its input, so the cell was "
@@ -646,7 +661,7 @@ class CasSession:
                         kernel_lost=True,
                         signalled=True,
                     )
-                return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
+                return incomplete(status="kernel_died", stderr=kernel.stderr_text())
             deadline = time.monotonic() + limit
             # The frame, not the source: an echoing interpreter echoes the
             # sentinel statements bracketing the cell as readily as the cell
@@ -673,7 +688,7 @@ class CasSession:
             # cannot be replayed from or built on -- so it goes, exactly as a
             # timed-out one does. This is the case the interrupt exists to
             # avoid, not the one it produces when it works.
-            return CellOutcome(
+            return incomplete(
                 status="interrupted",
                 stderr=(
                     "the cell was interrupted and the kernel did not answer within "
@@ -682,7 +697,7 @@ class CasSession:
                 kernel_lost=True,
             )
         if reply is TIMED_OUT:
-            return CellOutcome(
+            return incomplete(
                 status="timeout",
                 stderr=f"cell exceeded its {limit:g}s limit",
             )
@@ -696,7 +711,7 @@ class CasSession:
                 # simply exit -- and a kernel Hardy stopped must not be
                 # recorded as one that fell over on its own. The state is gone
                 # either way; what changes is which cause the record names.
-                return CellOutcome(
+                return incomplete(
                     status="interrupted",
                     stderr=(
                         "the cell was interrupted and the kernel did not survive it, "
@@ -704,37 +719,10 @@ class CasSession:
                     ),
                     kernel_lost=True,
                 )
-            return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
+            return incomplete(status="kernel_died", stderr=kernel.stderr_text())
         outcome, consumed = reply
         if self.backend.framing == "sentinel":
-            # Stderr first, and the truncation flag read after it. Both come
-            # before `consume`, which clears the flag for the next cell.
-            #
-            # `extract_sentinel` snapshots `kernel.truncated` at the moment the
-            # stdout end marker was found, and stderr is a second pipe drained
-            # by a second thread: a cell that overran `cas_output_bytes` on
-            # stderr alone had its overflow recorded *after* that snapshot and
-            # then cleared by `consume`, so the record said nothing had been
-            # discarded. That is the one thing the flag exists to say. A
-            # Macaulay2 error banner sitting in the discarded stderr tail was
-            # then classified from a prefix, called clean, and accepted --
-            # which is exactly the "verification that accepts too much" the
-            # truncated-capture rule in `execute` refuses.
-            stderr_text = kernel.stderr_settled()
-            truncated = outcome.capture_truncated or kernel.truncated
             kernel.consume(consumed)
-            # Reclassify now that both streams are in: confirmed of Macaulay2
-            # (CI run 30167266358), whose errors ("stdio:...: error: ...") land
-            # on stderr with nothing error-shaped left on stdout at all, so a
-            # stdout-only classification always read a broken M2 cell as "ok".
-            status = self.backend.classify(outcome.stdout, stderr_text)
-            outcome = outcome.model_copy(
-                update={
-                    "stderr": stderr_text,
-                    "status": status,
-                    "capture_truncated": truncated,
-                }
-            )
         if signalled:
             outcome = outcome.model_copy(update={"signalled": True})
         if not signalled and outcome.status == "interrupted":
@@ -1032,6 +1020,7 @@ class CasSession:
                 kernel_lost=outcome.kernel_lost or status in {"timeout", "kernel_died"},
                 stdout=outcome.stdout,
                 stderr=outcome.stderr,
+                capture_mode=outcome.capture_mode,
                 value_repr=outcome.value_repr,
                 duration_ms=round(elapsed * 1_000),
                 spent_ms=round(self.total_spent_seconds * 1_000),

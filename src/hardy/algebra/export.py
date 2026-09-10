@@ -434,6 +434,12 @@ def _verify_script(
     remaining = session.remaining_seconds
     if remaining <= 0:
         return "unverified", "the session budget ran out before the script could be run"
+    capture_mode = "merged" if session.backend.framing == "sentinel" else "separate"
+    if any(record.capture_mode != capture_mode for record in cells):
+        return "unverified", (
+            "the recorded capture mode differs from the script runner; identical "
+            "text cannot establish equivalent capture. Reset and record a fresh session."
+        )
     truncated_cells = [record.seq for record in cells if record.capture_truncated]
 
     # Fresh every time: a script that writes a file must be seen to create it,
@@ -493,7 +499,8 @@ def _verify_script(
     if run.timed_out:
         return "failed", f"the script did not finish within {remaining:g}s"
     if run.returncode:
-        return "failed", f"the script exited {run.returncode}: {_excerpt(run.stderr.strip())}"
+        diagnostics = run.stderr or run.stdout
+        return "failed", f"the script exited {run.returncode}: {_excerpt(diagnostics.strip())}"
 
     # The file itself is what a line-oriented interpreter was fed, and what it
     # echoes back into its own transcript -- including Hardy's header and the
@@ -896,6 +903,7 @@ def _export_held(session: CasSession, directory: Path) -> ExportReport:
         # string-keyed dict prints in a different order under a different seed.
         # Recorded here and named in the script's own header.
         "environment": dict(getattr(session.backend, "environment", {})),
+        "capture_mode": "merged" if session.backend.framing == "sentinel" else "separate",
         "counts": counts,
         "script_verdict": script_verdict[0],
         "script_detail": script_verdict[1],

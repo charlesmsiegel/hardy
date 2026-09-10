@@ -419,15 +419,17 @@ def test_an_export_holds_the_session_lock_while_it_runs(tmp_path, cas_session, m
 def test_an_export_replays_kernel_start_is_charged_too(tmp_path, cas_session, monkeypatch) -> None:
     """Issue #37: `_start` inside `replay_in_fresh_kernel` was outside the
     budget accounting, so every export cost one unbilled kernel start."""
-    import time
+    from types import SimpleNamespace
 
+    import hardy.algebra.replay as replay_module
     from hardy.algebra.session import CasSession
 
     original = CasSession._start
+    elapsed = [0.0]
 
     def slow_start(self) -> None:
-        time.sleep(0.05)
         original(self)
+        elapsed[0] += 0.05
 
     from hardy.algebra.replay import replay_in_fresh_kernel
 
@@ -436,6 +438,10 @@ def test_an_export_replays_kernel_start_is_charged_too(tmp_path, cas_session, mo
         session.execute("a")
         session.execute("b")
         monkeypatch.setattr(CasSession, "_start", slow_start)
+        # Patch only the replay owner's clock. Windows monotonic resolution
+        # can report 47 ms across a real 50 ms sleep; that says nothing about
+        # whether the start was charged. Other owners keep their real clocks.
+        monkeypatch.setattr(replay_module, "time", SimpleNamespace(monotonic=lambda: elapsed[0]))
         charges: list[float] = []
         replay_in_fresh_kernel(
             backend=session.backend,

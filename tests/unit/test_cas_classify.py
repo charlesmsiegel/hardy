@@ -82,3 +82,16 @@ def test_macaulay2_errors_on_stderr_alone_are_classified() -> None:
     backend = backend_for("macaulay2")
     assert backend.classify("", "stdio:2:1:(3):[1]: error: division by zero") == "error"
     assert backend.classify("ordinary output", "") == "ok"
+
+
+def test_a_merged_macaulay2_error_after_unterminated_stdout_is_recognised() -> None:
+    # stdout need not end in a newline before M2 writes its stderr banner.
+    assert backend_for("macaulay2").classify(
+        "progress...stdio:2:1:(3):[1]: error: division by zero\n"
+    ) == "error"
+
+
+def test_a_merged_singular_banner_after_unterminated_stdout_is_recognised() -> None:
+    assert backend_for("singular").classify(
+        "progress...   ? undefined symbol\n"
+    ) == "error"

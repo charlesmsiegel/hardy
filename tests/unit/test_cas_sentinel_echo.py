@@ -1,16 +1,141 @@
-"""The two Macaulay2-shaped behaviours the non-echoing fake cannot exercise.
+"""Echoed marker boundaries and stderr attribution through an ordered pipe.
 
-`fake_sentinel_cas.py` (behind `sentinel_session`) is modelled on Singular in
-`-q` mode: it never echoes stdin and never writes to stderr, so nothing in
-the hermetic suite could have caught a regression in `_find_marker`'s
-tail-aware skip of a marker's own echoed occurrence, or in
-`classify(stdout, stderr)` reading an error off stderr alone -- both were
-previously verified only by the real-backend CI job against actual
-Macaulay2. `fake_sentinel_cas_echo.py` (behind `echoing_sentinel_session`)
-does both, so these run hermetically.
+The real helper process echoes source and writes diagnostics on stderr like
+Macaulay2. Hardy captures both descriptors in stdout with explicit provenance.
 """
 
 from __future__ import annotations
+
+import json
+import threading
+
+import pytest
+
+from hardy.algebra.contracts import SENTINEL_BEGIN, SENTINEL_END, CasError
+from hardy.algebra.kernel import _Kernel
+
+
+def test_a_delayed_stderr_reader_cannot_accept_an_error_or_blame_the_next_cell(
+    echoing_sentinel_session, monkeypatch,
+):
+    """The child writes the error before its marker; only parent delivery lags."""
+    release = threading.Event()
+    original = _Kernel._drain
+
+    def delayed_stderr(self, pipe, destination):
+        if pipe is self.process.stderr:
+            release.wait(3)
+        original(self, pipe, destination)
+
+    monkeypatch.setattr(_Kernel, "_drain", delayed_stderr)
+    session = echoing_sentinel_session()
+    try:
+        broken = session.execute("error;")
+        assert broken.status == "error"
+        assert not broken.accepted
+        assert "division by zero" in broken.stdout + broken.stderr
+        release.set()
+        clean = session.execute("hello;")
+        assert clean.status == "ok"
+        assert "division by zero" not in clean.stdout + clean.stderr
+    finally:
+        release.set()
+
+
+def test_sentinel_records_disclose_ordered_combined_capture(echoing_sentinel_session):
+    session = echoing_sentinel_session()
+    record = session.execute("hello;")
+    assert record.model_dump()["capture_mode"] == "merged"
+
+
+def test_a_merged_kernel_death_is_not_mistaken_for_a_timeout(echoing_sentinel_session):
+    session = echoing_sentinel_session(cas_cell_seconds=2)
+    record = session.execute("die;")
+    assert record.status == "kernel_died"
+    assert record.kernel_lost
+
+
+def test_a_fatal_sentinel_error_retains_its_diagnostics(echoing_sentinel_session):
+    session = echoing_sentinel_session()
+    record = session.execute("error;\ndie;")
+    assert record.status == "kernel_died"
+    assert "division by zero" in record.stdout
+    assert record.capture_mode == "merged"
+
+
+def test_a_timed_out_sentinel_cell_retains_partial_diagnostics(echoing_sentinel_session):
+    session = echoing_sentinel_session(cas_cell_seconds=1)
+    record = session.execute("error;\nhang;")
+    assert record.status == "timeout"
+    assert "division by zero" in record.stdout
+    assert record.capture_mode == "merged"
+    assert "limit" in record.stderr
+
+
+def test_a_fatal_stderr_flood_retains_bounded_diagnostics(echoing_sentinel_session):
+    session = echoing_sentinel_session(cas_output_bytes=4096)
+    record = session.execute("flooddie;")
+    assert record.status == "kernel_died"
+    assert record.capture_truncated
+    assert record.capture_mode == "merged"
+    assert "diagnostic-prefix" in record.stdout
+    assert len(record.stdout.encode()) <= 4096
+
+
+def test_reopening_a_legacy_sentinel_journal_requires_reset(echoing_sentinel_session):
+    session = echoing_sentinel_session()
+    session.execute("hello;")
+    session.close()
+    legacy = json.loads(session.log_path.read_text(encoding="utf-8"))
+    del legacy["capture_mode"]
+    session.log_path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+    reopened = echoing_sentinel_session()
+    with pytest.raises(CasError, match="did not reproduce"):
+        reopened.execute("second;")
+    reopened.reset()
+    assert reopened.execute("second;").accepted
+
+
+def test_legacy_separate_capture_is_not_certified_by_merged_replay(echoing_sentinel_session):
+    from hardy.algebra.contracts import CellOutcome, same_output
+
+    session = echoing_sentinel_session()
+    record = session.execute("hello;")
+    legacy = type(record).model_validate({
+        key: value for key, value in record.model_dump().items() if key != "capture_mode"
+    })
+    replay = CellOutcome.model_validate({
+        "status": "ok", "stdout": record.stdout, "capture_mode": "merged",
+    })
+    assert not same_output(legacy, replay)
+
+
+@pytest.mark.parametrize("suffix_bytes", [0, 1])
+def test_a_split_echoed_end_marker_waits_for_its_suffix(
+    echoing_sentinel_session, suffix_bytes,
+) -> None:
+    """A pipe read may end inside the echo template, before its closing quote."""
+    session = echoing_sentinel_session()
+    begin = SENTINEL_BEGIN.format(nonce="split")
+    end = SENTINEL_END.format(nonce="split")
+    extract = session._extractor("split")
+    prefix = f'{begin}\nhello\ni3 : ECHO "{end}'.encode()
+    partial = prefix + b'";'[:suffix_bytes]
+    assert extract(partial) is None
+    complete = prefix + f'";\ndeferred-output\n{end}\n'.encode()
+    outcome, _ = extract(complete)
+    assert "deferred-output" in outcome.stdout
+
+
+def test_a_split_echoed_begin_marker_is_not_part_of_the_cell(echoing_sentinel_session):
+    session = echoing_sentinel_session()
+    begin = SENTINEL_BEGIN.format(nonce="split")
+    end = SENTINEL_END.format(nonce="split")
+    extract = session._extractor("split")
+    echoed = f'i1 : ECHO "{begin}'.encode()
+    assert extract(echoed) is None
+    outcome, _ = extract(echoed + f'";\n{begin}\nhello\n{end}\n'.encode())
+    assert outcome.stdout.strip() == "hello"
 
 
 def test_content_is_extracted_despite_the_interpreters_own_echo(
@@ -46,13 +171,14 @@ def test_an_error_written_only_to_stderr_is_classified_as_an_error(
 ) -> None:
     """The fake writes nothing error-shaped to stdout for a failing
     statement -- only to stderr, exactly like a real Macaulay2 error.
-    `classify` must catch this on the stderr argument.
+    Ordered capture must retain and classify it in the combined transcript.
     """
     session = echoing_sentinel_session()
     record = session.execute("error;")
     assert record.status == "error"
     assert record.accepted is False
-    assert "error:" in record.stderr
+    assert "error:" in record.stdout
+    assert record.stderr == ""
 
 
 def test_a_cell_is_not_cut_short_by_its_own_echoed_end_marker(
@@ -96,21 +222,13 @@ def test_state_still_persists_across_cells_despite_the_echo(
 
 
 
-def test_an_error_that_lands_on_stderr_after_the_end_marker_still_classifies_the_cell(
+def test_an_error_emitted_before_the_end_marker_still_classifies_the_cell(
     echoing_sentinel_session,
 ) -> None:
-    """Issue #36: the hermetic regression test for the stderr quiet-window bug.
-
-    stdout and stderr are two pipes drained by two threads, and nothing ties
-    their delivery together: an error the interpreter wrote *before* it
-    echoed the end marker can still reach Hardy after the marker has. Reading
-    stderr the instant the marker is found read a broken cell as clean.
-    `laterror;` in the fake writes the stdout end marker immediately and only
-    then, after `STDERR_DELAY`, the error -- inside the quiet window
-    `stderr_settled` waits out, so the settle is what has to catch it.
-    """
+    """The interpreter finishes its stderr writes before executing the marker."""
     session = echoing_sentinel_session()
     record = session.execute("laterror;")
     assert record.status == "error"
     assert record.accepted is False
-    assert "error:" in record.stderr
+    assert "error:" in record.stdout
+    assert record.stderr == ""

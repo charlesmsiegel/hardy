@@ -1203,3 +1203,9 @@ true.
 
 The complete feature inventory is in [FEATURES.md](FEATURES.md), and the visual
 map is [ARCHITECTURE.html](ARCHITECTURE.html).
+
+X4 sentinel capture now combines stdout/stderr into one ordered pipe. Capture
+mode is recorded and incompatible legacy captures cannot establish replay or
+export agreement. The protocol assumes synchronous flushed writes before each
+marker; it cannot attribute asynchronous output after completion. See the
+[CAS residual report](docs/superpowers/reports/2026-09-10-cas-residuals.md).
