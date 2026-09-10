@@ -511,6 +511,22 @@ def test_relation_publication_metadata_does_not_require_a_new_source():
     LedgerPolicy().validate(before, LedgerSnapshot((*before.records, changed)))
 
 
+def test_relation_cannot_move_back_to_an_old_source_revision(tmp_path):
+    from hardy.workflows.ledger.store import LedgerStore
+
+    old = item("T", statement="old")
+    current = old.model_copy(update={"statement": "current"})
+    guess = item("guess", kind="conjecture")
+    edge = Relation(id="dependency", kind="depends_on", source=current.ref, target=guess.ref)
+    store = LedgerStore(tmp_path)
+    store.append((old, guess), expected_revision=0)
+    store.append((current, edge), expected_revision=1)
+    moved = edge.model_copy(update={"source": old.ref})
+    with pytest.raises(ValueError, match="source"):
+        store.append((moved,), expected_revision=2)
+    assert store.read().head("dependency") == edge
+
+
 def test_moving_relation_to_an_unrelated_source_cannot_erase_original_dependency(tmp_path):
     from hardy.workflows.ledger.graph import LedgerGraph
     from hardy.workflows.ledger.store import LedgerStore

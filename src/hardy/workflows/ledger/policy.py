@@ -190,6 +190,9 @@ class LedgerPolicy:
                 self._check_resolution(after, record, frozenset())
             if isinstance(record, Relation) and isinstance(previous, Relation):
                 semantic = DEPENDENCIES | TRANSPORT | {RelationKind.INTERPRETS, RelationKind.REFINES}
+                if (record.source != previous.source and (record.kind in semantic or previous.kind in semantic)
+                        and after.head(record.source.id).ref != record.source):
+                    raise ValueError("semantic relation source must advance to the current source revision")
                 if ((record.kind in semantic or previous.kind in semantic)
                         and record.source.id != previous.source.id):
                     raise ValueError("semantic relation must preserve its stable source identity")
