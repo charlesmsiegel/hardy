@@ -234,7 +234,9 @@ OTHER = "…other"  # sentinel; not a legal model identity
 
 def model_rows(config) -> list[Choice]:
     current = (config.model or "").strip()
-    entries = catalog.available()
+    # Read through the backend, not whole: the unfiltered list offered a
+    # Codex session four Claude identities it could not run (issue #28).
+    entries = catalog.available(getattr(config, "backend", DEFAULT_BACKEND))
     rows: list[Choice] = []
     if current and not catalog.find(current):
         # An unlisted identity is legitimate, so it needs a row of its own --
@@ -286,6 +288,16 @@ async def _chosen_identity(ui: Ui, argument: str, config) -> str | None:
 async def handle_model(ui: Ui, argument: str, state: State) -> State:
     identity = await _chosen_identity(ui, argument, state.config)
     if identity is None:
+        return state
+
+    # Refused here, before the live session is asked, so an impossible choice
+    # fails at selection with its reason and not at the next provider request.
+    # Only a catalogued identity can be refused; a typed-in one is the escape
+    # hatch and stays the transport's to judge.
+    backend = getattr(state.config, "backend", DEFAULT_BACKEND)
+    reason = catalog.refusal(identity, backend)
+    if reason is not None:
+        ui.write(f"{reason} Model unchanged.", style="error")
         return state
 
     entry = catalog.describe(identity)

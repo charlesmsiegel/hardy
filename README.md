@@ -348,9 +348,10 @@ pip install 'hardy-prover[api]'
 export ANTHROPIC_API_KEY=...   # hardy doctor checks for it when this backend is selected
 ```
 
-`/model` inside a session lists the catalogued Claude models, switches the live
-session, records the change in the transcript, and can save the choice as your
-default. The conversation carries across the switch on both backends, by
+`/model` inside a session lists the catalogued models the active backend can
+serve, switches the live session, records the change in the transcript, and can
+save the choice as your default. A catalogued model the backend cannot serve is
+refused at selection, with the reason, rather than at the next request. The conversation carries across the switch on both backends, by
 different means and with different reach: on the subscription backend it rides
 the provider's own session thread, which also survives closing and reopening
 the workspace; on the `api` backend Hardy holds the conversation itself and

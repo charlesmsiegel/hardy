@@ -62,7 +62,7 @@ async def test_selecting_a_row_picks_that_model(tmp_path: Path):
     session = Recorder()
     ui = ScriptedUi(choices=[1], confirmations=[False])
     await handlers.handle_model(ui, "", state(tmp_path, session))
-    assert session.models == [catalog.available()[1].identifier]
+    assert session.models == [catalog.available("claude")[1].identifier]
 
 
 async def test_escaping_the_selector_changes_nothing(tmp_path: Path):
@@ -163,6 +163,52 @@ def test_an_unlisted_current_model_gets_its_own_row(tmp_path: Path):
 
 def test_the_last_row_is_the_escape_hatch(tmp_path: Path):
     assert handlers.model_rows(settings(tmp_path))[-1].label.startswith("Other")
+
+
+def test_an_api_session_is_offered_the_claude_roster(tmp_path: Path):
+    """The Messages API serves the same identities the subscription does."""
+    rows = handlers.model_rows(settings(tmp_path, backend="api"))
+    offered = [row.value for row in rows if row.value != handlers.OTHER]
+    assert offered == [entry.identifier for entry in catalog.available("claude")]
+
+
+def test_a_codex_session_is_not_offered_claude_models(tmp_path: Path):
+    """Issue #28: the menu was built from the whole catalog whatever the
+    backend, so a Codex session was offered four models it could not run."""
+    rows = handlers.model_rows(settings(tmp_path, model="gpt-codex", backend="codex"))
+    assert all(not row.value.startswith("claude-") for row in rows)
+    assert rows[-1].value == handlers.OTHER
+
+
+def test_a_codex_session_still_shows_its_own_unlisted_current_model(tmp_path: Path):
+    rows = handlers.model_rows(settings(tmp_path, model="gpt-codex", backend="codex"))
+    assert rows[0].value == "gpt-codex" and "current" in rows[0].note
+
+
+async def test_a_backend_incompatible_switch_is_refused_at_selection(tmp_path: Path):
+    """Refused here, with a reason, and the live session never asked -- not
+    accepted now and failed at the next provider request."""
+    session = Recorder()
+    ui = ScriptedUi()
+    result = await handlers.handle_model(
+        ui, "claude-opus-5", state(tmp_path, session, model="gpt-codex", backend="codex")
+    )
+    assert session.models == []
+    assert result.config.model == "gpt-codex"
+    assert "claude-opus-5" in ui.text and "codex" in ui.text and "Model unchanged" in ui.text
+    assert not ui.asked, "nothing to save: the switch did not happen"
+
+
+async def test_the_escape_hatch_survives_on_every_backend(tmp_path: Path):
+    """An identity the catalog lacks cannot be refused by it. The transport
+    is the authority on those, and it says so at the next request."""
+    session = Recorder()
+    ui = ScriptedUi(confirmations=[False])
+    result = await handlers.handle_model(
+        ui, "gpt-codex-next", state(tmp_path, session, model="gpt-codex", backend="codex")
+    )
+    assert result.config.model == "gpt-codex-next"
+    assert session.models == ["gpt-codex-next"]
 
 
 async def test_saving_writes_the_model_without_losing_other_settings(tmp_path: Path):
