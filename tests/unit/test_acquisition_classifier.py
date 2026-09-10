@@ -96,3 +96,12 @@ def test_target_paper_origin_is_not_an_external_source_even_without_scope_entry(
     work = work.model_copy(update={"item": item.ref})
     service, _ = classifier("literature")
     assert service.classify(LedgerSnapshot((item, work.scope, work)), work).kind == "target_paper"
+
+
+def test_superseded_subject_does_not_reach_search_or_model():
+    state, work = fixture()
+    revised = state.get(work.item).model_copy(update={"name": "revised"})
+    service, calls = classifier()
+    with pytest.raises(ValueError, match="current subject"):
+        service.classify(LedgerSnapshot((*state.records, revised)), work)
+    assert calls == []

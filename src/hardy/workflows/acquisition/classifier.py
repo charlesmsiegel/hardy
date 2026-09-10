@@ -46,6 +46,8 @@ class GapClassifier:
         item = snapshot.get(obligation.item)
         if not isinstance(item, ProjectItem):
             raise ValueError("classification requires a project item")
+        if snapshot.head(item.id) != item or item.context != obligation.context:
+            raise ValueError("classification requires the current subject and its exact context")
         if snapshot.head(obligation.scope.id) != obligation.scope:
             raise ValueError("classification requires current scope")
         searches = tuple(operation(snapshot, obligation)
