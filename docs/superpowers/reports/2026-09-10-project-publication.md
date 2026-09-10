@@ -26,7 +26,8 @@ refused, including after restart, so later publication cannot overwrite edits.
 currently admitted background/interface item is refused because the existing
 trust policy pins its exact digest; this command does not migrate trust.
 Repeated identical marks and links do not append redundant transactions, including
-links whose target moved only through presentation metadata.
+links whose source or target moved only through presentation metadata. A changed
+prose statement remains distinct and retains its exact new source reference.
 `documents` requires exposition/document-fragment source, and `illustrates`
 requires an example. Both preserve exact endpoint references.
 
@@ -82,14 +83,15 @@ The broader scoped gate covered existing project commands and module boundaries:
 uv run --extra test pytest tests/test_project_publication.py tests/tui/test_project_publication.py tests/unit/test_publication.py tests/unit/test_publication_structure.py tests/unit/test_publish.py tests/tui/test_project_command.py tests/unit/test_module_boundaries.py -q --tb=short
 ```
 
-**135 passed in 10.06 seconds.** Two later review fixes covered effective-role
-rendering and repeated links across metadata revisions. Their final affected gate:
+**135 passed in 10.06 seconds.** Later review fixes covered effective-role
+rendering and repeated links across source/target metadata revisions. Their final affected gate:
 
 ```powershell
 uv run --extra test pytest tests/test_project_publication.py tests/tui/test_project_publication.py tests/unit/test_publication.py tests/unit/test_publication_structure.py tests/unit/test_publish.py -q --tb=short
 ```
 
-**71 passed in 4.14 seconds.** Tests use actual session, ledger, planner,
+**73 passed in 5.21 seconds.** Ruff passed on the two Python files changed for the
+final source-side idempotency fix. Tests use actual session, ledger, planner,
 assembly and document-gate owners with trusted scripted compiler/provider
 fixtures. This is not a full hermetic-suite, real TeX, live model, or confinement
 result. `git diff --check` found no whitespace errors in the tracked E3 edits.

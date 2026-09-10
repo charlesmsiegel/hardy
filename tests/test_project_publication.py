@@ -219,6 +219,35 @@ def test_repeating_links_after_metadata_mark_does_not_duplicate_exposition(tmp_p
     assert result.draft.source.count(prose.statement) == 1
 
 
+def test_repeating_link_after_source_metadata_mark_preserves_one_exact_paragraph(tmp_path):
+    chat = session(tmp_path, FakeChatRuntime([]))
+    store, _, _, _, prose, _ = populate(tmp_path)
+    hidden = chat.project_mark("Paragraph", "internal")
+    first = chat.project_link("Paragraph", "documents", "Main")
+    assert first.source == hidden.ref
+    chat.project_mark("Paragraph", "public")
+    before = store.read()
+    assert chat.project_link("Paragraph", "documents", "Main") == first
+    assert store.read() == before
+    result = chat.project_publish("Main", scope="scope", output="single-source")
+    assert result.draft.source.count(prose.statement) == 1
+    frozen = json.loads((result.output / "publication.json").read_text())["plan"]
+    assert frozen["exposition"][0]["prose"]["publication_visibility"] == "internal"
+    assert frozen["attachments"][0]["source"] == hidden.ref.model_dump()
+
+
+def test_changed_prose_source_is_not_collapsed_as_a_presentation_edit(tmp_path):
+    chat = session(tmp_path, FakeChatRuntime([]))
+    store, _, _, _, prose, _ = populate(tmp_path)
+    first = chat.project_link("Paragraph", "documents", "Main")
+    changed = prose.model_copy(update={"statement": "A different author paragraph."})
+    store.append((changed,), expected_revision=store.read().revision)
+    second = chat.project_link("Paragraph", "documents", "Main")
+    assert second.ref != first.ref
+    assert second.source == changed.ref
+    assert store.read().get(first.ref) == first
+
+
 @pytest.mark.parametrize("container", [False, True])
 def test_links_after_metadata_mark_reach_exact_scope_target_and_audit_example_dependencies(tmp_path, container):
     chat = session(tmp_path, FakeChatRuntime([]))

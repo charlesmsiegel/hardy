@@ -80,9 +80,10 @@ class ProjectOperations:
         if origin.kind not in allowed[kind] or origin.ref == subject.ref:
             raise ValueError(f"{kind} requires a distinct example or prose source of the appropriate kind.")
         for relation in LedgerGraph(snapshot).relations:
+            source_record = snapshot.get(relation.source)
             target_record = snapshot.get(relation.target)
-            if (relation.source == origin.ref and relation.kind == kind
-                    and isinstance(target_record, ProjectItem)
+            if (relation.kind == kind and isinstance(source_record, ProjectItem)
+                    and same_publication_subject(source_record, origin) and isinstance(target_record, ProjectItem)
                     and same_publication_subject(target_record, subject)):
                 return relation
         relation = Relation(id=f"publication-{uuid4().hex}", kind=RelationKind(kind),
