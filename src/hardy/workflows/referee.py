@@ -384,6 +384,11 @@ class RefereeWorkflow:
         pending = tuple(o for o in views.obligations() if o.scope == scope)
         citations = tuple(self._citation_audit(snapshot, use, reference)
                           for use, reference in zip(uses, citation_work, strict=True))
+        # Capability receipts can be revoked without changing ledger revision.
+        # Refresh recursive acceptance at the same final boundary as direct uses.
+        recursive = tuple(replace(node, children=tuple(
+            self._citation_audit(snapshot, child.use, child.obligation)
+            for child in node.children)) for node in recursive)
         unresolved = tuple(ref for ref in selected if ref not in verified or
                            any(o.item in LedgerGraph(snapshot).dependency_closure(ref, include_roots=True) for o in pending))
         report = RefereeReport(

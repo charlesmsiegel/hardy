@@ -276,6 +276,37 @@ def test_recursive_snapshot_cannot_survive_later_semantic_reader_mutation(tmp_pa
             expand_citation=expand).run(replace(request, citation_depth=2))
 
 
+def test_final_recursive_report_reauthenticates_receipt_revoked_during_review(tmp_path, monkeypatch):
+    """An external capability receipt can disappear without a ledger revision."""
+    from hardy.workflows.critique import ReviewPass
+
+    store, request, resolve, expand, _, _ = chain(tmp_path)
+    receipt = tmp_path / "capability-receipt"
+    receipt.write_text("authenticated", encoding="utf-8")
+    observed = []
+    original = referee.RefereeWorkflow._citation_audit
+
+    def authenticate(self, snapshot, use, work):
+        # Stand in for the capability owner's live receipt authentication. The
+        # C2 traversal/store are real; this test concerns reporting-time reuse.
+        result = original(self, snapshot, use, work)
+        checked = receipt.exists()
+        observed.append((use.required_claim.id, checked))
+        return replace(result, checked=checked, outstanding=())
+
+    def revoke(review):
+        receipt.unlink(missing_ok=True)
+        return ReviewPass(subject=review.subject.ref, scope=review.scope.ref,
+                          revision=review.snapshot.revision)
+
+    monkeypatch.setattr(referee.RefereeWorkflow, "_citation_audit", authenticate)
+    report = referee.RefereeWorkflow(store, critique=CritiqueOperations(adversarial=revoke),
+        resolve_citation=resolve, expand_citation=expand).run(replace(request, citation_depth=2))
+    assert ("C", True) in observed
+    assert not report.citations[0].checked
+    assert all(not child.checked for node in report.recursive_citations for child in node.children)
+
+
 def test_node_budget_reserves_siblings_before_descending(tmp_path):
     store, request, resolve, expand, resolved, expanded = chain(tmp_path, branching=True)
     report = referee.RefereeWorkflow(store, critique=CritiqueOperations(), resolve_citation=resolve,
