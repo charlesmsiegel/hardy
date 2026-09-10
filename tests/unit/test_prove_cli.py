@@ -1,9 +1,20 @@
 import dataclasses
 import importlib
 import json
+import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
+
+import pytest
+
+# `build_prove_workflow` identifies the toolchain by running `config.lake env
+# lean --version` before the tests below get a workflow, and `_staged_config`'s
+# `lake` is a `#!/bin/sh` script that Windows cannot execute (WinError 193).
+# A real `lake.exe` takes the same path; only the fake is missing.
+runs_the_fake_lake = pytest.mark.skipif(
+    os.name == 'nt', reason='the fake lake is a POSIX shell script'
+)
 
 
 def test_prove_accepts_an_ordinary_language_claim_and_exact_model() -> None:
@@ -123,6 +134,7 @@ def _staged_config(tmp_path, **overrides):
     return config_module.Config(**settings)
 
 
+@runs_the_fake_lake
 def test_staged_doctor_ignores_an_advisory_cas_failure(tmp_path, monkeypatch) -> None:
     """`doctor._cas_check` marks a failed default-backend probe
     `required=False`; the staged health calculation must honor that instead
@@ -147,6 +159,7 @@ def test_staged_doctor_ignores_an_advisory_cas_failure(tmp_path, monkeypatch) ->
     assert report.healthy is True
 
 
+@runs_the_fake_lake
 def test_the_staged_doctor_checks_the_backend_the_run_will_build(tmp_path, monkeypatch):
     """`hardy prove` takes a `--backend` of its own, and the global setting is
     for interactive and batch work. Reading the wrong one blocks a usable
@@ -178,6 +191,7 @@ def test_doctor_asked_for_a_backend_checks_that_one(tmp_path):
     assert 'claude sdk' in names and 'anthropic key' not in names
 
 
+@runs_the_fake_lake
 def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
     tmp_path,
 ) -> None:
@@ -407,6 +421,7 @@ def test_accept_takes_the_same_reviewer_override_as_prove() -> None:
     assert args.faithfulness_model == 'gpt-reviewer'
 
 
+@runs_the_fake_lake
 def test_a_lean_that_cannot_be_identified_is_a_recorded_setup_failure(tmp_path) -> None:
     """Not a traceback: the identity probe runs before the workflow exists,
     and a `lake` that answers `--version` with nothing used to escape
