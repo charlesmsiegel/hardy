@@ -115,3 +115,16 @@ def test_cli_reference_names_every_command_and_option() -> None:
         body = section(page, name)
         for option in _options(sub):
             assert f"`{option}`" in body, f"{name}: option {option} missing"
+
+
+def test_session_reference_names_every_slash_command() -> None:
+    from hardy.app.tui.handlers import build_registry
+    from hardy.prompts import user
+
+    page = (ROOT / "docs" / "reference" / "session-commands.md").read_text(encoding="utf-8")
+    for command in build_registry():
+        assert f"`/{command.name}`" in page, f"/{command.name} missing"
+        if command.safe_in_flight:
+            assert f"`/{command.name}`" in section(page, "Commands that work while a turn is running")
+    for template in user.SHORTCUTS:
+        assert f"`/{template.name}`" in section(page, "Prompt shortcuts")
