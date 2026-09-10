@@ -46,7 +46,7 @@ from hardy.workflows.ledger.contracts import (
     ScopedBinding,
     VersionRef,
 )
-from hardy.workflows.ledger.graph import TRANSPORT, LedgerGraph
+from hardy.workflows.ledger.graph import DEPENDENCIES, TRANSPORT, LedgerGraph
 from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
@@ -200,6 +200,16 @@ class RefereeWorkflow:
         item = snapshot.get(claim.item)
         graph = LedgerGraph(snapshot)
         findings = [CritiqueFinding(kind=r.kind, reason=r.reason) for r in claim.requirements]
+        # A dependency component names recorded circular reasoning, not a
+        # semantic judgment inferred from the manuscript's prose.
+        for component in graph.strongly_connected_components():
+            if item.ref in component and (len(component) > 1 or any(
+                relation.kind in DEPENDENCIES and relation.source == relation.target == item.ref
+                for relation in graph.relations
+            )):
+                members = ", ".join(f"{ref.id}@{ref.digest}" for ref in component)
+                findings.append(CritiqueFinding(kind="check_informal_step",
+                    reason=f"Circular proof dependency among {members}; supply an independent argument."))
         if claim.proof_context is not None and claim.proof_context != item.context:
             findings.append(CritiqueFinding(kind="resolve_declaration",
                 reason="Proof context differs from the statement context; discharge hidden or changed hypotheses explicitly."))

@@ -3,7 +3,8 @@
 E4 now adds persisted mathematical context, scoped research, blockers, trust and
 publication readiness to `/status --full` and the shared context summary.
 Ledger evidence authentication remains unavailable in the terminal adapter;
-recorded acceptance is not proof. E1/E3 are in progress; E0/E2 remain deferred.
+recorded acceptance is not proof. E1 now has a synthetic manuscript acceptance fixture with scripted semantic
+readings and explicit coverage. E3 is in progress; E0/E2 remain deferred.
 See the [status report](docs/superpowers/reports/2026-09-10-project-status.md).
 
 Hardy is an experimental, model-agnostic harness for theorem proving in Lean 4.

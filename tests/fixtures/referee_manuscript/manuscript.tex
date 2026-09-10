@@ -1,0 +1,63 @@
+% E1 synthetic manuscript. Deliberate errors are documented in README.md.
+\section{Finite and compact objects}
+\begin{theorem}\label{correct}
+For every natural number n, n + 0 = n.
+\end{theorem}
+\begin{proof}This is the defining equation for addition by zero.\end{proof}
+
+\begin{theorem}\label{citation_good}
+Every finite topological space is compact.
+\end{theorem}
+\begin{proof}Apply the finite-space theorem of \cite{finite}.\end{proof}
+
+\begin{theorem}\label{citation_missing}
+Every subset of a compact space is compact.
+\end{theorem}
+\begin{proof}Apply the closed-subset theorem of \cite{closed}, without any further condition on the subset.\end{proof}
+
+\begin{lemma}\label{cycle_a}
+The sequence a is bounded above.
+\end{lemma}
+\begin{proof}Lemma~\ref{cycle_b} supplies an upper bound.\end{proof}
+\begin{lemma}\label{cycle_b}
+There exists a real number M with a(n) at most M for every n.
+\end{lemma}
+\begin{proof}This follows from Lemma~\ref{cycle_a}.\end{proof}
+
+\begin{theorem}\label{unsupported}
+Every bounded real sequence converges.
+\end{theorem}
+\begin{proof}Boundedness plainly forces all terms to approach one limit.\end{proof}
+
+\begin{lemma}\label{side}
+For every natural number n, 0 + n = n.
+\end{lemma}
+\begin{proof}Induct on n. This side lemma is unused by the main results.\end{proof}
+
+\begin{theorem}\label{drift}
+Every topological space X is compact.
+\end{theorem}
+\begin{proof}Take X finite. Every open cover then has a finite subcover.\end{proof}
+
+\begin{theorem}\label{shadow}
+The declared set M is finite.
+\end{theorem}
+\begin{proof}Write M for the singleton containing zero. Then M is finite.\end{proof}
+
+\begin{theorem}\label{wlog}
+Every continuous real function on X attains a maximum.
+\end{theorem}
+\begin{proof}Without loss of generality replace X by a compact space. Apply the extreme-value theorem.\end{proof}
+
+\section{One representation, two uses}
+We write V for an abstract carrier with an operation called addition. No laws
+or scalar action have been declared. This conventional name adds no structure.
+\begin{lemma}\label{weak}
+For elements x and y of V, the expression x + y is an element of V.
+\end{lemma}
+\begin{proof}This is exactly the codomain of the declared binary operation.\end{proof}
+
+\begin{theorem}\label{strong}
+The carrier V has a basis over the real numbers.
+\end{theorem}
+\begin{proof}Treat V as a vector space and choose a basis.\end{proof}

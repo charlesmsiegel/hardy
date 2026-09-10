@@ -26,7 +26,7 @@ coverage gate before fast-forward landing. Tests use trusted disposable fixtures
   and explicit scope for publication. Use `plan_publication` and
   `PublicationPublisher` for fresh guarded bundles. Test actual command dispatch,
   history-preserving edits, stale output refusal and partial draft disclosure.
-- [ ] E1: commit the synthetic flawed manuscript and expected findings; run
+- [x] E1: commit the synthetic flawed manuscript and expected findings; run
   real Referee composition with attributed scripted semantic reads. Assert both
   detected defects and clean controls, source coverage and restart behavior.
 - [ ] S1/S2: read-only capability recheck; record any unresolved host prerequisite.
