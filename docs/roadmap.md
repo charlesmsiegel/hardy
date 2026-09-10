@@ -448,6 +448,18 @@ Persist mathematical contexts, scoped bindings, goal/conjecture/approach status 
 
 **Deps:** A0
 
+**Status: implemented (2026-09-10).** `ledger/graph.py` provides exact-version
+dependency/reverse closures, paths, iterative SCCs, blockers/readiness, critical
+branches and publication support. Context ancestry, lexical shadowing, minimal
+explicit context closure, research neighborhoods and authenticated transport paths
+share the same snapshot. Reverse impact includes descendants and items established
+in changed transport contexts without pulling every ambient declaration into a
+minimal context. Recorded statuses do not authenticate resolution. Run
+`uv run --extra test pytest tests/unit/test_ledger_graph.py -q` (17 tests).
+Simple-path enumeration can be exponential; queries are intended for bounded
+project graphs. Earlier outgoing edges on an unchanged source require the earlier
+snapshot when a relation has since been revised.
+
 Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, helpers used by publication closure, representation-use reverse closure, declaration/context closure, research-goal/approach neighborhoods, and transport/equivalence paths.
 
 Required queries include:
