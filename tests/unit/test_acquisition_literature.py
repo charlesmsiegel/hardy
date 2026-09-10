@@ -24,10 +24,12 @@ from hardy.workflows.ledger.contracts import (
     EvidenceRef,
     MathematicalContext,
     Obligation,
+    ObligationStatus,
     ProjectItem,
+    Resolution,
     Scope,
 )
-from hardy.workflows.ledger.policy import AuthenticatedEvidence
+from hardy.workflows.ledger.policy import AcceptanceDecision, AuthenticatedEvidence, LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.validation import validate_structure
 from hardy.workflows.representation import RepresentationModel
@@ -408,3 +410,35 @@ def test_candidate_limit_leaves_unresolved_instead_of_claiming_absence(tmp_path)
     assert not operations.prepared
     assert not result.evidence
     assert not any(isinstance(record, CitationContract) for record in result.records)
+
+
+def test_completed_hypothesis_work_is_not_rescheduled_but_keeps_exact_citation_links(tmp_path):
+    library, snapshot, work, gap = fixture(tmp_path)
+    service, operations = resolver(tmp_path, library)
+    initial = service.resolve(snapshot, work, gap)
+    discharges = tuple(child for child in initial.children if child.kind.value == "discharge_citation_hypotheses")
+    evidence, decisions = {}, {}
+    policy = LedgerPolicy(read_evidence=evidence.get, read_decision=decisions.get)
+    snapshot = replace(snapshot, records=(*snapshot.records, *discharges))
+    closed = []
+    for child, hypothesis in zip(discharges, ("ambient space is compact", "subset is closed"), strict=True):
+        reference = EvidenceRef(kind="formal", subject=work.item, producer="fixture-lean",
+                                artifact=ArtifactRef(uri=f"fixture:{child.id}", digest="a" * 64))
+        evidence[reference] = AuthenticatedEvidence(reference, work.scope.ref, work.context,
+                                                   "kernel_proof", hypothesis=hypothesis)
+        proposal = Resolution(id=f"done:{child.id}", obligation=child.ref, item=child.item, evidence=(reference,))
+        receipt = ArtifactRef(uri=f"fixture:decision:{child.id}", digest="b" * 64)
+        decisions[receipt] = AcceptanceDecision(proposal.ref, child.ref, child.item, work.scope.ref,
+                                                 work.context, policy.digest)
+        accepted = policy.accept(snapshot, proposal, receipt)
+        closed.append(child.model_copy(update={"status": ObligationStatus.RESOLVED,
+                                               "previous": child.ref, "resolution": accepted}))
+    snapshot = replace(snapshot, records=(*snapshot.records, *closed))
+    untrusted = service.resolve(snapshot, work, gap)
+    assert any(child.kind.value == "discharge_citation_hypotheses" for child in untrusted.children)
+    service.policy = policy
+    result = service.resolve(snapshot, work, gap)
+    assert all(child.kind.value != "discharge_citation_hypotheses" for child in result.children)
+    citation, = (record for record in result.records if isinstance(record, CitationContract))
+    assert tuple(mapping.obligation for mapping in citation.hypothesis_mapping) == tuple(child.ref for child in discharges)
+    assert result.evidence == ()  # Scheduling completion cannot manufacture acceptance evidence.

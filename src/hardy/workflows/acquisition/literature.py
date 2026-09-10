@@ -50,7 +50,7 @@ from hardy.workflows.ledger.contracts import (
     ResearchState,
     Text,
 )
-from hardy.workflows.ledger.policy import AuthenticatedEvidence
+from hardy.workflows.ledger.policy import AuthenticatedEvidence, LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.representation import RepresentationModel
 
@@ -113,6 +113,7 @@ class LiteratureResolver:
                  review: Callable[[FrozenClaim], LiteratureReading],
                  request_admission: Callable[[AdmissionRequest, SourceEvidence, PreparedCandidate], CheckDecision],
                  read_evidence: Callable[[EvidenceRef], AuthenticatedEvidence | None] | None = None,
+                 policy: LedgerPolicy | None = None,
                  max_candidates: int = 8):
         if type(max_candidates) is not int or max_candidates < 1:
             raise ValueError("max_candidates must be a positive integer")
@@ -124,6 +125,7 @@ class LiteratureResolver:
         self.review = review
         self.request_admission = request_admission
         self.read_evidence = read_evidence
+        self.policy = policy
         self.max_candidates = max_candidates
         self.admission = AdmissionPolicy()
 
@@ -250,7 +252,10 @@ class LiteratureResolver:
                 child = Obligation(id=f"{prefix}:hypothesis:{index}", kind="discharge_citation_hypotheses",
                     item=work.item, context=work.context, scope=work.scope,
                     reason=f"Discharge source hypothesis: {hypothesis.hypothesis}. {hypothesis.reason}")
-                children.append(child)
+                # Preserve the original citation pin while B2 authenticates its
+                # current completion. A serialized RESOLVED flag cannot hide work.
+                if not self._completed(query.snapshot, child):
+                    children.append(child)
                 mappings.append(HypothesisMapping(hypothesis=hypothesis.hypothesis, obligation=child.ref))
         source_ref = EvidenceRef(kind="literature", artifact=source.evidence.artifact,
                                  subject=work.item, producer="hardy.literature.library")
@@ -289,6 +294,20 @@ class LiteratureResolver:
             records.append(source_item)
         return ResolverResult(records=tuple(records), children=tuple(children), evidence=evidence,
                               detail="Citation candidate retains explicit hypothesis and admission obligations")
+
+    def _completed(self, snapshot: LedgerSnapshot, child: Obligation) -> bool:
+        if self.policy is None:
+            return False
+        try:
+            original = snapshot.get(child.ref)
+            current = snapshot.head(child.id)
+        except ValueError:
+            return False
+        return (original == child and isinstance(current, Obligation)
+                and (current.item, current.kind, current.context, current.scope) ==
+                    (child.item, child.kind, child.context, child.scope)
+                and current.status == "resolved" and current.resolution is not None
+                and self.policy.is_accepted(snapshot, current.resolution))
 
     def _authenticate(self, reference: EvidenceRef, work: Obligation, *, outcome: str,
                       hypothesis: str | None = None, citation: CitationContract | None = None) -> None:
