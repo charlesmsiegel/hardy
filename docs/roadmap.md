@@ -27,7 +27,7 @@ Do **not** use Issues for:
 - deployment prerequisites for modes Hardy explicitly says it does not yet support;
 - “someday” convenience features.
 
-Those belong here. PRs implementing planned work should reference roadmap task IDs, e.g. `Implements B2 and C0`, and update this file as part of the change.
+Those belong here. PRs implementing planned work should reference roadmap task IDs, e.g. `Implements B1 and C0`, and update this file as part of the change.
 
 A useful rule:
 
@@ -41,7 +41,11 @@ Concrete defects discovered while implementing roadmap work should still become 
 
 This roadmap is a dependency DAG, not a waterfall.
 
-Within a wave, tasks should run in parallel. A later task starts as soon as **its own** dependencies are complete; it does not wait for the entire previous wave.
+The **Core A, B, C, ...** labels describe architectural dependency depth. They are not synchronization barriers: a task starts as soon as **its own** dependencies are complete, even if other tasks in an earlier core stage are still running.
+
+Separate `X`, `S`, and `V` lanes contain engineering work, service hardening, and evaluation work that is not on the critical path of the mathematical-project architecture. Those tasks may run whenever capacity and their own dependencies permit. They should not delay the next core stage merely because they appear earlier or remain unfinished.
+
+This relabeling happened before implementation of the new architecture. **Use the task IDs in this file only; older planning-branch task IDs are obsolete.**
 
 Priority:
 
@@ -57,26 +61,22 @@ HARDEN  required before untrusted/shared-service use
 The shortest route to a meaningful prototype is:
 
 ```text
-shared mathematical ledger
+Core A: freeze shared contracts/seams
+                 │
+                 ▼
+Core B: persistent mathematical project
         │
         ├── scoped declarations/context/notation
         ├── questions/goals/conjectures/approaches
         ├── concept/representation resolution
-        ├── formalization primitive
-        ├── generic admission policy
-        ├── manuscript structure
-        └── proof-strategy contract
+        └── graph/policy/views
                  │
                  ▼
-        prerequisite acquisition
+Core C: prerequisite acquisition + proof machinery
                  │
        ┌─────────┼─────────┐
        ▼         ▼         ▼
-    Explore   Research   Referee
-       │         │         │
-       └─────────┼─────────┘
-                 ▼
-        Publication/report
+Core D: Explore  Research  Referee / Critique / Publication
 ```
 
 The first acceptance milestone is deliberately synthetic:
@@ -96,114 +96,15 @@ Only then make the Prym/Jacobian paper the primary stress test.
 
 ---
 
-# Wave A — independent work that can start immediately
+# Core A — freeze shared contracts and seams
 
-## A0 — Module-boundary tests for the new architecture — P0
+These are the first architectural tasks. `A0` is the central contract freeze; the other tasks can begin immediately and in parallel because they do not require the ledger implementation.
 
-**Deps:** none
-
-Prepare boundary tests so new workflow packages may depend on `formal/`, `literature/`, `documents/`, and `algebra/` while capability packages still cannot depend on workflow controllers. The ledger must not depend on model transports.
-
-## A1 — Make the save gates one explicit ordered sequence — P0
+## A0 — Ledger contracts — P0
 
 **Deps:** none
 
-Refactor the existing guarded Lean save path without changing behavior. One named sequence should make the invariant obvious and directly testable:
-
-```text
-cheap structural checks
--> Lean/build checks
--> axiom audit
--> documentation/name obligations
--> atomic commit or total refusal
-```
-
-Keep refusal text and stage/commit/discard semantics unchanged.
-
-## A2 — Evaluation comparison primitive — P1
-
-**Deps:** none
-
-Add a shared comparison surface (likely `evals/compare.py`) for contemporaneous model/prompt/runtime/tool configurations. Report per-problem results, cost, turns, and comparability; do not reduce a small correlated set to one misleading mean.
-
-This also becomes the measurement substrate for prompt cleanup and later strategy comparisons.
-
-## A3 — Transcript in-flight durability — P1
-
-**Deps:** none
-
-Checkpoint assistant text at an interval, record in-flight tool calls, and preserve the rule that completed blocks supersede partial checkpoints. Coordinate with durable-write work in the defect tracker.
-
-## A4 — Safe interactive assumption prompt presentation — P1
-
-**Deps:** none
-
-Ensure human trust-widening approval cannot be visually interleaved/confused with concurrent model streaming. This is tracked as a current defect in Issues; this roadmap entry only records its relationship to the new generic admission seam.
-
-## A5 — CAS correctness lane — P1
-
-**Deps:** none
-
-Continue resolving concrete CAS defect issues independently of the research architecture. Correctness and honest accounting outrank performance polish.
-
-## A6 — Process-isolation design/spike — HARDEN
-
-**Deps:** none
-
-Design a reusable confinement policy (likely `foundation/isolation.py`) used by Lean, TeX, CAS, paper helpers, and other subprocesses:
-
-- no network by default;
-- read-only inputs;
-- quota-limited scratch;
-- CPU/memory/time limits;
-- hostile-input tests.
-
-Hardy explicitly does **not** claim this boundary today, so implementation is planned hardening rather than an open bug. It becomes blocking before untrusted/multi-user/shared-service deployment.
-
-The later anti-cheat audit must execute where audited Lean source cannot modify the mechanism that reports its axioms.
-
-## A7 — Proof-strategy contract — P0
-
-**Deps:** none
-
-Add `workflows/strategies/contracts.py` with a small `ProofTask`, `ProofOutcome`, and `Strategy` interface plus shared budget/evidence semantics. Do not implement sophisticated strategies yet.
-
-## A8 — Mechanical manuscript-source model — P0
-
-**Deps:** none
-
-Add `literature/manuscript.py` exposing objective structure such as sections, theorem/definition/proof environments, labels, citation occurrences, and source spans. It must not judge correctness or semantic claim boundaries.
-
-## A9 — Token/cost reserve-settle budgets — P1
-
-**Deps:** harness-owned decision point for the relevant runtime
-
-Runs may declare token/cost budgets. Before a provider call, reserve expected spend; after the call, settle actual spend. A call that would exceed the remaining budget is not made. Record budget, reservations, actual spend, and which limit ended the run.
-
-This is especially important before comparing proof strategies at “equal budget.”
-
-## A10 — Complete reproducible run identity/journaling — P1
-
-**Deps:** none for residual audit
-
-Current eval infrastructure already carries substantial identity machinery. Audit the remaining gap against the intended contract:
-
-- canonical configuration identity;
-- immutable code/worker/model/toolchain/corpus/annotation identities where relevant;
-- crash-safe attempt journals;
-- append-only adjudication.
-
-Do not rebuild already-shipped `run_procedure_digest`, environment pooling, or result revalidation.
-
----
-
-# Wave B — central project primitives
-
-## B0 — Ledger contracts — P0
-
-**Deps:** none
-
-Add `workflows/ledger/contracts.py` and freeze the public types before parallel implementation of B1-B4.
+Add `workflows/ledger/contracts.py` and freeze the public types before parallel implementation of Core B.
 
 At minimum represent:
 
@@ -271,61 +172,15 @@ Context C2 from C0:
 
 The fixture must prove that extending C0 does not mutate/invalidate C0; compactness is not an external trusted assumption; alias `M` does not create a second object; C is not treated as established; A1 remains historical after it is blocked; and conclusions in C2 cannot close the original goal until J is accepted.
 
-## B1 — Ledger event store — P0
+## A1 — Module-boundary tests for the new architecture — P0
 
-**Deps:** B0
+**Deps:** none
 
-Implement durable project-level persistence, preferably append-only. Requirements: stable IDs, restart, retained history, crash-safe append, schema version/refusal, serialized writers, and no conflation with `session.json`.
+Prepare boundary tests so new workflow packages may depend on `formal/`, `literature/`, `documents/`, and `algebra/` while capability packages still cannot depend on workflow controllers. The ledger must not depend on model transports.
 
-Persist mathematical contexts, scoped bindings, goal/conjecture/approach status transitions, and context-activation events alongside ordinary ledger items/relations. Parent contexts and superseded conjectures/failed approaches remain immutable history; “drop an assumption” returns to/forks from an earlier context rather than deleting events.
+## A2 — Shared statement formalization — P0
 
-## B2 — Ledger graph algorithms — P0
-
-**Deps:** B0
-
-Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, helpers used by publication closure, representation-use reverse closure, declaration/context closure, research-goal/approach neighborhoods, and transport/equivalence paths.
-
-Required queries include:
-
-```text
-active declarations/bindings for context C
-minimal declaration/hypothesis/convention closure needed by item T
-which items depend on declaration D
-which items were established under local hypothesis H
-open goals/conjectures and their approaches
-approaches already failed/blocked for goal G and why
-results/lemmas produced by approach A
-transport path/justification from declaration or goal X to X'
-```
-
-Adding another representation for a concept must not invalidate existing users. Extending a context or adding child notation must not invalidate results in its parent. Replacing the representation/context used by a claim, or changing a required transport justification, is an explicit semantic change whose downstream blast radius is computable.
-
-## B3 — Ledger policy — P0
-
-**Deps:** B0
-
-Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit trust-scope changes, the rule that model proposals are not evidence, the rule that a mathematical concept is not silently identified with one representation, and the rule that local binders/hypotheses are not external trusted assumptions.
-
-Also enforce:
-
-- a question/conjecture/goal is never treated as an established premise without proof/admission appropriate to the use;
-- a result established in a stronger mathematical context cannot silently be relabelled as a result in a weaker one;
-- aliases/notation do not manufacture duplicate mathematical identity;
-- a WLOG/identification/replacement context cannot discharge the source goal until its preservation/equivalence justification is resolved;
-- blocked/failed approaches remain historical state and do not disappear from model-facing summaries/retrieval unless explicitly filtered;
-- correcting a disproved conjecture creates a superseding/specializing/generalizing item rather than mutating the old statement.
-
-## B4 — Ledger derived views — P0
-
-**Deps:** B0; finalize against B2
-
-Pure views for status, active mathematical context/declarations/bindings, open questions/conjectures/goals, approach status/reasons, concepts and known representations, unresolved declaration/representation/transport obligations, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
-
-Trust views must visibly separate theorem parameters/local hypotheses from admitted external assumptions. Research views must visibly separate conjectures from theorems and high-level failed approaches from tactic-level run failures.
-
-## B5 — Shared statement formalization — P0
-
-**Deps:** none conceptually; integrate with B0 after contract freeze; consume B7/B8 when available
+**Deps:** none conceptually; integrate with A0 after contract freeze; consume B4/B5 when available
 
 Extract one reusable formalization path over existing Lean checking and independent faithfulness review. It must work without a `MathematicsSession` and be reused by Prove, Research, Referee, Critique probing, and citation-contract construction.
 
@@ -346,9 +201,9 @@ One semantic declaration may expand to multiple Lean binders/typeclass hypothese
 
 Formalizing a conjecture produces a formal target, not a theorem. If the current representation is insufficient, emit `resolve_representation`/`refine_representation`. If a binder/local hypothesis cannot yet be faithfully rendered, emit `resolve_declaration`. If a WLOG/identification preservation step is missing, emit `justify_transport` rather than generic formalization failure.
 
-## B6 — Generic assumption admission policy — P0
+## A3 — Generic assumption admission policy — P0
 
-**Deps:** none conceptually; integrate scope rule after B3
+**Deps:** none conceptually; integrate scope rule after B2
 
 Extract policy from interactive admission. Generic policy owns search-first evidence, elaboration/shape checks, cheap proof/refutation/vacuity probes, source/faithfulness checks, and scope legality. Interactive code remains the human-confirmation/transcript adapter.
 
@@ -356,9 +211,184 @@ There must be one trust-widening route.
 
 Explicitly exclude ordinary mathematical context construction and conjecture creation from this route. Phrases such as “suppose X is compact” may create local theorem hypotheses, and “I conjecture C” may create research state, without human trust approval; neither makes an unproved fact globally trusted.
 
-## B7 — Shared concept/representation resolution — P0
+## A4 — Proof-strategy contract — P0
 
-**Deps:** B0; integrate graph queries after B2
+**Deps:** none
+
+Add `workflows/strategies/contracts.py` with a small `ProofTask`, `ProofOutcome`, and `Strategy` interface plus shared budget/evidence semantics. Do not implement sophisticated strategies yet.
+
+## A5 — Mechanical manuscript-source model — P0
+
+**Deps:** none
+
+Add `literature/manuscript.py` exposing objective structure such as sections, theorem/definition/proof environments, labels, citation occurrences, and source spans. It must not judge correctness or semantic claim boundaries.
+
+---
+
+# Parallel engineering lane X — independent of core stage order
+
+These tasks may start immediately or whenever engineering capacity is available. They improve correctness, durability, measurement, or maintainability, but they are not prerequisites for beginning Core B unless a task's explicit dependency says otherwise.
+
+## X0 — Make the save gates one explicit ordered sequence — P0
+
+**Deps:** none
+
+Refactor the existing guarded Lean save path without changing behavior. One named sequence should make the invariant obvious and directly testable:
+
+```text
+cheap structural checks
+-> Lean/build checks
+-> axiom audit
+-> documentation/name obligations
+-> atomic commit or total refusal
+```
+
+Keep refusal text and stage/commit/discard semantics unchanged.
+
+## X1 — Evaluation comparison primitive — P1
+
+**Deps:** none
+
+Add a shared comparison surface (likely `evals/compare.py`) for contemporaneous model/prompt/runtime/tool configurations. Report per-problem results, cost, turns, and comparability; do not reduce a small correlated set to one misleading mean.
+
+This also becomes the measurement substrate for prompt cleanup and later strategy comparisons.
+
+## X2 — Transcript in-flight durability — P1
+
+**Deps:** none
+
+Checkpoint assistant text at an interval, record in-flight tool calls, and preserve the rule that completed blocks supersede partial checkpoints. Coordinate with durable-write work in the defect tracker.
+
+## X3 — Safe interactive assumption prompt presentation — P1
+
+**Deps:** none
+
+Ensure human trust-widening approval cannot be visually interleaved/confused with concurrent model streaming. This is tracked as a current defect in Issues; this roadmap entry only records its relationship to the new generic admission seam.
+
+## X4 — CAS correctness lane — P1
+
+**Deps:** none
+
+Continue resolving concrete CAS defect issues independently of the research architecture. Correctness and honest accounting outrank performance polish.
+
+## X5 — Token/cost reserve-settle budgets — P1
+
+**Deps:** harness-owned decision point for the relevant runtime
+
+Runs may declare token/cost budgets. Before a provider call, reserve expected spend; after the call, settle actual spend. A call that would exceed the remaining budget is not made. Record budget, reservations, actual spend, and which limit ended the run.
+
+This is especially important before comparing proof strategies at “equal budget.”
+
+## X6 — Complete reproducible run identity/journaling — P1
+
+**Deps:** none for residual audit
+
+Current eval infrastructure already carries substantial identity machinery. Audit the remaining gap against the intended contract:
+
+- canonical configuration identity;
+- immutable code/worker/model/toolchain/corpus/annotation identities where relevant;
+- crash-safe attempt journals;
+- append-only adjudication.
+
+Do not rebuild already-shipped `run_procedure_digest`, environment pooling, or result revalidation.
+
+---
+
+# Service-hardening lane S — independent until service readiness
+
+## S0 — Process-isolation design/spike — HARDEN
+
+**Deps:** none
+
+Design a reusable confinement policy (likely `foundation/isolation.py`) used by Lean, TeX, CAS, paper helpers, and other subprocesses:
+
+- no network by default;
+- read-only inputs;
+- quota-limited scratch;
+- CPU/memory/time limits;
+- hostile-input tests.
+
+Hardy explicitly does **not** claim this boundary today, so implementation is planned hardening rather than an open bug. It becomes blocking before untrusted/multi-user/shared-service deployment.
+
+The later anti-cheat audit must execute where audited Lean source cannot modify the mechanism that reports its axioms.
+
+## S1 — Process isolation implementation — HARDEN
+
+**Deps:** S0
+
+Implement the confinement policy for Lean, TeX, CAS, paper extraction, and helpers. This gates untrusted input, multi-user execution, or autonomous network-enabled modes.
+
+## S2 — Audit outside the audited Lean environment — HARDEN
+
+**Deps:** S1
+
+Ensure audited source cannot redefine/intercept the mechanism used to establish its axiom report. This is an acceptance criterion of isolation/audit architecture, not a separate backlog system.
+
+## S3 — Operational-floor audit — HARDEN/P1
+
+Concrete current defects stay in Issues. Periodically audit all subprocess/result paths for deterministic timeout semantics, bounded outputs, durable atomic writes, and secret redaction; open/retain Issues only for observable failures in the current tree.
+
+---
+
+# Core B — persistent mathematical project
+
+All Core B tasks depend on the A0 contracts. Once A0 lands, B0-B5 can begin in parallel, with graph/storage integration added as neighboring tasks land.
+
+## B0 — Ledger event store — P0
+
+**Deps:** A0
+
+Implement durable project-level persistence, preferably append-only. Requirements: stable IDs, restart, retained history, crash-safe append, schema version/refusal, serialized writers, and no conflation with `session.json`.
+
+Persist mathematical contexts, scoped bindings, goal/conjecture/approach status transitions, and context-activation events alongside ordinary ledger items/relations. Parent contexts and superseded conjectures/failed approaches remain immutable history; “drop an assumption” returns to/forks from an earlier context rather than deleting events.
+
+## B1 — Ledger graph algorithms — P0
+
+**Deps:** A0
+
+Implement dependency/reverse closure, blockers, paths, SCCs, critical unresolved branches, `ready_obligations`, helpers used by publication closure, representation-use reverse closure, declaration/context closure, research-goal/approach neighborhoods, and transport/equivalence paths.
+
+Required queries include:
+
+```text
+active declarations/bindings for context C
+minimal declaration/hypothesis/convention closure needed by item T
+which items depend on declaration D
+which items were established under local hypothesis H
+open goals/conjectures and their approaches
+approaches already failed/blocked for goal G and why
+results/lemmas produced by approach A
+transport path/justification from declaration or goal X to X'
+```
+
+Adding another representation for a concept must not invalidate existing users. Extending a context or adding child notation must not invalidate results in its parent. Replacing the representation/context used by a claim, or changing a required transport justification, is an explicit semantic change whose downstream blast radius is computable.
+
+## B2 — Ledger policy — P0
+
+**Deps:** A0
+
+Deterministically enforce legal resolution/evidence combinations, target-paper self-assumption refusal, explicit trust-scope changes, the rule that model proposals are not evidence, the rule that a mathematical concept is not silently identified with one representation, and the rule that local binders/hypotheses are not external trusted assumptions.
+
+Also enforce:
+
+- a question/conjecture/goal is never treated as an established premise without proof/admission appropriate to the use;
+- a result established in a stronger mathematical context cannot silently be relabelled as a result in a weaker one;
+- aliases/notation do not manufacture duplicate mathematical identity;
+- a WLOG/identification/replacement context cannot discharge the source goal until its preservation/equivalence justification is resolved;
+- blocked/failed approaches remain historical state and do not disappear from model-facing summaries/retrieval unless explicitly filtered;
+- correcting a disproved conjecture creates a superseding/specializing/generalizing item rather than mutating the old statement.
+
+## B3 — Ledger derived views — P0
+
+**Deps:** A0; finalize against B1
+
+Pure views for status, active mathematical context/declarations/bindings, open questions/conjectures/goals, approach status/reasons, concepts and known representations, unresolved declaration/representation/transport obligations, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
+
+Trust views must visibly separate theorem parameters/local hypotheses from admitted external assumptions. Research views must visibly separate conjectures from theorems and high-level failed approaches from tactic-level run failures.
+
+## B4 — Shared concept/representation resolution — P0
+
+**Deps:** A0; integrate graph queries after B1
 
 Add `workflows/representation.py` as the shared model-driven primitive for deciding how a mathematical concept should be represented for a particular use.
 
@@ -379,9 +409,9 @@ Hardy supplies tools, persistent state, and verification boundaries; the model s
 
 The primitive must work with no target theorem so Explore can use it during open-ended research. It must also work with a concrete downstream statement so paper formalization/acquisition can use the same mechanism.
 
-## B8 — Shared mathematical context/declaration management — P0
+## B5 — Shared mathematical context/declaration management — P0
 
-**Deps:** B0; persist through B1; integrate closure queries after B2
+**Deps:** A0; persist through B0; integrate closure queries after B1
 
 Add `workflows/context.py` as the shared domain-neutral primitive for semantic local mathematical scope.
 
@@ -423,17 +453,17 @@ Case splits are sibling/child contexts. Hypothetical reasoning is a child contex
 
 ---
 
-# Wave C — prerequisite acquisition and basic proof strategies
+# Core C — prerequisite acquisition and basic proof strategies
 
 ## C0 — Gap classifier — P0
 
-**Deps:** B0, B2
+**Deps:** A0, B1
 
 Classify a prerequisite as Mathlib, existing local, cheap local definition, cheap local proof, established literature result, representation/declaration/transport unresolved or insufficient, missing standard-object Lean interface, target-paper obligation, or unresolved. Record local/Mathlib searches before claiming absence.
 
 ## C1 — Definition acquisition — P0
 
-**Deps:** B0, B3, B6
+**Deps:** A0, B2, A3
 
 Implement the general policy:
 
@@ -447,7 +477,7 @@ The opaque branch cannot run before search evidence exists and must expose every
 
 ## C2 — Goal-directed literature resolver and citation contracts — P0
 
-**Deps:** A8, B0, B3, B5, B6
+**Deps:** A5, A0, B2, A2, A3
 
 Reuse the existing literature subsystem. Match exact source statements to required results, compare hypotheses/conclusions explicitly, formalize, run faithfulness review, request admission, and attach exact provenance.
 
@@ -455,7 +485,7 @@ A synthetic fixture must include one superficially relevant but unusable source 
 
 ## C3 — Standard-object Lean interface materialization — P0
 
-**Deps:** B0, B2, B3, B7, C1
+**Deps:** A0, B1, B2, B4, C1
 
 Materialize minimal Lean project interfaces from representation plans for objects absent from Mathlib. Do not create domain-specific Python modules. `workflows/representation.py` owns the general mathematical choice; `workflows/acquisition/interfaces.py` writes only the Lean interface needed by the selected plan and creates any child obligations it exposes.
 
@@ -463,29 +493,29 @@ Only required downstream fields/properties are introduced.
 
 ## C4 — Recursive obligation resolver — P0
 
-**Deps:** C0; register C1/C2/C3/B7/B8-backed resolution as they land
+**Deps:** C0; register C1/C2/C3/B4/B5-backed resolution as they land
 
 Implement classification -> resolver dispatch -> child obligations -> verify -> attach evidence -> resume parent. Build/test first with fake resolvers if needed. Unresolved is legitimate; there is no blind axiom fallback.
 
 ## C5 — Iterative strategy adapter — P0
 
-**Deps:** A7
+**Deps:** A4
 
 Wrap existing iterative proof behavior behind the strategy contract without semantic change. Preserve budgets, trajectories, and existing verification.
 
 ## C6 — Sketch-and-discharge strategy — P1
 
-**Deps:** A7, C5; B0 for durable semantic hole obligations
+**Deps:** A4, C5; A0 for durable semantic hole obligations
 
 Create a Lean skeleton and independent per-hole proof tasks. Cheap closers run against the current hole/goal as the cheapest discharge strategy. Final verification remains hole-free-only.
 
 ---
 
-# Wave D — first end-to-end workflows
+# Core D — first end-to-end mathematical workflows
 
 ## D0 — Synthetic literature-gap acceptance fixture — P0
 
-**Deps:** B1-B3, B5-B6, C0-C2, C4, C5
+**Deps:** B0-B2, A2-A3, C0-C2, C4, C5
 
 Construct:
 
@@ -501,7 +531,7 @@ Hardy must choose four distinct resolution kinds, widen trust only for the exter
 
 ## D1 — Research workflow — P0
 
-**Deps:** B0-B8, C0-C5
+**Deps:** A0, A2-A3, B0-B5, C0-C5
 
 Thin orchestration:
 
@@ -517,7 +547,7 @@ No duplicated context/representation/Lean/literature logic.
 
 ## D2 — Critique workflow — P0/P1
 
-**Deps:** B0-B5; B7-B8 for representation/context-specific findings
+**Deps:** A0, A2, B0-B5
 
 Implement three layers:
 
@@ -529,7 +559,7 @@ Findings become shared ledger obligations/relations. Critique never repairs auto
 
 ## D3 — Repair workflow — P1
 
-**Deps:** B0-B3, C5; D2 for realistic inputs
+**Deps:** A0, B0-B2, C5; D2 for realistic inputs
 
 Repair one obligation while preserving the claim. Apply through guarded save, compute reverse dependency closure, recheck affected artifacts, retain stable obligation identity/history, and reopen rather than silently replace a gap after overlapping changes.
 
@@ -537,7 +567,7 @@ Changing hypotheses/conclusion creates a revised claim, not a repair. Changing w
 
 ## D4 — Referee workflow — P0
 
-**Deps:** A8, B0-B8, C2, D2; C5 for formal checks
+**Deps:** A5, A0, A2-A3, B0-B5, C2, D2; C5 for formal checks
 
 Minimum paper-audit flow:
 
@@ -558,7 +588,7 @@ Primary contract: “verified/probed modulo these exact external contracts, with
 
 ## D5 — Publication planner — P0
 
-**Deps:** B0, B2, B4, B8
+**Deps:** A0, B1, B3, B5
 
 Implement `PublicationRequest`/`PublicationPlan`, publication closure, minimal declaration/hypothesis/convention closure, visibility policy, examples, citations, stale exposition, and missing exposition.
 
@@ -585,7 +615,7 @@ Feed `PublicationPlan` into existing document machinery. `documents/` remains me
 
 ## D7 — Exploratory concept/representation flow — P0
 
-**Deps:** B0-B4, B7; C3 only for the step that materializes Lean
+**Deps:** A0, B0-B4; C3 only for the step that materializes Lean
 
 Add the shared behavior needed for Explore to persist mathematical progress before there is a theorem-shaped target. It should be thin orchestration over the ledger and `workflows/representation.py`, not a new domain engine in `interactive/session.py`.
 
@@ -611,7 +641,7 @@ The same concept and representation graph must survive restart. If a representat
 
 ## D8 — Exploratory declaration/context flow — P0
 
-**Deps:** B0-B4, B8; B7/B5 when representation/formalization is requested
+**Deps:** A0, B0-B3, B5; B4/A2 when representation/formalization is requested
 
 Add the shared behavior needed for mathematicians to establish local setup conversationally before stating a theorem.
 
@@ -644,7 +674,7 @@ Add a theorem-export assertion that selecting S emits only the declarations/loca
 
 ## D9 — Exploratory goals, notation, transport, and approaches — P0
 
-**Deps:** B0-B4, B8; B5/B7/C5 as needed for formal/proof work
+**Deps:** A0, B0-B3, B5; A2/B4/C5 as needed for formal/proof work
 
 Exercise the remaining basic mathematician behaviors through the same ledger/context primitives rather than new stores.
 
@@ -683,7 +713,7 @@ Also test arbitrary-versus-chosen declarations: a chosen witness must depend on 
 
 ---
 
-# Wave E — first real validation and UX
+# Core E — first real validation and UX
 
 ## E0 — Jacobian/Prym paper prototype — P0 showcase
 
@@ -722,7 +752,7 @@ UI edits/queries the ledger; it does not reimplement planning.
 
 ## E4 — Ledger-aware `/status --full` / context summary — P1
 
-**Deps:** B1, B4, B8
+**Deps:** B0, B3, B5
 
 Show target/research focus, active mathematical context/declarations/bindings, open questions/conjectures/goals, approaches with blocked/failed reasons, concepts, known representations, unresolved declaration/representation/transport choices, blockers, project items, exact external trust boundary, citation status, stale exposition, and publication readiness from shared views.
 
@@ -730,17 +760,17 @@ The UI must distinguish local hypotheses from trusted assumptions, conjectures f
 
 ---
 
-# Wave F — proof-search sophistication
+# Core F — proof-search sophistication
 
 ## F0 — Best-first proof search — P1/P2
 
-**Deps:** A7, C5
+**Deps:** A4, C5
 
 Implement a ranked proof-state frontier behind the same `ProofTask`/budget contract. Compare contemporaneously with iterative search.
 
 ## F1 — Diverse parallel proof attempts — P1/P2
 
-**Deps:** A7, C5; A2 desirable
+**Deps:** A4, C5; X1 desirable
 
 Race genuinely independent approaches to one claim, accept first kernel-verified success, stop losers, and record total race cost rather than winner-only cost.
 
@@ -754,13 +784,13 @@ Escalate after defined lack of progress; narrow/prefer cheap work near budget ex
 
 ## F3 — Compact lessons from failed attempts — P2
 
-**Deps:** stable strategy trajectories; A2 for measurement
+**Deps:** stable strategy trajectories; X1 for measurement
 
 Derive compact “tried / Lean said / do not repeat” lessons from recorded proof-search evidence and compare against full-history replay. Do not duplicate high-level mathematical approaches: tactic/solver lessons remain strategy/runtime memory candidates; durable semantic approaches/dead ends already live in the ledger.
 
 ---
 
-# Wave G — manuscript/publication sophistication
+# Core G — manuscript/publication sophistication
 
 ## G0 — Recursive citation-audit depth — P1
 
@@ -770,7 +800,7 @@ Support audit depth 0/1/2 by expanding external citation contracts into cited-pa
 
 ## G1 — Paper-version diff auditing — P1
 
-**Deps:** A8, B2/B4, D4
+**Deps:** A5, B1/B3, D4
 
 Add later `literature/diff.py`: map changed source spans/statements between versions, preserve unaffected verification, invalidate only affected contracts/claims, and report changed obligations.
 
@@ -788,11 +818,11 @@ When explicitly requested, update stale prose and record that it now documents t
 
 ---
 
-# Wave H — retrieval and durable reuse
+# Core H — retrieval and durable reuse
 
 ## H0 — Project/shared-library retrieval source — P1
 
-**Deps:** B0/B1 + stable project artifacts
+**Deps:** A0/B0 + stable project artifacts
 
 Index verified project/shared Lean declarations, clearly separated approved external assumptions, concise concept/representation/context summaries, open goal/conjecture summaries, and durable high-level approach/dead-end summaries from the project ledger. Keep provenance and distinguish project semantics from formal evidence. The index is derived/rebuildable.
 
@@ -812,11 +842,11 @@ Report exact-repeat retrieval, transfer from related prior work, and held-out un
 
 ---
 
-# Wave I — interactive ergonomics
+# Core I — interactive ergonomics
 
 ## I0 — Conversation tree/history — P1
 
-**Deps:** A3 recommended + stable interactive record
+**Deps:** X2 recommended + stable interactive record
 
 Add later `workflows/interactive/history.py` for transcript entry IDs/parents, active leaf, branch/fork/abandon, and branch summaries.
 
@@ -843,45 +873,27 @@ The current backend-blind menu is a defect and remains in Issues. Longer-term li
 
 ---
 
-# Wave J — hardening/service readiness
+# Evaluation lane V — cross-cutting measurement and acceptance
 
-## J0 — Process isolation implementation — HARDEN
+These tasks run alongside the core and should be added as the corresponding primitives become available.
 
-**Deps:** A6 design
-
-Implement the confinement policy for Lean, TeX, CAS, paper extraction, and helpers. This gates untrusted input, multi-user execution, or autonomous network-enabled modes.
-
-## J1 — Audit outside the audited Lean environment — HARDEN
-
-**Deps:** J0
-
-Ensure audited source cannot redefine/intercept the mechanism used to establish its axiom report. This is an acceptance criterion of isolation/audit architecture, not a separate backlog system.
-
-## J2 — Operational-floor audit — HARDEN/P1
-
-Concrete current defects stay in Issues. Periodically audit all subprocess/result paths for deterministic timeout semantics, bounded outputs, durable atomic writes, and secret redaction; open/retain Issues only for observable failures in the current tree.
-
----
-
-# Wave K — evaluation lane
-
-## K0 — Acceptance fixtures for every new primitive — P0
+## V0 — Acceptance fixtures for every new primitive — P0
 
 Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, declaration/context/notation semantics, research-goal/conjecture/approach semantics, representation resolution, context branching, transport/WLOG justification, arbitrary-vs-chosen declarations, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, `Let X be ...` workflows, counterexamples, and Referee coverage.
 
-## K1 — Regression tracking — P1
+## V1 — Regression tracking — P1
 
-**Deps:** A2 recommended
+**Deps:** X1 recommended
 
 Provide the across-time view over comparable scoreboards. Never attribute a historical delta to one change without a contemporaneous control.
 
-## K2 — Certified fixed-budget pass@k — P1
+## V2 — Certified fixed-budget pass@k — P1
 
 **Deps:** stable run budgets/identities; especially relevant after F1
 
 Separate provisional from certified results. Report pass@1/pass@k with explicit fixed budgets plus cost, Lean CPU, makespan/utilization, failure kinds, and per-domain results.
 
-## K3 — External Lean benchmark importers — P2
+## V3 — External Lean benchmark importers — P2
 
 Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Hardy's own classified corpus remains strategically primary.
 
@@ -889,32 +901,39 @@ Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Har
 
 # Development parallelism
 
-A practical initial agent fan-out:
+The initial implementation fan-out is now intentionally centered on Core A:
 
 ```text
-Agent 1   B0 ledger contracts, including concept/representation/declaration/context/research ontology
-Agent 2   A1 save-gate refactor
-Agent 3   B5 formalization extraction
-Agent 4   B6 admission extraction
-Agent 5   A7 strategy contracts
-Agent 6   A8 manuscript parser
-Agent 7   A2 eval comparison
-Agent 8   A3 transcript durability
-Agent 9   A5 CAS defects
-Agent 10  A6 isolation design
-Agent 11  A9 budget accounting design/implementation
-Agent 12  A10 eval identity/journal residual audit
+Agent 1   A0 ledger contracts, including concept/representation/declaration/context/research ontology
+Agent 2   A1 module-boundary tests
+Agent 3   A2 formalization extraction
+Agent 4   A3 admission extraction
+Agent 5   A4 strategy contracts
+Agent 6   A5 manuscript parser
 ```
 
-As soon as B0 lands, run B1/B2/B3/B4 concurrently.
+At the same time, spare workers may independently take engineering/hardening lanes:
 
-Start B7 and B8 as soon as B0 is frozen; integrate their graph/storage queries as B1/B2 land. B5 can be extracted in parallel and then wired to B7/B8 without making either a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind B0-B4 rather than a new module unless implementation exposes a real seam.
+```text
+Agent 7   X0 save-gate refactor
+Agent 8   X1 eval comparison
+Agent 9   X2 transcript durability
+Agent 10  X3 safe assumption UI
+Agent 11  X4 CAS defects
+Agent 12  S0 isolation design
+Agent 13  X5 budget accounting
+Agent 14  X6 eval identity/journal residual audit
+```
 
-As soon as B3/B5/B6 land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows B7 + C1.
+**As soon as A0 lands**, start B0/B1/B2/B3/B4/B5 concurrently. There is no reason to wait for X/S tasks, and B tasks do not wait for unrelated A tasks unless they explicitly name them.
+
+A2 can be extracted in parallel with the ledger and wired to B4/B5 as those land; representation/context resolution need not become a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
+
+As soon as the needed A/B dependencies land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows B4 + C1.
 
 As soon as the core loop works, run D0/D1/D2/D5/D7/D8/D9 concurrently where their local dependencies permit; then D3/D4/D6 according to their local dependencies.
 
-Then run E0/E1/E3/E4 concurrently.
+Then run E0/E1/E3/E4 concurrently. V0 acceptance work should accompany each primitive rather than wait for Core E.
 
 ---
 
@@ -941,21 +960,21 @@ Mathematical context branching is separate again: it records different local hyp
 
 The following former issue concepts are intentionally represented here rather than as separate persistent backlogs:
 
-- Critique, three critique layers, persistent holes, Repair, and crash-safe patch history -> B ledger + D2/D3;
-- concept/representation persistence and synthesis -> B0/B2/B4/B7/C3/D7 rather than a domain-specific memory/package;
-- scoped mathematical declarations/context/notation/transport -> B0-B4/B8/D8/D9 rather than separate session-variable, notation, or WLOG subsystems;
-- questions/conjectures/goals/high-level research approaches -> B0-B4/D1/D9 rather than a separate research notebook database;
+- Critique, three critique layers, persistent holes, Repair, and crash-safe patch history -> A0/B ledger + D2/D3;
+- concept/representation persistence and synthesis -> A0/B1/B3/B4/C3/D7 rather than a domain-specific memory/package;
+- scoped mathematical declarations/context/notation/transport -> A0/B0-B3/B5/D8/D9 rather than separate session-variable, notation, or WLOG subsystems;
+- questions/conjectures/goals/high-level research approaches -> A0/B0-B3/D1/D9 rather than a separate research notebook database;
 - mid-proof closers -> C6;
-- proof-strategy seam/sketch/best-first/parallel/escalation -> A7/C5/C6/F0-F2;
-- token/cost budgets -> A9;
+- proof-strategy seam/sketch/best-first/parallel/escalation -> A4/C5/C6/F0-F2;
+- token/cost budgets -> X5;
 - tactic-level failed-attempt lessons -> F3;
 - definition acquisition -> C1;
-- benchmark importers/pass@k/repro identities/regression comparison -> A2/A10/K1-K3;
+- benchmark importers/pass@k/repro identities/regression comparison -> X1/X6/V1-V3;
 - durable proof memory/contamination-aware recall -> H0-H2;
-- process isolation/anti-cheat audit -> A6/J0-J1;
+- process isolation/anti-cheat audit -> S0-S2;
 - session branching -> I0;
-- configuration comparison -> A2;
-- save-gate refactor -> A1.
+- configuration comparison -> X1;
+- save-gate refactor -> X0.
 
 No separate hole ledger, concept database, representation database, context/notation database, conjecture database, approach/dead-end database, patch database, citation database, stale-prose store, publication graph, or theorem-memory database should be added unless this architecture is explicitly reconsidered.
 
@@ -965,8 +984,8 @@ No separate hole ledger, concept database, representation database, context/nota
 
 ## R1 — Persistent mathematical project
 
-- ledger contracts/store/graph/policy/views, including concept/representation/declaration/context/binding/question/conjecture/goal/approach semantics;
-- shared context/representation/formalization/admission primitives;
+- A0 contracts plus B0-B5 store/graph/policy/views/context/representation semantics;
+- shared A2/A3 formalization/admission primitives;
 - current Prove/interactive behavior remains sound;
 - a session may persist a mathematical concept or research question before a theorem or Lean encoding exists;
 - a session may persist `Let X be ...`, maps/elements/local hypotheses, notation/conventions, and context forks without forcing Lean syntax;
