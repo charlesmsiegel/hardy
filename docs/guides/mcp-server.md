@@ -9,9 +9,9 @@ wiring an MCP-capable client to Hardy or debugging a staged Codex run.
 `hardy.app.mcp` builds a FastMCP server named `Hardy Lean Tools`
 (`json_response=True`) and serves it over stdio. It is the same Lean
 service the in-process workflow uses, so a client that cannot host
-in-process tools, the Codex SDK, an editor, another agent, still goes
+in-process tools (the Codex SDK, an editor, another agent) still goes
 through Hardy's checks rather than around them. `hardy.mcp_server` is a
-thin compatibility entry point that re-exports everything from
+thin compatibility entry point that re-exports the public names from
 `hardy.app.mcp`.
 
 ## Running it
@@ -98,12 +98,20 @@ in process. `agents/codex.py` launches it as:
 
 ```json
 {
-  "command": "<sys.executable>",
-  "args": ["-m", "hardy.mcp_server"],
-  "cwd": "<the run directory>",
-  "env": {"HARDY_RUN_DIR": "...", "HARDY_CONFIG": "...", "HARDY_CLAIM_SHA256": "..."},
-  "startup_timeout_sec": 20,
-  "required": true
+  "mcp_servers": {
+    "hardy": {
+      "command": "<sys.executable>",
+      "args": ["-m", "hardy.mcp_server"],
+      "cwd": "<the run directory>",
+      "env": {
+        "HARDY_RUN_DIR": "...",
+        "HARDY_CONFIG": "...",
+        "HARDY_CLAIM_SHA256": "..."
+      },
+      "startup_timeout_sec": 20,
+      "required": true
+    }
+  }
 }
 ```
 

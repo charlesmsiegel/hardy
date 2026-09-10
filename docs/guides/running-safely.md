@@ -37,9 +37,13 @@ What Hardy controls:
   Hardy tool, by default.
 - **No inherited configuration.** Your Claude Code settings and
   `CLAUDE.md` files are not read. An interactive session reads exactly one
-  project file, `AGENTS.md` at the project root or `HARDY.md` in its place,
-  and records the exact text shown to the model in the transcript. That
-  read can be turned off; graded runs read none.
+  project file, `AGENTS.md` at the project root or `HARDY.md` in its
+  place, never an ancestor, and records the exact text shown to the model
+  in the transcript, bounded at 2,000 lines or 50 KB and flagged as a
+  fragment when trimmed, with the whole file's SHA-256. That read is on
+  by default and can be turned off (`--no-project-context`,
+  `project_context = false`, or `HARDY_PROJECT_CONTEXT=0`); graded runs
+  read none.
 - **No extension surface.** Nothing can register a tool, intercept a tool
   result, or supply a summary of the session.
 - **A faithfulness reader with no tools.** On the default Claude backend the
@@ -95,10 +99,12 @@ is the bad assumption this document exists to prevent.
 - **Helper processes.** Lean, `lake`, TeX, and the CAS kernel are ordinary
   child processes of your account. On Windows, a tracked child is placed
   in a Job Object, and `TerminateJobObject` reaches every descendant in
-  it, the Windows equivalent of killing a process group. What remains is
-  narrow: the child has been running since it started, so a grandchild
-  spawned in the microseconds before the job assignment completes escapes
-  the job, and any process this launcher never tracked is untouched
+  it, the Windows equivalent of killing a process group. The assignment
+  is best effort: a grandchild spawned in the microseconds before it
+  completes escapes the job, and a child that has already exited, or a
+  host that refuses the assignment, leaves the started process as all a
+  stop can reach, which is what every Windows stop was before this
+  existed. Any process this launcher never tracked at all is untouched
   either way. See [ISOLATION.md](../ISOLATION.md)
   <!-- relink to ../isolation.md after the rename --> for the confinement
   policy this gap is measured against.
@@ -125,24 +131,23 @@ independent re-check exists.
 
 ## Process bounds
 
-`foundation/process.py` is what actually launches Lean, TeX, and CAS
-processes, and it enforces a few bounds worth knowing before you rely on
-it:
+A few separately owned pieces of Hardy each enforce a bound worth knowing
+before you rely on it:
 
-- An invalid process request, a negative timeout or an impossible byte
-  cap, is rejected before a child is ever launched, rather than surfacing
-  partway through a run.
-- Captured compiler output is bounded, and a one-byte overflow past that
-  bound is detected as it happens, without waiting for the deadline to
-  expire.
-- Overflow stays distinct from a timeout, and a child that exits
-  successfully after overflowing is still reported as an overflow, never
-  as a success.
-- The doctor command and the interactive Lean-path probes refuse a
-  truncated answer rather than reading a partial one as complete.
-- Credential filtering on exported output does not prove the absence of
-  every secret shape; it is a filter over known patterns, not a
-  guarantee.
+- The process launcher (`foundation/process.py`) rejects an invalid
+  request, a negative timeout or an impossible byte cap, before a child
+  is ever launched, rather than surfacing partway through a run.
+- The same launcher bounds captured compiler output and detects a
+  one-byte overflow past that bound as it happens, without waiting for
+  the deadline to expire; overflow stays distinct from a timeout there,
+  and a child that exits successfully after overflowing is still
+  reported as an overflow, never as a success.
+- The doctor command and the Lean-path probe `hardy setup` runs each
+  refuse a truncated answer rather than reading a partial one as
+  complete.
+- The export path does its own credential filtering on exported output,
+  and that filtering does not prove the absence of every secret shape;
+  it is a filter over known patterns, not a guarantee.
 
 None of this confines a process. Lean, TeX, the CAS kernel, and every
 other helper process Hardy starts remain unconfined: they run as you, with
@@ -195,9 +200,9 @@ Whatever the platform, the pattern is the same:
 
 ### Linux
 
-Run the whole session in a container. Hardy works as root in a container,
-its permission model deliberately avoids the CLI flag that refuses to run
-as root:
+Run the whole session in a container. Hardy's permission model
+deliberately avoids the CLI flag that refuses to run as root, so it works
+fine as root inside one:
 
 ```sh
 rm -rf math-session                   # a stale copy is last session's untrusted output
@@ -217,7 +222,7 @@ hardy chat --root /work/math
 gigabytes, so bake the installed state into an image and start each
 session from that: image layers are shared read-only and a container's
 changes to them die with it. Do not carry a writable volume of
-`~/.local/share/hardy` from one session into the next, a session that ran
+`~/.local/share/hardy` from one session into the next: a session that ran
 hostile output could have modified the Hardy installation or the Mathlib
 tree in it, and reattaching the volume hands the next "fresh" environment
 a compromised toolchain. If a volume is how you cache the download,
@@ -228,8 +233,8 @@ nothing in Hardy needs anything wider at runtime.
 
 ### macOS
 
-Containers on macOS already run inside a lightweight VM, Docker Desktop,
-OrbStack, Colima, or Lima all work, and the Linux pattern above applies
+Containers on macOS already run inside a lightweight VM: Docker Desktop,
+OrbStack, Colima, and Lima all work, and the Linux pattern above applies
 unchanged inside them. A full virtual machine (UTM, Parallels, VMware)
 running the macOS or Linux installer is the heavier but simpler
 alternative.
