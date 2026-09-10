@@ -601,7 +601,8 @@ Priority labels are sequencing hints:
   authenticated by subscription with no API key, exposing Hardy's Lean and LaTeX
   tools as in-process SDK tools so the harness still performs every check and
   write. Built-in CLI tools are refused by default rather than by enumeration.
-- **Now (implemented):** `/model` lists the catalogued Claude models, switches
+- **Now (implemented):** `/model` lists the catalogued models the active
+  backend can serve and refuses one it cannot at selection, switches
   mid-conversation without losing the provider thread, records the switch, and
   can save the choice.
 - **Now (implemented):** model, backend, and endpoint recorded together in the
