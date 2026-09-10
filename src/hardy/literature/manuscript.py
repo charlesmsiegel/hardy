@@ -332,6 +332,12 @@ class _Scanner:
             optional = self._group(position, "[", "]")
             if optional is not None:
                 _, position = optional
+                # The argument count may be followed by TeX's optional
+                # default value.  Both precede the stored body; stopping at
+                # the first bracket would scan that body as live source.
+                default = self._group(position, "[", "]")
+                if default is not None:
+                    _, position = default
             bodies = 2 if name in {"newenvironment", "renewenvironment"} else 1
         for _ in range(bodies):
             body = self._group(position, "{", "}")

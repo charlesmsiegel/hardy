@@ -76,6 +76,22 @@ def test_comments_verbatim_and_macro_bodies_do_not_become_inventory_records() ->
     assert {item.kind for item in found.unsupported} >= {"macro_definition"}
 
 
+@pytest.mark.parametrize("command", ("newcommand", "renewcommand", "providecommand"))
+def test_macro_optional_default_body_is_suppressed(command: str) -> None:
+    source = (
+        f"\\{command}{{\\hidden}}[1][default]"
+        "{\\begin{theorem}\\label{wrong}\\cite{wrong}\\end{theorem}}\n"
+        "\\begin{theorem}\\label{real}\\cite{real}\\end{theorem}"
+    )
+
+    found = inventory({"source.tex": source})
+
+    assert [(item.name, item.kind) for item in found.environments] == [("theorem", "theorem")]
+    assert [item.value for item in found.labels] == ["real"]
+    assert [item.key for item in found.citations] == ["real"]
+    assert {item.kind for item in found.unsupported} >= {"macro_definition"}
+
+
 def test_repeated_occurrences_stay_distinct_and_source_identity_is_not_a_path_read() -> None:
     first = "é\\label{same}\\cite{key}\\label{same}\\cite{key}"
     second = "é\\section{Other}"
