@@ -47,6 +47,43 @@ def test_both_entries_preserve_identity_budget_and_spill_sequence(tmp_path, entr
     assert runtime.remaining_official_checks == 0
 
 
+def test_shared_runtime_reserves_final_check_and_rejects_budget_reset(tmp_path):
+    from hardy.formal.budget import BudgetExhausted, CheckBudget
+    from hardy.formal.tools import LeanToolRuntime
+    from hardy.workflows import contracts as domain
+    from hardy.workflows.storage import RunStore
+
+    budget = CheckBudget(official_checks=2, active_seconds=10, proof_seconds=5)
+    view = budget.reserved(checks=1)
+    claim = _claim(domain)
+    calls = []
+
+    class Service:
+        def check_proof(self, *args):
+            calls.append(args)
+            raise RuntimeError("a failed tool process still costs a check")
+
+    runtime = LeanToolRuntime(claim=claim, service=Service(),
+        store=RunStore.create(tmp_path, "shared", now=NOW, run_id=RUN_ID),
+        official_checks=2, observation_bytes=1024)
+    runtime.bind_budget(view)
+    runtime.bind_budget(view)
+    with pytest.raises(ValueError, match="Frozen Claim"):
+        runtime.check_proof("0" * 64, "by rfl")
+    assert budget.checks == 0
+    with pytest.raises(RuntimeError):
+        runtime.check_proof(claim.content_hash, "by rfl")
+    with pytest.raises(ValueError, match="budget"):
+        runtime.check_proof(claim.content_hash, "by rfl")
+    assert len(calls) == 1
+    assert runtime.remaining_official_checks == 0
+    with pytest.raises(ValueError, match="already"):
+        runtime.bind_budget(budget)
+    assert budget.acquire() == 2
+    with pytest.raises(BudgetExhausted):
+        budget.acquire()
+
+
 def _claim(domain):
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',

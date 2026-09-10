@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import PurePosixPath
 from typing import Any
 
+from hardy.formal.budget import CheckBudget, ReservedBudget
 from hardy.formal.contracts import FrozenClaim
 from hardy.formal.declarations import DeclarationIndex, search_result
 from hardy.formal.lean import DeclarationInspection, DeclarationSearch, LeanCheckResult
@@ -28,6 +29,7 @@ class LeanToolRuntime:
         retriever: PremiseRetriever | None = None,
         declarations: DeclarationIndex | None = None,
         allowed: Sequence[Any] = (),
+        budget: CheckBudget | ReservedBudget | None = None,
     ) -> None:
         self.claim = claim
         #: What this run declared it may stand on. Rendered into every proof
@@ -36,7 +38,8 @@ class LeanToolRuntime:
         self.allowed = tuple(allowed)
         self.service = service
         self.store = store
-        self.remaining_official_checks = official_checks
+        self._remaining_official_checks = official_checks
+        self._budget = budget
         self.observation_bytes = observation_bytes
         # Optional because a machine can be configured without one; the tool
         # then says there is no retrieval rather than ranking an empty list,
@@ -45,6 +48,12 @@ class LeanToolRuntime:
         self.retriever = retriever
         self.declarations = declarations
         self._artifact_sequence = 0
+
+    def bind_budget(self, budget: CheckBudget | ReservedBudget) -> None:
+        """Bind a run owner without resetting this runtime's local check count."""
+        if self._budget is not None and self._budget is not budget:
+            raise ValueError("Lean runtime already has a shared budget")
+        self._budget = budget
 
     def rank_premises(self, goal: str, limit: int) -> PremiseRanking:
         if self.retriever is None:
@@ -71,8 +80,16 @@ class LeanToolRuntime:
             raise ValueError("proof body exceeds the 64 KiB limit")
         if self.remaining_official_checks <= 0:
             raise ValueError("official proof-check budget exhausted")
-        self.remaining_official_checks -= 1
+        if self._budget is not None:
+            self._budget.acquire()
+        self._remaining_official_checks -= 1
         return self.bound_check(self.service.check_proof(self.claim, proof_body, self.allowed))
+
+    @property
+    def remaining_official_checks(self) -> int:
+        if self._budget is None:
+            return self._remaining_official_checks
+        return min(self._remaining_official_checks, self._budget.remaining_checks)
 
     def bound_check(self, result: LeanCheckResult) -> LeanCheckResult:
         if len(result.model_dump_json().encode("utf-8")) <= self.observation_bytes:

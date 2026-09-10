@@ -84,8 +84,16 @@ def test_active_ceiling_prevents_any_provider_or_verifier_work():
 
 def test_proof_ceiling_prevents_another_attempt_after_verifier_spends_time():
     strategy, prompts, transitions, checked = _strategy()
-    ticks = iter((0, 0, 5))
-    strategy._monotonic = lambda: next(ticks)
+    clock = [0]
+    strategy._monotonic = lambda: clock[0]
+    verify = strategy._verify
+
+    def spend_time(task, submission):
+        result = verify(task, submission)
+        clock[0] = 5
+        return result
+
+    strategy._verify = spend_time
 
     outcome = run_strategy(strategy, _task(limits=RunLimits(proof_seconds=5, official_checks=3)))
 
@@ -110,3 +118,39 @@ def test_cancellation_after_provider_or_verifier_stops_before_next_stage(boundar
     assert len(prompts) == 1
     assert len(checked) == boundary - 2
     assert RunPhase.WRITEUP not in transitions
+
+
+def test_model_checks_and_final_verification_spend_the_same_pool():
+    from hardy.formal.budget import CheckBudget
+
+    budget = CheckBudget(official_checks=2, active_seconds=10, proof_seconds=5)
+    strategy, prompts, transitions, checked = _strategy()
+    strategy._budget = budget
+    propose = strategy._propose
+
+    def spend_tool_check(prompt):
+        budget.reserved(checks=1).acquire()
+        return propose(prompt)
+
+    strategy._propose = spend_tool_check
+    outcome = run_strategy(strategy, _task(limits=RunLimits(official_checks=2)))
+    assert outcome.status == "exhausted"
+    assert budget.checks == 2
+    assert len(prompts) == len(checked) == 1
+
+
+def test_proposal_crossing_deadline_is_retained_without_verification():
+    strategy, prompts, transitions, checked = _strategy()
+    clock = [0]
+    strategy._monotonic = lambda: clock[0]
+    propose = strategy._propose
+
+    def spend_time(prompt):
+        clock[0] = 5
+        return propose(prompt)
+
+    strategy._propose = spend_time
+    outcome = run_strategy(strategy, _task())
+    assert outcome.status == "exhausted"
+    assert outcome.submission.proof_body == "by rfl"
+    assert not checked

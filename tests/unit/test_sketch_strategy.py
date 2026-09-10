@@ -331,3 +331,18 @@ def test_same_store_retry_refuses_before_model_calls_and_preserves_prior_artifac
 
     assert {path.relative_to(store.path): path.read_bytes() for path in store.path.rglob("*") if path.is_file()} == before
     assert ledger.read() == prior_ledger
+
+
+def test_external_reservation_survives_closers_and_iterative_hole_repairs(tmp_path):
+    from hardy.formal.budget import CheckBudget
+
+    task, strategy, store, ledger, verified, proposed = _setup(
+        tmp_path, checks=6, accepted=lambda task, body: body != "by rfl")
+    budget = CheckBudget(official_checks=6, active_seconds=task.limits.active_seconds,
+                         proof_seconds=task.limits.proof_seconds)
+    strategy._budget = budget.reserved(checks=1)
+    outcome = run_strategy(strategy, task)
+    assert outcome.status == "submitted"
+    assert len(verified) == budget.checks == 5
+    assert len(proposed) == 2
+    assert budget.acquire() == 6

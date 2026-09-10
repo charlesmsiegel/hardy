@@ -16,6 +16,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
+from hardy.formal.budget import BudgetExhausted, CheckBudget, ReservedBudget
 from hardy.formal.closers import CLOSERS, close
 from hardy.formal.contracts import FormalizationProposal, freeze_claim
 from hardy.formal.lean import LeanTools, scannable
@@ -59,32 +60,6 @@ class SketchPlan(FrozenModel):
         return "\n".join(lines) + "\n"
 
 
-class _Exhausted(Exception):
-    pass
-
-
-class _Budget:
-    """One counter/deadline for all strategy-issued verification operations."""
-
-    def __init__(
-        self, task: ProofTask, monotonic: Callable[[], float],
-        active_elapsed: Callable[[], float], check_cancelled: Callable[[], None],
-    ) -> None:
-        self.task = task
-        self.monotonic = monotonic
-        self.active_elapsed = active_elapsed
-        self.check_cancelled = check_cancelled
-        self.started = monotonic()
-        self.checks = 0
-
-    def ensure(self, *, reserve: int = 0) -> None:
-        self.check_cancelled()
-        if (self.active_elapsed() >= self.task.limits.active_seconds
-                or self.monotonic() - self.started >= self.task.limits.proof_seconds
-                or self.checks >= self.task.limits.official_checks - reserve):
-            raise _Exhausted
-
-
 class SketchStrategy:
     """Create a skeleton, discharge its independent lemmas, then check the whole.
 
@@ -116,6 +91,7 @@ class SketchStrategy:
         check_cancelled: Callable[[], None],
         monotonic: Callable[[], float] = time.monotonic,
         closers: Sequence[str] = CLOSERS,
+        budget: CheckBudget | ReservedBudget | None = None,
     ) -> None:
         self._propose_sketch = propose_sketch
         self._propose_hole = propose_hole
@@ -127,14 +103,21 @@ class SketchStrategy:
         self._check_cancelled = check_cancelled
         self._monotonic = monotonic
         self._closers = tuple(closers)
+        self._budget = budget
 
     def run(self, task: ProofTask) -> ProofOutcome:
         if (self._store.path / "sketch").exists():
             raise ValueError("This run already has a sketch attempt; use a fresh RunStore")
-        budget = _Budget(task, self._monotonic, self._active_elapsed, self._check_cancelled)
+        limits = dict(official_checks=task.limits.official_checks,
+                      active_seconds=task.limits.active_seconds,
+                      proof_seconds=task.limits.proof_seconds)
+        budget = self._budget or CheckBudget(**limits, active_elapsed=self._active_elapsed,
+                                             monotonic=self._monotonic)
+        budget.validate_limits(**limits)
         plan = None
         proved: dict[str, ProofSubmission] = {}
         try:
+            self._check_cancelled()
             budget.ensure()
             plan = SketchPlan.model_validate(self._propose_sketch(task).model_dump())
             # Save model output before observing a deadline/cancellation that
@@ -142,8 +125,10 @@ class SketchStrategy:
             self._store.write_json(PurePosixPath("sketch/plan.json"), plan)
             self._store.write_text(PurePosixPath("sketch/skeleton.lean"), plan.assemble({}))
             children = [(hole, self._record_task(task, hole)) for hole in plan.holes]
+            self._check_cancelled()
             budget.ensure()
             for hole, child in children:
+                self._check_cancelled()
                 budget.ensure(reserve=1)
                 submission = self._discharge(child, budget)
                 if submission is not None:
@@ -166,7 +151,7 @@ class SketchStrategy:
                                     "The assembled original claim passed FinalVerifier.", result)
             return self._finish(task, plan, proved, budget, "partial",
                                 "The assembled original claim failed FinalVerifier.")
-        except _Exhausted:
+        except BudgetExhausted:
             remaining = self._remaining(plan, proved)
             return self._finish(task, plan, proved, budget, "exhausted",
                                 "Shared sketch budget exhausted; remaining holes: "
@@ -216,7 +201,9 @@ class SketchStrategy:
                                     "obligation": obligation.model_dump(mode="json")})
         return child
 
-    def _discharge(self, child: ProofTask, budget: _Budget) -> ProofSubmission | None:
+    def _discharge(
+        self, child: ProofTask, budget: CheckBudget | ReservedBudget,
+    ) -> ProofSubmission | None:
         accepted = None
 
         def submit(body: str) -> tuple[bool, str]:
@@ -236,38 +223,39 @@ class SketchStrategy:
         def propose(prompt: str) -> ProofSubmission:
             budget.ensure(reserve=1)
             submission = self._propose_hole(child, prompt)
-            budget.check_cancelled()
+            self._check_cancelled()
             return submission
 
         strategy = IterativeStrategy(
             propose=propose,
-            verify=lambda task, submission: self._check(task, submission, budget),
+            verify=lambda task, submission: self._check(task, submission, budget, charged=True),
             transition=lambda phase: self._event("sketch.hole_phase", {
                 "claim_sha256": child.claim.content_hash, "phase": phase.value}),
-            check_cancelled=budget.check_cancelled,
+            check_cancelled=self._check_cancelled,
             active_elapsed=self._active_elapsed,
             monotonic=self._monotonic,
+            budget=budget.reserved(checks=1),
         )
         outcome = run_strategy(strategy, child)
         return outcome.submission if outcome.status == "submitted" else None
 
     def _check(
-        self, task: ProofTask, submission: ProofSubmission, budget: _Budget,
-        *, final: bool = False,
+        self, task: ProofTask, submission: ProofSubmission, budget: CheckBudget | ReservedBudget,
+        *, final: bool = False, charged: bool = False,
     ) -> VerificationResult:
-        budget.ensure(reserve=0 if final else 1)
-        budget.checks += 1
-        path = PurePosixPath(f"sketch/checks/{budget.checks}")
+        self._check_cancelled()
+        number = budget.checks if charged else budget.acquire(reserve=0 if final else 1)
+        path = PurePosixPath(f"sketch/checks/{number}")
         self._store.write_json(path / "task.json", task)
         self._store.write_json(path / "submission.json", submission)
         check_store = self._store if final else RunStore.open(
             self._store.path / path, run_id=self._store.run_id)
         result = self._verify(task, submission, check_store)
         self._store.write_json(path / "result.json", result)
-        self._event("sketch.check", {"number": budget.checks, "final": final,
+        self._event("sketch.check", {"number": number, "final": final,
                                     "claim_sha256": task.claim.content_hash,
                                     "result": result.model_dump(mode="json")})
-        budget.check_cancelled()
+        self._check_cancelled()
         if result.verified:
             # Authenticate exact claim/environment/source even for cheap closers.
             ProofOutcome(task=task, status="submitted", submission=submission,
@@ -290,7 +278,7 @@ class SketchStrategy:
 
     def _finish(
         self, task: ProofTask, plan: SketchPlan | None,
-        proved: dict[str, ProofSubmission], budget: _Budget,
+        proved: dict[str, ProofSubmission], budget: CheckBudget | ReservedBudget,
         status: Literal["submitted", "partial", "cancelled", "exhausted"],
         detail: str, result: VerificationResult | None = None,
     ) -> ProofOutcome:

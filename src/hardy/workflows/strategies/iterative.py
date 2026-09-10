@@ -11,6 +11,7 @@ import json
 import time
 from collections.abc import Callable
 
+from hardy.formal.budget import BudgetExhausted, CheckBudget, ReservedBudget
 from hardy.formal.contracts import DeclaredAssumption
 from hardy.formal.verifier import VerificationResult
 from hardy.prompts import proof_prompt
@@ -36,6 +37,7 @@ class IterativeStrategy:
         check_cancelled: Callable[[], None],
         active_elapsed: Callable[[], float],
         monotonic: Callable[[], float] = time.monotonic,
+        budget: CheckBudget | ReservedBudget | None = None,
     ) -> None:
         self._propose = propose
         self._verify = verify
@@ -43,25 +45,35 @@ class IterativeStrategy:
         self._check_cancelled = check_cancelled
         self._active_elapsed = active_elapsed
         self._monotonic = monotonic
+        self._budget = budget
         self.last_verification: VerificationResult | None = None
 
     def run(self, task: ProofTask) -> ProofOutcome:
         self.last_verification = None
-        proof_started = self._monotonic()
+        limits = dict(official_checks=task.limits.official_checks,
+                      active_seconds=task.limits.active_seconds,
+                      proof_seconds=task.limits.proof_seconds)
+        budget = self._budget or CheckBudget(**limits, active_elapsed=self._active_elapsed,
+                                             monotonic=self._monotonic)
+        budget.validate_limits(**limits)
         prompt = proof_prompt(task.claim) + declared_note(task.declared_assumptions)
         submission = None
         for attempt in range(task.limits.official_checks):
             self._check_cancelled()
-            active_elapsed = self._active_elapsed()
-            proof_elapsed = self._monotonic() - proof_started
-            if (active_elapsed >= task.limits.active_seconds
-                    or proof_elapsed >= task.limits.proof_seconds):
+            try:
+                budget.ensure()
+            except BudgetExhausted:
                 self._transition(RunPhase.FINAL_VERIFICATION)
                 self._transition(RunPhase.WRITEUP)
                 break
             submission = self._propose(prompt)
             self._check_cancelled()
             self._transition(RunPhase.FINAL_VERIFICATION)
+            try:
+                budget.acquire()
+            except BudgetExhausted:
+                self._transition(RunPhase.WRITEUP)
+                break
             verification = self._verify(task, submission)
             self.last_verification = verification
             self._check_cancelled()
