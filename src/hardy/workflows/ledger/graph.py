@@ -286,20 +286,46 @@ class LedgerGraph:
         records = (self.snapshot.get(ref) for ref in _ordered(refs))
         return tuple(r for r in records if isinstance(r, ProjectItem))
 
+    def _approach_histories(self) -> dict[tuple[str, VersionRef | None], list[ProjectItem]]:
+        histories = defaultdict(list)
+        for record in self.snapshot.records:
+            if isinstance(record, ProjectItem) and record.kind == ProjectItemKind.APPROACH:
+                histories[record.id, record.context].append(record)
+        return histories
+
+    def _approach_versions(self, refs: Iterable[VersionRef]) -> tuple[ProjectItem, ...]:
+        identities = {(r.id, r.context) for r in self._items(refs)
+                      if r.kind == ProjectItemKind.APPROACH}
+        return tuple(r for r in self.snapshot.records
+                     if isinstance(r, ProjectItem) and r.kind == ProjectItemKind.APPROACH
+                     and (r.id, r.context) in identities)
+
     def approaches(self, goal: VersionRef) -> tuple[ProjectItem, ...]:
+        """Chronological assessments of approaches linked to this exact goal.
+
+        Research assessments follow stable approach identity within one exact
+        context: a blocked/revived revision does not need to rewrite its goal
+        links. Return history as well as the latest assessment so failed reasons
+        remain discoverable; callers may select the last revision per identity.
+        Goals, contexts and produced artifacts never float to their heads.
+        """
         self.snapshot.get(goal)
-        return tuple(r for r in self._items(relation.source for relation in self.relations
-                                           if relation.target == goal and relation.kind in {
-                                               RelationKind.PURSUES, RelationKind.TARGETS})
-                     if r.kind == ProjectItemKind.APPROACH)
+        return self._approach_versions(relation.source for relation in self.relations
+                                       if relation.target == goal and relation.kind in {
+                                           RelationKind.PURSUES, RelationKind.TARGETS})
 
     def produced_by(self, approach: VersionRef) -> tuple[ProjectItem, ...]:
-        self.snapshot.get(approach)
+        """Exact products of every assessment revision in the approach's context."""
+        versions = {r.ref for r in self._approach_versions((approach,))}
         return self._items(r.target for r in self.relations
-                           if r.source == approach and r.kind == RelationKind.PRODUCES)
+                           if r.source in versions and r.kind == RelationKind.PRODUCES)
 
     def research_neighborhood(self, root: VersionRef) -> tuple[ProjectItem, ...]:
         adjacency = self._adjacency(RESEARCH)
+        # Link only assessment revisions, in a star to keep this linear in
+        # history size. These research-only arcs do not affect proof dependencies.
+        for history in self._approach_histories().values():
+            adjacency[history[0].ref].update(r.ref for r in history[1:])
         for source, targets in tuple((s, tuple(ts)) for s, ts in adjacency.items()):
             for target in targets:
                 adjacency[target].add(source)

@@ -153,6 +153,49 @@ def test_research_queries_preserve_failed_approach_reasons_and_do_not_prove_goal
     assert g.research_neighborhood(goal.ref) == (approach, goal, result)
 
 
+def test_research_links_keep_status_history_without_rewriting_relations():
+    goal = item("goal", "goal")
+    proposed = item("approach", "approach", research=ResearchState(status="proposed"))
+    failed = proposed.model_copy(update={"research": ResearchState(
+        status="failed", reason="Cannot preserve the boundary")})
+    revived = proposed.model_copy(update={"research": ResearchState(
+        status="investigating", reason="Try a compactification")})
+    product = item("product", "lemma", statement="Original lemma")
+    changed_product = product.model_copy(update={"statement": "Revised lemma"})
+    later_product = item("later-product", "lemma")
+    records = (goal, proposed, product, edge("pursues", proposed, goal, "pursues"),
+               edge("produces", proposed, product, "produces"), failed)
+    assert graph(*records).approaches(goal.ref) == (proposed, failed)
+    g = graph(*records, revived, changed_product, later_product,
+              edge("later-produces", revived, later_product, "produces"))
+    assert g.approaches(goal.ref) == (proposed, failed, revived)
+    assert set(g.produced_by(revived.ref)) == {product, later_product}
+    assert set(g.produced_by(proposed.ref)) == {product, later_product}
+    neighborhood = g.research_neighborhood(goal.ref)
+    assert set(neighborhood) == {goal, proposed, failed, revived, product, later_product}
+    assert changed_product not in neighborhood
+    assert set(g.research_neighborhood(revived.ref)) == set(neighborhood)
+    reverted = graph(*g.snapshot.records, proposed)
+    assert reverted.approaches(goal.ref) == (proposed, failed, revived, proposed)
+
+
+def test_research_history_does_not_float_goal_or_context_identity():
+    parent = MathematicalContext(id="parent", label="parent", origin="human_authored")
+    child = MathematicalContext(id="child", parent=parent.ref, label="child", origin="human_authored")
+    goal = item("goal", "goal", context=parent.ref, statement="P")
+    changed_goal = goal.model_copy(update={"statement": "Q"})
+    approach = item("approach", "approach", context=parent.ref)
+    moved = approach.model_copy(update={"context": child.ref})
+    result = item("result", "lemma", context=child.ref)
+    g = graph(parent, child, goal, approach, edge("pursues", approach, goal, "pursues"),
+              changed_goal, moved, result, edge("produces", moved, result, "produces"))
+    assert g.approaches(goal.ref) == (approach,)
+    assert g.approaches(changed_goal.ref) == ()
+    assert g.produced_by(approach.ref) == ()
+    assert g.produced_by(moved.ref) == (result,)
+    assert set(g.research_neighborhood(goal.ref)) == {goal, approach}
+
+
 def test_transport_paths_require_authentication_and_respect_direction():
     a, b, c, proof = (item(n) for n in ("a", "b", "c", "proof"))
     ab = edge("ab", a, b, "equivalent_to", justification=proof.ref)

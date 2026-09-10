@@ -455,7 +455,10 @@ explicit context closure, research neighborhoods and authenticated transport pat
 share the same snapshot. Reverse impact includes descendants and items established
 in changed transport contexts without pulling every ambient declaration into a
 minimal context. Recorded statuses do not authenticate resolution. Run
-`uv run --extra test pytest tests/unit/test_ledger_graph.py -q` (17 tests).
+`uv run --extra test pytest tests/unit/test_ledger_graph.py -q` (19 tests).
+Research links retain chronological assessments across a stable approach identity
+in its exact context, so a blocked/revived approach and its products remain
+discoverable without rewriting historical goal or product references.
 Simple-path enumeration can be exponential; queries are intended for bounded
 project graphs. Earlier outgoing edges on an unchanged source require the earlier
 snapshot when a relation has since been revised.
