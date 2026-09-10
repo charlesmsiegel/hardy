@@ -217,6 +217,5 @@ design. The model chooses what goes into those processes.
 So the confinement has to come from the environment around Hardy rather than
 from anything on this page: a machine you are willing to lose, credentials the
 run cannot reach, and untrusted input treated as untrusted. The practical rules
-for running it that way are their own page; until it exists,
-[the roadmap](../roadmap.md) is where that work is tracked.
-<!-- link guides/running-safely.md once it exists -->
+for running it that way are their own page:
+[running Hardy safely](../guides/running-safely.md).

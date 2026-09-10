@@ -183,9 +183,9 @@ and nothing else, not even the Lean toolchain `doctor` asked for above.
   root, a problem, and a run directory.
 - [Artifacts](reference/artifacts.md) for what every field in `manifest.json`,
   `session.json`, and the evaluation artifacts means.
-- [security.md](security.md) for what the trust boundary actually is, and
-  how to run Hardy inside a container or VM that holds only the work.
-  <!-- relink to guides/running-safely.md once it exists -->
+- [Running Hardy safely](guides/running-safely.md) for what the trust
+  boundary actually is, and how to run Hardy inside a container or VM that
+  holds only the work.
 - [Trust boundary](design/trust-boundary.md) for the design argument behind
   that boundary.
 - [Hardy roadmap](roadmap.md) for what is built, in progress, or not started.
