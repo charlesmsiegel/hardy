@@ -1,17 +1,9 @@
-"""Which models Hardy knows about, and which backend can carry each one.
+"""Bundled model suggestions and their provenance, not an availability probe.
 
-Hardy reaches Claude through the Claude Code agent SDK, so a model is usable
-when the subscription behind that CLI can reach it. There is no key to probe a
-provider with and no `/models` endpoint in play, which is why this list is
-hand-maintained and why an identifier not on it is still accepted: typing one in
-is the escape hatch for a release this file has not caught up with.
-
-The list is read through the backend a session runs on, never whole. Every
-entry names the family it belongs to and every transport names the family it
-carries, and the `/model` menu shows only where the two agree. Issue #28 is
-what the unfiltered list did: a Codex session was offered four Claude
-identities, and the one it picked failed at the next provider request rather
-than at selection.
+The menu filters suggestions by transport family (issue #28), but neither
+catalog membership nor a configured identity proves account access or model
+capabilities. This catalog performs no live discovery. Unlisted identities
+remain usable as explicit input; the provider decides whether it can serve them.
 """
 
 from __future__ import annotations
@@ -33,16 +25,20 @@ SERVES: dict[str, str] = {"claude": CLAUDE, "api": CLAUDE, "codex": CODEX}
 @dataclass(frozen=True)
 class ModelInfo:
     identifier: str
-    note: str = ""
-    backend: str = CLAUDE
+    note: str = "capabilities unknown"
+    backend: str | None = CLAUDE
+    source: str = "curated"
+    provenance: str = "Hardy bundled catalog"
+    capabilities: tuple[str, ...] | None = None
 
 
-# Claude identifiers are exact and complete as written: never append a date suffix.
+# Preserve existing suggestions without asserting their current availability,
+# performance, or context limits. Only the configured provider can establish those.
 CATALOG: tuple[ModelInfo, ...] = (
-    ModelInfo("claude-opus-5", "strongest reasoning and long-horizon agentic work; 1M context"),
-    ModelInfo("claude-opus-4-8", "previous Opus; 1M context"),
-    ModelInfo("claude-sonnet-5", "near-Opus quality at lower cost; 1M context"),
-    ModelInfo("claude-haiku-4-5", "fastest and cheapest; 200K context"),
+    ModelInfo("claude-opus-5"),
+    ModelInfo("claude-opus-4-8"),
+    ModelInfo("claude-sonnet-5"),
+    ModelInfo("claude-haiku-4-5"),
 )
 
 
@@ -57,12 +53,13 @@ def find(identifier: str) -> ModelInfo | None:
 
 
 def describe(identifier: str) -> ModelInfo:
-    """The catalog entry for a model, inventing one for identities we do not list."""
-    return find(identifier) or ModelInfo(identifier.strip(), "not in the catalog")
+    """Describe a listed or configured identity without inferring its capabilities."""
+    return find(identifier) or ModelInfo(identifier.strip(), "not in catalog; capabilities unknown",
+                                        backend=None, source="configured", provenance="Explicit model identity")
 
 
 def available(backend: str) -> list[ModelInfo]:
-    """The catalogued models the transport `backend` can serve."""
+    """Family-compatible suggestions; account and endpoint availability are unverified."""
     served = family(backend)
     return [entry for entry in CATALOG if entry.backend == served]
 

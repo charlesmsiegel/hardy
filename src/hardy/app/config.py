@@ -88,10 +88,8 @@ def authentication(backend: str) -> str:
 
 #: The context window Hardy plans compaction against, in tokens.
 #:
-#: Deliberately not derived from the model identity, even though `catalog`
-#: notes a larger figure for three of the four entries: Hardy sends no
-#: long-context beta with its requests, so 200K is the window every catalogued
-#: model actually offers on the path Hardy uses. Guessing higher is the
+#: Deliberately not derived from the model identity: the curated catalog does
+#: not establish the capacity this account and endpoint offer. Guessing higher is the
 #: unrecoverable direction -- the compactor would never run and the provider
 #: would refuse every request -- while guessing lower only cuts sooner than it
 #: had to.

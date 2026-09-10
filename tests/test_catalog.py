@@ -24,15 +24,22 @@ def test_the_codex_backend_lists_no_claude_model():
     assert catalog.available("codex") == []
 
 
-def test_a_listed_model_keeps_its_note():
-    assert "1M context" in catalog.describe("claude-opus-5").note
+def test_curated_entries_disclose_their_source_and_unknown_provider_capabilities():
+    entry = catalog.describe("claude-opus-5")
+    assert entry.source == "curated"
+    assert entry.provenance == "Hardy bundled catalog"
+    assert entry.capabilities is None
+    assert "unknown" in entry.note
+    assert "1M" not in entry.note
 
 
 def test_an_unlisted_identity_is_still_accepted():
     """Typing one in is the escape hatch for a release the catalog has missed."""
     entry = catalog.describe("  claude-something-new ")
     assert entry.identifier == "claude-something-new"
-    assert entry.backend == catalog.CLAUDE
+    assert entry.backend is None
+    assert entry.source == "configured"
+    assert entry.capabilities is None
 
 
 @pytest.mark.parametrize("backend", ["claude", "api"])

@@ -185,6 +185,50 @@ def test_a_codex_session_still_shows_its_own_unlisted_current_model(tmp_path: Pa
     assert rows[0].value == "gpt-codex" and "current" in rows[0].note
 
 
+def test_a_configured_model_from_another_backend_remains_visible_without_claiming_compatibility(tmp_path):
+    rows = handlers.model_rows(settings(tmp_path, model="claude-opus-5", backend="codex"))
+    assert rows[0].value == "claude-opus-5"
+    assert "current" in rows[0].note
+    assert "incompatible" in rows[0].note
+    assert len(rows) == 2
+
+
+def test_curated_model_rows_disclose_unverified_availability_and_unknown_capabilities(tmp_path):
+    rows = handlers.model_rows(settings(tmp_path))
+    assert all("curated" in row.note and "unverified" in row.note and "unknown" in row.note
+               for row in rows if row.value != handlers.OTHER)
+
+
+def test_current_identity_spelling_is_preserved_without_a_duplicate_catalog_row(tmp_path):
+    rows = handlers.model_rows(settings(tmp_path, model="CLAUDE-OPUS-5"))
+    matching = [row for row in rows if row.value.lower() == "claude-opus-5"]
+    assert len(matching) == 1
+    assert matching[0].value == "CLAUDE-OPUS-5"
+
+
+def test_unknown_backend_keeps_only_its_configured_identity_and_the_escape_hatch(tmp_path):
+    rows = handlers.model_rows(settings(tmp_path, model="gateway/model", backend="private-gateway"))
+    assert [row.value for row in rows] == ["gateway/model", handlers.OTHER]
+    assert "configured" in rows[0].note and "unknown" in rows[0].note
+
+
+async def test_menu_reports_catalog_provenance_and_that_it_did_not_query_provider_availability(tmp_path):
+    ui = ScriptedUi(choices=[None])
+    await handlers.handle_model(ui, "", state(tmp_path, Recorder()))
+    assert any("Hardy bundled catalog" in subtitle for subtitle in ui.subtitles)
+    assert any("not queried" in subtitle for subtitle in ui.subtitles)
+
+
+async def test_selecting_the_incompatible_current_row_cannot_change_runtime_or_config(tmp_path):
+    session = Recorder()
+    ui = ScriptedUi(choices=[0])
+    initial = state(tmp_path, session, model="claude-opus-5", backend="codex")
+    result = await handlers.handle_model(ui, "", initial)
+    assert result is initial
+    assert session.models == []
+    assert "cannot serve" in ui.text
+
+
 async def test_a_backend_incompatible_switch_is_refused_at_selection(tmp_path: Path):
     """Refused here, with a reason, and the live session never asked -- not
     accepted now and failed at the next provider request."""

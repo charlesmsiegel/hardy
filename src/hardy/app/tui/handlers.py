@@ -243,17 +243,21 @@ def model_rows(config) -> list[Choice]:
     current = (config.model or "").strip()
     # Read through the backend, not whole: the unfiltered list offered a
     # Codex session four Claude identities it could not run (issue #28).
-    entries = catalog.available(getattr(config, "backend", DEFAULT_BACKEND))
+    backend = getattr(config, "backend", DEFAULT_BACKEND)
+    entries = catalog.available(backend)
     rows: list[Choice] = []
-    if current and not catalog.find(current):
-        # An unlisted identity is legitimate, so it needs a row of its own --
-        # otherwise nothing shows what is actually running.
-        rows.append(Choice(current, current, "current, not in catalog"))
+    if current and not any(entry.identifier.lower() == current.lower() for entry in entries):
+        # Preserve the configured choice even when its catalogued family is
+        # incompatible. Visibility is not permission to switch to that family.
+        detail = f"incompatible with {backend} backend" if catalog.find(current) else "not in catalog"
+        rows.append(Choice(current, current, f"current, configured identity; {detail}; capabilities unknown; availability unverified"))
     for entry in entries:
-        note = entry.note
+        note = f"{entry.source}; {entry.note}; availability unverified"
+        identity = entry.identifier
         if entry.identifier.lower() == current.lower():
-            note = f"{note}   (current)" if note else "(current)"
-        rows.append(Choice(entry.identifier, entry.identifier, note))
+            note += "   (current)"
+            identity = current
+        rows.append(Choice(identity, identity, note))
     rows.append(Choice(OTHER, "Other…", "type an identity the catalog lacks"))
     return rows
 
@@ -281,7 +285,8 @@ async def _chosen_identity(ui: Ui, argument: str, config) -> str | None:
         current=current,
         # Derived, not hardcoded: on an API-key session the old wording told
         # the user their subscription was about to be spent when it was not.
-        subtitle=f"Runs through: {authentication(getattr(config, 'backend', DEFAULT_BACKEND))}.",
+        subtitle=(f"Runs through: {authentication(getattr(config, 'backend', DEFAULT_BACKEND))}. "
+                  "Curated suggestions: Hardy bundled catalog. Provider availability not queried."),
     )
     if picked is None:
         return None
