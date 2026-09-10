@@ -15,7 +15,6 @@ problems/<NN>.json     entries, sharded by MSC 2-digit class
 sources.json           the texts entries are drawn from
 taxonomy/              all 6603 MSC2020 codes; the MSC→arXiv map and groups
 tombstones.json        every entry id ever issued
-measurements/          Lean measurements, keyed by entry id and digest
 CHANGELOG.md           what changed, per version, citing ids
 ```
 
@@ -24,8 +23,9 @@ CHANGELOG.md           what changed, per version, citing ids
 **The corpus holds statements only.** No tier, no solve rate, no
 discrimination, no `shard` field — nothing measured and nothing derived. A tier
 is a fact about one tactic ladder against one Mathlib revision on one machine,
-not a property of a theorem. Measurements live in `measurements/`, keyed by id,
-so the statements stay portable.
+not a property of a theorem. Measurements are not part of the corpus at all:
+they live under the Hardy repository's `evals/` tree, as `evals/baseline.json`
+and the per-run scoreboards, so the statements stay portable.
 
 **A result is one entry with many occurrences.** The Nullstellensatz appears in
 most algebraic geometry texts; it is one entry citing several, not several
@@ -61,7 +61,8 @@ over the same population.** Only occurrences in source and field pairs marked
 fully surveyed count toward the numerator, against a denominator of the texts
 surveyed for that field: counting every citation against a surveyed-only
 denominator mixes populations, can put the numerator above the denominator, and
-misclassifies entries as core.
+misclassifies entries as core. Nothing computes this yet, and `sources.json`
+carries no survey record to compute it from.
 
 **`title` and `name` are asymmetric on purpose.** A title is a retrieval cue and
 never reaches a model; a Lean identifier is a label the declaration cannot omit,
@@ -167,9 +168,9 @@ and the analysis plan):
 
 Comparing version *strings* alone cannot see an unversioned edit: a shard
 changes, both strings stay put, and the gate passes on a version that is no
-longer reproducible. `measurements/`, `CHANGELOG.md` and this file are outside
-the manifest — a baseline re-sweep or a documentation edit must not manufacture
-a release.
+longer reproducible. `CHANGELOG.md` and this file are outside the manifest, as a
+corpus-side measurements tree would be were one built — a baseline re-sweep or a
+documentation edit must not manufacture a release.
 
 `hardy evals corpus check` reports every mechanical objection: unregistered
 ids, occurrences citing a text `sources.json` does not carry, unknown MSC
