@@ -553,6 +553,16 @@ The primitive must work with no target theorem so Explore can use it during open
 
 **Deps:** A0; persist through B0; integrate closure queries after B1
 
+**Status: implemented (2026-09-10).** `workflows/context.py` provides normalized
+semantic declaration/binding operations, immutable context extensions, ancestor
+activation, scoped renaming/shadowing, and explicit transport children. A
+transported subject preserves its original statement and required dependencies;
+formalization keeps exact declaration/convention sources and auditable binder
+origins through A2. Chosen objects and transport mappings require reauthenticated
+policy evidence; missing prerequisites persist as typed obligations. The model
+still parses prose, and A2 owns Lean syntax/execution. Run
+`uv run --extra test pytest tests/unit/test_mathematical_context.py tests/unit/test_formalization.py -q`.
+
 Add `workflows/context.py` as the shared domain-neutral primitive for semantic local mathematical scope.
 
 Required operations:
