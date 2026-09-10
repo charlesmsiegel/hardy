@@ -150,7 +150,14 @@ class CasStateResult(FrozenModel):
     kernel: str
     segment: int
     accepted: tuple[str, ...]
-    seconds_remaining: int
+    # What the session has spent, across every process that has opened it: the
+    # honest figure, and the one that is not a limit.
+    seconds_spent: int
+    # What this process will still allow before `cas_session_seconds` refuses
+    # a cell. A guard against a runaway computation, not the session's budget,
+    # and named for the process so it is not read as the session's remaining
+    # time -- which, until the spend was persisted, is exactly how it read.
+    process_seconds_remaining: int
     # How many of the oldest accepted cells the listing left out to stay
     # inside the observation budget, and a note saying so. The cells are
     # still accepted; only the list is shorter.
@@ -190,10 +197,8 @@ class CasToolRuntime:
             kernel=session.state,
             segment=session.segment,
             accepted=tuple(lines),
-            seconds_remaining=max(
-                0,
-                round(session.limits.cas_session_seconds - session.spent_seconds),
-            ),
+            seconds_spent=round(session.total_spent_seconds),
+            process_seconds_remaining=round(session.remaining_seconds),
         )
         # Bounded like every other observation: the listing grows with the
         # session and a few hundred cells outgrow the default budget. The

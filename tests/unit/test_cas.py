@@ -754,6 +754,66 @@ def test_reset_cannot_be_used_to_buy_a_second_session_budget(tmp_path, cas_sessi
         session.close()
 
 
+def test_a_reopened_session_continues_its_own_spend(tmp_path, cas_session) -> None:
+    """The spend is the session's figure, and it survives the process.
+
+    Held in memory only, it started again at zero on every reopen while the
+    replay that rebuilt the session was billed -- so what a saved session
+    reported was whatever the current process had done, never what the
+    session had.
+    """
+    first = cas_session(cas_cell_seconds=30)
+    first.execute("slow")
+    record = first.execute("quick")
+    assert record.spent_ms >= 500
+    assert first.total_spent_seconds >= 0.5
+    first.close()
+
+    reopened = cas_session(cas_cell_seconds=30)
+    # Known before a single cell has run in this process: it is on the log.
+    assert reopened.total_spent_seconds >= 0.5
+    assert reopened.spent_seconds == 0.0
+
+    # The rebuild replays `slow`, and that is the session's time too.
+    reopened.execute("b")
+    assert reopened.total_spent_seconds >= 1.0
+    # The per-process guard counts only what this process ran.
+    assert reopened.spent_seconds < reopened.total_spent_seconds
+    reopened.close()
+
+    again = cas_session()
+    assert again.total_spent_seconds >= 1.0
+
+
+def test_a_reset_carries_the_spend_across_a_reopen(tmp_path, cas_session) -> None:
+    """A reset clears the namespace, not the bill -- durably, not only in memory."""
+    session = cas_session(cas_cell_seconds=30)
+    session.execute("slow")
+    session.reset()
+    session.close()
+
+    reopened = cas_session()
+    assert reopened.accepted() == ()
+    assert reopened.total_spent_seconds >= 0.5
+
+
+def test_a_log_written_before_the_spend_was_recorded_still_loads(tmp_path, cas_session) -> None:
+    session = cas_session()
+    session.execute("a")
+    session.close()
+    log = tmp_path / "cells.jsonl"
+    lines = [
+        json.dumps({k: v for k, v in json.loads(line).items() if k != "spent_ms"})
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    reopened = cas_session()
+    assert [record.source for record in reopened.accepted()] == ["a"]
+    assert reopened.total_spent_seconds == 0.0
+
+
 # ------------------------------------------------------------ the toolchain
 
 

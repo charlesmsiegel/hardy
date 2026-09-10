@@ -96,6 +96,13 @@ class CellRecord(FrozenModel):
     stderr: str = ""
     value_repr: str = ""
     duration_ms: int = 0
+    # The session's running total of billed CAS wall clock as of this append,
+    # across every process that has opened the log -- the figure `cas_state`
+    # reports as `seconds_spent`. Cumulative rather than per-cell so a reopened
+    # session reads its own figure off the last record instead of starting a
+    # new one; `duration_ms` is this cell alone. Zero on records written before
+    # the field existed, so an older log still loads.
+    spent_ms: int = 0
     capture_truncated: bool = False
     # The toolchain that produced this record, carried on the durable log
     # rather than only in an export manifest: a session that is saved but never

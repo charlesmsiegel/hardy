@@ -1129,11 +1129,6 @@ Priority labels are sequencing hints:
   cannot run a sleeping cell for a minute; and `cas_reset` — a tool the model
   can call itself — clears the namespace and opens a new segment without
   refunding time already spent.
-- **Known gap:** the CAS budget bounds a process, not a workspace. The spend is
-  held in memory and is not written to the cell log, so reopening a saved
-  session starts `cas_session_seconds` again even though the cells it replays
-  to rebuild that session are charged. A long-running run is bounded; a
-  workspace reopened all day is not.
 - **Now (implemented):** an export holds the session for its whole duration,
   so a cell cannot land between the replay and the manifest that describes
   it. `cas_state` is bounded by `model_observation_bytes` like every other
@@ -1144,6 +1139,22 @@ Priority labels are sequencing hints:
   rule `doctor` already applied. The real-backend CI job pins its runner image
   and both package versions, so a red run means the adapter broke rather than
   that a package moved.
+- **Now (implemented):** the spend is the session's figure, and it survives the
+  process. Every cell record carries the running total of billed CAS wall
+  clock as of its append, so a reopened session continues its own figure
+  rather than starting a new one, and the rebuild that reopens it is added to
+  that figure rather than to a fresh zero. `cas_state` reports
+  `seconds_spent` -- what the session has spent across every process that has
+  opened it -- beside `process_seconds_remaining`, what this process will
+  still allow. `cas_session_seconds` stays a per-process guard against a
+  runaway computation rather than a workspace budget: a research workspace
+  may legitimately be open for months, and a lifetime cap attached to it
+  would eventually refuse work for reasons that have nothing to do with the
+  work.
+- **Known gap:** spend after the last record is written -- a rebuild nobody
+  then ran a cell on, an export -- becomes durable only when the next record
+  is appended, so a session closed straight after such work reopens a little
+  behind its true figure.
 - **Now (implemented):** every cell record carries the backend and probed
   version that produced it, so a saved-but-never-exported trajectory still
   names its toolchain. A log whose live segment was written by another backend

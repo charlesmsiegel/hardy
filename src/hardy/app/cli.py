@@ -285,7 +285,8 @@ def cas_command(
         if argument == "state":
             state = session.cas.state()
             out(f"{state.backend} {state.version or '?'} — kernel {state.kernel}, "
-                f"segment {state.segment}, {state.seconds_remaining}s left")
+                f"segment {state.segment}, {state.seconds_spent}s spent, "
+                f"{state.process_seconds_remaining}s left in this process")
             for line in state.accepted:
                 out(f"  {line}")
             return

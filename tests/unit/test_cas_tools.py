@@ -64,6 +64,29 @@ def test_state_lists_the_cells_that_built_the_session(tmp_path, cas_session) -> 
     assert state.kernel == "live"
 
 
+def test_state_reports_the_session_spend_and_this_process_guard(tmp_path, cas_session) -> None:
+    """`seconds_remaining` was computed from a total that reset on reopen.
+
+    The model was told it had budget the session had already spent. What it
+    is told now is what the session has spent, across every process that has
+    opened it, and separately what this process will still allow.
+    """
+    first = make_runtime(cas_session(cas_cell_seconds=30), {})
+    first.run("slow")
+    first.run("slow")
+    first.session.close()
+
+    runtime = make_runtime(cas_session(cas_cell_seconds=30, cas_session_seconds=900), {})
+    before = runtime.state()
+    assert before.seconds_spent >= 1
+    assert before.process_seconds_remaining == 900
+
+    runtime.run("x")
+    after = runtime.state()
+    assert after.seconds_spent >= 2
+    assert after.process_seconds_remaining <= 899
+
+
 def test_reset_clears_the_state_the_model_can_see(tmp_path, cas_session) -> None:
     runtime = make_runtime(cas_session(), {})
     runtime.run("a")
