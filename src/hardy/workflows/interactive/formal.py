@@ -1,4 +1,4 @@
-"""Atomic checked saves and audit decisions for an interactive Lean tree.
+"""Staged checked saves and audit decisions for an interactive Lean tree.
 
 A save builds and audits a shadow before committing, then publishes evidence.
 Cross-capability authorship and documentation gates are explicit callbacks;
@@ -10,7 +10,7 @@ import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hardy.formal import audit
@@ -156,6 +156,49 @@ class FormalWorkspaceService:
     def _save_lean_unbraked(
         self, path: str, source: str, *, policy: SavePolicy, ratchet: bool = True, generated: bool = False
     ) -> ToolResult:
+        relative = self._save_preflight(path, source, policy=policy, ratchet=ratchet, generated=generated)
+        if isinstance(relative, ToolResult):
+            return relative
+        text = source.rstrip() + "\n"
+        # The shadow build elaborates this file itself, so there is no
+        # pre-check run: with Mathlib imported each elaboration costs tens of
+        # seconds, and checking the same source twice per save doubled the
+        # expensive half of the operation. What Lean said is captured here
+        # because the build reports only which module failed.
+        seen: dict[str, ToolResult] = {}
+
+        def capturing(module: str, source_root: Path, build_root: Path, source_file: Path) -> tuple[bool, str]:
+            result = self.lean.compile_module(
+                source_root, build_root, source_file, lean_path=policy.compile_path(build_root)
+            )
+            seen[module] = result
+            return result.ok, result.output
+
+        # Before the shadow is staged, so the staged build is keyed on the
+        # identity the shared sources currently have. Staging first would copy
+        # `_environment` into the shadow while it still named the old shared
+        # text, and the save would be committed under a signature that was
+        # already false when it was computed.
+        policy.build_shared()
+        # Before staging: what the tree holds now is what a registered name may
+        # be judged to have vanished *from*.
+        committed = self.lean_workspace.sources()
+        shadow, commit = self.lean_workspace.stage(relative, text, capturing)
+        try:
+            module = module_name(relative)
+            checked = self._check_staged_save(shadow, module, source, committed, policy=policy)
+            if isinstance(checked, ToolResult):
+                return checked
+            records, note = checked
+            commit()
+        finally:
+            LeanWorkspace.discard(shadow)
+        return self._publish_saved_audit(module, source, records, note, seen, policy=policy)
+
+    def _save_preflight(
+        self, path: str, source: str, *, policy: SavePolicy, ratchet: bool, generated: bool
+    ) -> PurePosixPath | ToolResult:
+        """Refuse unsafe paths and disallowed source before any build or stage."""
         try:
             relative = safe_relative(path)
         except WorkspacePathError as error:
@@ -184,60 +227,43 @@ class FormalWorkspaceService:
         refusal = policy.final_gates(source)
         if refusal is not None:
             return refusal
-        text = source.rstrip() + "\n"
-        # The shadow build elaborates this file itself, so there is no
-        # pre-check run: with Mathlib imported each elaboration costs tens of
-        # seconds, and checking the same source twice per save doubled the
-        # expensive half of the operation. What Lean said is captured here
-        # because the build reports only which module failed.
-        seen: dict[str, ToolResult] = {}
+        return relative
 
-        def capturing(module: str, source_root: Path, build_root: Path, source_file: Path) -> tuple[bool, str]:
-            result = self.lean.compile_module(
-                source_root, build_root, source_file, lean_path=policy.compile_path(build_root)
-            )
-            seen[module] = result
-            return result.ok, result.output
-
-        # Before the shadow is staged, so the staged build is keyed on the
-        # identity the shared sources currently have. Staging first would copy
-        # `_environment` into the shadow while it still named the old shared
-        # text, and the save would be committed under a signature that was
-        # already false when it was computed.
-        policy.build_shared()
-        # Before staging: what the tree holds now is what a registered name may
-        # be judged to have vanished *from*.
-        committed = self.lean_workspace.sources()
-        shadow, commit = self.lean_workspace.stage(relative, text, capturing)
+    def _check_staged_save(
+        self, shadow: LeanWorkspace, module: str, source: str, committed: dict[str, str], *, policy: SavePolicy
+    ) -> tuple[dict[str, Any], str] | ToolResult:
+        """Build dependents, preserve registered names, then audit before commit."""
         try:
-            module = module_name(relative)
-            try:
-                affected = [module, *sorted(dependents(shadow.sources(), module))]
-                failure = shadow.build_modules(affected)
-            except ImportCycle as error:
-                return ToolResult(False, f"{error}; nothing was written", source)
-            if failure is not None:
-                return ToolResult(False, f"this save breaks {failure.module}, so nothing was written:\n{failure.output}", source)
-            # The registry and the Lean must stay in step. This was a per-file
-            # check when the workspace was one file; a registered name now has
-            # to survive somewhere in the tree, not in whichever file is being
-            # saved -- but it must not be allowed to vanish from all of them.
-            lost = policy.missing_names(shadow.sources(), committed)
-            if lost:
-                return ToolResult(False, f"this save would drop registered names from the workspace: {lost}", source)
-            # Last, because it is the only gate that costs another Lean run,
-            # and still before `commit`: a refused audit must leave the
-            # workspace exactly as it was.
-            audited = policy.audit_tree(shadow, affected)
-            if isinstance(audited, ToolResult):
-                return audited
-            records, note = audited
-            stale = policy.closes_and_adds(source, affected, records)
-            if stale is not None:
-                return ToolResult(False, stale, source)
-            commit()
-        finally:
-            LeanWorkspace.discard(shadow)
+            affected = [module, *sorted(dependents(shadow.sources(), module))]
+            failure = shadow.build_modules(affected)
+        except ImportCycle as error:
+            return ToolResult(False, f"{error}; nothing was written", source)
+        if failure is not None:
+            return ToolResult(False, f"this save breaks {failure.module}, so nothing was written:\n{failure.output}", source)
+        # The registry and the Lean must stay in step. This was a per-file
+        # check when the workspace was one file; a registered name now has
+        # to survive somewhere in the tree, not in whichever file is being
+        # saved -- but it must not be allowed to vanish from all of them.
+        lost = policy.missing_names(shadow.sources(), committed)
+        if lost:
+            return ToolResult(False, f"this save would drop registered names from the workspace: {lost}", source)
+        # Last, because it is the only gate that costs another Lean run,
+        # and still before `commit`: a refused audit must leave the
+        # workspace exactly as it was.
+        audited = policy.audit_tree(shadow, affected)
+        if isinstance(audited, ToolResult):
+            return audited
+        records, note = audited
+        stale = policy.closes_and_adds(source, affected, records)
+        if stale is not None:
+            return ToolResult(False, stale, source)
+        return records, note
+
+    def _publish_saved_audit(
+        self, module: str, source: str, records: dict[str, Any], note: str,
+        seen: dict[str, ToolResult], *, policy: SavePolicy
+    ) -> ToolResult:
+        """Publish against committed signatures, disclose automation, and persist."""
         # Published after the write, and not before: a verdict stored first
         # would survive a failed commit and describe a tree that never existed.
         # Stamped with what the module's build inputs hashed to, not merely with
@@ -805,5 +831,4 @@ class FormalWorkspaceService:
             module: self._still_current(module, record, signatures)
             for module, record in stored.items()
         }
-
 
