@@ -79,6 +79,7 @@ class RefereeRequest:
 @dataclass(frozen=True)
 class CitationAudit:
     use: CitationUse
+    obligation: VersionRef
     contracts: tuple[CitationContract, ...]
     checked: bool
     outstanding: tuple[VersionRef, ...]
@@ -211,7 +212,7 @@ class RefereeWorkflow:
                     reason=f"Unjustified transport {relation.id}@{relation.digest}; preserve exact endpoints and hypotheses."))
         return tuple(findings)
 
-    def _citation(self, use: CitationUse, scope: Scope) -> None:
+    def _citation(self, use: CitationUse, scope: Scope) -> VersionRef:
         snapshot = self.store.read()
         item = self._current(snapshot, use.required_claim, ProjectItem)
         identity = "referee:citation:" + json_digest({
@@ -230,7 +231,7 @@ class RefereeWorkflow:
         if existing is None:
             snapshot = self.store.append((work,), expected_revision=snapshot.revision, validate=self.policy.validate)
         if self.resolve_citation is None or self._accepted(snapshot, work):
-            return
+            return work.ref
         result = self.resolve_citation(snapshot, work)
         if not isinstance(result, ResolverResult):
             raise ValueError("citation owner must return a ResolverResult")
@@ -261,12 +262,51 @@ class RefereeWorkflow:
             else:
                 additions.append(record)
                 heads[record.id] = record
+        # Record which candidates and child work belong to this exact use. A
+        # shared external statement alone cannot attribute a prior paper audit.
+        for record in (*result.records, *result.children):
+            if not isinstance(record, (CitationContract, Obligation)):
+                continue
+            link = Relation(id="referee:citation-link:" + json_digest(
+                (work.ref.model_dump(), record.ref.model_dump())),
+                kind="cites" if isinstance(record, CitationContract) else "blocked_by",
+                source=work.ref, target=record.ref)
+            if link.id not in heads:
+                additions.append(link)
+                heads[link.id] = link
+            elif heads[link.id] != link:
+                raise ValueError("citation candidate association changed identity")
         if additions:
             self.store.append(additions, expected_revision=snapshot.revision, validate=self.policy.validate)
+        return work.ref
 
     def _accepted(self, snapshot: LedgerSnapshot, obligation: Obligation) -> bool:
         return (obligation.status == "resolved" and obligation.resolution is not None
                 and self.policy.is_accepted(snapshot, obligation.resolution))
+
+    def _citation_audit(self, snapshot: LedgerSnapshot, use: CitationUse,
+                        reference: VersionRef) -> CitationAudit:
+        original = snapshot.get(reference)
+        work = snapshot.head(reference.id)
+        if not isinstance(work, Obligation) or (work.item, work.scope, work.kind, work.context) != (
+            original.item, original.scope, original.kind, original.context
+        ):
+            raise ValueError("citation audit work changed identity")
+        history = {record.ref for record in snapshot.records if isinstance(record, Obligation)
+                   and record.id == work.id and (record.item, record.scope, record.kind, record.context)
+                   == (work.item, work.scope, work.kind, work.context)}
+        graph = LedgerGraph(snapshot)
+        contracts = tuple(dict.fromkeys(snapshot.get(relation.target) for relation in graph.relations
+            if relation.kind == "cites" and relation.source in history
+            and isinstance(snapshot.get(relation.target), CitationContract)))
+        accepted = self._accepted(snapshot, work)
+        if accepted:
+            contracts = tuple(contract for contract in contracts if contract.evidence
+                              and set(contract.evidence) <= set(work.resolution.evidence))
+        closure = graph.dependency_closure(history, include_roots=True)
+        pending = tuple(o.ref for o in snapshot.current(Obligation) if o.scope == work.scope
+                        and any(ref.id == o.id for ref in closure) and not self._accepted(snapshot, o))
+        return CitationAudit(use, work.ref, contracts, accepted and bool(contracts) and not pending, pending)
 
     def run(self, request: RefereeRequest) -> RefereeReport:
         request = replace(request, sources=dict(request.sources))
@@ -277,8 +317,7 @@ class RefereeWorkflow:
         closure = set(path)
         selected = tuple(c.item for c in request.claims if c.item in closure)
         uses = tuple(use for use in request.citations if use.use_site in selected)
-        for use in uses:
-            self._citation(use, scope)
+        citation_work = tuple(self._citation(use, scope) for use in uses)
         critiques = []
         structural_findings = []
         for claim in request.claims:
@@ -326,12 +365,8 @@ class RefereeWorkflow:
         verified = tuple(ref for ref in selected if self.policy.premise_allowed(
             snapshot, ref, scope=scope, context=snapshot.get(ref).context))
         pending = tuple(o for o in views.obligations() if o.scope == scope)
-        citations = tuple(CitationAudit(
-            use, tuple(c for c in snapshot.current(CitationContract) if c.required_claim == use.required_claim),
-            any(o.item == use.required_claim and o.scope == scope and o.kind == "check_citation"
-                and self._accepted(snapshot, o) for o in snapshot.current(Obligation)),
-            tuple(o.ref for o in pending if o.item == use.required_claim),
-        ) for use in uses)
+        citations = tuple(self._citation_audit(snapshot, use, reference)
+                          for use, reference in zip(uses, citation_work, strict=True))
         unresolved = tuple(ref for ref in selected if ref not in verified or
                            any(o.item in LedgerGraph(snapshot).dependency_closure(ref, include_roots=True) for o in pending))
         report = RefereeReport(

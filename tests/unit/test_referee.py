@@ -198,3 +198,68 @@ def test_real_adversarial_provider_retains_its_own_findings_and_layer(tmp_path):
     assert report.critiques[0].layers_run == ("adversarial",)
     assert report.critiques[0].findings == (("adversarial", finding),)
     assert report.structural_findings
+
+
+def test_new_citation_cannot_inherit_another_uses_authenticated_contract(tmp_path):
+    from hardy.workflows.acquisition.contracts import ResolverResult
+    from hardy.workflows.ledger.contracts import (
+        ArtifactRef,
+        CitationContract,
+        EvidenceRef,
+        Resolution,
+    )
+    from hardy.workflows.ledger.policy import (
+        AcceptanceDecision,
+        AuthenticatedEvidence,
+        LedgerPolicy,
+    )
+
+    store, request, _, external = manuscript(tmp_path)
+    scope = store.read().get(request.scope)
+    evidence = {}
+    decisions = {}
+    policy = LedgerPolicy(read_evidence=evidence.get, read_decision=decisions.get)
+
+    def contract(work, identifier):
+        source = ArtifactRef(uri=identifier + ":source", digest="a" * 64)
+        reading = ArtifactRef(uri=identifier + ":reading", digest="b" * 64)
+        references = (EvidenceRef(kind="literature", artifact=source, subject=external.ref, producer="fixture"),
+                      EvidenceRef(kind="faithfulness", artifact=reading, subject=external.ref, producer="fixture"))
+        value = CitationContract(id=identifier, use_site=external.ref, required_claim=external.ref,
+            paper_id=identifier, paper_version="v1", source_statement=source,
+            conclusion=external.statement, evidence=references)
+        for reference, outcome in zip(references, ("source_read", "faithful"), strict=True):
+            evidence[reference] = AuthenticatedEvidence(reference, scope.ref, work.context, outcome,
+                                                       citation=value.ref)
+        return value
+
+    def accept(work, value):
+        proposal = Resolution(id=work.id + ":accept", obligation=work.ref, item=external.ref,
+                              evidence=value.evidence)
+        receipt = ArtifactRef(uri=proposal.id, digest=proposal.digest)
+        decisions[receipt] = AcceptanceDecision(proposal.ref, work.ref, external.ref, scope.ref,
+                                               work.context, policy.digest)
+        accepted = policy.accept(store.read(), proposal, receipt)
+        closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+                                            "status": "resolved", "resolution": accepted})
+        store.append((closed,), expected_revision=store.read().revision, validate=policy.validate)
+
+    old = Obligation(id="old-audit", kind="check_citation", item=external.ref, scope=scope)
+    old_contract = contract(old, "prior-paper")
+    store.append((old, old_contract), expected_revision=store.read().revision, validate=policy.validate)
+    accept(old, old_contract)
+    flow = referee.RefereeWorkflow(store, critique=CritiqueOperations(), policy=policy)
+    report = flow.run(request)
+    assert not report.citations[0].checked
+    assert report.citations[0].contracts == ()
+
+    flow.resolve_citation = lambda snapshot, work: ResolverResult(records=(contract(work, "current-paper"),))
+    report = flow.run(request)
+    current_contract, = report.citations[0].contracts
+    assert current_contract.id == "current-paper"
+    assert not report.citations[0].checked
+    current_work = store.read().get(report.citations[0].obligation)
+    accept(current_work, current_contract)
+    restarted = flow.run(request)
+    assert restarted.citations[0].checked
+    assert restarted.citations[0].contracts == (current_contract,)
