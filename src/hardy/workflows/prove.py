@@ -126,6 +126,7 @@ def _strategy_record(request: ProveRequest, *, shared_tool_budget: bool) -> dict
             "native-thread" if request.history_mode == "full" else "fresh-per-expansion"
         ),
         "shared_tool_budget": shared_tool_budget,
+        "verifier_call_journal": True,
         "prompt_set_sha256": PROMPT_SET_SHA256,
         "source_sha256": {
             name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in modules
@@ -800,6 +801,10 @@ class ProveWorkflow:
                 nonlocal verification
                 if request.strategy == "best-first":
                     state.transition(RunPhase.FINAL_VERIFICATION)
+                store.append("workflow.verifier_call", {
+                    "claim_sha256": task.claim.content_hash,
+                    "official_check_number": budget.checks,
+                }, phase=state.phase)
                 verification = self._verifier.verify(
                     task.claim, submission.proof_body, store,
                     allowed=task.declared_assumptions,

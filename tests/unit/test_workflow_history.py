@@ -170,3 +170,15 @@ def test_context_setup_exhausting_deadline_prevents_next_provider_call(tmp_path,
     assert len(state.candidate_threads) == 1
     assert state.verifier_calls == 1
     assert manifest.terminal_reason == domain.TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+
+
+def test_independent_verifier_calls_have_their_own_journal(tmp_path):
+    workflow, _, controller, state = _controller(tmp_path)
+    controller.run(workflow.ProveRequest(text='Two equals two.', model='fixture',
+                   strategy='best-first', history_mode='compact'), Terminal())
+    root = next(tmp_path.rglob('manifest.json')).parent
+    events = [json.loads(line) for line in (root / 'trajectory.jsonl').read_text().splitlines()]
+    calls = [event for event in events if event['kind'] == 'workflow.verifier_call']
+    assert len(calls) == state.verifier_calls == 2
+    assert [event['payload']['official_check_number'] for event in calls] == [1, 2]
+    assert json.loads((root / 'strategy.json').read_text())['verifier_call_journal'] is True
