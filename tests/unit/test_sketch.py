@@ -769,7 +769,8 @@ def test_events_that_are_not_a_list_of_objects_are_a_finding_not_a_crash(tmp_pat
         assert any("events are not a list of objects" in issue for issue in issues)
 
 
-def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+@pytest.mark.parametrize("stage", ["exchange", "closers", None])
+def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_request: Request, lean: LeanTools, stage: str | None) -> None:
     """A run that submits and then declines the next turn has closers disabled.
 
     Counting every `declined_turn` as a closer event made the audit refuse an
@@ -786,9 +787,19 @@ def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_re
         "mathlib_revision": "b" * 40,
         "lake_manifest_sha256": "c" * 64,
     }
+    class Declining(FakeRuntime):
+        def ask(self, text: str) -> str:
+            result = super().ask(text)
+            self.context["observe"]({
+                "type": "declined_turn",
+                **({"stage": stage} if stage is not None else {}),
+                "why": "a submission was accepted and audited; the run needs no further turn",
+            })
+            return result
+
     run(
         proof_request,
-        factory([call("submit_proof", {"proof": "by exact True.intro"})]),
+        lambda model=None, **context: Declining([call("submit_proof", {"proof": "by exact True.intro"})], **context),
         lean,
         tmp_path,
         toolchain=toolchain,
@@ -796,36 +807,24 @@ def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_re
     path = tmp_path / "trajectory.json"
     record = json.loads(path.read_text(encoding="utf-8"))
     assert record["closers"]["enabled"] is False
-    record["events"].append({
-        "type": "declined_turn",
-        "stage": "exchange",
-        "why": "a submission was accepted and audited; the run has its result and needs no further turn",
-    })
-    path.write_text(json.dumps(record), encoding="utf-8")
-
-    assert acceptance.validate_batch_consistency(tmp_path) == ()
-
-    # And a decline that *does* claim the ladder is still refused there, so the
-    # rule is narrower rather than weaker -- including one with no stage at all,
-    # which is what every decline in a record from before the gate existed was.
-    for decline in ({"stage": "closers"}, {}):
-        record["events"][-1] = {
-            "type": "declined_turn",
-            **decline,
-            "why": "closed by `rfl` before a model turn was spent",
-        }
-        path.write_text(json.dumps(record), encoding="utf-8")
-        issues = acceptance.validate_batch_consistency(tmp_path)
+    assert record["events"][-1]["type"] == "declined_turn"
+    issues = acceptance.validate_batch_consistency(tmp_path)
+    assert not any("attempt journal" in issue for issue in issues)
+    if stage == "exchange":
+        assert issues == ()
+    else:
+        # An actual recorded decline claiming the disabled ladder is invalid,
+        # including the missing-stage shape of historical SDK reports.
         assert any("closers are recorded as disabled" in issue for issue in issues)
 
 
-def test_a_failed_run_clears_the_previous_run_s_proof(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
-    """An output directory is reusable, and `hardy-output` is the default.
+def test_a_failed_run_clears_a_loose_stale_proof(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """A fresh attempt must not inherit a loose proof from an earlier run.
 
-    A failed run following a verified one left the earlier `proof.lean` beside
-    a `result.json` saying no completed artifact was produced -- the directory
-    showing a checked proof of the previous run's statement as though it
-    belonged to this one, which the audit then refused the record for.
+    Completed attempt directories are immutable and separately tested to
+    refuse reuse. A directory with only a copied proof has no attempt yet;
+    its failed run must remove that stale artifact without altering the
+    earlier run that actually verified it.
     """
     import importlib
 
@@ -836,24 +835,30 @@ def test_a_failed_run_clears_the_previous_run_s_proof(tmp_path: Path, proof_requ
         "mathlib_revision": "b" * 40,
         "lake_manifest_sha256": "c" * 64,
     }
+    previous, output = tmp_path / "previous", tmp_path / "fresh"
     verified = run(
         proof_request,
         factory([call("submit_proof", {"proof": "by exact True.intro"})]),
         lean,
-        tmp_path,
+        previous,
         toolchain=toolchain,
     )
     assert verified.terminal_reason == "verified"
-    assert (tmp_path / "proof.lean").exists()
+    proof = (previous / "proof.lean").read_bytes()
+    before = {p.relative_to(previous): p.read_bytes() for p in previous.rglob("*") if p.is_file()}
+    output.mkdir()
+    (output / "proof.lean").write_bytes(proof)
 
     failed = run(
         proof_request,
         factory([call("check_proof", {"proof": "by exact True.intro"})]),
         lean,
-        tmp_path,
+        output,
         toolchain=toolchain,
     )
 
     assert failed.terminal_reason == "no_proof_submitted"
-    assert not (tmp_path / "proof.lean").exists()
-    assert acceptance.validate_batch_consistency(tmp_path) == ()
+    assert not (output / "proof.lean").exists()
+    assert acceptance.validate_batch_consistency(output) == ()
+    assert acceptance.validate_batch_consistency(previous) == ()
+    assert {p.relative_to(previous): p.read_bytes() for p in previous.rglob("*") if p.is_file()} == before
