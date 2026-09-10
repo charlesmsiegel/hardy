@@ -7,7 +7,7 @@ Their full hermetic landing gates passed. Continue with the remaining X, S and V
 with satisfied dependencies. **E1/E3/E4 have automated acceptance; E0/E2 remain deferred.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 Sections X7-X9, F4, F5 and V4-V10, and the independent-verifier lead recorded under S2,
-come from retired design documents: they describe designs those documents specified and
+come from retired design documents, plans, and reports: they describe designs those sources specified and
 nobody built. All of them are not started, and each states its own dependencies.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
@@ -238,9 +238,8 @@ not resolve them or widen trust. Project-aware Prove input and other workflow ca
 are later B/D integration. For direct contextual, persistence, reader, verifier and MCP
 coverage, run:
 
-```
-uv run --extra test pytest tests/unit/test_formalization.py tests/unit/test_faithfulness.py \
-  tests/tui/test_prove_command.py tests/unit/test_workflow.py tests/unit/test_workflow_modulo.py -q
+```text
+uv run --extra test pytest tests/unit/test_formalization.py tests/unit/test_faithfulness.py tests/tui/test_prove_command.py tests/unit/test_workflow.py tests/unit/test_workflow_modulo.py -q
 ```
 
 Extract one reusable formalization path over existing Lean checking and independent faithfulness review. It must work without a `MathematicsSession` and be reused by Prove, Research, Referee, Critique probing, and citation-contract construction.
@@ -1294,7 +1293,7 @@ First measure whether verified Lean + project ledger + retrieval index already s
 
 ## H2 — Contamination-aware evaluation — P1
 
-**Status:** Implemented: immutable retrieval/exposure conditions, owner-bound actual forwarding receipts and separate exact-repeat, related-transfer, declared-local-held-out and unknown cohorts.
+**Status:** Implemented: immutable retrieval/exposure conditions, owner-bound actual forwarding receipts and separate exact-repeat, related-transfer, declared-local-held-out and unknown cohorts. Local completeness says nothing about provider pretraining.
 
 **Deps:** H0/H1 + eval identity
 
@@ -1325,7 +1324,7 @@ A conversation fork does not automatically fork the mathematical context; a math
 
 ## I1 — Prompt templates/project commands — P2
 
-**Status:** Implemented: bundled audit/formalize/publish/restyle requests use existing project templates and recorded transcript input; project overrides remain supported.
+**Status:** Implemented: bundled audit/formalize/publish/restyle requests use existing project templates and recorded transcript input; project overrides remain supported. A `/publish` request prepares a local draft and does not implement the deferred publication wiring.
 
 Useful conveniences such as `/audit`, `/formalize`, `/publish`, `/restyle`. Expanded text is transcript input, never evidence.
 
@@ -1345,7 +1344,7 @@ These tasks run alongside the core and should be added as the corresponding prim
 
 ## V0 — Acceptance fixtures for every new primitive — P0
 
-**Status:** Ongoing obligation. The current acceptance fixtures map every shipped primitive, including the I lane and X6; they do not accept future behavior or the deferred Core E trials.
+**Status:** Ongoing obligation. The current acceptance fixtures map the shipped primitives, including the I lane and X6; they do not accept future behavior or the deferred Core E trials.
 
 Add deterministic fixtures as each primitive lands: ledger/policy, concept/representation semantics, declaration/context/notation semantics, research-goal/conjecture/approach semantics, representation resolution, context branching, transport/WLOG justification, arbitrary-vs-chosen declarations, scope protection, acquisition, citation contracts, publication, Critique/Repair, Explore representation refinement, `Let X be ...` workflows, counterexamples, and Referee coverage.
 
@@ -1412,7 +1411,7 @@ watches. What a hermetic run cannot report is drift since recording, which is wh
 
 ## V5 — Corpus fixtures and antecedent policy enforcement — P1
 
-**Deps:** the active corpus schema; A4 and A5 sweeps
+**Deps:** the active corpus schema; the fixture consistency and strength sweeps
 
 **Status:** Not started.
 
