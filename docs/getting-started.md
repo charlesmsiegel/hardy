@@ -142,8 +142,10 @@ sqrt(3) is irrational.`), and its `manifest.json` carries
 `"formal": "kernel_verified"` and `"faithfulness": "user_approved"`. Compare
 the run you just made against this one: same claim, same shape of
 directory, and grades that should read the same way if your Lean and
-Mathlib pin match the ones this recording names.
-<!-- relink to guides/proving.md once it exists -->
+Mathlib pin match the ones this recording names. See
+[Proving a claim](guides/proving.md) for the rest of what `hardy prove`
+can do: strategies, declared assumptions, the faithfulness reader, both
+backends, and the checked-in acceptance set.
 
 ## 5. Recheck a recorded run without a model
 
