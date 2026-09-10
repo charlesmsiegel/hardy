@@ -14,24 +14,49 @@ subprocesses, a durable transcript, explicit assumption approval, and a manifest
 linking formal names to LaTeX labels. Continue optimizing for
 learning and add abstraction only after an experiment exposes a real seam.
 
-## Core A shared primitives
+## Core A and B shared project primitives
 
-Core A freezes seams that later project workflows can share without claiming that
-the project architecture already exists. Immutable ledger values carry derived
+Core A freezes seams shared by the Core B project operations. Immutable ledger values carry derived
 content identities and exact references for items, contexts, bindings,
 obligations, relations, scopes, evidence, and publication contracts. Constructors
 check their own shape; they do not verify cross-record history, mathematical
-truth, evidence, or acceptance decisions.
+truth, evidence, or acceptance decisions. Core B's `workflows/ledger/store.py`
+persists those values in an append-only project `ledger/`, separate from
+`session.json`. Each atomic transaction is serialized under a writer lock and
+replayed with schema, reference, ownership and history checks; stale writers,
+corrupt events and sequence gaps are refused. Mathematical contexts, declarations
+and bindings keep immutable identities; extensions create children.
+
+`ledger/graph.py` provides exact-version dependency and reverse closures, paths,
+cycles, blockers, context ancestry, minimal declaration/convention closure and
+research relationships. Adding a representation or child context does not change
+an earlier result's pinned dependencies. `ledger/policy.py` separates structure
+from authority: injected capability readers must authenticate exact evidence and
+acceptance decisions, including after restart. Missing authentication denies
+acceptance. Local hypotheses remain conditional mathematical context, and
+transport must be justified for the particular mapping. `ledger/views.py` derives
+research/context, representation, obligation, trust, coverage, stale-artifact and
+publication-readiness reports from the snapshot and policy.
 
 The shared formalization operation can consume an optional caller-supplied
 semantic context. It freezes exact source records and generated Lean-binder
 origins into its contextual identity, sends the frozen projection to the
 independent reader, and returns typed declaration, representation, or transport
 obligations when supplied prerequisites are missing or stale. The standalone
-Prove request and its legacy context-free frozen hashes remain unchanged. Core B
-will own persistent records, reachability and minimal-closure discovery,
-representation adequacy, and transport/acceptance decisions; there is no
-project-aware Prove UI yet.
+Prove request and its legacy context-free frozen hashes remain unchanged.
+`workflows/context.py` accepts model-normalized semantic inputs for declarations,
+local hypotheses, choices, aliases, conventions and transport children. It can
+activate ancestors and fork siblings without erasing history, project the graph's
+minimal recorded closure into A2, and request materialization through an injected
+operation while retaining unresolved typed prerequisites.
+
+`workflows/representation.py` composes injected local/Mathlib search, a structured
+model decision and optional materialization. It works with or without a target
+theorem, records model/configuration identity and inspectable reasons/assumptions,
+and persists exact `interprets`, `uses` and `refines` relations. A stronger plan
+gets a new identity; changing the interpretation of an existing exact use requires
+revising that use. The weakest adequate choice is the model's assessment, not a
+kernel certificate of mathematical meaning.
 
 Admission policy is likewise shared but staged: it owns request categories,
 exact scope checks, evidence/probe decisions, and caller-preauthorized
@@ -43,8 +68,11 @@ self-grade. A5 inventories literal manuscript sections, conservative source
 blocks, labels, citations, spans, and digests from supplied text. It does not
 read paths, execute TeX, expand macros, or decide semantic claim boundaries.
 
-These seams test mechanisms and import ownership; they add no execution
-isolation and establish no mathematical benchmark improvement. The exact
+Hermetic tests exercise these mechanisms, persistence/restart and import ownership.
+Production capability readers, model/search adapters and CLI/UI wiring for the
+new project operations remain unconfigured; later workflow and integration stages
+will connect them. There is no project-aware Prove UI yet. Core B adds no live
+model/Lean validation, execution isolation or mathematical benchmark improvement. The exact
 implementation status and later owners are maintained in
 [docs/roadmap.md](docs/roadmap.md).
 

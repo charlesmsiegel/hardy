@@ -266,7 +266,8 @@ quarantine and admission/save rollback. CLI structural checks and Prove refutati
 share the policy for caller-preauthorized `--assume` input without new gates or
 prompts. Paper approvals carry an exact inventoried-excerpt artifact identity.
 Direct policy and existing admission regressions cover these boundaries; B2's
-authenticated scope/evidence enforcement remains unimplemented.
+authenticated scope/evidence enforcement is now implemented for ledger callers;
+production admission-reader adapters remain part of later workflow integration.
 
 Extract policy from interactive admission. Generic policy owns search-first evidence, elaboration/shape checks, cheap proof/refutation/vacuity probes, source/faithfulness checks, and scope legality. Interactive code remains the human-confirmation/transcript adapter.
 
@@ -455,7 +456,7 @@ explicit context closure, research neighborhoods and authenticated transport pat
 share the same snapshot. Reverse impact includes descendants and items established
 in changed transport contexts without pulling every ambient declaration into a
 minimal context. Recorded statuses do not authenticate resolution. Run
-`uv run --extra test pytest tests/unit/test_ledger_graph.py -q` (19 tests).
+`uv run --extra test pytest tests/unit/test_ledger_graph.py -q` (25 tests).
 Research links retain chronological assessments across a stable approach identity
 in its exact context, so a blocked/revived approach and its products remain
 discoverable without rewriting historical goal or product references.
@@ -510,6 +511,18 @@ Also enforce:
 ## B3 — Ledger derived views — P0
 
 **Deps:** A0; finalize against B1
+
+**Status: implemented (2026-09-10).** `ledger/views.py` derives context,
+research/history, representation, obligation, trust, coverage, stale-artifact and
+publication reports from exact snapshots and authenticated policy. Failed/blocked
+approach revisions remain visible; resolving a goal closes research work without
+making the goal a premise. Trust reports use authenticated audited assumptions,
+separately showing local context and unaccepted external proposals. Unread attached
+citation contracts block readiness even without a separately scheduled obligation.
+The synthetic acceptance fixture exercises persistent contexts, representations,
+research/transport and restart, including positive authentication with explicitly
+labelled test capability stand-ins. Run
+`uv run --extra test pytest tests/unit/test_ledger_views.py tests/unit/test_core_b_acceptance.py -q`.
 
 Pure views for status, active mathematical context/declarations/bindings, open questions/conjectures/goals, approach status/reasons, concepts and known representations, unresolved declaration/representation/transport obligations, trust boundary, formalization/citation coverage, blockers, stale artifacts, and publication readiness.
 
@@ -1051,7 +1064,7 @@ Import miniF2F/PutnamBench/ProofNet byte-exactly for external comparability. Har
 
 # Development parallelism
 
-The initial implementation fan-out is now intentionally centered on Core A:
+The completed Core A implementation fan-out established these seams:
 
 ```text
 Agent 1   A0 ledger contracts, including concept/representation/declaration/context/research ontology
@@ -1075,13 +1088,11 @@ Agent 13  X5 budget accounting
 Agent 14  X6 eval identity/journal residual audit
 ```
 
-**When a future implementation pass starts Core B after its own authorization,**
-B0/B1/B2/B3/B4/B5 may begin concurrently once their own dependencies permit.
-They need not wait for unrelated X/S tasks or unrelated A tasks. This is a
-scheduling qualification, not an instruction to start B work from the completed
-Core A branch.
+**The authorized Core B pass implements B0/B1/B2/B3/B4/B5** against those seams.
+Independent tasks proceed once their own dependencies permit, without waiting
+for unrelated X/S tasks. Core C remains outside this pass.
 
-A2 can be extracted in parallel with the ledger and wired to B4/B5 as those land; representation/context resolution need not become a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
+A2 is shared by the new B5 projection; B4 representation decisions remain an optional semantic step, not a mandatory separate model call for every statement. Goal/conjecture/approach operations remain ledger operations behind A0/B0-B3 rather than a new module unless implementation exposes a real seam.
 
 As soon as the needed A/B dependencies land, run C0/C1/C2/C5 concurrently. Start C4 with fake resolvers after C0 and register concrete resolvers as they arrive. C3 follows B4 + C1.
 

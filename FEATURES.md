@@ -27,8 +27,9 @@ interactive surface's own live run is still to come.
   algorithms. Interactive effects remain in adapters; explicit staged `--assume`
   input uses shared structural/refutation checks without new prompts. Paper
   approvals retain an exact inventoried-excerpt identity. Local context and
-  research conjectures do not widen global trust; B2 ledger enforcement remains
-  future work.
+  research conjectures do not widen global trust. B2 now enforces this distinction
+  for callers of the shared project ledger; its production capability adapters
+  and interactive wiring remain unconfigured.
 - Core A shared contracts add immutable exact-reference ledger values and import
   boundaries; optional direct contextual formalization callers bind source
   records and generated binder origins into their identity while the legacy
@@ -38,9 +39,28 @@ interactive surface's own live run is still to come.
   prerequisites return typed obligations. The strategy protocol is bounded and
   descriptive only, and the manuscript inventory reports literal spans/digests,
   sections, conservative blocks, labels and citations without reading paths,
-  executing TeX, expanding macros, or judging mathematical claims. There is no
-  persistent project store, graph/resolution engine, project-aware Prove UI, or
-  new execution isolation.
+  executing TeX, expanding macros, or judging mathematical claims.
+- Core B adds reusable persistent project operations: an append-only `ledger/`
+  separate from `session.json`, atomic transactions with stale-writer refusal,
+  exact history and validated restart; pure dependency/context/research graph
+  queries; and policy-aware views of representations, blockers, trust, coverage,
+  stale artifacts and publication readiness. Acceptance defaults to denial unless
+  injected capability readers authenticate exact evidence and decisions again
+  on use. A recorded status or model assessment cannot certify a result.
+- The semantic context manager accepts normalized declarations, local hypotheses,
+  choices, scoped bindings and transport children; ancestor activation and sibling
+  forks preserve history. It projects the minimal recorded declaration/convention
+  closure into A2 and retains typed prerequisites during optional materialization.
+  Representation resolution accepts injected local/Mathlib search, structured
+  model decisions and optional materialization, with or without a target theorem.
+  It records model/configuration identity, reasons, assumptions and exact
+  `interprets`/`uses`/`refines` links; stronger structure gets a new representation
+  identity. Mathematical adequacy remains an inspectable model assessment.
+- Core B is covered by hermetic persistence and integration tests. Production
+  capability readers, model/search adapters and CLI/UI wiring for these new
+  project operations remain unconfigured and belong to later workflow/integration
+  stages. There is no project-aware Prove UI, new live model/Lean validation,
+  performance claim or execution isolation from this work.
 - Algebra backend/kernel/session/replay/script owners and literature
   metadata/library/client/archive/inventory owners. `app` owns CLI/MCP entry
   points, `app/tui`, configuration, setup, project construction and terminal

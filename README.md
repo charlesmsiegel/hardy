@@ -66,17 +66,28 @@ owning packages. Pure evidence readers do not import run launchers. See
 [the architecture map](ARCHITECTURE.html). These boundaries do not provide
 execution isolation.
 
-Core A also supplies shared, immutable seams for the next project architecture:
-exactly referenced ledger records and contexts, a reusable formalization path,
-session-free admission policy, bounded strategy values, and a mechanical
-manuscript-source inventory. They are contracts, not a project store or a new
-project-aware Prove interface. Core B remains responsible for persistence,
-graph and context resolution, acceptance and representation policy; a missing
-semantic prerequisite is returned as a typed obligation rather than assumed.
-Contextual formalization binds exact semantic sources and generated binder
-origins into its hash, while the legacy context-free frozen hash is unchanged.
-The inventory records literal source spans and digests only; it neither executes
-TeX nor judges a paper's mathematics. See [the Core A roadmap](docs/roadmap.md).
+Core A and B supply reusable mathematical project operations. An append-only
+project `ledger/`, separate from `session.json`, commits atomic transactions and
+preserves exact record history across restarts. Pure graph queries and views
+expose dependencies, contexts, representations, blockers, trust, coverage and
+publication readiness. Acceptance is denied unless injected capability readers
+authenticate the exact evidence and decision; recorded status alone is not proof.
+
+The context manager accepts normalized declarations, hypotheses, bindings and
+forks, and projects the minimal recorded dependency closure into contextual
+formalization. Missing prerequisites remain typed obligations. Representation
+resolution uses injected local/Mathlib search, structured model decisions and
+optional materialization, recording model/configuration identity, reasons and
+assumptions without certifying mathematical interpretation. Contextual
+formalization binds exact sources and generated binder origins into its hash;
+legacy context-free hashes remain unchanged.
+
+These primitives have hermetic persistence and integration tests. Production
+capability readers, model/search adapters and CLI/UI wiring for the new project
+operations remain unconfigured and belong to later workflow and integration
+stages. Core B adds no live model/Lean validation, performance result or execution
+isolation. Core A's bounded strategy contracts and literal manuscript inventory
+remain available. See the [roadmap](docs/roadmap.md).
 
 ## What this cannot establish
 
