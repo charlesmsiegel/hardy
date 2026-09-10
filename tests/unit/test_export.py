@@ -1466,3 +1466,25 @@ def test_a_tool_call_that_finished_is_not_also_shown_as_unfinished():
         ]
     )
     assert "never finished" not in page
+
+
+def test_a_new_turns_tool_result_does_not_finish_a_crashed_turns_call():
+    events = [
+        {"type": "tool_started", "name": "check_lean", "arguments": {"module": "Old"}},
+        {"type": "user", "message": {"content": "Try again"}},
+        {"type": "tool_started", "name": "check_lean", "arguments": {"module": "New"}},
+        {"type": "tool", "name": "check_lean", "arguments": {"module": "New"}},
+    ]
+    assert export._unfinished(events) == {0}
+
+
+def test_tool_results_identify_the_call_even_across_turns():
+    events = [
+        {"type": "tool_started", "name": "check_lean", "call_id": "old"},
+        {"type": "user", "message": {"content": "Try again"}},
+        {"type": "tool_started", "name": "check_lean", "call_id": "new"},
+        {"type": "tool", "name": "check_lean", "call_id": "new"},
+    ]
+    assert export._unfinished(events) == {0}
+    events.append({"type": "tool", "name": "check_lean", "call_id": "old"})
+    assert export._unfinished(events) == set()

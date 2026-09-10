@@ -655,6 +655,32 @@ def test_drawn_text_is_checkpointed_while_its_block_is_still_being_written():
     ]
 
 
+def test_a_stalled_stream_checkpoints_without_another_delta():
+    saved = threading.Event()
+    seen = []
+
+    def observe(event):
+        seen.append(event)
+        if event.get("checkpoint"):
+            saved.set()
+
+    live, _ = wired(
+        [StreamEvent("Visible words"), ResultMessage()],
+        stall_after=1,
+        observe=observe,
+        checkpoint_seconds=0.02,
+    )
+    events = live.stream("go")
+    try:
+        assert next(events).text == "Visible words"
+        assert saved.wait(2), "stalled provider left displayed words unrecorded"
+        assert checkpoint("Visible words") in seen
+    finally:
+        live.cancel()
+        list(events)
+        assert live.settle()
+
+
 def test_checkpoints_are_paced_by_the_interval_and_not_per_delta():
     """Per delta would write a line per token. The interval is what makes the
     checkpoint cheap enough to leave on, and a turn shorter than one interval
