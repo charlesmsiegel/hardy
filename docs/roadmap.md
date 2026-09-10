@@ -2,8 +2,8 @@
 
 **Status:** canonical implementation backlog
 
-**Current execution scope (2026-09-10):** Core A-D, Core F-G and X1 are implemented.
-Their full hermetic landing gates passed. Continue with Core H and remaining sections
+**Current execution scope (2026-09-10):** Core A-D, Core F-H and X1 are implemented.
+Their full hermetic landing gates passed. Continue with Core I and remaining sections
 with satisfied dependencies. **Skip all of Core E pending human input.** Keep an individual
 tested commit for each item and require clean tests before landing each branch.
 
@@ -1069,6 +1069,8 @@ recording fresh authorship without inheriting the old text's evidence.
 
 ## H0 — Project/shared-library retrieval source — P1
 
+**Status:** Implemented: content-identified project/shared-library index and bounded delivery with current evidence, scope, context, artifact and environment authentication. See the [Core H verification report](superpowers/reports/2026-09-10-core-h.md).
+
 **Deps:** A0/B0 + stable project artifacts
 
 Index verified project/shared Lean declarations, clearly separated approved external assumptions, concise concept/representation/context summaries, open goal/conjecture summaries, and durable high-level approach/dead-end summaries from the project ledger. Keep provenance and distinguish project semantics from formal evidence. The index is derived/rebuildable.
@@ -1077,11 +1079,15 @@ Do not treat transient local symbols as globally reusable concepts merely becaus
 
 ## H1 — Re-evaluate whether a separate proof-memory store is needed — P1
 
+**Status:** Implemented: six-category deterministic ledger/index restart fixture; the measured cases do not justify an additional memory store. No live-model gain is claimed. See the [Core H verification report](superpowers/reports/2026-09-10-core-h.md).
+
 **Deps:** H0 + ledger
 
 First measure whether verified Lean + project ledger + retrieval index already solves repeated-lemma, concept, representation, context, goal, and high-level approach reuse. Only build a distinct memory subsystem if a residual category (for example portable tactic/strategy lessons) actually needs its own lifetime/API.
 
 ## H2 — Contamination-aware evaluation — P1
+
+**Status:** Implemented: immutable retrieval/exposure conditions, owner-bound actual forwarding receipts and separate exact-repeat, related-transfer, declared-local-held-out and unknown cohorts. See the [Core H verification report](superpowers/reports/2026-09-10-core-h.md).
 
 **Deps:** H0/H1 + eval identity
 

@@ -212,7 +212,8 @@
   "live_model_performance": "unmeasured",
   "measurement": "Deterministic context discovery and delivery after ledger/index restart; no proof search.",
   "source_sha256": {
-    "src/hardy/workflows/retrieval.py": "17a6f88a3c94019aba05ddb8c5eef31ca101a9042f4c7cb4e6dcd16953a97540",
+    "src/hardy/workflows/retrieval.py": "25674fa2f3121033f3a230c54b9fdedaa33f25231bfe3d11b65ff298c3afce91",
     "tests/unit/test_project_reuse.py": "17cf8c900da5e45740b593e39cdafe3905f8e7e8b624357c5b0a518133dcd4ba"
-  }
+  },
+  "source_hash_encoding": "UTF-8 with universal newlines normalized to LF"
 }

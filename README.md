@@ -128,6 +128,13 @@ reopen affected work while preserving unaffected verification and history.
 Publication containment does not add mathematical dependencies, and only an
 explicit refresh request rewrites stale prose.
 
+Core H adds a rebuildable project/shared-library index with exact provenance,
+scoped discovery and current proof-authority checks at delivery. Its bounded
+restart fixture covers six reuse categories without adding another memory store.
+Evaluation exposure binds the frozen retrieval plan and actual forwarded context
+to each run, separating exact repeat, related transfer, declared local held-out
+and unknown exposure. This does not establish unseen provider training data.
+
 ## What this cannot establish
 
 The audit is elaborated by an environment the audited source could have extended.

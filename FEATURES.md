@@ -127,6 +127,18 @@ interactive surface's own live run is still to come.
 These are shared workflow APIs with deterministic acceptance fixtures. Core E's
 human-guided paper trials and interactive publication wiring remain deferred.
 
+### Core H retrieval and reuse APIs
+
+- Rebuildable project/shared-library discovery retains exact source identity,
+  scoped aliases, context members, goals and historical approach assessments.
+  Formal delivery reauthenticates evidence, artifacts and environment at use.
+- A deterministic restart fixture measures six reuse categories and records its
+  source hashes. It supports the current storage design for those cases; live
+  model gains remain unmeasured.
+- Evaluation exposure records the frozen retrieval plan and actual forwarded
+  context. Exact-repeat, related-transfer, declared-local-held-out and unknown
+  cohorts remain separate; missing exposure cannot count as held-out evidence.
+
 ## Interactive exploration
 
 - **Now (implemented):** running `hardy` starts a persistent terminal conversation

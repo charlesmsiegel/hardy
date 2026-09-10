@@ -220,6 +220,30 @@ prose; one revision-checked append writes it and retargets the link. Old text's
 evidence is not inherited, all history remains available, and mathematical edits
 alone invoke no prose operation.
 
+## Core H retrieval and evaluation exposure
+
+`workflows/retrieval.py` derives a serializable, content-identified index from
+explicit project and shared-library snapshots. Missing stores remain distinct
+from empty stores. Exact IDs and scoped aliases rank first; formal declarations,
+approved assumptions, semantic records, goals and approaches remain distinct.
+Delivery rechecks current ledger policy, exact scope/context, source identity,
+artifact bytes, environment and importability through named capability readers.
+Shared-library delivery additionally requires an explicit project authorization
+bridge. The complete accepted payload is bounded; rejected diagnostics never
+consume the delivery budget. Historical blocked reasons remain labelled history.
+
+H1's deterministic ledger/index restart fixture recovers six category expectations
+with retrieval enabled and none without it. It measures context delivery, with
+scripted capability readers and no provider or Lean process calls. This evidence
+justifies retaining the current stores for these cases, not a general memory claim.
+
+`evals/exposure.py` freezes source/index/query settings and declared split families
+in run identity. Owner-written forwarding records bind exact delivered bytes to
+actual provider input and the run trajectory. Auditing distinguishes exact repeat,
+related transfer, declared local held-out and unknown exposure. Missing coverage,
+truncation, incomplete journals or untracked provider context prevent a held-out
+claim. Local source completeness says nothing about provider pretraining.
+
 ## Output contract
 
 A full Prove run aims to produce two linked artifacts:

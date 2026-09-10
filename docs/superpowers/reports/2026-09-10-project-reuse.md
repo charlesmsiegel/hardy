@@ -30,7 +30,8 @@ Lean process calls are zero; no cost or theorem-success improvement is inferred.
 [Machine-readable results](2026-09-10-project-reuse.json) retain exact targets,
 delivered references, source/index identities and fixture/retrieval source hashes.
 The JSON is regenerated after retrieval review fixes; the committed evidence must
-match those hashes.
+match those hashes (UTF-8 text with newlines normalized to LF, so Git checkout
+line endings do not change source identity).
 
 Portable tactic/solver lessons already have F3's run-artifact and replay API.
 That lifetime differs from semantic concepts, contexts, goals and approaches, but

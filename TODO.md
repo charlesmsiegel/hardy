@@ -4,8 +4,8 @@ Checked against the roadmap on 2026-09-10. This is a navigation and scheduling
 index into the canonical [roadmap](docs/roadmap.md); its task definitions,
 acceptance criteria, priorities, and dependency qualifications remain authoritative.
 
-**Completed: 38 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3 and X1).**
-Checkmarks mean the roadmap records the item as implemented. Core D, F and G passed their full hermetic landing gates. Unchecked items
+**Completed: 41 of 63 implementation/lane items (A0-A5, B0-B5, C0-C6, D0-D9, F0-F3, G0-G3, H0-H2 and X1).**
+Checkmarks mean the roadmap records the item as implemented. Core D, F, G and H passed their full hermetic landing gates. Unchecked items
 are planned, ongoing, or not yet accepted in full. Update this index alongside
 roadmap status changes. Defects remain in GitHub Issues.
 
@@ -20,10 +20,12 @@ Core F and X1 verification is tracked in the
 Core G verification and integration limits are in the
 [Core G report](docs/superpowers/reports/2026-09-10-core-g.md).
 
+Core H verification and measurement limits are in the
+[Core H report](docs/superpowers/reports/2026-09-10-core-h.md).
+
 ## Available next work
 
-Continue with Core H, then eligible I
-work. **Skip all of Core E pending human input.** Independent X, S and V work
+Continue with eligible Core I work. **Skip all of Core E pending human input.** Independent X, S and V work
 retains its own dependencies; X1 supports strategy comparison and X5 supports
 fixed token/cost budgets.
 
@@ -156,9 +158,9 @@ flowchart LR
 
 ## Core H: retrieval and reuse
 
-- [ ] [H0 - Project/shared-library retrieval source - P1](docs/roadmap.md#h0--projectshared-library-retrieval-source--p1) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0)/[B0](docs/roadmap.md#b0--ledger-event-store--p0) + stable project artifacts.
-- [ ] [H1 - Re-evaluate whether a separate proof-memory store is needed - P1](docs/roadmap.md#h1--re-evaluate-whether-a-separate-proof-memory-store-is-needed--p1) - Deps: [H0](docs/roadmap.md#h0--projectshared-library-retrieval-source--p1) + ledger.
-- [ ] [H2 - Contamination-aware evaluation - P1](docs/roadmap.md#h2--contamination-aware-evaluation--p1) - Deps: [H0](docs/roadmap.md#h0--projectshared-library-retrieval-source--p1)/[H1](docs/roadmap.md#h1--re-evaluate-whether-a-separate-proof-memory-store-is-needed--p1) + eval identity.
+- [x] [H0 - Project/shared-library retrieval source - P1](docs/roadmap.md#h0--projectshared-library-retrieval-source--p1) - Deps: [A0](docs/roadmap.md#a0--ledger-contracts--p0)/[B0](docs/roadmap.md#b0--ledger-event-store--p0) + stable project artifacts.
+- [x] [H1 - Re-evaluate whether a separate proof-memory store is needed - P1](docs/roadmap.md#h1--re-evaluate-whether-a-separate-proof-memory-store-is-needed--p1) - Deps: [H0](docs/roadmap.md#h0--projectshared-library-retrieval-source--p1) + ledger.
+- [x] [H2 - Contamination-aware evaluation - P1](docs/roadmap.md#h2--contamination-aware-evaluation--p1) - Deps: [H0](docs/roadmap.md#h0--projectshared-library-retrieval-source--p1)/[H1](docs/roadmap.md#h1--re-evaluate-whether-a-separate-proof-memory-store-is-needed--p1) + eval identity.
 
 ## Core I: interactive ergonomics
 
