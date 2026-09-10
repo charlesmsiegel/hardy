@@ -36,6 +36,7 @@ from hardy.workflows.critique import (
 )
 from hardy.workflows.formalization import SemanticRequirement
 from hardy.workflows.ledger.contracts import (
+    ArtifactRef,
     CitationContract,
     MathematicalContext,
     Obligation,
@@ -240,8 +241,20 @@ class RefereeWorkflow:
             ):
                 raise ValueError("citation obligation identity refers to different work")
             work = existing
-        if existing is None:
-            snapshot = self.store.append((work,), expected_revision=snapshot.revision, validate=self.policy.validate)
+        # The digest identifies a use but cannot reconstruct it. Persist its
+        # exact manuscript owner and source span for later version auditing.
+        use_link = Relation(id=identity + ":use", kind="cites", source=use.use_site,
+            target=work.ref, artifacts=(ArtifactRef(uri="manuscript:" + use.span.path,
+                digest=use.span.digest, locator=f"{use.span.start}:{use.span.end}"),))
+        old_link = next((r for r in snapshot.current(Relation) if r.id == use_link.id), None)
+        additions = [] if existing else [work]
+        if old_link is None:
+            additions.append(use_link)
+        elif (old_link.kind, old_link.source, old_link.target.id, old_link.artifacts) != (
+                use_link.kind, use_link.source, work.id, use_link.artifacts):
+            raise ValueError("citation use association changed identity")
+        if additions:
+            snapshot = self.store.append(additions, expected_revision=snapshot.revision, validate=self.policy.validate)
         if self.resolve_citation is None or self._accepted(snapshot, work):
             return work.ref
         result = self.resolve_citation(snapshot, work)
