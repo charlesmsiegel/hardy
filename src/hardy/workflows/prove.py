@@ -19,7 +19,6 @@ model its proving time.
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 import time
 from collections.abc import Callable
@@ -41,7 +40,7 @@ from hardy.formal.contracts import (
 from hardy.formal.lean import LeanCheckResult
 from hardy.formal.verifier import VerificationResult
 from hardy.foundation.values import FrozenModel
-from hardy.prompts import PROMPT_SET_SHA256, proof_prompt, writeup_prompt
+from hardy.prompts import PROMPT_SET_SHA256, writeup_prompt
 from hardy.workflows.admission import AdmissionPolicy, refutation_probe
 from hardy.workflows.contracts import (
     FaithfulnessOutcome,
@@ -62,6 +61,8 @@ from hardy.workflows.formalization import (
     review_translation,
 )
 from hardy.workflows.storage import RunStore
+from hardy.workflows.strategies.contracts import ProofTask, run_strategy
+from hardy.workflows.strategies.iterative import IterativeStrategy
 
 ALLOWED = {
     RunPhase.SETUP: {RunPhase.FORMALIZING},
@@ -720,7 +721,7 @@ class ProveWorkflow:
                     run_dir=store.path,
                     claim=approved_claim,
                     # The thread that writes the proof gets the same declared
-                    # set the verifier will render, because `_declared_note`
+                    # set the verifier will render, because `declared_note`
                     # below tells the model they "are already in scope in the
                     # file you are proving" -- and without this they were not.
                     # The model cited one, every official check answered
@@ -729,63 +730,26 @@ class ProveWorkflow:
                     allowed=request.assumptions,
                 )
             )
-            proof_started = self._monotonic()
-            proof_request = proof_prompt(approved_claim) + _declared_note(request.assumptions)
-            last_submission = None
-            for attempt in range(self._config.limits.official_checks):
-                self._refuse_if_cancelled()
-                active_elapsed = self._monotonic() - active_started - user_wait
-                proof_elapsed = self._monotonic() - proof_started
-                if (
-                    active_elapsed >= self._config.limits.active_seconds
-                    or proof_elapsed >= self._config.limits.proof_seconds
-                ):
-                    state.transition(RunPhase.FINAL_VERIFICATION)
-                    state.transition(RunPhase.WRITEUP)
-                    terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
-                    break
-                last_submission = runtime.run_proof(active_thread, proof_request)
-                # Before the verifier rather than only after it. The check
-                # below keeps the record honest about a press that lands
-                # inside the verification; this one keeps an abandoned run
-                # from buying a verification at all, and it is Lean over the
-                # whole claim -- minutes, on a machine nobody is waiting at.
-                self._refuse_if_cancelled()
-                state.transition(RunPhase.FINAL_VERIFICATION)
-                verification = self._verifier.verify(
-                    approved_claim,
-                    last_submission.proof_body,
-                    store,
-                    allowed=request.assumptions,
-                )
-                # After the verifier, whatever it said. It runs Lean over the
-                # whole claim and can take minutes, so a press very plausibly
-                # lands inside it -- and BOTH branches below leave this loop for
-                # the writeup without passing the check at its top again. Put
-                # only on the verified branch, the rejecting one on the last
-                # attempt went to writeup with cancellation set: the runtime
-                # refused the turn, the writeup fallback caught that, compiled
-                # TeX, and graded an abandoned run `completed`.
-                self._refuse_if_cancelled()
-                if verification.verified:
-                    state.transition(RunPhase.WRITEUP)
-                    break
-                if attempt + 1 >= self._config.limits.official_checks:
-                    state.transition(RunPhase.WRITEUP)
-                    terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
-                    break
-                state.transition(RunPhase.PROVING)
-                reason = verification.reason.name if verification.reason else "UNKNOWN"
-                proof_request = (
-                    "The FinalVerifier rejected the candidate with reason "
-                    + reason
-                    + ". Repair the proof body without changing the Frozen Claim.\n"
-                    + json.dumps(
-                        verification.model_dump(mode="json"),
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    )
-                )
+            strategy = IterativeStrategy(
+                propose=lambda prompt: runtime.run_proof(active_thread, prompt),
+                verify=lambda task, submission: self._verifier.verify(
+                    task.claim, submission.proof_body, store,
+                    allowed=task.declared_assumptions,
+                ),
+                transition=state.transition,
+                check_cancelled=self._refuse_if_cancelled,
+                active_elapsed=lambda: self._monotonic() - active_started - user_wait,
+                monotonic=self._monotonic,
+            )
+            outcome = run_strategy(strategy, ProofTask(
+                claim=approved_claim,
+                declared_assumptions=request.assumptions,
+                limits=self._config.limits,
+            ))
+            last_submission = outcome.submission
+            verification = strategy.last_verification
+            if outcome.status == "exhausted":
+                terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             verified = verification is not None and verification.verified
             used = verification.assumed if verified and verification is not None else ()
             gaps = (
@@ -1039,30 +1003,6 @@ class ProveWorkflow:
         store.finalize(manifest)
         terminal.show_result(manifest)
         return manifest
-
-
-def _declared_note(assumptions: tuple[DeclaredAssumption, ...]) -> str:
-    """What the proof may stand on, told to the model that writes it.
-
-    Without this the declarations were in scope in the file and mentioned
-    nowhere in the prompt: the model had no way to know the axioms existed, so
-    a run could declare an assumption and never use it. They are named with
-    their statements and their sources, and marked as assumed rather than
-    proved, because a model that mistakes one for a proved lemma will describe
-    it as one in the writeup.
-    """
-    if not assumptions:
-        return ""
-    lines = "\n".join(
-        f"- `{item.name} : {item.statement.strip()}` (assumed from {item.source.strip()})"
-        for item in assumptions
-    )
-    return (
-        "\n\nThis run may stand on the following axioms, which are already in scope in "
-        "the file you are proving. They are ASSUMED, not proved: anything resting on one "
-        "is verified only modulo them, and the result will be graded and documented that "
-        f"way. Use them only where you need them.\n{lines}\n"
-    )
 
 
 def _artifact_hashes(run_dir: Path) -> dict[str, str]:

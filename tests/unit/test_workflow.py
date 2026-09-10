@@ -253,7 +253,7 @@ def _scripted_controller(
                     domain,
                     store,
                     claim,
-                    'theorem two_eq_two : 2 = 2 :=\nby rfl\n#print axioms two_eq_two\n',
+                    verifier_module.verification_source(claim, proof_body, allowed),
                 )
             store.write_text(PurePosixPath('lean/last-attempt.lean'), proof_body)
             result = verifier_module.VerificationResult(
@@ -380,7 +380,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
                 domain,
                 store,
                 claim,
-                'theorem two_eq_two : 2 = 2 :=\nby rfl\n#print axioms two_eq_two\n',
+                verifier_module.verification_source(claim, proof_body, allowed),
             )
 
     def build_document(claim, content, grades, verification, identities, store, **kwargs):
