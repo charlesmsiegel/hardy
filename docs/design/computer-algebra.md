@@ -35,8 +35,8 @@ instead: the chat banner (`app/tui/banner.py`), the staged run's typed
 acknowledgement (`app/terminal.py`), the MCP tool descriptions
 (`algebra/tools.py`), and the header of every exported script
 (`algebra/export.py`). Run only trusted code, in a disposable environment. See
-[security](../security.md) for the same statement beside Lean, TeX and
-downloaded archives.
+[running Hardy safely](../guides/running-safely.md) for the same statement
+beside Lean, TeX and downloaded archives.
 
 ## A persistent kernel, not replay
 
