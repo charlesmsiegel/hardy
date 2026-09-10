@@ -61,16 +61,22 @@ from a project-local file cannot be compared with one that did not.
 pathological file is capped by lines and by bytes together, head first, and the
 model is told when it is looking at a fragment.
 
-Reopening a workspace resumes the provider conversation it left off in. The two
-switches around that are per-run flags rather than settings, and each names the
-one thing it governs: `--no-project-context` governs what this run's system
-prompt carries, and `--fresh-thread` starts on a new provider conversation while
-keeping the workspace, the artifacts, the transcript and the spend ledger
-exactly as they are. Only the machine-local conversation id is discarded, and
-the discard is an event in the transcript, because a turn produced from an empty
-conversation is not comparable to one produced from a thousand-turn one. Neither
-flag persists: "always start fresh" would silently discard the conversation on
-every launch, which is not a coherent standing preference.
+Reopening a workspace resumes the provider conversation it left off in. Two
+switches sit around that, and each names the one thing it governs.
+`--no-project-context` governs what this run's system prompt carries, and it is
+one of three ways to say the same thing: the flag, `HARDY_PROJECT_CONTEXT`, or
+the `project_context` key in a config file, since whether a session reads the
+project's own instructions is a coherent standing preference
+([configuration](../reference/configuration.md#settings)). `--fresh-thread`
+starts the session on a new provider conversation while keeping the workspace,
+the artifacts, the transcript and the spend ledger exactly as they are: only the
+machine-local conversation id is discarded, and the discard is an event in the
+transcript, because a turn produced from an empty conversation is not comparable
+to one produced from a thousand-turn one. That one is deliberately a flag and
+nothing else, with no config key and no environment variable behind it, because
+"always start fresh" persisted would silently discard the conversation on every
+launch, which is not a coherent standing preference. Together the two are the
+fully clean interactive condition.
 
 ### What a project switch rebuilds and what it keeps
 
@@ -101,9 +107,14 @@ conversation of every problem visited afterwards, which is the standing
 preference the flag refuses to be. The switch itself is refused while a turn is
 running, because a running turn is appending to the record and the transcript of
 the problem it started in. It runs on a worker so the terminal stays live, and
-it is cancellable: nothing irreversible happens until one commit point, so a
-cancelled switch closes only the kernel it started and leaves the session
-exactly where it was.
+it is cancellable: the old kernel is not closed and the active project is not
+rewritten until one commit point, so a cancelled switch closes only the kernel
+it started and leaves the session exactly where it was. One thing before that
+point is bounded rather than closed: preparing the target problem's layout is
+not atomic, so a cancel arriving while it runs leaves whatever it had made by
+then. That is cheaply survivable, because Hardy recognises its own bare
+scaffold, so the name can be created again rather than being burned by the
+attempt.
 
 ## Streaming and cancellation
 
@@ -486,7 +497,7 @@ process still pays it in full. So the question is not the wall time of a call,
 which conflates the two, but the share of a run the prelude takes:
 
 ```
-recoverable = prelude x (calls - workers)
+recoverable = prelude * (calls - workers)
 ```
 
 The prelude is isolated the only way that works, by elaborating a source that
@@ -528,8 +539,9 @@ would have nothing coherent to complete: `/q` matches `exit` through `quit`, but
 `exit` does not start with `q`, so appending the canonical tail renders `/qxit`,
 while returning nothing contradicts aliases being completable. Giving each name
 its own entry means every string the suggester can match is a string the user is
-literally typing, so it only ever appends. `/help` lists canonical entries and
-mentions their aliases alongside.
+literally typing, so it only ever appends. `/help` lists the canonical
+entries only, so an alias completes at the prompt without doubling the list a
+reader has to scan.
 
 **Alt+Enter is deliberately not bound, and dropping it buys something.** A
 newline is Shift+Enter, which takes one deliberate step: the library maps the
@@ -601,17 +613,19 @@ accept a mess, and the warning says so rather than implying a clean stop.
 lookup reads contextvars.** A nested application built without explicit input
 and output devices inherits them from whatever application session is current,
 and that inheritance reads a `contextvars.Context`, which does not propagate
-across thread boundaries; worse, scheduling a coroutine onto a loop from another
-thread captures the *calling* thread's context at the moment it is invoked, not
-the loop's, even though the coroutine body later runs on the loop's thread. A
-nested application relying on ambient lookup then tries to build a real console
-output: on one platform that raises, and elsewhere it silently attaches to the
-process's actual stdio instead of the intended devices, which is worse. So a
-tool thread posts only the *coroutine* across a queue, and the drainer awaits it
-on the loop, in the loop's own context, where the application is constructed for
-the first time. The shell and the selector both accept explicit input and output
-devices as well, which is how a test injects an inspectable stream, and the
-shell holds those references for anything it builds. A discarded output cannot
-prove that a suggestion rendered dim, so appearance is asserted against a real
-virtual-terminal output over an inspectable stream and read back as escape
-sequences; behaviour alone can use a discarding one.
+across thread boundaries; worse, scheduling a coroutine onto a loop from
+another thread captures the *calling* thread's context at the moment it is
+invoked, not the loop's, even though the coroutine body later runs on the
+loop's thread. A nested application relying on ambient lookup then tries to
+build a real console output: on one platform that raises, and elsewhere it
+silently attaches to the process's actual stdio instead of the intended
+devices, which is worse. So a tool thread posts only the *coroutine* across a
+queue, and the drainer awaits it on the loop, in the loop's own context, where
+the application is constructed for the first time. The shell and the selector
+both accept explicit input and output devices as well, which is how a test
+injects an inspectable stream; the shell passes its own to the application it
+owns, while a nested one takes the ambient session that the drainer has just
+guaranteed is the right one. A discarded output cannot prove that a suggestion
+rendered dim, so appearance is asserted against a real virtual-terminal output
+over an inspectable stream and read back as escape sequences; behaviour alone
+can use a discarding one.
