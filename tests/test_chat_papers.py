@@ -506,6 +506,23 @@ def test_a_non_tex_compiler_input_is_part_of_the_writeup_signature(session) -> N
     assert session._tex_signature() != before
 
 
+def test_a_writeup_with_crlf_line_endings_is_not_stale_after_its_own_compile(session) -> None:
+    r"""The stamp hashed the bytes on disk; `_stale_writeup` hashed the text it
+    had just read, which universal newlines had already turned from `\r\n`
+    into `\n`. The two never agreed on a file carrying Windows line endings --
+    Hardy's own writes there included, since it saves in text mode -- so every
+    report was refused as compiled against a tree nobody had edited.
+    """
+    (session.workspace / "tex").mkdir(exist_ok=True)
+    (session.workspace / "tex" / "notes.tex").write_bytes(b"Carried over.\r\n")
+    saved = session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\n\\input{notes}\n\\end{document}\n"},
+    )
+    assert saved.ok, saved.output
+    assert session._stale_writeup() == []
+
+
 def test_the_compilers_own_output_is_not_part_of_that_signature(session) -> None:
     """`_copy_tree` does not hand it to TeX, so it is not what was compiled."""
     session._tool(

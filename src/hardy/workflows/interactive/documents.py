@@ -28,6 +28,27 @@ from hardy.literature.bibliography import is_generated as is_generated_bibliogra
 BUILD_DIR_TEX = ".build/tex"
 NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 
+
+def _as_snapshot(raw: bytes) -> bytes:
+    r"""`raw` as the text snapshot `_tex_sources` holds for it, re-encoded.
+
+    `_tex_signature` hashes a snapshot when it is handed one and the file on
+    disk when it is not, and the stamp is always taken from the disk. The
+    snapshot came through a text-mode read, so universal newlines had already
+    turned every `\r\n` into `\n` by the time it was hashed -- and a file
+    carrying Windows line endings, Hardy's own text-mode saves there among
+    them, never matched its own stamp. Every report was then refused as
+    compiled against a tree nobody had edited. A file that is not UTF-8 is
+    hashed as it is: the snapshot holds replacement characters for it, the
+    two disagree, and the writeup reads stale, which is the safe direction.
+    """
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    return text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+
+
 class WriteupNotSaved(ValueError):
     """The compiler accepted a source which guarded publication could not save."""
 
@@ -504,15 +525,17 @@ class DocumentService:
                 # A caller holding a snapshot of the `.tex` tree is answered
                 # from it, so its obligations all describe one moment. For a
                 # file that decodes cleanly this is the same bytes the live
-                # read below would hash; where it is not -- a `.tex` that is
-                # not UTF-8, or one deleted since the snapshot -- the two
-                # disagree and the writeup reads as stale, which is the safe
-                # direction for a comparison whose match releases a refusal.
+                # read below hashes, because `_as_snapshot` gives that read
+                # the newlines the text-mode snapshot already has; where it
+                # is not -- a `.tex` that is not UTF-8, or one deleted since
+                # the snapshot -- the two disagree and the writeup reads as
+                # stale, which is the safe direction for a comparison whose
+                # match releases a refusal.
                 digest.update(tex[path].encode("utf-8"))
                 digest.update(b"\0")
                 continue
             try:
-                digest.update(read_bytes(self.tex_root, path))
+                digest.update(_as_snapshot(read_bytes(self.tex_root, path)))
             except (OSError, ValueError):
                 # Unreadable is itself a state to be stamped against, and a
                 # distinct one from absent: the path is already in the hash
