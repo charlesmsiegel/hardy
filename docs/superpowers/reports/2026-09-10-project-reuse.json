@@ -1,0 +1,218 @@
+{
+  "schema": "hardy.reuse-fixture/v1",
+  "index_digest": "fbcaa4885e570611b635e3c42820078af1da1acb4e46d7343107aecf6e23a87a",
+  "sources": [
+    {
+      "id": "project",
+      "kind": "project",
+      "status": "available",
+      "content_digest": "392b3cfa85aa8aa43ef2c6e6994d99be34f7e7ead2ae3ff27250a58b65aba586",
+      "provenance": null,
+      "detail": ""
+    }
+  ],
+  "rows": [
+    {
+      "category": "lemma",
+      "retrieval": false,
+      "target": {
+        "id": "stable-lemma",
+        "digest": "9f61432fa5a96f0d072dfd5be682d692af906031097632d1ff2e9037fc143167"
+      },
+      "target_available": false,
+      "delivered": [],
+      "characters": 0,
+      "truncated": false
+    },
+    {
+      "category": "lemma",
+      "retrieval": true,
+      "target": {
+        "id": "stable-lemma",
+        "digest": "9f61432fa5a96f0d072dfd5be682d692af906031097632d1ff2e9037fc143167"
+      },
+      "target_available": true,
+      "delivered": [
+        {
+          "id": "stable-lemma",
+          "digest": "9f61432fa5a96f0d072dfd5be682d692af906031097632d1ff2e9037fc143167"
+        }
+      ],
+      "characters": 1956,
+      "truncated": false
+    },
+    {
+      "category": "concept",
+      "retrieval": false,
+      "target": {
+        "id": "concept-space",
+        "digest": "b8703c9f1c8331cc65e656c50db499e140cd6bd1b9851e8a7e7ec82e9df98f4f"
+      },
+      "target_available": false,
+      "delivered": [],
+      "characters": 0,
+      "truncated": false
+    },
+    {
+      "category": "concept",
+      "retrieval": true,
+      "target": {
+        "id": "concept-space",
+        "digest": "b8703c9f1c8331cc65e656c50db499e140cd6bd1b9851e8a7e7ec82e9df98f4f"
+      },
+      "target_available": true,
+      "delivered": [
+        {
+          "id": "concept-space",
+          "digest": "b8703c9f1c8331cc65e656c50db499e140cd6bd1b9851e8a7e7ec82e9df98f4f"
+        }
+      ],
+      "characters": 1281,
+      "truncated": false
+    },
+    {
+      "category": "representation",
+      "retrieval": false,
+      "target": {
+        "id": "representation-topology",
+        "digest": "efa043bf942064f3aac52b78b5468c124c518198da2911ac11a637b7ece597f6"
+      },
+      "target_available": false,
+      "delivered": [],
+      "characters": 0,
+      "truncated": false
+    },
+    {
+      "category": "representation",
+      "retrieval": true,
+      "target": {
+        "id": "representation-topology",
+        "digest": "efa043bf942064f3aac52b78b5468c124c518198da2911ac11a637b7ece597f6"
+      },
+      "target_available": true,
+      "delivered": [
+        {
+          "id": "representation-topology",
+          "digest": "efa043bf942064f3aac52b78b5468c124c518198da2911ac11a637b7ece597f6"
+        },
+        {
+          "id": "concept-space",
+          "digest": "b8703c9f1c8331cc65e656c50db499e140cd6bd1b9851e8a7e7ec82e9df98f4f"
+        }
+      ],
+      "characters": 2474,
+      "truncated": false
+    },
+    {
+      "category": "context",
+      "retrieval": false,
+      "target": {
+        "id": "context-space",
+        "digest": "340f8d8ac8060efe90ab8365efff064da4d466b07de8c23d46ab9af967b599f1"
+      },
+      "target_available": false,
+      "delivered": [],
+      "characters": 0,
+      "truncated": false
+    },
+    {
+      "category": "context",
+      "retrieval": true,
+      "target": {
+        "id": "context-space",
+        "digest": "340f8d8ac8060efe90ab8365efff064da4d466b07de8c23d46ab9af967b599f1"
+      },
+      "target_available": true,
+      "delivered": [
+        {
+          "id": "context-space",
+          "digest": "340f8d8ac8060efe90ab8365efff064da4d466b07de8c23d46ab9af967b599f1"
+        }
+      ],
+      "characters": 1382,
+      "truncated": false
+    },
+    {
+      "category": "goal",
+      "retrieval": false,
+      "target": {
+        "id": "goal-compactness",
+        "digest": "caede01a2e2f3337899b8b329a688a2f13aee0881ac88cbc47405bba01a85192"
+      },
+      "target_available": false,
+      "delivered": [],
+      "characters": 0,
+      "truncated": false
+    },
+    {
+      "category": "goal",
+      "retrieval": true,
+      "target": {
+        "id": "goal-compactness",
+        "digest": "caede01a2e2f3337899b8b329a688a2f13aee0881ac88cbc47405bba01a85192"
+      },
+      "target_available": true,
+      "delivered": [
+        {
+          "id": "goal-compactness",
+          "digest": "caede01a2e2f3337899b8b329a688a2f13aee0881ac88cbc47405bba01a85192"
+        },
+        {
+          "id": "approach-covering",
+          "digest": "ec39791e5ae340731ce53148c41fc4a8a3b95a286f1ec2f05b634309ec2d434b"
+        }
+      ],
+      "characters": 2822,
+      "truncated": false
+    },
+    {
+      "category": "approach",
+      "retrieval": false,
+      "target": {
+        "id": "approach-covering",
+        "digest": "ec39791e5ae340731ce53148c41fc4a8a3b95a286f1ec2f05b634309ec2d434b"
+      },
+      "target_available": false,
+      "delivered": [],
+      "characters": 0,
+      "truncated": false
+    },
+    {
+      "category": "approach",
+      "retrieval": true,
+      "target": {
+        "id": "approach-covering",
+        "digest": "ec39791e5ae340731ce53148c41fc4a8a3b95a286f1ec2f05b634309ec2d434b"
+      },
+      "target_available": true,
+      "delivered": [
+        {
+          "id": "goal-compactness",
+          "digest": "caede01a2e2f3337899b8b329a688a2f13aee0881ac88cbc47405bba01a85192"
+        },
+        {
+          "id": "approach-covering",
+          "digest": "ec39791e5ae340731ce53148c41fc4a8a3b95a286f1ec2f05b634309ec2d434b"
+        }
+      ],
+      "characters": 2822,
+      "truncated": false
+    }
+  ],
+  "categories": 6,
+  "retrieval_off_available": 0,
+  "retrieval_on_available": 6,
+  "scoped_alias_correct": true,
+  "out_of_context_local_rejected": true,
+  "revoked_proof_rejected": true,
+  "historical_assessment_retained": true,
+  "formal_reader_calls": 1,
+  "provider_calls": 0,
+  "lean_process_calls": 0,
+  "live_model_performance": "unmeasured",
+  "measurement": "Deterministic context discovery and delivery after ledger/index restart; no proof search.",
+  "source_sha256": {
+    "src/hardy/workflows/retrieval.py": "17a6f88a3c94019aba05ddb8c5eef31ca101a9042f4c7cb4e6dcd16953a97540",
+    "tests/unit/test_project_reuse.py": "17cf8c900da5e45740b593e39cdafe3905f8e7e8b624357c5b0a518133dcd4ba"
+  }
+}
