@@ -367,7 +367,13 @@ class LedgerPolicy:
         for relation in LedgerGraph(snapshot).relations:
             if relation.kind not in DEPENDENCIES or relation.source != subject.ref:
                 continue
-            if relation.kind == RelationKind.BLOCKED_BY and isinstance(snapshot.get(relation.target), Obligation):
+            blocker = snapshot.get(relation.target)
+            if relation.kind == RelationKind.BLOCKED_BY and isinstance(blocker, Obligation):
+                # An item's requirement can block the item, but cannot require
+                # its own completion before its evidence is first accepted.
+                if all(getattr(blocker, field) == getattr(obligation, field)
+                       for field in ("id", "item", "kind", "scope", "context")):
+                    continue
                 ready = self._completed(snapshot, relation.target, obligation.scope, obligation.context, visiting)
             else:
                 ready = self._premise(snapshot, relation.target, obligation.scope, obligation.context, visiting)

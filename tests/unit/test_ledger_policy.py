@@ -581,4 +581,41 @@ def test_blocking_obligation_completion_requires_live_exact_authentication(failu
         auth.policy.accept(state, proposal, receipt)
 
 
+def test_item_formalization_can_complete_its_own_blocking_requirement_before_proof():
+    theorem = item("T")
+    scope = Scope(id="scope")
+    formalize = Obligation(id="formalize-T", item=theorem.ref, kind="formalize", scope=scope)
+    edge = Relation(id="formalization-required", kind="blocked_by", source=theorem.ref,
+                    target=formalize.ref)
+    state = LedgerSnapshot((theorem, scope, formalize, edge))
+    auth = PolicyAuthority()
+    proposal, receipt = auth.proposal(formalize, outcomes=("elaborated", "faithful"))
+    accepted = auth.policy.accept(state, proposal, receipt)
+    closed = Obligation.model_validate({**formalize.model_dump(), "previous": formalize.ref,
+        "status": ObligationStatus.RESOLVED, "resolution": accepted})
+    prove = Obligation(id="prove-T", item=theorem.ref, kind="prove", scope=scope)
+    state = LedgerSnapshot((*state.records, closed, prove))
+    assert not auth.policy.premise_allowed(state, theorem.ref, scope=scope, context=None)
+    proof, decision = auth.proposal(prove)
+    assert auth.policy.accept(state, proof, decision).accepted_by == decision
+
+
+def test_distinct_same_item_blocking_obligations_cannot_authenticate_each_other():
+    theorem = item("T")
+    scope = Scope(id="scope")
+    first = Obligation(id="first", item=theorem.ref, kind="formalize", scope=scope)
+    second = Obligation(id="second", item=theorem.ref, kind="formalize", scope=scope)
+    edges = tuple(Relation(id=f"blocked-{work.id}", kind="blocked_by", source=theorem.ref,
+                           target=work.ref) for work in (first, second))
+    auth = PolicyAuthority()
+    closed = []
+    for work in (first, second):
+        proposal, receipt = auth.proposal(work, outcomes=("elaborated", "faithful"))
+        recorded = proposal.model_copy(update={"accepted_by": receipt, "policy_digest": auth.policy.digest})
+        closed.append(Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+            "status": ObligationStatus.RESOLVED, "resolution": recorded}))
+    state = LedgerSnapshot((theorem, scope, first, second, *edges, *closed))
+    assert not auth.policy.is_accepted(state, closed[0].resolution)
+
+
 
