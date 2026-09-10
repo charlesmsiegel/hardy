@@ -149,6 +149,7 @@ class FinalVerifier:
             claim.proposal,
             claim.environment,
             claim.approved_at,
+            semantic_context=claim.semantic_context,
         )
         if (
             expected_claim.content_hash != claim.content_hash

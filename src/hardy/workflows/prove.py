@@ -35,7 +35,6 @@ from hardy.formal import refute
 from hardy.formal.contracts import (
     DeclaredAssumption,
     EnvironmentIdentity,
-    FormalizationProposal,
     FormalStatus,
     FrozenClaim,
     freeze_claim,
@@ -43,7 +42,7 @@ from hardy.formal.contracts import (
 from hardy.formal.lean import LeanCheckResult
 from hardy.formal.verifier import VerificationResult
 from hardy.foundation.values import FrozenModel
-from hardy.prompts import FORMALIZATION_PROMPT, PROMPT_SET_SHA256, proof_prompt, writeup_prompt
+from hardy.prompts import PROMPT_SET_SHA256, proof_prompt, writeup_prompt
 from hardy.workflows.contracts import (
     FaithfulnessOutcome,
     FaithfulnessStatus,
@@ -53,7 +52,15 @@ from hardy.workflows.contracts import (
     RunPhase,
     TerminalReason,
 )
-from hardy.workflows.faithfulness import dispute_gaps, review_translation
+from hardy.workflows.faithfulness import dispute_gaps
+from hardy.workflows.formalization import (
+    PreparedCandidate,
+    StandaloneFormalizationInput,
+    formalization_prompt,
+    prepare_candidate,
+    proposal_type,
+    review_translation,
+)
 from hardy.workflows.storage import RunStore
 
 ALLOWED = {
@@ -406,15 +413,14 @@ class ProveWorkflow:
                 if active_elapsed >= self._config.limits.active_seconds:
                     terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
                     break
-                prompt = FORMALIZATION_PROMPT + "\n\nUser claim:\n" + request.text
-                if revision:
-                    prompt += "\n\nUser revision request:\n" + revision
+                formalization_input = StandaloneFormalizationInput(text=request.text)
+                prompt = formalization_prompt(formalization_input, revision)
                 try:
                     proposal = runtime.run_structured(
                         formal_thread,
                         "formalization",
                         prompt,
-                        FormalizationProposal,
+                        proposal_type(formalization_input),
                     )
                 except ValueError as error:
                     # An interrupted exchange comes back empty, and an empty
@@ -435,17 +441,17 @@ class ProveWorkflow:
                     continue
                 if self._environment is None:
                     raise RuntimeError("no Lean environment identity to freeze a claim under")
-                temporary_claim = freeze_claim(
-                    request.text, proposal, self._environment, self._now()
-                )
                 # A statement that does not elaborate is not a statement, so it
                 # is never put in front of the user for approval.
                 # With the declared set in scope: a claim whose statement
                 # mentions an assumed constant would otherwise fail to
                 # elaborate here and be refused as a bad formalization.
-                elaboration = self._lean.check_proof(
-                    temporary_claim, "by sorry", request.assumptions
+                prepared = prepare_candidate(
+                    formalization_input, proposal, self._environment, self._now(),
+                    lean=self._lean, assumptions=request.assumptions,
                 )
+                assert isinstance(prepared, PreparedCandidate)  # standalone has no semantic blockers
+                elaboration = prepared.elaboration
                 # Elaboration runs Lean, so a press lands inside it and the
                 # child is interrupted. Without this the run either walked on
                 # into the approval selector and waited for an answer nobody
@@ -520,6 +526,7 @@ class ProveWorkflow:
                     approved_claim.proposal,
                     approved_claim.environment,
                     approved_claim.approved_at,
+                    semantic_context=approved_claim.semantic_context,
                 )
                 if expected.content_hash != approved_claim.content_hash:
                     raise RuntimeError("persisted Frozen Claim hash mismatch")

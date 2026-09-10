@@ -144,6 +144,7 @@ def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime | None:
         claim.proposal,
         claim.environment,
         claim.approved_at,
+        semantic_context=claim.semantic_context,
     )
     if (
         claim.content_hash != expected.content_hash

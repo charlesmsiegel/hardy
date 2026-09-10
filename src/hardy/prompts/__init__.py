@@ -173,22 +173,29 @@ def proof_prompt(claim: FrozenClaim) -> str:
 
 
 def faithfulness_prompt(claim: FrozenClaim) -> str:
-    """The independent reader's question: the claim and the Lean, and nothing else.
+    """Read the claim and Lean against any frozen caller-resolved semantic context.
 
     Deliberately not given the proposal's restatement, domains or
     interpretation choices. Those are the formalizer's gloss on its own work,
     and a reader handed them is reading the translation through the account
     that produced it -- which is the shared context this gate exists to
-    defeat. What is left is the two texts that have to say the same thing.
+    defeat. Caller-owned semantic sources are part of what must be translated,
+    so contextual claims include those exact frozen records and binder origins.
     """
     text = claim.original_text.strip()
     signature = claim_signature(claim)
-    return render(
+    prompt = render(
         "staged/faithfulness",
         fence=_fence(text, signature),
         claim=text,
         signature=signature,
     )
+    if claim.semantic_context is not None:
+        prompt += ("\n\nFrozen caller-resolved semantic context and generated binder origins:\n"
+                   + claim.semantic_context.model_dump_json(indent=2)
+                   + "\nRead the original statement in this context; check the generated binders "
+                   "against their declaration origins. Local hypotheses do not establish global truth.")
+    return prompt
 
 
 def canonical_prompt(canonical_declaration: str, model_signature: str) -> str:

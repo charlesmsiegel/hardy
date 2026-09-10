@@ -9,20 +9,65 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any, Literal, Self
+
+from pydantic import StringConstraints, model_validator
 
 from hardy.foundation.values import FrozenModel, json_digest
 
 
-class FormalizationProposal(FrozenModel):
+class ProposalMeaning(FrozenModel):
     restatement: str
     domains: tuple[str, ...]
     quantifiers: tuple[str, ...]
     assumptions: tuple[str, ...]
     interpretation_choices: tuple[str, ...]
     theorem_name: str
+
+
+class FormalizationProposal(ProposalMeaning):
     binders: str
     proposition: str
+
+
+class SemanticRef(FrozenModel):
+    """Exact caller-owned identity; formal code has no ledger dependency."""
+
+    id: Annotated[str, StringConstraints(strict=True, pattern=r"\A[A-Za-z0-9][A-Za-z0-9_.:-]*\z")]
+    digest: Annotated[str, StringConstraints(strict=True, pattern=r"\A[0-9a-f]{64}\z")]
+
+
+class GeneratedBinder(FrozenModel):
+    lean_syntax: Annotated[str, StringConstraints(strict=True, min_length=1, pattern=r"\S")]
+    declaration_ref: SemanticRef
+
+
+class ContextualFormalizationProposal(ProposalMeaning):
+    """One semantic declaration may generate several distinct binder fragments."""
+
+    generated_binders: tuple[GeneratedBinder, ...]
+    proposition: str
+
+
+class SemanticEntry(FrozenModel):
+    ref: SemanticRef
+    role: Literal["subject", "context", "scope", "declaration", "binding", "representation", "transport", "source"]
+    text: str
+
+
+class FormalizationContext(FrozenModel):
+    """Resolved source content and generated origins, frozen for independent reading.
+
+    Source text is an exact serialized view, not the proposer's interpretation.
+    These are local parameters, never permission to admit a global axiom.
+    """
+
+    subject: SemanticRef
+    context: SemanticRef
+    scope: SemanticRef
+    entries: tuple[SemanticEntry, ...]
+    required_binders: tuple[SemanticRef, ...]
+    generated_binders: tuple[GeneratedBinder, ...] = ()
 
 
 class EnvironmentIdentity(FrozenModel):
@@ -40,6 +85,19 @@ class FrozenClaim(FrozenModel):
     imports: tuple[str, ...] = ("Mathlib",)
     approved_at: datetime
     content_hash: str
+    semantic_context: FormalizationContext | None = None
+
+    @model_validator(mode="after")
+    def check_generated_signature(self) -> Self:
+        if self.semantic_context is not None:
+            rendered = " ".join(b.lean_syntax for b in self.semantic_context.generated_binders)
+            if self.proposal.binders != rendered:
+                raise ValueError("contextual signature differs from generated binder origins")
+            declarations = {entry.ref for entry in self.semantic_context.entries if entry.role == "declaration"}
+            origins = {binder.declaration_ref for binder in self.semantic_context.generated_binders}
+            if not origins <= declarations or not set(self.semantic_context.required_binders) <= origins:
+                raise ValueError("contextual signature has unknown or missing required binder origins")
+        return self
 
 
 def freeze_claim(
@@ -47,6 +105,8 @@ def freeze_claim(
     proposal: FormalizationProposal,
     environment: EnvironmentIdentity,
     approved_at: datetime,
+    *,
+    semantic_context: FormalizationContext | None = None,
 ) -> FrozenClaim:
     """Freeze an approved statement and its verifier identity under a stable hash."""
     payload = {
@@ -56,6 +116,8 @@ def freeze_claim(
         "original_text": original_text,
         "proposal": proposal.model_dump(mode="json"),
     }
+    if semantic_context is not None:
+        payload["semantic_context"] = semantic_context.model_dump(mode="json")
     return FrozenClaim(
         original_text=original_text,
         proposal=proposal,
@@ -63,6 +125,7 @@ def freeze_claim(
         imports=environment.imports,
         approved_at=approved_at,
         content_hash=json_digest(payload),
+        semantic_context=semantic_context,
     )
 
 

@@ -206,6 +206,29 @@ Prepare boundary tests so new workflow packages may depend on `formal/`, `litera
 
 **Deps:** none conceptually; integrate with A0 after contract freeze; consume B4/B5 when available
 
+**Status:** Implemented in Core A (`refactor(A2): share statement formalization and review`).
+`workflows/formalization.py` owns standalone/contextual prompt and schema choice,
+candidate freezing/elaboration, and access to the independent reader. Prove reuses
+the standalone operation while retaining approval, revisions, budgets, cancellation
+and persisted-readback sequencing. Its public request schema is unchanged.
+
+Contextual callers supply exact A0 records, selected sources, required binder/source
+references and unresolved requirements. The adapter checks supplied context membership
+and explicit dependency/alias references; unrelated context members need no generated
+binders. Semantic text comes from the source records themselves. Generated binder
+fragments carry declaration origins, including several fragments from one declaration.
+The formal-owned frozen projection binds source text, exact identities and generated
+origins into the claim hash and independent reading; legacy context-free hashes and
+proposal schemas remain unchanged. Verifier and MCP reconstruct contextual hashes.
+
+B0/B4/B5 still own ledger reachability, semantic/minimal-closure discovery,
+representation adequacy, and justification/transport acceptance. A2 returns open typed
+obligations for supplied unresolved requirements or missing selected records; it does
+not resolve them or widen trust. Project-aware Prove input and other workflow callers
+are later B/D integration. Run the Task 3 focused command in
+`docs/superpowers/plans/2026-09-09-core-a.md` and `tests/unit/test_formalization.py`
+for direct contextual/persistence/reader/verifier/MCP coverage.
+
 Extract one reusable formalization path over existing Lean checking and independent faithfulness review. It must work without a `MathematicsSession` and be reused by Prove, Research, Referee, Critique probing, and citation-contract construction.
 
 The semantic pipeline is:
