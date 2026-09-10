@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import threading
 import time
@@ -122,11 +123,24 @@ class CasSession:
         # lifetime cap attached to it would eventually refuse work for reasons
         # that have nothing to do with the work.
         #
-        # Spend after the last append -- a rebuild nobody then ran a cell on,
-        # an export -- becomes durable only when the next record is written.
-        self.total_spent_seconds = (
+        # The sidecar also includes charges made after the last cell append.
+        self._spend_name = log_path.name + ".spend.json"
+        recorded_spend = (
             self._records[-1].spent_ms / 1_000 if self._records else 0.0
         )
+        self.total_spent_seconds = max(recorded_spend, self._load_spend())
+
+    def _load_spend(self) -> float:
+        try:
+            with self._log.open(self._spend_name, "r", encoding="utf-8") as stream:
+                value = json.load(stream)
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("expected finite nonnegative seconds")
+            return float(value)
+        except FileNotFoundError:
+            return 0.0  # Older logs predate the sidecar.
+        except (OSError, ValueError, OverflowError) as error:
+            raise CasError(f"the CAS spend could not be read ({self._spend_name}): {error}") from error
 
     @contextlib.contextmanager
     def hold(self):
@@ -789,6 +803,16 @@ class CasSession:
             seconds = max(0.0, seconds)
             self.spent_seconds += seconds
             self.total_spent_seconds += seconds
+            try:
+                self._log.mkdir()
+                self._log.write_bytes(
+                    self._spend_name,
+                    (json.dumps(self.total_spent_seconds, allow_nan=False) + "\n").encode("utf-8"),
+                )
+            except OSError as error:
+                self._drop_kernel()
+                self.state = "poisoned"
+                raise CasError(f"the CAS spend could not be written ({self._spend_name}): {error}") from error
 
     def _cell_seconds(self) -> float:
         """The deadline one round trip may have: the smaller of the two limits.

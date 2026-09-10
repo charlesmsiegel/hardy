@@ -719,8 +719,11 @@ def test_an_export_replay_is_charged_to_the_session_budget(tmp_path, cas_session
         before = session.spent_seconds
         export_session(session, tmp_path / "cas")
         assert session.spent_seconds - before >= 0.5
+        total = session.total_spent_seconds
     finally:
         session.close()
+    reopened = cas_session()
+    assert reopened.total_spent_seconds == pytest.approx(total, abs=0.001)
 
 
 def test_a_reset_does_not_refund_the_time_already_spent(tmp_path, cas_session) -> None:
@@ -752,6 +755,37 @@ def test_reset_cannot_be_used_to_buy_a_second_session_budget(tmp_path, cas_sessi
             session.execute("b")
     finally:
         session.close()
+
+
+def test_spend_without_another_cell_survives_close(cas_session) -> None:
+    session = cas_session()
+    session.charge(12.5)  # Export and recovery bill through this same entry point.
+    session.close()
+    reopened = cas_session()
+    assert reopened.total_spent_seconds == 12.5
+    assert reopened.spent_seconds == 0
+
+
+def test_failed_spend_write_refuses_further_work(cas_session, monkeypatch) -> None:
+    session = cas_session()
+
+    def full_disk(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(session._log, "write_bytes", full_disk)
+    with pytest.raises(CasError, match="spend could not be written"):
+        session.charge(12.5)
+    assert session.total_spent_seconds == 12.5
+    assert session.state == "poisoned"
+    with pytest.raises(CasError, match="poisoned"):
+        session.execute("a")
+
+
+@pytest.mark.parametrize("value", ["garbage", "NaN", "Infinity", "-1", "true", "{}"])
+def test_corrupt_spend_is_refused(tmp_path, cas_session, value) -> None:
+    (tmp_path / "cells.jsonl.spend.json").write_text(value, encoding="utf-8")
+    with pytest.raises(CasError, match="spend"):
+        cas_session()
 
 
 def test_a_reopened_session_continues_its_own_spend(tmp_path, cas_session) -> None:
@@ -808,6 +842,7 @@ def test_a_log_written_before_the_spend_was_recorded_still_loads(tmp_path, cas_s
         if line.strip()
     ]
     log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (tmp_path / "cells.jsonl.spend.json").unlink()
 
     reopened = cas_session()
     assert [record.source for record in reopened.accepted()] == ["a"]
