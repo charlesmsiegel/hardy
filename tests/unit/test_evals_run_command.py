@@ -123,6 +123,9 @@ def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeyp
     )
     assert code == 0
     condition = seen["condition"]
+    from hardy.evals.identity import run_source_digest_of
+    assert condition.source_sha256 == run_source_digest_of()
+    assert condition.strategy is None and condition.history_mode is None
     assert condition.limits == {"max_turns": 60, "wall_seconds": 1800.0, "lean_timeout": 60.0}
     assert condition.selection == {"only": ["a", "b"], "tiers": [2, 3], "twins": False}
     # Records the source checkout that made the run, not just `hardy_version`

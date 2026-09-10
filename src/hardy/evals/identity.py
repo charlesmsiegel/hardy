@@ -29,6 +29,7 @@ RUN_SOURCE_EXCLUDED_FILES = frozenset({
     "app/cli.py",        # argument parsing; construction lives in wiring.py
     "app/corpus_viewer.py",    # the corpus review viewer
     "evals/summary.py",   # reads finished boards; cannot reach a run
+    "evals/compare.py",   # reads paired finished boards; cannot reach a run
 })
 RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/",)
 
@@ -79,6 +80,19 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
         "mode": mode,
         "limits": limits,
         "repeats": repeats,
+    })
+
+
+def run_source_digest_of() -> str:
+    """Identify source independently of experimental model/prompt/budget choices.
+
+    Include module names as well as normalized bytes so moving identical code
+    between import paths cannot masquerade as the same source. Record only
+    for newly launched runs; never backfill existing evidence from this tree.
+    """
+    return digests.procedure_digest({
+        "source": {path.relative_to(RUN_SOURCE_ROOT).as_posix(): digests.source_digest(path.read_bytes())
+                   for path in run_source_paths()},
     })
 
 

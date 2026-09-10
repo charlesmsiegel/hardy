@@ -200,6 +200,13 @@ def add_parser(subparsers: Any) -> None:
     pool.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
     pool.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<first label>/pool.json")
+    compare = verbs.add_parser("compare", help="read two scoreboards with explicit treatment differences; JSON on stdout")
+    compare.add_argument("left", type=Path)
+    compare.add_argument("right", type=Path)
+    compare.add_argument("--vary", action="append", default=[], help="Condition field intended to vary; repeat for each field")
+    compare.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
+    compare.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    compare.add_argument("--right-baseline", type=Path, default=None)
     summary = verbs.add_parser(
         "summary",
         help="write a Markdown report over every scoreboard, one row per model (read-only)",
@@ -489,6 +496,8 @@ def run_summary(args: argparse.Namespace) -> int:
 
 
 def main(args: argparse.Namespace, config: Any) -> int:
+    if args.evals_command == "compare":
+        return run_compare(args)
     if args.evals_command == "baseline":
         return run_baseline(args, config)
     if args.evals_command == "run":
@@ -551,6 +560,20 @@ def main(args: argparse.Namespace, config: Any) -> int:
     raise AssertionError(args.evals_command)
 
 
+def run_compare(args: argparse.Namespace) -> int:
+    """Read-only comparison: audit findings stay in the report and fail exit 1."""
+    from hardy.evals.compare import ComparisonRefused, compare
+
+    try:
+        result = compare(args.left, args.right, varying=args.vary, problems_path=args.problems,
+                         baseline_path=args.baseline, right_baseline_path=args.right_baseline)
+    except ComparisonRefused as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    return 1 if any(side["audit_issues"] for side in result["sides"].values()) else 0
+
+
 def check_command(args: Any) -> int:
     from hardy.evals.scoreboard import validate_scoreboard
 
@@ -574,6 +597,7 @@ def check_command(args: Any) -> int:
 
 
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
+    from hardy.evals.identity import run_source_digest_of
     from hardy.formal.lean import environment_identity
     from hardy.prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
     from hardy.workflows.batch import WARNING
@@ -645,6 +669,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         model=model, backend=args.backend, mode=args.mode,
         staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
         hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
+        source_sha256=run_source_digest_of(),
         selection={"only": only, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
         run_procedure_digest=run_digest,

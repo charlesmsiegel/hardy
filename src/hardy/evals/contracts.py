@@ -115,6 +115,13 @@ class Condition(FrozenModel):
     # (item 8). Defaulted so every existing `Condition(...)` call site --
     # test fixtures included -- need not name it.
     source_revision: str | None = None
+    # Prospective, source-only identity: the compound run digest also varies
+    # with the model and budgets and cannot isolate a source change.
+    source_sha256: str | None = None
+    # Only the runtime that actually selects these treatments may set them.
+    # Legacy absence is unknown; comparison never derives them from labels.
+    strategy: str | None = None
+    history_mode: str | None = None
     limits: dict[str, float | int]
     repeats: int
     selection: dict[str, Any]
