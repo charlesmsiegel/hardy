@@ -357,6 +357,14 @@ class TurnCoordinator:
             # is exactly what `cancel` promises will not happen.
             if self._cancelled.is_set():
                 return self._refuse_cancelled(name, arguments, persistence)
+            # Written before the call runs, not only after. A Lean check can
+            # take minutes, and a session killed in the middle of one used to
+            # leave no trace that the call had been made: the `tool` event
+            # below is written on the far side of the work, and the backend's
+            # own `tool_use` event is not ordered against this thread. This is
+            # the durable record that the call started; a `tool` event that
+            # never follows it is the record that it did not finish.
+            persistence.event({"type": "tool_started", "name": name, "arguments": arguments})
             try:
                 result = tool(name, arguments)
             except (KeyError, TypeError, ValueError) as error:

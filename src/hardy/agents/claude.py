@@ -37,6 +37,12 @@ SERVER = "hardy"
 # stopped reading. It is a daemon thread, so this bounds tidiness, not safety.
 TEARDOWN_SECONDS = 5.0
 
+# How often, at most, text still being streamed is copied into the record
+# before its block completes. A hard kill runs no `finally`, so this interval
+# bounds how many seconds of an answer the user watched arrive a crash can
+# take with it. Per delta would be a line per token; see `_checkpoint`.
+CHECKPOINT_SECONDS = 2.0
+
 # Put on the queue by the SDK's thread when it has nothing further to say.
 _FINISHED = object()
 
@@ -176,9 +182,12 @@ class ClaudeAgentRuntime:
         observe: Callable[[dict[str, Any]], None] | None = None,
         max_turns: int | None = None,
         wall_seconds: float | None = None,
+        checkpoint_seconds: float | None = CHECKPOINT_SECONDS,
     ):
         self.model = model
         self.session_id = session_id
+        # `None` turns checkpointing off; `0` checkpoints on every delta.
+        self.checkpoint_seconds = checkpoint_seconds
         # The session a runtime that resumes nothing will open, chosen here
         # rather than left to the CLI. Left to the CLI, a `claude` started
         # inside another Claude Code session took that session's id from its
@@ -215,8 +224,12 @@ class ClaudeAgentRuntime:
         # first, and the block index the last delta belonged to. A completed
         # block consumes its own entry; whatever is left at the end of the turn
         # was drawn and never superseded. See `_note` and `_settle_drawn`.
+        # While a block is still open, `_checkpoint` copies these entries into
+        # the record every `checkpoint_seconds`, so a process that dies before
+        # the block arrives leaves them behind rather than nothing.
         self._drawn: list[str] = []
         self._drawing: int | None = None
+        self._checkpointed_at = 0.0
 
     def _loaded(self) -> Any:
         """The SDK, and the tool server built on it, on first use.
@@ -302,6 +315,9 @@ class ClaudeAgentRuntime:
         self._cancelled = False
         self._loop, self._client, self._called = None, None, {}
         self._drawn, self._drawing = [], None
+        # The interval is counted from here, not from the first delta: the
+        # first checkpoint of a turn lands one interval in, like every other.
+        self._checkpointed_at = time.monotonic()
 
         def pump() -> None:
             try:
@@ -542,13 +558,55 @@ class ClaudeAgentRuntime:
             self._drawn.append("")
             self._drawing = index
         self._drawn[-1] += text
+        self._checkpoint()
+
+    def _checkpoint(self) -> None:
+        """Copy the drawn text into the record, at most once per interval.
+
+        The completed block is still the authoritative form and still arrives
+        as before; this is insurance against the process not living to see it.
+        `_settle_drawn` covers every way a turn can *end* -- interrupt,
+        deadline, provider error -- but a hard kill, a crash, or the power
+        going runs no `finally` at all, and until this the transcript then lost
+        every word of an answer the user had already watched arrive: a lost
+        exchange indistinguishable from one that never happened.
+
+        Paced by `checkpoint_seconds` rather than written per delta, because
+        per delta is a line per token. Each checkpoint carries the whole of the
+        text drawn so far for the blocks still open, so the newest one is
+        always the one that matters and `tail -f transcript.jsonl` follows a
+        running answer at this granularity.
+
+        Marked `partial`, like the text `_settle_drawn` keeps, because no
+        provider completed it -- and `checkpoint` besides, because unlike that
+        text it is expected to be superseded: by the next checkpoint, or by the
+        block itself. A replay (`export._conversation`) uses exactly that rule
+        to show each answer once.
+        """
+        interval = self.checkpoint_seconds
+        if interval is None:
+            return
+        now = time.monotonic()
+        if now - self._checkpointed_at < interval:
+            return
+        said = "\n\n".join(entry for entry in self._drawn if entry)
+        if not said:
+            return
+        self._checkpointed_at = now
+        self._observe({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": said},
+            "partial": True,
+            "checkpoint": True,
+        })
 
     def _note(self, message: Any, spoken: list[str]) -> Iterator[TurnEvent]:
         """Record what the SDK reports, and say what a watcher should draw.
 
         Two granularities, on purpose. What it *yields* is for the terminal and
         includes partial text; what it hands `observe` -- and so what reaches
-        `transcript.jsonl` -- is whole blocks, as before.
+        `transcript.jsonl` -- is whole blocks, plus the interval checkpoints
+        `_checkpoint` takes of a block still being written.
         """
         # Resuming by session id is how a conversation survives both the next
         # exchange and the next process.

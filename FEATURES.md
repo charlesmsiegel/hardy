@@ -321,6 +321,18 @@ interactive surface's own live run is still to come.
   written, and a reply that lands anyway is printed and labelled. Without a TTY, or with `--plain`/`HARDY_PLAIN`/
   `TERM=dumb`, or if the terminal session fails to start, the same commands and
   banner run through a line-based session instead.
+- **Now (implemented):** the transcript survives a session that dies mid-turn
+  (issue #91). An answer still streaming is checkpointed into `transcript.jsonl`
+  every two seconds, marked `partial` and `checkpoint`; on the ordinary path the
+  completed block supersedes the checkpoints, so a replay shows each answer once,
+  and a hard kill — crash, SIGKILL, power loss — leaves at most the last two
+  seconds of what the user watched arrive unrecorded, where before it left
+  nothing. `tail -f transcript.jsonl` follows a running answer at that
+  granularity. A tool call is recorded as started before it runs, so a session
+  killed during a Lean check leaves a record that the call began and did not
+  finish, and the export says so rather than showing a session that simply
+  stopped. Transcript appends from the runtime's worker, the SDK's tool threads
+  and the shell are serialised, which append mode alone did not keep whole.
 - **Now (implemented):** model output is streamed as it is produced rather than printed only
   once the turn finishes, and both ends of every tool call are drawn, so a
   three-minute Lean check reports itself instead of looking like a hang

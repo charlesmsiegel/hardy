@@ -35,6 +35,9 @@ class SessionRecord:
         self._workspace_guard = workspace_guard or WriteGuard(workspace, create=True)
         self._local_guard = WriteGuard(workspace / LOCAL_DIR, create=True)
         self._writes = threading.Lock()
+        # Separate from `_writes`: an append must never wait behind a rewrite
+        # of `session.json`, and a rewrite has nothing to fear from an append.
+        self._appends = threading.Lock()
         self.state: dict[str, Any] = {}
         self.local: dict[str, Any] = {}
         self.usage = Usage()
@@ -172,10 +175,18 @@ class SessionRecord:
         event it just accounted for rather than to wherever the file happens
         to have reached -- two turns' reports can be in flight at once, and
         the file's current size may already include one nobody has folded.
+
+        Serialised, because three threads append here -- the runtime's worker,
+        the SDK's tool threads, the shell -- and append mode alone does not
+        keep their lines whole: on Windows, eight threads appending together
+        lost three lines in four hundred to interleaving, and the reader drops
+        a torn line silently. The lock is held for one line's write, which is
+        the only thing it has to make atomic.
         """
         event = {"timestamp": time.time(), **event}
-        with self._workspace_guard.open(TRANSCRIPT, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        line = json.dumps(event, ensure_ascii=False) + "\n"
+        with self._appends, self._workspace_guard.open(TRANSCRIPT, "a", encoding="utf-8") as handle:
+            handle.write(line)
             return handle.tell()
 
 
