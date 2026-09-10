@@ -12,6 +12,30 @@ def append(record, kind, text="", **fields):
     return record.history().active_leaf
 
 
+def test_history_refresh_preserves_guarded_filesystem_refusal(tmp_path, monkeypatch):
+    """The history owner must not relabel a refused path as malformed JSON.
+
+    Inject the guard's read refusal so this boundary also runs on hosts where
+    creating an actual symlink requires privileges. test_chat covers the link.
+    """
+    from hardy.foundation.files import LayoutError
+
+    record = SessionRecord(tmp_path)
+    append(record, "user", "before")
+    history = record._history
+    record.transcript_path.write_text("changed outside Hardy\n", encoding="utf-8")
+    before = record.transcript_path.read_bytes()
+
+    def refuse(*args, **kwargs):
+        raise LayoutError("transcript is a symlink; refusing to read or write through it")
+
+    monkeypatch.setattr(record._workspace_guard, "open", refuse)
+    with pytest.raises(LayoutError, match="symlink"):
+        append(record, "user", "after")
+    assert record._history is history
+    assert record.transcript_path.read_bytes() == before
+
+
 def test_legacy_ids_survive_restart_without_rewriting_and_new_events_have_parents(tmp_path):
     record = SessionRecord(tmp_path)
     legacy = b'{"type":"user","message":{"content":"original"}}\n'

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from hardy.agents.usage import Usage
-from hardy.foundation.files import WriteGuard
+from hardy.foundation.files import LayoutError, WriteGuard
 from hardy.foundation.locking import FileLock
 from hardy.workflows.interactive.history import History, HistorySnapshot, identify
 from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT
@@ -203,6 +203,9 @@ class SessionRecord:
         if stamp != self._history_stamp:
             try:
                 self._history = History(self._recorded())
+            except LayoutError:
+                # A refused filesystem path is not a transcript schema error.
+                raise
             except ValueError as error:
                 raise SchemaError(f"Transcript history is invalid: {error}") from error
             self._history_stamp = stamp
