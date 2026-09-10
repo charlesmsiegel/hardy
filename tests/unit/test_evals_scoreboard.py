@@ -408,24 +408,26 @@ def test_a_condition_limits_mismatch_is_a_finding(tmp_path):
     assert any("max_turns" in i for i in issues), issues
 
 
-def test_a_batch_toolchain_mismatch_is_a_finding(tmp_path):
+def test_a_batch_toolchain_mismatch_is_a_finding(tmp_path, monkeypatch):
     """A row's own recorded toolchain must match the scoreboard's environment
     (item 1): copying in a run produced under a different Mathlib revision
     must not pass silently and be credited to this board's toolchain. The
-    run's own three artifacts (`result.json`, `trajectory.json`,
-    `writeup.md`) are kept self-consistent with each other -- as a real
-    swapped-in run's would be -- so only the new cross-check against
-    `board.environment` fires, not the recorded-run audit's own internal
-    consistency check.
+    run is produced under that revision from the start, including its durable
+    manifest and journal, so only the cross-check against `board.environment`
+    fires, not the recorded-run audit's own internal consistency check.
     """
+    from hardy.workflows import batch
+
+    run = batch.run
+
+    def foreign_toolchain(*args, **kwargs):
+        output = args[3]
+        if output.name == "batch-0" and output.parent.name == "t":
+            kwargs["toolchain"] = {**kwargs["toolchain"], "mathlib_revision": "f" * 40}
+        return run(*args, **kwargs)
+
+    monkeypatch.setattr(batch, "run", foreign_toolchain)
     out, problems, baseline = _board(tmp_path)
-    old_revision = RAW_IDENTITY["mathlib_revision"]
-    new_revision = "f" * 40
-    run_dir = out / "runs" / "t" / "batch-0"
-    _edit(run_dir / "trajectory.json", lambda t: t["toolchain"].__setitem__("mathlib_revision", new_revision))
-    _edit(run_dir / "result.json", lambda r: r["toolchain"].__setitem__("mathlib_revision", new_revision))
-    writeup_path = run_dir / "writeup.md"
-    writeup_path.write_bytes(writeup_path.read_bytes().replace(old_revision.encode("utf-8"), new_revision.encode("utf-8")))
 
     issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
     assert not any("audit reports findings" in i for i in issues), issues
