@@ -98,27 +98,33 @@ def build_runtime(
         backend = backend_for(backend_name)
     except ValueError as error:
         return None, str(error)
-    session = CasSession(
-        backend=backend,
-        command=command,
-        log_path=log_path,
-        limits=limits,
-        cwd=cwd,
-        observe=observe,
-    )
+    try:
+        session = CasSession(
+            backend=backend,
+            command=command,
+            log_path=log_path,
+            limits=limits,
+            cwd=cwd,
+            observe=observe,
+        )
+    except CasError as error:
+        return None, str(error)
     # Handed over before the probe, which is the only moment it can be: a
     # caller on another thread has no other way to reach a kernel this
     # function is about to block on. `probe_version` holds the session's own
     # `_lock` for its whole duration and so does `close`, so the reach that
     # works is `escalate`, which takes `_signal_lock` and never `_lock`
     # precisely so it can arrive from outside.
-    if on_session is not None:
-        on_session(session)
     try:
+        if on_session is not None:
+            on_session(session)
         version = session.probe_version()
     except CasError as error:
         session.close()
         return None, str(error)
+    except BaseException:
+        session.close()
+        raise
     runtime = CasToolRuntime(
         session=session,
         observation_bytes=limits.model_observation_bytes,

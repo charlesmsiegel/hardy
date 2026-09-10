@@ -32,6 +32,7 @@ from hardy.algebra.contracts import (
 )
 from hardy.algebra.kernel import _Kernel
 from hardy.foundation.files import LayoutError, WriteGuard
+from hardy.foundation.locking import FileLock, LockTimeout
 from hardy.foundation.process import INTERRUPT_GRACE_SECONDS
 from hardy.workflows.contracts import RunLimits
 
@@ -59,11 +60,8 @@ class CasSession:
         # to whatever it named, it would destroy it. `Layout.ensure` cannot
         # help: it runs once at startup and never enumerates this file.
         #
-        # Not created here. A session whose log directory cannot be made --
-        # the path is a plain file, the disk is full -- must still be
-        # constructible, and fail at the append, where the failure is a
-        # poisoned session naming the log rather than a constructor that
-        # raised. `_append` creates the directory, and the guard pins it then.
+        # An unusable absent log remains constructible, but no kernel may run
+        # before its directory can be created and its writer lease acquired.
         self._log = WriteGuard(log_path.parent)
         self.limits = limits
         self.cwd = cwd or log_path.parent
@@ -114,7 +112,10 @@ class CasSession:
         # declined to wait for. Lifted by `resume`, at the start of the next
         # turn or command, exactly as that register is.
         self._stop_level = 0
-        self._records: list[CellRecord] = self._load()
+        self._records: list[CellRecord] = []
+        self._lease: FileLock | None = None
+        self._lease_identity: tuple[int, int] | None = None
+        self._closed = False
         # The session's own figure: every second of CAS wall clock billed to
         # this log, across every process that has opened it. Read back from the
         # last record, which carries the running total as of its append, and
@@ -125,10 +126,61 @@ class CasSession:
         #
         # The sidecar also includes charges made after the last cell append.
         self._spend_name = log_path.name + ".spend.json"
+        self.total_spent_seconds = 0.0
+        try:
+            self._load_owned_history()
+        except OSError:
+            # Preserve lazy construction when the absent log's parent cannot
+            # yet be created. The first operation retries before doing work.
+            if self.log_path.exists():
+                raise
+
+    def _load_owned_history(self) -> None:
+        """Own the log before reading its history or repairing a torn tail.
+
+        Locking only an append cannot serialize two already-loaded histories:
+        their sequence numbers, spend, and live namespaces would still differ.
+        The OS lease therefore lasts until close, including between cells.
+        """
+        # A deferred session has never loaded history or owned a kernel. Its
+        # formerly unusable parent may now be a directory; prove it afresh.
+        self._log = WriteGuard(self.log_path.parent)
+        self._log.mkdir()
+        lease = FileLock(self._log.reserve(self.log_path.name + ".lock"), timeout=0)
+        try:
+            lease.__enter__()
+        except LockTimeout as error:
+            raise CasError(f"the CAS cell log cannot be owned ({self.log_path}): {error}") from error
+        try:
+            info = lease.path.stat()
+            self._lease_identity = (info.st_dev, info.st_ino)
+            self._records = self._load()
+            self._restore_spend()
+        except BaseException:
+            lease.__exit__(None, None, None)
+            raise
+        self._lease = lease
+
+    def _restore_spend(self) -> None:
         recorded_spend = (
             self._records[-1].spent_ms / 1_000 if self._records else 0.0
         )
         self.total_spent_seconds = max(recorded_spend, self._load_spend())
+
+    def _require_owner(self) -> None:
+        if self._closed:
+            raise CasError("the CAS session is closed; open a new session before running or writing")
+        try:
+            if self._lease is None:
+                self._load_owned_history()
+            assert self._lease is not None
+            info = self._log.reserve(self._lease.path.name).stat()
+            if (info.st_dev, info.st_ino) != self._lease_identity:
+                raise CasError("the CAS writer lease was replaced; close and reopen the session")
+        except (OSError, CasError) as error:
+            self._drop_kernel()
+            self.state = "poisoned"
+            raise CasError(f"the CAS cell log could not be written ({self.log_path}): {error}") from error
 
     def _load_spend(self) -> float:
         try:
@@ -156,6 +208,7 @@ class CasSession:
         lock does not.
         """
         with self._lock:
+            self._require_owner()
             yield
 
     # ------------------------------------------------------------------ log
@@ -296,6 +349,7 @@ class CasSession:
         described by anything durable: the session is poisoned rather than
         allowed to continue on state it can never explain.
         """
+        self._require_owner()
         try:
             # Through the guard, which re-proves the directory and re-pins it
             # if it had to be recreated: a session whose workspace was deleted
@@ -347,6 +401,7 @@ class CasSession:
     # -------------------------------------------------------------- kernel
 
     def _start(self) -> None:
+        self._require_owner()
         cap = self.limits.cas_output_bytes
         argv = self.backend.argv(self.command, cap)
         # A length-framed backend clips its own output to `cap`, so the reader
@@ -390,6 +445,7 @@ class CasSession:
         accepted log, which is the only state anything else can reconstruct.
         """
         with self._lock:
+            self._require_owner()
             if self._kernel is None:
                 self._start()
             try:
@@ -802,6 +858,7 @@ class CasSession:
         durable total. Every charge goes through here so they cannot drift.
         """
         with self._lock:
+            self._require_owner()
             seconds = max(0.0, seconds)
             self.spent_seconds += seconds
             self.total_spent_seconds += seconds
@@ -836,6 +893,7 @@ class CasSession:
         return None
 
     def _guard(self) -> None:
+        self._require_owner()
         if self.state == "poisoned":
             raise CasError(
                 "the CAS session is poisoned: its state could not be rebuilt faithfully. "
@@ -1148,6 +1206,7 @@ class CasSession:
         for it makes the timeline lie about why earlier definitions vanished.
         """
         with self._lock:
+            self._require_owner()
             self._drop_kernel()
             self.state = "cold"
             self._append(
@@ -1166,8 +1225,16 @@ class CasSession:
 
     def close(self) -> None:
         with self._lock:
-            if self._kernel is not None:
-                self._kernel.kill()
-            self._kernel = None
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                if self._kernel is not None:
+                    self._kernel.kill()
+            finally:
+                self._kernel = None
+                if self._lease is not None:
+                    self._lease.__exit__(None, None, None)
+                    self._lease = None
 
 
