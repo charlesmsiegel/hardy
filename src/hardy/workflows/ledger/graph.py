@@ -189,12 +189,34 @@ class LedgerGraph:
                              if is_resolved is None or not is_resolved(o)),
                             key=lambda o: _key(o.ref)))
 
+    def _obligation_state(self, pinned: Obligation) -> Obligation:
+        """Follow progress only when the head still describes this exact requirement.
+
+        Graph edges remain pinned to the original record. Updating its status
+        must not erase the edge; a resolution under another scope must not
+        discharge it either. Incompatible heads leave the pinned work visible.
+        """
+        current = self.snapshot.head(pinned.id)
+        if isinstance(current, Obligation) and (
+            current.item == pinned.item and current.kind == pinned.kind
+            and current.context == pinned.context and current.scope.ref == pinned.scope.ref
+        ):
+            return current
+        return pinned
+
     def blockers(self, root: VersionRef, *, is_resolved: Resolved | None = None
                  ) -> tuple[Obligation, ...]:
         """Unresolved obligations on prerequisites, excluding the root's own work."""
         dependencies = set(self.dependency_closure(root))
-        return tuple(o for o in self._unresolved(is_resolved)
-                     if o.item in dependencies or o.ref in dependencies)
+        candidates = {o.ref: o for o in self.snapshot.current(Obligation) if o.item in dependencies}
+        for ref in dependencies:
+            record = self.snapshot.get(ref)
+            if isinstance(record, Obligation):
+                state = self._obligation_state(record)
+                candidates[state.ref] = state
+        return tuple(sorted((o for o in candidates.values()
+                             if is_resolved is None or not is_resolved(o)),
+                            key=lambda o: _key(o.ref)))
 
     def ready_obligations(self, *, is_resolved: Resolved | None = None
                           ) -> tuple[Obligation, ...]:
@@ -215,8 +237,13 @@ class LedgerGraph:
                           ) -> tuple[tuple[VersionRef, ...], ...]:
         """Maximal simple paths to unresolved work, longest first; cycles terminate."""
         blockers = self.blockers(root, is_resolved=is_resolved)
-        paths = {path for o in blockers for target in (o.item, o.ref)
-                 for path in self.paths(root, target)}
+        targets = {ref for o in blockers for ref in (o.item, o.ref)}
+        blocker_refs = {o.ref for o in blockers}
+        for ref in self.dependency_closure(root):
+            record = self.snapshot.get(ref)
+            if isinstance(record, Obligation) and self._obligation_state(record).ref in blocker_refs:
+                targets.add(ref)
+        paths = {path for target in targets for path in self.paths(root, target)}
         maximal = [p for p in paths if not any(len(q) > len(p) and q[:len(p)] == p for q in paths)]
         return tuple(sorted(maximal, key=lambda p: (-len(p), tuple(map(_key, p)))))
 

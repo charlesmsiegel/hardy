@@ -267,6 +267,37 @@ def test_self_dependent_obligation_is_not_ready():
     assert g.ready_obligations() == ()
 
 
+def test_revised_open_obligation_still_blocks_its_exact_pinned_users():
+    theorem, prerequisite = item("T"), item("prerequisite")
+    scope = Scope(id="scope")
+    work = Obligation(id="prerequisite-work", kind="prove", item=prerequisite.ref, scope=scope)
+    target_work = Obligation(id="target-work", kind="prove", item=theorem.ref, scope=scope)
+    revised = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+                                        "status": "investigating"})
+    g = graph(theorem, prerequisite, scope, work, target_work,
+              edge("dependency", theorem, work, "blocked_by"), revised)
+    assert g.blockers(theorem.ref) == (revised,)
+    assert target_work not in g.ready_obligations()
+    assert g.critical_branches(theorem.ref) == ((theorem.ref, work.ref),)
+
+
+@pytest.mark.parametrize("different_scope", [False, True])
+def test_only_compatible_authenticated_successor_discharges_a_pinned_requirement(different_scope):
+    theorem, prerequisite = item("T"), item("prerequisite")
+    scope, other_scope = Scope(id="scope"), Scope(id="other-scope")
+    work = Obligation(id="work", kind="prove", item=prerequisite.ref, scope=scope)
+    resolution = Resolution(id="resolution", obligation=work.ref, item=prerequisite.ref,
+                            accepted_by=ArtifactRef(uri="decision", digest="a" * 64),
+                            policy_digest="b" * 64)
+    closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+                                       "scope": other_scope if different_scope else scope,
+                                       "status": "resolved", "resolution": resolution})
+    g = graph(theorem, prerequisite, scope, other_scope, work,
+              edge("dependency", theorem, work, "blocked_by"), closed)
+    assert g.blockers(theorem.ref, is_resolved=lambda o: o == closed) == (
+        (work,) if different_scope else ())
+
+
 def test_transport_context_reverse_closure_reaches_only_its_descendants_and_users():
     root = MathematicalContext(id="root", label="root", origin="human_authored")
     child = MathematicalContext(id="child", label="normalization", origin="human_authored",
