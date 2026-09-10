@@ -394,6 +394,129 @@ def test_the_deadline_does_not_wait_for_the_sdk_to_tear_down():
     assert live.settle(timeout=5) is True
 
 
+def test_timed_out_teardown_cannot_settle_the_next_turns_partial_text():
+    """A fresh turn may start while the previous SDK client is still closing."""
+    seen = []
+    release = threading.Event()
+
+    class SlowTeardown(FakeClient):
+        async def __aexit__(self, *exception):
+            while not release.is_set():
+                await asyncio.sleep(0.001)
+            return False
+
+    old = SlowTeardown([StreamEvent("old"), ResultMessage()], stall_after=1)
+    new = FakeClient([StreamEvent("new"), ResultMessage()], stall_after=1)
+    clients = iter([old, new])
+    live = runtime(wall_seconds=0.05, observe=seen.append)
+    live._sdk = types.SimpleNamespace(ClaudeSDKClient=lambda options=None: next(clients))
+    live._options = lambda: None
+    stream = None
+    try:
+        with pytest.raises(TimeoutError):
+            live.ask("first")
+        old_worker = live.worker
+        live.wall_seconds = None
+        stream = live.stream("second")
+        assert next(stream).text == "new"
+        release.set()
+        old_worker.join(2)
+        assert not old_worker.is_alive()
+        # Teardown belongs to the old turn; the new text is still streaming.
+        assert not any(event.get("message", {}).get("content") == "new" for event in seen)
+        live.cancel()
+        list(stream)
+        assert [event["message"]["content"] for event in seen if event.get("partial")] == ["old", "new"]
+    finally:
+        release.set()
+        live.cancel()
+        if stream is not None:
+            stream.close()
+        live.settle(timeout=2)
+
+
+@pytest.mark.parametrize("late_stage", ["connect", "response"])
+def test_a_timed_out_provider_cannot_publish_into_the_next_turn(late_stage):
+    release = threading.Event()
+    seen = []
+
+    class LateClient(FakeClient):
+        async def _finish_after_cancel(self):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                while not release.is_set():
+                    await asyncio.sleep(0.001)
+
+        async def __aenter__(self):
+            if late_stage == "connect":
+                await self._finish_after_cancel()
+            return self
+
+        async def receive_response(self):
+            if late_stage == "response":
+                yield StreamEvent("old")
+                await self._finish_after_cancel()
+            yield StreamEvent("late")
+            yield ResultMessage()
+
+    old = LateClient([])
+    new = FakeClient([StreamEvent("new"), ResultMessage()], stall_after=1)
+    clients = iter([old, new])
+    live = runtime(wall_seconds=0.05, observe=seen.append)
+    live._sdk = types.SimpleNamespace(ClaudeSDKClient=lambda options=None: next(clients))
+    live._options = lambda: None
+    stream = None
+    try:
+        with pytest.raises(TimeoutError):
+            live.ask("first")
+        old_worker = live.worker
+        live.wall_seconds = None
+        stream = live.stream("second")
+        assert next(stream).text == "new"
+        release.set()
+        old_worker.join(2)
+        assert not old_worker.is_alive()
+        assert live._client is new
+        assert live._drawn == ["new"]
+        assert not any(event["type"] == "result" for event in seen)
+        if late_stage == "connect":
+            assert old.asked is None
+        live.cancel()
+        list(stream)
+        assert new.interrupted
+        assert seen[-1]["message"]["content"] == "new"
+    finally:
+        release.set()
+        live.cancel()
+        if stream is not None:
+            stream.close()
+        live.settle(timeout=2)
+
+
+def test_an_early_event_loop_timer_does_not_shorten_the_wall_budget(monkeypatch):
+    """Windows timers may wake before the monotonic deadline they approximate."""
+    real_wait = asyncio.wait
+    woke_early = False
+
+    async def early_once(tasks, **kwargs):
+        nonlocal woke_early
+        if not woke_early:
+            woke_early = True
+            return set(), set(tasks)
+        return await real_wait(tasks, **kwargs)
+
+    monkeypatch.setattr(asyncio, "wait", early_once)
+    seen = []
+    live, _ = wired([StreamEvent("partial"), ResultMessage()], stall_after=1,
+                    wall_seconds=0.05, observe=seen.append)
+    with pytest.raises(TimeoutError):
+        live.ask("go")
+    [limit] = [event for event in seen if event["type"] == "wall_clock_limit"]
+    assert limit["elapsed"] >= 0.05
+    assert live.settle(timeout=2)
+
+
 def test_a_cancelled_turn_is_not_reported_as_a_provider_error():
     """The SDK reports an interrupted exchange as an error. Raising would dress
     the user's own decision up as a failure of the provider."""
