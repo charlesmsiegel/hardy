@@ -98,9 +98,8 @@ At any point, `/status` shows the project, model, and spend, read from the
 session's own files rather than from anything the conversation claims.
 `/exit` (or `/quit`, or Ctrl+D) leaves the session; nothing is lost, since
 the record is written as you go rather than at the end. See
-[the command reference](reference/cli.md) for the rest of the session
-commands.
-<!-- relink to guides/interactive-session.md once it exists -->
+[working in `hardy chat`](guides/interactive-session.md) for the rest of
+what you can do at that prompt.
 
 ## 4. Your first staged proof
 
