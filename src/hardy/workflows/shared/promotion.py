@@ -39,6 +39,7 @@ from hardy.formal.syntax import (
 from hardy.formal.workspace import LeanWorkspace
 from hardy.foundation.files import files_under, guard_for
 from hardy.foundation.journal import Journal, JournalSnapshot
+from hardy.foundation.locking import FileLock
 from hardy.foundation.values import FrozenModel, json_digest
 from hardy.literature.sources.contracts import Digest, StableId, Text
 from hardy.workflows.contracts import FaithfulnessVerdict
@@ -63,7 +64,8 @@ class ClosureEntry(FrozenModel):
 
 
 class PromotionBlocker(FrozenModel):
-    kind: Literal["project_local_assumption", "project_specific_dependency", "unverified", "unfaithful", "build_failed", "audit_failed", "stale_shared_head", "missing_module", "unknown_claim"]
+    kind: Literal["project_local_assumption", "project_specific_dependency", "unverified", "unfaithful", "build_failed", "audit_failed", "stale_shared_head",
+                  "missing_module", "unknown_claim", "admission_failed"]
     detail: Text
 
 
@@ -257,10 +259,7 @@ class Promoter:
             self.claims.get(request.claim)
         except Exception as error:
             blockers.append(PromotionBlocker(kind="unknown_claim", detail=f"claim {request.claim.id} is not in the shared ledger: {error}"))
-        if request.faithfulness is None and request.approval is None:
-            blockers.append(PromotionBlocker(kind="unfaithful", detail="no faithfulness verdict or human approval ties the declaration to the claim"))
-        elif request.faithfulness is not None and not request.faithfulness.agreed:
-            blockers.append(PromotionBlocker(kind="unfaithful", detail=f"the faithfulness verdict is {request.faithfulness.outcome.value}"))
+        blockers.extend(_semantic_blockers(request))
         closure = compute_closure(sources, request.module, shared_modules=shared_modules_in(self.shared_root), audit=audit)
         blockers.extend(blockers_of(closure))
         if request.module in sources and request.declaration not in _declared(sources[request.module]):
@@ -282,6 +281,9 @@ class Promoter:
             raise PromotionError(f"promotion {record_id} is {record.status}; only a prepared promotion is promoted")
         if (record.project, record.source_module, record.declaration, record.claim) != (request.project, request.module, request.declaration, request.claim):
             raise PromotionError("the request does not match the prepared promotion")
+        semantic = _semantic_blockers(request)
+        if semantic:
+            return self._fail(record, semantic[0])
         if shared_head(self.shared_root) != record.shared_head:
             return self._fail(record, PromotionBlocker(kind="stale_shared_head", detail="the shared library changed since this promotion was prepared; prepare it again"))
         renames = dict(record.shared_modules)
@@ -311,44 +313,107 @@ class Promoter:
             if failure is not None:
                 return self._fail(record, PromotionBlocker(kind="build_failed", detail=f"{failure.module}: {failure.output}"[:2000]))
             verdicts = self._audit(shadow, targets)
+            target_module = renames[record.source_module]
+            short = record.declaration.rsplit(".", 1)[-1]
             for shared in targets:
                 verdict = verdicts.get(shared)
                 if verdict is None or verdict.get("status") != "clean" or verdict.get("assumed"):
                     return self._fail(record, PromotionBlocker(kind="audit_failed", detail=f"{shared}: audit {verdict!r} is not clean in the current environment"))
-            target_module = renames[record.source_module]
+                if shared == target_module and not ({record.declaration, short} & set(verdict.get("declarations") or ())):
+                    # A clean module status says nothing about a declaration the
+                    # audit never looked at; the promoted declaration must be
+                    # among the ones the audit actually established.
+                    return self._fail(record, PromotionBlocker(kind="audit_failed", detail=f"the audit of {shared} does not cover {record.declaration}; only an audited declaration promotes"))
             declared = _declared(staged[target_module])
             if record.declaration not in declared:
                 return self._fail(record, PromotionBlocker(kind="missing_module", detail=f"{target_module} does not declare {record.declaration} after staging"))
-            # Commit: sources into the shared tree through guards, then the build mirror.
-            for shared, source in staged.items():
-                guard, name = guard_for(self.shared_root, module_path(shared), create=True)
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(source)
-            if self.shared_build.is_dir():
-                shutil.rmtree(self.shared_build)
-            shutil.copytree(shadow_build, self.shared_build)
+            source_sha = hashlib.sha256(staged[target_module].encode("utf-8")).hexdigest()
+            verification = EvidenceRef(kind="formal", subject=record.claim, producer=PRODUCER,
+                                       artifact=ArtifactRef(uri=f"hardy-shared-lean:{target_module}", digest=source_sha, locator=record.declaration))
+            formal_type = statements(staged[target_module]).get(record.declaration) or record.declaration
+            realization = FormalRealization(
+                id=realization_id(record.claim, RealizationOrigin.HARDY_SHARED, target_module, record.declaration, self.environment), claim=record.claim,
+                origin=RealizationOrigin.HARDY_SHARED, module=target_module, declaration=record.declaration, formal_type=formal_type, source_sha256=source_sha,
+                environment=self.environment, imports=(target_module,), project=record.project, status="candidate",
+                history=(f"promoted from {record.project}:{record.source_module} by {record.actor}",), at=_stamp(),
+            )
+            # Commit under the shared tree's lock: the head is checked again
+            # inside it, so a promotion that landed during the build is seen
+            # before anything is written rather than silently overwritten.
+            self.shared_root.parent.mkdir(parents=True, exist_ok=True)
+            with FileLock(self.shared_root.with_name(self.shared_root.name + ".promotion.lock")):
+                if shared_head(self.shared_root) != record.shared_head:
+                    return self._fail(record, PromotionBlocker(kind="stale_shared_head", detail="another promotion changed the shared library during this one; prepare it again"))
+                before = {shared: _read_if_file(self.shared_root / module_path(shared)) for shared in staged}
+                build_before = temporary / "build-before"
+                if self.shared_build.is_dir():
+                    shutil.copytree(self.shared_build, build_before)
+                for shared, source in staged.items():
+                    guard, name = guard_for(self.shared_root, module_path(shared), create=True)
+                    with guard.open(name, "w", encoding="utf-8") as handle:
+                        handle.write(source)
+                if self.shared_build.is_dir():
+                    shutil.rmtree(self.shared_build)
+                shutil.copytree(shadow_build, self.shared_build)
+                try:
+                    self.realizations.propose(realization)
+                    attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness,
+                                                        approval=request.approval, actor=record.actor)
+                except Exception as error:
+                    # Files without an admitted realization would be a shared
+                    # module nothing vouches for: put the tree back as it was.
+                    self._restore(before, build_before)
+                    self._withdraw(realization.id, f"{type(error).__name__}: {error}")
+                    return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{type(error).__name__}: {error}; the shared tree was restored"[:2000]))
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
-        source_sha = hashlib.sha256(staged[target_module].encode("utf-8")).hexdigest()
-        verification = EvidenceRef(kind="formal", subject=record.claim, producer=PRODUCER,
-                                   artifact=ArtifactRef(uri=f"hardy-shared-lean:{target_module}", digest=source_sha, locator=record.declaration))
-        formal_type = statements(staged[target_module]).get(record.declaration) or record.declaration
-        realization = FormalRealization(
-            id=realization_id(record.claim, RealizationOrigin.HARDY_SHARED, target_module, record.declaration, self.environment), claim=record.claim,
-            origin=RealizationOrigin.HARDY_SHARED, module=target_module, declaration=record.declaration, formal_type=formal_type, source_sha256=source_sha,
-            environment=self.environment, imports=(target_module,), project=record.project, status="candidate",
-            history=(f"promoted from {record.project}:{record.source_module} by {record.actor}",), at=_stamp(),
-        )
-        self.realizations.propose(realization)
-        attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness, approval=request.approval, actor=record.actor)
         admitted = record.model_copy(update={"status": "admitted", "realization": attached.id, "verification": verification, "at": _stamp(),
                                              "history": (*record.history, f"admitted as {attached.id} in {target_module}")})
         return self.promotions.append(admitted)
+
+    def _restore(self, before: Mapping[str, bytes | None], build_before: Path) -> None:
+        for shared, content in before.items():
+            path = self.shared_root / module_path(shared)
+            if content is None:
+                path.unlink(missing_ok=True)
+                parent = path.parent
+                while parent != self.shared_root and parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+            else:
+                path.write_bytes(content)
+        if self.shared_build.is_dir():
+            shutil.rmtree(self.shared_build)
+        if build_before.is_dir():
+            shutil.copytree(build_before, self.shared_build)
+
+    def _withdraw(self, realization_id_: str, reason: str) -> None:
+        try:
+            held = self.realizations.get(realization_id_)
+        except Exception:
+            return
+        if held.status == "candidate":
+            self.realizations.mark(realization_id_, "rejected", reason=f"promotion admission failed: {reason}")
 
     def _fail(self, record: PromotionRecord, blocker: PromotionBlocker) -> PromotionRecord:
         failed = record.model_copy(update={"status": "failed", "blockers": (*record.blockers, blocker), "at": _stamp(),
                                            "history": (*record.history, f"failed: {blocker.kind}")})
         return self.promotions.append(failed)
+
+
+def _semantic_blockers(request: PromotionRequest) -> tuple[PromotionBlocker, ...]:
+    if request.faithfulness is None and request.approval is None:
+        return (PromotionBlocker(kind="unfaithful", detail="no faithfulness verdict or human approval ties the declaration to the claim"),)
+    found: list[PromotionBlocker] = []
+    if request.faithfulness is not None and not request.faithfulness.agreed:
+        found.append(PromotionBlocker(kind="unfaithful", detail=f"the faithfulness verdict is {request.faithfulness.outcome.value}"))
+    if request.approval is not None and not request.approval.actor.startswith("user:"):
+        found.append(PromotionBlocker(kind="unfaithful", detail=f"an approval by {request.approval.actor!r} is not a human approval; a model is not an approver"))
+    return tuple(found)
+
+
+def _read_if_file(path: Path) -> bytes | None:
+    return path.read_bytes() if path.is_file() and not path.is_symlink() else None
 
 
 def _declared(source: str) -> set[str]:

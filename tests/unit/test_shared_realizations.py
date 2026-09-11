@@ -143,3 +143,13 @@ def test_restart_preserves_realizations(tmp_path):
     c = claim()
     r = store.attach(store.propose(realization(c)).id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="t")
     assert RealizationStore(tmp_path / "realizations").get(r.id) == r
+
+
+def test_evidence_about_another_claim_does_not_attach(tmp_path):
+    store = RealizationStore(tmp_path / "realizations")
+    c, other = claim(), claim(id="other-claim", name="Something else")
+    r = store.propose(realization(c))
+    with pytest.raises(RealizationError, match="does not transfer"):
+        store.attach(r.id, verification=formal_evidence(other.ref), faithfulness=verdict(), actor="test")
+    assert store.get(r.id).status == "candidate"
+    assert store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="test").status == "attached"

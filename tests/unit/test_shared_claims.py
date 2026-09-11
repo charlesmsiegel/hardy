@@ -202,3 +202,24 @@ def test_proposal_refuses_unknown_nodes_and_claims(tmp_path):
         linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(claim("ghost", "g", "g").ref,), interpreter="m"))
     with pytest.raises(LinkError, match="candidate claim"):
         linker.propose(sha, tree.id, theorem.id, InterpretationProposal(interpreter="m"))
+
+
+def test_a_retried_admission_reuses_the_claim_it_minted(tmp_path):
+    from hardy.foundation.journal import StaleRevision
+
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    theorem = node_numbered(tree, "1.2")
+    link = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c-retry", "retry", "retry"), interpreter="m"))
+    real_append = linker.links.append
+    calls = []
+
+    def flaky(record, *, expected_revision):
+        calls.append(record.status)
+        if len(calls) == 1:
+            raise StaleRevision("another writer appended a link first")
+        return real_append(record, expected_revision=expected_revision)
+
+    linker.links.append = flaky
+    admitted = linker.admit(link.id, verdict=verdict())
+    assert admitted.status is LinkStatus.ADMITTED and admitted.claim.id == "c-retry" and len(calls) == 2
+    assert [c.id for c in claims.claims()] == ["c-retry"]
