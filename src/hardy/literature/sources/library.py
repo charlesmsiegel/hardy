@@ -33,6 +33,7 @@ from .contracts import (
     Diagnostic,
     GroupingProposal,
     IdentityEvidence,
+    PageRegion,
     RepresentationKind,
     SourceFormat,
     SourceTree,
@@ -40,6 +41,7 @@ from .contracts import (
     WorkKind,
 )
 from .observations import PRODUCER, PRODUCER_VERSION, ObservationStore, observe_text
+from .ocr import OcrEngine, OcrResult, ocr_representations, page_images, weak_regions_of
 from .representations import RepresentationStore
 from .trees import TreeStore, build_tree, page_spans_from
 
@@ -160,6 +162,36 @@ class ManagedLibrary:
             snapshot = self.catalog.propose_grouping(proposal, expected_revision=snapshot.revision)
         return fresh
 
+
+    def weak_regions(self, sha256: str) -> tuple[PageRegion, ...]:
+        """Pages whose native extraction found no text; nothing is processed here."""
+        manifest = self.representations.page_manifest(sha256)
+        if manifest is None:
+            return ()
+        return weak_regions_of(manifest[1])
+
+    def enrich_region(self, sha256: str, region: PageRegion, *, engine: OcrEngine, reason: str) -> DerivedRepresentation:
+        """Run one engine over one region and admit its reading as its own representation.
+
+        The region's page images are kept as evidence beside the reading;
+        the native representation is untouched; an engine failure is a
+        diagnostic on a failed OCR representation, never a lost artifact.
+        """
+        artifact = self.artifacts.record(sha256)
+        data = self.artifacts.read(sha256)
+        images = page_images(data, region.page_index)
+        try:
+            result = engine(images[0][1] if images else b"", images[0][0].name if images else "", region)
+        except Exception as error:
+            result = OcrResult(tokens=(), engine=getattr(engine, "name", "ocr"), engine_version=getattr(engine, "version", "unknown"),
+                               diagnostics=(Diagnostic(code="ocr_engine_failed", detail=f"{type(error).__name__}: {error}", severity="error", page_index=region.page_index),))
+        representations, mappings = ocr_representations(sha256, artifact.access, region, images, result, reason=reason)
+        admitted = None
+        for record, payloads in representations:
+            admitted = self.representations.admit(record, payloads)
+        self.representations.add_mappings(sha256, mappings)
+        assert admitted is not None
+        return admitted
 
     def build_tree(self, sha256: str, *, representation: str | None = None) -> SourceTree:
         """Build, validate and admit a deterministic tree over one normalized text representation.
