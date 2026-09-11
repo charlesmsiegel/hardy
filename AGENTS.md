@@ -1,133 +1,121 @@
-# Codex startup context
+# Agent instructions
+
+This file is the contract for any coding agent working in this repository. It
+applies whatever model or harness is driving the session; `CLAUDE.md` points
+here and adds nothing.
 
 ## Read first
 
-Hardy restarted from a documentation-only reset and now carries one thin
-interactive slice; nothing promises compatibility with the deleted prototype.
-Before designing or coding, read `README.md`, `DESIGN.md`, and `FEATURES.md`; use
-`ARCHITECTURE.html` as the visual overview and `docs/INSTALL.md` for how a machine
-is brought up.
+1. `README.md`, for what Hardy is and what it refuses to claim.
+2. `docs/design/overview.md`, `docs/design/trust-boundary.md`, and
+   `docs/design/output-contract.md`, for the rules every change must keep.
+3. `docs/reference/` for what the commands, settings, and artifacts are today.
+   The reference pages are tested against the code; trust them over memory.
 
-To work on the code: `scripts/install.sh` sets up a full environment,
-`uv run --extra test pytest` runs the hermetic suite, and `hardy doctor` reports
-what a machine is still missing. Add `--cov` to measure what the suite reaches;
-it writes `coverage.xml` and `htmlcov/index.html`, and fails below the floor in
-`pyproject.toml`. CI runs the same command on every pull request and keeps the
-report.
+`docs/design/decisions.md` records what was chosen over what and why. Read the
+entry for an area before proposing to change it.
+
+## Working on the code
+
+```sh
+scripts/install.sh                          # full environment from a clone
+uv run --extra test pytest -m "not real_toolchain and not live"
+uvx ruff check src tests
+uv run hardy doctor                         # what this machine is still missing
+```
+
+A bare `pytest` on a machine with a configured Lean project runs a whole-corpus
+real sweep; use the marker filter above. `CONTRIBUTING.md` describes the test
+tiers, coverage floor, CI, and releases.
 
 ## Source ownership
 
 Implementations live under `src/hardy/agents`, `algebra`, `app`, `corpus`,
 `documents`, `evals`, `formal`, `foundation`, `literature`, `prompts` and
-`workflows`. The package root has only `__init__.py`, `__main__.py` and the
-`cli.py`, `mcp_server.py`, `cas_driver.py` entry-point shims. Use canonical package
-imports; the former root implementation modules, including `domain.py` and
-`models.py`, have been removed.
+`workflows`. The package root holds only `__init__.py`, `__main__.py` and the
+`cli.py`, `mcp_server.py`, `cas_driver.py` entry-point shims. Import from the
+owning package; the former root modules are gone.
 
-The interactive coordinator is `workflows/interactive/session.py`; record,
-formal save, admission, document and turn responsibilities have separate owners
-beside it. Collaborators receive named operations and snapshots, not the whole
-session. Application construction and terminal adapters live in `app/`, including
-`app/tui/`, `app/evals.py` and `app/corpus_viewer.py`.
-
-Shared primitives are in `foundation/values.py`, `files.py`, `locking.py` and
-`paths.py`; capability and run values live in `formal/contracts.py`,
-`documents/contracts.py`, `workflows/contracts.py` and
-`workflows/batch_contracts.py`. Keep dependency direction from application to
-workflow to capabilities to foundations. `corpus/` under the Python package is
-code; the repository-level corpus content still follows the branch rules below.
+Dependencies point one way: `app` to `workflows` to the capability packages
+(`formal`, `documents`, `algebra`, `literature`, `corpus`) to `foundation`, with
+`agents`, `evals` and `prompts` beside them. `tests/unit/test_module_boundaries.py`
+enforces the direction; `docs/design/module-boundaries.md` explains it. The
+interactive coordinator is `workflows/interactive/session.py`; record, formal
+save, admission, document, and turn responsibilities each have their own owner
+beside it, and collaborators receive named operations and snapshots, never the
+whole session.
 
 ## Repository rules
 
-- Keep `README.md`, `DESIGN.md`, `FEATURES.md`, and `ARCHITECTURE.html` consistent.
-- Prefer the shortest vertical slice that tests a design assumption. Do not restore
-  the old milestone machinery, container sandbox, framework abstractions, or warm
-  worker pool unless current evidence requires them.
-- The absent sandbox is a known temporary risk. Never describe generated Lean,
-  TeX, downloaded papers, or helper processes as safe. Run only trusted output in
-  disposable development environments until isolation is deliberately restored.
-- The Lean kernel is the authority for formal verification. Preserve the original
-  statement, audit axioms, and distinguish kernel verification from heuristic
+- The Lean kernel is the authority for formal verification. Preserve the frozen
+  statement, audit axioms, and keep kernel verification distinct from heuristic
   review and document compilation.
 - Partial results are valid only when their remaining holes and assumptions are
   explicit. Never silently weaken or strengthen a theorem to make it pass.
-- When code is introduced, add the smallest tests and commands needed to reproduce
+- Nothing confines generated Lean, TeX, downloaded papers, or helper processes.
+  Never describe them as safe. Run only trusted output in disposable
+  environments.
+- Prefer the shortest vertical slice that tests a design assumption. Do not
+  restore milestone machinery, a container sandbox, framework abstractions, or a
+  warm worker pool unless current evidence requires them.
+- When code is introduced, add the smallest tests and commands that reproduce
   the experiment. Record model, toolchain, configuration, and source identities
   when they can affect results.
-
-## Current direction
-
-Build the “First experiment acceptance test” in `FEATURES.md` before expanding the
-architecture: one model loop, direct Lean feedback, structured tools, a saved
-trajectory, a checked Lean artifact, and an honestly graded writeup.
+- Status lives only in `docs/roadmap.md`. Reference pages under
+  `docs/reference/` are tested against the code: when you change a command,
+  flag, slash command, or setting, `tests/unit/test_docs.py` names the page to
+  update. Design pages carry reasoning and no status markers. Planning
+  artifacts, reports, and session notes do not belong in the tree.
+- Add every new page under `docs/` to `docs/README.md`; the same test checks it.
 
 ## Branching: code on `main`, statements on `corpus/curation`
 
-Two kinds of change live in this repository and they move at different speeds.
-The harness -- `src/`, `tests/`, tooling, docs -- is code. The corpus is
-mathematical content: `corpus/problems/*.json`, `corpus/CHANGELOG.md`,
-`corpus/sources.json`, `corpus/tombstones.json`, and `corpus/EVALS.md`.
+Two kinds of change live here and move at different speeds. The harness
+(`src/`, `tests/`, tooling, docs) is code. The corpus is mathematical content:
+`corpus/problems/*.json`, `corpus/CHANGELOG.md`, `corpus/sources.json`,
+`corpus/tombstones.json`, and `corpus/EVALS.md`.
 
-**`main` carries everything that is not corpus content.** **`corpus/curation`
-branches off `main` and carries only the statements and the measurements over
-them.**
+`main` carries everything that is not corpus content. `corpus/curation` branches
+off `main` and carries only the statements and the measurements over them.
+Never make a code change on the corpus branch:
 
-### The rule
-
-Never make a code change on the corpus branch.
-
-```
+```sh
 git checkout main
-# ... edit src/, tests/, docs ...
+# edit src/, tests/, docs
 git commit
 git checkout corpus/curation
 git rebase main
 ```
 
-Corpus work -- harvesting statements, recording faithfulness reads through the
-viewer, cutting a corpus release -- is committed on `corpus/curation` and never
-on `main`.
+A change that is both, such as a harvest that also improves the ingestion
+skill, is split: the code half onto `main`, the statements onto the corpus
+branch. A corpus harvest can be tens of thousands of JSON lines; a harness
+change buried in one cannot be reviewed, and keeping them apart lets a code
+change be tested against the base corpus before the statements that exercise it
+exist. `corpus/EVALS.md` is on the corpus side even though it is generated: it
+reports on the active corpus. `evals/` is ignored and holds no committed
+evidence.
 
-A change that is genuinely both, such as a harvest that also improves the
-ingestion skill, is split: the code half onto `main`, the statements onto the
-corpus branch. Do not let a corpus commit carry a `src/` or `tests/` edit along
-with it.
+### Digest coupling
 
-### Why the split
+Two digests decide whether earlier measurements can be reused, and a rebase is
+exactly when the edits that move them land:
 
-A corpus branch accumulates enormous JSON diffs: one harvest was 39,000 lines.
-Reviewing a harness change buried in that is not review. Keeping them apart also
-means a code change is testable against the base corpus on `main` before the
-statements that exercise it exist.
+- Editing any of the six deciding sources named in `src/hardy/evals/sweep.py`
+  (the sweep itself, `formal/audit.py`, `formal/lean.py`, `formal/syntax.py`,
+  `corpus/problems.py`, `corpus/identity.py`) moves `procedure_digest` and makes
+  the whole tier file non-reusable; the next sweep re-elaborates every entry.
+- Editing anything under `src/hardy/` not excluded by the denylist in
+  `src/hardy/evals/identity.py` moves `run_procedure_digest` and orphans every
+  scoreboard on disk, so boards stop pooling and `hardy evals todo` reports
+  `boards_counted: 0`.
 
-`corpus/EVALS.md` is on the corpus side even though it is generated rather than
-authored: it reports on the *active* corpus, so on `main` it would describe
-entries `main` does not carry.
+Neither is a reason not to make a change. Both are reasons to batch such edits
+rather than trickle them, never to make one while a sweep or a run is in
+flight, and never to restamp old evidence with a new digest to regain reuse.
 
-`evals/` is ignored and holds no committed evidence. `evals/baseline.json` and
-the scoreboards are local artifacts, regenerable with `hardy evals baseline` and
-`hardy evals run`.
-
-### Two things the split does not resolve
-
-`tests/unit/test_evals_corpus.py`, `test_evals_problems.py` and
-`test_evals_viewer.py` assert the shipped corpus's counts, so each branch needs
-its own values and they must be hand-edited whenever the corpus grows. Deriving
-the counts from the shards would end this; until then, expect them red on the
-corpus branch between a harvest and its release.
-
-Digest coupling makes some code edits expensive, and a rebase is exactly when
-they land:
-
-- Editing a deciding source listed in `src/hardy/evals/sweep.py` -- the sweep,
-  `formal/audit.py`, `formal/lean.py`, `formal/syntax.py`, `corpus/problems.py`
-  or `corpus/identity.py` -- moves `procedure_digest` and makes the entire tier
-  file non-reusable; the next sweep re-elaborates every entry.
-- Editing anything under `src/hardy/` that is not excluded by
-  `RUN_SOURCE_EXCLUDED_FILES` or `RUN_SOURCE_EXCLUDED_DIRS` in `evals/identity.py`
-  moves `run_procedure_digest` and orphans every scoreboard on disk, so boards
-  stop pooling and `evals todo` reports `boards_counted: 0`.
-
-Neither is a reason not to make the change. Both are a reason to batch such
-edits rather than trickle them, and never to make one while a sweep or a run is
-in flight.
+The unit tests that assert the shipped corpus's counts
+(`tests/unit/test_evals_corpus.py`, `test_evals_problems.py`,
+`test_evals_viewer.py`) need their own values on each branch and are hand-edited
+when the corpus grows; expect them red on the corpus branch between a harvest
+and its release.
