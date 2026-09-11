@@ -378,7 +378,7 @@ Lists the active problem's seeds with their priorities and intents.
 
 ### hardy library report
 
-Prints, as JSON, the evaluation counts the library's own records support: artifacts by format and extraction quality, representations by kind, trees with their node kinds, boundary statuses and diagnostics, unknown regions and model repairs, groupings confirmed and pending, weak pages and OCR readings; and, from the shared ledger, claims, relations, clusters, links by status, realizations by origin and status, and promotions by outcome and blocker. Every figure is reported on its own; nothing is folded into a single score.
+Prints, as JSON, the evaluation counts the library's own records support: artifacts by format, extraction quality, the outcome of each artifact's latest extraction pass (failures, refusals and unsupported formats counted, not only what was admitted), representations by kind, trees with their node kinds, boundary statuses and diagnostics, unknown regions and model repairs, groupings confirmed and pending, weak pages and OCR readings; and, from the shared ledger, claims, relations, clusters, links by status, realizations by origin and status, and promotions by outcome and blocker. Every figure is reported on its own; nothing is folded into a single score.
 
 ## Project publication commands
 

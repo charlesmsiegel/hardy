@@ -10,13 +10,17 @@ representation that did succeed stays usable.
 """
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from hardy.foundation.locking import atomic_write_bytes
 from hardy.foundation.paths import global_library
+from hardy.foundation.values import json_digest
 
 from .adapters import (
     AdapterRegistry,
@@ -49,6 +53,7 @@ ARTIFACTS = "artifacts"
 CATALOG = "catalog"
 REPRESENTATIONS = "representations"
 TREES = "trees"
+EXTRACTIONS = "extractions"
 
 DEFAULT_BUDGET = ExtractionBudget()
 
@@ -66,6 +71,47 @@ class ExtractionReport:
     adapter: str | None = None
 
 
+class ExtractionLog:
+    """One small record per extraction pass, kept beside the stores it fed.
+
+    A pass that admitted nothing, was refused, or found no adapter leaves a
+    record like any other, so the evaluation counts see every outcome rather
+    than only the representations that survived.
+    """
+
+    def __init__(self, root: Path, *, clock: Callable[[], float] = time.time) -> None:
+        self.root = Path(root)
+        self._clock = clock
+
+    def record(self, report: ExtractionReport) -> Path:
+        payload = {
+            "artifact_sha256": report.artifact_sha256, "status": report.status, "adapter": report.adapter,
+            "representations": [r.id for r in report.representations],
+            "diagnostics": [{"code": d.code, "severity": d.severity} for d in report.diagnostics],
+            "at": datetime.fromtimestamp(self._clock(), UTC).isoformat(timespec="seconds"),
+        }
+        content = json.dumps(payload, sort_keys=True).encode("utf-8")
+        target = self.root / report.artifact_sha256 / f"{int(self._clock() * 1000):013d}-{json_digest(payload)[:8]}.json"
+        atomic_write_bytes(target, content)
+        return target
+
+    def passes(self, sha256: str) -> tuple[dict[str, Any], ...]:
+        directory = self.root / sha256
+        if not directory.is_dir() or directory.is_symlink():
+            return ()
+        found = []
+        for path in sorted(directory.glob("*.json")):
+            try:
+                found.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        return tuple(found)
+
+    def latest(self, sha256: str) -> dict[str, Any] | None:
+        passes = self.passes(sha256)
+        return passes[-1] if passes else None
+
+
 @dataclass(frozen=True)
 class ImportReport:
     outcome: ImportOutcome
@@ -81,6 +127,7 @@ class ManagedLibrary:
         self.representations = RepresentationStore(self.root / REPRESENTATIONS)
         self.observations = ObservationStore(self.root / TREES)
         self.trees = TreeStore(self.root / TREES)
+        self.extractions = ExtractionLog(self.root / EXTRACTIONS, clock=clock)
         self.adapters = adapters if adapters is not None else default_adapters()
         self._clock = clock
 
@@ -97,6 +144,11 @@ class ManagedLibrary:
         return ImportReport(outcome=outcome, extraction=extraction, proposals=proposals)
 
     def extract(self, sha256: str, *, budget: ExtractionBudget = DEFAULT_BUDGET) -> ExtractionReport:
+        report = self._extract(sha256, budget=budget)
+        self.extractions.record(report)
+        return report
+
+    def _extract(self, sha256: str, *, budget: ExtractionBudget) -> ExtractionReport:
         artifact = self.artifacts.record(sha256)
         adapter = self.adapters.for_artifact(artifact)
         if adapter is None:

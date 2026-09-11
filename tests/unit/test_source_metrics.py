@@ -50,6 +50,33 @@ def test_source_report_counts_per_dimension(tmp_path):
     assert "numbering_gap" in dict(report.diagnostics_by_code) and "no_text_layer" in dict(report.diagnostics_by_code)
     assert report.weak_pages == 1 and report.ocr_representations == 0 and report.model_repairs == 0
     assert report.pending_groupings == 0 and report.authoritative_groupings == 0
+    assert dict(report.extraction_outcomes) == {"partial": 1} and report.extraction_passes == 1
+
+
+def test_failed_and_unsupported_extractions_are_counted_not_lost(tmp_path):
+    from hardy.literature.sources.contracts import SourceCorrespondence
+
+    lib = ManagedLibrary(tmp_path / "library")
+    good = lib.import_source(ImportRequest(data=build_pdf(book_pages()))).outcome.artifact.sha256
+    binary = lib.import_source(ImportRequest(data=b"\x00\x01\x02\xff", original_name="blob.bin")).outcome.artifact.sha256
+    empty = lib.import_source(ImportRequest(data=b"  \n", original_name="empty.txt")).outcome.artifact.sha256
+    skipped = lib.import_source(ImportRequest(data=b"never read\n", original_name="later.txt"), extract=False).outcome.artifact.sha256
+    lib.extract(good)  # a second pass over the same artifact is a second record, not a replaced one
+    assert [p["status"] for p in lib.extractions.passes(good)] == ["ok", "ok"]
+    assert lib.extractions.latest(binary)["status"] == "unsupported" and lib.extractions.latest(binary)["diagnostics"] == [{"code": "no_adapter", "severity": "info"}]
+    assert lib.extractions.latest(empty)["status"] == "failed" and lib.extractions.latest(skipped) is None
+    report = source_report(lib)
+    assert dict(report.extraction_outcomes) == {"failed": 1, "never_extracted": 1, "ok": 1, "unsupported": 1} and report.extraction_passes == 4
+    assert dict(report.extraction_quality) == {"ok": 1}
+    other = lib.import_source(ImportRequest(data=build_pdf([*book_pages(), Page((("Appendix. Extra page.", 72, 720),))]))).outcome.artifact.sha256
+    a, b = lib.build_tree(good), lib.build_tree(other)
+    left, right = (next(n for n in t.nodes if n.number == "1.2") for t in (a, b))
+    record = SourceCorrespondence(id="corr-1", left_artifact=good, left=left.id, right_artifact=other, right=right.id, relation="same_source_unit")
+    lib.trees.add_correspondence(record, expected_revision=lib.trees.revision())
+    lib.trees.add_correspondence(record.model_copy(update={"id": "corr-2", "status": "authoritative", "decided_by": "user:c", "evidence": ("read both",)}),
+                                 expected_revision=lib.trees.revision())
+    assert len(lib.trees.correspondences(good)) == 2 and len(lib.trees.correspondences(other)) == 2  # listed under both artifacts
+    assert dict(source_report(lib).correspondences) == {"same_source_unit:authoritative": 1, "same_source_unit:candidate": 1}  # counted once
 
 
 def test_compare_tree_scores_per_kind_without_collapsing(tmp_path):

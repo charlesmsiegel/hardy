@@ -55,6 +55,8 @@ class SourceReport(FrozenModel):
     artifacts: int
     by_format: tuple[tuple[str, int], ...]
     extraction_quality: tuple[tuple[str, int], ...]
+    extraction_outcomes: tuple[tuple[str, int], ...] = ()   # latest recorded pass per artifact; `never_extracted` when none
+    extraction_passes: int = 0
     representations_by_kind: tuple[tuple[str, int], ...]
     trees: int
     tree_versions: tuple[tuple[str, int], ...]
@@ -82,7 +84,8 @@ def source_report(library: ManagedLibrary) -> SourceReport:
     node_kinds: Counter = Counter()
     boundaries: Counter = Counter()
     diagnostics: Counter = Counter()
-    correspondences: Counter = Counter()
+    outcomes: Counter = Counter()
+    passes = 0
     unknown = repairs = trees = weak = ocr = 0
     digests = library.artifacts.stored()
     snapshot = library.catalog.snapshot()
@@ -91,6 +94,9 @@ def source_report(library: ManagedLibrary) -> SourceReport:
     pending = sum(1 for p in snapshot.proposals() if p.id not in decided)
     for sha in digests:
         formats[library.artifacts.record(sha).format.value] += 1
+        recorded = library.extractions.passes(sha)
+        passes += len(recorded)
+        outcomes[str(recorded[-1].get("status")) if recorded else "never_extracted"] += 1
         for record in library.representations.list(sha):
             kinds[record.kind.value] += 1
             if record.kind.value in {"native_text", "native_source", "dom"}:
@@ -112,10 +118,13 @@ def source_report(library: ManagedLibrary) -> SourceReport:
                 diagnostics[diagnostic.code] += 1
                 if diagnostic.code == "model_repair":
                     repairs += 1
-        for record in library.trees.correspondences(sha):
-            correspondences[f"{record.relation}:{record.status}"] += 1
+    # A correspondence names two artifacts and is listed under both; the
+    # latest revision of each id is counted once.
+    latest_correspondence = {record.id: record for sha in digests for record in library.trees.correspondences(sha)}
+    correspondences: Counter = Counter(f"{record.relation}:{record.status}" for record in latest_correspondence.values())
     return SourceReport(
-        artifacts=len(digests), by_format=_pairs(formats), extraction_quality=_pairs(quality), representations_by_kind=_pairs(kinds), trees=trees,
+        artifacts=len(digests), by_format=_pairs(formats), extraction_quality=_pairs(quality), extraction_outcomes=_pairs(outcomes),
+        extraction_passes=passes, representations_by_kind=_pairs(kinds), trees=trees,
         tree_versions=_pairs(versions), nodes_by_kind=_pairs(node_kinds), boundary_status=_pairs(boundaries), diagnostics_by_code=_pairs(diagnostics),
         unknown_regions=unknown, model_repairs=repairs, correspondences=_pairs(correspondences), authoritative_groupings=len(authoritative),
         pending_groupings=pending, weak_pages=weak, ocr_representations=ocr,
