@@ -208,8 +208,8 @@ def test_readme_records_the_prose_route_past_the_theorem_gate() -> None:
     """Two live runs walked past the theorem gate, one in prose and one in a
     `lemma` environment; the README must say so beside what covers them."""
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    paragraphs = [_flat(p) for p in readme.split("\n\n")]
-    hits = [p for p in paragraphs if "Saying it in prose instead does" in p]
+    bullets = [_flat(b) for b in readme.split("\n- ")]
+    hits = [b for b in bullets if "Saying it in prose instead does" in b]
     assert hits, "the README does not name the prose route past the theorem gate"
     assert "`lemma`" in hits[0] and "banner" in hits[0]
 
