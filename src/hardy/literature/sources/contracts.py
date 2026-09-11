@@ -306,6 +306,42 @@ class RepresentationMapping(FrozenModel):
     producer: Text
 
 
+# --- structural observations --------------------------------------------------
+
+
+class ObservationKind(str, Enum):
+    OUTLINE_ENTRY = "outline_entry"
+    HEADING = "heading"
+    STATEMENT_START = "statement_start"
+    PROOF_START = "proof_start"
+    PROOF_END = "proof_end"
+    LABEL = "label"
+    REFERENCE = "reference"
+    EQUATION_NUMBER = "equation_number"
+    TOC_ENTRY = "toc_entry"
+    PAGE_BREAK = "page_break"
+    ENVIRONMENT = "environment"
+
+
+class StructuralObservation(FrozenModel):
+    """Local evidence about document structure; not yet a durable tree claim."""
+
+    id: StableId
+    artifact_sha256: Digest
+    kind: ObservationKind
+    anchor: SourceAnchor
+    payload: tuple[tuple[Text, Text], ...] = ()
+    producer: Text
+    producer_version: Text
+    confidence: float | None = None
+
+    def value(self, key: str, default: str = "") -> str:
+        for k, v in self.payload:
+            if k == key:
+                return v
+        return default
+
+
 def content_digest(value: object) -> str:
     """The digest of any contract value, for identities derived from content."""
     return json_digest(value.model_dump(mode="json") if isinstance(value, FrozenModel) else value)

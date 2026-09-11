@@ -60,7 +60,7 @@ class RepresentationStore:
             held = self.get(record.artifact_sha256, record.id)
             if held.output_sha256 != record.output_sha256:
                 raise RepresentationError(f"representation {record.id} already exists with different output")
-            self._admit_mappings(record.artifact_sha256, mappings)
+            self.add_mappings(record.artifact_sha256, mappings)
             return held
         parent = WriteGuard(self.root / record.artifact_sha256, create=True)
         target = parent.reserve(record.id)
@@ -77,10 +77,11 @@ class RepresentationStore:
                     raise
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        self._admit_mappings(record.artifact_sha256, mappings)
+        self.add_mappings(record.artifact_sha256, mappings)
         return self.get(record.artifact_sha256, record.id)
 
-    def _admit_mappings(self, artifact_sha256: str, mappings: tuple[RepresentationMapping, ...]) -> None:
+    def add_mappings(self, artifact_sha256: str, mappings: tuple[RepresentationMapping, ...]) -> None:
+        """Record mappings beside their left representation; a repeated identical mapping is a no-op."""
         for mapping in mappings:
             if mapping.artifact_sha256 != artifact_sha256:
                 raise RepresentationError("a mapping must belong to the artifact of the representations it aligns")
