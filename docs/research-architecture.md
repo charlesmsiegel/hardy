@@ -510,8 +510,10 @@ workflows/strategies/
   contracts.py
   iterative.py
   sketch.py
-  best_first.py   # later
-  parallel.py     # later
+  escalating.py
+  lessons.py
+  best_first.py
+  race.py
 ```
 
 Define a small `ProofTask`/`ProofOutcome`/`Strategy` seam with shared budgets and evidence semantics. Existing iterative proving becomes one strategy. Sketch holes become independent proof tasks. Cheap closers are a strategy/tool invoked against current goals rather than a separate subsystem.
@@ -572,7 +574,7 @@ A relation like `ExampleE illustrates TheoremT` lets Publication automatically i
 
 Add `literature/manuscript.py` for objective source structure: sections, theorem-like environments, definitions, proof blocks, labels, citation occurrences, source spans. It does not judge correctness or whether an informal sentence is a distinct claim; that remains Referee semantics.
 
-A later `literature/diff.py` may support version-diff auditing, but only after the core audit workflow exists.
+`literature/diff.py` supports version-diff auditing over that structure.
 
 ## 12. Publication is the theorem -> paper/book path
 
@@ -617,7 +619,7 @@ Do not add new research behavior directly to the already-large interactive sessi
 - `interactive/formal.py` adapts shared context/representation/formalization/proof primitives;
 - `interactive/summary.py` consumes ledger views including active goals/approaches;
 - `interactive/documents.py` links document fragments to project items;
-- later `interactive/history.py` owns conversation branching.
+- `interactive/history.py` owns conversation branching.
 
 Conversation branching, mathematical context branching, mathematical dependency/representation/research-state graphs, and proof-search frontiers are distinct structures with distinct owners. A conversation fork does not automatically fork mathematical assumptions, and a mathematical child context does not require a new provider conversation.
 
@@ -654,7 +656,7 @@ Keep these separate:
 1. **Mathematical dependency/representation/research graph** — `workflows/ledger/` relations among concepts, representations, declarations, questions/goals/conjectures, approaches, claims, examples, etc.
 2. **Mathematical context tree/DAG** — persistent parent-linked local binder/hypothesis/notation states managed through `workflows/context.py` and stored in the ledger.
 3. **Proof-search frontier** — strategy state under `workflows/strategies/`.
-4. **Conversation tree** — user/model history under later `interactive/history.py`.
+4. **Conversation tree** — user/model history under `interactive/history.py`.
 
 Dependency-level parallelism comes from independent ready obligations/goals in the first structure. Proof-search parallelism comes from the third. Conversation branches are the fourth. Mathematical context branches are semantic scoping, not conversation history.
 
