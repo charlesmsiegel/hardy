@@ -291,3 +291,62 @@ def test_worker_findings_reach_the_parent_and_a_counterexample_draws_attention(t
         assert any("counterexample" in text for text in notices)
     finally:
         controller.shutdown()
+
+
+
+def test_subscriptions_route_modes_and_interrupts_reach_the_hook(tmp_path):
+    """Spec 16.7: queue is silent, notify is a notice, interrupt needs a subscription and reaches the hook."""
+    from hardy.workflows.delegation.attention import AttentionSubscription, DeliveryMode
+
+    notices, interrupts = [], []
+    script = [call("propose_finding", {"kind": "counterexample", "summary": "a conic bundle", "payload": "p",
+                                       "related_refs": ["L17"]}),
+              call("finish", {"status": "completed", "synthesis": "done"})]
+    seed_lemma(tmp_path)
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=_open(script),
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=notices.append, interrupt=interrupts.append)
+    try:
+        spec = _spec(tmp_path).model_copy(update={"notify_human": False})       # nothing by default
+        quiet = controller.delegate(spec)
+        controller.wait(quiet.id, timeout=5)
+        assert notices == [] and controller.attention().pending("main_agent") == ()
+        controller.subscribe(AttentionSubscription(owner="human", source=ROOT_ID, triggers=("counterexample",),
+                                                   mode=DeliveryMode.INTERRUPT, recipient="both"))
+        controller.subscribe(AttentionSubscription(owner="human", source=ROOT_ID, triggers=("terminal",),
+                                                   mode=DeliveryMode.QUEUE, recipient="main_agent"))
+        assert len(controller.subscriptions()) == 2
+        loud = controller.delegate(spec)
+        controller.wait(loud.id, timeout=5)
+        assert len(interrupts) == 1 and interrupts[0].finding_kind == "counterexample"
+        assert any("counterexample" in text for text in notices)
+        kinds = [e.kind for e in controller.store.events()]
+        assert "attention.interrupt_requested" in kinds and "attention.subscribed" in kinds
+        receipts = controller.attention().receipts(interrupts[0].id)
+        assert [r.mode for r in receipts] == ["interrupt"]
+    finally:
+        controller.shutdown()
+
+
+def test_continuations_start_only_when_the_conversation_has_not_moved(tmp_path):
+    """Criterion 37."""
+    controller = _controller(tmp_path, _open([FINISH]))
+    try:
+        delegation = controller.delegate(_spec(tmp_path))
+        controller.wait(delegation.id, timeout=5)
+        cont = controller.record_continuation(delegation.id, condition="terminal", epoch="entry:a", offset=10,
+                                              resume_text="now use the lemma")
+        assert [c.id for c in controller.continuations()] == [cont.id]
+        started = controller.resolve_continuations(epoch="entry:a", advanced_since=lambda offset: False)
+        assert [c.resume_text for c in started] == ["now use the lemma"]
+        assert controller.continuations() == ()
+        stale = controller.record_continuation(delegation.id, condition="terminal", epoch="entry:a", offset=10,
+                                               resume_text="stale plan")
+        assert controller.resolve_continuations(epoch="entry:b", advanced_since=lambda offset: True) == ()
+        assert controller.continuations() == ()
+        items = [i for i in controller.attention().pending("main_agent") if i.category == "continuation"]
+        assert len(items) == 1 and "stale plan" in items[0].summary and not items[0].sticky
+        assert stale.id != cont.id
+    finally:
+        controller.shutdown()
