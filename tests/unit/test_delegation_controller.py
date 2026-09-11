@@ -97,7 +97,8 @@ def test_delegate_returns_before_the_worker_finishes_and_completion_is_journaled
 
 
 def test_refused_lease_leaves_the_journal_unchanged(tmp_path):
-    controller = _controller(tmp_path, _open([FINISH]), checks=1)
+    started, release = threading.Event(), threading.Event()
+    controller = _controller(tmp_path, _open([FINISH], gate=(started, release)), checks=1)
     try:
         with pytest.raises(LeaseRefused):
             controller.delegate(_spec(tmp_path, checks=2))
@@ -107,13 +108,16 @@ def test_refused_lease_leaves_the_journal_unchanged(tmp_path):
             controller.delegate(_spec(tmp_path, checks=2))
         assert controller.tree().revision == before
         first = controller.delegate(_spec(tmp_path, checks=1))
+        assert started.wait(5)
         with pytest.raises(LeaseRefused):
             controller.delegate(_spec(tmp_path, checks=1))
+        release.set()
         controller.wait(first.id, timeout=5)
         # A released reservation makes room again.
         second = controller.delegate(_spec(tmp_path, checks=1))
         assert controller.wait(second.id, timeout=5).state is DelegationState.COMPLETED
     finally:
+        release.set()
         controller.shutdown()
 
 
@@ -348,5 +352,71 @@ def test_continuations_start_only_when_the_conversation_has_not_moved(tmp_path):
         items = [i for i in controller.attention().pending("main_agent") if i.category == "continuation"]
         assert len(items) == 1 and "stale plan" in items[0].summary and not items[0].sticky
         assert stale.id != cont.id
+    finally:
+        controller.shutdown()
+
+
+def test_cancelling_a_cell_ends_it_once_its_active_child_has_settled_and_releases_both(tmp_path):
+    """An interior node has no worker to end it: it becomes cancelled when its last child does, never before."""
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    started, release = threading.Event(), threading.Event()
+    controller = _controller(tmp_path, _open([FINISH], gate=(started, release)), checks=4, slots=1)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=3).model_copy(
+            update={"spawn": SpawnPolicy(can_spawn=True, max_children=2, max_depth=1)}))
+        child = controller.delegate(_spec(tmp_path, checks=1), parent_id=cell.id)
+        queued = controller.delegate(_spec(tmp_path, checks=1).model_copy(update={"concurrency": ConcurrencyLease(slots=1)}),
+                                     parent_id=cell.id)
+        assert started.wait(5)
+        requested = controller.cancel(cell.id)
+        assert set(requested) == {cell.id, child.id, queued.id}
+        tree = controller.tree()
+        assert tree.get(queued.id).state is DelegationState.CANCELLED
+        assert tree.get(cell.id).state is DelegationState.ACTIVE            # its child is still ending
+        release.set()
+        controller.wait(child.id, timeout=5)
+        ended = controller.wait(cell.id, timeout=5)
+        assert ended.state is DelegationState.CANCELLED
+        assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 4
+        empty = controller.delegate(_spec(tmp_path, checks=1).model_copy(
+            update={"spawn": SpawnPolicy(can_spawn=True, max_children=1, max_depth=1)}))
+        assert controller.cancel(empty.id) == (empty.id,)
+        assert controller.tree().get(empty.id).state is DelegationState.CANCELLED   # nothing beneath: ends at once
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_a_blind_cell_hides_its_ids_from_every_descendant_at_preload_and_retrieval(tmp_path):
+    """Isolation is inherited: a child spec that names nothing still cannot see what its cell hides."""
+    from delegation_helpers import seed_project
+
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    seed_project(tmp_path)
+    prompts = {}
+    script = [call("read_item", {"selector": "L14"}), call("read_item", {"selector": "D3"}), FINISH]
+    opener = _open(script)
+
+    def open_worker(launch, dispatch, observe):
+        prompts[launch.delegation_id] = launch.prompt
+        return opener(launch, dispatch, observe)
+
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=open_worker,
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=lambda text: None)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=2).model_copy(
+            update={"hidden_ids": ("L14",), "spawn": SpawnPolicy(can_spawn=True, max_children=2, max_depth=1)}))
+        child = controller.delegate(_spec(tmp_path, checks=1), parent_id=cell.id)
+        controller.wait(child.id, timeout=5)
+        trajectory = [json.loads(line) for line in
+                      controller.store.artifacts(child.id).trajectory_path.read_text(encoding="utf-8").splitlines()]
+        tools = [e["payload"] for e in trajectory if e["kind"] == "tool"]
+        assert not tools[0]["result"]["ok"] and "generic fiber is connected" not in tools[0]["result"]["output"]
+        assert tools[1]["result"]["ok"]
+        assert "generic fiber is connected" not in prompts[child.id] and "L14" not in prompts[child.id]
     finally:
         controller.shutdown()

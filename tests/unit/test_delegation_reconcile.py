@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import json
 import sys
-from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
 import pytest
-from delegation_helpers import seed_project
+from delegation_helpers import ScriptedOwners, seed_project
 
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
@@ -32,7 +31,6 @@ from hardy.workflows.delegation.findings import Finding
 from hardy.workflows.delegation.store import DelegationStore
 from hardy.workflows.delegation.workspace import WorkspaceOverlay
 from hardy.workflows.ledger import contracts as c
-from hardy.workflows.ledger.policy import AcceptanceDecision, AuthenticatedEvidence, LedgerPolicy
 from hardy.workflows.ledger.store import LedgerStore
 
 FAKE_LEAN = (sys.executable, str(Path(__file__).resolve().parents[1] / "fake_lean.py"))
@@ -54,46 +52,6 @@ def _base(tmp_path: Path) -> LeanWorkspace:
     workspace = LeanWorkspace(root, build, compile, environment="test-env")
     assert workspace.build_modules(["Main"]) is None
     return workspace
-
-
-class Owners:
-    """Scripted capability owners over real bytes, as the acceptance suites do."""
-
-    def __init__(self, root: Path):
-        self.root = root
-        self.evidence = {}
-        self.decisions = {}
-        self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.decisions.get)
-        self.verified: list[str] = []
-
-    def verify(self, workspace: LeanWorkspace, candidate, obligation):
-        """Build the change set's modules on the staged head; mint evidence bound to the exact subject."""
-        for path in candidate.files:
-            failure = workspace.build_modules([path.removesuffix(".lean").replace("/", ".")])
-            if failure is not None:
-                return None, f"{failure.module}: {failure.output}"
-        self.root.mkdir(parents=True, exist_ok=True)
-        artifact = self.root / f"{obligation.id.replace(':', '_')}.json"     # a colon is a drive letter on Windows
-        artifact.write_text(json.dumps({"subject": obligation.item.model_dump(), "files": candidate.files}), encoding="utf-8")
-        reference = c.EvidenceRef(kind="formal", subject=obligation.item, producer="scripted-verifier",
-                                  artifact=c.ArtifactRef(uri=str(artifact), digest=sha256(artifact.read_bytes()).hexdigest()))
-        self.evidence[reference] = AuthenticatedEvidence(reference, obligation.scope.ref, obligation.context, "kernel_proof")
-        self.verified.append(obligation.item.id)
-        return (reference,), "built on the current head"
-
-    def read_evidence(self, reference):
-        owned = self.evidence.get(reference)
-        path = Path(reference.artifact.uri)
-        if owned is None or not path.is_file() or sha256(path.read_bytes()).hexdigest() != reference.artifact.digest:
-            return None
-        return owned
-
-    def decide(self, snapshot, proposal):
-        work = snapshot.get(proposal.obligation)
-        receipt = c.ArtifactRef(uri=f"fixture:decision:{proposal.id}", digest=proposal.digest)
-        self.decisions[receipt] = AcceptanceDecision(proposal.ref, work.ref, work.item, work.scope.ref, work.context,
-                                                     self.policy.digest)
-        return receipt
 
 
 def _overlay(base, tmp_path, name, revision):
@@ -147,7 +105,7 @@ def _candidate(tmp_path, overlay, name, statement="A new lemma from the worker")
 def test_new_verified_lemma_is_admitted_with_fresh_verification_and_exact_subject_evidence(tmp_path):
     seed_project(tmp_path)
     base = _base(tmp_path)
-    owners = Owners(tmp_path / "capabilities")
+    owners = ScriptedOwners(tmp_path / "capabilities")
     overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
     assert overlay.save(PurePosixPath("A.lean"), A) is None
     candidate, change_set = _candidate(tmp_path, overlay, "w")
@@ -170,7 +128,7 @@ def test_new_verified_lemma_is_admitted_with_fresh_verification_and_exact_subjec
 def test_a_head_that_moves_mid_admission_is_reconciled_again_not_retried_stale(tmp_path):
     seed_project(tmp_path)
     base = _base(tmp_path)
-    owners = Owners(tmp_path / "capabilities")
+    owners = ScriptedOwners(tmp_path / "capabilities")
     overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
     assert overlay.save(PurePosixPath("A.lean"), A) is None
     candidate, change_set = _candidate(tmp_path, overlay, "w")
@@ -199,7 +157,7 @@ def test_a_head_that_moves_mid_admission_is_reconciled_again_not_retried_stale(t
 def test_verification_failure_after_files_are_prepared_commits_nothing(tmp_path):
     seed_project(tmp_path)
     base = _base(tmp_path)
-    owners = Owners(tmp_path / "capabilities")
+    owners = ScriptedOwners(tmp_path / "capabilities")
     overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
     assert overlay.save(PurePosixPath("A.lean"), A) is None
     candidate, change_set = _candidate(tmp_path, overlay, "w")
@@ -216,7 +174,7 @@ def test_verification_failure_after_files_are_prepared_commits_nothing(tmp_path)
 def test_conflicting_change_set_is_reported_with_both_proposals_kept(tmp_path):
     seed_project(tmp_path)
     base = _base(tmp_path)
-    owners = Owners(tmp_path / "capabilities")
+    owners = ScriptedOwners(tmp_path / "capabilities")
     overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
     assert overlay.save(PurePosixPath("Main.lean"), MAIN.replace("base_fact", "renamed_fact")) is None
     (tmp_path / "lean" / "Main.lean").write_text(MAIN.replace("base_fact", "other_fact"), encoding="utf-8")
@@ -232,7 +190,7 @@ def test_conflicting_change_set_is_reported_with_both_proposals_kept(tmp_path):
 def test_a_crash_after_files_committed_is_an_incomplete_admission_not_a_success(tmp_path):
     seed_project(tmp_path)
     base = _base(tmp_path)
-    owners = Owners(tmp_path / "capabilities")
+    owners = ScriptedOwners(tmp_path / "capabilities")
     overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
     assert overlay.save(PurePosixPath("A.lean"), A) is None
     candidate, change_set = _candidate(tmp_path, overlay, "w")
@@ -251,9 +209,25 @@ def test_a_crash_after_files_committed_is_an_incomplete_admission_not_a_success(
 def test_exact_duplicate_of_an_authoritative_item_is_reused_not_recreated(tmp_path):
     heads = seed_project(tmp_path)
     base = _base(tmp_path)
-    owners = Owners(tmp_path / "capabilities")
+    owners = ScriptedOwners(tmp_path / "capabilities")
     overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
     candidate, change_set = _candidate(tmp_path, overlay, "w", statement="The special fiber is reduced")
     outcome = _admission(tmp_path, base, owners).admit(candidate, change_set)
     assert outcome.action == "reused_existing" and outcome.authoritative_refs == (heads["L12"].ref,)
     assert outcome.identity_map == (("w:0:lemma", "L12"),)
+
+
+def test_admitting_the_same_candidate_twice_reuses_its_identity_and_commits_nothing_new(tmp_path):
+    seed_project(tmp_path)
+    base = _base(tmp_path)
+    owners = ScriptedOwners(tmp_path / "capabilities")
+    overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
+    assert overlay.save(PurePosixPath("A.lean"), A) is None
+    candidate, change_set = _candidate(tmp_path, overlay, "w")
+    first = _admission(tmp_path, base, owners).admit(candidate, change_set)
+    assert first.action == "created"
+    revision = LedgerStore(tmp_path).read().revision
+    second = _admission(tmp_path, base, owners).admit(candidate, change_set)
+    assert second.action == "reused_existing" and second.authoritative_refs == first.authoritative_refs
+    assert LedgerStore(tmp_path).read().revision == revision and owners.verified == [first.authoritative_refs[0].id]
+    assert "admission.incomplete" not in [e.kind for e in DelegationStore(tmp_path).events()]

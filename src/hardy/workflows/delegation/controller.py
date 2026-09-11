@@ -239,9 +239,18 @@ class DelegationController:
         self.store.append(id, "workspace.overlay_created", {"generation": overlay.generation.model_dump(mode="json")})
         return overlay
 
-    def _retriever(self, spec: DelegationSpec, artifacts: RunStore) -> WorkerRetriever:
+    def _effective_hidden(self, parent: str, spec: DelegationSpec) -> tuple[str, ...]:
+        tree = self.tree()
+        hidden: list[str] = []
+        if parent in tree.delegations:
+            for ancestor in (*reversed(tree.ancestors(parent)), parent):
+                hidden.extend(tree.get(ancestor).spec.hidden_ids)
+        hidden.extend(spec.hidden_ids)
+        return tuple(dict.fromkeys(hidden))
+
+    def _retriever(self, hidden: tuple[str, ...], artifacts: RunStore) -> WorkerRetriever:
         return WorkerRetriever(
-            self.ledger, self.papers, VisibilityPolicy(hidden_ids=spec.hidden_ids),
+            self.ledger, self.papers, VisibilityPolicy(hidden_ids=hidden),
             record=lambda event, store=artifacts: store.append(event["kind"], event["payload"],
                                                                phase=RunPhase.PROVING))
 
@@ -273,7 +282,10 @@ class DelegationController:
         # One worker is the direct role; its framing carries the objective as asked.
         (brief,) = assign_briefs(target, 1, task_mode=spec.task_mode, model=spec.model)
         brief = brief.model_copy(update={"framing": f"{brief.framing} Objective: {spec.objective}"})
-        policy = ContextPolicy(hidden_ids=spec.hidden_ids, seeded_sources=spec.seeded_sources)
+        # Isolation is inherited: what any ancestor hides stays hidden from
+        # this node at preload and at every retrieval, whatever its own spec says.
+        hidden = self._effective_hidden(parent_id or ROOT_ID, spec)
+        policy = ContextPolicy(hidden_ids=hidden, seeded_sources=spec.seeded_sources)
         working = build_working_set(self.ledger, target, spec.scope, brief, policy,
                                     sources=self._source_index(spec.seeded_sources))
         with self._lock:
@@ -316,7 +328,7 @@ class DelegationController:
                 return self.tree().get(id)
             launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
                                   model=spec.model, store=artifacts, lease=lease,
-                                  retriever=self._retriever(spec, artifacts), overlay=overlay,
+                                  retriever=self._retriever(hidden, artifacts), overlay=overlay,
                                   cas_factory=self.cas_factory)
             self._pending[id] = launch
             self._dispatch()
@@ -545,6 +557,25 @@ class DelegationController:
     def _after_terminal(self, id: str, event: DelegationEvent) -> None:
         self.store.release(id)
         self._route(id, event)
+        parent = self.tree().get(id).parent_id
+        if parent is not None:
+            self._settle_interior(parent)
+
+    def _settle_interior(self, id: str) -> None:
+        """An interior node asked to cancel has no worker to end it: it ends when its last child has.
+
+        Its lease is released only then, so a child still winding down keeps
+        the reservation it is spending from until the journal says it stopped.
+        """
+        with self._lock:
+            tree = self.tree()
+            node = tree.get(id)
+            if node.terminal or not node.spawn.can_spawn or not tree.cancel_requested(id):
+                return
+            if any(not tree.get(child).terminal for child in node.children):
+                return
+            event = self.store.append(id, "delegation.cancelled", {"reason": "cancelled after its children ended"})
+            self._after_terminal(id, event)
 
     def _route(self, id: str, event: DelegationEvent) -> None:
         """Raw events stay in the journal; what the root owes attention to is routed by mode.
@@ -651,6 +682,8 @@ class DelegationController:
                     event = next(e for e in reversed(self.store.events())
                                  if e.delegation_id == node and e.kind == "delegation.cancelled")
                     self._after_terminal(node, event)
+            for node in requested:
+                self._settle_interior(node)
             return requested
 
     def wait(self, id: str, timeout: float | None = None) -> Delegation:

@@ -1194,11 +1194,11 @@ async def handle_delegate(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
-JOBS_USAGE = (
-    "Usage: /jobs · /jobs tree · /jobs <delegation-id> · /jobs pin <id> <min_attention|forbid_spend|reinforce|"
-    "reserve_exploration> [value] · /jobs unpin <id> <kind> · /jobs pause <id> · /jobs resume <id> · "
-    "/jobs reinforce <id> <checks> · /jobs finish <id> <synthesis> · /jobs handle <attention-id> · "
-    "/jobs subscribe <id> <trigger[,trigger]> <queue|notify|interrupt> · /jobs continue"
+JOBS_USAGE_LINES = (
+    "Usage: /jobs · /jobs tree · /jobs <delegation-id>",
+    "  /jobs pin <id> <min_attention|forbid_spend|reinforce|reserve_exploration> [value] · /jobs unpin <id> <kind>",
+    "  /jobs pause <id> · /jobs resume <id> · /jobs reinforce <id> <checks> · /jobs finish <id> <synthesis>",
+    "  /jobs handle <attention-id> · /jobs subscribe <id> <trigger[,trigger]> <queue|notify|interrupt> · /jobs continue",
 )
 _PIN_KINDS = ("min_attention", "forbid_spend", "reinforce", "reserve_exploration")
 
@@ -1316,7 +1316,7 @@ async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
             delegations.subscribe(subscription)
             ui.write(f"Subscribed to {words[2]} from {words[1]} as {words[3]}.")
         else:
-            ui.write(JOBS_USAGE, style="error")
+            ui.write("\n".join(JOBS_USAGE_LINES), style="error")
     except ValueError as error:
         ui.write(str(error), style="error")
     return state
