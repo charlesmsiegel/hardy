@@ -134,9 +134,10 @@ acceptance attacks pass.
 
 ## Independent verifier: a lead
 
-`Get-Command leanchecker` finds an elan shim. Its SHA-256 equals `elan.exe`'s, so
-its presence on PATH says nothing at all about verifier availability. Direct file
-checks find a real `bin/leanchecker` in the installed toolchains
+On the recorded baseline host, 2026-09-10, `Get-Command leanchecker` found an
+elan shim. Its SHA-256 equalled `elan.exe`'s, so its presence on PATH says
+nothing at all about verifier availability. Direct file checks found a real
+`bin/leanchecker` (`bin/leanchecker.exe` on Windows) in the installed toolchains
 `leanprover--lean4---v4.32.0`, `leanprover--lean4---v4.32.1`,
 `leanprover--lean4---v4.33.0-rc1` and `leanprover--lean4---v4.33.1`.
 
@@ -157,11 +158,12 @@ lead because it replays imported declarations too. The source describes the tool
 as an environment-hacking detector rather than an external verifier, and a
 distinct implementation is not inferred from its name.
 
-A direct invocation of the installed 4.33.1 binary with `--help` produces no help
-output. Source inspection explains why: unrecognized flags are ignored, so
-`--help` starts default module discovery and replay instead. No result from such
-an invocation counts as evidence. A probe reads the CLI source before choosing
-flags, and passes an explicit trusted module and a deadline.
+On the same host, a direct invocation of the installed 4.33.1 binary with
+`--help` produced no help output and was interrupted. Source inspection explains
+why: unrecognized flags are ignored, so `--help` starts default module discovery
+and replay instead. No result from such an invocation counts as evidence. A probe
+reads the CLI source before choosing flags, and passes an explicit trusted module
+and a deadline.
 
 File identities under the 4.33.1 toolchain directory
 (`.elan/toolchains/leanprover--lean4---v4.33.1/`):
