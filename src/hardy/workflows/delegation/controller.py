@@ -28,9 +28,9 @@ from hardy.agents.executor import (
 from hardy.workflows.delegation.attention import AttentionInbox
 from hardy.workflows.delegation.budget import LeaseLedger, grant
 from hardy.workflows.delegation.context import (
-    ContextManifest,
-    ResearchBrief,
+    ContextPolicy,
     build_problem_core,
+    build_working_set,
     render_launch_prompt,
 )
 from hardy.workflows.delegation.contracts import (
@@ -42,6 +42,7 @@ from hardy.workflows.delegation.contracts import (
     ResourceLease,
     WorkerResult,
 )
+from hardy.workflows.delegation.diversity import assign_briefs
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
 from hardy.workflows.delegation.worker import OpenWorker, WorkerLaunch, run_worker
 from hardy.workflows.ledger.contracts import VersionRef
@@ -161,9 +162,12 @@ class DelegationController:
         spec = DelegationSpec.model_validate(spec.model_dump())
         if not spec.project_refs:
             raise ValueError("a delegation needs at least one exact project ref")
-        core = build_problem_core(self.ledger, spec.project_refs[0], scope=spec.scope, task_mode=spec.task_mode)
-        brief = ResearchBrief(target=spec.project_refs[0], task_mode=spec.task_mode, framing=spec.objective,
-                              model=spec.model)
+        target = spec.project_refs[0]
+        core = build_problem_core(self.ledger, target, scope=spec.scope)
+        # One worker is the direct role; its framing carries the objective as asked.
+        (brief,) = assign_briefs(target, 1, task_mode=spec.task_mode, model=spec.model)
+        brief = brief.model_copy(update={"framing": f"{brief.framing} Objective: {spec.objective}"})
+        working = build_working_set(self.ledger, target, spec.scope, brief, ContextPolicy())
         with self._lock:
             self._ensure_root(spec.scope)
             parent = parent_id or ROOT_ID
@@ -183,17 +187,15 @@ class DelegationController:
             self.store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"),
                                                       "slots": spec.concurrency.slots})
             artifacts = self.store.artifacts(id)
-            manifest = ContextManifest(id=f"{id}:manifest", problem_core_digest=core.digest,
-                                       research_brief_digest=brief.digest,
-                                       project_revision=core.project_revision,
-                                       included_refs=(core.target, *core.dependencies))
+            manifest = working.manifest(f"{id}:manifest", problem_core_digest=core.digest,
+                                        research_brief_digest=brief.digest)
             artifacts.write_json(PurePosixPath("core.json"), core)
             artifacts.write_json(PurePosixPath("brief.json"), brief)
             artifacts.write_json(PurePosixPath("manifest.json"), manifest)
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
-            launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief),
+            launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
                                   model=spec.model, store=artifacts, lease=lease)
             handle = self.executor.submit(WorkerJob(id, lambda token, launch=launch: self._run(launch, token)))
             self._handles[id] = handle
