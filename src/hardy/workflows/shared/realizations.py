@@ -59,6 +59,7 @@ class FormalRealization(FrozenModel):
     source_sha256: Digest | None = None
     environment: EnvironmentIdentity
     imports: tuple[Text, ...] = ()
+    formalization_sha256: Digest | None = None   # the frozen (claim version, formal statement) pair a faithfulness verdict must name
     verification: EvidenceRef | None = None
     faithfulness: FaithfulnessVerdict | None = None
     approval: HumanApproval | None = None
@@ -91,6 +92,11 @@ def realization_id(claim: VersionRef, origin: RealizationOrigin, module: str, de
     return "real-" + json_digest([claim.id, origin.value, module, declaration, environment.mathlib_revision, environment.lean_commit])[:16]
 
 
+def formalization_digest(claim: VersionRef, formal_type: str) -> str:
+    """What a faithfulness verdict about a realization names: this exact claim version read against this exact formal statement."""
+    return json_digest(["hardy.formalization/v1", claim.id, claim.digest, formal_type])
+
+
 def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
     heads: dict[str, FormalRealization] = {r.id: r for r in before.of(FormalRealization)}
     for record in after.records[len(before.records):]:
@@ -98,6 +104,8 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
         if record.status == "attached":
             if not record.semantically_attached:
                 raise RealizationError("attachment needs an agreeing faithfulness verdict or a human approval; a matching name is a lead")
+            if record.faithfulness is not None and record.faithfulness.claim_sha256 != record.formalization_sha256:
+                raise RealizationError("the faithfulness verdict names a different formalization; a verdict about another statement does not attach this one")
             if record.verification is None:
                 raise RealizationError("attachment needs formal verification evidence; faithfulness alone is not proof reuse")
             if record.verification.kind.value != "formal":
@@ -114,6 +122,8 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
                 raise RealizationError(f"a {previous.status} realization stays {previous.status}")
         if record.supersedes is not None and record.supersedes not in heads and record.supersedes != record.id:
             raise RealizationError(f"supersedes names unknown realization {record.supersedes}")
+        if record.formalization_sha256 != formalization_digest(record.claim, record.formal_type):
+            raise RealizationError("a realization carries the digest of its own claim version and formal statement")
         heads[record.id] = record
 
 
@@ -154,7 +164,8 @@ class RealizationStore:
         raise RealizationError("the realization journal kept moving; try again")
 
     def propose(self, candidate: FormalRealization) -> FormalRealization:
-        record = candidate.model_copy(update={"status": "candidate", "at": _stamp()})
+        record = candidate.model_copy(update={"status": "candidate", "at": _stamp(),
+                                              "formalization_sha256": formalization_digest(candidate.claim, candidate.formal_type)})
 
         def fresh(heads: dict[str, FormalRealization]) -> None:
             held = heads.get(record.id)
@@ -188,7 +199,14 @@ class RealizationStore:
     def mark(self, realization_id: str, status: Literal["stale", "rejected"], *, reason: str) -> FormalRealization:
         held = self.get(realization_id)
         updated = held.model_copy(update={"status": status, "at": _stamp(), "history": (*held.history, f"{status}: {reason}")})
-        return self._append(updated, precondition=lambda heads: None)
+
+        def unchanged(heads: dict[str, FormalRealization]) -> None:
+            # The mark was decided against `held`; a head that moved meanwhile
+            # (an attachment, say) must not be overwritten by a stale copy.
+            if heads.get(realization_id) != held:
+                raise RealizationError(f"realization {realization_id} changed under the mark; read it again")
+
+        return self._append(updated, precondition=unchanged)
 
     def supersede(self, old_id: str, replacement: FormalRealization, *, reason: str) -> FormalRealization:
         """Record a meaning-changing update as a new realization; the old one keeps its identity."""
@@ -197,7 +215,8 @@ class RealizationStore:
             raise RealizationError("a replacement is a distinct realization")
         if replacement.claim.id != old.claim.id:
             raise RealizationError("a replacement realizes the same claim; a different claim is a different realization line")
-        new = replacement.model_copy(update={"supersedes": old_id, "at": _stamp(), "history": (*replacement.history, f"supersedes {old_id}: {reason}")})
+        new = replacement.model_copy(update={"supersedes": old_id, "at": _stamp(), "history": (*replacement.history, f"supersedes {old_id}: {reason}"),
+                                             "formalization_sha256": formalization_digest(replacement.claim, replacement.formal_type)})
         retired = old.model_copy(update={"status": "superseded", "at": _stamp(), "history": (*old.history, f"superseded by {new.id}: {reason}")})
         for _ in range(RETRIES):
             snapshot = self.snapshot()

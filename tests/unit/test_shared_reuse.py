@@ -15,6 +15,7 @@ from hardy.workflows.shared.realizations import (
     FormalRealization,
     RealizationOrigin,
     RealizationStore,
+    formalization_digest,
     realization_id,
 )
 from hardy.workflows.shared.reuse import ReuseClass, ReuseResult, resolve_reusable_claim
@@ -31,6 +32,10 @@ def verdict():
     review = FaithfulnessReview(formalization_entails_claim=True, claim_entails_formalization=True)
     return FaithfulnessVerdict(claim_sha256="c" * 64, reviewer_model="reader", reviewer_backend="test", reviewer_isolation="tools-refused",
                                prompt_sha256="p" * 64, outcome=FaithfulnessOutcome.AGREED, review=review)
+
+
+def bound(c):
+    return verdict().model_copy(update={"claim_sha256": formalization_digest(c.ref, "T")})
 
 
 def evidence(subject):
@@ -65,7 +70,7 @@ def test_resolver_distinguishes_exact_related_and_candidate(tmp_path):
     claims.add_claim(family, expected_revision=2)
     claims.relate(Relation(id="gen", kind="generalizes", source=exact.ref, target=weaker.ref), expected_revision=3)
     attached = realizations.attach(realizations.propose(realization(exact, RealizationOrigin.MATHLIB, "Subgroup.isCyclic")).id,
-                                   verification=evidence(exact.ref), faithfulness=verdict(), actor="t")
+                                   verification=evidence(exact.ref), faithfulness=bound(exact), actor="t")
     realizations.propose(realization(exact, RealizationOrigin.HARDY_SHARED, "Hardy.cyclic_candidate"))
     results = resolve("Subgroups of cyclic groups are cyclic", claims, links, realizations)
     classes = [(r.cls, r.claim.id if r.claim else None) for r in results]
@@ -84,10 +89,10 @@ def test_resolver_prefers_project_then_mathlib_then_shared_and_flags_stale(tmp_p
     root, claims, links, realizations = library(tmp_path)
     c = claim("rr", "Riemann-Roch for curves", "RR")
     claims.add_claim(c, expected_revision=0)
-    shared = realizations.attach(realizations.propose(realization(c, RealizationOrigin.HARDY_SHARED, "Hardy.rr")).id, verification=evidence(c.ref), faithfulness=verdict(), actor="t")
+    shared = realizations.attach(realizations.propose(realization(c, RealizationOrigin.HARDY_SHARED, "Hardy.rr")).id, verification=evidence(c.ref), faithfulness=bound(c), actor="t")
     mathlib = realizations.attach(realizations.propose(realization(c, RealizationOrigin.MATHLIB, "AlgebraicGeometry.rr", environment=OTHER_ENV)).id,
-                                  verification=evidence(c.ref), faithfulness=verdict(), actor="t")
-    local = realizations.attach(realizations.propose(realization(c, RealizationOrigin.PROJECT, "Local.rr", project="p1")).id, verification=evidence(c.ref), faithfulness=verdict(), actor="t")
+                                  verification=evidence(c.ref), faithfulness=bound(c), actor="t")
+    local = realizations.attach(realizations.propose(realization(c, RealizationOrigin.PROJECT, "Local.rr", project="p1")).id, verification=evidence(c.ref), faithfulness=bound(c), actor="t")
     project = ReuseResult(cls=ReuseClass.PROJECT_ESTABLISHED, claim=c.ref, claim_name=c.name, availability="project", reason="already proved here")
     results = resolve("Riemann-Roch for curves", claims, links, realizations, project_results=(project,))
     assert results[0].cls is ReuseClass.PROJECT_ESTABLISHED
@@ -114,3 +119,21 @@ def test_source_only_claims_and_empty_answers_are_explicit(tmp_path):
     assert results[0].cls is ReuseClass.EXACT_CLAIM_SOURCE_ONLY and results[0].links == (link.id,) and not results[0].reusable_now
     nothing = resolve("Hodge conjecture", claims, links, realizations)
     assert [r.cls for r in nothing] == [ReuseClass.NONE] and "not evidence" in nothing[0].reason
+
+
+def test_a_realization_of_an_earlier_revision_is_not_an_exact_reuse(tmp_path):
+    root, claims, links, realizations = library(tmp_path)
+    c = claim("cyclic-subgroups", "Subgroups of cyclic groups are cyclic", "Every subgroup of a cyclic group is cyclic.")
+    claims.add_claim(c, expected_revision=0)
+    attached = realizations.attach(realizations.propose(realization(c, RealizationOrigin.MATHLIB, "Subgroup.isCyclic")).id,
+                                   verification=evidence(c.ref), faithfulness=bound(c), actor="t")
+    before = resolve("Subgroups of cyclic groups are cyclic", claims, links, realizations)
+    assert before[0].cls is ReuseClass.EXACT_CLAIM_WITH_REALIZATION and before[0].realization == attached
+    revised = c.model_copy(update={"statement": "Every subgroup of a cyclic group is cyclic, and so is every quotient."})
+    claims.append((ProjectItem.model_validate(revised.model_dump(mode="json")),), expected_revision=claims.snapshot().revision)
+    assert claims.head(c.id).ref != c.ref
+    after = resolve("Subgroups of cyclic groups are cyclic", claims, links, realizations)
+    assert not any(r.cls is ReuseClass.EXACT_CLAIM_WITH_REALIZATION for r in after)
+    assert not any(r.reusable_now for r in after)
+    head = next(r for r in after if r.claim and r.claim.id == c.id)
+    assert head.cls is ReuseClass.EXACT_CLAIM_SOURCE_ONLY and "earlier revision" in head.reason and head.claim == claims.head(c.id).ref

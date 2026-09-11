@@ -97,11 +97,14 @@ def compare_links(links: LinkStore, expected: Iterable[ExpectedLink]) -> LinkCom
     admitted = [link for link in links.heads().values() if link.status is LinkStatus.ADMITTED and link.claim is not None]
     correct = false = 0
     seen: set[tuple[str, str]] = set()
+    matched: set[tuple[str, str]] = set()
     for link in admitted:
         key = (link.artifact_sha256, link.node)
         seen.add(key)
         if key in wanted and wanted[key] == link.claim.id:
-            correct += 1
+            if key not in matched:  # several admitted links may name one relation; the relation is found once
+                matched.add(key)
+                correct += 1
         elif key in wanted:
             false += 1
     missing = sum(1 for key in wanted if key not in seen)

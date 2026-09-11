@@ -115,7 +115,8 @@ def test_semantic_report_and_link_comparison_count_false_merges(tmp_path):
     linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=ProjectItem(id="c-other", kind="theorem", name="other", origin="background_paper", statement="o"), interpreter="m"))
     real = realizations.propose(FormalRealization(id=realization_id(right.claim, RealizationOrigin.MATHLIB, "M", "d", ENV), claim=right.claim, origin=RealizationOrigin.MATHLIB,
                                                   module="M", declaration="d", formal_type="T", environment=ENV, at="now"))
-    realizations.attach(real.id, verification=EvidenceRef(kind="formal", subject=right.claim, producer="p", artifact=ArtifactRef(uri="u", digest="e" * 64)), faithfulness=verdict(), actor="t")
+    realizations.attach(real.id, verification=EvidenceRef(kind="formal", subject=right.claim, producer="p", artifact=ArtifactRef(uri="u", digest="e" * 64)),
+                        faithfulness=verdict().model_copy(update={"claim_sha256": real.formalization_sha256}), actor="t")
     report = semantic_report(claims, links, realizations, PromotionStore(root / "promotions"))
     assert report.claims == 1 and dict(report.links_by_status) == {"admitted": 2, "proposed": 1}
     assert report.links_with_faithfulness == 2 and report.claims_with_source_links == 1
@@ -126,6 +127,10 @@ def test_semantic_report_and_link_comparison_count_false_merges(tmp_path):
                                        ExpectedLink(artifact_sha256=sha, node="n-nowhere", claim_id="c-missing")])
     assert (comparison.expected, comparison.admitted, comparison.correct, comparison.false_merges, comparison.missing) == (3, 2, 1, 1, 1)
     assert comparison.precision == 0.5 and comparison.recall == 1 / 3
+    # A second admitted link naming the same relation is still one relation found: recall stays a proportion.
+    linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(claims.head("c-right").ref,), interpreter="m")).id, verdict=verdict())
+    twice = compare_links(links, [ExpectedLink(artifact_sha256=sha, node=theorem.id, claim_id="c-right")])
+    assert (twice.expected, twice.admitted, twice.correct, twice.missing) == (1, 3, 1, 0) and twice.recall == 1.0
     assert wrong.claim.id == "c-right"
     summary = reuse_summary([ReuseResult(cls=ReuseClass.EXACT_CLAIM_WITH_REALIZATION, availability="importable", reason="r"),
                              ReuseResult(cls=ReuseClass.NONE, reason="n")])
