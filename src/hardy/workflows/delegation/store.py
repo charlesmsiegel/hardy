@@ -55,10 +55,15 @@ class DelegationTree:
     """Derived state over one journal replay; read-only."""
 
     def __init__(self, delegations: dict[str, Delegation], usage: dict[str, ResourceUsage],
-                 events: tuple[DelegationEvent, ...]) -> None:
+                 events: tuple[DelegationEvent, ...], cancel_requests: frozenset[str] = frozenset()) -> None:
         self.delegations: Mapping[str, Delegation] = MappingProxyType(delegations)
         self.usage_reported: Mapping[str, ResourceUsage] = MappingProxyType(usage)
         self.events = events
+        self._cancel_requests = cancel_requests
+
+    def cancel_requested(self, id: str) -> bool:
+        self.get(id)
+        return id in self._cancel_requests
 
     @property
     def revision(self) -> int:
@@ -98,6 +103,7 @@ class DelegationTree:
 def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
     delegations: dict[str, Delegation] = {}
     usage: dict[str, ResourceUsage] = {}
+    cancel_requests: set[str] = set()
     for event in events:
         id = event.delegation_id
         if event.kind == "delegation.created":
@@ -123,6 +129,13 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
         if event.kind == "usage.reported":
             usage[id] = usage[id] + ResourceUsage.model_validate(event.payload["usage"])
             continue
+        if event.kind == "cancel.requested":
+            if current.terminal:
+                raise ValueError(f"journal requests cancellation of terminal delegation {id}")
+            cancel_requests.add(id)
+            continue
+        if event.kind == "budget.released" and not current.terminal:
+            raise ValueError(f"journal releases the reservation of non-terminal delegation {id}")
         if event.kind in _STATE_EVENTS:
             if current.terminal:
                 raise ValueError(f"journal continues terminal delegation {id} with {event.kind}")
@@ -141,7 +154,7 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
         if event.kind == "delegation.context":
             delegations[id] = current.model_copy(update={
                 key: str(event.payload[key]) for key in _CONTEXT_KEYS if key in event.payload})
-    return DelegationTree(delegations, usage, events)
+    return DelegationTree(delegations, usage, events, frozenset(cancel_requests))
 
 
 class DelegationStore:
@@ -215,6 +228,36 @@ class DelegationStore:
             return RunStore.open(path, run_id=run_id)
         path.mkdir(parents=True)
         return RunStore(path, run_id)
+
+    def cancel_subtree(self, id: str, *, reason: str) -> tuple[str, ...]:
+        """Request cancellation of a node and every live descendant, deepest first.
+
+        Queued work has no executor to wait for and is cancelled outright.
+        Active work only receives the request; whoever runs it ends it. The
+        store records; it does not stop threads.
+        """
+        tree = self.tree()
+        requested = []
+        for node in (*reversed(tree.descendants(id)), id):
+            delegation = tree.get(node)
+            if delegation.terminal or tree.cancel_requested(node):
+                continue
+            self.append(node, "cancel.requested", {"reason": reason})
+            if delegation.state is DelegationState.QUEUED:
+                self.append(node, "delegation.cancelled", {"reason": reason})
+            requested.append(node)
+        return tuple(requested)
+
+    def release(self, id: str) -> None:
+        """Return a terminal node's reservation to its parent. Idempotent."""
+        tree = self.tree()
+        delegation = tree.get(id)
+        if not delegation.terminal:
+            raise ValueError(f"cannot release the reservation of non-terminal delegation {id}")
+        if any(e.kind == "budget.released" and e.delegation_id == id for e in tree.events):
+            return None
+        self.append(id, "budget.released", {})
+        return None
 
     def recover(self, *, now: str) -> tuple[Delegation, ...]:
         """Mark every active, waiting or paused delegation interrupted. Idempotent."""
