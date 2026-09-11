@@ -33,6 +33,11 @@ def _stem(paper_id: str) -> str:
     return _VERSION.sub("", paper_id.strip())
 
 
+#: The most project items one `read_project` answer carries, whatever limit the model
+#: asks for: an observation stays bounded on a large ledger.
+MAX_PROJECT_RESULTS = 25
+
+
 class VisibilityPolicy(FrozenModel):
     """What this delegation may never see. Union under narrowing; never subtraction."""
 
@@ -123,7 +128,7 @@ class WorkerRetriever:
         for _, item in scored:
             if not self.policy.permits_ref(item.ref):
                 refused.append(item.id)
-            elif len(delivered) < max(1, limit):
+            elif len(delivered) < max(1, min(limit, MAX_PROJECT_RESULTS)):
                 delivered.append(item)
         self._note("read_project", delivered=[i.id for i in delivered], refused=refused, query=query)
         return ToolResult(True, json.dumps({

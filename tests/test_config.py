@@ -696,3 +696,12 @@ def test_a_delegation_pool_without_a_worker_is_refused(tmp_path: Path):
     bad = write(tmp_path / "bad.toml", 'delegation_workers = "many"\n')
     with pytest.raises(ValueError, match="delegation_workers must be a number of workers"):
         config.load(bad)
+
+
+def test_a_fractional_delegation_pool_is_refused_from_every_source(tmp_path: Path, monkeypatch):
+    path = write(tmp_path / "config.toml", "delegation_workers = 3.9\n")
+    with pytest.raises(ValueError, match="delegation_workers must be a whole number"):
+        config.load(path)
+    monkeypatch.setenv("HARDY_DELEGATION_WORKERS", "3.9")
+    with pytest.raises(ValueError, match="delegation_workers must be a whole number"):
+        config.load(write(tmp_path / "ok.toml", "delegation_workers = 3\n"))

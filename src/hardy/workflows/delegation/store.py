@@ -48,7 +48,9 @@ _STATE_EVENTS = {
 
 _CONTEXT_KEYS = ("problem_core_digest", "research_brief_digest", "context_manifest_id")
 
-INTERRUPTIBLE = frozenset({DelegationState.ACTIVE, DelegationState.WAITING, DelegationState.PAUSED})
+#: What a dead process may have been in the middle of. A pause holds no worker and no
+#: slot, so it is a control that survives a restart rather than work to doubt.
+INTERRUPTIBLE = frozenset({DelegationState.ACTIVE, DelegationState.WAITING})
 
 
 class DelegationTree:
@@ -265,7 +267,7 @@ class DelegationStore:
         return None
 
     def recover(self, *, now: str) -> tuple[Delegation, ...]:
-        """Mark every active, waiting or paused delegation interrupted. Idempotent."""
+        """Mark every active or waiting delegation interrupted; paused work stays paused. Idempotent."""
         recovered = []
         for delegation in self.tree().delegations.values():
             if delegation.state in INTERRUPTIBLE:

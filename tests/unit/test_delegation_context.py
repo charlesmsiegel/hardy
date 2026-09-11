@@ -163,3 +163,16 @@ def test_manifest_records_items_budget_and_policy(tmp_path):
     assert manifest.context_policy_digest == policy.digest
     assert [item.ref.id for item in manifest.included_items] == [item.ref.id for item in working.items]
     assert manifest.included_refs == tuple(item.ref for item in working.items)
+
+
+def test_hidden_optional_records_are_absent_from_the_structural_map(tmp_path):
+    """Isolation covers navigation too: a hidden consumer's id, kind and trust never appear."""
+    heads = seed_project(tmp_path)
+    store = LedgerStore(tmp_path)
+    assert "T1" in structural_map(store.read(), heads["L17"].ref)
+    assert "T1" not in structural_map(store.read(), heads["L17"].ref, hidden=("T1",))
+    brief = ResearchBrief(target=heads["L17"].ref, task_mode="prove")
+    blind = build_working_set(store, heads["L17"].ref, _scope(tmp_path), brief, ContextPolicy(hidden_ids=("T1",)))
+    assert "T1" not in blind.structural_map and "L12" in blind.structural_map
+    with pytest.raises(ValueError, match="correctness"):
+        build_working_set(store, heads["L17"].ref, _scope(tmp_path), brief, ContextPolicy(hidden_ids=("L12",)))

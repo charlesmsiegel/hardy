@@ -30,7 +30,11 @@ from hardy.workflows.delegation.context import (
     render_launch_prompt,
 )
 from hardy.workflows.delegation.contracts import DelegationState, ResourceLease
-from hardy.workflows.delegation.retrieval import VisibilityPolicy, WorkerRetriever
+from hardy.workflows.delegation.retrieval import (
+    MAX_PROJECT_RESULTS,
+    VisibilityPolicy,
+    WorkerRetriever,
+)
 from hardy.workflows.delegation.worker import WORKER_TOOLS, OpenedWorker, WorkerLaunch, run_worker
 from hardy.workflows.explore import ExploreWorkflow
 from hardy.workflows.ledger import contracts as c
@@ -230,3 +234,38 @@ def test_unknown_selectors_are_answered_not_raised(tmp_path, selector):
     seed_project(tmp_path)
     result = _retriever(tmp_path).item(selector)
     assert not result.ok
+
+
+def test_project_search_results_are_capped_whatever_limit_the_model_asks_for(tmp_path):
+    from hardy.workflows.explore import ExploreWorkflow
+    from hardy.workflows.ledger import contracts as c
+
+    seed_project(tmp_path)
+    flow = ExploreWorkflow(LedgerStore(tmp_path))
+    for n in range(MAX_PROJECT_RESULTS + 5):
+        flow.record_item(id=f"N-fiber-{n}", kind=c.ProjectItemKind.RESEARCH_NOTE, name=f"Note fiber {n}",
+                         statement=f"A remark about the fiber, number {n}")
+    found = _retriever(tmp_path).project("fiber", limit=1_000_000)
+    matches = json.loads(found.output)["matches"]
+    assert len(matches) == MAX_PROJECT_RESULTS
+
+
+def test_a_plain_related_id_is_pinned_to_the_head_the_worker_could_see(tmp_path):
+    from hardy.workflows.delegation.worker import OpenedWorker, WorkerLaunch, run_worker
+    from hardy.workflows.storage import RunStore
+
+    heads = seed_project(tmp_path)
+    store = RunStore.create(tmp_path / "delegations", "d-1", now=datetime.now(UTC), run_id=uuid4())
+    launch = WorkerLaunch(delegation_id="d-1", prompt="p", model=None, store=store,
+                         lease=ResourceLease(official_checks=1), retriever=_retriever(tmp_path))
+    script = [call("propose_finding", {"kind": "note", "summary": "s", "payload": "p", "related_refs": ["L17", "ghost"]}),
+              call("finish", {"status": "completed", "synthesis": "ok"})]
+
+    def open_worker(launch, dispatch, observe):
+        runtime = ScriptedWorkerRuntime(script, dispatch=dispatch, observe=observe)
+        return OpenedWorker(context_id="ctx", runtime=runtime, usage=lambda: Usage())
+
+    run_worker(launch, open_worker, CancelToken())
+    [finding] = json.loads((store.path / "findings.json").read_text(encoding="utf-8"))
+    assert finding["related_refs"] == [{"id": "L17", "digest": heads["L17"].digest}]
+    assert finding["related_ids"] == ["ghost"]

@@ -69,13 +69,19 @@ class LeaseLedger:
         return total
 
     def allocatable(self, id: str) -> ResourceLease:
-        """What a new child may still reserve: lease minus children minus own direct use.
+        """What a new child may still reserve: lease minus live children minus what is already spent.
 
-        A dimension this node's own usage cannot state is unknown liability,
-        so nothing further is promised in it: the whole remainder is treated
-        as spent rather than as available.
+        Spent means this node's own direct use plus everything a released
+        child consumed: a release returns the unspent part of a reservation,
+        never the part that was used. A dimension that usage cannot state,
+        here or in a released child, is unknown liability, so nothing further
+        is promised in it: the whole remainder is treated as spent rather
+        than as available.
         """
-        own = self.tree.usage_reported.get(id, ResourceUsage())
+        spent = self.tree.usage_reported.get(id, ResourceUsage())
+        for child in self.tree.children(id):
+            if child in self._released:
+                spent = spent + self.usage(child)
         remaining = self.reserved(id) - self.child_reservations(id)
         values: dict[str, Any] = {}
         for name in DIMENSIONS:
@@ -83,11 +89,11 @@ class LeaseLedger:
             if ceiling is None:
                 values[name] = None
                 continue
-            if name in own.unknown:
+            if name in spent.unknown:
                 values[name] = type(ceiling)(0)
             else:
-                spent = getattr(own, name) or 0
-                values[name] = max(ceiling - type(ceiling)(spent), type(ceiling)(0))
+                used = getattr(spent, name) or 0
+                values[name] = max(ceiling - type(ceiling)(used), type(ceiling)(0))
         return ResourceLease(**values)
 
     def exhausted(self, id: str) -> tuple[str, ...]:

@@ -71,6 +71,8 @@ class AttentionItem(FrozenModel):
     supersedes: tuple[str, ...] = ()
     event_kind: str = ""
     finding_kind: str | None = None
+    #: Who this item is for. Default routing addresses both; a subscription narrows it.
+    recipients: tuple[Recipient, ...] = ("human", "main_agent")
 
 
 class DeliveryReceipt(FrozenModel):
@@ -241,7 +243,10 @@ def route(event: DelegationEvent, tree: DelegationTree, subscriptions: tuple[Att
         item = derive_item(event, tree, force=True)
         if item is None:
             return None
-        return item, max((s.mode for s in matched), key=_MODE_RANK.__getitem__)
+        wanted = {r for s in matched for r in (("human", "main_agent") if s.recipient == "both" else (s.recipient,))}
+        recipients = tuple(r for r in ("human", "main_agent") if r in wanted)
+        return item.model_copy(update={"recipients": recipients}), max((s.mode for s in matched),
+                                                                       key=_MODE_RANK.__getitem__)
     item = derive_item(event, tree)
     if item is None:
         return None
@@ -288,7 +293,7 @@ class AttentionInbox:
         items, receipts, handled = self._state()
         pending = []
         for item in items.values():
-            if item.id in handled:
+            if item.id in handled or recipient not in item.recipients:
                 continue
             delivered = any(r.recipient == recipient for r in receipts.get(item.id, ()))
             if not delivered or item.sticky:

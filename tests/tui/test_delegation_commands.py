@@ -228,13 +228,42 @@ async def test_jobs_controls_reach_the_controller(ui, settings):
     assert "unknown delegation" in ui.text
 
 
-async def test_jobs_continue_resumes_the_main_conversation_only_between_turns(ui, settings):
+async def test_jobs_continue_queues_the_resumed_turn_for_the_terminal_rather_than_running_it(ui, settings):
     session = _Session()
     session.continuation = "Prove L17 by induction."
-    await handlers.handle_jobs(ui, "continue", State(config=settings, session=session, turn_running=True))
-    assert session.sent == [] and "running" in ui.text
-    await handlers.handle_jobs(ui, "continue", State(config=settings, session=session))
-    assert session.sent == ["Prove L17 by induction."]
+    busy = await handlers.handle_jobs(ui, "continue", State(config=settings, session=session, turn_running=True))
+    assert busy.queued_text is None and "running" in ui.text
+    state = await handlers.handle_jobs(ui, "continue", State(config=settings, session=session))
+    assert state.queued_text == "Prove L17 by induction." and session.sent == []      # never run in the handler
     session.continuation = None
-    await handlers.handle_jobs(ui, "continue", State(config=settings, session=session))
-    assert "nothing to continue" in ui.text.lower()
+    idle = await handlers.handle_jobs(ui, "continue", State(config=settings, session=session))
+    assert idle.queued_text is None and "nothing to continue" in ui.text.lower()
+
+
+def test_plain_mode_runs_a_queued_continuation_as_an_ordinary_turn(settings):
+    from .test_plain import FakeSession
+
+    class Continuing(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.delegations = _Delegations()
+            self.on_notice = None
+
+        def continue_main(self):
+            return "Prove L17 by induction."
+
+    written = []
+    session = Continuing()
+    replies = iter(["/jobs continue", "/exit"])
+    plain.run(settings, session, out=written.append, read=lambda prompt: next(replies))
+    assert session.sent == ["Prove L17 by induction."]
+    assert any("reply to Prove L17 by induction." in line for line in written)
+
+
+async def test_delegate_derives_the_default_objective_from_the_mode_and_refuses_unknown_modes(ui, settings):
+    session = _Session()
+    await handlers.handle_delegate(ui, "L17 --mode refute", State(config=settings, session=session))
+    assert session.delegated == [("L17", "refute L17", 1)]
+    assert session.delegate_kwargs[-1]["task_mode"] == "refute"
+    await handlers.handle_delegate(ui, "L17 --mode bogus", State(config=settings, session=session))
+    assert "Usage" in ui.text and len(session.delegated) == 1

@@ -56,6 +56,7 @@ class FakeMathematicsSession:
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        self.closed = 0
         # The real session derives this from `fresh_thread`; the closure under
         # test reads and rewrites it, so the fake has to carry it too.
         self.fresh_thread_detail = "started fresh (test detail)" if kwargs.get("fresh_thread") else ""
@@ -66,6 +67,9 @@ class FakeMathematicsSession:
 
     def switch_model(self, model) -> None: ...
     def record_abandonment(self, reason) -> None: ...
+
+    def close(self) -> None:
+        self.closed += 1
 
 
 def test_opening_a_project_creates_its_layout(tmp_path):
@@ -420,3 +424,13 @@ def test_chat_hands_the_worker_pool_and_a_per_worker_cas_factory_to_the_session(
     assert isinstance(kwargs["cas_factory"](worker_dir), FakeCasRuntime)
     assert calls[-1]["cwd"] == worker_dir and calls[-1]["log_path"] == worker_dir / "cells.jsonl"
     assert calls[-1]["backend_name"] == calls[0]["backend_name"] and calls[-1]["limits"] == calls[0]["limits"]
+
+
+def test_chat_closes_the_session_it_built_when_the_loop_ends(tmp_path, monkeypatch):
+    """Background workers must not outlive the session: the pool is stopped on the way out."""
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (FakeCasRuntime(), "fakecas 1.0"))
+    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
+    FakeMathematicsSession.instances = []
+    assert cli._chat(settings(tmp_path), plain=True) == 0
+    assert [s.closed for s in FakeMathematicsSession.instances] == [1]

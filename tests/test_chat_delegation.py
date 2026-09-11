@@ -18,6 +18,7 @@ from test_chat import FakeChatRuntime, call
 from workspace_helpers import events
 
 from hardy.agents.contracts import TurnEvent
+from hardy.agents.executor import WorkerJob
 from hardy.workflows.context import ContextManager
 from hardy.workflows.contracts import RunLimits
 from hardy.workflows.delegation.budget import LeaseRefused
@@ -355,3 +356,18 @@ def test_delegate_carries_hidden_ids_time_and_task_mode_into_the_spec(tmp_path):
         chat.delegations.wait(delegation.id, timeout=10)
     finally:
         chat.delegations.shutdown()
+
+
+def test_closing_the_session_cancels_its_delegations_and_stops_the_pool(tmp_path):
+    seed_lemma(tmp_path)
+    started, release = threading.Event(), threading.Event()
+    chat = session_with_worker(tmp_path, main_script=["Hello."], worker_script=WORKER_SCRIPT,
+                               worker_gate=(started, release))
+    delegation = chat.delegate("L17", objective="prove L17", checks=1)
+    assert started.wait(5)
+    chat.close()
+    node = chat.delegations.tree().get(delegation.id)
+    assert node.state is DelegationState.CANCELLED and "session" in (node.terminal_reason or "")
+    with pytest.raises(RuntimeError):
+        chat.delegations.executor.submit(WorkerJob("late", lambda token: None))
+    chat.close()                                                                  # idempotent

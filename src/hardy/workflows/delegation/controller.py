@@ -9,6 +9,7 @@ happened and marks what was interrupted as unknown.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -70,13 +71,20 @@ from hardy.workflows.delegation.scheduler import (
     graph_urgency,
 )
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
-from hardy.workflows.delegation.worker import CasFactory, OpenWorker, WorkerLaunch, run_worker
+from hardy.workflows.delegation.worker import (
+    CasFactory,
+    OpenWorker,
+    WorkerLaunch,
+    render_pushes,
+    run_worker,
+)
 from hardy.workflows.delegation.workspace import WorkspaceOverlay
 from hardy.workflows.ledger.contracts import VersionRef
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.storage import RunStore
 
 if TYPE_CHECKING:
+    from hardy.formal.budget import CheckBudget
     from hardy.formal.workspace import LeanWorkspace
     from hardy.literature.tools import PaperToolRuntime
 
@@ -131,6 +139,8 @@ class DelegationController:
         self._clock = clock
         self._lock = threading.RLock()
         self._handles: dict[str, WorkerHandle] = {}
+        #: Live check budgets by delegation id, so a granted tranche reaches a running worker.
+        self._budgets: dict[str, CheckBudget] = {}
         self._inbox = AttentionInbox(store)
 
     # -- views --------------------------------------------------------------
@@ -216,10 +226,11 @@ class DelegationController:
                     overlay = WorkspaceOverlay.open(artifacts.path / "overlay", generation, like=self.workspace)
                     self._overlays[delegation.id] = overlay
                     break
+        hidden = self._effective_hidden(delegation.parent_id or ROOT_ID, delegation.spec)
         return WorkerLaunch(delegation_id=delegation.id, prompt=prompt_path.read_text(encoding="utf-8"),
                             model=delegation.spec.model, store=artifacts, lease=lease,
-                            retriever=self._retriever(delegation.spec, artifacts), overlay=overlay,
-                            cas_factory=self.cas_factory)
+                            retriever=self._retriever(hidden, artifacts), overlay=overlay,
+                            cas_factory=self.cas_factory, **self._hooks(delegation.id))
 
     def _overlay_for(self, id: str, spec: DelegationSpec, parent: str, artifacts: RunStore,
                      revision: int) -> WorkspaceOverlay | None:
@@ -326,13 +337,25 @@ class DelegationController:
                 # coordinator or the human finishes, retires or cancels it.
                 self.store.append(id, "delegation.started", {"interior": True})
                 return self.tree().get(id)
-            launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
-                                  model=spec.model, store=artifacts, lease=lease,
+            prompt = render_launch_prompt(core, brief, working)
+            # Persisted when the work is queued, not when it starts: a restart
+            # relaunches from this file, and a job that never ran still has one.
+            artifacts.write_text(PurePosixPath("prompt.md"), prompt)
+            launch = WorkerLaunch(delegation_id=id, prompt=prompt, model=spec.model, store=artifacts, lease=lease,
                                   retriever=self._retriever(hidden, artifacts), overlay=overlay,
-                                  cas_factory=self.cas_factory)
+                                  cas_factory=self.cas_factory, **self._hooks(id))
             self._pending[id] = launch
             self._dispatch()
             return self.tree().get(id)
+
+    def _hooks(self, id: str) -> dict[str, Any]:
+        """What a launch needs from the controller while it runs: its budget registry and its pushes."""
+        return {"on_budget": lambda budget, id=id: self._budgets.__setitem__(id, budget),
+                "pushes": lambda id=id: self._consume_pushes(id)}
+
+    def _consume_pushes(self, id: str) -> tuple[Finding, ...]:
+        with self._lock:
+            return FindingLedger(self.store).consume_pushes(id)
 
     # -- interior nodes and human steering --------------------------------------
 
@@ -368,6 +391,11 @@ class DelegationController:
             if node.state is not DelegationState.PAUSED:
                 raise ValueError(f"{id} is not paused")
             self.store.append(id, "delegation.resumed", {"by": by})
+            if id not in self._pending and id not in self._handles:
+                # Paused before this process started: relaunch from the persisted package.
+                launch = self._relaunch(self.tree().get(id), LeaseLedger(self.tree()).reserved(id))
+                if launch is not None:
+                    self._pending[id] = launch
             self._dispatch()
 
     def set_lane(self, id: str, lane: Lane, *, by: str) -> None:
@@ -431,15 +459,35 @@ class DelegationController:
                          lanes=self._lanes(), urgency=urgency)
 
     def _dispatch(self) -> None:
-        """Hand free slots to the leaves the scheduler chooses; nothing else starts work."""
+        """Hand free slots to the leaves the scheduler chooses; nothing else starts work.
+
+        The executor's slots are the machine's; every ancestor's concurrency
+        lease is honoured too, counting what this pass has already handed out
+        and what is submitted but not yet journaled as started.
+        """
         with self._lock:
             free = self.executor.slots - len(self._handles)
             if free <= 0 or not self._pending or self._closed:
                 return
+            tree = self.tree()
+            ledger = LeaseLedger(tree)
+            taken: dict[str, int] = {}
+            for id in self._handles:
+                node = tree.delegations.get(id)
+                if node is not None and node.state is DelegationState.QUEUED and node.parent_id is not None:
+                    taken[node.parent_id] = taken.get(node.parent_id, 0) + node.spec.concurrency.slots
             for chosen in self._scheduler().choose(free):
                 launch = self._pending.get(chosen.id)
                 if launch is None:
                     continue
+                wanted = chosen.spec.concurrency.slots
+                parent = chosen.parent_id or ROOT_ID
+                if ledger.slots_available(parent) - taken.get(parent, 0) < wanted:
+                    continue
+                pushed = FindingLedger(self.store).consume_pushes(chosen.id)
+                if pushed:
+                    # The launch is the recipient's first provider boundary.
+                    launch = dataclasses.replace(launch, prompt=f"{render_pushes(pushed)}\n\n{launch.prompt}")
                 try:
                     handle = self.executor.submit(
                         WorkerJob(chosen.id, lambda token, launch=launch: self._run(launch, token)))
@@ -448,6 +496,7 @@ class DelegationController:
                     return
                 self._pending.pop(chosen.id, None)
                 self._handles[chosen.id] = handle
+                taken[parent] = taken.get(parent, 0) + wanted
                 handle.add_done_callback(self._settle)
 
     def pin(self, id: str, kind: PinKind, *, by: str, value: int | None = None) -> Pin:
@@ -477,6 +526,13 @@ class DelegationController:
             if decision.granted is not None:
                 self.store.append(id, "budget.reserved", {"lease": decision.resulting.model_dump(mode="json"),
                                                           "slots": scheduler.ledger.slots(id)})
+                # Effective now, not at the next replay: the queued launch and
+                # the running worker's own budget both see the new ceiling.
+                if id in self._pending:
+                    self._pending[id] = dataclasses.replace(self._pending[id], lease=decision.resulting)
+                budget = self._budgets.get(id)
+                if budget is not None and decision.resulting.official_checks is not None:
+                    budget.set_official_checks(decision.resulting.official_checks)
             self._dispatch()
             return decision
 
@@ -504,6 +560,12 @@ class DelegationController:
             self.store.append(id, "delegation.started", {})
         result = run_worker(launch, self._open_worker, token)
         with self._lock:
+            if result.status is DelegationState.CANCELLED:
+                # The terminal record carries the reason the request gave, not the worker's generic one.
+                asked = next((e.payload.get("reason") for e in reversed(self.store.events())
+                              if e.delegation_id == id and e.kind == "cancel.requested"), None)
+                if asked:
+                    result = result.model_copy(update={"terminal_reason": str(asked)})
             self.store.append(id, "usage.reported", {"usage": result.usage.model_dump(mode="json")})
             self._propose_findings(id, launch)
             if result.change_set is not None:
@@ -555,6 +617,7 @@ class DelegationController:
             self._route(id, event)
 
     def _after_terminal(self, id: str, event: DelegationEvent) -> None:
+        self._budgets.pop(id, None)
         self.store.release(id)
         self._route(id, event)
         parent = self.tree().get(id).parent_id
@@ -593,15 +656,19 @@ class DelegationController:
         self._inbox.record(item)
         if mode is DeliveryMode.QUEUE:
             return
-        try:
-            self._notify(item.summary)
-        except Exception:  # noqa: BLE001 - a notice that cannot be shown is not delivered
-            return
+        to_human = "human" in item.recipients
+        if to_human:
+            try:
+                self._notify(item.summary)
+            except Exception:  # noqa: BLE001 - a notice that cannot be shown is not delivered
+                return
         if mode is DeliveryMode.NOTIFY or self._interrupt is None:
-            self._inbox.receipt(item.id, "human", "notify")
+            if to_human:
+                self._inbox.receipt(item.id, "human", "notify")
             return
         self.store.append(id, "attention.interrupt_requested", {"item_id": item.id})
-        self._inbox.receipt(item.id, "human", "interrupt")
+        if to_human:
+            self._inbox.receipt(item.id, "human", "interrupt")
         try:
             self._interrupt(item)
         except Exception:  # noqa: BLE001 - the hook's failure is not the worker's
@@ -685,6 +752,18 @@ class DelegationController:
             for node in requested:
                 self._settle_interior(node)
             return requested
+
+    def cancel_all(self, *, reason: str) -> tuple[str, ...]:
+        """Request cancellation of every live delegation under the root; used when the session ends."""
+        requested: list[str] = []
+        with self._lock:
+            tree = self.tree()
+            if ROOT_ID not in tree.delegations:
+                return ()
+            for child in tree.children(ROOT_ID):
+                if not tree.get(child).terminal:
+                    requested.extend(self.cancel(child, reason=reason))
+        return tuple(requested)
 
     def wait(self, id: str, timeout: float | None = None) -> Delegation:
         """Block until the journal shows a terminal state. For tests and command-line callers."""

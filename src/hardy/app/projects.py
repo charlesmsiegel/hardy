@@ -220,6 +220,9 @@ class ProjectOpener:
         self._search = search
         self._search_detail = search_detail
         self.cas = cas
+        #: The session the process is running, for whoever has to close it at
+        #: the end: `_chat` built the first, a switch replaces it.
+        self.session: Any = None
         # The reopen currently in flight, or None. Written by the worker and
         # read by `cancel` from the event loop -- see both.
         self._opening: _Reopen | None = None
@@ -413,6 +416,7 @@ class ProjectOpener:
         if self.cas is not None:
             self.cas.session.close()
         self.cas = cas
+        self.session = session
         self._remember(config)
         return config, session
 

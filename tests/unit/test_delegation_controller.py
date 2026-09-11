@@ -1,6 +1,7 @@
 """The controller is nonblocking orchestration over the journal, the executor and the leases."""
 import json
 import threading
+import time
 from decimal import Decimal
 from uuid import uuid4
 
@@ -419,4 +420,102 @@ def test_a_blind_cell_hides_its_ids_from_every_descendant_at_preload_and_retriev
         assert tools[1]["result"]["ok"]
         assert "generic fiber is connected" not in prompts[child.id] and "L14" not in prompts[child.id]
     finally:
+        controller.shutdown()
+
+
+def test_a_one_slot_cell_runs_its_children_one_at_a_time_whatever_the_executor_has(tmp_path):
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    started, release = threading.Event(), threading.Event()
+    controller = _controller(tmp_path, _open([FINISH], gate=(started, release)), checks=6, slots=4)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=4).model_copy(update={
+            "spawn": SpawnPolicy(can_spawn=True, max_children=3, max_depth=1), "concurrency": ConcurrencyLease(slots=1)}))
+        a = controller.delegate(_spec(tmp_path, checks=1), parent_id=cell.id)
+        b = controller.delegate(_spec(tmp_path, checks=1), parent_id=cell.id)
+        assert started.wait(5)
+        time.sleep(0.3)
+        tree = controller.tree()
+        assert tree.get(a.id).state is DelegationState.ACTIVE and tree.get(b.id).state is DelegationState.QUEUED
+        assert controller.status()["counts"].get("active") == 2                     # the cell and one child
+        release.set()
+        assert controller.wait(a.id, timeout=5).state is DelegationState.COMPLETED
+        assert controller.wait(b.id, timeout=5).state is DelegationState.COMPLETED
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_queued_and_paused_work_survives_a_restart_from_its_persisted_launch(tmp_path):
+    """A launch is persisted when it is queued, not when it starts, so a restart can relaunch it."""
+    first = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    first.shutdown()                                                          # nothing can start any more
+    queued = first.delegate(_spec(tmp_path, checks=1))
+    paused = first.delegate(_spec(tmp_path, checks=1))
+    first.pause(paused.id, by="human")
+    assert (first.store.artifacts(queued.id).path / "prompt.md").exists()
+    again = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    try:
+        assert again.recover() == ()                                          # nothing was in flight
+        assert again.wait(queued.id, timeout=5).state is DelegationState.COMPLETED
+        assert again.tree().get(paused.id).state is DelegationState.PAUSED
+        again.resume(paused.id, by="human")
+        assert again.wait(paused.id, timeout=5).state is DelegationState.COMPLETED
+    finally:
+        again.shutdown()
+
+
+def test_pushed_findings_reach_a_queued_recipient_in_its_prompt_and_an_active_one_at_its_next_tool_result(tmp_path):
+    from delegation_helpers import seed_project
+
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+    from hardy.workflows.delegation.findings import FindingLedger
+
+    seed_project(tmp_path)
+    started, release = threading.Event(), threading.Event()
+    prompts = {}
+    scripts = {
+        "source": [call("propose_finding", {"kind": "reduction", "summary": "reduce to the special fiber",
+                                            "payload": "L17 reduces to L12", "related_refs": ["L17"]}), FINISH],
+        "active": [call("read_item", {"selector": "D3"}), FINISH],
+        "queued": [FINISH],
+    }
+
+    def open_worker(launch, dispatch, observe):
+        objective = next(k for k in scripts if f"Objective: {k}" in launch.prompt)
+        prompts[launch.delegation_id] = launch.prompt
+        gate = (started, release) if objective == "active" else None
+        runtime = ScriptedWorkerRuntime(scripts[objective], gate=gate, dispatch=dispatch, observe=observe)
+        return OpenedWorker(context_id=launch.delegation_id, runtime=runtime, usage=lambda: Usage())
+
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(4),
+                                      open_worker=open_worker,
+                                      root=RootResources(lease=ResourceLease(official_checks=6), slots=4),
+                                      notify=lambda text: None)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=4, objective="cell").model_copy(update={
+            "spawn": SpawnPolicy(can_spawn=True, max_children=3, max_depth=1), "concurrency": ConcurrencyLease(slots=1)}))
+        source = controller.delegate(_spec(tmp_path, checks=1, objective="source"), parent_id=cell.id)
+        controller.wait(source.id, timeout=5)
+        active = controller.delegate(_spec(tmp_path, checks=1, objective="active"), parent_id=cell.id)
+        assert started.wait(5)
+        queued = controller.delegate(_spec(tmp_path, checks=1, objective="queued"), parent_id=cell.id)
+        assert controller.tree().get(queued.id).state is DelegationState.QUEUED
+        ledger = FindingLedger(controller.store)
+        for recipient in (active.id, queued.id):
+            ledger.promote(f"{source.id}:finding:0", recipient=recipient, mode="push", selector="human",
+                           authorized_by=cell.id, reason="react to this")
+        release.set()
+        controller.wait(active.id, timeout=5)
+        controller.wait(queued.id, timeout=5)
+        trajectory = [json.loads(line) for line in
+                      controller.store.artifacts(active.id).trajectory_path.read_text(encoding="utf-8").splitlines()]
+        tools = [e["payload"] for e in trajectory if e["kind"] == "tool"]
+        assert "reduce to the special fiber" in tools[0]["result"]["output"]        # the next provider boundary
+        assert "reduce to the special fiber" in prompts[queued.id]                  # the launch itself
+        assert "reduce to the special fiber" not in prompts[active.id]
+        consumed = [e for e in controller.store.events() if e.kind == "context.pushes_consumed"]
+        assert {e.delegation_id for e in consumed} == {active.id, queued.id}
+    finally:
+        release.set()
         controller.shutdown()

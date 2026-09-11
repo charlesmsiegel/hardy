@@ -53,6 +53,14 @@ class CheckBudget:
         with self._lock:
             return self._checks
 
+    def set_official_checks(self, official_checks: int) -> None:
+        """Move the ceiling under a running budget: a granted tranche, or a reclaim never below use."""
+        _count(official_checks)
+        with self._lock:
+            if official_checks < self._checks:
+                raise ValueError("a check ceiling cannot fall below the checks already charged")
+            self._official_checks = official_checks
+
     @property
     def remaining_checks(self) -> int:
         with self._lock:

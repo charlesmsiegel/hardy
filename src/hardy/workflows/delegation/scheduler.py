@@ -165,6 +165,11 @@ class Scheduler:
                 continue
             if any(self.tree.get(a).terminal or self.tree.cancel_requested(a) for a in self.tree.ancestors(delegation.id)):
                 continue
+            # A leaf is runnable only where its parent can still seat it. The
+            # parent's own seats were granted under its parent in turn, so the
+            # chain above is already accounted for in that one reservation.
+            if self.ledger.slots_available(delegation.parent_id) < delegation.spec.concurrency.slots:
+                continue
             ready.append(delegation)
         return tuple(ready)
 
@@ -195,9 +200,27 @@ class Scheduler:
 
         take(Lane.USER_PINNED, free_slots)
         take(Lane.BLOCKER, free_slots)
+        # A `min_attention` pin holds `value` of the free slots for a subtree
+        # (or a leaf), whatever lane its ready work sits in.
+        for pin in self.pins:
+            if pin.kind != "min_attention":
+                continue
+            scope = {pin.delegation_id, *self.tree.descendants(pin.delegation_id)}
+            need = pin.value if pin.value is not None else 1
+            for lane in Lane:
+                while need > 0 and len(chosen) < free_slots:
+                    inside = next((d for d in by_lane[lane] if d.id in scope), None)
+                    if inside is None:
+                        break
+                    by_lane[lane].remove(inside)
+                    chosen.append(inside)
+                    need -= 1
         total = self.ledger.slots(self.tree.roots[0]) if self.tree.roots else free_slots
-        if not self.constraints.collapse_exploration:
-            take(Lane.EXPLORE, max(0, math.ceil(total * self.constraints.exploration_floor)))
+        # A `reserve_exploration` pin holds `value` slots for exploration on top of the floor.
+        reserved = sum((pin.value if pin.value is not None else 1) for pin in self.pins
+                       if pin.kind == "reserve_exploration")
+        if not self.constraints.collapse_exploration or reserved:
+            take(Lane.EXPLORE, max(reserved, math.ceil(total * self.constraints.exploration_floor)))
         take(Lane.VERIFY, max(0, math.ceil(total * self.constraints.verify_floor)))
         for lane in (Lane.EXPLOIT, Lane.VERIFY, Lane.EXPLORE):
             if lane is Lane.EXPLORE and self.constraints.collapse_exploration and by_lane[Lane.EXPLOIT]:

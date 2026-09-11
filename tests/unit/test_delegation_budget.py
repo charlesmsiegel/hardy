@@ -7,6 +7,7 @@ from hardy.workflows.delegation.budget import LeaseLedger, LeaseRefused, grant
 from hardy.workflows.delegation.contracts import (
     ConcurrencyLease,
     DelegationSpec,
+    DelegationState,
     ResourceLease,
     ResourceUsage,
 )
@@ -130,3 +131,37 @@ def test_concurrency_slots_count_active_work_and_bound_a_child_request(tmp_path)
     assert slots == ConcurrencyLease(slots=1)
     store.append("a", "delegation.cancelled", {"reason": "user"})
     assert LeaseLedger(store.tree()).slots_available("root") == 1
+
+
+def _finish(store, id, **usage):
+    from hardy.workflows.delegation.contracts import WorkerResult
+    store.append(id, "delegation.started", {})
+    _use(store, id, **usage)
+    result = WorkerResult(delegation_id=id, status=DelegationState.COMPLETED, synthesis="done",
+                          usage=ResourceUsage(**usage))
+    store.append(id, "delegation.completed", {"result": result.model_dump(mode="json")})
+    store.release(id)
+
+
+def test_a_released_child_still_counts_what_it_consumed_against_the_parent(tmp_path):
+    """Releasing a reservation returns what was not spent; what was spent is gone for good."""
+    store = DelegationStore(tmp_path)
+    tree = _tree(store, ("root", None, {"official_checks": 4}), ("a", "root", {"official_checks": 1}))
+    _finish(store, "a", official_checks=1)
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=3)
+    with pytest.raises(LeaseRefused, match="official_checks"):
+        grant(store.tree(), "root", ResourceLease(official_checks=4), requested_slots=0)
+    grant(store.tree(), "root", ResourceLease(official_checks=3), requested_slots=0)
+    assert tree.revision < store.tree().revision
+
+
+def test_a_released_child_with_unknown_usage_leaves_that_dimension_unallocatable(tmp_path):
+    store = DelegationStore(tmp_path)
+    _tree(store, ("root", None, {"official_checks": 4, "tokens": 1000}), ("a", "root", {"official_checks": 1, "tokens": 100}))
+    store.append("a", "delegation.started", {})
+    store.append("a", "usage.reported", {"usage": ResourceUsage(official_checks=1, unknown=("tokens",)).model_dump(mode="json")})
+    store.append("a", "delegation.completed", {"result": {"delegation_id": "a", "status": "completed", "synthesis": "",
+                                                          "usage": ResourceUsage(unknown=("tokens",)).model_dump(mode="json")}})
+    store.release("a")
+    assert LeaseLedger(store.tree()).allocatable("root") == ResourceLease(official_checks=3, tokens=0)

@@ -569,6 +569,7 @@ class MathematicsSession:
         )
         # Work that was active when the last process died is unknown, not done.
         self.delegations.recover()
+        self._closed = False
 
     @property
     def state(self) -> dict[str, Any]:
@@ -707,6 +708,21 @@ class MathematicsSession:
             concurrency=ConcurrencyLease(slots=1),
         )
         return self.delegations.delegate(spec)
+
+    def close(self) -> None:
+        """End background work with the session: cancel what runs, then stop the pool. Idempotent.
+
+        A worker cannot outlive the process that reads its results, so what
+        is still running is journaled cancelled with this reason rather than
+        left to be found unknown at the next start.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.delegations.cancel_all(reason="session closed")
+        finally:
+            self.delegations.shutdown()
 
     def admit(self, delegation_id: str) -> tuple[AdmissionOutcome, ...]:
         """Admit a finished delegation's provable findings into the project through the installed owners.

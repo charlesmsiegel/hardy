@@ -993,6 +993,14 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # problem that was open stays open.
         ui.write(f"Could not open {slug}: {error}", style="error")
         return state
+    # The problem being left takes its background work with it: what still
+    # runs there is cancelled and its pool stopped before the state moves on.
+    close = getattr(state.session, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
+            ui.write(f"Could not close the previous session cleanly: {error}", style="error")
     switched = dataclasses.replace(state, config=config, session=session)
     ui.write(f"  {status_line(config)}")
     if creating:
@@ -1138,6 +1146,7 @@ async def handle_abandon(ui: Ui, argument: str, state: State) -> State:
 
 DELEGATE_USAGE = ("Usage: /delegate <item-id> [--checks N] [--seconds S] [--mode prove|explore|refute|"
                   "critique|verify] [--hide id,id] [objective]")
+TASK_MODES = ("prove", "explore", "refute", "critique", "verify")
 
 
 def _delegate_arguments(argument: str) -> tuple[str, str, dict[str, Any]]:
@@ -1161,6 +1170,8 @@ def _delegate_arguments(argument: str) -> tuple[str, str, dict[str, Any]]:
         elif word == "--seconds":
             options["seconds"] = float(value)
         elif word == "--mode":
+            if value not in TASK_MODES:
+                raise ValueError(DELEGATE_USAGE)
             options["task_mode"] = value
         elif word == "--hide":
             options["hidden_ids"] = tuple(part for part in value.split(",") if part)
@@ -1169,7 +1180,9 @@ def _delegate_arguments(argument: str) -> tuple[str, str, dict[str, Any]]:
     if not positional:
         raise ValueError(DELEGATE_USAGE)
     target, *rest = positional
-    return target, " ".join(rest) or f"prove {target}", options
+    # The default objective says what the mode asks for; "prove" under
+    # `--mode refute` would hand the worker two contradictory instructions.
+    return target, " ".join(rest) or f"{options.get('task_mode', 'prove')} {target}", options
 
 
 async def handle_delegate(ui: Ui, argument: str, state: State) -> State:
@@ -1254,16 +1267,23 @@ def _jobs_inspect(ui: Ui, delegations: Any, id: str) -> None:
         ui.write(f"  {item['id']}  {item['summary']}")
 
 
-async def _jobs_continue(ui: Ui, state: State) -> None:
+async def _jobs_continue(ui: Ui, state: State) -> State:
+    """Hand a due continuation to the terminal as the next typed line, never run it here.
+
+    A handler runs inside the command path: in plain mode a turn run here
+    would print nothing, and in the shell it would block the event loop for
+    the whole exchange. The terminal submits `queued_text` through its
+    ordinary turn path, with streaming and cancellation intact.
+    """
     if state.turn_running:
         ui.write("A turn is running; /jobs continue resumes the conversation between turns.", style="error")
-        return
+        return state
     text = state.session.continue_main()
     if text is None:
         ui.write("Nothing to continue: no continuation is due, or the conversation has moved on.")
-        return
+        return state
     ui.write(f"Resuming: {text}")
-    state.session.send(text)
+    return dataclasses.replace(state, queued_text=text)
 
 
 async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
@@ -1283,7 +1303,7 @@ async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
         elif words == ["tree"]:
             _jobs_tree(ui, delegations)
         elif words == ["continue"]:
-            await _jobs_continue(ui, state)
+            state = await _jobs_continue(ui, state)
         elif len(words) == 1:
             _jobs_inspect(ui, delegations, words[0])
         elif words[0] == "pin" and len(words) in {3, 4} and words[2] in _PIN_KINDS:

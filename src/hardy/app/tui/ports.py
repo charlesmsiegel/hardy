@@ -26,6 +26,10 @@ class State:
     session: Any
     done: bool = False
     turn_running: bool = False
+    #: A line a handler asks the terminal to submit next, as though typed:
+    #: a resumed continuation goes through the ordinary turn path rather
+    #: than running inside the command.
+    queued_text: str | None = None
     #: How to open another problem in this root:
     #: `(slug, confirm, config) -> (config, session)`. Supplied by whoever
     #: built the session, because reopening one needs the runtime factory and

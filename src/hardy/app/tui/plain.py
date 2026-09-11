@@ -7,6 +7,7 @@ drawing differs, which is what keeps `hardy < script.txt` working.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import threading
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -225,7 +226,13 @@ def run(
             continue
         if outcome.kind == "command":
             state = asyncio.run(outcome.command.handler(ui, outcome.argument, state))
-            continue
+            if state.queued_text is None:
+                continue
+            # The handler asked for a turn: submitted here exactly as a typed line would be.
+            outcome = dispatch.classify(state.queued_text, registry, turn_running=False)
+            state = dataclasses.replace(state, queued_text=None)
+            if outcome.kind != "send":
+                continue
 
         for line in transcript.user_lines(outcome.argument, WIDTH):
             out(line)

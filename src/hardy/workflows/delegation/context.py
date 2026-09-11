@@ -16,7 +16,7 @@ calls a provider or writes the ledger.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from enum import Enum
 from typing import Literal
 
@@ -124,6 +124,11 @@ class ContextPolicy(FrozenModel):
     #: Sources made prominent at launch as pointers with an index line; their
     #: text is retrieved lazily, never pasted wholesale.
     seeded_sources: tuple[str, ...] = ()
+
+    @property
+    def hidden_identities(self) -> tuple[str, ...]:
+        """Every stable id this policy hides, by id or by exact ref."""
+        return tuple(dict.fromkeys((*self.hidden_ids, *(ref.id for ref in self.hidden_refs))))
 
     def hides(self, ref: VersionRef) -> bool:
         return ref.id in self.hidden_ids or ref in self.hidden_refs
@@ -300,9 +305,15 @@ def mandatory_kernel(snapshot: LedgerSnapshot, target: VersionRef, scope: Versio
     return tuple(seen.values())
 
 
-def structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int = 3) -> str:
-    """Stage B: navigation, not evidence. Dependencies down, direct consumers across."""
+def structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int = 3,
+                   hidden: Collection[str] = ()) -> str:
+    """Stage B: navigation, not evidence. Dependencies down, direct consumers across.
+
+    Built under the same visibility as the preload: a hidden record's id,
+    kind and trust state are as much project information as its statement.
+    """
     graph = LedgerGraph(snapshot)
+    hidden = frozenset(hidden)
 
     def label(ref: VersionRef) -> str:
         record = snapshot.get(ref)
@@ -310,7 +321,8 @@ def structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int =
         return f"{ref.id} ({kind}) [{_trust(snapshot, ref)}]"
 
     def children(ref: VersionRef) -> list[VersionRef]:
-        return sorted({r.target for r in graph.relations if r.source == ref and r.kind in DEPENDENCIES},
+        return sorted({r.target for r in graph.relations
+                       if r.source == ref and r.kind in DEPENDENCIES and r.target.id not in hidden},
                       key=lambda r: r.id)
 
     lines = [f"Target {label(target)}"]
@@ -325,7 +337,8 @@ def structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int =
             walk(child, prefix + ("    " if last else "│   "), remaining - 1)
 
     walk(target, "", depth)
-    consumers = sorted({r.source for r in graph.relations if r.target == target and r.kind in DEPENDENCIES},
+    consumers = sorted({r.source for r in graph.relations
+                        if r.target == target and r.kind in DEPENDENCIES and r.source.id not in hidden},
                        key=lambda r: r.id)
     for index, consumer in enumerate(consumers):
         lines.append(f"{'└── ' if index == len(consumers) - 1 else '├── '}used_by {label(consumer)}")
@@ -425,7 +438,8 @@ def build_working_set(store: LedgerStore, target: VersionRef, scope: VersionRef,
     items, overflow = fit_to_budget(mandatory, candidates, policy, already_preloaded=sibling_preloads,
                                     seeded=seeded_items(policy, sources))
     return InitialWorkingSet(
-        items=items, structural_map=structural_map(snapshot, target), budget_tokens=policy.preload_tokens,
+        items=items, structural_map=structural_map(snapshot, target, hidden=policy.hidden_identities),
+        budget_tokens=policy.preload_tokens,
         overflow=overflow, selection=selection, project_revision=snapshot.revision,
         manifest_hidden=policy.hidden_selectors, policy_digest=policy.digest,
     )

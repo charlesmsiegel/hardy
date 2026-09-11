@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
@@ -240,3 +241,44 @@ def test_workspace_digest_is_stable_and_order_independent(path):
     a = workspace_digest({"Main": MAIN, "Group.Sylow": NEW})
     b = workspace_digest({"Group.Sylow": NEW, "Main": MAIN})
     assert a == b and len(a) == 64 and workspace_digest({"Main": MAIN}) != a
+
+
+def test_a_granted_tranche_reaches_a_running_worker_and_a_queued_launch(tmp_path):
+    from hardy.workflows.delegation.contracts import ResourceDelta
+
+    seed_project(tmp_path)
+    base = _base(tmp_path)
+    started, release = threading.Event(), threading.Event()
+    script = [call("check_lean", {"path": "A.lean", "source": NEW}), call("check_lean", {"path": "B.lean", "source": NEW}),
+              call("finish", {"status": "completed", "synthesis": "both checked"})]
+
+    def open_worker(launch, dispatch, observe):
+        runtime = ScriptedWorkerRuntime(script, gate=(started, release), dispatch=dispatch, observe=observe)
+        return OpenedWorker(context_id=launch.delegation_id, runtime=runtime, usage=lambda: Usage())
+
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=open_worker,
+                                      root=RootResources(lease=ResourceLease(official_checks=6), slots=1),
+                                      notify=lambda text: None, workspace=base)
+    try:
+        snapshot = LedgerStore(tmp_path).read()
+        spec = DelegationSpec(objective="check twice", project_refs=(snapshot.head("L17").ref,),
+                              scope=snapshot.head("scope").ref, lease=ResourceLease(official_checks=1),
+                              concurrency=ConcurrencyLease(slots=1), created_by="human", writable=True)
+        running = controller.delegate(spec)
+        assert started.wait(5)
+        queued = controller.delegate(spec)
+        for id in (running.id, queued.id):
+            decision = controller.reinforce(id, ResourceDelta(official_checks=1), by="human", reason="one more")
+            assert decision.granted is not None
+        release.set()
+        for id in (running.id, queued.id):
+            done = controller.wait(id, timeout=10)
+            assert done.state is DelegationState.COMPLETED and done.result.usage.official_checks == 2
+            trajectory = [json.loads(line) for line in
+                          controller.store.artifacts(id).trajectory_path.read_text(encoding="utf-8").splitlines()]
+            tools = [e["payload"] for e in trajectory if e["kind"] == "tool"]
+            assert tools[0]["result"]["ok"] and tools[1]["result"]["ok"]
+    finally:
+        release.set()
+        controller.shutdown()

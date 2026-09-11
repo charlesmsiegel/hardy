@@ -222,3 +222,25 @@ def test_decisions_and_pins_are_journaled_by_the_controller(tmp_path):
         assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 6
     finally:
         controller.shutdown()
+
+
+def test_min_attention_and_reserve_exploration_pins_change_what_is_chosen(tmp_path):
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    store = _store(tmp_path, ("x1", _spec()), ("x2", _spec()), ("x3", _spec()),
+                   ("e1", _spec(lane="explore")), root_slots=4)
+    cell = _spec(objective="cell").model_copy(update={"spawn": SpawnPolicy(can_spawn=True, max_children=2, max_depth=1)})
+    store.append("cell", "delegation.created", {"spec": cell.model_dump(mode="json"), "parent_id": "root", "created_at": "t"})
+    store.append("cell", "budget.reserved", {"lease": cell.lease.model_dump(mode="json"), "slots": 2})
+    store.append("cell", "delegation.started", {})
+    for id in ("c1", "c2"):
+        store.append(id, "delegation.created", {"spec": _spec().model_dump(mode="json"), "parent_id": "cell", "created_at": "z"})
+        store.append(id, "budget.reserved", {"lease": _spec().lease.model_dump(mode="json"), "slots": 1})
+    quiet = PortfolioConstraints(exploration_floor=0, verify_floor=0)
+    assert [d.id for d in _scheduler(store, constraints=quiet).choose(2)] == ["x1", "x2"]
+    attention = _scheduler(store, constraints=quiet, pins=(Pin(delegation_id="cell", kind="min_attention", by="human", value=2),))
+    assert [d.id for d in attention.choose(2)] == ["c1", "c2"]                     # the cell's subtree comes first
+    one = _scheduler(store, constraints=quiet, pins=(Pin(delegation_id="cell", kind="min_attention", by="human", value=1),))
+    assert [d.id for d in one.choose(2)] == ["c1", "x1"]
+    explore = _scheduler(store, constraints=quiet, pins=(Pin(delegation_id="root", kind="reserve_exploration", by="human", value=1),))
+    assert [d.id for d in explore.choose(2)] == ["e1", "x1"]                       # one slot held for exploration
