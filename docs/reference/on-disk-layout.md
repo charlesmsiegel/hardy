@@ -95,6 +95,7 @@ Everything one problem owns lives under its own directory, and all of it is mean
 │       ├── result.json                            # its structured terminal result
 │       ├── change_set.json                        # its file changes against an exact base, when it could write
 │       ├── overlay/<generation-id>/               # its private lean/ and build/ copies, never the problem's
+│       ├── ledger/                                # its subtree's local ledger records, same schema as ledger/
 │       └── cas/                                   # its private computer algebra cells, when it used a kernel
 ├── publications/
 │   └── <name>/                                   # one immutable bundle per /project publish

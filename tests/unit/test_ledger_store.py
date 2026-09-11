@@ -236,3 +236,19 @@ def test_replay_refuses_case_changed_event_instead_of_treating_ledger_as_empty(t
     event.rename(event.with_suffix(".JSON"))
     with pytest.raises(ValueError):
         store.read()
+
+
+def test_a_base_snapshot_is_replayed_beneath_local_transactions(tmp_path, store_type):
+    """An overlay store sees the base's records but writes only its own files."""
+    authoritative = store_type(tmp_path / "project")
+    theorem = item("T", statement="base")
+    authoritative.append((theorem,), expected_revision=0)
+    local = store_type(tmp_path / "local", base=lambda: authoritative.read())
+    assert local.read().head("T") == theorem and local.read().revision == 0
+    uses = Relation(id="uses-T", kind="uses", source=theorem.ref, target=theorem.ref)
+    after = local.append((uses,), expected_revision=0)
+    assert after.revision == 1 and after.head("uses-T") == uses and after.head("T") == theorem
+    assert authoritative.read().revision == 1 and "uses-T" not in {r.id for r in authoritative.read().records}
+    assert store_type(tmp_path / "local", base=lambda: authoritative.read()).read().head("uses-T") == uses
+    with pytest.raises(ValueError, match="revision"):
+        local.append((item("U"),), expected_revision=0)

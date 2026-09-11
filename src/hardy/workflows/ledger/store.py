@@ -25,9 +25,36 @@ SCHEMA = "hardy.ledger/transaction/v1"
 Validator = Callable[[LedgerSnapshot, LedgerSnapshot], None]
 
 
+def _refuse_shadowing(origin: LedgerSnapshot, records: Iterable[LedgerRecord]) -> None:
+    if not origin.records:
+        return
+    owned = {record.id for record in origin.records}
+    for record in records:
+        if record.id in owned:
+            raise ValueError(f"local record {record.id!r} would shadow an authoritative or ancestor identity")
+
+
 class LedgerStore:
-    def __init__(self, project: Path) -> None:
+    """An append-only transaction log, optionally replayed on top of a base snapshot.
+
+    `base` is how a subtree's private overlay reuses these records with weaker
+    authority: its transactions are validated and replayed beneath the
+    authoritative snapshot plus its ancestors' local records, while its own
+    files, revision and lock stay entirely its own. The base is read fresh on
+    every replay so a local record can reference what the project currently
+    holds; a base that moves is a fact the caller reconciles, never hidden.
+    """
+
+    def __init__(self, project: Path, *, base: Callable[[], LedgerSnapshot] | None = None) -> None:
         self.project = Path(project)
+        self._base = base
+
+    def _origin(self) -> LedgerSnapshot:
+        """The snapshot local transactions extend, at local revision zero."""
+        if self._base is None:
+            return LedgerSnapshot()
+        base = self._base()
+        return LedgerSnapshot(base.records, 0, base.active_context)
 
     def _guard(self, *, create: bool) -> WriteGuard:
         root = WriteGuard(self.project, create=create)
@@ -35,20 +62,19 @@ class LedgerStore:
 
     def read(self) -> LedgerSnapshot:
         if not self.project.exists():
-            return LedgerSnapshot()
+            return self._origin()
         root = WriteGuard(self.project)
         if not (root.directory / "ledger").exists():
             # Still refuse dangling symlinks instead of treating one as absent.
             if (root.directory / "ledger").is_symlink():
                 self._guard(create=False)
-            return LedgerSnapshot()
+            return self._origin()
         guard = self._guard(create=False)
         with FileLock(guard.reserve("writer.lock")):
             return self._replay(guard)[0]
 
-    @staticmethod
-    def _replay(guard: WriteGuard) -> tuple[LedgerSnapshot, str | None]:
-        snapshot = LedgerSnapshot()
+    def _replay(self, guard: WriteGuard) -> tuple[LedgerSnapshot, str | None]:
+        snapshot = self._origin()
         previous_digest = None
         events = sorted(p.name for p in guard.directory.iterdir() if p.suffix.lower() == ".json")
         for sequence, name in enumerate(events, 1):
@@ -82,6 +108,8 @@ class LedgerStore:
                 records.append(record)
             active = snapshot.active_context if event["activate"] is None else VersionRef.model_validate(event["activate"])
             after = LedgerSnapshot(snapshot.records + tuple(records), sequence, active)
+            # A local overlay may extend the base but never shadow one of its identities.
+            _refuse_shadowing(self._origin(), records)
             validate_structure(snapshot, after)
             snapshot = after
             previous_digest = event["digest"]
@@ -107,6 +135,7 @@ class LedgerStore:
             before, previous = self._replay(guard)
             if type(expected_revision) is not int or expected_revision != before.revision:
                 raise ValueError(f"stale ledger revision: expected {expected_revision}, found {before.revision}")
+            _refuse_shadowing(self._origin(), values)
             after = LedgerSnapshot(before.records + tuple(values), before.revision + 1,
                                    activate if activate is not None else before.active_context)
             validate_structure(before, after)
