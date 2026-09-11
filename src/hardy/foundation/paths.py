@@ -21,3 +21,8 @@ def global_lean() -> Path:
 
 def global_build() -> Path:
     return global_dir() / BUILD_DIR / "lean"
+
+
+def global_library() -> Path:
+    """The user-level mathematical library: managed sources, shared claims, realizations."""
+    return global_dir() / "library"

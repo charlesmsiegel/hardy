@@ -27,6 +27,7 @@ from hardy.foundation.paths import HARDY_DIR as HARDY_DIR
 from hardy.foundation.paths import global_build as global_build
 from hardy.foundation.paths import global_dir as global_dir
 from hardy.foundation.paths import global_lean as global_lean
+from hardy.foundation.paths import global_library as global_library
 
 LOCAL_DIR = ".local"
 

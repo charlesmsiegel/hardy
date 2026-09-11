@@ -43,6 +43,8 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 - [Research architecture](research-architecture.md): sets out the direction for research, auditing, and publication features built on shared primitives.
 - [Isolation](isolation.md): specifies the confinement boundary a sandboxed run must implement.
 - [Delegation and research-swarm design](superpowers/specs/2026-09-10-delegation-swarm-design.md): the architectural specification for background workers and research swarms over the project ledger.
+- [General literature sources design](superpowers/specs/2026-09-10-general-literature-sources-design.md): the architecture for managed scholarly sources, shared mathematical claims and reusable formalizations.
+- [General literature sources plan](superpowers/plans/2026-09-10-general-literature-sources-plan.md): the dependency-ordered implementation plan and acceptance-criteria checklist for that design.
 
 ## Archive
 

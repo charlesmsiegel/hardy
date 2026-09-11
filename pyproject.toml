@@ -26,6 +26,10 @@ dependencies = [
     "jinja2>=3.1",
     "prompt-toolkit>=3.0.50,<3.1",
     "sympy>=1.14.0",
+    # pypdf reads born-digital PDFs for the managed literature library: page
+    # geometry, native text with fragment origins, page labels and outlines.
+    # It is pure Python and never renders or executes anything in the file.
+    "pypdf>=5",
 ]
 
 [project.optional-dependencies]

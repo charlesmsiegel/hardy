@@ -12,9 +12,10 @@ One directory per machine, independent of any project root:
 ├── lean/                # a personal Lean library, reserved for Lean the user brings
 ├── .build/
 │   └── lean/             # oleans for ~/.hardy/lean/
-└── papers/
-    ├── state.json         # the arXiv request throttle: {"last_request": <epoch seconds>}
-    └── state.lock          # the throttle's OS-level lock, left in place after use
+├── papers/
+│   ├── state.json         # the arXiv request throttle: {"last_request": <epoch seconds>}
+│   └── state.lock          # the throttle's OS-level lock, left in place after use
+└── library/              # the personal mathematical library; see below
 ```
 
 `config.toml` is the global config layer; see [Configuration](configuration.md#where-settings-come-from) for how it combines with a project's own config and the environment.
@@ -22,6 +23,22 @@ One directory per machine, independent of any project root:
 `lean/` and its `.build/lean/` are a personal library: Lean the user brings that is not any one problem's own sources. A project may hold the same pair at `<root>/.hardy/lean/`; when both exist, imports resolve against the problem's own `.build/lean/` first, then the root's shared `.build/lean/`, then this one, then Mathlib. Nothing writes to `~/.hardy/lean/` automatically; a file that lands there is something the user placed by hand.
 
 `papers/state.json` and `papers/state.lock` hold nothing but the arXiv throttle: the timestamp of the last request Hardy made to arXiv, and the lock file that serializes it. This is deliberately the one piece of the paper cache kept here rather than under a project root, because the throttle is a promise about this machine's request rate to a third party, and two roots on the same machine must share one clock rather than two. The cached paper bytes themselves live per-root, under `<root>/.hardy/papers/`, described below.
+
+`library/` is the personal mathematical library, shared by every project on the machine and never committed anywhere:
+
+```
+~/.hardy/library/
+├── artifacts/<sha256>/          # one managed immutable source: content, artifact.json, provenance/<id>.json
+├── catalog/                     # journal of works, editions, grouping proposals and decisions
+├── representations/<sha256>/    # derived text, layout and page records per artifact, write-once
+├── trees/<sha256>/              # versioned SourceTrees per artifact, write-once
+├── ledger/                      # the shared mathematical ledger, in the project ledger's own format
+├── links/                       # journal of source-to-claim interpretation records
+├── realizations/                # journal of formal realizations and promotion records
+└── index/                       # rebuildable search structures; never authoritative
+```
+
+Every entry under `artifacts/` is named by the SHA-256 of the bytes it holds, so identical files imported from two paths land once, and a file whose bytes changed lands as a second artifact. Nothing under `library/` is ever rewritten in place: artifacts and derived records are written once beside a staging directory and moved in with one rename, and the mutable state (which edition an artifact belongs to, which tree is preferred, which interpretation was admitted) is an append-only journal of numbered, hash-chained files. The design behind this layout is [the general literature sources design](../superpowers/specs/2026-09-10-general-literature-sources-design.md).
 
 ## A root and its `.hardy/`
 
