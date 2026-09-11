@@ -42,16 +42,28 @@ from hardy.workflows.delegation.contracts import (
     DelegationEvent,
     DelegationSpec,
     DelegationState,
+    ResourceDelta,
     ResourceLease,
     WorkerResult,
 )
 from hardy.workflows.delegation.diversity import assign_briefs
 from hardy.workflows.delegation.findings import Finding, FindingLedger
 from hardy.workflows.delegation.retrieval import VisibilityPolicy, WorkerRetriever
+from hardy.workflows.delegation.scheduler import (
+    AllocationRequest,
+    GraphUrgency,
+    Pin,
+    PinKind,
+    PortfolioConstraints,
+    Scheduler,
+    SchedulerDecision,
+    graph_urgency,
+)
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
 from hardy.workflows.delegation.worker import OpenWorker, WorkerLaunch, run_worker
 from hardy.workflows.ledger.contracts import VersionRef
 from hardy.workflows.ledger.store import LedgerStore
+from hardy.workflows.storage import RunStore
 
 if TYPE_CHECKING:
     from hardy.literature.tools import PaperToolRuntime
@@ -79,11 +91,15 @@ class DelegationController:
     def __init__(self, store: DelegationStore, ledger: LedgerStore, *, executor: WorkerExecutor,
                  open_worker: OpenWorker, root: RootResources, notify: Callable[[str], None],
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-                 papers: PaperToolRuntime | None = None) -> None:
+                 papers: PaperToolRuntime | None = None,
+                 constraints: PortfolioConstraints | None = None) -> None:
         self.store = store
         self.ledger = ledger
         self.executor = executor
         self.papers = papers
+        self.constraints = constraints or PortfolioConstraints()
+        #: Created but not yet holding a slot; the scheduler decides when.
+        self._pending: dict[str, WorkerLaunch] = {}
         self._open_worker = open_worker
         self.root = root
         self._notify = notify
@@ -140,14 +156,42 @@ class DelegationController:
     # -- lifecycle ----------------------------------------------------------
 
     def recover(self) -> tuple[Delegation, ...]:
-        """Replay after a restart: interrupted work becomes unknown, never success."""
+        """Replay after a restart: interrupted work becomes unknown, never success.
+
+        Work that was queued and never started is still owed a slot; its launch
+        package is rebuilt from the artifacts it was recorded with.
+        """
         with self._lock:
             recovered = self.store.recover(now=self._clock().isoformat())
             for delegation in recovered:
                 event = next(e for e in reversed(self.store.events())
                              if e.delegation_id == delegation.id and e.kind == "delegation.recovered")
                 self._after_terminal(delegation.id, event)
+            tree = self.tree()
+            ledger = LeaseLedger(tree)
+            for delegation in tree.delegations.values():
+                if (delegation.state is DelegationState.QUEUED and delegation.parent_id is not None
+                        and delegation.id not in self._pending and delegation.id not in self._handles):
+                    launch = self._relaunch(delegation, ledger.reserved(delegation.id))
+                    if launch is not None:
+                        self._pending[delegation.id] = launch
+            self._dispatch()
             return recovered
+
+    def _relaunch(self, delegation: Delegation, lease: ResourceLease) -> WorkerLaunch | None:
+        artifacts = self.store.artifacts(delegation.id)
+        prompt_path = artifacts.path / "prompt.md"
+        if not prompt_path.exists():
+            return None
+        return WorkerLaunch(delegation_id=delegation.id, prompt=prompt_path.read_text(encoding="utf-8"),
+                            model=delegation.spec.model, store=artifacts, lease=lease,
+                            retriever=self._retriever(delegation.spec, artifacts))
+
+    def _retriever(self, spec: DelegationSpec, artifacts: RunStore) -> WorkerRetriever:
+        return WorkerRetriever(
+            self.ledger, self.papers, VisibilityPolicy(hidden_ids=spec.hidden_ids),
+            record=lambda event, store=artifacts: store.append(event["kind"], event["payload"],
+                                                               phase=RunPhase.PROVING))
 
     def _ensure_root(self, scope: VersionRef) -> None:
         tree = self.tree()
@@ -207,16 +251,89 @@ class DelegationController:
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
-            retriever = WorkerRetriever(
-                self.ledger, self.papers, VisibilityPolicy(hidden_ids=spec.hidden_ids),
-                record=lambda event, store=artifacts: store.append(event["kind"], event["payload"],
-                                                                   phase=RunPhase.PROVING))
             launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
-                                  model=spec.model, store=artifacts, lease=lease, retriever=retriever)
-            handle = self.executor.submit(WorkerJob(id, lambda token, launch=launch: self._run(launch, token)))
-            self._handles[id] = handle
-            handle.add_done_callback(self._settle)
+                                  model=spec.model, store=artifacts, lease=lease,
+                                  retriever=self._retriever(spec, artifacts))
+            self._pending[id] = launch
+            self._dispatch()
             return self.tree().get(id)
+
+    # -- scheduling ---------------------------------------------------------
+
+    def _pins(self) -> tuple[Pin, ...]:
+        active: dict[tuple[str, str], Pin] = {}
+        for event in self.store.events():
+            if event.kind == "scheduler.pin":
+                pin = Pin.model_validate(event.payload["pin"])
+                active[(pin.delegation_id, pin.kind)] = pin
+            elif event.kind == "scheduler.unpin":
+                active.pop((event.delegation_id, str(event.payload["kind"])), None)
+        return tuple(active.values())
+
+    def pins(self) -> tuple[tuple[str, str], ...]:
+        return tuple((pin.delegation_id, pin.kind) for pin in self._pins())
+
+    def _scheduler(self) -> Scheduler:
+        tree = self.tree()
+        snapshot = self.ledger.read()
+        cache: dict[str, GraphUrgency | None] = {}
+
+        def urgency(delegation: Delegation) -> GraphUrgency | None:
+            if delegation.id not in cache:
+                refs = delegation.spec.project_refs
+                try:
+                    cache[delegation.id] = graph_urgency(snapshot, refs[0]) if refs else None
+                except ValueError:
+                    cache[delegation.id] = None
+            return cache[delegation.id]
+
+        return Scheduler(tree, LeaseLedger(tree), constraints=self.constraints, pins=self._pins(),
+                         urgency=urgency)
+
+    def _dispatch(self) -> None:
+        """Hand free slots to the leaves the scheduler chooses; nothing else starts work."""
+        with self._lock:
+            free = self.executor.slots - len(self._handles)
+            if free <= 0 or not self._pending:
+                return
+            for chosen in self._scheduler().choose(free):
+                launch = self._pending.pop(chosen.id, None)
+                if launch is None:
+                    continue
+                handle = self.executor.submit(
+                    WorkerJob(chosen.id, lambda token, launch=launch: self._run(launch, token)))
+                self._handles[chosen.id] = handle
+                handle.add_done_callback(self._settle)
+
+    def pin(self, id: str, kind: PinKind, *, by: str, value: int | None = None) -> Pin:
+        with self._lock:
+            self.tree().get(id)
+            pin = Pin(delegation_id=id, kind=kind, by=by, value=value)
+            self.store.append(id, "scheduler.pin", {"pin": pin.model_dump(mode="json")})
+            self._dispatch()
+            return pin
+
+    def unpin(self, id: str, kind: PinKind, *, by: str) -> None:
+        with self._lock:
+            self.tree().get(id)
+            self.store.append(id, "scheduler.unpin", {"kind": kind, "by": by})
+            self._dispatch()
+
+    def reinforce(self, id: str, delta: ResourceDelta, *, by: str, reason: str) -> SchedulerDecision:
+        """A tranche or a reclaim, decided mechanically and journaled with its provenance."""
+        with self._lock:
+            scheduler = self._scheduler()
+            delegation = self.tree().get(id)
+            request = AllocationRequest(delegation_id=id, lane=scheduler.lane(delegation), tranche=delta,
+                                        requested_by=by, reason=reason)
+            decision = scheduler.decide(request)
+            decision = decision.model_copy(update={"sequence": self.tree().revision})
+            self.store.append(id, "scheduler.decision", {"decision": decision.model_dump(mode="json")})
+            if decision.granted is not None:
+                self.store.append(id, "budget.reserved", {"lease": decision.resulting.model_dump(mode="json"),
+                                                          "slots": scheduler.ledger.slots(id)})
+            self._dispatch()
+            return decision
 
     def _source_index(self, paper_ids: tuple[str, ...]) -> dict[str, str]:
         """One index line per seeded source the library holds; never the body."""
@@ -271,6 +388,8 @@ class DelegationController:
                 self.store.release(id)
             # Last, so `wait` sees a settled journal once the handle is gone.
             self._handles.pop(id, None)
+        # A freed slot goes to whatever the scheduler chooses next.
+        self._dispatch()
 
     def _propose_findings(self, id: str, launch: WorkerLaunch) -> None:
         """Every finding the worker recorded reaches its parent; priority ones draw attention."""
@@ -303,6 +422,7 @@ class DelegationController:
         with self._lock:
             requested = self.store.cancel_subtree(id, reason=reason)
             for node in requested:
+                self._pending.pop(node, None)
                 handle = self._handles.get(node)
                 if handle is not None:
                     handle.cancel()
@@ -320,7 +440,7 @@ class DelegationController:
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             delegation = self.tree().get(id)
-            if delegation.terminal and id not in self._handles:
+            if delegation.terminal and id not in self._handles and id not in self._pending:
                 return delegation
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f"delegation {id} did not finish within {timeout}s")

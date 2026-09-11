@@ -86,6 +86,37 @@ class ResourceLease(FrozenModel):
         return self._combine(other, -1)
 
 
+class ResourceDelta(FrozenModel):
+    """A signed change to a lease: a tranche when positive, a reclaim when negative."""
+
+    cost_usd: Decimal | None = Field(default=None, allow_inf_nan=False)
+    tokens: int | None = Field(default=None, strict=True)
+    provider_calls: int | None = Field(default=None, strict=True)
+    official_checks: int | None = Field(default=None, strict=True)
+    active_seconds: float | None = Field(default=None, allow_inf_nan=False)
+
+    def applied_to(self, lease: ResourceLease) -> ResourceLease:
+        values: dict[str, Any] = {}
+        for name in DIMENSIONS:
+            base, change = getattr(lease, name), getattr(self, name)
+            if change is None:
+                values[name] = base
+            elif base is None:
+                raise ValueError(f"{name} is unbounded; a delta needs a bounded lease to change")
+            else:
+                result = base + change
+                if result < 0:
+                    raise ValueError(f"{name} cannot fall below zero")
+                values[name] = result
+        return ResourceLease(**values)
+
+    @property
+    def increases(self) -> ResourceLease:
+        """The positive part, as a lease a parent must be able to allocate."""
+        return ResourceLease(**{name: max(getattr(self, name), type(getattr(self, name))(0))
+                                for name in DIMENSIONS if getattr(self, name) is not None})
+
+
 class ConcurrencyLease(FrozenModel):
     slots: int = Field(ge=1, strict=True)
 
@@ -163,6 +194,8 @@ class DelegationSpec(FrozenModel):
     hidden_ids: tuple[str, ...] = ()
     #: Sources made prominent at launch as pointers; their text stays lazy.
     seeded_sources: tuple[str, ...] = ()
+    #: An explicit scheduling lane; None lets the scheduler derive one from the task mode.
+    lane: str | None = None
 
     @property
     def digest(self) -> str:
