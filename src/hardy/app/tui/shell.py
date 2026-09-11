@@ -644,58 +644,7 @@ class Shell:
                 command_running=self._commands_running > 0,
             )
             if outcome.kind == "send":
-                # `turn_running` flips here, synchronously, not inside
-                # `_run_turn` once it gets to run. A lone Escape typed right
-                # behind this Enter can be resolved -- by both the vt100
-                # parser and the key processor -- in the very same input
-                # batch, with no event-loop turn in between; if the flip
-                # waited for the scheduled task to actually start, `_abandon`
-                # below would still see `turn_running=False` and do nothing.
-                self._state = dataclasses.replace(self._state, turn_running=True)
-                self._abandoned = False
-                self._forcing = False
-                # Submitted to the executor *here*, synchronously -- not
-                # `asyncio.to_thread` inside `_run_turn`. `to_thread` is a
-                # coroutine: it does not call `executor.submit()` until its
-                # own `await` line runs, and that line only runs once the
-                # scheduled `_run_turn` task gets its first turn on the loop.
-                # A `/exit` or Ctrl+C in the *same input batch* schedules the
-                # app's own exit before that first turn ever comes; prompt_
-                # toolkit then cancels every background task, including one
-                # that never ran a single line of its body -- so `session.send`
-                # is never called at all, and the turn vanishes from
-                # transcript.jsonl with no record whatsoever. Calling
-                # `run_in_executor` here submits the work immediately, before
-                # anything later in this same batch can prevent it.
-                #
-                # What is submitted is `_drain`, not `session.send`: the turn
-                # arrives in pieces now, and they cross back to this loop
-                # through `arrivals`. The queue is created here, on the loop,
-                # for the same reason the work is submitted here -- `_run_turn`
-                # may never get a turn to create one.
-                #
-                # `session.stream` is *called* here too, synchronously, and
-                # only its iteration handed to the executor. Both it and the
-                # runtime's `stream` are eager for this reason: starting the
-                # turn is what clears the per-turn cancellation flags, and a
-                # lone Escape behind this Enter is resolved in the very same
-                # input batch, with no event-loop turn in between. Left to the
-                # worker, those resets would land after `_abandon` had already
-                # cancelled, and the turn would run on with the transcript
-                # saying it had stopped.
-                loop = asyncio.get_running_loop()
-                arrivals: asyncio.Queue = asyncio.Queue()
-                try:
-                    events = self._state.session.stream(outcome.argument)
-                except Exception as error:  # noqa: BLE001 - never lose the session
-                    self._state = dataclasses.replace(self._state, turn_running=False)
-                    self.write(f"{type(error).__name__}: {error}", style="error")
-                    return
-                future = loop.run_in_executor(None, self._drain, events, arrivals, loop)
-                self._pending_future = future
-                event.app.create_background_task(
-                    self._run_turn(outcome.argument, future, arrivals)
-                )
+                self._start_turn(outcome.argument)
                 return
             if outcome.kind == "command":
                 # Counted here, synchronously, for exactly the reason
@@ -885,6 +834,62 @@ class Shell:
         finally:
             loop.call_soon_threadsafe(arrivals.put_nowait, _TURN_OVER)
 
+    def _start_turn(self, text: str) -> None:
+        """Start a model turn for `text` exactly as Enter does; also how a handler's queued line is sent."""
+        # `turn_running` flips here, synchronously, not inside
+        # `_run_turn` once it gets to run. A lone Escape typed right
+        # behind this Enter can be resolved -- by both the vt100
+        # parser and the key processor -- in the very same input
+        # batch, with no event-loop turn in between; if the flip
+        # waited for the scheduled task to actually start, `_abandon`
+        # below would still see `turn_running=False` and do nothing.
+        self._state = dataclasses.replace(self._state, turn_running=True)
+        self._abandoned = False
+        self._forcing = False
+        # Submitted to the executor *here*, synchronously -- not
+        # `asyncio.to_thread` inside `_run_turn`. `to_thread` is a
+        # coroutine: it does not call `executor.submit()` until its
+        # own `await` line runs, and that line only runs once the
+        # scheduled `_run_turn` task gets its first turn on the loop.
+        # A `/exit` or Ctrl+C in the *same input batch* schedules the
+        # app's own exit before that first turn ever comes; prompt_
+        # toolkit then cancels every background task, including one
+        # that never ran a single line of its body -- so `session.send`
+        # is never called at all, and the turn vanishes from
+        # transcript.jsonl with no record whatsoever. Calling
+        # `run_in_executor` here submits the work immediately, before
+        # anything later in this same batch can prevent it.
+        #
+        # What is submitted is `_drain`, not `session.send`: the turn
+        # arrives in pieces now, and they cross back to this loop
+        # through `arrivals`. The queue is created here, on the loop,
+        # for the same reason the work is submitted here -- `_run_turn`
+        # may never get a turn to create one.
+        #
+        # `session.stream` is *called* here too, synchronously, and
+        # only its iteration handed to the executor. Both it and the
+        # runtime's `stream` are eager for this reason: starting the
+        # turn is what clears the per-turn cancellation flags, and a
+        # lone Escape behind this Enter is resolved in the very same
+        # input batch, with no event-loop turn in between. Left to the
+        # worker, those resets would land after `_abandon` had already
+        # cancelled, and the turn would run on with the transcript
+        # saying it had stopped.
+        loop = asyncio.get_running_loop()
+        arrivals: asyncio.Queue = asyncio.Queue()
+        try:
+            events = self._state.session.stream(text)
+        except Exception as error:  # noqa: BLE001 - never lose the session
+            self._state = dataclasses.replace(self._state, turn_running=False)
+            self.write(f"{type(error).__name__}: {error}", style="error")
+            return
+        future = loop.run_in_executor(None, self._drain, events, arrivals, loop)
+        self._pending_future = future
+        self._app.create_background_task(
+            self._run_turn(text, future, arrivals)
+        )
+        return
+
     async def _run_command(self, outcome: dispatch.Outcome) -> None:
         # The count was raised by `_submit_key` before this task existed, and
         # stays up for the whole handler rather than only the part that runs a
@@ -927,6 +932,12 @@ class Shell:
             # for a change that moved no files at all.
             if self._state.config.layout.local != before:
                 self.retarget(self._state.config)
+            queued = self._state.queued_text
+            if queued is not None:
+                # A resumed continuation: submitted through the ordinary turn
+                # path, so it streams and can be cancelled like a typed line.
+                self._state = dataclasses.replace(self._state, queued_text=None)
+                self._start_turn(queued)
         except Exception as error:  # noqa: BLE001 - a bad command must not end the session
             self.write(f"{type(error).__name__}: {error}", style="error")
         finally:

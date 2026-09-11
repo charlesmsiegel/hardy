@@ -176,3 +176,12 @@ def test_release_requires_a_terminal_node(tmp_path):
     store.release("a")
     assert store.release("a") is None                             # idempotent
     assert [e.kind for e in store.events()].count("budget.released") == 1
+
+
+def test_recovery_keeps_deliberately_paused_work_paused(tmp_path):
+    """A pause is a durable control over queued work, never in flight, so a restart has nothing to doubt."""
+    store = DelegationStore(tmp_path)
+    _create(store, "p")
+    store.append("p", "delegation.paused", {"by": "human"})
+    assert DelegationStore(tmp_path).recover(now="t") == ()
+    assert store.tree().get("p").state is DelegationState.PAUSED

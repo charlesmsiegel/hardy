@@ -144,3 +144,31 @@ def test_trajectory_events_use_the_proving_phase(tmp_path, phase):
     run_worker(launch, _open([call("finish", {"status": "completed", "synthesis": "ok"})]), CancelToken())
     events = [json.loads(line) for line in launch.store.trajectory_path.read_text().splitlines()]
     assert {e["phase"] for e in events} == {phase.value}
+
+
+def test_findings_keep_exact_related_revisions_and_plain_ids_apart(tmp_path):
+    """`L17@<digest>` is an exact ref; a bare id is only an id, never silently rebound to a later head."""
+    digest = "c" * 64
+    script = [call("propose_finding", {"kind": "reduction", "summary": "s", "payload": "p",
+                                       "related_refs": [f"L17@{digest}", "L12"]}),
+              call("finish", {"status": "completed", "synthesis": "ok"})]
+    launch = _launch(tmp_path)
+    result = run_worker(launch, _open(script), CancelToken())
+    assert result.status is DelegationState.COMPLETED
+    [finding] = json.loads((launch.store.path / "findings.json").read_text(encoding="utf-8"))
+    assert finding["related_refs"] == [{"id": "L17", "digest": digest}]
+    assert finding["related_ids"] == ["L12"]
+
+
+def test_the_active_time_lease_ends_a_worker_that_never_calls_a_tool(tmp_path):
+    """Provider time is spend too: the deadline cancels the runtime and the result is exhausted, not completed."""
+    started, release = threading.Event(), threading.Event()
+    store = RunStore.create(tmp_path, "d-t", now=datetime.now(UTC), run_id=uuid4())
+    launch = WorkerLaunch(delegation_id="d-t", prompt="[Hardy delegation worker] think", model=None, store=store,
+                          lease=ResourceLease(official_checks=1, active_seconds=0.3))
+    opened = []
+    result = run_worker(launch, _open([call("finish", {"status": "completed", "synthesis": "late"})],
+                                      gate=(started, release), opened=opened), CancelToken())
+    assert started.is_set() and opened[0].cancelled
+    assert result.status is DelegationState.EXHAUSTED and "active" in (result.terminal_reason or "")
+    assert result.usage.active_seconds >= 0.3

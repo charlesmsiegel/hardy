@@ -223,6 +223,7 @@ def _chat(
         except BaseException:
             launch["fresh_thread"] = fresh
             raise
+        opener.session = session
         if fresh:
             launch["detail"] = session.fresh_thread_detail
         else:
@@ -258,6 +259,12 @@ def _chat(
         # `opener.cas`, not `cas`: a `/project switch` replaced the kernel, and
         # closing the one this function built would leave the live one running
         # and the session's own process behind.
+        # The session first: its background workers hold the kernel factory
+        # and a thread pool that would otherwise keep the process alive.
+        live = getattr(opener, "session", None)
+        close = getattr(live, "close", None)
+        if close is not None:
+            close()
         if opener.cas is not None:
             opener.cas.session.close()
 

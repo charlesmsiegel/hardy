@@ -579,3 +579,25 @@ async def test_a_reopener_that_cannot_be_armed_still_switches(ui, root):
     after = await handlers.handle_project(ui, "switch burnside", state)
 
     assert after.config.project == "burnside"
+
+
+class _Closable:
+    def __init__(self):
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+async def test_switching_closes_the_session_it_leaves(ui, root):
+    _record(root, "burnside")
+    _record(root, "sylow")
+    left = _Closable()
+    before = State(config=_settings(root, "burnside"), session=left, reopen=Reopener(root))
+    after = await handlers.handle_project(ui, "switch sylow", before)
+    assert after.session is not left and left.closed == 1
+    failed = Reopener(root, fail=RuntimeError("no such problem"))
+    kept = _Closable()
+    same = await handlers.handle_project(ui, "switch sylow", State(config=_settings(root, "burnside"), session=kept,
+                                                                   reopen=failed))
+    assert same.session is kept and kept.closed == 0                              # a refused switch keeps the session

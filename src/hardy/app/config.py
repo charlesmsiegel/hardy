@@ -400,6 +400,28 @@ def active_project(
     return layout.DEFAULT_SLUG
 
 
+def _whole_workers(raw: Any) -> int:
+    """A worker count is a whole number from every source: TOML `3.9` is refused like `"3.9"`."""
+    if isinstance(raw, bool):
+        raise ValueError(f"delegation_workers must be a number of workers, not {raw!r}")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        if raw.is_integer():
+            return int(raw)
+        raise ValueError(f"delegation_workers must be a whole number of workers, not {raw!r}")
+    text = str(raw).strip()
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        float(text)
+    except ValueError:
+        raise ValueError(f"delegation_workers must be a number of workers, not {raw!r}") from None
+    raise ValueError(f"delegation_workers must be a whole number of workers, not {raw!r}")
+
+
 def load(
     path: Path | None = None,
     *,
@@ -523,13 +545,7 @@ def load(
             f"{MINIMUM_CONTEXT_WINDOW} tokens, not {context_window}"
         )
 
-    raw_workers = values.get("delegation_workers", DEFAULT_DELEGATION_WORKERS)
-    try:
-        delegation_workers = int(raw_workers) if not isinstance(raw_workers, bool) else None
-    except (TypeError, ValueError):
-        delegation_workers = None
-    if delegation_workers is None:
-        raise ValueError(f"delegation_workers must be a number of workers, not {raw_workers!r}")
+    delegation_workers = _whole_workers(values.get("delegation_workers", DEFAULT_DELEGATION_WORKERS))
     if delegation_workers < 1:
         raise ValueError(f"delegation_workers must be at least 1, not {delegation_workers}")
 

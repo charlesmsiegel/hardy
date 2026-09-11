@@ -248,3 +248,24 @@ def test_a_stale_continuation_becomes_a_queued_item_not_a_response(tmp_path):
     item = inbox.derive(event, store.tree())
     assert item is not None and item.category == "continuation" and not item.sticky
     assert "carry on" in item.summary
+
+
+def test_a_subscription_recipient_narrows_who_hears(tmp_path):
+    """A model-only subscription never notifies the human; a human-only one never reaches the model."""
+    store = _tree_with_cell(DelegationStore(tmp_path))
+    model_only = AttentionSubscription(owner="human", source="cell", triggers=("reduction",),
+                                       mode=DeliveryMode.QUEUE, recipient="main_agent")
+    item, mode = route(_finding_event(store, "w1", "reduction"), store.tree(), (model_only,))
+    assert item.recipients == ("main_agent",) and mode is DeliveryMode.QUEUE
+    human_only = AttentionSubscription(owner="human", source="cell", triggers=("terminal",),
+                                       mode=DeliveryMode.NOTIFY, recipient="human")
+    done = store.append("cell", "delegation.completed", {"reason": "finished"})
+    item, mode = route(done, store.tree(), (human_only,))
+    assert item.recipients == ("human",)
+    inbox = AttentionInbox(store)
+    inbox.record(item)
+    assert inbox.pending("main_agent") == () and [i.id for i in inbox.pending("human")] == [item.id]
+    both = AttentionSubscription(owner="human", source="cell", triggers=("terminal",),
+                                 mode=DeliveryMode.NOTIFY, recipient="main_agent")
+    item, _ = route(done, store.tree(), (human_only, both))
+    assert item.recipients == ("human", "main_agent")

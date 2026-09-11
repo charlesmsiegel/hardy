@@ -9,6 +9,7 @@ never a transcript pasted into anyone else's context.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ from hardy.workflows.delegation.contracts import (
 from hardy.workflows.delegation.findings import Finding
 from hardy.workflows.delegation.retrieval import WorkerRetriever
 from hardy.workflows.delegation.workspace import WorkspaceOverlay
+from hardy.workflows.ledger.contracts import VersionRef
 from hardy.workflows.storage import RunStore
 
 if TYPE_CHECKING:
@@ -89,6 +91,20 @@ class WorkerLaunch:
     retriever: WorkerRetriever | None = None
     overlay: WorkspaceOverlay | None = None
     cas_factory: CasFactory | None = None
+    #: Told the worker's live check budget once it exists, so a granted tranche can reach it.
+    on_budget: Callable[[CheckBudget], None] | None = None
+    #: Findings pushed to this worker since its last provider boundary; rendered into the next one.
+    pushes: Callable[[], tuple[Finding, ...]] | None = None
+
+
+def render_pushes(findings: tuple[Finding, ...]) -> str:
+    """Pushed findings as one block a worker reads at its next provider boundary."""
+    lines = ["[Hardy delegation push] Findings your cell pushed to you; weigh them before your next step:"]
+    for finding in findings:
+        detail = " ".join(finding.payload.split())[:240]
+        lines.append(f"- {finding.id} ({finding.kind}, {finding.evidence_profile.value}): {finding.summary}"
+                     + (f" -- {detail}" if detail else ""))
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -116,6 +132,10 @@ class _WorkerState:
         seconds = launch.lease.active_seconds if launch.lease.active_seconds is not None else _UNBOUNDED_SECONDS
         self.checks = CheckBudget(official_checks=launch.lease.official_checks or 0,
                                   active_seconds=seconds, proof_seconds=seconds)
+        if launch.on_budget is not None:
+            launch.on_budget(self.checks)
+        #: Set by the active-time timer: the provider was still running when the lease ran out.
+        self.deadline_hit = False
         self.cas: CasToolRuntime | None = None
         self.cas_opened = False
 
@@ -123,13 +143,13 @@ class _WorkerState:
         if self.finished is not None:
             return ToolResult(False, "this delegation already called finish; nothing further is accepted")
         if name == "propose_finding":
-            refs = arguments.get("related_refs") or []
+            exact, plain = self._related(arguments.get("related_refs") or [])
             finding = Finding(
                 id=f"{self.launch.delegation_id}:finding:{len(self.findings)}",
                 source_delegation=self.launch.delegation_id,
                 kind=str(arguments["kind"]), summary=str(arguments["summary"]),
                 payload=str(arguments.get("payload") or ""),
-                related_ids=tuple(str(ref) for ref in refs),
+                related_refs=exact, related_ids=plain,
                 sequence=len(self.findings),
             )
             self.findings.append(finding)
@@ -147,6 +167,37 @@ class _WorkerState:
         if name in {"cas_run", "cas_state"}:
             return self.algebra(name, arguments)
         return ToolResult(False, f"unknown tool: {name}")
+
+    def _related(self, selectors: list[Any]) -> tuple[tuple[VersionRef, ...], tuple[str, ...]]:
+        """`id@digest` is an exact ref; a bare id is pinned to the head this worker can see, or stays an id.
+
+        Pinned here, at the moment of the claim, so a project that advances
+        while the worker runs cannot rebind its finding to a statement it
+        never read. An id this worker may not see, or that names nothing,
+        stays a bare id rather than being resolved on its behalf.
+        """
+        exact: list[VersionRef] = []
+        plain: list[str] = []
+        retriever = self.launch.retriever
+        for raw in selectors:
+            text = str(raw).strip()
+            if "@" in text:
+                identity, digest = text.rsplit("@", 1)
+                exact.append(VersionRef(id=identity, digest=digest))
+                continue
+            ref = None
+            if retriever is not None:
+                try:
+                    record = retriever.ledger.read().head(text)
+                except (ValueError, OSError):
+                    record = None
+                if record is not None and retriever.policy.permits_ref(record.ref):
+                    ref = record.ref
+            if ref is None:
+                plain.append(text)
+            else:
+                exact.append(ref)
+        return tuple(exact), tuple(plain)
 
     def lean(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         overlay = self.launch.overlay
@@ -241,6 +292,12 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
             result = state.tool(name, arguments)
         except (KeyError, TypeError, ValueError) as error:
             result = ToolResult(False, f"invalid tool call: {error}")
+        if launch.pushes is not None:
+            # A tool result is a provider boundary: what was pushed since the
+            # last one rides along with it rather than interrupting mid-request.
+            pushed = launch.pushes()
+            if pushed:
+                result = ToolResult(result.ok, f"{result.output}\n\n{render_pushes(pushed)}")
         store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict(),
                               "call_id": call_id}, phase=RunPhase.PROVING)
         return result
@@ -251,6 +308,7 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
     store.write_text(PurePosixPath("prompt.md"), launch.prompt)
     exchanges = 0
     opened: OpenedWorker | None = None
+    deadline: threading.Timer | None = None
     status: DelegationState
     reason: str | None = None
     synthesis = ""
@@ -260,15 +318,29 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
         store.append("worker.opened", {"context_id": opened.context_id, "model": getattr(opened.runtime, "model", None)},
                      phase=RunPhase.PROVING)
         token.on_cancel(opened.runtime.cancel)
+        if launch.lease.active_seconds is not None:
+            # Provider time is spend too: when the lease runs out the runtime is
+            # cancelled, and the result says exhausted rather than completed.
+            runtime = opened.runtime
+
+            def expire() -> None:
+                state.deadline_hit = True
+                runtime.cancel()
+
+            deadline = threading.Timer(launch.lease.active_seconds, expire)
+            deadline.daemon = True
+            deadline.start()
         exchanges = 1
         for event in opened.runtime.stream(launch.prompt):
             if event.kind == "reply":
                 store.append("worker.reply", {"text": event.text}, phase=RunPhase.PROVING)
-            if token.cancelled:
+            if token.cancelled or state.deadline_hit:
                 break
         if token.cancelled:
             raise WorkerCancelled
-        if state.finished is None:
+        if state.deadline_hit:
+            status, reason = DelegationState.EXHAUSTED, "active_seconds lease exhausted while the provider ran"
+        elif state.finished is None:
             status, reason = DelegationState.PARTIAL, "no_finish_call"
         else:
             status, synthesis = state.finished
@@ -277,6 +349,9 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
     except Exception as error:  # noqa: BLE001 - a worker's failure is a result, not a crash upstream
         status, reason = DelegationState.FAILED, f"{type(error).__name__}: {error}"
         store.append("worker.failed", {"error": reason}, phase=RunPhase.PROVING)
+    finally:
+        if deadline is not None:
+            deadline.cancel()
     usage = None
     if opened is not None:
         try:

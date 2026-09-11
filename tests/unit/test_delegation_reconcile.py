@@ -231,3 +231,51 @@ def test_admitting_the_same_candidate_twice_reuses_its_identity_and_commits_noth
     assert second.action == "reused_existing" and second.authoritative_refs == first.authoritative_refs
     assert LedgerStore(tmp_path).read().revision == revision and owners.verified == [first.authoritative_refs[0].id]
     assert "admission.incomplete" not in [e.kind for e in DelegationStore(tmp_path).events()]
+
+
+def test_a_crash_while_files_are_being_written_is_an_incomplete_admission(tmp_path):
+    """The mutation is journaled before the first authoritative write, so a half-written tree is never silent."""
+    seed_project(tmp_path)
+    base = _base(tmp_path)
+    owners = ScriptedOwners(tmp_path / "capabilities")
+    overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
+    assert overlay.save(PurePosixPath("A.lean"), A) is None
+    candidate, change_set = _candidate(tmp_path, overlay, "w")
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        _admission(tmp_path, base, owners, crash_after=AdmissionPhase.FILES_COMMITTING).admit(candidate, change_set)
+    phases = [AdmissionAttempt.model_validate(e.payload["attempt"]).phase for e in DelegationStore(tmp_path).events()
+              if e.kind == "admission.attempt"]
+    assert phases[-1] is AdmissionPhase.FILES_COMMITTING
+    assert phases.index(AdmissionPhase.VERIFICATION_COMPLETE) < phases.index(AdmissionPhase.FILES_COMMITTING)
+    incomplete = _admission(tmp_path, base, owners).recover()
+    assert [a.phase for a in incomplete] == [AdmissionPhase.FILES_COMMITTING]
+    from hardy.workflows.delegation.attention import AttentionInbox
+    pending = AttentionInbox(DelegationStore(tmp_path)).pending("human")
+    assert pending and pending[0].sticky and pending[0].category == "admission"
+
+
+def test_a_proof_for_an_existing_unverified_statement_resolves_its_obligation_not_just_reuses_it(tmp_path):
+    from hardy.workflows.explore import ExploreWorkflow
+
+    seed_project(tmp_path)
+    ledger = LedgerStore(tmp_path)
+    existing = ExploreWorkflow(ledger).record_item(id="LX", kind=c.ProjectItemKind.LEMMA, name="Lemma X",
+                                                   statement="A new lemma from the worker")
+    snapshot = ledger.read()
+    ledger.append((c.Obligation(id="prove-LX", item=existing.ref, kind=c.ObligationKind.PROVE,
+                                scope=snapshot.head("scope"), context=existing.context),),
+                  expected_revision=snapshot.revision)
+    base = _base(tmp_path)
+    owners = ScriptedOwners(tmp_path / "capabilities")
+    overlay = _overlay(base, tmp_path, "w", ledger.read().revision)
+    assert overlay.save(PurePosixPath("A.lean"), A) is None
+    candidate, change_set = _candidate(tmp_path, overlay, "w")
+    outcome = _admission(tmp_path, base, owners).admit(candidate, change_set)
+    assert outcome.action == "resolved_obligation" and outcome.authoritative_refs == (existing.ref,), outcome.reasons
+    after = ledger.read()
+    assert not any(record.id.endswith(":lemma") for record in after.records)      # no second identity
+    prove = after.head("prove-LX")
+    assert prove.status is c.ObligationStatus.RESOLVED and owners.policy.is_accepted(after, prove.resolution)
+    assert owners.verified == ["LX"] and (tmp_path / "lean" / "A.lean").read_text(encoding="utf-8") == A
+    again = _admission(tmp_path, base, owners).admit(candidate, change_set)
+    assert again.action == "reused_existing" and again.authoritative_refs == (existing.ref,)
