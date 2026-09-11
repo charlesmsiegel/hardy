@@ -383,6 +383,11 @@ class Shell:
         the caller (`tui.run_session`) has one.
         """
         self._state = dataclasses.replace(self._state, session=session)
+        # Background work reports here, from its own thread: `write` prints
+        # under `patch_stdout`, which is what makes that safe. The notice is
+        # for the person; the model gets its own copy at its next turn.
+        if hasattr(session, "on_notice"):
+            session.on_notice = lambda text: self.write(f"Hardy: {text}")
 
     # -- rendering --------------------------------------------------------
 
