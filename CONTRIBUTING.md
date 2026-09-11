@@ -123,7 +123,7 @@ sweep or a run is in flight.
 
 Editing any of six deciding sources moves `procedure_digest` and makes the
 entire tier file non-reusable, so the next sweep re-elaborates every entry:
-the sweep itself, `formal/audit.py`, `formal/lean.py`, `formal/syntax.py`,
+the sweep itself (`src/hardy/evals/sweep.py`), `formal/audit.py`, `formal/lean.py`, `formal/syntax.py`,
 `corpus/problems.py`, and `corpus/identity.py`.
 
 Editing anything under `src/hardy/` that is not covered by the denylist in

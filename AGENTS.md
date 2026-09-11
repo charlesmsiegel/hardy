@@ -6,13 +6,17 @@ here and adds nothing.
 
 ## Read first
 
-1. `README.md`, for what Hardy is and what it refuses to claim.
-2. `docs/design/overview.md`, `docs/design/trust-boundary.md`, and
-   `docs/design/output-contract.md`, for the rules every change must keep.
-3. `docs/reference/` for what the commands, settings, and artifacts are today.
+1. [README.md](README.md), for what Hardy is and what it refuses to claim.
+2. [the architecture overview](docs/design/overview.md),
+   [the trust boundary](docs/design/trust-boundary.md), and
+   [the output contract](docs/design/output-contract.md), for the rules every
+   change must keep.
+3. [the reference pages](docs/reference/cli.md) for what the commands,
+   settings, and artifacts are today.
    The reference pages are tested against the code; trust them over memory.
 
-`docs/design/decisions.md` records what was chosen over what and why. Read the
+[The decision record](docs/design/decisions.md) records what was chosen over
+what and why. Read the
 entry for an area before proposing to change it.
 
 ## Working on the code
@@ -25,8 +29,8 @@ uv run hardy doctor                         # what this machine is still missing
 ```
 
 A bare `pytest` on a machine with a configured Lean project runs a whole-corpus
-real sweep; use the marker filter above. `CONTRIBUTING.md` describes the test
-tiers, coverage floor, CI, and releases.
+real sweep; use the marker filter above. [CONTRIBUTING.md](CONTRIBUTING.md)
+describes the test tiers, coverage floor, CI, and releases.
 
 ## Source ownership
 
@@ -34,12 +38,15 @@ Implementations live under `src/hardy/agents`, `algebra`, `app`, `corpus`,
 `documents`, `evals`, `formal`, `foundation`, `literature`, `prompts` and
 `workflows`. The package root holds only `__init__.py`, `__main__.py` and the
 `cli.py`, `mcp_server.py`, `cas_driver.py` entry-point shims. Import from the
-owning package; the former root modules are gone.
+owning package; the former root modules are gone. `src/hardy/corpus/` is code
+and follows the code rules; the repository-level `corpus/` directory is
+mathematical content and follows the branch rule below.
 
 Dependencies point one way: `app` to `workflows` to the capability packages
 (`formal`, `documents`, `algebra`, `literature`, `corpus`) to `foundation`, with
 `agents`, `evals` and `prompts` beside them. `tests/unit/test_module_boundaries.py`
-enforces the direction; `docs/design/module-boundaries.md` explains it. The
+enforces the direction; [module boundaries](docs/design/module-boundaries.md)
+explains it. The
 interactive coordinator is `workflows/interactive/session.py`; record, formal
 save, admission, document, and turn responsibilities each have their own owner
 beside it, and collaborators receive named operations and snapshots, never the
@@ -61,12 +68,13 @@ whole session.
 - When code is introduced, add the smallest tests and commands that reproduce
   the experiment. Record model, toolchain, configuration, and source identities
   when they can affect results.
-- Status lives only in `docs/roadmap.md`. Reference pages under
+- Status lives only in [the roadmap](docs/roadmap.md). Reference pages under
   `docs/reference/` are tested against the code: when you change a command,
   flag, slash command, or setting, `tests/unit/test_docs.py` names the page to
   update. Design pages carry reasoning and no status markers. Planning
   artifacts, reports, and session notes do not belong in the tree.
-- Add every new page under `docs/` to `docs/README.md`; the same test checks it.
+- Add every new page under `docs/` to [the documentation map](docs/README.md);
+  the same test checks it.
 
 ## Branching: code on `main`, statements on `corpus/curation`
 
@@ -94,7 +102,8 @@ change buried in one cannot be reviewed, and keeping them apart lets a code
 change be tested against the base corpus before the statements that exercise it
 exist. `corpus/EVALS.md` is on the corpus side even though it is generated: it
 reports on the active corpus. `evals/` is ignored and holds no committed
-evidence.
+evidence; `hardy evals baseline` and `hardy evals run` regenerate it, as
+[the evaluation guide](docs/guides/evaluation.md) describes.
 
 ### Digest coupling
 
