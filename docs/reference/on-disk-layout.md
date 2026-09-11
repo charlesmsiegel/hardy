@@ -32,6 +32,7 @@ One directory per machine, independent of any project root:
 ├── catalog/                     # journal of works, editions, grouping proposals and decisions
 ├── representations/<sha256>/    # derived text, layout and page records per artifact, write-once
 ├── trees/<sha256>/              # versioned SourceTrees per artifact, write-once
+├── extractions/<sha256>/        # one record per extraction pass: status, adapter, diagnostics; refusals and failures included
 ├── ledger/                      # the shared mathematical ledger, in the project ledger's own format
 ├── links/                       # journal of source-to-claim interpretation records
 ├── realizations/                # journal of formal realizations and promotion records
