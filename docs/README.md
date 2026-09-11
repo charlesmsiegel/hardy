@@ -43,7 +43,6 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 - [Research architecture](research-architecture.md): sets out the direction for research, auditing, and publication features built on shared primitives.
 - [Isolation](isolation.md): specifies the confinement boundary a sandboxed run must implement.
 - [Delegation and research-swarm design](superpowers/specs/2026-09-10-delegation-swarm-design.md): the architectural specification for background workers and research swarms over the project ledger.
-- [Delegation backend implementation plan](superpowers/plans/2026-09-10-delegation-swarm-backend.md): the dependency-ordered slices that implement that specification.
 
 ## Archive
 

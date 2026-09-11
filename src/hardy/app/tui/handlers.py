@@ -1001,6 +1001,9 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
             close()
         except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
             ui.write(f"Could not close the previous session cleanly: {error}", style="error")
+    # The new session's background notices go where the old one's went: this terminal.
+    if hasattr(session, "on_notice"):
+        session.on_notice = lambda text: ui.write(f"Hardy: {text}")
     switched = dataclasses.replace(state, config=config, session=session)
     ui.write(f"  {status_line(config)}")
     if creating:

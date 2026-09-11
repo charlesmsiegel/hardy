@@ -242,3 +242,82 @@ def test_malformed_action_arguments_are_refused_individually_and_the_plan_goes_o
     finally:
         release.set()
         controller.shutdown()
+
+
+def test_a_null_hidden_ids_argument_is_refused_without_aborting_the_plan(tmp_path):
+    controller, started, release = _controller(tmp_path, checks=25)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=EXPEDITION)
+        plan = CoordinationPlan(view_digest=view.digest, rationale="sloppy", actions=(
+            PlanAction(action="spawn", args={"objective": "hide nothing", "checks": 1, "hidden_ids": None}),
+            PlanAction(action="spawn", args={"objective": "hide a string", "checks": 1, "hidden_ids": "L12"}),
+            PlanAction(action="spawn", args={"objective": "fine", "checks": 1, "hidden_ids": ["T1"]}),
+        ))
+        outcomes = apply_plan(controller, cell.id, plan, EXPEDITION)
+        assert [o.applied for o in outcomes] == [False, False, True]
+        assert all("hidden_ids" in " ".join(o.refused_because) for o in outcomes[:2])
+        assert "coordinator.plan_applied" in [e.kind for e in controller.store.events()]
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def _lean_base(tmp_path):
+    import sys
+    from pathlib import Path
+
+    from hardy.formal.contracts import Request
+    from hardy.formal.lean import LeanTools
+    from hardy.formal.workspace import LeanWorkspace
+
+    fake = (sys.executable, str(Path(__file__).resolve().parents[1] / "fake_lean.py"))
+    lean = LeanTools(Request("example : True", "workspace", ("Mathlib",)), fake)
+    root, build = tmp_path / "lean", tmp_path / ".build" / "lean"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "Main.lean").write_text("import Mathlib\n\ntheorem base_fact : True := by exact True.intro\n", encoding="utf-8")
+
+    def compile(module, source_root, build_root, source_file):
+        result = lean.compile_module(source_root, build_root, source_file, lean_path=str(build_root))
+        return result.ok, result.output
+
+    return LeanWorkspace(root, build, compile, environment="test-env")
+
+
+def test_coordinator_spawned_proof_workers_inherit_a_writable_workspace_but_literature_workers_do_not(tmp_path):
+    controller, started, release = _controller(tmp_path, checks=25)
+    controller.workspace = _lean_base(tmp_path)
+    try:
+        cell = controller.delegate(_spec(tmp_path, "writable cell", checks=6,
+                                         spawn=SpawnPolicy(can_spawn=True, max_children=4, max_depth=1),
+                                         coordination=CoordinationPolicy.CELL).model_copy(update={"writable": True}))
+        view = build_view(controller, cell.id, authority=EXPEDITION)
+        plan = CoordinationPlan(view_digest=view.digest, rationale="mix", actions=(
+            PlanAction(action="spawn", args={"objective": "prove it", "checks": 1}),
+            PlanAction(action="adversarial", args={"objective": "break it", "checks": 1}),
+            PlanAction(action="literature", args={"objective": "read up", "checks": 1}),
+        ))
+        outcomes = apply_plan(controller, cell.id, plan, EXPEDITION)
+        assert [o.applied for o in outcomes] == [True, True, True]
+        specs = {controller.tree().get(o.detail).spec.objective: controller.tree().get(o.detail).spec for o in outcomes}
+        assert specs["prove it"].writable and specs["break it"].writable and not specs["read up"].writable
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_the_coordinator_view_honours_the_subtrees_inherited_isolation(tmp_path):
+    controller, started, release = _controller(tmp_path, checks=25)
+    try:
+        blind = controller.delegate(_spec(tmp_path, "blind cell", checks=4,
+                                          spawn=SpawnPolicy(can_spawn=True, max_children=2, max_depth=1),
+                                          coordination=CoordinationPolicy.CELL).model_copy(update={"hidden_ids": ("T1",)}))
+        view = build_view(controller, blind.id, authority=ASSISTED)
+        assert "T1" not in view.neighborhood and "L12" in view.neighborhood
+        open_cell = controller.delegate(_spec(tmp_path, "open cell", checks=4,
+                                              spawn=SpawnPolicy(can_spawn=True, max_children=2, max_depth=1),
+                                              coordination=CoordinationPolicy.CELL))
+        assert "T1" in build_view(controller, open_cell.id, authority=ASSISTED).neighborhood
+    finally:
+        release.set()
+        controller.shutdown()

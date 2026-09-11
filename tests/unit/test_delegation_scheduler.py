@@ -71,12 +71,12 @@ def test_default_lane_follows_the_brief_not_a_score():
 
 
 def test_ready_excludes_started_terminal_forbidden_and_exhausted_work(tmp_path):
-    store = _store(tmp_path, ("a", _spec()), ("b", _spec()), ("c", _spec()), ("d", _spec()), root_checks=3)
+    store = _store(tmp_path, ("a", _spec()), ("b", _spec()), ("c", _spec()), ("d", _spec()), root_checks=4)
     store.append("a", "delegation.started", {})
     store.append("b", "delegation.cancelled", {"reason": "user"})
     ready = _scheduler(store, pins=(Pin(delegation_id="c", kind="forbid_spend", by="human"),)).ready()
     assert [d.id for d in ready] == ["d"]
-    store.append("a", "usage.reported", {"usage": ResourceUsage(official_checks=3).model_dump(mode="json")})
+    store.append("a", "usage.reported", {"usage": ResourceUsage(official_checks=4).model_dump(mode="json")})
     assert _scheduler(store).ready() == ()                     # root exhausted: nothing starts anywhere
 
 
@@ -229,7 +229,7 @@ def test_min_attention_and_reserve_exploration_pins_change_what_is_chosen(tmp_pa
 
     store = _store(tmp_path, ("x1", _spec()), ("x2", _spec()), ("x3", _spec()),
                    ("e1", _spec(lane="explore")), root_slots=4)
-    cell = _spec(objective="cell").model_copy(update={"spawn": SpawnPolicy(can_spawn=True, max_children=2, max_depth=1)})
+    cell = _spec(objective="cell", checks=4).model_copy(update={"spawn": SpawnPolicy(can_spawn=True, max_children=2, max_depth=1)})
     store.append("cell", "delegation.created", {"spec": cell.model_dump(mode="json"), "parent_id": "root", "created_at": "t"})
     store.append("cell", "budget.reserved", {"lease": cell.lease.model_dump(mode="json"), "slots": 2})
     store.append("cell", "delegation.started", {})
@@ -260,3 +260,22 @@ def test_a_lane_floor_counts_the_workers_already_running_in_it(tmp_path):
     store.append("e2", "delegation.completed", {"result": {"delegation_id": "e2", "status": "completed",
                                                           "synthesis": "", "usage": {}}})
     assert [d.id for d in _scheduler(store, constraints=floors).choose(1)] == ["e4"]     # now one short
+
+
+def test_a_tranche_that_names_only_checks_is_granted_under_a_time_bounded_parent(tmp_path):
+    from hardy.workflows.delegation.contracts import ResourceDelta
+
+    store = DelegationStore(tmp_path)
+    root = DelegationSpec(objective="root", project_refs=(), scope=VersionRef(id="scope", digest="b" * 64),
+                          lease=ResourceLease(official_checks=10, active_seconds=600.0),
+                          concurrency=ConcurrencyLease(slots=2), created_by="session", notify_human=False)
+    store.append("root", "delegation.created", {"spec": root.model_dump(mode="json"), "parent_id": None, "created_at": "t"})
+    store.append("root", "budget.reserved", {"lease": root.lease.model_dump(mode="json"), "slots": 2})
+    leaf = _spec().model_copy(update={"lease": ResourceLease(official_checks=1, active_seconds=60.0)})
+    store.append("a", "delegation.created", {"spec": leaf.model_dump(mode="json"), "parent_id": "root", "created_at": "t"})
+    store.append("a", "budget.reserved", {"lease": leaf.lease.model_dump(mode="json"), "slots": 1})
+    scheduler = _scheduler(store)
+    decision = scheduler.decide(AllocationRequest(delegation_id="a", lane=Lane.EXPLOIT,
+                                                  tranche=ResourceDelta(official_checks=2), requested_by="human", reason="r"))
+    assert decision.granted is not None, decision.refused_because
+    assert decision.resulting == ResourceLease(official_checks=3, active_seconds=60.0)

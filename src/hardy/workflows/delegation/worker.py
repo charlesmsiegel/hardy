@@ -73,6 +73,8 @@ CasFactory = Callable[[Path], "CasToolRuntime | None"]
 #: Active-time ceilings are enforced by the executor and the lease; the check
 #: budget only needs a finite deadline to construct.
 _UNBOUNDED_SECONDS = 10.0 ** 9
+#: An unbounded check lease, as a count the budget can hold: never zero.
+_UNBOUNDED_CHECKS = 10 ** 9
 
 FINISH_STATUSES = {
     "completed": DelegationState.COMPLETED,
@@ -121,6 +123,10 @@ Observe = Callable[[dict[str, Any]], None]
 OpenWorker = Callable[[WorkerLaunch, Dispatch, Observe], OpenedWorker]
 
 
+class _NoTime(Exception):
+    """The active-time lease was spent before the worker opened."""
+
+
 class _WorkerState:
     """Worker-private, mutable, and thrown away with the worker."""
 
@@ -130,8 +136,8 @@ class _WorkerState:
         self.findings: list[Finding] = []
         self.finished: tuple[DelegationState, str] | None = None
         seconds = launch.lease.active_seconds if launch.lease.active_seconds is not None else _UNBOUNDED_SECONDS
-        self.checks = CheckBudget(official_checks=launch.lease.official_checks or 0,
-                                  active_seconds=seconds, proof_seconds=seconds)
+        checks = launch.lease.official_checks if launch.lease.official_checks is not None else _UNBOUNDED_CHECKS
+        self.checks = CheckBudget(official_checks=checks, active_seconds=seconds, proof_seconds=seconds)
         if launch.on_budget is not None:
             launch.on_budget(self.checks)
         #: Set by the active-time timer: the provider was still running when the lease ran out.
@@ -314,6 +320,9 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
     synthesis = ""
     try:
         token.check()
+        if launch.lease.active_seconds is not None and launch.lease.active_seconds <= 0:
+            # Nothing to spend: no provider context is opened for a lease that is already over.
+            raise _NoTime
         opened = open_worker(launch, dispatch, observe)
         store.append("worker.opened", {"context_id": opened.context_id, "model": getattr(opened.runtime, "model", None)},
                      phase=RunPhase.PROVING)
@@ -344,6 +353,8 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
             status, reason = DelegationState.PARTIAL, "no_finish_call"
         else:
             status, synthesis = state.finished
+    except _NoTime:
+        status, reason = DelegationState.EXHAUSTED, "active_seconds lease exhausted before the provider was opened"
     except WorkerCancelled:
         status, reason = DelegationState.CANCELLED, "cancelled"
     except Exception as error:  # noqa: BLE001 - a worker's failure is a result, not a crash upstream

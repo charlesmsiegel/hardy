@@ -269,3 +269,18 @@ def test_a_plain_related_id_is_pinned_to_the_head_the_worker_could_see(tmp_path)
     [finding] = json.loads((store.path / "findings.json").read_text(encoding="utf-8"))
     assert finding["related_refs"] == [{"id": "L17", "digest": heads["L17"].digest}]
     assert finding["related_ids"] == ["ghost"]
+
+
+def test_neighborhood_rows_are_capped_in_each_direction_and_the_cut_is_reported(tmp_path):
+    from hardy.workflows.delegation.retrieval import MAX_NEIGHBORHOOD_ROWS
+    from hardy.workflows.explore import ExploreWorkflow
+    from hardy.workflows.ledger import contracts as c
+
+    heads = seed_project(tmp_path)
+    flow = ExploreWorkflow(LedgerStore(tmp_path))
+    for n in range(MAX_NEIGHBORHOOD_ROWS + 5):
+        flow.record_item(id=f"U{n}", kind=c.ProjectItemKind.LEMMA, name=f"User {n}",
+                         statement=f"Consequence {n}", dependencies=(heads["L17"].ref,))
+    payload = json.loads(_retriever(tmp_path).neighborhood("L17").output)
+    assert len(payload["used_by"]) == MAX_NEIGHBORHOOD_ROWS and payload["truncated"] == 6      # T1 already used it
+    assert payload["withheld"] == 0

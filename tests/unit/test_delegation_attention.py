@@ -269,3 +269,14 @@ def test_a_subscription_recipient_narrows_who_hears(tmp_path):
                                  mode=DeliveryMode.NOTIFY, recipient="main_agent")
     item, _ = route(done, store.tree(), (human_only, both))
     assert item.recipients == ("human", "main_agent")
+
+
+def test_mixed_subscriptions_keep_a_delivery_mode_per_recipient(tmp_path):
+    store = _tree_with_cell(DelegationStore(tmp_path))
+    quiet_human = AttentionSubscription(owner="human", source="cell", triggers=("counterexample",),
+                                        mode=DeliveryMode.QUEUE, recipient="human")
+    loud_model = AttentionSubscription(owner="human", source="cell", triggers=("counterexample",),
+                                       mode=DeliveryMode.INTERRUPT, recipient="main_agent")
+    item, mode = route(_finding_event(store, "w1", "counterexample"), store.tree(), (quiet_human, loud_model))
+    assert mode is DeliveryMode.INTERRUPT and item.recipients == ("human", "main_agent")
+    assert item.mode_for("human") is DeliveryMode.QUEUE and item.mode_for("main_agent") is DeliveryMode.INTERRUPT

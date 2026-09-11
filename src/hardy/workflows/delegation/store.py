@@ -150,6 +150,8 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
             if event.kind == "delegation.started":
                 started.add(id)
             update: dict[str, Any] = {"state": _STATE_EVENTS[event.kind]}
+            if event.kind == "delegation.started" and event.payload.get("interior"):
+                update["interior"] = True
             if event.kind == "delegation.resumed" and id not in started:
                 update["state"] = DelegationState.QUEUED     # never started: back to the queue
             if "result" in event.payload:
@@ -167,6 +169,28 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
             delegations[id] = current.model_copy(update={
                 key: str(event.payload[key]) for key in _CONTEXT_KEYS if key in event.payload})
     return DelegationTree(delegations, usage, events, frozenset(cancel_requests))
+
+
+def _refuse_overdraft(tree: DelegationTree, delegation_id: str, event: DelegationEvent) -> None:
+    """A reservation may only take what its parent can still allocate at the moment it is recorded."""
+    from hardy.workflows.delegation.budget import LeaseLedger, LeaseRefused
+    from hardy.workflows.delegation.contracts import ResourceLease
+
+    node = tree.get(delegation_id)
+    if node.parent_id is None:
+        return
+    ledger = LeaseLedger(tree)
+    wanted = ResourceLease.model_validate(event.payload["lease"])
+    available = ledger.allocatable_excluding(node.parent_id, delegation_id)
+    over = []
+    for name in DIMENSIONS:
+        ceiling, asked = getattr(available, name), getattr(wanted, name)
+        if ceiling is None:
+            continue
+        if asked is None or asked > ceiling:
+            over.append(f"{name} ({asked} asked, {ceiling} allocatable)")
+    if over:
+        raise LeaseRefused(f"reservation exceeds parent allocatable resources: {', '.join(over)}")
 
 
 class DelegationStore:
@@ -222,7 +246,12 @@ class DelegationStore:
             )
             # Validated before it is written: the journal never holds an event
             # its own replay would refuse.
+            before = _replay(events)
             _replay((*events, event))
+            if kind == "budget.reserved":
+                # Re-checked here, under the journal's own lock: two processes
+                # that both passed `grant` on one stale balance cannot both record.
+                _refuse_overdraft(before, delegation_id, event)
             line = json.dumps({"event": event.model_dump(mode="json"), "digest": event.digest},
                               ensure_ascii=False, allow_nan=False) + "\n"
             with guard.open(JOURNAL, "a", encoding="utf-8", newline="\n") as handle:
@@ -283,7 +312,9 @@ class DelegationStore:
         """Mark every active or waiting delegation interrupted; paused work stays paused. Idempotent."""
         recovered = []
         for delegation in self.tree().delegations.values():
-            if delegation.state in INTERRUPTIBLE:
+            # An interior cell runs no worker: it is structure the next process
+            # continues, not work the last one was in the middle of.
+            if delegation.state in INTERRUPTIBLE and not delegation.interior:
                 self.append(delegation.id, "delegation.recovered",
                             {"reason": "interrupted", "recovered_at": now})
                 recovered.append(self.tree().get(delegation.id))

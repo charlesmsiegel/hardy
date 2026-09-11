@@ -39,7 +39,7 @@ from hardy.workflows.delegation.attention import (
     resolve_continuation,
     route,
 )
-from hardy.workflows.delegation.budget import LeaseLedger, grant
+from hardy.workflows.delegation.budget import LeaseLedger, LeaseRefused, grant
 from hardy.workflows.delegation.context import (
     ContextPolicy,
     build_problem_core,
@@ -206,11 +206,17 @@ class DelegationController:
                 self._after_terminal(delegation.id, event)
             tree = self.tree()
             ledger = LeaseLedger(tree)
+            derived = {item.source_event for item in self._inbox.items()}
             for delegation in tree.delegations.values():
                 # A worker whose end was journaled but whose lease the dead
                 # process never returned would charge its parent forever.
                 if delegation.terminal and delegation.parent_id is not None and not ledger.released(delegation.id):
                     self.store.release(delegation.id)
+                    # And its result never reached anyone: route it now.
+                    terminal = next((e for e in reversed(tree.events)
+                                     if e.delegation_id == delegation.id and e.kind in _TERMINAL_EVENT.values()), None)
+                    if terminal is not None and terminal.sequence not in derived:
+                        self._route(delegation.id, terminal)
             tree = self.tree()
             ledger = LeaseLedger(tree)
             for delegation in tree.delegations.values():
@@ -259,6 +265,11 @@ class DelegationController:
         self.store.append(id, "workspace.overlay_created", {"generation": overlay.generation.model_dump(mode="json")})
         return overlay
 
+    def hidden_for(self, id: str) -> tuple[str, ...]:
+        """Every stable id hidden from a node: its own and all of its ancestors'."""
+        node = self.tree().get(id)
+        return self._effective_hidden(node.parent_id or ROOT_ID, node.spec)
+
     def _effective_hidden(self, parent: str, spec: DelegationSpec) -> tuple[str, ...]:
         tree = self.tree()
         hidden: list[str] = []
@@ -297,6 +308,8 @@ class DelegationController:
         spec = DelegationSpec.model_validate(spec.model_dump())
         if not spec.project_refs:
             raise ValueError("a delegation needs at least one exact project ref")
+        if spec.lease.active_seconds is not None and spec.lease.active_seconds <= 0:
+            raise ValueError("a delegation needs a positive active_seconds lease, or none")
         target = spec.project_refs[0]
         # One read: the core and the working set describe the same revision.
         snapshot = self.ledger.read()
@@ -344,8 +357,15 @@ class DelegationController:
                 artifacts.write_text(PurePosixPath("prompt.md"), prompt)
             self.store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"),
                                                          "parent_id": parent, "created_at": now})
-            self.store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"),
-                                                      "slots": spec.concurrency.slots})
+            try:
+                self.store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"),
+                                                          "slots": spec.concurrency.slots})
+            except LeaseRefused:
+                # Another process took the balance between our check and this
+                # record: the node is retired so it stops counting at its ask.
+                self.store.append(id, "delegation.cancelled", {"reason": "reservation refused at the journal"})
+                self.store.release(id)
+                raise
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
@@ -703,25 +723,23 @@ class DelegationController:
             return
         item, mode = routed
         self._inbox.record(item)
-        if mode is DeliveryMode.QUEUE:
-            return
-        to_human = "human" in item.recipients
-        if to_human:
+        # Each recipient hears in its own mode: the human's is delivered and
+        # receipted here; the model's is queued for its next request unless
+        # a subscription of its own asked for an interrupt.
+        human_mode = item.mode_for("human", mode) if "human" in item.recipients else DeliveryMode.QUEUE
+        model_mode = item.mode_for("main_agent", mode) if "main_agent" in item.recipients else DeliveryMode.QUEUE
+        if human_mode is not DeliveryMode.QUEUE:
             try:
                 self._notify(item.summary)
             except Exception:  # noqa: BLE001 - a notice that cannot be shown is not delivered
                 return
-        if mode is DeliveryMode.NOTIFY or self._interrupt is None:
-            if to_human:
-                self._inbox.receipt(item.id, "human", "notify")
-            return
-        self.store.append(id, "attention.interrupt_requested", {"item_id": item.id})
-        if to_human:
-            self._inbox.receipt(item.id, "human", "interrupt")
-        try:
-            self._interrupt(item)
-        except Exception:  # noqa: BLE001 - the hook's failure is not the worker's
-            return
+            self._inbox.receipt(item.id, "human", human_mode.value)
+        if model_mode is DeliveryMode.INTERRUPT and self._interrupt is not None:
+            self.store.append(id, "attention.interrupt_requested", {"item_id": item.id})
+            try:
+                self._interrupt(item)
+            except Exception:  # noqa: BLE001 - the hook's failure is not the worker's
+                return
 
     # -- subscriptions and continuations --------------------------------------
 
