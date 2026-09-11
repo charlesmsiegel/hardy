@@ -172,6 +172,8 @@ A problem's `delegations/journal.jsonl` is the append-only record of background 
 | `delegation.completed` / `partial` / `failed` / `cancelled` / `exhausted` | `result`, `reason` | Terminal. `result` is the worker's structured `WorkerResult`. |
 | `delegation.recovered` | `reason`, `recovered_at` | Work that was active when the process died; state `unknown`, every usage dimension unknown. Distinct from every other ending. |
 | `cancel.requested` | `reason` | A cancellation request; the executor ends the worker. |
+| `scheduler.pin` / `scheduler.unpin` | `pin` / `kind`, `by` | A human constraint on the mechanical scheduler: `reinforce` (runs ahead of every heuristic), `forbid_spend` (queued until lifted; no tranche granted), `min_attention`, `reserve_exploration`. |
+| `scheduler.decision` | `decision` | One tranche or reclaim, with the request (who asked, why, which lane), what was `granted` or every reason it was `refused_because`, and the `prior` and `resulting` leases. A grant is followed by a `budget.reserved` carrying the new lease. |
 | `finding.proposed` | `finding` | A worker's structured discovery, visible to its parent and nobody else until promoted. Never a ledger record; its `evidence_profile` is what the worker could show, and promotion never changes it. |
 | `finding.promoted` | `record` | A deliberate sharing act: `mode` is `discoverable` (enters the recipient's permitted universe), `push` (injected into the recipient's next context) or `upward`; `selector` says whether policy, a coordinator or a human chose it, `authorized_by` the ancestor that could. |
 | `context.pushes_consumed` | `findings` | The pushed findings a recipient took into its next context. |
