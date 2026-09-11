@@ -75,8 +75,9 @@ hardy accept --recorded acceptance/recorded/prove-verified/20260901T220742+0000-
   standard axioms. `sorryAx` is a hole no approval can convert; an unapproved
   axiom is a rejection. See [the output contract](docs/design/output-contract.md).
 - **The statement is frozen before proving.** The formalization is hashed, and
-  every proof check is against that exact statement. A proof of something else
-  is not a proof.
+  every proof check is against that exact statement; a proof of something else
+  is not a proof. The hash travels in
+  [the run's manifest](docs/reference/artifacts.md).
 - **An independent reader checks the formalization.** Before any proof search,
   a reader with no tools, given only the user's words and the frozen Lean
   signature, must agree that each entails the other. That faithfulness check is
@@ -86,19 +87,20 @@ hardy accept --recorded acceptance/recorded/prove-verified/20260901T220742+0000-
   reader can read anywhere the SDK's sandbox allows), and the verdict records
   what its isolation was actually worth rather than claiming otherwise. See
   [the trust boundary](docs/design/trust-boundary.md).
-- **Hardy runs every tool.** The model decides when a Lean check, a search, a
-  computer-algebra cell, or a LaTeX compile happens; Hardy's own code runs it
-  and writes every record. On the Claude backend the SDK's own tools are refused
-  by a default-deny gate, and no configuration is inherited from the host.
-- **Assumptions are admitted, not asserted.** An axiom the model wants is
-  searched for first, elaborated, probed for triviality and for a
-  counterexample, and shown to a human beside the session's stated goal.
-  Declining is the default.
+- **Hardy runs every tool, and admits assumptions rather than accepting
+  them.** The model decides when a Lean check, a search, a computer-algebra
+  cell, or a LaTeX compile happens; Hardy's own code runs it and writes every
+  record, and on the Claude backend the SDK's own tools are refused by a
+  default-deny gate. An axiom the model wants is searched for first,
+  elaborated, probed for triviality and for a counterexample, and shown to a
+  human beside the session's stated goal; declining is the default. See
+  [what Hardy controls](docs/design/trust-boundary.md#what-hardy-controls-and-what-it-does-not).
 - **The document cannot outrun the proof.** The compiled writeup carries a
   provenance banner computed from the record, and a theorem stated in the
   writeup without a kernel-checked counterpart blocks the report. Saying it in
   prose instead does get past the theorem gate, as does a `lemma` environment;
   the banner's counts are what cover that, and they count rather than point.
+  See [what the document must carry](docs/design/output-contract.md).
 
 ## What this cannot establish
 
@@ -106,7 +108,8 @@ The axiom audit is elaborated by an environment the audited source could have
 extended. Hardy reports what Lean's kernel says a theorem depends on, but that
 report is produced inside a system the theorem's own source could have
 modified. Closing the gap needs an independent, sandboxed re-check that Hardy
-does not yet do. Nothing here confines the Lean, LaTeX, or computer-algebra
+does not yet do; [the trust boundary](docs/design/trust-boundary.md) carries
+the full argument. Nothing here confines the Lean, LaTeX, or computer-algebra
 processes it runs; treat the machine as disposable and read
 [running Hardy safely](docs/guides/running-safely.md) before running it on one
 you care about.
@@ -192,17 +195,19 @@ packages and down to `foundation`, and a test enforces it. The
 
 ## Engineering
 
-Every claim in this table is something CI checks on every push.
+Each row names a check and the workflow or test that runs it, with when it
+runs.
 
-| What | Where |
-| --- | --- |
-| A hermetic suite of several thousand tests with a coverage floor that fails the build | `pyproject.toml`, `.github/workflows/tests.yml` |
-| Real-toolchain tiers: a pinned Lean audit, and Singular and Macaulay2 kernels | `.github/workflows/tests.yml`, `.github/workflows/cas-backends.yml` |
-| Installers exercised on Linux, macOS, and Windows runners | `.github/workflows/installers.yml` |
-| Every artifact digest-bound and rechecked without a model | `hardy accept --recorded`, `hardy evals check` |
-| The corpus manifest anchored against the merge base, so a shard edit cannot rewrite its own digest | `.github/workflows/tests.yml` |
-| Pinned toolchain, and release assets published with a `SHA256SUMS` the installers verify | `src/hardy/app/installers.py`, `.github/workflows/release.yml` |
-| Reference documentation checked against the parser, the command registry, and the settings table | `tests/unit/test_docs.py` |
+| Check | Runs | Where |
+| --- | --- | --- |
+| The hermetic suite, with a coverage floor that fails the build | every push to `main` and every pull request | `.github/workflows/tests.yml`, `pyproject.toml` |
+| A real Lean axiom audit against the current stable toolchain, left unpinned on purpose so a toolchain change shows up | every push to `main` and every pull request | `.github/workflows/tests.yml` |
+| Singular and Macaulay2 kernels at pinned package versions | pushes to `main`, and pull requests that touch the computer-algebra code | `.github/workflows/cas-backends.yml` |
+| The installers, on Linux, macOS, and Windows runners, verifying the built release assets against `SHA256SUMS` | every push to `main` and every pull request | `.github/workflows/installers.yml` |
+| The corpus manifest digest, anchored against the merge base so a shard edit cannot rewrite its own digest | every pull request | `.github/workflows/tests.yml` |
+| Four recorded acceptance runs rechecked without a model | inside the hermetic suite | `tests/integration/test_recorded_acceptance.py` |
+| Reference documentation checked against the parser, the command registry, and the settings table | inside the hermetic suite | `tests/unit/test_docs.py` |
+| Release assets published with a `SHA256SUMS`, and a release that already has assets is never rewritten | on a version tag | `.github/workflows/release.yml` |
 
 ## Documentation
 
