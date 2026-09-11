@@ -62,7 +62,9 @@ class AttentionInbox:
     def derive(self, event: DelegationEvent, tree: DelegationTree) -> AttentionItem | None:
         """The item this event owes the root, or None when it stays local."""
         delegation = tree.get(event.delegation_id)
-        if delegation.parent_id is not None:
+        # Only work somebody asked to hear about: a direct job says so in its
+        # spec; autonomously spawned descendants do not implicitly notify.
+        if not delegation.spec.notify_human:
             return None
         item_id = f"attention:{event.sequence}"
         detail = (f"delegations/{delegation.id}/result.json",)
@@ -74,7 +76,7 @@ class AttentionInbox:
                 category="interrupted", importance="high", actionable=True, sticky=True,
                 related_refs=delegation.spec.project_refs, detail_refs=detail,
             )
-        if event.kind in _TERMINAL_KINDS and delegation.spec.notify_human:
+        if event.kind in _TERMINAL_KINDS:
             category, importance = _TERMINAL_KINDS[event.kind]
             status = delegation.state.value
             synthesis = ""

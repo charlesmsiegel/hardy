@@ -19,8 +19,10 @@ from hardy.workflows.delegation.contracts import (
 )
 from hardy.workflows.delegation.store import DelegationTree
 
-#: States in which a child still holds its parent's worker slots.
-HOLDING_SLOTS = frozenset({DelegationState.QUEUED, DelegationState.ACTIVE, DelegationState.WAITING})
+#: States in which a child holds its parent's worker slots. Queued work holds
+#: none: there may be more runnable leaves than slots, and which of them run
+#: is scheduling, not reservation.
+HOLDING_SLOTS = frozenset({DelegationState.ACTIVE, DelegationState.WAITING})
 
 
 class LeaseRefused(ValueError):
@@ -117,6 +119,6 @@ def grant(tree: DelegationTree, parent_id: str, requested: ResourceLease, *, req
     exhausted = ledger.exhausted(parent_id)
     if exhausted:
         raise LeaseRefused(f"ancestor resources exhausted: {', '.join(exhausted)}")
-    if requested_slots > ledger.slots_available(parent_id):
-        raise LeaseRefused("requested worker slots exceed the parent's available concurrency")
+    if requested_slots > ledger.slots(parent_id):
+        raise LeaseRefused("requested worker slots exceed the parent's concurrency lease")
     return requested, (ConcurrencyLease(slots=requested_slots) if requested_slots else None)

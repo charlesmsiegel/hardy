@@ -113,16 +113,20 @@ def test_root_exhaustion_is_visible_at_every_descendant(tmp_path):
         grant(store.tree(), "a1", ResourceLease(official_checks=0), requested_slots=0)
 
 
-def test_concurrency_slots_are_bounded_by_the_parent(tmp_path):
+def test_concurrency_slots_count_active_work_and_bound_a_child_request(tmp_path):
     store = DelegationStore(tmp_path)
     _tree(store, ("root", None, {"official_checks": 9}), slots=2)
     tree = _tree(store, ("a", "root", {"official_checks": 1}), ("b", "root", {"official_checks": 1}))
     ledger = LeaseLedger(tree)
-    assert ledger.slots("root") == 2 and ledger.slots_in_use("root") == 2
-    assert ledger.slots_available("root") == 0
+    assert ledger.slots("root") == 2 and ledger.slots_in_use("root") == 0      # queued work holds no slot
+    store.append("a", "delegation.started", {})
+    store.append("b", "delegation.started", {})
+    ledger = LeaseLedger(store.tree())
+    assert ledger.slots_in_use("root") == 2 and ledger.slots_available("root") == 0
     with pytest.raises(LeaseRefused, match="slots"):
-        grant(tree, "root", ResourceLease(official_checks=1), requested_slots=1)
-    store.append("a", "delegation.cancelled", {"reason": "user"})
-    assert LeaseLedger(store.tree()).slots_available("root") == 1
+        grant(store.tree(), "root", ResourceLease(official_checks=1), requested_slots=3)
+    # More runnable leaves than slots is allowed; the scheduler decides who runs.
     _, slots = grant(store.tree(), "root", ResourceLease(official_checks=1), requested_slots=1)
     assert slots == ConcurrencyLease(slots=1)
+    store.append("a", "delegation.cancelled", {"reason": "user"})
+    assert LeaseLedger(store.tree()).slots_available("root") == 1
