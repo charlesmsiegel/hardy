@@ -16,17 +16,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import tempfile
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path, PurePosixPath
 
 from hardy.foundation.files import files_under
+from hardy.foundation.journal import JournalError, verify_chain
 from hardy.foundation.values import FrozenModel, json_digest
 
 from .artifacts import CONTENT, PROVENANCE_DIR, RECORD
-from .contracts import AccessPolicy, RepresentationKind
+from .contracts import AccessPolicy, RepresentationKind, most_restrictive
 from .library import ARTIFACTS, REPRESENTATIONS, TREES, ManagedLibrary
 from .representations import MAPPINGS
 from .representations import RECORD as REPRESENTATION_RECORD
@@ -103,13 +106,16 @@ def export_library(
     if ExportClass.METADATA_SEMANTICS in classes:
         for sha in digests:
             directory = root / ARTIFACTS / sha
+            artifact_access = library.artifacts.record(sha).access
             _copy(directory / RECORD, into, f"{ARTIFACTS}/{sha}/{RECORD}", files)
             _copy_tree(directory / PROVENANCE_DIR, into, f"{ARTIFACTS}/{sha}/{PROVENANCE_DIR}", files)
             for record in library.representations.list(sha):
                 rep_dir = root / REPRESENTATIONS / sha / record.id
                 _copy(rep_dir / REPRESENTATION_RECORD, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{REPRESENTATION_RECORD}", files)
                 _copy_tree(rep_dir / MAPPINGS, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{MAPPINGS}", files)
-                portable = record.access not in PRIVATE or record.kind in PORTABLE_KINDS
+                # A derived text is governed by the stricter of its own policy and
+                # its artifact's: a policy tightened after extraction still holds.
+                portable = most_restrictive(artifact_access, record.access) not in PRIVATE or record.kind in PORTABLE_KINDS
                 for name in record.payload_files:
                     if portable:
                         _copy(rep_dir / name, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{name}", files)
@@ -145,15 +151,21 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
     seeded: list[str] = []
     kept: list[str] = []
     journal_state: dict[str, bool] = {}
-    for journal in (*JOURNALS, f"{TREES}/journal"):
+    journal_dirs = (*JOURNALS, f"{TREES}/journal")
+    for journal in journal_dirs:
         existing = library.root / journal
         journal_state[journal] = existing.is_dir() and any(existing.glob("*.json"))
         (kept if journal_state[journal] else seeded).append(journal)
+    grouped: dict[str, list[tuple[str, PurePosixPath, str]]] = {journal: [] for journal in journal_dirs}
     for relative, digest in manifest.files:
         try:
             safe = safe_relative(relative)
         except ExportError as error:
             skipped.append(f"{relative}: {error}")
+            continue
+        owner = next((j for j in journal_dirs if relative.startswith(j + "/")), None)
+        if owner is not None:
+            grouped[owner].append((relative, safe, digest))
             continue
         source = bundle / safe
         if not source.is_file() or source.is_symlink():
@@ -169,10 +181,6 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
             target = shared_lean / PurePosixPath(*safe.parts[1:])
         else:
             target = library.root / safe
-        owner = next((j for j in journal_state if relative.startswith(j + "/")), None)
-        if owner is not None and journal_state[owner]:
-            skipped.append(f"{relative}: local journal {owner} already has history; merging is synchronization, which is deferred")
-            continue
         if target.exists():
             if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
                 skipped.append(f"{relative}: already present")
@@ -182,8 +190,54 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         copied.append(relative)
+    # A journal is a hash chain: it is imported whole after its staged copy
+    # verifies, or not at all. A gap or a corrupt revision would otherwise
+    # seed a journal every later replay refuses.
+    for owner, entries in grouped.items():
+        if not entries:
+            continue
+        if journal_state[owner]:
+            skipped.append(f"{owner}: local journal already has history; merging is synchronization, which is deferred ({len(entries)} file(s) not imported)")
+            continue
+        fault = _import_journal(library.root, bundle, owner, entries)
+        if fault is None:
+            copied.extend(relative for relative, _, _ in entries)
+        else:
+            skipped.append(f"{owner}: {fault}; nothing of this journal was imported")
     return ImportSummary(copied=tuple(copied), skipped=tuple(skipped), journals_seeded=tuple(j for j in seeded if any(c.startswith(j + "/") for c in copied)),
                          journals_kept=tuple(kept))
+
+
+def _import_journal(root: Path, bundle: Path, owner: str, entries: list[tuple[str, PurePosixPath, str]]) -> str | None:
+    """Stage every file of one journal, verify the chain, then move it in as a unit; the fault otherwise."""
+    root.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".import-journal-", dir=root))
+    try:
+        depth = len(PurePosixPath(owner).parts) + 1
+        for relative, safe, digest in entries:
+            if len(safe.parts) != depth:
+                return f"{relative} is not a journal file"
+            source = bundle / safe
+            if not source.is_file() or source.is_symlink():
+                return f"{relative} missing from bundle"
+            data = source.read_bytes()
+            if hashlib.sha256(data).hexdigest() != digest:
+                return f"{relative} digest mismatch"
+            (staging / safe.name).write_bytes(data)
+        try:
+            verify_chain(staging)
+        except JournalError as error:
+            return f"journal chain invalid ({error})"
+        target = root / owner
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(staging, target)
+            return None
+        for path in sorted(staging.iterdir()):
+            os.replace(path, target / path.name)
+        return None
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def bundle_digest(bundle: Path) -> str:

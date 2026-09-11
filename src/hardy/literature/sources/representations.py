@@ -98,9 +98,15 @@ class RepresentationStore:
         for mapping in mappings:
             if mapping.artifact_sha256 != artifact_sha256:
                 raise RepresentationError("a mapping must belong to the artifact of the representations it aligns")
+            for side, rep in (("left", mapping.left), ("right", mapping.right)):
+                if not (self._dir(artifact_sha256, rep) / RECORD).is_file():
+                    raise RepresentationError(f"mapping {mapping.id} names unknown representation {rep} on its {side}")
+            for left_locator, right_locator in mapping.pairs:
+                for side, locator, expected in (("left", left_locator, mapping.left), ("right", right_locator, mapping.right)):
+                    named = getattr(locator, "representation", None)
+                    if named is not None and named != expected:
+                        raise RepresentationError(f"mapping {mapping.id}: a {side} locator names representation {named}, not {expected}")
             owner = self._dir(artifact_sha256, mapping.left)
-            if not (owner / RECORD).is_file():
-                raise RepresentationError(f"mapping {mapping.id} names unknown representation {mapping.left}")
             guard = WriteGuard(owner / MAPPINGS, create=True)
             name = f"{mapping.id}.json"
             if guard.path(name).is_file():

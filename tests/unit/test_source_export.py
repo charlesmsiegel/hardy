@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 
+import pytest
 from pdf_helpers import book_pages, build_pdf
 
 from hardy.literature.sources.artifacts import ImportRequest
@@ -26,10 +27,10 @@ def verdict():
                                prompt_sha256="p" * 64, outcome=FaithfulnessOutcome.AGREED, review=review)
 
 
-def populated(tmp_path, name="library"):
+def populated(tmp_path, name="library", access=AccessPolicy.PRIVATE_LOCAL):
     root = tmp_path / name
     lib = ManagedLibrary(root)
-    sha = lib.import_source(ImportRequest(data=PDF, original_name="tiny.pdf")).outcome.artifact.sha256
+    sha = lib.import_source(ImportRequest(data=PDF, original_name="tiny.pdf", access=access)).outcome.artifact.sha256
     tree = lib.build_tree(sha)
     claims = SharedClaims(shared_store(root))
     links = LinkStore(root / "links")
@@ -58,7 +59,7 @@ def test_metadata_export_omits_private_bytes_but_keeps_digests(tmp_path):
 
 
 def test_private_ocr_text_is_excluded_from_metadata_export(tmp_path):
-    root, lib, sha, tree, theorem, link = populated(tmp_path)
+    root, lib, sha, tree, theorem, link = populated(tmp_path, access=AccessPolicy.REDISTRIBUTABLE)
     from hardy.literature.sources.contracts import DerivedRepresentation, QualityProfile
     from hardy.literature.sources.representations import payload_digest
 
@@ -168,3 +169,55 @@ def test_export_needs_a_fresh_destination_and_import_confines_paths(tmp_path):
     summary = import_export(target, crafted)
     assert not (tmp_path / "victim" / "outside.json").exists()
     assert any("would leave" in s for s in summary.skipped) and summary.copied == ("evil.json",)
+
+
+def test_a_policy_tightened_after_extraction_withholds_derived_text(tmp_path):
+    root, lib, sha, tree, theorem, link = populated(tmp_path, access=AccessPolicy.REDISTRIBUTABLE)
+    open_manifest = export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=tmp_path / "open")
+    assert any(n.endswith("/text.txt") for n, _ in open_manifest.files) and open_manifest.withheld_payloads == ()
+    again = lib.import_source(ImportRequest(data=PDF, original_name="tiny-corrected.pdf", access=AccessPolicy.PRIVATE_LOCAL), extract=False)
+    assert again.outcome.reused and again.outcome.artifact.access is AccessPolicy.PRIVATE_LOCAL
+    assert lib.artifacts.record(sha).access is AccessPolicy.PRIVATE_LOCAL
+    loosened = lib.import_source(ImportRequest(data=PDF, original_name="tiny-open.pdf", access=AccessPolicy.REDISTRIBUTABLE), extract=False)
+    assert loosened.outcome.artifact.access is AccessPolicy.PRIVATE_LOCAL  # a later, looser import does not loosen the record
+    closed = export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=tmp_path / "closed")
+    assert not any(n.endswith("/text.txt") for n, _ in closed.files) and closed.withheld_payloads
+    assert any(n.endswith("/pages.json") for n, _ in closed.files)
+
+
+def test_a_corrupt_or_incomplete_journal_is_never_seeded_piecemeal(tmp_path):
+    import json
+
+    from hardy.foundation.journal import JournalError, verify_chain
+
+    root, lib, sha, tree, theorem, link = populated(tmp_path)
+    bundle = tmp_path / "bundle"
+    export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=bundle)
+    manifest = json.loads((bundle / "export.json").read_text(encoding="utf-8"))
+    link_files = sorted(f for f, _ in manifest["files"] if f.startswith("links/"))
+    assert len(link_files) >= 2
+    # Drop the first revision from the bundle: the remaining files are intact but the chain has a gap.
+    (bundle / link_files[0]).unlink()
+    (bundle / "export.json").write_text(json.dumps(manifest), encoding="utf-8")
+    other = ManagedLibrary(tmp_path / "other")
+    summary = import_export(other, bundle)
+    assert not any(c.startswith("links/") for c in summary.copied)
+    assert any(s.startswith("links:") and "nothing of this journal was imported" in s for s in summary.skipped)
+    assert "links" not in summary.journals_seeded and "ledger" in summary.journals_seeded
+    assert not list((tmp_path / "other" / "links").glob("*.json")) if (tmp_path / "other" / "links").exists() else True
+    assert LinkStore(tmp_path / "other" / "links").heads() == {}
+    # A corrected bundle then seeds the whole journal, because nothing partial was left behind.
+    whole = tmp_path / "whole"
+    export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=whole)
+    corrected = import_export(other, whole)
+    assert "links" in corrected.journals_seeded and LinkStore(tmp_path / "other" / "links").get(link.id) == link
+    # A tampered revision fails the chain check even when its manifest digest matches the tampered bytes.
+    tampered = tmp_path / "tampered"
+    export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=tampered)
+    victim = sorted((tampered / "ledger").glob("*.json"))[0]
+    event = json.loads(victim.read_text(encoding="utf-8"))
+    event["records"] = []
+    victim.write_text(json.dumps(event), encoding="utf-8")
+    with pytest.raises(JournalError, match="digest"):
+        verify_chain(tampered / "ledger")
+    assert verify_chain(tampered / "links") == len(link_files)

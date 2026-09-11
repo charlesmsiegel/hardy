@@ -101,12 +101,18 @@ def test_mappings_are_stored_beside_their_left_representation_and_queryable(tmp_
         id="map-text-pages", artifact_sha256=SHA, left="rep-text", right="rep-pages", partial=True, producer="test",
         pairs=((RepresentationSpan(representation="rep-text", start=0, end=10), PageRegion(page_index=0, precision="page")),),
     )
+    with pytest.raises(RepresentationError, match="unknown representation rep-pages on its right"):
+        store.add_mappings(SHA, (mapping,))  # a mapping into a coordinate system nobody holds is not provenance
+    store.admit(record("rep-pages", {"pages.json": b"[]"}, kind=RepresentationKind.PAGE_MANIFEST), {"pages.json": b"[]"})
     store.admit(record("rep-text", {"text.txt": b"Theorem 1."}), {"text.txt": b"Theorem 1."}, mappings=(mapping,))
     assert store.mappings(SHA) == (mapping,)
     assert store.mappings(SHA, left="rep-text", right="rep-pages") == (mapping,)
     assert store.mappings(SHA, right="rep-other") == ()
     with pytest.raises(RepresentationError, match="unknown representation"):
         store.admit(record("rep-2", {"text.txt": b"x"}), {"text.txt": b"x"}, mappings=(mapping.model_copy(update={"id": "m2", "left": "rep-missing"}),))
+    crossed = mapping.model_copy(update={"id": "m3", "pairs": ((RepresentationSpan(representation="rep-2", start=0, end=1), PageRegion(page_index=0)),)})
+    with pytest.raises(RepresentationError, match="names representation rep-2, not rep-text"):
+        store.add_mappings(SHA, (crossed,))
 
 
 def test_derived_representation_inherits_private_access(tmp_path):

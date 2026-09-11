@@ -156,3 +156,46 @@ def test_delivery_refuses_when_no_cut_fits_the_budget(tmp_path):
     refused = hopeless.call("read_source", {"source": sha[:12], "node": node["node"]})
     assert refused.ok is False and "does not fit the observation budget" in refused.output
     assert len(refused.output.encode("utf-8")) <= size - 8
+
+
+def test_a_subtree_seed_grants_only_that_subtree(tmp_path):
+    lib = ManagedLibrary(tmp_path / "library")
+    sha = lib.import_source(ImportRequest(data=build_pdf(book_pages(), outline=book_outline()), original_name="book.pdf")).outcome.artifact.sha256
+    tree = lib.build_tree(sha)
+    chapters = [n for n in tree.nodes if n.parent is None and n.kind.value in {"chapter", "part", "section"}]
+    assert len(chapters) >= 2
+    granted, withheld = chapters[0], chapters[1]
+    inside = [n for n in tree.nodes if n.parent == granted.id]
+    outside = [n for n in tree.nodes if n.parent == withheld.id]
+    assert inside and outside
+    problem = tmp_path / "problem"
+    store = SeedStore(problem)
+    store.add(new_seed(sha, tree=tree.id, subtree=granted.id, intent="one chapter only"), expected_revision=0)
+    runtime = build_runtime(problem, library=lib)
+    listed = json.loads(runtime.call("list_sources", {}).output)["sources"][0]
+    shown = [e["node"] for e in listed["map"]]
+    assert listed["subtree"] == granted.id and granted.id in shown and withheld.id not in shown and not any(n.id in shown for n in outside)
+    source_map = json.loads(runtime.call("source_map", {"source": sha[:12], "depth": 2}).output)
+    nodes = {e["node"] for e in source_map["entries"]}
+    assert granted.id in nodes and withheld.id not in nodes and not any(n.id in nodes for n in outside)
+    assert runtime.call("source_map", {"source": sha[:12], "node": withheld.id}).ok is False
+    assert runtime.call("read_source", {"source": sha[:12], "node": outside[0].id}).ok is False
+    assert "outside the seeded subtree" in runtime.call("read_source", {"source": sha[:12], "node": outside[0].id}).output
+    assert runtime.call("show_source_region", {"source": sha[:12], "node": outside[0].id}).ok is False
+    assert runtime.call("read_source", {"source": sha[:12], "node": inside[0].id}).ok
+    found = json.loads(runtime.call("find_source_statements", {"source": sha[:12], "kind": "theorem"}).output)["statements"]
+    assert found and all(str(n["number"]).startswith("1.") for n in found)  # chapter 2 is not searched
+    hits = json.loads(runtime.call("search_source", {"source": sha[:12], "query": "Theorem"}).output)["hits"]
+    assert hits and not any(h["node"] in {n.id for n in outside} for h in hits)
+
+
+def test_proof_reads_resume_at_the_offset(tmp_path):
+    long_proof = "Proof. " + " ".join(f"step{i}" for i in range(200)) + " Q.E.D."
+    pages = [Page((("Theorem 9.1. A long one.", 72, 720), (long_proof, 72, 700)))]
+    runtime, sha = seeded(tmp_path, pages=pages, observation_bytes=1_600)
+    (node,) = json.loads(runtime.call("find_source_statements", {"source": sha[:12], "number": "9.1"}).output)["statements"]
+    first = json.loads(runtime.call("read_source", {"source": sha[:12], "node": node["node"], "part": "proof"}).output)
+    assert first["truncated"] and first["text"].startswith("Proof.") and first["total_characters"] > len(first["text"])
+    second = json.loads(runtime.call("read_source", {"source": sha[:12], "node": node["node"], "part": "proof", "start": len(first["text"])}).output)
+    assert second["node"] == first["node"] and not second["text"].startswith("Proof.") and second["text"]
+    assert second["text"] != first["text"]

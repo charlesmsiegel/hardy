@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import tarfile
 
@@ -30,7 +31,7 @@ MAIN = b"\\documentclass{article}\n\\begin{document}\n\\section{Entropy}\n\\begi
 
 def bundle(*members):
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
         for name, content in members:
             info = tarfile.TarInfo(name)
             info.size = len(content)
