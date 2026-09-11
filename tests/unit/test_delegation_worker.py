@@ -127,8 +127,8 @@ def test_no_finish_call_is_partial_and_calls_after_finish_are_refused(tmp_path):
     assert quiet.status is DelegationState.PARTIAL and quiet.terminal_reason == "no_finish_call"
 
 
-def test_worker_tools_are_the_two_named_functions():
-    assert [spec["function"]["name"] for spec in WORKER_TOOLS] == ["propose_finding", "finish"]
+def test_worker_tools_are_the_named_functions():
+    assert [spec["function"]["name"] for spec in WORKER_TOOLS][:2] == ["propose_finding", "finish"]
     assert all(spec["function"]["parameters"]["additionalProperties"] is False for spec in WORKER_TOOLS)
 
 

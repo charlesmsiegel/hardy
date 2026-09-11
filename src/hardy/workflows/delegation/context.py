@@ -16,7 +16,7 @@ calls a provider or writes the ledger.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import Enum
 from typing import Literal
 
@@ -121,6 +121,9 @@ class ContextPolicy(FrozenModel):
     hidden_refs: tuple[VersionRef, ...] = ()
     pinned_refs: tuple[VersionRef, ...] = ()
     excluded_refs: tuple[VersionRef, ...] = ()
+    #: Sources made prominent at launch as pointers with an index line; their
+    #: text is retrieved lazily, never pasted wholesale.
+    seeded_sources: tuple[str, ...] = ()
 
     def hides(self, ref: VersionRef) -> bool:
         return ref.id in self.hidden_ids or ref in self.hidden_refs
@@ -360,17 +363,31 @@ def candidate_pool(snapshot: LedgerSnapshot, target: VersionRef, policy: Context
     return tuple(pool.values())
 
 
+def seeded_items(policy: ContextPolicy, sources: Mapping[str, str] | None) -> tuple[ContextItem, ...]:
+    """A seeded source is prominent as a pointer plus its index line; the body stays behind read_source."""
+    items = []
+    for paper_id in policy.seeded_sources:
+        index = (sources or {}).get(paper_id, "(no index available)")
+        text = f"seeded source {paper_id}: {index} — retrieve exact text with read_source"
+        items.append(ContextItem(source=paper_id, kind="source", resolution=ContextResolution.POINTER,
+                                 inclusion_reason="seeded by the user", selected_by="user",
+                                 trust="source lead; not evidence", estimated_tokens=estimate_tokens(text),
+                                 text=text))
+    return tuple(items)
+
+
 def fit_to_budget(mandatory: tuple[ContextItem, ...], candidates: tuple[ContextItem, ...],
                   policy: ContextPolicy, *, already_preloaded: frozenset[VersionRef] = frozenset(),
-                  ) -> tuple[tuple[ContextItem, ...], bool]:
-    """Stage E: the kernel always; then pins; then novel candidates; then the rest."""
+                  seeded: tuple[ContextItem, ...] = ()) -> tuple[tuple[ContextItem, ...], bool]:
+    """Stage E: the kernel always; then seeds and pins; then novel candidates; then the rest."""
     used = sum(item.estimated_tokens for item in mandatory)
     overflow = used > policy.preload_tokens
     chosen = list(mandatory)
     pinned = set(policy.pinned_refs)
     ordered = (
-        [item.model_copy(update={"selected_by": "user", "inclusion_reason": "pinned by the user or parent"})
-         for item in candidates if item.ref in pinned]
+        list(seeded)
+        + [item.model_copy(update={"selected_by": "user", "inclusion_reason": "pinned by the user or parent"})
+           for item in candidates if item.ref in pinned]
         + [item for item in candidates if item.ref not in pinned and item.ref not in already_preloaded]
         + [item.model_copy(update={"inclusion_reason": item.inclusion_reason + "; also preloaded by a sibling"})
            for item in candidates if item.ref not in pinned and item.ref in already_preloaded]
@@ -388,7 +405,8 @@ Planner = Callable[[tuple[ContextItem, ...]], tuple[ContextItem, ...]]
 
 def build_working_set(store: LedgerStore, target: VersionRef, scope: VersionRef, brief: ResearchBrief,
                       policy: ContextPolicy, *, portfolio: tuple[ContextManifest, ...] = (),
-                      planner: Planner | None = None) -> InitialWorkingSet:
+                      planner: Planner | None = None,
+                      sources: Mapping[str, str] | None = None) -> InitialWorkingSet:
     """Stages A-E over one snapshot. Routine jobs use no model; a planner only reorders candidates."""
     snapshot = store.read()
     mandatory = mandatory_kernel(snapshot, target, scope, policy)
@@ -404,7 +422,8 @@ def build_working_set(store: LedgerStore, target: VersionRef, scope: VersionRef,
     sibling_preloads = frozenset(
         item.ref for manifest in portfolio for item in manifest.included_items
         if item.ref is not None and item.selected_by != "mandatory" and item.preload)
-    items, overflow = fit_to_budget(mandatory, candidates, policy, already_preloaded=sibling_preloads)
+    items, overflow = fit_to_budget(mandatory, candidates, policy, already_preloaded=sibling_preloads,
+                                    seeded=seeded_items(policy, sources))
     return InitialWorkingSet(
         items=items, structural_map=structural_map(snapshot, target), budget_tokens=policy.preload_tokens,
         overflow=overflow, selection=selection, project_revision=snapshot.revision,

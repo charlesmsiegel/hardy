@@ -97,6 +97,7 @@ def writeup_prompt(*, verified: bool) -> str:
     return render("staged/writeup", verified=verified)
 STRUCTURE_INSTRUCTION = "\n\n" + render("staged/structure") + "\n"
 CHAT_SYSTEM_PROMPT = render("chat")
+DELEGATION_WORKER_PROMPT = render("delegation_worker")
 #: What the independent reader of an assumed paper statement is told, and
 #: nothing else -- no tools, no session history, no account of how the
 #: translation was arrived at. See `hardy.workflows.interactive.session._review_assumption`.

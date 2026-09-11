@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from hardy.agents.executor import (
@@ -25,6 +25,8 @@ from hardy.agents.executor import (
     WorkerHandle,
     WorkerJob,
 )
+from hardy.literature.metadata import ArxivError, parse_id
+from hardy.workflows.contracts import RunPhase
 from hardy.workflows.delegation.attention import AttentionInbox
 from hardy.workflows.delegation.budget import LeaseLedger, grant
 from hardy.workflows.delegation.context import (
@@ -43,10 +45,14 @@ from hardy.workflows.delegation.contracts import (
     WorkerResult,
 )
 from hardy.workflows.delegation.diversity import assign_briefs
+from hardy.workflows.delegation.retrieval import VisibilityPolicy, WorkerRetriever
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
 from hardy.workflows.delegation.worker import OpenWorker, WorkerLaunch, run_worker
 from hardy.workflows.ledger.contracts import VersionRef
 from hardy.workflows.ledger.store import LedgerStore
+
+if TYPE_CHECKING:
+    from hardy.literature.tools import PaperToolRuntime
 
 #: The synthetic node every user-created job hangs from; it owns the root ceilings.
 ROOT_ID = "root"
@@ -70,10 +76,12 @@ class RootResources:
 class DelegationController:
     def __init__(self, store: DelegationStore, ledger: LedgerStore, *, executor: WorkerExecutor,
                  open_worker: OpenWorker, root: RootResources, notify: Callable[[str], None],
-                 clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+                 clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+                 papers: PaperToolRuntime | None = None) -> None:
         self.store = store
         self.ledger = ledger
         self.executor = executor
+        self.papers = papers
         self._open_worker = open_worker
         self.root = root
         self._notify = notify
@@ -167,7 +175,9 @@ class DelegationController:
         # One worker is the direct role; its framing carries the objective as asked.
         (brief,) = assign_briefs(target, 1, task_mode=spec.task_mode, model=spec.model)
         brief = brief.model_copy(update={"framing": f"{brief.framing} Objective: {spec.objective}"})
-        working = build_working_set(self.ledger, target, spec.scope, brief, ContextPolicy())
+        policy = ContextPolicy(hidden_ids=spec.hidden_ids, seeded_sources=spec.seeded_sources)
+        working = build_working_set(self.ledger, target, spec.scope, brief, policy,
+                                    sources=self._source_index(spec.seeded_sources))
         with self._lock:
             self._ensure_root(spec.scope)
             parent = parent_id or ROOT_ID
@@ -195,12 +205,31 @@ class DelegationController:
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
+            retriever = WorkerRetriever(
+                self.ledger, self.papers, VisibilityPolicy(hidden_ids=spec.hidden_ids),
+                record=lambda event, store=artifacts: store.append(event["kind"], event["payload"],
+                                                                   phase=RunPhase.PROVING))
             launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
-                                  model=spec.model, store=artifacts, lease=lease)
+                                  model=spec.model, store=artifacts, lease=lease, retriever=retriever)
             handle = self.executor.submit(WorkerJob(id, lambda token, launch=launch: self._run(launch, token)))
             self._handles[id] = handle
             handle.add_done_callback(self._settle)
             return self.tree().get(id)
+
+    def _source_index(self, paper_ids: tuple[str, ...]) -> dict[str, str]:
+        """One index line per seeded source the library holds; never the body."""
+        index: dict[str, str] = {}
+        if self.papers is None:
+            return index
+        for paper_id in paper_ids:
+            try:
+                record = self.papers.library.read(parse_id(paper_id))
+            except (ArxivError, OSError, ValueError):
+                continue
+            authors = ", ".join(record.authors[:3]) + (" et al." if len(record.authors) > 3 else "")
+            abstract = " ".join(record.abstract.split())
+            index[paper_id] = f"{record.title} ({authors}): {abstract[:200]}"
+        return index
 
     def _run(self, launch: WorkerLaunch, token: CancelToken) -> WorkerResult:
         id = launch.delegation_id
@@ -222,7 +251,6 @@ class DelegationController:
         """Whatever the job did or failed to do, the journal ends up terminal and released."""
         with self._lock:
             id = handle.name
-            self._handles.pop(id, None)
             tree = self.tree()
             delegation = tree.get(id)
             if not delegation.terminal:
@@ -238,6 +266,8 @@ class DelegationController:
                 self._after_terminal(id, event)
             elif not LeaseLedger(tree).released(id):
                 self.store.release(id)
+            # Last, so `wait` sees a settled journal once the handle is gone.
+            self._handles.pop(id, None)
 
     def _after_terminal(self, id: str, event: DelegationEvent) -> None:
         self.store.release(id)
@@ -259,7 +289,9 @@ class DelegationController:
                 if handle is not None:
                     handle.cancel()
                 delegation = self.tree().get(node)
-                if delegation.state is DelegationState.CANCELLED and handle is None:
+                if delegation.state is DelegationState.CANCELLED:
+                    # Queued work the store cancelled outright: settle it now
+                    # rather than when the executor gets round to refusing it.
                     event = next(e for e in reversed(self.store.events())
                                  if e.delegation_id == node and e.kind == "delegation.cancelled")
                     self._after_terminal(node, event)
@@ -270,7 +302,7 @@ class DelegationController:
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             delegation = self.tree().get(id)
-            if delegation.terminal and (id not in self._handles or self._handles[id].done()):
+            if delegation.terminal and id not in self._handles:
                 return delegation
             if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError(f"delegation {id} did not finish within {timeout}s")

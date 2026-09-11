@@ -550,7 +550,7 @@ class MathematicsSession:
             root=RootResources(lease=ResourceLease(official_checks=self.limits.official_checks,
                                                    active_seconds=float(self.limits.active_seconds)),
                                slots=delegation_slots),
-            notify=self._notify,
+            notify=self._notify, papers=self.papers,
         )
         # Work that was active when the last process died is unknown, not done.
         self.delegations.recover()

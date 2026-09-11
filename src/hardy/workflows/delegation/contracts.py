@@ -158,6 +158,11 @@ class DelegationSpec(FrozenModel):
     model: str | None = None
     created_by: Text
     notify_human: bool = True
+    #: Isolation, enforced at preload and at every retrieval: stable ids this
+    #: delegation and its descendants may never see.
+    hidden_ids: tuple[str, ...] = ()
+    #: Sources made prominent at launch as pointers; their text stays lazy.
+    seeded_sources: tuple[str, ...] = ()
 
     @property
     def digest(self) -> str:

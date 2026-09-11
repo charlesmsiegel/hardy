@@ -21,6 +21,7 @@ from hardy.agents.contracts import ChatRuntime
 from hardy.agents.executor import CancelToken, WorkerCancelled
 from hardy.agents.usage import Usage
 from hardy.foundation.values import ToolResult
+from hardy.prompts import DELEGATION_WORKER_PROMPT
 from hardy.workflows.contracts import RunPhase
 from hardy.workflows.delegation.contracts import (
     DelegationState,
@@ -29,20 +30,23 @@ from hardy.workflows.delegation.contracts import (
     WorkerResult,
 )
 from hardy.workflows.delegation.findings import Finding
+from hardy.workflows.delegation.retrieval import WorkerRetriever
 from hardy.workflows.storage import RunStore
 
-WORKER_SYSTEM_PROMPT = (
-    "You are a Hardy delegation worker. You receive one exact mathematical target and a "
-    "research brief. Work on the target only; the statement is fixed and you may not change it. "
-    "Record every useful discovery with `propose_finding` (a finding is a proposal, not project "
-    "truth) and end your work with exactly one `finish` call stating completed, partial or failed "
-    "with a short synthesis for the mathematician. Nothing you say outside `finish` is reported."
-)
+#: The worker's system prompt, kept with every other prompt under hardy/prompts.
+WORKER_SYSTEM_PROMPT = DELEGATION_WORKER_PROMPT
 
 WORKER_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "propose_finding", "description": "Record one structured discovery: a candidate lemma, reduction, counterexample, computation, literature lead, obstruction, failed approach, strategy, question or note. Proposing a finding never resolves anything; it is provenance the mathematician can inspect.", "parameters": {"type": "object", "properties": {"kind": {"type": "string"}, "summary": {"type": "string"}, "payload": {"type": "string"}, "related_refs": {"type": "array", "items": {"type": "string"}}}, "required": ["kind", "summary", "payload"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "finish", "description": "End this delegation with a terminal status (completed, partial or failed) and a short synthesis. Call it exactly once; nothing after it is accepted.", "parameters": {"type": "object", "properties": {"status": {"type": "string"}, "synthesis": {"type": "string"}}, "required": ["status", "synthesis"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_project", "description": "Search the current project ledger by keywords: items, their statements and their trust status as the ledger records it. New results proved since you were launched are visible here; your assigned target does not change.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "kind": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_item", "description": "Read one project item exactly, by id or id@digest: its statement, trust status and dependencies.", "parameters": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_neighborhood", "description": "What one project item depends on and what depends on it, one step out.", "parameters": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_literature", "description": "Search the literature for leads. State your intent (matching conclusions, matching hypotheses, counterexamples, stronger theorems, analogues, surveys); leads are pointers and abstracts, never evidence.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "intent": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query", "intent"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_source", "description": "Read a bounded window of one paper's exact text by its versioned id, fetching it first if needed. `start_line` pages; `file` names one source file once the source bundle is held.", "parameters": {"type": "object", "properties": {"paper_id": {"type": "string"}, "start_line": {"type": "integer"}, "file": {"type": "string"}}, "required": ["paper_id"], "additionalProperties": False}}},
 ]
+
+RETRIEVAL_TOOLS = frozenset({"read_project", "read_item", "read_neighborhood", "search_literature", "read_source"})
 
 FINISH_STATUSES = {
     "completed": DelegationState.COMPLETED,
@@ -58,6 +62,7 @@ class WorkerLaunch:
     model: str | None
     store: RunStore
     lease: ResourceLease
+    retriever: WorkerRetriever | None = None
 
 
 @dataclass(frozen=True)
@@ -104,7 +109,27 @@ class _WorkerState:
                 return ToolResult(False, "finish requires status completed, partial or failed")
             self.finished = (status, str(arguments.get("synthesis") or ""))
             return ToolResult(True, f"delegation {self.launch.delegation_id} finished {status.value}")
+        if name in RETRIEVAL_TOOLS:
+            return self.retrieve(name, arguments)
         return ToolResult(False, f"unknown tool: {name}")
+
+    def retrieve(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        retriever = self.launch.retriever
+        if retriever is None:
+            return ToolResult(False, "retrieval is not available to this delegation")
+        if name == "read_project":
+            return retriever.project(str(arguments["query"]), kind=arguments.get("kind"),
+                                     limit=int(arguments.get("limit", 10) or 10))
+        if name == "read_item":
+            return retriever.item(str(arguments["selector"]))
+        if name == "read_neighborhood":
+            return retriever.neighborhood(str(arguments["selector"]))
+        if name == "search_literature":
+            return retriever.literature(str(arguments["query"]), intent=str(arguments.get("intent") or ""),
+                                        limit=int(arguments.get("limit", 10) or 10))
+        file = arguments.get("file")
+        return retriever.source_text(str(arguments["paper_id"]), int(arguments.get("start_line", 1) or 1),
+                                     None if file is None else str(file))
 
 
 def _usage_of(usage: Usage | None, *, exchanges: int, seconds: float) -> ResourceUsage:
