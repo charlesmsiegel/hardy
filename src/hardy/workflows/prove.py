@@ -1119,6 +1119,18 @@ class ProveWorkflow:
             },
             phase=state.phase,
         )
+        # Closed here, before the directory is hashed, and not only in `_run`'s
+        # `finally`. The manifest is the inventory of the run directory, and the
+        # runtime still has things in it until it closes: the CAS session's
+        # export lands on close, and its cell log is leased until then. On
+        # Windows that lease is a mandatory byte-range lock, so reading the
+        # lock file from any other handle -- which is what hashing it is --
+        # raised `PermissionError`, and every run that had opened a CAS
+        # session crashed on its way out. The `finally` stays as the net for a
+        # finalization that raises before this line; `close` is idempotent.
+        runtime = self._runtime_in_flight
+        if runtime is not None and hasattr(runtime, "close"):
+            runtime.close()
         artifacts = _artifact_hashes(store.path)
         manifest = RunManifest(
             run_id=store.run_id,
