@@ -128,8 +128,12 @@ class ArtifactStore:
 
     # --- reading ------------------------------------------------------------
 
+    def known(self, sha256: str) -> bool:
+        """Whether this library has a record of the artifact, with or without its bytes."""
+        return (self._dir(sha256) / RECORD).is_file()
+
     def record(self, sha256: str) -> SourceArtifact:
-        if not self.holds(sha256):
+        if not self.known(sha256):
             raise ArtifactError(f"artifact {sha256} is unavailable in this library")
         try:
             record = SourceArtifact.model_validate_json(read_text(self.root, f"{sha256}/{RECORD}"))
@@ -231,6 +235,16 @@ class ArtifactStore:
         """Stage beside the target and rename; True when this call admitted it."""
         root = WriteGuard(self.root, create=True)
         target = root.reserve(artifact.sha256)
+        if (target / RECORD).is_file() and not (target / CONTENT).is_file():
+            # The record and provenance arrived without bytes (a portable
+            # export imported on another machine). The exact digest is now
+            # being imported: restore the bytes under the identity that was
+            # already recorded rather than minting anything.
+            held = self.record(artifact.sha256)
+            if held.sha256 != artifact.sha256:
+                raise ArtifactError(f"artifact {artifact.sha256} record names a different digest")
+            WriteGuard(target).write_bytes(CONTENT, data)
+            return True
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=root.directory))
         try:
             (staging / CONTENT).write_bytes(data)
