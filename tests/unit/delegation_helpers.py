@@ -18,6 +18,9 @@ def seed_lemma(project, *, id="L17", statement="The generic fiber is geometrical
     if not store.read().records:
         store.append((c.Scope(id="scope"),), expected_revision=0)
         ContextManager(store).create_root(id="ambient", label="Ambient")
+    snapshot = store.read()
+    if any(record.id == id for record in snapshot.records):
+        return snapshot.head(id)
     flow = ExploreWorkflow(store)
     return flow.record_item(id=id, kind=c.ProjectItemKind.LEMMA, name=f"Lemma {id}", statement=statement)
 
