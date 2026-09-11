@@ -7,16 +7,17 @@ import sys
 from pathlib import Path
 
 import pytest
-from pdf_helpers import book_pages, build_pdf
-from test_chat import FakeChatRuntime, factory
-
-from hardy.literature.sources import tools as source_tools
-from hardy.literature.sources.artifacts import ImportRequest
-from hardy.literature.sources.library import ManagedLibrary
-from hardy.literature.sources.seeds import SeedStore, new_seed
-from hardy.workflows.interactive.session import CHAT_TOOLS, MathematicsSession
 
 sys.path.insert(0, str(Path(__file__).with_name("unit")))
+
+from pdf_helpers import book_pages, build_pdf  # noqa: E402
+from test_chat import FakeChatRuntime, factory  # noqa: E402
+
+from hardy.literature.sources import tools as source_tools  # noqa: E402
+from hardy.literature.sources.artifacts import ImportRequest  # noqa: E402
+from hardy.literature.sources.library import ManagedLibrary  # noqa: E402
+from hardy.literature.sources.seeds import SeedStore, new_seed  # noqa: E402
+from hardy.workflows.interactive.session import CHAT_TOOLS, MathematicsSession  # noqa: E402
 
 
 @pytest.fixture

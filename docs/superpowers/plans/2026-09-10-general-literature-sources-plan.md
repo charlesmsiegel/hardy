@@ -621,65 +621,77 @@ Derived, model-free measures: per-artifact extraction coverage and quality statu
 
 ## Acceptance criteria checklist
 
+Every test named below is hermetic and lives under `tests/unit/` or `tests/`; all 58 criteria are implemented and tested on this branch.
+
 | # | Criterion (short) | Slice | Modules | Tests | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Local PDF copied into managed storage; reads independent of original path | A | artifacts.py | test_import_copies_bytes_and_reads_do_not_touch_original_path | planned |
-| 2 | Re-import identical bytes reuses artifact, adds provenance | A | artifacts.py | test_same_bytes_from_two_paths_is_one_artifact_with_two_provenance_records | planned |
-| 3 | Different bytes never collapse on metadata | A, B | artifacts.py, catalog.py | test_same_metadata_different_bytes_are_separate_artifacts | planned |
-| 4 | Proposed same-edition grouping is not authoritative without evidence | B | catalog.py | test_same_title_and_year_is_only_a_candidate | planned |
-| 5 | Interrupted import leaves no readable artifact | A | artifacts.py | test_interrupted_import_leaves_no_readable_artifact | planned |
-| 6 | Private bytes absent from project repository state | G, L | seeds.py, export.py | test_seed_store_holds_refs_only_no_bytes | planned |
-| 7 | Born-digital PDF: native text plus page/bbox mappings | D | pdf.py | test_native_text_carries_page_and_origin_mappings | planned |
-| 8 | Scan: OCR plus image-region mappings and confidence | P | ocr.py | test_scan_exposes_page_images_and_ocr_with_confidence_and_mappings | planned |
-| 9 | EPUB/HTML DOM and spine preserved, text maps back | N | epub.py | test_epub_preserves_spine_and_maps_text_to_dom | planned |
-| 10 | TeX import preserves file identity and includes, never executes | O | tex.py | test_tex_tree_import_preserves_file_digests_and_includes, test_tex_ingest_never_executes_or_compiles | planned |
-| 11 | Multiple representations coexist, no forced merge | C | representations.py | test_two_representations_coexist_without_a_canonical_merge | planned |
-| 12 | Offsets need their exact representation | C | locators.py | test_offsets_cannot_resolve_against_a_different_representation | planned |
-| 13 | Printed labels and page indices separately queryable | C, D | representations.py, pdf.py | test_page_index_and_printed_label_are_distinct_queries | planned |
-| 14 | Lazy enrichment on one weak region | P | library.py, ocr.py | test_enrichment_runs_on_one_region_only | planned |
-| 15 | Optional extraction failure leaves artifact and text usable | D, P | library.py | test_extraction_failure_leaves_artifact_admitted_with_diagnostics | planned |
-| 16 | Every excerpt carries provenance and truncation/quality | G | reading.py | test_every_delivery_carries_provenance_and_truncation | planned |
-| 17 | Tree bound to one artifact; PDF and EPUB separate | E, N | trees.py | test_trees_for_pdf_and_epub_of_one_edition_are_separate | planned |
-| 18 | Native TeX/EPUB structure builds a tree without a model | E, N, O | observations.py, tex.py, epub.py | test_native_outline_builds_sections_without_a_model and adapter tests | planned |
-| 19 | Partial/unknown regions admitted, no invented classification | E | trees.py | test_partial_structure_is_admitted_with_unknown_regions | planned |
-| 20 | Model repair bounded to provided material, anchored proposals | F | repair.py | test_repair_outside_window_is_refused | planned |
-| 21 | Validation rejects unmapped spans and cycles | E | trees.py | test_cycle_is_rejected, test_span_outside_representation_is_rejected | planned |
-| 22 | Refined tree keeps unchanged node identities | E | trees.py | test_refined_tree_keeps_unchanged_node_identity | planned |
-| 23 | Historical links resolve to old tree versions | E, H | trees.py, claims.py | test_old_tree_and_nodes_remain_readable_after_preference_moves | planned |
-| 24 | Cross-artifact identity needs explicit correspondence | E | trees.py | test_correspondence_is_required_for_cross_artifact_identity | planned |
-| 25 | Statement and proof independently retrievable | E, G | trees.py, reading.py | test_statement_and_proof_are_separate_nodes | planned |
-| 26 | "By Proposition 4.7" is a source edge, not dependency | E | observations.py, trees.py | test_reference_edges_do_not_assert_dependency | planned |
-| 27 | Candidate interpretation creates no reusable link automatically | H | claims.py | test_candidate_interpretation_creates_no_reusable_link | planned |
-| 28 | Admission records faithfulness and mappings | H | claims.py | test_admission_records_faithfulness_and_mappings | planned |
-| 29 | Two nodes link one claim with separate spans | H | claims.py | test_two_nodes_link_to_one_claim_with_separate_spans | planned |
-| 30 | Ambiguous interpretations coexist | H | claims.py | test_ambiguous_interpretations_coexist | planned |
-| 31 | Near-duplicates stay distinct and clustered | H | ledger.py | test_fuzzy_match_cannot_merge_claims | planned |
-| 32 | Stronger/weaker pair as separate claims with relation | H | ledger.py | test_stronger_weaker_pair_stays_separate_with_relation | planned |
-| 33 | Shared claims use ledger/evidence semantics | H | ledger.py | test_shared_claims_use_ledger_policy_and_reject_contextual_items | planned |
-| 34 | Mathlib and Hardy shared realizations as distinct records | I | realizations.py | test_one_claim_can_have_mathlib_and_shared_realizations | planned |
-| 35 | Mathlib matching checks exact declaration before attachment | I | realizations.py | test_candidate_matching_records_exact_type_before_attachment | planned |
-| 36 | Unimportable realization rejected or flagged | I | realizations.py | test_stale_environment_is_flagged_not_delivered | planned |
-| 37 | Verified theorem can stay project-local | I | realizations.py | test_project_local_realization_is_not_importable_elsewhere | planned |
-| 38 | Promotion computes reusable dependency closure | J | promotion.py | test_closure_promotes_reusable_project_lemma_and_keeps_mathlib_import | planned |
-| 39 | Project-local dependency blocks or generates work | J | promotion.py | test_project_local_axiom_blocks_promotion | planned |
-| 40 | Promotion stages and verifies before admission | J | promotion.py | test_promotion_builds_in_a_shadow_before_admission | planned |
-| 41 | Later project imports promoted realization without source workspace | J | promotion.py, reuse.py | test_promoted_realization_is_retrievable_from_another_project_without_the_source_workspace | planned |
-| 42 | Meaning-changing updates create new realization identity | J | realizations.py | test_meaning_change_creates_new_realization_with_supersession | planned |
-| 43 | Later project reuses formalized claim without new proof | J | reuse.py | test_second_project_reuses_promoted_claim_without_new_formalization | planned |
-| 44 | Book edition cited through controlled bibliography path | K | bibliography.py | test_book_edition_cited_through_controlled_path | planned |
-| 45 | PDF and EPUB of one edition share an entry with both digests | K | bibliography.py | test_pdf_and_epub_of_one_edition_share_one_entry_with_both_digests | planned |
-| 46 | Distinct editions do not deduplicate on title/DOI | B, K | catalog.py, bibliography.py | test_distinct_editions_do_not_deduplicate_on_title | planned |
-| 47 | Stable order-independent cite keys | K | bibliography.py | test_edition_cite_key_is_order_independent | planned |
-| 48 | Seeding exposes compact map and lazy retrieval | G | reading.py, seeds.py | test_seeding_exposes_a_compact_map_not_the_text | planned |
-| 49 | Search distinguishes exact, related and unverified | G, I | reading.py, reuse.py | test_resolver_distinguishes_exact_related_and_candidate | planned |
-| 50 | Shared existence does not change project trust scope | H | ledger.py | test_shared_existence_does_not_widen_project_scope | planned |
-| 51 | Source-backed evidence keeps span provenance beside Lean realization | H, I | claims.py | test_source_evidence_keeps_span_provenance_when_lean_realization_exists | planned |
-| 52 | Metadata export omits private bytes, keeps digests | L | export.py | test_metadata_export_omits_private_bytes_but_keeps_digests | planned |
-| 53 | Missing bytes: refs identifiable, reads unavailable | A, G, L | artifacts.py, reading.py | test_missing_artifact_reports_unavailable_not_absent_identity | planned |
-| 54 | Importing the missing digest restores reads without reminting | L | artifacts.py, export.py | test_reimporting_exact_digest_restores_reads_without_new_identity | planned |
-| 55 | Private derivatives inherit restrictive handling | C, L | representations.py, export.py | test_derived_representation_inherits_private_access | planned |
-| 56 | Restart preserves authoritative records; indexes rebuild | L | index.py, all stores | test_restart_preserves_artifacts_trees_links_realizations_promotions | planned |
-| 57 | Concurrency never last-writer-wins | A, B, H | journal.py, artifacts.py | test_concurrent_identical_imports_coalesce, test_concurrent_decisions_do_not_last_writer_win | planned |
-| 58 | Failed promotion leaves no admitted realization | J | promotion.py | test_failed_build_leaves_no_shared_module_or_realization | planned |
+| 1 | Local PDF copied into managed storage; reads independent of original path | A | artifacts.py | test_source_artifacts: test_import_copies_bytes_and_reads_do_not_touch_original_path | implemented |
+| 2 | Re-import identical bytes reuses artifact, adds provenance | A | artifacts.py | test_source_artifacts: test_same_bytes_from_two_paths_is_one_artifact_with_two_provenance_records | implemented |
+| 3 | Different bytes never collapse on metadata | A, B | artifacts.py, catalog.py | test_source_artifacts: test_same_metadata_different_bytes_are_separate_artifacts; test_source_catalog: test_two_artifacts_under_one_edition_stay_distinct_artifacts | implemented |
+| 4 | Proposed same-edition grouping is not authoritative without evidence | B | catalog.py | test_source_catalog: test_same_title_and_year_is_only_a_candidate; test_managed_library: test_import_admits_extracts_and_proposes_without_grouping | implemented |
+| 5 | Interrupted import leaves no readable artifact | A | artifacts.py | test_source_artifacts: test_interrupted_import_leaves_no_readable_artifact | implemented |
+| 6 | Private bytes absent from project repository state | G, L | seeds.py, export.py | test_source_seeds: test_seed_store_holds_refs_only_no_bytes; test_chat_sources: test_a_seeded_source_is_readable_and_an_unseeded_one_is_not | implemented |
+| 7 | Born-digital PDF: native text plus page/bbox mappings | D | pdf.py | test_source_pdf: test_native_text_carries_page_and_origin_mappings | implemented |
+| 8 | Scan: OCR plus image-region mappings and confidence | P | ocr.py | test_source_ocr: test_scan_exposes_page_images_and_ocr_with_confidence_and_mappings | implemented |
+| 9 | EPUB/HTML DOM and spine preserved, text maps back | N | epub.py | test_source_epub: test_epub_preserves_spine_and_maps_text_to_dom | implemented |
+| 10 | TeX import preserves file identity and includes, never executes | O | tex.py | test_source_tex: test_tex_tree_import_preserves_file_digests_and_includes, test_tex_ingest_never_executes_or_compiles | implemented |
+| 11 | Multiple representations coexist, no forced merge | C | representations.py | test_source_representations: test_two_representations_coexist_without_a_canonical_merge | implemented |
+| 12 | Offsets need their exact representation | C | locators.py | test_source_locators: test_offsets_cannot_resolve_against_a_different_representation | implemented |
+| 13 | Printed labels and page indices separately queryable | C, D | representations.py, pdf.py | test_source_representations: test_page_index_and_printed_label_are_distinct_queries; test_source_pdf: test_page_labels_are_recorded_only_when_declared | implemented |
+| 14 | Lazy enrichment on one weak region | P | library.py, ocr.py | test_source_ocr: test_enrichment_runs_on_one_region_only, test_clean_pdf_has_no_weak_regions_so_no_ocr_runs | implemented |
+| 15 | Optional extraction failure leaves artifact and text usable | D, P | library.py | test_managed_library: test_extraction_failure_leaves_artifact_admitted_with_diagnostics, test_optional_pass_failure_keeps_text_usable_and_records_diagnostics; test_source_ocr: test_ocr_failure_leaves_native_representation_usable | implemented |
+| 16 | Every excerpt carries provenance and truncation/quality | G | reading.py, tools.py | test_source_reading: test_every_delivery_carries_provenance_and_truncation; test_source_tools: test_read_carries_provenance_and_is_bounded | implemented |
+| 17 | Tree bound to one artifact; PDF and EPUB separate | E, N | trees.py | test_source_trees: test_trees_for_two_artifacts_of_one_edition_are_separate; test_source_epub: test_epub_tree_is_separate_from_pdf_tree_of_same_edition | implemented |
+| 18 | Native TeX/EPUB structure builds a tree without a model | E, N, O | observations.py, tex.py, epub.py | test_source_trees: test_native_outline_builds_sections_without_a_model; test_source_tex: test_tex_environments_build_tree_without_model; test_source_epub: test_epub_headings_build_tree_without_model | implemented |
+| 19 | Partial/unknown regions admitted, no invented classification | E | trees.py | test_source_trees: test_partial_structure_is_admitted_with_unknown_regions, test_numbering_gap_creates_a_diagnostic_not_nodes | implemented |
+| 20 | Model repair bounded to provided material, anchored proposals | F | repair.py | test_source_repair: test_repair_outside_window_is_refused, test_repair_creates_a_new_tree_version_with_anchors_and_provenance | implemented |
+| 21 | Validation rejects unmapped spans and cycles | E | trees.py | test_source_trees: test_cycle_is_rejected, test_span_outside_representation_is_rejected, test_digest_drift_and_bad_edges_are_rejected | implemented |
+| 22 | Refined tree keeps unchanged node identities | E | trees.py | test_source_trees: test_refined_tree_keeps_unchanged_node_identity | implemented |
+| 23 | Historical links resolve to old tree versions | E, H | trees.py, claims.py | test_shared_claims: test_new_preferred_tree_marks_links_review_needed_not_deleted; test_source_trees: test_refined_tree_keeps_unchanged_node_identity | implemented |
+| 24 | Cross-artifact identity needs explicit correspondence | E | trees.py | test_source_trees: test_correspondence_is_required_for_cross_artifact_identity | implemented |
+| 25 | Statement and proof independently retrievable | E, G | trees.py, reading.py | test_source_trees: test_statement_and_proof_are_separate_nodes_with_a_proof_of_edge; test_source_reading: test_proof_and_statement_are_independently_retrievable | implemented |
+| 26 | "By Proposition 4.7" is a source edge, not dependency | E | observations.py, trees.py | test_source_trees: test_reference_edges_do_not_assert_dependency | implemented |
+| 27 | Candidate interpretation creates no reusable link automatically | H | claims.py | test_shared_claims: test_candidate_interpretation_creates_no_reusable_link | implemented |
+| 28 | Admission records faithfulness and mappings | H | claims.py | test_shared_claims: test_admission_records_faithfulness_and_mappings, test_human_approval_admits_and_models_cannot_approve | implemented |
+| 29 | Two nodes link one claim with separate spans | H | claims.py | test_shared_claims: test_two_nodes_link_to_one_claim_with_separate_spans | implemented |
+| 30 | Ambiguous interpretations coexist | H | claims.py | test_shared_claims: test_ambiguous_interpretations_coexist_until_adjudicated | implemented |
+| 31 | Near-duplicates stay distinct and clustered | H | ledger.py | test_shared_ledger: test_fuzzy_match_cannot_merge_claims | implemented |
+| 32 | Stronger/weaker pair as separate claims with relation | H | ledger.py | test_shared_ledger: test_stronger_weaker_pair_stays_separate_with_relation | implemented |
+| 33 | Shared claims use ledger/evidence semantics | H | ledger.py | test_shared_ledger: test_shared_claims_use_ledger_policy_and_reject_contextual_items, test_authorization_is_bound_to_the_live_ledger_state | implemented |
+| 34 | Mathlib and Hardy shared realizations as distinct records | I | realizations.py | test_shared_realizations: test_one_claim_can_have_mathlib_and_shared_realizations | implemented |
+| 35 | Mathlib matching checks exact declaration before attachment | I | realizations.py | test_shared_realizations: test_candidate_matching_records_exact_type_before_attachment, test_formally_valid_but_unfaithful_is_not_attached | implemented |
+| 36 | Unimportable realization rejected or flagged | I | realizations.py, reuse.py | test_shared_realizations: test_stale_environment_is_flagged_not_delivered; test_shared_reuse: test_resolver_prefers_project_then_mathlib_then_shared_and_flags_stale | implemented |
+| 37 | Verified theorem can stay project-local | I | realizations.py | test_shared_realizations: test_project_local_realization_is_not_importable_elsewhere | implemented |
+| 38 | Promotion computes reusable dependency closure | J | promotion.py | test_shared_promotion: test_closure_promotes_reusable_project_lemma_and_keeps_mathlib_import | implemented |
+| 39 | Project-local dependency blocks or generates work | J | promotion.py | test_shared_promotion: test_project_local_axiom_blocks_promotion | implemented |
+| 40 | Promotion stages and verifies before admission | J | promotion.py | test_shared_promotion: test_promotion_builds_in_a_shadow_before_admission_and_publishes_closure, test_failed_audit_in_the_current_environment_is_not_admitted, test_stale_shared_head_is_refused | implemented |
+| 41 | Later project imports promoted realization without source workspace | J | promotion.py, reuse.py | test_shared_promotion: test_second_project_reuses_promoted_claim_without_new_formalization | implemented |
+| 42 | Meaning-changing updates create new realization identity | I | realizations.py | test_shared_realizations: test_meaning_change_creates_new_realization_with_supersession | implemented |
+| 43 | Later project reuses formalized claim without new proof | J | reuse.py | test_shared_promotion: test_second_project_reuses_promoted_claim_without_new_formalization | implemented |
+| 44 | Book edition cited through controlled bibliography path | K | bibliography.py | test_bibliography_editions: test_book_edition_cited_through_controlled_path | implemented |
+| 45 | PDF and EPUB of one edition share an entry with both digests | K | bibliography.py | test_bibliography_editions: test_pdf_and_epub_of_one_edition_share_one_entry_with_both_digests | implemented |
+| 46 | Distinct editions do not deduplicate on title/DOI | B, K | catalog.py, bibliography.py | test_bibliography_editions: test_distinct_editions_do_not_deduplicate_on_title_isbn_or_doi; test_source_catalog: test_different_editions_are_never_merged_by_title | implemented |
+| 47 | Stable order-independent cite keys | K | bibliography.py | test_bibliography_editions: test_edition_cite_key_is_order_independent | implemented |
+| 48 | Seeding exposes compact map and lazy retrieval | G | reading.py, tools.py | test_source_tools: test_seeding_exposes_a_compact_map_not_the_text | implemented |
+| 49 | Search distinguishes exact, related and unverified | G, I | reading.py, reuse.py | test_shared_reuse: test_resolver_distinguishes_exact_related_and_candidate; test_source_reading: test_exact_number_outranks_text_similarity | implemented |
+| 50 | Shared existence does not change project trust scope | H | ledger.py | test_shared_ledger: test_shared_existence_does_not_widen_project_scope | implemented |
+| 51 | Source-backed evidence keeps span provenance beside Lean realization | H, I | claims.py | test_shared_claims: test_admission_records_faithfulness_and_mappings (span artifact on the claim); test_source_metrics: test_semantic_report_and_link_comparison_count_false_merges (link and realization on one claim) | implemented |
+| 52 | Metadata export omits private bytes, keeps digests | L | export.py | test_source_export: test_metadata_export_omits_private_bytes_but_keeps_digests | implemented |
+| 53 | Missing bytes: refs identifiable, reads unavailable | A, G, L | artifacts.py, reading.py | test_source_artifacts: test_missing_artifact_reports_unavailable_not_absent_identity; test_source_reading: test_missing_bytes_read_reports_unavailable_not_absence; test_source_export: test_missing_bytes_keep_refs_and_reimport_restores_reads_without_reminting | implemented |
+| 54 | Importing the missing digest restores reads without reminting | L | artifacts.py, export.py | test_source_export: test_missing_bytes_keep_refs_and_reimport_restores_reads_without_reminting | implemented |
+| 55 | Private derivatives inherit restrictive handling | C, L | representations.py, export.py | test_source_representations: test_derived_representation_inherits_private_access; test_source_export: test_private_ocr_text_is_excluded_from_metadata_export | implemented |
+| 56 | Restart preserves authoritative records; indexes rebuild | L | index.py, all stores | test_source_export: test_restart_preserves_everything_and_index_rebuilds; test_shared_claims: test_restart_preserves_links_and_claims; test_shared_realizations: test_restart_preserves_realizations | implemented |
+| 57 | Concurrency never last-writer-wins | A, B, H | journal.py, artifacts.py | test_journal: test_concurrent_appenders_never_both_win_one_revision; test_source_artifacts: test_concurrent_identical_imports_coalesce; test_source_catalog: test_concurrent_decisions_do_not_last_writer_win; test_shared_claims: test_concurrent_proposals_both_survive | implemented |
+| 58 | Failed promotion leaves no admitted realization | J | promotion.py | test_shared_promotion: test_failed_build_leaves_no_shared_module_or_realization | implemented |
+
+## Deferred and known limitations
+
+- No OCR engine ships with Hardy. The enrichment protocol, weak-region detection, token confidences and image mappings are implemented and tested against a scripted engine; a real engine is a caller-supplied callable.
+- No model is wired to the proposal interfaces yet. Structural repair, source-to-claim interpretation and Mathlib candidate search take proposals through plain callables and are tested with scripted ones; connecting a provider is the next integration step and grants no new authority.
+- The reuse resolver is a backend operation. `workflows/acquisition` still runs its two fixed searches (local, Mathlib); routing a project's prerequisite through the shared library is an integration step over the resolver that exists.
+- Multi-machine synchronization is deferred, as the spec states: an export bundle seeds an empty journal and never merges into one with history.
+- Delegation integration (spec section 17.2) is not on this branch; the delegation package lives on `delegation-swarm-spec`. The bounded reader and seed store are the interfaces it will consume.
+- Citing an edition from the interactive session is not yet a model-facing tool; `cite_paper` remains the only citation tool and `Bibliography.cite_edition` is the controlled path a source-citation tool will call.
+- Model-facing source tools are limited to seeded sources by design; there is no tool that imports, seeds or confirms identity from inside a session. Those stay with the user through `hardy library`.
 
 Deferred to policy tuning rather than architecture (spec section 30): OCR confidence thresholds, automatic repair triggers, embedding indexes, promotion-worthiness heuristics, automatic claim-match thresholds, default context budgets, multi-machine sync.
