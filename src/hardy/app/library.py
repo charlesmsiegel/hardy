@@ -65,6 +65,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
     verbs.add_parser("seeds", help="list the active problem's seeds")
 
+    verbs.add_parser("report", help="print evaluation counts derived from the library's records, per dimension")
+
 
 def main(args: argparse.Namespace, config: Config, *, library: ManagedLibrary | None = None) -> int:
     held = library if library is not None else ManagedLibrary(library_root())
@@ -83,7 +85,9 @@ def main(args: argparse.Namespace, config: Config, *, library: ManagedLibrary | 
         return _confirm(args, held)
     if command in {"seed", "unseed", "seeds"}:
         return _seeds(args, config, held)
-    print("usage: hardy library {import,list,show,tree,map,confirm,seed,unseed,seeds}")
+    if command == "report":
+        return _report(held)
+    print("usage: hardy library {import,list,show,tree,map,confirm,seed,unseed,seeds,report}")
     return 2
 
 
@@ -238,4 +242,19 @@ def _seeds(args: argparse.Namespace, config: Config, held: ManagedLibrary) -> in
     seed = new_seed(sha, edition=edition.id if edition else None, tree=tree.id if tree else None, priority=args.priority, intent=args.intent)
     store.add(seed, expected_revision=store.revision())
     print(f"seeded {config.project} with {sha[:16]} as {seed.id}" + ("" if tree else "; no tree yet, run `hardy library tree`"))
+    return 0
+
+
+def _report(held: ManagedLibrary) -> int:
+    from hardy.literature.sources.metrics import source_report
+    from hardy.workflows.shared.claims import LinkStore
+    from hardy.workflows.shared.ledger import SharedClaims, shared_store
+    from hardy.workflows.shared.metrics import semantic_report
+    from hardy.workflows.shared.promotion import PromotionStore
+    from hardy.workflows.shared.realizations import RealizationStore
+
+    sources = source_report(held)
+    semantics = semantic_report(SharedClaims(shared_store(held.root)), LinkStore(held.root / "links"), RealizationStore(held.root / "realizations"),
+                                PromotionStore(held.root / "promotions"))
+    print(json.dumps({"sources": sources.model_dump(mode="json"), "semantics": semantics.model_dump(mode="json")}, indent=2, sort_keys=True))
     return 0
