@@ -1136,6 +1136,71 @@ async def handle_abandon(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+async def handle_delegate(ui: Ui, argument: str, state: State) -> State:
+    """Start one background worker on a ledger item and come straight back.
+
+    `safe_in_flight` stays False, the default: starting a worker reads the
+    ledger head and reserves part of the session's root ceiling, and a turn
+    in flight may be about to move both.
+    """
+    parts = argument.strip().split(maxsplit=1)
+    if not parts:
+        ui.write("Usage: /delegate <item-id> [objective]", style="error")
+        return state
+    target = parts[0]
+    objective = parts[1].strip() if len(parts) > 1 else f"prove {target}"
+    try:
+        delegation = state.session.delegate(target, objective=objective)
+    except ValueError as error:
+        ui.write(str(error), style="error")
+        return state
+    ui.write(f"Delegated {delegation.id} ({objective}): {delegation.state.value}. "
+             "The session continues; /jobs lists it and its result arrives as a notice.")
+    return state
+
+
+async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
+    """Read-only: the delegation journal, the root budget, and what awaits attention."""
+    delegations = state.session.delegations
+    status = delegations.status()
+    counts = ", ".join(f"{count} {name}" for name, count in sorted(status["counts"].items())) or "none"
+    ui.write(f"Delegations: {counts}", style="normal")
+    root = status.get("root") or {}
+    if root:
+        ui.write(f"  root lease: {root['lease']}")
+        ui.write(f"  root usage: {root['usage']}")
+        ui.write(f"  allocatable: {root['allocatable']}; slots {root['slots_in_use']}/{root['slots']} in use")
+    for delegation in delegations.tree().delegations.values():
+        if delegation.id == "root":
+            continue
+        ui.write(f"  {delegation.id}  {delegation.state.value:<10} {delegation.spec.objective}")
+    pending = delegations.attention().pending("human")
+    if pending:
+        ui.write("Awaiting attention:", style="normal")
+        for item in pending:
+            flag = " [action required]" if item.actionable else ""
+            ui.write(f"  {item.id}  {item.summary}{flag}")
+    return state
+
+
+async def handle_cancel(ui: Ui, argument: str, state: State) -> State:
+    """Request cancellation of a delegation and everything under it."""
+    target = argument.strip()
+    if not target or len(target.split()) != 1:
+        ui.write("Usage: /cancel <delegation-id>", style="error")
+        return state
+    try:
+        requested = state.session.delegations.cancel(target, reason="user")
+    except ValueError as error:
+        ui.write(str(error), style="error")
+        return state
+    if not requested:
+        ui.write(f"Nothing to cancel: {target} is unknown or already finished.")
+        return state
+    ui.write(f"Cancellation requested for {', '.join(requested)}. Active workers stop at their next step.")
+    return state
+
+
 def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Command]:
     """Operations, bundled prompt defaults, and then project prompts.
 
@@ -1183,6 +1248,9 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
         Command("tree", "show conversation entries and the active leaf", handle_tree, safe_in_flight=True),
         Command("fork", "continue from a conversation entry", handle_fork, argument_hint="<entry-id|root>"),
         Command("abandon", "leave a branch with a human lesson", handle_abandon, argument_hint="<entry-id|root> <lesson>"),
+        Command("delegate", "start a background worker on a ledger item", handle_delegate, argument_hint="<item-id> [objective]"),
+        Command("jobs", "list background work, its budget and pending attention", handle_jobs, safe_in_flight=True),
+        Command("cancel", "cancel a delegation and its descendants", handle_cancel, argument_hint="<delegation-id>", safe_in_flight=True),
         exit_command,
         Command(
             "quit", "leave the session", exit_command.handler,

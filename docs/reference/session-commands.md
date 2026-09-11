@@ -23,6 +23,9 @@ This page names every `/` command the prompt inside `hardy chat` accepts, checke
 | `/tree` | | Shows the conversation's entries and which one is the active leaf, abandoned branches included. |
 | `/fork` | `<entry-id\|root>` | Continues the conversation from a chosen entry, on a new branch. See "/fork" below. |
 | `/abandon` | `<entry-id\|root> <lesson>` | Leaves a branch the way `/fork` does, and attaches the lesson given as a human note. See "/abandon" below. |
+| `/delegate` | `<item-id> [objective]` | Starts one background worker on a ledger item (a stable id, or `id@digest`) and returns at once. The worker gets its own provider context and none of this conversation; it reserves one official Lean check from the session's ceiling, and its result arrives as a notice and, at the next turn, as a compact block the model reads before your message. |
+| `/jobs` | | Lists background delegations with their state, the root budget and what it has used, and every item still awaiting attention. Read from the delegation journal beside the record. |
+| `/cancel` | `<delegation-id>` | Requests cancellation of a delegation and everything under it. Queued work is cancelled outright; an active worker stops at its next step. Nothing it produced is merged. |
 | `/exit` | | Leaves the session. |
 | `/quit` | | Same as `/exit`. |
 
@@ -62,6 +65,8 @@ Everything else is refused while a turn, or another command, is already running,
 - `/status` (`/status --full` included)
 - `/clear`
 - `/tree`
+- `/jobs`
+- `/cancel`
 - `/exit`
 - `/quit`
 

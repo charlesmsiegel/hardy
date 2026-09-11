@@ -180,6 +180,9 @@ def run(
     # Everything below draws through the Ui's lock, not the bare callable, so
     # a turn's lines cannot land inside a prompt a tool thread has open.
     out = ui.line
+    # Background work reports through the same lock, from its own thread.
+    if hasattr(session, "on_notice"):
+        session.on_notice = lambda text: ui.write(f"Hardy: {text}")
     if ui_holder is not None:
         # Populated before the loop starts: `run_session._run_plain`'s
         # `confirm` closure looks this up lazily, since the approval
