@@ -53,6 +53,7 @@ SETTINGS = {
     "project_context": "HARDY_PROJECT_CONTEXT",
     "context_window": "HARDY_CONTEXT_WINDOW",
     "provider_budget": "HARDY_PROVIDER_BUDGET",
+    "delegation_workers": "HARDY_DELEGATION_WORKERS",
 }
 
 # What a project's own committed config may say. Deliberately tiny: the file
@@ -105,6 +106,12 @@ def authentication(backend: str) -> str:
 #: The figure itself lives in `compaction`, beside the reserve and recent
 #: budgets it is spent against, so the default and the planner cannot drift.
 DEFAULT_CONTEXT_WINDOW = compaction.CONTEXT_WINDOW
+
+#: How many background delegation workers an interactive session runs at once.
+#: A small pool by default; a machine that can carry more says so in its
+#: config, and nothing here caps what it may say -- the ceiling is the
+#: machine's and the provider's, not Hardy's.
+DEFAULT_DELEGATION_WORKERS = 4
 
 #: The largest reply the API transport will ask for, and therefore the smallest
 #: window that can hold one. Stated here rather than imported from
@@ -275,6 +282,8 @@ class Config:
     # See DEFAULT_CONTEXT_WINDOW: what compaction plans against, in tokens.
     context_window: int = DEFAULT_CONTEXT_WINDOW
     provider_budget: SpendPolicy | None = None
+    # Concurrent background workers a session may run; see DEFAULT_DELEGATION_WORKERS.
+    delegation_workers: int = DEFAULT_DELEGATION_WORKERS
     # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
@@ -514,6 +523,16 @@ def load(
             f"{MINIMUM_CONTEXT_WINDOW} tokens, not {context_window}"
         )
 
+    raw_workers = values.get("delegation_workers", DEFAULT_DELEGATION_WORKERS)
+    try:
+        delegation_workers = int(raw_workers) if not isinstance(raw_workers, bool) else None
+    except (TypeError, ValueError):
+        delegation_workers = None
+    if delegation_workers is None:
+        raise ValueError(f"delegation_workers must be a number of workers, not {raw_workers!r}")
+    if delegation_workers < 1:
+        raise ValueError(f"delegation_workers must be at least 1, not {delegation_workers}")
+
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
@@ -556,6 +575,7 @@ def load(
         cas_command=location("cas_command"),
         project_context=flag("project_context", True),
         context_window=context_window,
+        delegation_workers=delegation_workers,
         provider_budget=provider_budget,
         path=path if path.exists() else None,
         requested_path=path,

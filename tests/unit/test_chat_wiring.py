@@ -12,6 +12,7 @@ do not exercise at all, not the kernel mechanics those already cover.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 
 import pytest
@@ -397,3 +398,25 @@ def test_chat_never_calls_close_when_no_backend_was_discovered(tmp_path, monkeyp
     assert code == 0
     assert FakeMathematicsSession.instances[0].kwargs["cas"] is None
     assert FakeMathematicsSession.instances[0].kwargs["cas_detail"] == "sympy raised ImportError"
+
+
+def test_chat_hands_the_worker_pool_and_a_per_worker_cas_factory_to_the_session(tmp_path, monkeypatch):
+    """Each worker gets its own kernel, built where the worker keeps its artifacts."""
+    calls: list[dict] = []
+
+    def fake_build_runtime(**kwargs):
+        calls.append(kwargs)
+        return FakeCasRuntime(), "fakecas 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
+    FakeMathematicsSession.instances = []
+    config = dataclasses.replace(settings(tmp_path), delegation_workers=7)
+    assert cli._chat(config, plain=True) == 0
+    kwargs = FakeMathematicsSession.instances[0].kwargs
+    assert kwargs["delegation_slots"] == 7
+    worker_dir = tmp_path / "worker-cas"
+    assert isinstance(kwargs["cas_factory"](worker_dir), FakeCasRuntime)
+    assert calls[-1]["cwd"] == worker_dir and calls[-1]["log_path"] == worker_dir / "cells.jsonl"
+    assert calls[-1]["backend_name"] == calls[0]["backend_name"] and calls[-1]["limits"] == calls[0]["limits"]

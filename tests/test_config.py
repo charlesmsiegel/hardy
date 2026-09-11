@@ -675,3 +675,24 @@ def test_a_context_window_that_is_not_a_number_is_refused(tmp_path: Path):
     text = write(tmp_path / "text.toml", 'context_window = "large"\n')
     with pytest.raises(ValueError, match="context_window must be a number"):
         config.load(text)
+
+
+def test_the_delegation_pool_defaults_small_and_can_be_raised_without_a_ceiling(tmp_path: Path, monkeypatch):
+    """How many background workers a session may run at once. The default is
+    a small pool; a machine that can carry more says so, and nothing here
+    caps what it may say -- the limit is the machine's, not Hardy's."""
+    monkeypatch.chdir(tmp_path)
+    assert config.load(tmp_path / "missing.toml").delegation_workers == config.DEFAULT_DELEGATION_WORKERS == 4
+    path = write(tmp_path / "config.toml", "delegation_workers = 24\n")
+    assert config.load(path).delegation_workers == 24
+    monkeypatch.setenv("HARDY_DELEGATION_WORKERS", "3")
+    assert config.load(path).delegation_workers == 3
+
+
+def test_a_delegation_pool_without_a_worker_is_refused(tmp_path: Path):
+    path = write(tmp_path / "config.toml", "delegation_workers = 0\n")
+    with pytest.raises(ValueError, match="delegation_workers must be at least 1"):
+        config.load(path)
+    bad = write(tmp_path / "bad.toml", 'delegation_workers = "many"\n')
+    with pytest.raises(ValueError, match="delegation_workers must be a number of workers"):
+        config.load(bad)

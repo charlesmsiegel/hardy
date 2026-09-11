@@ -64,8 +64,9 @@ nothing.
 | `project_context` | `HARDY_PROJECT_CONTEXT` | `true` | Whether an interactive session reads the project's own context file. See [Project context files](#project-context-files). |
 | `context_window` | `HARDY_CONTEXT_WINDOW` | `200000` (tokens) | The context window compaction plans against. Settable because this is a property of the endpoint, not of Hardy: a gateway serving `claude-opus-5` may offer a smaller window than Anthropic does. |
 | `provider_budget` | `HARDY_PROVIDER_BUDGET` | unset | Path to a JSON spend-policy file, resolved relative to the config file that names it. Requires `backend = "api"`. See [Provider budget](cli.md#provider-budget-api-backend) in the command reference for the policy format. |
+| `delegation_workers` | `HARDY_DELEGATION_WORKERS` | `4` | How many background delegation workers an interactive session runs at once. Each worker is its own provider context and its own computer algebra kernel; the pool is a slot count, not a spend limit, and the session's Lean-check and active-time ceilings are what every worker draws from. There is no upper bound here: the machine and the provider set it. |
 
-Four settings are constrained beyond their type, and a config file or
+Five settings are constrained beyond their type, and a config file or
 environment value outside the constraint is refused where the file is read:
 
 - `context_window` must be greater than `8192`. That is the largest reply the
@@ -75,6 +76,7 @@ environment value outside the constraint is refused where the file is read:
 - `cas_backend` must be `sympy`, `singular`, or `macaulay2`.
 - `provider_budget` is refused unless `backend` is `api`; the harness-owned
   loop it meters does not exist on the other backends.
+- `delegation_workers` must be a whole number of at least `1`.
 
 ## Environment variables without a setting
 
