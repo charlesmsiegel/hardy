@@ -16,6 +16,8 @@ ROOT = Path(__file__).parents[2]
 # Pages in scope. Tasks that add a page append it here. The old root
 # documents join in Task 26, when they are deleted or rewritten.
 NEW_TREE: list[Path] = [
+    ROOT / "AGENTS.md",
+    ROOT / "CLAUDE.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "roadmap.md",
     ROOT / "docs" / "README.md",
