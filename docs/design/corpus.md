@@ -10,6 +10,10 @@ and check it are in [the CLI reference](../reference/cli.md). How those
 measurements are decided, and what each of their numbers is worth, is
 [the evaluation page](evaluation.md).
 
+This page supersedes the retired corpus design specification; code comments
+that cite that specification by section number (`spec §N`) refer to the design
+it recorded, whose substance is here.
+
 ## An instrument with two outputs
 
 The corpus is a classified, versioned set of mathematical statements formalised

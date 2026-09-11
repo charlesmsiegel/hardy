@@ -1,4 +1,4 @@
-"""The component digests of spec §3.
+"""The component digests described in `docs/design/evaluation.md`.
 
 Each measurement records the subset it depends on, so editing a shared fixture
 does not invalidate the fixture-free measurements of every dependent entry.

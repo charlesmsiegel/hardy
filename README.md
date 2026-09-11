@@ -92,8 +92,9 @@ hardy accept --recorded acceptance/recorded/prove-verified/20260901T220742+0000-
   cell, or a LaTeX compile happens; Hardy's own code runs it and writes every
   record, and on the Claude backend the SDK's own tools are refused by a
   default-deny gate. An axiom the model wants is searched for first,
-  elaborated, probed for triviality and for a counterexample, and shown to a
-  human beside the session's stated goal; declining is the default. See
+  elaborated, probed for triviality and vacuity, and for a counterexample
+  where the axiom comes from a paper or a staged `--assume` file, and shown
+  to a human beside the session's stated goal; declining is the default. See
   [what Hardy controls](docs/design/trust-boundary.md#what-hardy-controls-and-what-it-does-not).
 - **The document cannot outrun the proof.** The compiled writeup carries a
   provenance banner computed from the record, and a theorem stated in the
@@ -202,7 +203,7 @@ runs.
 | --- | --- | --- |
 | The hermetic suite, with a coverage floor that fails the build | every push to `main` and every pull request | `.github/workflows/tests.yml`, `pyproject.toml` |
 | A real Lean axiom audit against the current stable toolchain, left unpinned on purpose so a toolchain change shows up | every push to `main` and every pull request | `.github/workflows/tests.yml` |
-| Singular and Macaulay2 kernels at pinned package versions | pushes to `main`, and pull requests that touch the computer-algebra code | `.github/workflows/cas-backends.yml` |
+| Singular and Macaulay2 kernels at pinned package versions | pushes to `main`, and pull requests that touch `src/hardy/**`, the CAS tests, or the workflow itself | `.github/workflows/cas-backends.yml` |
 | The installers, on Linux, macOS, and Windows runners, verifying the built release assets against `SHA256SUMS` | every push to `main` and every pull request | `.github/workflows/installers.yml` |
 | The corpus manifest digest, anchored against the merge base so a shard edit cannot rewrite its own digest | every pull request | `.github/workflows/tests.yml` |
 | Four recorded acceptance runs rechecked without a model | inside the hermetic suite | `tests/integration/test_recorded_acceptance.py` |

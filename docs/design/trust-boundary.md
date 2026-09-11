@@ -65,7 +65,8 @@ Controlled:
   is the Windows spelling of killing a process group. The residual gap is
   narrow and stated in the code: the child has been running since `Popen`
   returned, so a grandchild spawned in the microseconds before the job
-  assignment escapes the job.
+  assignment escapes the job. The second residue is a process this launcher
+  never tracked at all, which no stop reaches on either platform.
 
 Not controlled:
 
@@ -173,9 +174,13 @@ is tracked.
 
 ## What the SDK may not do
 
-The SDK decides when to call Hardy's tools. It never runs them, it is never
-handed the filesystem, and it inherits nothing from the machine it runs on.
-That is the default-deny gate above, seen from the model's side.
+On the Claude backend, the SDK decides when to call Hardy's tools. It never
+runs them, it is never handed the filesystem, and it inherits nothing from the
+machine it runs on. That is the default-deny gate above, seen from the model's
+side. Under `--backend codex` that scoping matters: the thread starts with
+`sandbox=workspace_write` and `approval_mode=auto_review` (`agents/codex.py`),
+so the SDK keeps its own auto-approved file and shell tools over the run
+directory.
 
 There is no extension surface either, and this is a standing constraint rather
 than an open question. The comparison is with coding agents whose headline
@@ -279,7 +284,7 @@ narrower than what was asked for.
   the workspace's imports, because a narrower import set turns "you used a
   name that does not exist" into "you used a name I did not import", which is
   a different and misleading sentence.
-- **Fail-closed probes, and which path runs which.** Three exist, all in
+- **Fail-closed probes, and which path runs which.** Four exist, all in
   `workflows/admission.py`. A shape gate reads the request as Lean would. A
   provability probe runs a triviality ladder to ask whether standard automation
   already closes the statement. A vacuity elaboration asks whether the

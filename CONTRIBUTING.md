@@ -65,9 +65,9 @@ workflow installs Lean at the `stable` release (deliberately unpinned, so a
 change in Lean's own wording is caught rather than hidden) and runs the Lean
 real-toolchain tests; `CAS backends` installs pinned Singular and Macaulay2
 packages on Ubuntu 24.04 and runs the CAS real-toolchain tests. `CAS backends`
-only runs on a pull request that touches the source tree, a CAS test file, or
-its own workflow file, since it would otherwise repeat the hermetic suite on
-every unrelated change.
+runs on pushes to `main`, and on pull requests that touch `src/hardy/**`, the
+CAS tests, or the workflow itself, since it would otherwise repeat the hermetic
+suite on every unrelated change.
 
 **Live** tests invoke a billable model, an installer, or a third-party
 service over the network. They opt in through environment variables read
@@ -164,9 +164,11 @@ Every new page added under `docs/` is listed in
 [the documentation index](docs/README.md); the same test module checks that
 the index names every page.
 
-Prefer linking an existing page over restating what it already says. Do not
-use em-dashes, issue numbers, or task IDs anywhere outside `docs/roadmap.md`.
-Process artifacts and session notes are not kept in the tree.
+Prefer linking an existing page over restating what it already says. New prose
+uses no em-dashes, issue numbers, or task IDs anywhere outside
+`docs/roadmap.md`; `docs/research-architecture.md` and `corpus/SCHEMA.md`
+predate the rule and still carry em-dashes, so leave theirs alone rather than
+sweeping them. Process artifacts and session notes are not kept in the tree.
 
 ## Line endings
 

@@ -864,9 +864,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
-    # The evidence docs/design/interactive-session.md and issue #54 defer warm pools until. Separate from
-    # `doctor` because it answers a design question rather than reporting whether
-    # the machine works, and because each probe pays a full Mathlib import.
+    # The evidence the interactive-session page (docs/design/interactive-session.md)
+    # and issue #54 defer warm pools until. Separate from `doctor` because it
+    # answers a design question rather than reporting whether the machine works,
+    # and because each probe pays a full Mathlib import.
     measure = subparsers.add_parser(
         "latency", help="measure the fixed Lean import cost a warm pool would recover (issue #54)"
     )
