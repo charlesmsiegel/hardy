@@ -99,7 +99,22 @@ def check_proposal(proposal: RepairProposal) -> tuple[Diagnostic, ...]:
             problems.append(Diagnostic(code="repair_number", severity="error", detail=f"unit {index} number {unit.number!r} is not a printed-style number"))
         if unit.number and unit.number not in window.text:
             problems.append(Diagnostic(code="repair_number_absent", severity="error", detail=f"unit {index} number {unit.number!r} does not appear in the window"))
+    ordered = sorted(enumerate(proposal.units), key=lambda pair: (pair[1].start, pair[1].end))
+    for (first_index, first), (second_index, second) in zip(ordered, ordered[1:], strict=False):
+        if second.start < first.end:
+            problems.append(Diagnostic(code="repair_overlap", severity="error",
+                                       detail=f"units {first_index} and {second_index} overlap at {second.start}:{first.end}; one character has one owner"))
     return tuple(problems)
+
+
+def _leftover(text: str, start: int, end: int) -> tuple[ProposedUnit, ...]:
+    while start < end and text[start] in " \t\n\f":
+        start += 1
+    while end > start and text[end - 1] in " \t\n\f":
+        end -= 1
+    if start >= end:
+        return ()
+    return (ProposedUnit(kind=NodeKind.UNKNOWN, start=start, end=end, boundary_status="high"),)
 
 
 def apply_repair(tree: SourceTree, proposal: RepairProposal, texts: Mapping[str, str]) -> SourceTree | tuple[Diagnostic, ...]:
@@ -121,7 +136,15 @@ def apply_repair(tree: SourceTree, proposal: RepairProposal, texts: Mapping[str,
     page_spans = None
     provenance = f"{proposal.proposer}/{proposal.proposer_version} repair of {tree.id}"
     new_nodes = []
+    # Window text no proposed unit covers is not discarded: it stays readable
+    # as unknown material, as `build_tree` keeps every uncovered run.
+    units = list(proposal.units)
+    position = window.start
     for unit in sorted(proposal.units, key=lambda u: u.start):
+        units.extend(_leftover(text, position, unit.start))
+        position = max(position, unit.end)
+    units.extend(_leftover(text, position, window.end))
+    for unit in sorted(units, key=lambda u: u.start):
         record = node_record(tree.artifact_sha256, window.representation, text,
                              Unit(kind=unit.kind, start=unit.start, end=unit.end, title=unit.title, number=unit.number,
                                   number_origin="explicit" if unit.number else "none", label=unit.label, boundary=unit.boundary_status,

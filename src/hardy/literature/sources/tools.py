@@ -156,7 +156,13 @@ class SourceToolRuntime:
 
     # --- resolution ---------------------------------------------------------
 
-    def _resolve(self, source: str) -> str:
+    def _resolve(self, source: str) -> tuple[str, str | None]:
+        """The seeded artifact and the tree the seed pins, if it pins one.
+
+        A seed that names a tree grants that tree, not whichever tree the
+        library prefers today; a later rebuild must not silently change what
+        the session reads.
+        """
         seeds = self.seeds.by_prefix(source)
         if not seeds:
             known = ", ".join(f"{s.artifact_sha256[:12]} ({s.id})" for s in self.seeds.seeds()) or "none"
@@ -167,14 +173,17 @@ class SourceToolRuntime:
         digests = {s.artifact_sha256 for s in seeds}
         if len(digests) > 1:
             raise SourceUnavailable(f"{source!r} matches several seeded sources; give more of the digest")
-        return digests.pop()
+        trees = {s.tree for s in seeds if s.tree}
+        if len(trees) > 1:
+            raise SourceUnavailable(f"{source!r} is seeded under several trees ({', '.join(sorted(trees))}); unseed one first")
+        return digests.pop(), (trees.pop() if trees else None)
 
     # --- operations ---------------------------------------------------------
 
     def list_sources(self) -> ToolResult:
         entries = []
         for seed in self.seeds.seeds()[:MAX_LIST_ENTRIES]:
-            source_map = self.reader.source_map(seed.artifact_sha256, depth=1, max_nodes=MAX_MAP_NODES)
+            source_map = self.reader.source_map(seed.artifact_sha256, depth=1, max_nodes=MAX_MAP_NODES, tree=seed.tree)
             entries.append({
                 "seed": seed.id, "artifact": seed.artifact_sha256, "edition": seed.edition or source_map.edition, "title": source_map.title,
                 "priority": seed.priority, "intent": seed.intent, "pages": source_map.page_count, "nodes": source_map.node_count,
@@ -185,12 +194,12 @@ class SourceToolRuntime:
         return self._json({"sources": entries, "note": note})
 
     def source_map(self, source: str, *, depth: int = 2, node: str | None = None) -> ToolResult:
-        sha = self._resolve(source)
+        sha, tree = self._resolve(source)
         if node:
-            children = self.reader.list_children(sha, node)
-            return self._json({"artifact": sha, "node": node, "children": [_node_summary(n) for n in children[:MAX_MAP_NODES]],
+            children = self.reader.list_children(sha, node, tree=tree)
+            return self._json({"artifact": sha, "tree": tree, "node": node, "children": [_node_summary(n) for n in children[:MAX_MAP_NODES]],
                                "truncated": len(children) > MAX_MAP_NODES})
-        source_map = self.reader.source_map(sha, depth=max(1, min(depth, 4)), max_nodes=MAX_MAP_NODES)
+        source_map = self.reader.source_map(sha, depth=max(1, min(depth, 4)), max_nodes=MAX_MAP_NODES, tree=tree)
         if source_map.unavailable:
             return ToolResult(False, self._bounded(source_map.unavailable))
         return self._json({
@@ -200,44 +209,44 @@ class SourceToolRuntime:
         })
 
     def find_statements(self, source: str, *, number: str | None, kind: str | None, query: str | None, limit: int) -> ToolResult:
-        sha = self._resolve(source)
+        sha, tree = self._resolve(source)
         kinds: tuple[NodeKind, ...] = ()
         if kind:
             try:
                 kinds = (NodeKind(kind.lower()),)
             except ValueError:
                 return ToolResult(False, f"unknown statement kind {kind!r}")
-        found = self.reader.find_statements(sha, kinds=kinds, number=number, query=query, limit=max(1, min(limit, 100)))
+        found = self.reader.find_statements(sha, kinds=kinds, number=number, query=query, limit=max(1, min(limit, 100)), tree=tree)
         note = "" if found else "no matching unit was recovered from this source; the source may still contain one the extraction missed"
-        return self._json({"artifact": sha, "statements": [_node_summary(n) for n in found], "note": note})
+        return self._json({"artifact": sha, "tree": tree, "statements": [_node_summary(n) for n in found], "note": note})
 
     def search(self, source: str, query: str, *, limit: int) -> ToolResult:
-        sha = self._resolve(source)
-        hits = self.reader.search_text(sha, query, limit=max(1, min(limit, 50)))
-        return self._json({"artifact": sha, "query": query, "hits": [h.model_dump(mode="json") for h in hits],
+        sha, tree = self._resolve(source)
+        hits = self.reader.search_text(sha, query, limit=max(1, min(limit, 50)), tree=tree)
+        return self._json({"artifact": sha, "tree": tree, "query": query, "hits": [h.model_dump(mode="json") for h in hits],
                            "note": "ranks 0-2 are exact (id, printed number, title); 3-4 are fuzzy word matches and are leads, not identity"})
 
     def read(self, source: str, node: str, *, part: str, start: int) -> ToolResult:
-        sha = self._resolve(source)
+        sha, tree = self._resolve(source)
         if part == "statement":
-            delivery = self.reader.read_statement(sha, node)
+            delivery = self.reader.read_statement(sha, node, tree=tree)
         elif part == "proof":
-            delivery = self.reader.read_proof(sha, node)
+            delivery = self.reader.read_proof(sha, node, tree=tree)
         elif part == "context":
-            delivery = self.reader.read_context(sha, node)
+            delivery = self.reader.read_context(sha, node, tree=tree)
         elif part == "node":
-            delivery = self.reader.read_node(sha, node, start=start)
+            delivery = self.reader.read_node(sha, node, start=start, tree=tree)
         else:
             return ToolResult(False, f"unknown part {part!r}; use statement, proof, node or context")
         return self._delivery(delivery, part)
 
     def region(self, source: str, node: str) -> ToolResult:
-        sha = self._resolve(source)
-        anchors = self.reader.original_region(sha, node)
+        sha, tree = self._resolve(source)
+        anchors = self.reader.original_region(sha, node, tree=tree)
         labels = dict(self.library.representations.page_labels(sha))
         pages = sorted({a.locator.page_index for a in anchors if hasattr(a.locator, "page_index")})
         return self._json({
-            "artifact": sha, "node": node, "page_indices": pages, "printed_labels": {str(p): labels[p] for p in pages if p in labels},
+            "artifact": sha, "tree": tree, "node": node, "page_indices": pages, "printed_labels": {str(p): labels[p] for p in pages if p in labels},
             "anchors": [a.model_dump(mode="json") for a in anchors[:64]], "truncated": len(anchors) > 64,
             "note": "page_indices count from 0 in this artifact; printed_labels are what the file declares, when it declares any",
         })
@@ -255,10 +264,23 @@ class SourceToolRuntime:
         }
         rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         budget = self.observation_bytes
-        while len(rendered.encode("utf-8")) > budget and payload["text"]:
+
+        def over() -> bool:
+            return len(rendered.encode("utf-8")) > budget
+
+        while over() and payload["text"]:
             payload["text"] = payload["text"][: max(0, len(payload["text"]) // 2)]
             payload["truncated"] = True
             rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if over() and isinstance(payload["span"], dict) and payload["span"].get("anchors"):
+            # The span's anchors are the bulk of a small delivery; the ranges
+            # and content digest keep the provenance, the anchors are elided.
+            payload["span"] = {**payload["span"], "anchors": [], "anchors_elided": True}
+            rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if over():
+            return ToolResult(False, self._bounded(
+                f"the delivery for node {delivery.node} of {delivery.artifact_sha256[:12]} does not fit the observation budget of {budget} bytes "
+                "even with its text removed; raise the budget or read a smaller part"))
         return ToolResult(True, rendered)
 
     def _json(self, payload: dict[str, Any]) -> ToolResult:

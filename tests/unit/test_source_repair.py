@@ -102,3 +102,29 @@ def test_drifted_window_and_wrong_tree_are_refused(tmp_path):
     other = RepairProposal(window=window.model_copy(update={"tree": "tree-other"}), proposer="m", proposer_version="0",
                            units=(ProposedUnit(kind=NodeKind.REMARK, start=window.start, end=window.end),))
     assert [d.code for d in apply_repair(tree, other, texts)] == ["repair_wrong_tree"]
+
+
+def test_uncovered_window_text_stays_readable_as_unknown(tmp_path):
+    lib, sha, tree = built(tmp_path)
+    texts = lib.representations.texts(sha)
+    (window,) = weak_regions(tree, texts)
+    proof_at = window.text.index("PROOF")
+    partial = RepairProposal(window=window, proposer="m", proposer_version="0", units=(
+        ProposedUnit(kind=NodeKind.THEOREM, start=window.start, end=window.start + proof_at - 1, number="2.3", boundary_status="high"),))
+    repaired = apply_repair(tree, partial, texts)
+    assert not isinstance(repaired, tuple)
+    leftovers = [n for n in repaired.nodes if n.kind is NodeKind.UNKNOWN]
+    assert len(leftovers) == 1 and resolve_span(leftovers[0].span, texts) == "PROOF Standard. Q.E.D."
+    joined = "".join(resolve_span(n.span, texts) for n in repaired.nodes if n.kind not in {NodeKind.CHAPTER, NodeKind.SECTION})
+    assert "Every compact set is closed." in joined and "PROOF Standard." in joined
+
+
+def test_overlapping_units_are_refused(tmp_path):
+    lib, sha, tree = built(tmp_path)
+    texts = lib.representations.texts(sha)
+    (window,) = weak_regions(tree, texts)
+    overlapping = RepairProposal(window=window, proposer="m", proposer_version="0", units=(
+        ProposedUnit(kind=NodeKind.THEOREM, start=window.start, end=window.end, number="2.3"),
+        ProposedUnit(kind=NodeKind.PROOF, start=window.start + 5, end=window.end),))
+    assert [p.code for p in check_proposal(overlapping)] == ["repair_overlap"]
+    assert [p.code for p in apply_repair(tree, overlapping, texts)] == ["repair_overlap"]
