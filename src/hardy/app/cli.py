@@ -984,8 +984,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     from hardy.app.evals import add_parser as add_evals_parser
+    from hardy.app.library import add_parser as add_library_parser
 
     add_evals_parser(subparsers)
+    add_library_parser(subparsers)
     return parser
 
 
@@ -1009,6 +1011,10 @@ def main() -> int:
         return evals_main(args, config)
     if args.command == "batch":
         return _batch(args, config, parser)
+    if args.command == "library":
+        from hardy.app.library import main as library_main
+
+        return library_main(args, config)
     # No subcommand is intentionally the primary interactive experience.
     return _chat(config, plain=args.plain, parser=parser, args=args)
 

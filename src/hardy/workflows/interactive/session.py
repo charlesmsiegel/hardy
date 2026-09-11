@@ -67,6 +67,8 @@ from hardy.literature import statements as assume_module
 from hardy.literature.arxiv import ArxivError
 from hardy.literature.bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
 from hardy.literature.bibliography import is_generated as is_generated_bibliography
+from hardy.literature.sources.tools import SOURCE_TOOL_NAMES, SOURCE_TOOLS, SourceToolRuntime
+from hardy.literature.sources.tools import build_runtime as build_source_runtime
 from hardy.literature.tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
 from hardy.literature.tools import build_runtime as build_paper_runtime
 from hardy.prompts import (
@@ -212,6 +214,9 @@ CHAT_TOOLS += SEARCH_TOOLS
 # no binary to find and no version to probe, and everything already fetched
 # can be read and cited with no network. See `paper_tools`.
 CHAT_TOOLS += PAPER_TOOLS
+# Seeded library sources: readable only once the user seeded the problem with
+# them, and never more than a bounded excerpt at a time. See `sources.tools`.
+CHAT_TOOLS += SOURCE_TOOLS
 
 
 def _reportability(owed: Sequence[completion.Obligation]) -> str:
@@ -413,6 +418,9 @@ class MathematicsSession:
         # workspace configured for less had every other tool respect that.
         self.papers: PaperToolRuntime = build_paper_runtime(
             workspace, self.root, observation_bytes=self.limits.model_observation_bytes
+        )
+        self.sources: SourceToolRuntime = build_source_runtime(
+            workspace, observation_bytes=self.limits.model_observation_bytes
         )
         self._lean_command = lean_command
         self._lean_project = lean_project
@@ -3473,6 +3481,8 @@ class MathematicsSession:
             return self._search_tool(name, arguments)
         if name in PAPER_TOOL_NAMES:
             return self.papers.call(name, arguments)
+        if name in SOURCE_TOOL_NAMES:
+            return self.sources.call(name, arguments)
         if name == "read_workspace":
             return ToolResult(True, json.dumps(self._workspace_listing(), ensure_ascii=False))
         if name == "read_file":

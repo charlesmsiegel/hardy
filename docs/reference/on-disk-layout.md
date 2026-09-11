@@ -85,6 +85,7 @@ Everything one problem owns lives under its own directory, and all of it is mean
 ├── session.json                    # the record: naming registry, approved assumptions, audit verdicts
 ├── transcript.jsonl                 # the append-only conversation log
 ├── bibliography.json                # every reference cited into this problem
+├── sources/                         # journal of library seeds: artifact digests and tree ids, never bytes
 ├── lean/                            # authored Lean; a file's path is its module name
 ├── tex/
 │   ├── writeup.tex                    # the fixed document root; every fragment is \input from it
@@ -132,6 +133,8 @@ Everything one problem owns lives under its own directory, and all of it is mean
 **`session.json`** is the record: the mapping from a Lean declaration to its writeup label, every assumption a human approved and why, and the verdict an independent audit gave each closed theorem. **`transcript.jsonl`** is the append-only trace of the conversation that produced it. Both are evidence, and both are committed.
 
 **`lean/`** and **`tex/`** are not paired by name; see the next section for why. **`cas/`** is committed as a whole except its two scratch subdirectories: `replay/` is a fresh kernel's working directory for replaying every accepted cell on export, and `script-run/` is where the rendered script is run to check it against that replay. Both are reset on every export and neither is meant to be read afterward, so neither is versioned.
+
+**`sources/`** is the problem's seed journal, written by `hardy library seed` and read by the session's source tools: which artifacts of the personal library at `~/.hardy/library/` this problem may read, by digest, with the edition and tree it was seeded under. It holds refs only, so it is committed like `bibliography.json` while the bytes it names stay on the machine that imported them.
 
 **`bibliography.json`** is the one file that names every citation, keyed so that the same paper gets the same cite key wherever it is cited; `tex/references.tex` is rendered whole from it on every write and would be overwritten by the next citation if hand-edited, so it carries no information `bibliography.json` does not already have.
 
