@@ -284,3 +284,17 @@ def test_neighborhood_rows_are_capped_in_each_direction_and_the_cut_is_reported(
     payload = json.loads(_retriever(tmp_path).neighborhood("L17").output)
     assert len(payload["used_by"]) == MAX_NEIGHBORHOOD_ROWS and payload["truncated"] == 6      # T1 already used it
     assert payload["withheld"] == 0
+
+
+def test_read_item_bounds_its_dependency_list_and_reports_the_rest(tmp_path):
+    from hardy.workflows.delegation.retrieval import MAX_DEPENDENCY_ROWS
+    from hardy.workflows.explore import ExploreWorkflow
+    from hardy.workflows.ledger import contracts as c
+
+    seed_project(tmp_path)
+    flow = ExploreWorkflow(LedgerStore(tmp_path))
+    deps = [flow.record_item(id=f"P{n}", kind=c.ProjectItemKind.LEMMA, name=f"Premise {n}", statement=f"premise {n}").ref
+            for n in range(MAX_DEPENDENCY_ROWS + 4)]
+    flow.record_item(id="HUB", kind=c.ProjectItemKind.THEOREM, name="Hub", statement="everything", dependencies=tuple(deps))
+    payload = json.loads(_retriever(tmp_path).item("HUB").output)
+    assert len(payload["depends_on"]) == MAX_DEPENDENCY_ROWS and payload["dependencies_withheld"] == 4

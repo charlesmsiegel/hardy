@@ -229,8 +229,16 @@ class FindingLedger:
                 raise PromotionRefused("an upward promotion is authorized by an ancestor of the source")
         elif not (over(authorized_by, source) and over(authorized_by, recipient)):
             raise PromotionRefused("cross-branch sharing needs an ancestor authorized over both sides")
-        if not self._policy(tree, recipient).permits_finding(finding_id):
+        policy = self._policy(tree, recipient)
+        if not policy.permits_finding(finding_id):
             raise PromotionRefused(f"{finding_id} is hidden from {recipient}; inherited isolation dominates promotion")
+        # The finding's subjects are project information too: a finding about
+        # a hidden item cannot enter the blind branch under any mode.
+        disclosed = sorted({*(ref.id for ref in finding.related_refs if not policy.permits_ref(ref)),
+                            *(identity for identity in finding.related_ids if identity in policy.hidden_ids)})
+        if disclosed:
+            raise PromotionRefused(f"{finding_id} concerns {', '.join(disclosed)}, hidden from {recipient}; "
+                                   "isolation dominates promotion")
         record = PromotionRecord(
             finding_id=finding_id, source=source, recipient=recipient, mode=mode, selector=selector,
             authorized_by=authorized_by, reason=reason, sequence=len(promotions),

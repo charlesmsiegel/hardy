@@ -39,6 +39,8 @@ MAX_PROJECT_RESULTS = 25
 #: The most rows `read_neighborhood` carries in each direction; a hub item's fan-in is
 #: reported as a count beyond that, never as thousands of statements in one result.
 MAX_NEIGHBORHOOD_ROWS = 25
+#: The most dependency ids one `read_item` answer lists; the rest are a count.
+MAX_DEPENDENCY_ROWS = 50
 
 
 class VisibilityPolicy(FrozenModel):
@@ -150,8 +152,9 @@ class WorkerRetriever:
             return self._refuse("read_item", record.id, selector=selector)
         graph = LedgerGraph(snapshot)
         payload = self._describe(snapshot, record)
-        payload["depends_on"] = [ref.id for ref in graph.dependency_closure(record.ref)
-                                 if self.policy.permits_ref(ref)]
+        closure = [ref.id for ref in graph.dependency_closure(record.ref) if self.policy.permits_ref(ref)]
+        payload["depends_on"] = closure[:MAX_DEPENDENCY_ROWS]
+        payload["dependencies_withheld"] = max(0, len(closure) - MAX_DEPENDENCY_ROWS)
         self._note("read_item", delivered=[record.id], refused=[], selector=selector)
         return ToolResult(True, json.dumps(payload, ensure_ascii=False))
 

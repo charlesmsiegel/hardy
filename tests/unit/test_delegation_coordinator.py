@@ -321,3 +321,24 @@ def test_the_coordinator_view_honours_the_subtrees_inherited_isolation(tmp_path)
     finally:
         release.set()
         controller.shutdown()
+
+
+def test_the_coordinator_view_bounds_its_structural_map(tmp_path):
+    from hardy.workflows.explore import ExploreWorkflow
+    from hardy.workflows.ledger import contracts as c
+
+    controller, started, release = _controller(tmp_path, checks=25)
+    try:
+        heads = LedgerStore(tmp_path).read()
+        flow = ExploreWorkflow(LedgerStore(tmp_path))
+        for n in range(150):
+            flow.record_item(id=f"Q{n}", kind=c.ProjectItemKind.LEMMA, name=f"Consequence {n}",
+                             statement=f"a long consequence statement number {n} of the generic fiber being integral",
+                             dependencies=(heads.head("L17").ref,))
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        assert view.neighborhood_truncated > 0 and "withheld" in view.neighborhood
+        assert len(view.neighborhood) < 12000
+    finally:
+        release.set()
+        controller.shutdown()
