@@ -123,7 +123,7 @@ class CodexRuntime:
         Hardy therefore cannot establish this reader's independence, and says
         so rather than claiming it: see `isolation_guarantee` below, which the
         gate reads and records. Closing this needs the process confinement
-        DESIGN.md defers, or a readable-root control this SDK does not offer.
+        docs/design/trust-boundary.md defers, or a readable-root control this SDK does not offer.
         """
         sdk = load_sdk()
         configuration: dict[str, Any] = {}

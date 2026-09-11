@@ -1,6 +1,6 @@
 """Cheap Lean closers, tried before a model turn is spent.
 
-`FEATURES.md` has wanted this since the beginning: try `simp`, `omega`,
+the design has wanted this (docs/design/decisions.md) since the beginning: try `simp`, `omega`,
 `aesop`, `exact?` and their neighbours against the statement before paying a
 provider for a turn. It could not be built while the loop belonged to a
 provider's SDK, because the decision "do not call the model yet" has to be

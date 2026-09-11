@@ -996,7 +996,7 @@ def test_a_cell_log_symlinked_after_the_session_opened_is_refused(tmp_path, cas_
 
 def test_a_kernel_start_is_charged_to_the_session_budget(tmp_path, cas_session, monkeypatch) -> None:
     """Issue #37: `_start` sat outside the billed window in `_restore`, so a
-    recovery cost one unbilled kernel start -- and `FEATURES.md` says the
+    recovery cost one unbilled kernel start -- and `docs/design/computer-algebra.md` says the
     budget bounds total wall clock within a process."""
     session = cas_session(cas_cell_seconds=30)
     original = session._start

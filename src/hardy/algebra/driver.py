@@ -914,7 +914,7 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     hashes it identically; any mutation that a fingerprint could have seen
     moves the second answer off the first, and no digest is the honest result.
     One that a fingerprint could *not* have seen is the limit named in
-    `DESIGN.md` either way. This also reports a namespace being changed under
+    `docs/design/computer-algebra.md` either way. This also reports a namespace being changed under
     Hardy by a thread a cell started as unfingerprintable, which it is.
 
     The cost is one extra walk per cell, bounded by the same node and payload

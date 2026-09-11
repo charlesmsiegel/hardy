@@ -675,7 +675,7 @@ MAX_CALLS = 1_000_000_000
 
 
 def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
-    """Measure the fixed Lean import cost, for the gate in DESIGN.md and #54.
+    """Measure the fixed Lean import cost, for the gate in docs/design/interactive-session.md and #54.
 
     Runs where the ordinary checks run -- inside the configured Lake project,
     through the configured Lean command -- because an import cost measured
@@ -864,7 +864,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
-    # The evidence DESIGN.md and issue #54 defer warm pools until. Separate from
+    # The evidence docs/design/interactive-session.md and issue #54 defer warm pools until. Separate from
     # `doctor` because it answers a design question rather than reporting whether
     # the machine works, and because each probe pays a full Mathlib import.
     measure = subparsers.add_parser(

@@ -40,7 +40,7 @@ ENVIRONMENTS = frozenset(
 )
 # A branch TeX compiles without typesetting. Bounded to the literal spelling:
 # this is a scanner, not a TeX engine, and the general conditional is a limit
-# stated in FEATURES.md rather than a case pretended to be handled.
+# stated in docs/design/output-contract.md rather than a case pretended to be handled.
 FALSE_BRANCH = re.compile(r"\\iffalse(?![A-Za-z])")
 BRANCH_END = re.compile(r"\\fi(?![A-Za-z])")
 # An environment opening, with whatever optional arguments it carries:
@@ -437,7 +437,7 @@ def asserted_theorems(document: Displayed) -> tuple[tuple[str, str], ...]:
 
     Bodies are matched from `\begin{env}` to the next `\end{env}`. Theorem
     environments do not nest in practice, and this is a scanner rather than a
-    TeX engine: the limit is stated in FEATURES.md rather than pretended away.
+    TeX engine: the limit is stated in docs/design/output-contract.md rather than pretended away.
     """
     text = without_definitions(document.executed)
     found: list[tuple[str, str]] = []
