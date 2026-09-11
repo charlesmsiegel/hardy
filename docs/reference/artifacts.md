@@ -189,6 +189,8 @@ A worker's own `trajectory.jsonl` additionally carries `context.retrieved` event
 
 A writable delegation also holds `overlay/<generation-id>/` with its own `lean/` and `build/` copies, a `generation.json` naming the base it was taken from, and `base-sources.json` (the exact sources at that base), plus `change_set.json` once the worker finishes. A worker's `check_lean` and `save_lean` act on this overlay and never on the problem's `lean/`; a private computer algebra kernel, when one is used, keeps its cells under `cas/` in the same directory.
 
+A cell or worker that admits speculative mathematics locally keeps it in `<delegation-id>/ledger/`: an ordinary ledger transaction log (the same schema and files as the project's `ledger/`) replayed beneath the authoritative snapshot and every ancestor delegation's local records. Its identities may not shadow an authoritative or ancestor identity; a local record reaches the project only through admission.
+
 Each `<delegation-id>/` directory holds `core.json` (the frozen problem core, hashable, shared by every worker on one target), `brief.json` (the worker's own research brief), `manifest.json` (the context manifest), `prompt.md`, `trajectory.jsonl` (a run trajectory in the same shape as a staged run's), `findings.json` and `result.json`. A finding is execution provenance with a `kind`, `summary`, `payload`, related refs and an `evidence_profile` that defaults to `speculative`; recording one admits nothing to the ledger.
 
 ## Scoreboards, baselines, pools
