@@ -243,11 +243,12 @@ def test_the_script_detail_is_small_enough_to_publish(tmp_path, cas_session) -> 
 def test_a_check_that_blows_up_costs_the_verdict_not_the_artifacts(
     tmp_path, cas_session, monkeypatch
 ) -> None:
-    """docs/design/computer-algebra.md asks for a partial artifact over silence, and this is the last
-    step that could take one away: the script is written before it is run, so an
-    exception escaping the check left a script with no notebook and no manifest
-    beside it -- the exact half-written pair `export.json` exists to make
-    detectable. A `MemoryError` from an unbounded capture was the live route in.
+    """docs/design/output-contract.md asks for a partial artifact over silence,
+    and this is the last step that could take one away: the script is written
+    before it is run, so an exception escaping the check left a script with no
+    notebook and no manifest beside it -- the exact half-written pair
+    `export.json` exists to make detectable. A `MemoryError` from an unbounded
+    capture was the live route in.
     """
 
     def explode(**_kwargs):

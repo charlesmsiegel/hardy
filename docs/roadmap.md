@@ -367,7 +367,7 @@ Checkpoint assistant text at an interval, record in-flight tool calls, and prese
 
 ## X3 — Safe interactive assumption prompt presentation — P1
 
-**Status:** Accepted existing implementation: 23 tests verify prompt serialization and stream/approval ordering without changing admission authority.
+**Status:** Accepted existing implementation: tests verify prompt serialization and stream/approval ordering without changing admission authority.
 
 **Deps:** none
 
@@ -375,7 +375,7 @@ Ensure human trust-widening approval cannot be visually interleaved/confused wit
 
 ## X4 — CAS correctness lane — P1
 
-**Status:** Current residual acceptance complete: hermetic regressions and all 12 real Linux Singular/Macaulay2 tests passed. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain.
+**Status:** Current residual acceptance complete: hermetic regressions and the real Linux Singular/Macaulay2 tests passed. Sentinel capture now orders stdout/stderr in one pipe, discloses capture mode, waits for split echo suffixes, retains terminal diagnostics and refuses legacy capture certification. Existing writer leases and recovery refusals remain.
 
 **Deps:** none
 

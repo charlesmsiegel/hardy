@@ -1,10 +1,10 @@
 """A local viewer for the corpus, served from disk and re-read on every load.
 
-Spec §12: a mathematician judging an entry needs to see the statement rendered,
-the Lean beside it, and the classification **with its MSC2020 names** -- not
-raw JSON. This is the read-only half of that: it renders what §12.1 lists and
-reports what `corpus check` objects to, so an entry added by hand shows up,
-correct or broken, on the next refresh.
+`docs/design/corpus.md`: a mathematician judging an entry needs to see the
+statement rendered, the Lean beside it, and the classification **with its
+MSC2020 names** -- not raw JSON. This is the read-only half of that: it renders
+what §12.1 lists and reports what `corpus check` objects to, so an entry added
+by hand shows up, correct or broken, on the next refresh.
 
 It is deliberately a served page rather than a file opened directly. A
 `file://` page cannot read sibling JSON, and baking the corpus into the HTML

@@ -1,6 +1,6 @@
 # Hardy architecture: reusable primitives for research, auditing, and publication
 
-**Status:** as built, with the remaining seams noted
+This page sets out the primitives Hardy's research, refereeing, critique, repair, and publication workflows are meant to compose, and the seams that still have to be cut, for a reader deciding where a new capability belongs; [the roadmap](roadmap.md) is what records which of them are built.
 
 Hardy should maintain **one persistent mathematical project model** and expose a small number of trustworthy primitives over it. Research, Referee, Critique, Repair, Publication, Prove, and Explore should be different compositions of those primitives, not separate systems with their own state.
 

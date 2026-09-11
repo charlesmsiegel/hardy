@@ -143,7 +143,12 @@ def test_module_boundaries_page_matches_the_package_list() -> None:
 
 def test_trust_boundary_qualifies_the_codex_reader_and_compaction() -> None:
     page = (ROOT / "docs" / "design" / "trust-boundary.md").read_text(encoding="utf-8").lower()
-    assert "codex" in page and "cannot" in page
+    reader = section(page, "the faithfulness reader")
+    assert "codex" in reader, "the reader section does not name the Codex backend"
+    # Emphasis stripped: the page bolds a word inside the phrase.
+    assert "cannot be enforced" in reader.replace("*", ""), (
+        "the reader section must say the isolation cannot be enforced under Codex"
+    )
     for phrase in ("compaction", "what was dropped", "checkable", "precompact"):
         assert phrase in page, f"trust-boundary.md must keep the compaction-integrity argument ({phrase})"
 
@@ -218,8 +223,18 @@ def test_every_copy_of_the_deciding_sources_names_them_all() -> None:
     """Three pages list the sweep's deciding sources by hand; the code decides."""
     from hardy.evals.sweep import DECIDING_SOURCES
 
-    names = {str(source).replace("\\", "/").rsplit("/", 1)[-1] for source in DECIDING_SOURCES}
+    # The repo-relative path, not the basename: `evals/problems.py` is a
+    # different module from `corpus/problems.py` and must not satisfy the list.
+    names = {
+        Path(source).resolve().relative_to((ROOT / "src" / "hardy").resolve()).as_posix()
+        for source in DECIDING_SOURCES
+    }
     for page in ("AGENTS.md", "CONTRIBUTING.md", "docs/design/module-boundaries.md"):
         text = (ROOT / page).read_text(encoding="utf-8")
-        missing = sorted(name for name in names if name not in text)
+        # A page may spell the sweep either way round.
+        missing = sorted(
+            name
+            for name in names
+            if name not in text and f"src/hardy/{name}" not in text
+        )
         assert not missing, f"{page} omits deciding sources {missing}"

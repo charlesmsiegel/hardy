@@ -1,7 +1,8 @@
 """The automation floor: a fixed tactic set against every canonical statement.
 
-Tiers are decided by heartbeats, not seconds (spec §2.2), and the sweep runs
-in two stages so `exact?` cannot be credited with a neighbour's proof (§2.3).
+Tiers are decided by heartbeats, not seconds (`docs/design/evaluation.md`), and
+the sweep runs in two stages so `exact?` cannot be credited with a neighbour's
+proof.
 """
 from __future__ import annotations
 

@@ -1,10 +1,11 @@
 """Cheap Lean closers, tried before a model turn is spent.
 
-the design has wanted this (docs/design/decisions.md) since the beginning: try `simp`, `omega`,
-`aesop`, `exact?` and their neighbours against the statement before paying a
-provider for a turn. It could not be built while the loop belonged to a
-provider's SDK, because the decision "do not call the model yet" has to be
-made *in* the loop — which is issue #23 and why this module arrives with it.
+The design has wanted this (docs/research-architecture.md) since the beginning:
+try `simp`, `omega`, `aesop`, `exact?` and their neighbours against the
+statement before paying a provider for a turn. It could not be built while the
+loop belonged to a provider's SDK, because the decision "do not call the model
+yet" has to be made *in* the loop — which is issue #23 and why this module
+arrives with it.
 
 The economics are the whole argument and are worth stating rather than
 assuming. A closer costs one Lean elaboration, which against Mathlib is tens

@@ -8,6 +8,10 @@ what one of those numbers is worth. What the corpus holds and why is
 [the CLI reference](../reference/cli.md). This page is the reasoning behind
 them: what each measurement decides, and what it cannot say.
 
+This page supersedes the retired evaluation problem-set specification; code
+comments that cite that specification by section number (`spec §N`) refer to
+the design it recorded, whose substance is here.
+
 ## A solve rate says nothing until the list says what a solve is worth
 
 Competition sets are heavily one-tactic or heavily trained on. A model that

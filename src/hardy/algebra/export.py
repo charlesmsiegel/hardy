@@ -22,8 +22,8 @@ illegal in the middle of a file. Until the file has been run there is no
 evidence about what running the file does, so `reproduces` requires both.
 
 A diverged or unverified export is still written — a notebook marked `diverged`
-is more useful than no notebook, and `docs/design/computer-algebra.md` asks for useful partial
-artifacts over silence.
+is more useful than no notebook, and `docs/design/output-contract.md` asks for
+useful partial artifacts over silence.
 """
 
 from __future__ import annotations
@@ -836,12 +836,12 @@ def _export_held(session: CasSession, directory: Path) -> ExportReport:
     try:
         script_verdict = _verify_script(session, cells, script_path, directory, completion)
     except Exception as error:  # noqa: BLE001 - see below
-        # Deliberately everything. `docs/design/computer-algebra.md` requires a partial export to be
-        # written and marked rather than withheld, and the check is the *last*
-        # thing that should be able to take the notebook and the manifest with
-        # it: a session that cannot say whether its script runs is strictly
-        # better off than one with no artifacts at all. A verdict of
-        # `unverified` naming the failure is what that costs.
+        # Deliberately everything. `docs/design/output-contract.md` requires a
+        # partial export to be written and marked rather than withheld, and the
+        # check is the *last* thing that should be able to take the notebook and
+        # the manifest with it: a session that cannot say whether its script
+        # runs is strictly better off than one with no artifacts at all. A
+        # verdict of `unverified` naming the failure is what that costs.
         script_verdict = ("unverified", _excerpt(f"the script could not be checked: {error!r}"))
     notebook = render_notebook(session, cells, verdicts, script_verdict).encode("utf-8")
     guard.write_bytes(notebook_path.name, notebook)
