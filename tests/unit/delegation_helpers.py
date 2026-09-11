@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from hardy.agents.contracts import TurnEvent, final_text
-from hardy.workflows.context import ContextManager
+from hardy.workflows.context import ContextManager, DeclarationSpec
 from hardy.workflows.explore import ExploreWorkflow
 from hardy.workflows.ledger import contracts as c
 from hardy.workflows.ledger.store import LedgerStore
@@ -84,3 +84,44 @@ class ScriptedWorkerRuntime:
         self.cancelled = True
         if self.gate is not None:
             self.gate[1].set()
+
+
+def seed_project(project):
+    """A small research neighbourhood around L17: definitions, a blocked dependency,
+    a consumer, an approach, an example and a note. Returns the snapshot heads by id."""
+    store = LedgerStore(project)
+    if not store.read().records:
+        store.append((c.Scope(id="scope"),), expected_revision=0)
+        contexts = ContextManager(store)
+        contexts.create_root(id="ambient", label="Ambient")
+        contexts.extend(store.read().active_context, id="setup", label="Setup", declarations=(
+            DeclarationSpec(id="X", symbol="X", semantic_type="smooth projective variety"),))
+    snapshot = store.read()
+    if any(record.id == "L17" for record in snapshot.records):
+        return {record.id: record for record in snapshot.current(c.ProjectItem)}
+    flow = ExploreWorkflow(store)
+    d3 = flow.record_item(id="D3", kind=c.ProjectItemKind.DEFINITION, name="Definition 3",
+                          statement="A fiber is geometrically integral when its base change to the algebraic closure is integral")
+    l12 = flow.record_item(id="L12", kind=c.ProjectItemKind.LEMMA, name="Lemma 12",
+                           statement="The special fiber is reduced", dependencies=(d3.ref,))
+    l17 = flow.record_item(id="L17", kind=c.ProjectItemKind.LEMMA, name="Lemma 17",
+                           statement="The generic fiber is geometrically integral", dependencies=(l12.ref, d3.ref))
+    flow.record_item(id="T1", kind=c.ProjectItemKind.THEOREM, name="Theorem 1",
+                     statement="The total space is irreducible", dependencies=(l17.ref,))
+    flow.record_item(id="L14", kind=c.ProjectItemKind.LEMMA, name="Lemma 14",
+                     statement="The generic fiber is connected", dependencies=(d3.ref,))
+    flow.record_item(id="E1", kind=c.ProjectItemKind.EXAMPLE, name="Example 1",
+                     statement="A conic bundle over the projective line", dependencies=(d3.ref,))
+    inquiry = flow.ask(id="Q", question="Is the total space irreducible?",
+                       conjecture="The total space is irreducible", author="mathematician")
+    approach = flow.start_approach(id="A1", goal=inquiry.goal.ref,
+                                   description="Degenerate to the special fiber", author="model")
+    flow.record_product(approach.ref, l17.ref)
+    flow.record_item(id="N1", kind=c.ProjectItemKind.RESEARCH_NOTE, name="Note 1",
+                     statement="Reducedness of the special fiber should follow from flatness")
+    snapshot = store.read()
+    scope = snapshot.head("scope")
+    store.append((c.Obligation(id="prove-L12", item=l12.ref, kind=c.ObligationKind.PROVE, scope=scope,
+                               context=l12.context),), expected_revision=snapshot.revision)
+    snapshot = store.read()
+    return {record.id: record for record in snapshot.current(c.ProjectItem)}

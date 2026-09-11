@@ -1,4 +1,5 @@
 """The controller is nonblocking orchestration over the journal, the executor and the leases."""
+import json
 import threading
 from decimal import Decimal
 from uuid import uuid4
@@ -85,6 +86,12 @@ def test_delegate_returns_before_the_worker_finishes_and_completion_is_journaled
         assert controller.attention().pending("human") == ()          # notified => human receipt
         artifacts = controller.store.artifacts(delegation.id)
         assert (artifacts.path / "core.json").exists() and (artifacts.path / "manifest.json").exists()
+        manifest = json.loads((artifacts.path / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["problem_core_digest"] == done.problem_core_digest
+        assert [item["selected_by"] for item in manifest["included_items"]][0] == "mandatory"
+        assert manifest["preload_budget"] > 0 and manifest["context_policy_digest"]
+        prompt = (artifacts.path / "prompt.md").read_text(encoding="utf-8")
+        assert "Structural map" in prompt and "Task mode: prove" in prompt and "prove L17" in prompt
     finally:
         controller.shutdown()
 
