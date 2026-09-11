@@ -150,7 +150,12 @@ def _scripted_controller(
     cancel_stage=None,
     cancel_quietly_at=None,
     reviews=None,
+    on_build=None,
+    on_close=None,
 ):
+    """`on_build(store)` runs when the runtime is built for a run, and
+    `on_close(runtime)` when the workflow closes it -- the two ends of what a
+    real staged runtime holds open in the run directory in between."""
     config_module = importlib.import_module('hardy.app.config')
     codex_runtime = importlib.import_module('hardy.agents.codex')
     domain = importlib.import_module('hardy.workflows.contracts')
@@ -238,6 +243,15 @@ def _scripted_controller(
         def cancel(self, thread):
             state.cancelled = thread
 
+        def close(self):
+            if on_close is not None:
+                on_close(self)
+
+    def build_runtime(store):
+        if on_build is not None:
+            on_build(store)
+        return Runtime()
+
     class Lean:
         def check_proof(self, claim, proof, allowed=()):
             success = elaborations.pop(0) if elaborations else False
@@ -301,7 +315,7 @@ def _scripted_controller(
             healthy=healthy, authenticated=authenticated
         ),
         lean=Lean(),
-        runtime_factory=lambda store: Runtime(),
+        runtime_factory=build_runtime,
         verifier=Verifier(),
         writeup_builder=build_document,
         identities_factory=lambda run_id, model: SimpleNamespace(
@@ -1505,3 +1519,76 @@ def test_a_press_before_the_writeup_buys_no_writeup_turn(tmp_path, monkeypatch) 
 
     assert [stage for stage, _prompt in state.prompts if stage == 'writeup'] == []
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+
+
+def test_what_the_runtime_leaves_behind_on_close_is_in_the_manifest(tmp_path) -> None:
+    """The staged runtime holds its CAS session open until the workflow closes
+    it, and closing is when that session's export lands in the run directory.
+    The manifest is the inventory of that directory, so the close has to come
+    before the directory is hashed -- not in the `finally` after the manifest
+    was already written and shown."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    state = SimpleNamespace(run_dir=None)
+
+    def remember(store):
+        state.run_dir = store.path
+
+    def export_on_close(runtime):
+        (state.run_dir / 'cas').mkdir(exist_ok=True)
+        (state.run_dir / 'cas' / 'export.json').write_text('{}', encoding='utf-8')
+
+    workflow, _, controller, _ = _scripted_controller(
+        tmp_path,
+        limits=domain.RunLimits(formalization_proposals=1),
+        elaborations=[False],
+        on_build=remember,
+        on_close=export_on_close,
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.MALFORMED_MODEL_OUTPUT
+    assert 'cas/export.json' in manifest.artifacts
+    saved = domain.RunManifest.model_validate_json(
+        (state.run_dir / 'manifest.json').read_text(encoding='utf-8')
+    )
+    assert saved.artifacts == manifest.artifacts
+
+
+def test_a_lease_held_inside_the_run_directory_does_not_break_finalization(tmp_path) -> None:
+    """The CAS session leases `cas/cells.jsonl.lock` from the moment the
+    runtime is built until it is closed. On Windows that lease is a mandatory
+    byte-range lock, and reading the leased file from any other handle is
+    refused with `PermissionError` -- so hashing the directory while the lease
+    stood crashed every run that had opened a CAS session."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    locking = importlib.import_module('hardy.foundation.locking')
+    state = SimpleNamespace(lease=None, released=0)
+
+    def take_lease(store):
+        state.lease = locking.FileLock(store.path / 'cas' / 'cells.jsonl.lock', timeout=0)
+        state.lease.__enter__()
+        assert state.lease.held
+
+    def release_lease(runtime):
+        if state.lease.held:
+            state.released += 1
+        state.lease.__exit__(None, None, None)
+
+    workflow, _, controller, _ = _scripted_controller(
+        tmp_path,
+        limits=domain.RunLimits(formalization_proposals=1),
+        elaborations=[False],
+        on_build=take_lease,
+        on_close=release_lease,
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.MALFORMED_MODEL_OUTPUT
+    assert 'cas/cells.jsonl.lock' in manifest.artifacts
+    assert state.released == 1
