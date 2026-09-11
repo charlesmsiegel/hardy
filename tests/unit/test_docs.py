@@ -13,22 +13,10 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 
-# Pages in scope. Tasks that add a page append it here. The old root
-# documents join in Task 26, when they are deleted or rewritten.
+# Pages in scope: the whole new tree.
 NEW_TREE: list[Path] = [
-    ROOT / "README.md",
-    ROOT / "AGENTS.md",
-    ROOT / "CLAUDE.md",
-    ROOT / "CONTRIBUTING.md",
-    ROOT / "docs" / "roadmap.md",
-    ROOT / "docs" / "README.md",
-    ROOT / "docs" / "getting-started.md",
-    ROOT / "docs" / "install.md",
-    ROOT / "docs" / "isolation.md",
-    ROOT / "docs" / "research-architecture.md",
-    *sorted((ROOT / "docs" / "guides").glob("*.md")),
-    *sorted((ROOT / "docs" / "reference").glob("*.md")),
-    *sorted((ROOT / "docs" / "design").glob("*.md")),
+    *(ROOT / name for name in ("README.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md")),
+    *sorted(p for p in (ROOT / "docs").rglob("*.md") if "archive" not in p.parts),
 ]
 
 STATUS_MARKER = re.compile(
@@ -194,7 +182,7 @@ def test_docs_index_lists_every_page() -> None:
     listed = {target.split("#")[0] for target in links(index)}
     for path in (ROOT / "docs").rglob("*.md"):
         rel = path.relative_to(ROOT / "docs").as_posix()
-        if rel == "README.md" or rel.startswith(("archive/", "superpowers/", "ideas/")) or rel in {"INSTALL.md", "security.md"}:
+        if rel == "README.md" or rel.startswith("archive/"):
             continue
         assert rel in listed, f"docs/README.md does not list {rel}"
 

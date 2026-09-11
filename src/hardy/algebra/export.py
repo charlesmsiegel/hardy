@@ -22,7 +22,7 @@ illegal in the middle of a file. Until the file has been run there is no
 evidence about what running the file does, so `reproduces` requires both.
 
 A diverged or unverified export is still written — a notebook marked `diverged`
-is more useful than no notebook, and `DESIGN.md` asks for useful partial
+is more useful than no notebook, and `docs/design/computer-algebra.md` asks for useful partial
 artifacts over silence.
 """
 
@@ -836,7 +836,7 @@ def _export_held(session: CasSession, directory: Path) -> ExportReport:
     try:
         script_verdict = _verify_script(session, cells, script_path, directory, completion)
     except Exception as error:  # noqa: BLE001 - see below
-        # Deliberately everything. `DESIGN.md` requires a partial export to be
+        # Deliberately everything. `docs/design/computer-algebra.md` requires a partial export to be
         # written and marked rather than withheld, and the check is the *last*
         # thing that should be able to take the notebook and the manifest with
         # it: a session that cannot say whether its script runs is strictly

@@ -674,7 +674,7 @@ def test_the_run_record_states_what_the_run_cost(tmp_path: Path, proof_request: 
     """The bill reaches the two files a run is compared by, not just the events.
 
     It was recorded only inside `trajectory.json`'s event stream, which meant
-    that comparing two strategies "at equal budgets" -- the standard DESIGN.md
+    that comparing two strategies "at equal budgets" -- the standard docs/design/evaluation.md
     sets for evaluation -- needed a grep over the raw SDK reports.
     """
     result = run(proof_request, lambda model=None, **c: ReportingRuntime([

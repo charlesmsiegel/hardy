@@ -1,6 +1,6 @@
 """The measurement that issue #54 gates itself on.
 
-`DESIGN.md` defers warm pools until "measured latency warrants" them, so what
+`docs/design/interactive-session.md` defers warm pools until "measured latency warrants" them, so what
 is under test is whether Hardy can produce that measurement honestly -- above
 all that it does not overstate what a warm pool would recover.
 """

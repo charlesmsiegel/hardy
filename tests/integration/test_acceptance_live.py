@@ -1,7 +1,7 @@
 """The first experiment acceptance test, against a real model and a pinned toolchain.
 
 `tests/integration/test_batch_live.py` established that a real model reaches
-`verified` on a trivial theorem. This file is the claim FEATURES.md makes
+`verified` on a trivial theorem. This file is the claim docs/guides/proving.md makes
 beyond that: Hardy's honesty guarantees hold against a real model, a real
 pinned Mathlib, and a real TeX toolchain on a problem big enough to need more
 than one lemma -- on both surfaces, including the staged `hardy prove` path
@@ -308,7 +308,7 @@ class _ApprovingTerminal:
 def test_run_2_staged_prove_reaches_verified_through_the_document_pipeline(
     live_config: configuration.Config, identity, tmp_path: Path
 ):
-    """The half FEATURES.md said had never had a live run: frozen claim,
+    """The half docs/guides/proving.md said had never had a live run: frozen claim,
     independent final verification, controlled LaTeX, all on a real toolchain."""
     runs_root = _output(tmp_path, PROVE_VERIFIED)
     config = dataclasses.replace(live_config, runs_root=runs_root)

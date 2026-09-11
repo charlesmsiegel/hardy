@@ -1,6 +1,6 @@
 """What a warm Lean pool would actually recover, measured rather than assumed.
 
-`DESIGN.md` defers persistent sessions and warm pools until "measured latency
+`docs/design/interactive-session.md` defers persistent sessions and warm pools until "measured latency
 warrants them", and issue #54 repeats the condition. Nothing here implements a
 pool; this is the measurement the condition asks for.
 
