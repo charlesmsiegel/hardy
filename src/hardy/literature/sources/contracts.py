@@ -330,7 +330,7 @@ class StructuralObservation(FrozenModel):
     artifact_sha256: Digest
     kind: ObservationKind
     anchor: SourceAnchor
-    payload: tuple[tuple[Text, Text], ...] = ()
+    payload: tuple[tuple[Text, str], ...] = ()
     producer: Text
     producer_version: Text
     confidence: float | None = None
@@ -340,6 +340,133 @@ class StructuralObservation(FrozenModel):
             if k == key:
                 return v
         return default
+
+
+# --- source trees -------------------------------------------------------------
+
+
+class NodeKind(str, Enum):
+    PART = "part"
+    CHAPTER = "chapter"
+    SECTION = "section"
+    SUBSECTION = "subsection"
+    PARAGRAPH = "paragraph"
+    DEFINITION = "definition"
+    THEOREM = "theorem"
+    LEMMA = "lemma"
+    PROPOSITION = "proposition"
+    COROLLARY = "corollary"
+    CLAIM = "claim"
+    CONJECTURE = "conjecture"
+    PROOF = "proof"
+    CONSTRUCTION = "construction"
+    EXAMPLE = "example"
+    EXERCISE = "exercise"
+    SOLUTION = "solution"
+    REMARK = "remark"
+    EQUATION = "equation"
+    DIAGRAM = "diagram"
+    FIGURE = "figure"
+    TABLE = "table"
+    BIBLIOGRAPHY = "bibliography"
+    INDEX = "index"
+    FRONT_MATTER = "front_matter"
+    APPENDIX = "appendix"
+    UNKNOWN = "unknown"
+
+
+CONTAINER_KINDS: frozenset[NodeKind] = frozenset({NodeKind.PART, NodeKind.CHAPTER, NodeKind.SECTION, NodeKind.SUBSECTION, NodeKind.APPENDIX})
+STATEMENT_KINDS: frozenset[NodeKind] = frozenset({
+    NodeKind.DEFINITION, NodeKind.THEOREM, NodeKind.LEMMA, NodeKind.PROPOSITION, NodeKind.COROLLARY, NodeKind.CLAIM,
+    NodeKind.CONJECTURE, NodeKind.CONSTRUCTION, NodeKind.EXAMPLE, NodeKind.EXERCISE, NodeKind.SOLUTION, NodeKind.REMARK,
+})
+
+
+class SourceNode(FrozenModel):
+    """One structural unit of one artifact, with the exact span it covers."""
+
+    id: StableId
+    version: Digest
+    kind: NodeKind
+    parent: StableId | None = None
+    order: int
+    title: str | None = None
+    number: str | None = None
+    number_origin: Literal["explicit", "inferred", "none"] = "none"
+    label: str | None = None
+    span: SourceSpan
+    statement_span: SourceSpan | None = None
+    confidence: float | None = None
+    boundary_status: Literal["high", "probable", "unresolved"] = "high"
+    observations: tuple[StableId, ...] = ()
+
+
+class SourceEdgeKind(str, Enum):
+    CONTAINS = "contains"
+    PROOF_OF = "proof_of"
+    SOURCE_REFERS_TO = "source_refers_to"
+    SOURCE_CITES = "source_cites"
+    CONTINUES_FROM = "continues_from"
+    USES_NUMBERED_EQUATION = "uses_numbered_equation"
+    SOURCE_DEFINES_OR_LABELS = "source_defines_or_labels"
+
+
+class SourceEdge(FrozenModel):
+    """A claim about the document's own structure; never a mathematical dependency."""
+
+    kind: SourceEdgeKind
+    source: StableId
+    target: StableId
+    anchor: SourceAnchor | None = None
+
+
+class SourceTree(FrozenModel):
+    """A versioned structural interpretation of exactly one artifact."""
+
+    id: StableId
+    artifact_sha256: Digest
+    version: int
+    builder: Text
+    builder_version: Text
+    representations: tuple[StableId, ...]
+    nodes: tuple[SourceNode, ...] = ()
+    edges: tuple[SourceEdge, ...] = ()
+    diagnostics: tuple[Diagnostic, ...] = ()
+    supersedes: StableId | None = None
+    built_at: str
+
+    @property
+    def digest(self) -> str:
+        return json_digest({"schema": "hardy.source-tree/v1", "value": self.model_dump(mode="json")})
+
+    def node(self, id: str) -> SourceNode:
+        for node in self.nodes:
+            if node.id == id:
+                return node
+        raise KeyError(f"tree {self.id} has no node {id}")
+
+    def children(self, parent: StableId | None) -> tuple[SourceNode, ...]:
+        return tuple(sorted((n for n in self.nodes if n.parent == parent), key=lambda n: n.order))
+
+
+class SourceCorrespondence(FrozenModel):
+    """An evidenced relation between source units in different trees or artifacts."""
+
+    id: StableId
+    left_artifact: Digest
+    left: StableId
+    right_artifact: Digest
+    right: StableId
+    relation: Literal["same_source_unit", "overlapping", "variant", "translated", "other"]
+    status: Literal["candidate", "authoritative"] = "candidate"
+    evidence: tuple[Text, ...] = ()
+    decided_by: str | None = None
+
+
+class TreePreference(FrozenModel):
+    artifact_sha256: Digest
+    tree: StableId
+    reason: Text
 
 
 def content_digest(value: object) -> str:

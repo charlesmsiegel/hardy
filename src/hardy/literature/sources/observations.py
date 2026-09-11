@@ -30,15 +30,16 @@ PRODUCER_VERSION = "1"
 
 STATEMENT_KINDS = ("theorem", "lemma", "proposition", "corollary", "definition", "claim", "conjecture",
                    "example", "exercise", "remark", "construction", "solution")
+LINE_START = r"(?:^|(?<=[\n\f]))"
 STATEMENT_START = re.compile(
-    r"^(?P<kind>Theorem|Lemma|Proposition|Corollary|Definition|Claim|Conjecture|Example|Exercise|Remark|Construction|Solution)"
+    LINE_START + r"(?P<kind>Theorem|Lemma|Proposition|Corollary|Definition|Claim|Conjecture|Example|Exercise|Remark|Construction|Solution)"
     r"(?:\s+(?P<number>[A-Z]?[0-9]+(?:\.[0-9]+)*))?\s*(?:\((?P<name>[^)]*)\))?\s*[.:]\s*",
     re.MULTILINE,
 )
-PROOF_START = re.compile(r"^(?P<label>Proof|Beweis|Démonstration)(?:\s+of\s+[^.]*)?\.?\s*", re.MULTILINE)
+PROOF_START = re.compile(LINE_START + r"(?P<label>Proof|Beweis|Démonstration)(?:\s+of\s+[^.]*)?\.?\s*", re.MULTILINE)
 PROOF_END = re.compile(r"(?:∎|□|■|\bQ\.E\.D\.|\bQED\b|\bq\.e\.d\.)", re.MULTILINE)
 HEADING = re.compile(
-    r"^(?:(?P<chapter>Chapter|Part|Appendix)\s+(?P<chapter_number>[0-9IVXLC]+)\.?\s*(?P<chapter_title>[^\n]*)"
+    LINE_START + r"(?:(?P<chapter>Chapter|Part|Appendix)\s+(?P<chapter_number>[0-9IVXLC]+)\.?\s*(?P<chapter_title>[^\n]*)"
     r"|(?P<section_number>[0-9]+(?:\.[0-9]+){0,3})\s+(?P<section_title>[A-Z][^\n]{0,120}))$",
     re.MULTILINE,
 )
@@ -95,7 +96,7 @@ def observe_text(representation: DerivedRepresentation, text: str, *, producer_v
         add(ObservationKind.PROOF_END, match.start(), match.end(), (("marker", match.group(0)),), "end-of-proof marker", 0.9)
 
     for match in REFERENCE.finditer(text):
-        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_start = max(text.rfind("\n", 0, match.start()), text.rfind("\f", 0, match.start())) + 1
         if match.start() == line_start:
             continue  # a statement heading, not a reference to one
         add(ObservationKind.REFERENCE, match.start(), match.end(), (("kind", match.group("kind").lower()), ("number", match.group("number"))), "in-text reference to a numbered unit", 0.7)
