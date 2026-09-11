@@ -17,6 +17,7 @@ import pytest
 from test_chat import FakeChatRuntime, call
 from workspace_helpers import events
 
+from hardy.agents.contracts import TurnEvent
 from hardy.workflows.context import ContextManager
 from hardy.workflows.contracts import RunLimits
 from hardy.workflows.delegation.budget import LeaseRefused
@@ -154,6 +155,28 @@ def test_root_check_ceiling_refuses_a_second_worker_beyond_the_limit(tmp_path):
         chat.delegations.shutdown()
 
 
+def test_a_worker_reserves_a_share_of_the_root_time_so_another_can_follow(tmp_path):
+    """A single worker must not take the whole active-time ceiling: a second one, concurrent or later, still fits."""
+    seed_lemma(tmp_path)
+    started, release = threading.Event(), threading.Event()
+    chat = session_with_worker(tmp_path, main_script=["Hello."], worker_script=WORKER_SCRIPT,
+                               worker_gate=(started, release), limits=RunLimits(official_checks=4))
+    try:
+        first = chat.delegate("L17", objective="prove L17", checks=1)
+        assert started.wait(5)
+        second = chat.delegate("L17", objective="prove L17 differently", checks=1)     # concurrent
+        release.set()
+        assert chat.delegations.wait(first.id, timeout=10).state is DelegationState.COMPLETED
+        assert chat.delegations.wait(second.id, timeout=10).state is DelegationState.COMPLETED
+        third = chat.delegate("L17", objective="prove L17 once more", checks=1, seconds=30.0)  # later, explicit
+        assert chat.delegations.wait(third.id, timeout=10).state is DelegationState.COMPLETED
+        leases = [chat.delegations.tree().get(d.id).spec.lease for d in (first, second, third)]
+        assert leases[2].active_seconds == 30.0
+        assert all(lease.active_seconds is not None and lease.active_seconds < 1800 for lease in leases[:2])
+    finally:
+        chat.delegations.shutdown()
+
+
 def test_usage_unknown_stays_unknown_and_reported_usage_is_counted(tmp_path):
     seed_lemma(tmp_path)
     chat = session_with_worker(tmp_path, main_script=["Hello."], worker_script=WORKER_SCRIPT)
@@ -211,5 +234,110 @@ def test_delegate_refuses_unknown_targets_and_missing_scope(tmp_path):
     try:
         with pytest.raises(ValueError):
             chat.delegate("L17", objective="prove L17")
+    finally:
+        chat.delegations.shutdown()
+
+
+
+class StreamingMainRuntime(FakeChatRuntime):
+    """A main-conversation fake that streams, then holds mid-turn until released."""
+
+    hold: tuple[threading.Event, threading.Event] | None = None
+
+    def stream(self, text: str):
+        self.last_prompt = text
+        if self.hold is not None:
+            streaming, release = self.hold
+            streaming.set()
+        yield TurnEvent("text", text="Working... ")
+        if self.hold is not None:
+            release.wait(10)
+        if self.cancelled:
+            yield TurnEvent("reply", text="(cut off)")
+            return
+        yield from super().stream(text)
+
+
+def session_with_streaming_main(tmp_path: Path, *, worker_script, main_hold, worker_gate=None):
+    builds: list[dict] = []
+    mains: list[StreamingMainRuntime] = []
+
+    def make(model=None, **context):
+        builds.append(context)
+        if context.get("system_prompt") == WORKER_SYSTEM_PROMPT:
+            runtime = GatedWorkerRuntime(worker_script, **context)
+            runtime.gate = worker_gate
+            return runtime
+        runtime = StreamingMainRuntime(["All done."], **context)
+        runtime.hold = main_hold
+        mains.append(runtime)
+        return runtime
+
+    chat = MathematicsSession(tmp_path, make, FAKE_LEAN, FAKE_LATEX, lambda proposal: False, delegation_slots=2)
+    chat.mains = mains
+    return chat
+
+
+def test_completion_during_a_streaming_turn_notifies_now_and_reaches_the_model_next_turn(tmp_path):
+    """Criteria 31, 36: the in-flight provider request is untouched; the human hears at once."""
+    seed_lemma(tmp_path)
+    streaming, release = threading.Event(), threading.Event()
+    chat = session_with_streaming_main(tmp_path, worker_script=WORKER_SCRIPT, main_hold=(streaming, release))
+    try:
+        turn = chat.stream("Start the long turn.")
+        first = next(iter(turn))
+        assert first.kind == "text" and streaming.wait(5)
+        delegation = chat.delegate("L17", objective="prove L17", checks=1)
+        done = chat.delegations.wait(delegation.id, timeout=10)
+        assert done.state is DelegationState.COMPLETED
+        assert chat.notices and delegation.id in chat.notices[-1]            # notified while the turn streams
+        release.set()
+        rest = list(turn)
+        assert rest[-1].kind in {"reply", "notice"} and not chat.mains[0].cancelled   # ordinary completion never interrupts
+        assert "[Hardy delegation attention" not in chat.mains[0].last_prompt          # the sent request was not altered
+        chat.send("And now?")
+        assert "[Hardy delegation attention" in chat.mains[0].last_prompt               # the next request carries it
+        assert chat.delegations.attention().pending("main_agent") == ()
+    finally:
+        chat.delegations.shutdown()
+
+
+def test_a_subscribed_counterexample_interrupts_at_a_safe_boundary_and_records_a_continuation(tmp_path):
+    """Criteria 36, 37: interrupt only by subscription; the continuation is guarded by the epoch."""
+    from hardy.workflows.delegation.attention import AttentionSubscription, DeliveryMode
+    from hardy.workflows.delegation.controller import ROOT_ID
+
+    seed_lemma(tmp_path)
+    streaming, release = threading.Event(), threading.Event()
+    counter_script = [call("propose_finding", {"kind": "counterexample", "summary": "a conic bundle breaks L17",
+                                               "payload": "the conic bundle over P1", "related_refs": ["L17"]}),
+                      call("finish", {"status": "completed", "synthesis": "found a counterexample"})]
+    chat = session_with_streaming_main(tmp_path, worker_script=counter_script, main_hold=(streaming, release))
+    try:
+        warm_up = chat.delegate("L17", objective="warm up", checks=1)               # creates the root
+        chat.delegations.wait(warm_up.id, timeout=10)
+        chat.delegations.subscribe(AttentionSubscription(owner="human", source=ROOT_ID, triggers=("counterexample",),
+                                                         mode=DeliveryMode.INTERRUPT, recipient="both"))
+        turn = chat.stream("Prove L17 by induction.")
+        assert next(iter(turn)).kind == "text" and streaming.wait(5)
+        delegation = chat.delegate("L17", objective="look for counterexamples", checks=1)
+        chat.delegations.wait(delegation.id, timeout=10)
+        assert chat.mains[0].cancelled                                             # cancelled at the runtime boundary
+        release.set()
+        list(turn)
+        recorded = events(tmp_path)
+        cancelled = [e for e in recorded if e["type"] == "turn" and e.get("status") == "cancelled"]
+        assert cancelled and "delegation_interrupt" in cancelled[-1]["reason"]
+        assert [c.resume_text for c in chat.delegations.continuations()] == ["Prove L17 by induction."]
+        # The conversation has not moved: the continuation may start, and the restart carries the item.
+        assert chat.continue_main() == "Prove L17 by induction."
+        chat.send("Prove L17 by induction.")
+        assert "counterexample" in chat.mains[0].last_prompt
+        # A later interrupt whose continuation is overtaken by a new human message goes stale.
+        chat.delegations.record_continuation(delegation.id, condition="terminal", epoch=chat.record.history().epoch,
+                                             offset=0, resume_text="old plan")
+        assert chat.continue_main() is None
+        stale = [i for i in chat.delegations.attention().pending("main_agent") if i.category == "continuation"]
+        assert stale and "old plan" in stale[0].summary
     finally:
         chat.delegations.shutdown()

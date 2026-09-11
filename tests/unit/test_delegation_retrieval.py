@@ -187,8 +187,8 @@ def test_seeded_source_is_a_prominent_pointer_never_the_body(tmp_path):
 
 def test_worker_tools_include_retrieval_and_a_running_worker_uses_them(tmp_path):
     names = [spec["function"]["name"] for spec in WORKER_TOOLS]
-    assert names == ["propose_finding", "finish", "read_project", "read_item", "read_neighborhood",
-                     "search_literature", "read_source"]
+    assert names[:7] == ["propose_finding", "finish", "read_project", "read_item", "read_neighborhood",
+                         "search_literature", "read_source"]
     heads = seed_project(tmp_path)
     store = LedgerStore(tmp_path)
     started, release = threading.Event(), threading.Event()

@@ -93,14 +93,15 @@ from hardy.workflows.admission import (
     _vacuity_source as _vacuity_source,
 )
 from hardy.workflows.contracts import RunLimits
-from hardy.workflows.delegation.attention import DEFAULT_BUDGET_ITEMS
+from hardy.workflows.delegation.attention import DEFAULT_BUDGET_ITEMS, AttentionItem
+from hardy.workflows.delegation.budget import LeaseLedger
 from hardy.workflows.delegation.contracts import (
     ConcurrencyLease,
     Delegation,
     DelegationSpec,
     ResourceLease,
 )
-from hardy.workflows.delegation.controller import DelegationController, RootResources
+from hardy.workflows.delegation.controller import ROOT_ID, DelegationController, RootResources
 from hardy.workflows.delegation.store import DelegationStore
 from hardy.workflows.delegation.worker import (
     WORKER_SYSTEM_PROMPT,
@@ -544,9 +545,13 @@ class MathematicsSession:
         # at its next turn, never mid-request.
         self.notices: deque[str] = deque(maxlen=200)
         self.on_notice: Callable[[str], None] | None = None
+        #: What the human asked for in the turn now in flight, if any; an
+        #: interrupt records it as the continuation's resume text.
+        self._in_flight_text: str | None = None
         self.delegations = DelegationController(
             DelegationStore(workspace), LedgerStore(workspace),
             executor=LocalExecutor(delegation_slots), open_worker=self._open_worker,
+            interrupt=self._interrupt,
             root=RootResources(lease=ResourceLease(official_checks=self.limits.official_checks,
                                                    active_seconds=float(self.limits.active_seconds)),
                                slots=delegation_slots),
@@ -660,13 +665,15 @@ class MathematicsSession:
     # -- delegation ---------------------------------------------------------
 
     def delegate(self, target: str, *, objective: str, task_mode: str = "prove", checks: int = 1,
-                 model: str | None = None) -> Delegation:
+                 model: str | None = None, seconds: float | None = None) -> Delegation:
         """Start one background worker on a ledger item and return at once.
 
         `target` is a stable id or `id@digest`. The worker reserves `checks`
-        official Lean checks from the session's root ceiling and runs under
-        the same active-time limit; it receives its own provider context and
-        none of this conversation.
+        official Lean checks from the session's root ceiling and `seconds` of
+        active time -- by default an equal share of what the root can still
+        promise across its free slots, so one worker never takes the whole
+        ceiling from the next. It receives its own provider context and none
+        of this conversation.
         """
         snapshot = LedgerStore(self.workspace).read()
         if "@" in target:
@@ -682,10 +689,22 @@ class MathematicsSession:
         spec = DelegationSpec(
             objective=objective, project_refs=(record.ref,), scope=scopes[0].ref, context=record.context,
             task_mode=task_mode, model=model, created_by="human",
-            lease=ResourceLease(official_checks=checks, active_seconds=float(self.limits.active_seconds)),
+            lease=ResourceLease(official_checks=checks,
+                                active_seconds=self._worker_seconds() if seconds is None else seconds),
             concurrency=ConcurrencyLease(slots=1),
         )
         return self.delegations.delegate(spec)
+
+    def _worker_seconds(self) -> float:
+        """One worker's default share of the root's remaining active time."""
+        tree = self.delegations.tree()
+        if ROOT_ID not in tree.delegations:
+            return float(self.limits.active_seconds) / max(1, self.delegations.root.slots)
+        ledger = LeaseLedger(tree)
+        remaining = ledger.allocatable(ROOT_ID).active_seconds
+        if remaining is None:
+            return float(self.limits.active_seconds)
+        return remaining / max(1, ledger.slots_available(ROOT_ID))
 
     def _open_worker(self, launch: WorkerLaunch, dispatch: Callable[[str, dict[str, Any]], ToolResult],
                      observe: Callable[[dict[str, Any]], None]) -> OpenedWorker:
@@ -723,21 +742,56 @@ class MathematicsSession:
 
         Called by the turn coordinator ahead of the `user` event and prepended
         to the provider request, so the model reads background results before
-        the human's next message and never in the middle of a request.
+        the human's next message and never in the middle of a request. Items
+        are coalesced -- a finished worker's routine findings fold into its
+        completion -- and every folded item is receipted alongside the one
+        that carries it, so provenance survives the summary.
         """
         block = self._steering_block()
         try:
             inbox = self.delegations.attention()
-            pending = inbox.pending("main_agent")
+            pending = inbox.coalesced_pending("main_agent")
             attention = inbox.render_for_model(pending, budget_items=DEFAULT_BUDGET_ITEMS)
             if attention:
                 epoch = self.record.history().epoch
                 offset = self._transcript_end()
                 for item in pending[:DEFAULT_BUDGET_ITEMS]:
-                    inbox.receipt(item.id, "main_agent", "queue", epoch=epoch, offset=offset)
+                    for delivered in (item.id, *item.supersedes):
+                        inbox.receipt(delivered, "main_agent", "queue", epoch=epoch, offset=offset)
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return block
         return "\n\n".join(part for part in (block, attention) if part)
+
+    def _interrupt(self, item: AttentionItem) -> None:
+        """A subscribed INTERRUPT reached the session: end the in-flight turn at the runtime boundary.
+
+        The item itself is not injected here; the cancelled turn's restart
+        carries it through the steering block like any other attention. What
+        is recorded is a continuation holding what the human had asked for,
+        guarded by the conversation epoch and the transcript offset so that a
+        later human message makes it stale rather than replayed.
+        """
+        if not any(turn.active for turn in self._conversation_turns) or self._in_flight_text is None:
+            return
+        self.cancel(reason=f"delegation_interrupt:{item.id}")
+        self.delegations.record_continuation(
+            item.delegation_id, condition="interrupted", epoch=self.record.history().epoch,
+            offset=self._transcript_end(), resume_text=self._in_flight_text,
+        )
+
+    def continue_main(self) -> str | None:
+        """The text a due continuation resumes with, or None; stale ones become queued items.
+
+        A continuation starts only if the conversation has not moved since it
+        was recorded: the durable epoch is unchanged and no human turn was
+        recorded after its offset.
+        """
+        started = self.delegations.resolve_continuations(
+            epoch=self.record.history().epoch, advanced_since=self._human_turn_since)
+        return started[-1].resume_text if started else None
+
+    def _human_turn_since(self, offset: int) -> bool:
+        return any(event.get("type") == "user" for event in self.record._recorded(offset))
 
     def _project_operations(self):
         """Named ledger operations; called while both session gates are held."""
@@ -4583,6 +4637,7 @@ class MathematicsSession:
         with self._conversation_gate:
             if self._runtime_epoch != self.record.history().epoch:
                 raise ValueError("Conversation changed; reopen the session before starting a turn.")
+            self._in_flight_text = text
             events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
             turn = _ConversationTurn(events)
             self._conversation_turns.add(turn)

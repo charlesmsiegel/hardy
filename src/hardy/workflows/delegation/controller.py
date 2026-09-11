@@ -28,7 +28,15 @@ from hardy.agents.executor import (
 )
 from hardy.literature.metadata import ArxivError, parse_id
 from hardy.workflows.contracts import RunPhase
-from hardy.workflows.delegation.attention import AttentionInbox
+from hardy.workflows.delegation.attention import (
+    AttentionInbox,
+    AttentionItem,
+    AttentionSubscription,
+    DeliveryMode,
+    MainContinuation,
+    resolve_continuation,
+    route,
+)
 from hardy.workflows.delegation.budget import LeaseLedger, grant
 from hardy.workflows.delegation.context import (
     ContextPolicy,
@@ -94,6 +102,7 @@ class RootResources:
 class DelegationController:
     def __init__(self, store: DelegationStore, ledger: LedgerStore, *, executor: WorkerExecutor,
                  open_worker: OpenWorker, root: RootResources, notify: Callable[[str], None],
+                 interrupt: Callable[[AttentionItem], None] | None = None,
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC),
                  papers: PaperToolRuntime | None = None,
                  constraints: PortfolioConstraints | None = None,
@@ -116,6 +125,9 @@ class DelegationController:
         self._open_worker = open_worker
         self.root = root
         self._notify = notify
+        #: Reaches the main conversation only for a subscribed INTERRUPT; the
+        #: session decides what a safe boundary is, the controller never does.
+        self._interrupt = interrupt
         self._clock = clock
         self._lock = threading.RLock()
         self._handles: dict[str, WorkerHandle] = {}
@@ -535,15 +547,94 @@ class DelegationController:
         self._route(id, event)
 
     def _route(self, id: str, event: DelegationEvent) -> None:
-        item = self._inbox.derive(event, self.tree())
-        if item is None:
+        """Raw events stay in the journal; what the root owes attention to is routed by mode.
+
+        QUEUE records the item and nothing more: the model reads it at its next
+        turn. NOTIFY also tells the human now. INTERRUPT, reachable only through
+        a subscription, hands the item to the session's hook as well; the hook
+        chooses the boundary. Human delivery is receipted here; the model's is
+        receipted by whoever prepends the item to a provider request.
+        """
+        routed = route(event, self.tree(), self.subscriptions())
+        if routed is None:
             return
+        item, mode = routed
         self._inbox.record(item)
+        if mode is DeliveryMode.QUEUE:
+            return
         try:
             self._notify(item.summary)
         except Exception:  # noqa: BLE001 - a notice that cannot be shown is not delivered
             return
-        self._inbox.receipt(item.id, "human", "notify")
+        if mode is DeliveryMode.NOTIFY or self._interrupt is None:
+            self._inbox.receipt(item.id, "human", "notify")
+            return
+        self.store.append(id, "attention.interrupt_requested", {"item_id": item.id})
+        self._inbox.receipt(item.id, "human", "interrupt")
+        try:
+            self._interrupt(item)
+        except Exception:  # noqa: BLE001 - the hook's failure is not the worker's
+            return
+
+    # -- subscriptions and continuations --------------------------------------
+
+    def subscribe(self, subscription: AttentionSubscription) -> AttentionSubscription:
+        """An explicit override of default routing, journaled so it survives a restart."""
+        self.store.append(subscription.source, "attention.subscribed",
+                          {"subscription": subscription.model_dump(mode="json")})
+        return subscription
+
+    def subscriptions(self) -> tuple[AttentionSubscription, ...]:
+        return tuple(AttentionSubscription.model_validate(e.payload["subscription"])
+                     for e in self.store.events() if e.kind == "attention.subscribed")
+
+    def record_continuation(self, delegation_id: str, *, condition: str, epoch: str | None, offset: int,
+                            resume_text: str) -> MainContinuation:
+        """The main agent's next action waits on delegated work; guarded by the conversation epoch."""
+        continuation = MainContinuation(
+            id=f"continuation:{uuid4().hex[:12]}", awaiting=delegation_id, condition=condition,
+            conversation_epoch=epoch, transcript_offset=offset, resume_text=resume_text,
+            created_at=self._clock().isoformat(),
+        )
+        self.store.append(delegation_id, "continuation.recorded",
+                          {"continuation": continuation.model_dump(mode="json")})
+        return continuation
+
+    def continuations(self) -> tuple[MainContinuation, ...]:
+        """Continuations recorded and neither started nor gone stale."""
+        open_: dict[str, MainContinuation] = {}
+        for event in self.store.events():
+            if event.kind == "continuation.recorded":
+                continuation = MainContinuation.model_validate(event.payload["continuation"])
+                open_[continuation.id] = continuation
+            elif event.kind in {"continuation.started", "continuation.stale"}:
+                open_.pop(str(event.payload["continuation"]["id"]), None)
+        return tuple(open_.values())
+
+    def resolve_continuations(self, *, epoch: str | None,
+                              advanced_since: Callable[[int], bool]) -> tuple[MainContinuation, ...]:
+        """Which continuations may start now; the rest that are due become queued items instead.
+
+        A continuation starts only when the conversation has not moved since
+        it was recorded: same epoch and no human turn after its offset. One
+        that has been overtaken is never replayed; it is reported as stale so
+        the human and the model both see what would have happened.
+        """
+        started: list[MainContinuation] = []
+        tree = self.tree()
+        for continuation in self.continuations():
+            if continuation.condition == "terminal" and not tree.get(continuation.awaiting).terminal:
+                continue
+            payload = {"continuation": continuation.model_dump(mode="json")}
+            verdict = resolve_continuation(continuation, epoch=epoch,
+                                           advanced=advanced_since(continuation.transcript_offset))
+            if verdict == "start":
+                self.store.append(continuation.awaiting, "continuation.started", payload)
+                started.append(continuation)
+                continue
+            event = self.store.append(continuation.awaiting, "continuation.stale", payload)
+            self._route(continuation.awaiting, event)
+        return tuple(started)
 
     def cancel(self, id: str, *, reason: str = "user") -> tuple[str, ...]:
         with self._lock:
