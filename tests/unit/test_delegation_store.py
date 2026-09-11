@@ -140,3 +140,39 @@ def test_artifact_store_is_per_delegation_and_reopenable(tmp_path):
     assert again.path.parent == tmp_path / "delegations"
     with pytest.raises(ValueError, match="unknown delegation"):
         store.artifacts("missing")
+
+
+def test_cancelling_a_subtree_requests_descendants_deepest_first_and_cancels_queued(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    store.append("root", "delegation.started", {})
+    _create(store, "child", "root", "sub")
+    store.append("child", "delegation.started", {})
+    _create(store, "grandchild", "child", "subsub")           # never started: queued
+    _create(store, "done", "root", "finished")
+    store.append("done", "delegation.completed", {"reason": "done"})
+    requested = store.cancel_subtree("root", reason="user")
+    assert requested == ("grandchild", "child", "root")
+    tree = store.tree()
+    assert tree.get("grandchild").state is DelegationState.CANCELLED
+    assert tree.get("grandchild").terminal_reason == "user"
+    assert tree.get("child").state is DelegationState.ACTIVE      # the executor ends it
+    assert tree.get("root").state is DelegationState.ACTIVE
+    assert tree.get("done").state is DelegationState.COMPLETED
+    assert tree.cancel_requested("child") and tree.cancel_requested("root")
+    assert not tree.cancel_requested("done")
+    # A second request is not journaled twice.
+    assert store.cancel_subtree("root", reason="again") == ()
+
+
+def test_release_requires_a_terminal_node(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    _create(store, "a", "root")
+    store.append("a", "delegation.started", {})
+    with pytest.raises(ValueError, match="terminal"):
+        store.release("a")
+    store.append("a", "delegation.failed", {"reason": "boom"})
+    store.release("a")
+    assert store.release("a") is None                             # idempotent
+    assert [e.kind for e in store.events()].count("budget.released") == 1
