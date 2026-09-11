@@ -16,7 +16,12 @@ class _Delegations:
                                     spec=SimpleNamespace(objective="session root resources")),
             "d-1": SimpleNamespace(id="d-1", state=SimpleNamespace(value="active"),
                                    spec=SimpleNamespace(objective="prove L17")),
+            "d-2": SimpleNamespace(id="d-2", state=SimpleNamespace(value="queued"),
+                                   spec=SimpleNamespace(objective="refute L17")),
         })
+        self._tree.children = lambda id: {"root": ("d-1",), "d-1": ("d-2",)}.get(id, ())
+        self._tree.roots = ("d-1",)
+        self.calls = []
         self._pending = [SimpleNamespace(id="attention:3", summary="d-0 (prove L16) completed: done",
                                          actionable=False, sticky=False)]
 
@@ -30,29 +35,86 @@ class _Delegations:
         return self._tree
 
     def attention(self):
-        return SimpleNamespace(pending=lambda recipient: tuple(self._pending))
+        return SimpleNamespace(pending=lambda recipient: tuple(self._pending),
+                               handle=lambda item_id, *, by: self.calls.append(("handle", item_id, by)))
 
     def cancel(self, id, *, reason="user"):
         self.cancelled.append((id, reason))
         return (id,) if id in self._tree.delegations else ()
+
+    def _known(self, id):
+        if id not in self._tree.delegations:
+            raise ValueError(f"unknown delegation: {id}")
+
+    def inspect(self, id):
+        self._known(id)
+        node = self._tree.delegations[id]
+        return {"delegation": {"id": id, "state": node.state.value, "parent_id": None,
+                               "spec": {"objective": node.spec.objective, "task_mode": "prove"}},
+                "usage": {"official_checks": 1, "unknown": ["cost_usd"]}, "lease": {"official_checks": 2},
+                "released": False, "cancel_requested": False,
+                "attention": [{"id": "attention:3", "summary": "d-1 proposed a counterexample"}],
+                "artifacts": f"/tmp/delegations/{id}"}
+
+    def pin(self, id, kind, *, by, value=None):
+        self._known(id)
+        self.calls.append(("pin", id, kind, value))
+
+    def unpin(self, id, kind, *, by):
+        self._known(id)
+        self.calls.append(("unpin", id, kind))
+
+    def pause(self, id, *, by):
+        self._known(id)
+        self.calls.append(("pause", id))
+
+    def resume(self, id, *, by):
+        self._known(id)
+        self.calls.append(("resume", id))
+
+    def reinforce(self, id, delta, *, by, reason):
+        self._known(id)
+        self.calls.append(("reinforce", id, delta))
+        return SimpleNamespace(started=(), reason="reinforced")
+
+    def finish_subtree(self, id, *, synthesis, by):
+        self._known(id)
+        self.calls.append(("finish", id, synthesis))
+        return self._tree.delegations[id]
+
+    def subscribe(self, subscription):
+        self.calls.append(("subscribe", subscription.source, subscription.triggers, subscription.mode.value))
+        return subscription
 
 
 class _Session:
     def __init__(self):
         self.delegations = _Delegations()
         self.delegated = []
+        self.delegate_kwargs = []
         self.on_notice = None
+        self.continuation = None
+        self.sent = []
 
-    def delegate(self, target, *, objective, task_mode="prove", checks=1, model=None):
+    def delegate(self, target, *, objective, task_mode="prove", checks=1, model=None, seconds=None,
+                 hidden_ids=()):
         self.delegated.append((target, objective, checks))
+        self.delegate_kwargs.append({"task_mode": task_mode, "seconds": seconds, "hidden_ids": hidden_ids})
         if target == "missing":
             raise ValueError("unknown record identity: missing")
         return SimpleNamespace(id="d-9", state=SimpleNamespace(value="queued"))
 
+    def continue_main(self):
+        return self.continuation
+
+    def send(self, text):
+        self.sent.append(text)
+        return "ok"
+
 
 def test_registry_gains_the_three_controls_with_the_right_in_flight_rules():
     registry = {c.name: c for c in handlers.build_registry()}
-    assert registry["delegate"].argument_hint == "<item-id> [objective]"
+    assert registry["delegate"].argument_hint.startswith("<item-id> ")
     assert not registry["delegate"].safe_in_flight
     assert registry["jobs"].safe_in_flight and registry["cancel"].safe_in_flight
     assert registry["cancel"].argument_hint == "<delegation-id>"
@@ -114,3 +176,65 @@ def test_shell_attach_wires_notices_to_the_terminal(settings, capsys):
     assert session.on_notice is not None
     session.on_notice("d-1 (prove L17) completed: done")
     assert "d-1 (prove L17) completed" in capsys.readouterr().out
+
+
+async def test_delegate_accepts_flags_for_checks_mode_time_and_hidden_ids(ui, settings):
+    session = _Session()
+    await handlers.handle_delegate(ui, "L17 --checks 2 --mode explore --seconds 30 --hide L3,L4 find the obstruction",
+                                   State(config=settings, session=session))
+    assert session.delegated == [("L17", "find the obstruction", 2)]
+    assert session.delegate_kwargs[-1] == {"task_mode": "explore", "seconds": 30.0, "hidden_ids": ("L3", "L4")}
+    await handlers.handle_delegate(ui, "L17 --checks two", State(config=settings, session=session))
+    assert "Usage" in ui.text
+
+
+async def test_jobs_inspects_one_delegation(ui, settings):
+    session = _Session()
+    await handlers.handle_jobs(ui, "d-1", State(config=settings, session=session))
+    assert "active" in ui.text and "official_checks" in ui.text and "delegations/d-1" in ui.text
+    assert "attention:3" in ui.text
+    await handlers.handle_jobs(ui, "ghost", State(config=settings, session=session))
+    assert "unknown delegation" in ui.text
+
+
+async def test_jobs_tree_shows_children_beneath_parents(ui, settings):
+    await handlers.handle_jobs(ui, "tree", State(config=settings, session=_Session()))
+    lines = [line for line in ui.text.splitlines() if "d-1" in line or "d-2" in line]
+    assert lines[0].lstrip().startswith("d-1") and lines[1].startswith("    d-2")
+
+
+async def test_jobs_controls_reach_the_controller(ui, settings):
+    session = _Session()
+    state = State(config=settings, session=session)
+    await handlers.handle_jobs(ui, "pin d-1 min_attention 2", state)
+    await handlers.handle_jobs(ui, "unpin d-1 min_attention", state)
+    await handlers.handle_jobs(ui, "pause d-1", state)
+    await handlers.handle_jobs(ui, "resume d-1", state)
+    await handlers.handle_jobs(ui, "reinforce d-1 3", state)
+    await handlers.handle_jobs(ui, "finish d-1 the two approaches agree", state)
+    await handlers.handle_jobs(ui, "handle attention:3", state)
+    await handlers.handle_jobs(ui, "subscribe d-1 counterexample interrupt", state)
+    calls = session.delegations.calls
+    assert calls[0] == ("pin", "d-1", "min_attention", 2)
+    assert calls[1] == ("unpin", "d-1", "min_attention")
+    assert calls[2] == ("pause", "d-1") and calls[3] == ("resume", "d-1")
+    assert calls[4][:2] == ("reinforce", "d-1") and calls[4][2].official_checks == 3
+    assert calls[5] == ("finish", "d-1", "the two approaches agree")
+    assert calls[6] == ("handle", "attention:3", "human")
+    assert calls[7][:2] == ("subscribe", "d-1") and calls[7][2] == ("counterexample",) and calls[7][3] == "interrupt"
+    await handlers.handle_jobs(ui, "pin d-1 bogus", state)
+    assert "Usage" in ui.text
+    await handlers.handle_jobs(ui, "pause ghost", state)
+    assert "unknown delegation" in ui.text
+
+
+async def test_jobs_continue_resumes_the_main_conversation_only_between_turns(ui, settings):
+    session = _Session()
+    session.continuation = "Prove L17 by induction."
+    await handlers.handle_jobs(ui, "continue", State(config=settings, session=session, turn_running=True))
+    assert session.sent == [] and "running" in ui.text
+    await handlers.handle_jobs(ui, "continue", State(config=settings, session=session))
+    assert session.sent == ["Prove L17 by induction."]
+    session.continuation = None
+    await handlers.handle_jobs(ui, "continue", State(config=settings, session=session))
+    assert "nothing to continue" in ui.text.lower()

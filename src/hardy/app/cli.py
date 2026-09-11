@@ -189,6 +189,14 @@ def _chat(
     # condition the launch established.
     launch = {"fresh_thread": getattr(args, "fresh_thread", False), "detail": ""}
 
+    def worker_cas(cwd: Path):
+        """A kernel of its own for one background worker, logged beside its artifacts."""
+        runtime, _detail = cas_tools.build_runtime(
+            backend_name=config.cas_backend, command=config.cas_command, limits=config.limits,
+            log_path=cwd / "cells.jsonl", cwd=cwd,
+        )
+        return runtime
+
     def build(confirm: Callable[[dict[str, Any]], bool]) -> MathematicsSession:
         fresh = launch["fresh_thread"]
         launch["fresh_thread"] = False
@@ -209,6 +217,8 @@ def _chat(
                 context_window=config.context_window,
                 fresh_thread=fresh,
                 limits=config.limits,
+                delegation_slots=config.delegation_workers,
+                cas_factory=worker_cas,
             )
         except BaseException:
             launch["fresh_thread"] = fresh

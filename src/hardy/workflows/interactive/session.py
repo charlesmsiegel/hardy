@@ -665,7 +665,8 @@ class MathematicsSession:
     # -- delegation ---------------------------------------------------------
 
     def delegate(self, target: str, *, objective: str, task_mode: str = "prove", checks: int = 1,
-                 model: str | None = None, seconds: float | None = None) -> Delegation:
+                 model: str | None = None, seconds: float | None = None,
+                 hidden_ids: tuple[str, ...] = ()) -> Delegation:
         """Start one background worker on a ledger item and return at once.
 
         `target` is a stable id or `id@digest`. The worker reserves `checks`
@@ -673,7 +674,8 @@ class MathematicsSession:
         active time -- by default an equal share of what the root can still
         promise across its free slots, so one worker never takes the whole
         ceiling from the next. It receives its own provider context and none
-        of this conversation.
+        of this conversation; `hidden_ids` names ledger items it must not be
+        shown or able to retrieve, for an independent attempt.
         """
         snapshot = LedgerStore(self.workspace).read()
         if "@" in target:
@@ -688,7 +690,7 @@ class MathematicsSession:
             raise ValueError("delegation requires a recorded trust scope in the project ledger")
         spec = DelegationSpec(
             objective=objective, project_refs=(record.ref,), scope=scopes[0].ref, context=record.context,
-            task_mode=task_mode, model=model, created_by="human",
+            task_mode=task_mode, model=model, created_by="human", hidden_ids=tuple(hidden_ids),
             lease=ResourceLease(official_checks=checks,
                                 active_seconds=self._worker_seconds() if seconds is None else seconds),
             concurrency=ConcurrencyLease(slots=1),

@@ -341,3 +341,17 @@ def test_a_subscribed_counterexample_interrupts_at_a_safe_boundary_and_records_a
         assert stale and "old plan" in stale[0].summary
     finally:
         chat.delegations.shutdown()
+
+
+def test_delegate_carries_hidden_ids_time_and_task_mode_into_the_spec(tmp_path):
+    seed_lemma(tmp_path)
+    chat = session_with_worker(tmp_path, main_script=["Hello."], worker_script=WORKER_SCRIPT)
+    try:
+        delegation = chat.delegate("L17", objective="explore", task_mode="explore", checks=2, seconds=12.0,
+                                   hidden_ids=("L3", "L4"))
+        spec = chat.delegations.tree().get(delegation.id).spec
+        assert spec.hidden_ids == ("L3", "L4") and spec.task_mode == "explore"
+        assert spec.lease.official_checks == 2 and spec.lease.active_seconds == 12.0
+        chat.delegations.wait(delegation.id, timeout=10)
+    finally:
+        chat.delegations.shutdown()

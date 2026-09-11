@@ -1136,6 +1136,42 @@ async def handle_abandon(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+DELEGATE_USAGE = ("Usage: /delegate <item-id> [--checks N] [--seconds S] [--mode prove|explore|refute|"
+                  "critique|verify] [--hide id,id] [objective]")
+
+
+def _delegate_arguments(argument: str) -> tuple[str, str, dict[str, Any]]:
+    """`<item-id>`, the objective, and the keyword options `session.delegate` takes."""
+    words = argument.split()
+    options: dict[str, Any] = {}
+    positional: list[str] = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if not word.startswith("--"):
+            positional.append(word)
+            index += 1
+            continue
+        if index + 1 >= len(words):
+            raise ValueError(DELEGATE_USAGE)
+        value = words[index + 1]
+        index += 2
+        if word == "--checks":
+            options["checks"] = int(value)
+        elif word == "--seconds":
+            options["seconds"] = float(value)
+        elif word == "--mode":
+            options["task_mode"] = value
+        elif word == "--hide":
+            options["hidden_ids"] = tuple(part for part in value.split(",") if part)
+        else:
+            raise ValueError(DELEGATE_USAGE)
+    if not positional:
+        raise ValueError(DELEGATE_USAGE)
+    target, *rest = positional
+    return target, " ".join(rest) or f"prove {target}", options
+
+
 async def handle_delegate(ui: Ui, argument: str, state: State) -> State:
     """Start one background worker on a ledger item and come straight back.
 
@@ -1143,14 +1179,13 @@ async def handle_delegate(ui: Ui, argument: str, state: State) -> State:
     ledger head and reserves part of the session's root ceiling, and a turn
     in flight may be about to move both.
     """
-    parts = argument.strip().split(maxsplit=1)
-    if not parts:
-        ui.write("Usage: /delegate <item-id> [objective]", style="error")
-        return state
-    target = parts[0]
-    objective = parts[1].strip() if len(parts) > 1 else f"prove {target}"
     try:
-        delegation = state.session.delegate(target, objective=objective)
+        target, objective, options = _delegate_arguments(argument)
+    except ValueError as error:
+        ui.write(str(error) if str(error).startswith("Usage") else DELEGATE_USAGE, style="error")
+        return state
+    try:
+        delegation = state.session.delegate(target, objective=objective, **options)
     except ValueError as error:
         ui.write(str(error), style="error")
         return state
@@ -1159,9 +1194,16 @@ async def handle_delegate(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
-async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
-    """Read-only: the delegation journal, the root budget, and what awaits attention."""
-    delegations = state.session.delegations
+JOBS_USAGE = (
+    "Usage: /jobs · /jobs tree · /jobs <delegation-id> · /jobs pin <id> <min_attention|forbid_spend|reinforce|"
+    "reserve_exploration> [value] · /jobs unpin <id> <kind> · /jobs pause <id> · /jobs resume <id> · "
+    "/jobs reinforce <id> <checks> · /jobs finish <id> <synthesis> · /jobs handle <attention-id> · "
+    "/jobs subscribe <id> <trigger[,trigger]> <queue|notify|interrupt> · /jobs continue"
+)
+_PIN_KINDS = ("min_attention", "forbid_spend", "reinforce", "reserve_exploration")
+
+
+def _jobs_overview(ui: Ui, delegations: Any) -> None:
     status = delegations.status()
     counts = ", ".join(f"{count} {name}" for name, count in sorted(status["counts"].items())) or "none"
     ui.write(f"Delegations: {counts}", style="normal")
@@ -1180,6 +1222,103 @@ async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
         for item in pending:
             flag = " [action required]" if item.actionable else ""
             ui.write(f"  {item.id}  {item.summary}{flag}")
+
+
+def _jobs_tree(ui: Ui, delegations: Any) -> None:
+    tree = delegations.tree()
+
+    def draw(id: str, depth: int) -> None:
+        node = tree.delegations[id]
+        ui.write(f"{'    ' * depth}{node.id}  {node.state.value:<10} {node.spec.objective}")
+        for child in tree.children(id):
+            draw(child, depth + 1)
+
+    top = tree.children("root") if "root" in tree.delegations else ()
+    for id in (*top, *(root for root in tree.roots if root != "root")):
+        draw(id, 0)
+    if not top and all(root == "root" for root in tree.roots):
+        ui.write("No delegations.")
+
+
+def _jobs_inspect(ui: Ui, delegations: Any, id: str) -> None:
+    view = delegations.inspect(id)
+    record = view["delegation"]
+    ui.write(f"{record['id']}  {record['state']}  {record['spec']['objective']} "
+             f"[{record['spec'].get('task_mode', '')}]", style="normal")
+    ui.write(f"  parent: {record.get('parent_id') or 'root'}; released: {view['released']}; "
+             f"cancel requested: {view['cancel_requested']}")
+    ui.write(f"  lease: {view['lease']}")
+    ui.write(f"  usage: {view['usage']}")
+    ui.write(f"  artifacts: {view['artifacts']}")
+    for item in view["attention"]:
+        ui.write(f"  {item['id']}  {item['summary']}")
+
+
+async def _jobs_continue(ui: Ui, state: State) -> None:
+    if state.turn_running:
+        ui.write("A turn is running; /jobs continue resumes the conversation between turns.", style="error")
+        return
+    text = state.session.continue_main()
+    if text is None:
+        ui.write("Nothing to continue: no continuation is due, or the conversation has moved on.")
+        return
+    ui.write(f"Resuming: {text}")
+    state.session.send(text)
+
+
+async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
+    """The delegation journal, the root budget, what awaits attention, and the controls over them.
+
+    Reads and journaled controls only, so it stays safe while a turn runs;
+    `continue` is the one exception and refuses then, since it starts a turn.
+    """
+    from hardy.workflows.delegation.attention import AttentionSubscription, DeliveryMode
+    from hardy.workflows.delegation.contracts import ResourceDelta
+
+    delegations = state.session.delegations
+    words = argument.split()
+    try:
+        if not words:
+            _jobs_overview(ui, delegations)
+        elif words == ["tree"]:
+            _jobs_tree(ui, delegations)
+        elif words == ["continue"]:
+            await _jobs_continue(ui, state)
+        elif len(words) == 1:
+            _jobs_inspect(ui, delegations, words[0])
+        elif words[0] == "pin" and len(words) in {3, 4} and words[2] in _PIN_KINDS:
+            value = int(words[3]) if len(words) == 4 else None
+            delegations.pin(words[1], words[2], by="human", value=value)
+            ui.write(f"Pinned {words[2]} on {words[1]}.")
+        elif words[0] == "unpin" and len(words) == 3 and words[2] in _PIN_KINDS:
+            delegations.unpin(words[1], words[2], by="human")
+            ui.write(f"Unpinned {words[2]} from {words[1]}.")
+        elif words[0] == "pause" and len(words) == 2:
+            delegations.pause(words[1], by="human")
+            ui.write(f"Paused {words[1]}.")
+        elif words[0] == "resume" and len(words) == 2:
+            delegations.resume(words[1], by="human")
+            ui.write(f"Resumed {words[1]}.")
+        elif words[0] == "reinforce" and len(words) == 3:
+            decision = delegations.reinforce(words[1], ResourceDelta(official_checks=int(words[2])),
+                                             by="human", reason="reinforced from the terminal")
+            ui.write(f"Reinforced {words[1]} by {words[2]} checks: {decision.reason}")
+        elif words[0] == "finish" and len(words) >= 3:
+            delegations.finish_subtree(words[1], synthesis=" ".join(words[2:]), by="human")
+            ui.write(f"Finished {words[1]}; running children were cancelled.")
+        elif words[0] == "handle" and len(words) == 2:
+            delegations.attention().handle(words[1], by="human")
+            ui.write(f"Handled {words[1]}.")
+        elif words[0] == "subscribe" and len(words) == 4 and words[3] in {m.value for m in DeliveryMode}:
+            subscription = AttentionSubscription(
+                owner="human", source=words[1], triggers=tuple(t for t in words[2].split(",") if t),
+                mode=DeliveryMode(words[3]), recipient="both")
+            delegations.subscribe(subscription)
+            ui.write(f"Subscribed to {words[2]} from {words[1]} as {words[3]}.")
+        else:
+            ui.write(JOBS_USAGE, style="error")
+    except ValueError as error:
+        ui.write(str(error), style="error")
     return state
 
 
@@ -1248,8 +1387,8 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
         Command("tree", "show conversation entries and the active leaf", handle_tree, safe_in_flight=True),
         Command("fork", "continue from a conversation entry", handle_fork, argument_hint="<entry-id|root>"),
         Command("abandon", "leave a branch with a human lesson", handle_abandon, argument_hint="<entry-id|root> <lesson>"),
-        Command("delegate", "start a background worker on a ledger item", handle_delegate, argument_hint="<item-id> [objective]"),
-        Command("jobs", "list background work, its budget and pending attention", handle_jobs, safe_in_flight=True),
+        Command("delegate", "start a background worker on a ledger item", handle_delegate, argument_hint="<item-id> [--checks N] [--mode M] [--hide ids] [objective]"),
+        Command("jobs", "list background work, inspect or control it", handle_jobs, argument_hint="[tree|<id>|pin|unpin|pause|resume|reinforce|finish|handle|subscribe|continue]", safe_in_flight=True),
         Command("cancel", "cancel a delegation and its descendants", handle_cancel, argument_hint="<delegation-id>", safe_in_flight=True),
         exit_command,
         Command(
