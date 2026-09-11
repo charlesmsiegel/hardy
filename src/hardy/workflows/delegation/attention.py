@@ -73,6 +73,15 @@ class AttentionInbox:
         delegation = tree.get(event.delegation_id)
         item_id = f"attention:{event.sequence}"
         detail = (f"delegations/{delegation.id}/result.json",)
+        if event.kind == "admission.incomplete":
+            # Files landed but the ledger did not: recoverable, and never a success.
+            return AttentionItem(
+                id=item_id, delegation_id=delegation.id, source_event=event.sequence,
+                summary=f"{delegation.id}: admission {event.payload.get('attempt', '')} is incomplete at "
+                        f"{event.payload.get('phase', '')}; files may have landed without a ledger commit",
+                category="admission", importance="high", actionable=True, sticky=True,
+                related_refs=delegation.spec.project_refs, detail_refs=detail,
+            )
         if event.kind == "coordinator.human_decision_requested":
             # A request for the human's decision always reaches the human.
             return AttentionItem(

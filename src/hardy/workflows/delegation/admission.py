@@ -12,13 +12,29 @@ admission is a separate act with current-head verification.
 """
 from __future__ import annotations
 
+import difflib
 import re
+import shutil
+import tempfile
+from collections.abc import Callable
+from enum import Enum
+from hashlib import sha256
+from pathlib import Path, PurePosixPath
 from typing import Literal
+from uuid import uuid4
 
+from hardy.formal.workspace import LeanWorkspace
+from hardy.foundation.files import guard_for
+from hardy.foundation.locking import FileLock
 from hardy.foundation.values import FrozenModel, json_digest
+from hardy.workflows.delegation.attention import AttentionInbox
 from hardy.workflows.delegation.findings import Finding
 from hardy.workflows.delegation.overlay import SubtreeProjectOverlay
+from hardy.workflows.delegation.store import DelegationStore
+from hardy.workflows.delegation.workspace import ChangeSet, FileChange, workspace_digest
 from hardy.workflows.ledger.contracts import (
+    ArtifactRef,
+    EvidenceRef,
     LedgerRecord,
     Obligation,
     ObligationKind,
@@ -28,10 +44,17 @@ from hardy.workflows.ledger.contracts import (
     Relation,
     RelationKind,
     ResearchState,
+    Resolution,
     Scope,
     VersionRef,
 )
+from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
+from hardy.workflows.ledger.store import LedgerStore
+
+
+def _sha(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()
 
 Route = Literal[
     "candidate_lemma", "verified_proof", "new_verified_lemma", "approach", "failed_approach", "counterexample",
@@ -254,7 +277,275 @@ class LocalAdmission:
                                 authoritative_refs=(primary.ref,), near_duplicates=near)
 
 
-__all__ = [
-    "AdmissionCandidate", "AdmissionOutcome", "LocalAdmission", "Route", "find_duplicates", "route_finding",
-    "structural_fingerprint",
-]
+# -- current-head reconciliation -------------------------------------------------------------
+
+class Conflict(FrozenModel):
+    path: str
+    base_digest: str | None
+    head: str | None
+    proposed: str | None
+
+
+def _merge_three_way(base: str, head: str, proposed: str) -> str | None:
+    """Apply disjoint hunks from both sides onto the base; overlapping hunks mean no merge."""
+    base_lines = base.splitlines(keepends=True)
+    head_lines = head.splitlines(keepends=True)
+    mine_lines = proposed.splitlines(keepends=True)
+    edits: list[tuple[int, int, list[str], str]] = []
+    for side, lines in (("head", head_lines), ("proposed", mine_lines)):
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, base_lines, lines).get_opcodes():
+            if tag != "equal":
+                edits.append((i1, i2, lines[j1:j2], side))
+    edits.sort(key=lambda edit: (edit[0], edit[1]))
+    for (a1, a2, _, side_a), (b1, b2, _, side_b) in zip(edits, edits[1:], strict=False):
+        if side_a == side_b:
+            continue
+        if b1 < a2 or (a1 == a2 == b1 == b2):
+            return None
+    merged: list[str] = []
+    cursor = 0
+    for i1, i2, replacement, _ in edits:
+        merged.extend(base_lines[cursor:i1])
+        merged.extend(replacement)
+        cursor = i2
+    merged.extend(base_lines[cursor:])
+    return "".join(merged)
+
+
+def reconcile(change_set: ChangeSet, workspace: LeanWorkspace, *, head_revision: int,
+              ) -> tuple[ChangeSet, tuple[Conflict, ...]]:
+    """Transplant untouched files, merge disjoint same-file edits, and report genuine conflicts."""
+    files: list[FileChange] = []
+    conflicts: list[Conflict] = []
+    for change in change_set.files:
+        relative = PurePosixPath(change.path)
+        head = workspace.read(relative)
+        head_digest = _sha(head) if head is not None else None
+        if change.operation == "create":
+            if head is None:
+                files.append(change)
+            elif head != change.content:
+                conflicts.append(Conflict(path=change.path, base_digest=None, head=head, proposed=change.content))
+            continue
+        if change.operation == "delete":
+            if head is None:
+                continue
+            if head_digest == change.base_digest:
+                files.append(change)
+            else:
+                conflicts.append(Conflict(path=change.path, base_digest=change.base_digest, head=head, proposed=None))
+            continue
+        if head is None:
+            conflicts.append(Conflict(path=change.path, base_digest=change.base_digest, head=None, proposed=change.content))
+        elif head_digest == change.base_digest or head == change.content:
+            if head != change.content:
+                files.append(change.model_copy(update={"base_digest": head_digest, "base_content": head}))
+        else:
+            merged = _merge_three_way(change.base_content or "", head, change.content or "")
+            if merged is None:
+                conflicts.append(Conflict(path=change.path, base_digest=change.base_digest, head=head, proposed=change.content))
+            else:
+                files.append(change.model_copy(update={"base_digest": head_digest, "base_content": head,
+                                                       "content": merged, "result_digest": _sha(merged)}))
+    plan = change_set.model_copy(update={"files": tuple(files), "base_project_revision": head_revision,
+                                         "base_workspace_digest": workspace_digest(workspace.sources())})
+    return plan, tuple(conflicts)
+
+
+# -- authoritative admission ---------------------------------------------------------------
+
+class AdmissionPhase(str, Enum):
+    PROPOSED = "proposed"
+    RECONCILED = "reconciled"
+    VERIFICATION_COMPLETE = "verification_complete"
+    FILES_PREPARED = "files_prepared"
+    FILES_COMMITTED = "files_committed"
+    LEDGER_COMMITTED = "ledger_committed"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AdmissionAttempt(FrozenModel):
+    id: str
+    candidate_id: str
+    phase: AdmissionPhase
+    head_revision: int
+    detail: str = ""
+
+
+class VerificationRequest(FrozenModel):
+    """What a verifier is handed: the files to check on the staged head and what they are for."""
+
+    files: tuple[str, ...]
+    candidate_id: str
+    change_set_id: str
+
+
+Verify = Callable[[LeanWorkspace, VerificationRequest, Obligation], tuple[tuple[EvidenceRef, ...] | None, str]]
+Decide = Callable[[LedgerSnapshot, Resolution], ArtifactRef | None]
+
+_INCOMPLETE = frozenset({AdmissionPhase.FILES_COMMITTED})
+_TERMINAL = frozenset({AdmissionPhase.COMPLETED, AdmissionPhase.FAILED})
+
+
+class AuthoritativeAdmission:
+    """Serialized: read head, reconcile, stage, verify, accept, commit files, commit ledger.
+
+    Only the ledger transaction makes anything true. Each phase is journaled
+    so a crash between the file commit and the ledger commit is recoverable
+    as an incomplete admission and is never reported as a theorem added.
+    """
+
+    def __init__(self, ledger: LedgerStore, workspace: LeanWorkspace, store: DelegationStore, *,
+                 verify: Verify, policy: LedgerPolicy, decide: Decide, rounds: int = 3,
+                 crash_after: AdmissionPhase | None = None) -> None:
+        self.ledger = ledger
+        self.workspace = workspace
+        self.store = store
+        self._verify = verify
+        self.policy = policy
+        self._decide = decide
+        self.rounds = rounds
+        self._crash_after = crash_after
+
+    def _lock(self) -> FileLock:
+        guard = self.store._guard(create=True)
+        return FileLock(guard.reserve("admission.lock"))
+
+    def _journal(self, delegation_id: str, attempt: AdmissionAttempt) -> None:
+        self.store.append(delegation_id, "admission.attempt", {"attempt": attempt.model_dump(mode="json")})
+        if self._crash_after is not None and attempt.phase is self._crash_after:
+            raise RuntimeError(f"simulated crash after {attempt.phase.value}")
+
+    def admit(self, candidate: AdmissionCandidate, change_set: ChangeSet) -> AdmissionOutcome:
+        delegation_id = change_set.delegation_id
+        attempt_id = f"{candidate.id}:attempt:{uuid4().hex[:8]}"
+        artifacts = self.store.artifacts(delegation_id)
+
+        def phase(name: AdmissionPhase, head: int, detail: str = "") -> None:
+            self._journal(delegation_id, AdmissionAttempt(id=attempt_id, candidate_id=candidate.id, phase=name,
+                                                          head_revision=head, detail=detail))
+
+        def fail(head: int, action: str, reasons: tuple[str, ...], extra: tuple[str, ...] = ()) -> AdmissionOutcome:
+            phase(AdmissionPhase.FAILED, head, "; ".join(reasons))
+            return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids, action=action,
+                                    reasons=reasons, artifacts=extra)
+
+        primary = next((r for r in candidate.records if isinstance(r, ProjectItem)), None)
+        prove = next((r for r in candidate.records if isinstance(r, Obligation) and r.kind is ObligationKind.PROVE), None)
+        with self._lock():
+            phase(AdmissionPhase.PROPOSED, self.ledger.read().revision)
+            for _round in range(self.rounds):
+                snapshot = self.ledger.read()
+                head = snapshot.revision
+                near: tuple[VersionRef, ...] = ()
+                if primary is not None:
+                    exact, near = find_duplicates(primary, snapshot)
+                    if exact:
+                        phase(AdmissionPhase.COMPLETED, head, f"reused {exact[0].id}")
+                        return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
+                                                action="reused_existing", authoritative_refs=(exact[0],),
+                                                identity_map=((primary.id, exact[0].id),), near_duplicates=near)
+                plan, conflicts = reconcile(change_set, self.workspace, head_revision=head)
+                if conflicts:
+                    artifacts.write_json(PurePosixPath("conflicts.json"), [c.model_dump(mode="json") for c in conflicts])
+                    return fail(head, "conflicted",
+                                tuple(f"{c.path}: the head and the proposal changed the same lines" for c in conflicts),
+                                (f"delegations/{delegation_id}/conflicts.json",))
+                phase(AdmissionPhase.RECONCILED, head)
+                staging = Path(tempfile.mkdtemp(prefix="hardy-admission-"))
+                try:
+                    staged = self.workspace.copy_to(staging / "lean", staging / "build")
+                    for change in plan.files:
+                        target = staged.root / PurePosixPath(change.path)
+                        if change.operation == "delete":
+                            target.unlink(missing_ok=True)
+                            staged.forget(change.path.removesuffix(".lean").replace("/", "."))
+                        else:
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            target.write_text(change.content or "", encoding="utf-8")
+                    phase(AdmissionPhase.FILES_PREPARED, head)
+                    if prove is None:
+                        return fail(head, "rejected", ("no proof obligation to discharge on this candidate",))
+                    request = VerificationRequest(files=tuple(f.path for f in plan.files), candidate_id=candidate.id,
+                                                  change_set_id=plan.id)
+                    evidence, detail = self._verify(staged, request, prove)
+                    if evidence is None:
+                        return fail(head, "rejected", (f"verification on the current head failed: {detail}",))
+                    phase(AdmissionPhase.VERIFICATION_COMPLETE, head, detail)
+                    if self.ledger.read().revision != head:
+                        # The project advanced while we verified: prepare again from the new head.
+                        continue
+                    with_records = LedgerSnapshot(snapshot.records + tuple(candidate.records), head,
+                                                  snapshot.active_context)
+                    proposal = Resolution(id=f"{attempt_id}:resolution", obligation=prove.ref, item=prove.item,
+                                          evidence=tuple(evidence), explanation=detail or "admitted on the current head")
+                    receipt = self._decide(with_records, proposal)
+                    if receipt is None:
+                        return fail(head, "rejected", ("acceptance decision unavailable",))
+                    try:
+                        accepted = self.policy.accept(with_records, proposal, receipt)
+                    except ValueError as error:
+                        return fail(head, "rejected", (f"acceptance refused: {error}",))
+                    closed = Obligation.model_validate({**prove.model_dump(), "previous": prove.ref,
+                                                        "status": "resolved", "resolution": accepted})
+                    self._commit_files(staged, plan)
+                    phase(AdmissionPhase.FILES_COMMITTED, head)
+                    try:
+                        # Two transactions by the ledger's own contract: an obligation is
+                        # created open, and its resolution pins that stored revision.
+                        after = self.ledger.append(tuple(candidate.records), expected_revision=head,
+                                                   validate=self.policy.validate)
+                        self.ledger.append((closed,), expected_revision=after.revision, validate=self.policy.validate)
+                    except ValueError as error:
+                        # Files landed, the ledger did not: incomplete, recoverable, never a success.
+                        event = self.store.append(delegation_id, "admission.incomplete",
+                                                  {"attempt": attempt_id, "phase": AdmissionPhase.FILES_COMMITTED.value,
+                                                   "error": str(error)})
+                        inbox = AttentionInbox(self.store)
+                        item = inbox.derive(event, self.store.tree())
+                        if item is not None:
+                            inbox.record(item)
+                        return fail(head, "conflicted", (f"ledger commit failed after files were committed: {error}",))
+                    phase(AdmissionPhase.LEDGER_COMMITTED, head)
+                    phase(AdmissionPhase.COMPLETED, head)
+                    return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
+                                            action="created", authoritative_refs=(primary.ref,) if primary else (),
+                                            near_duplicates=near, artifacts=tuple(f.path for f in plan.files))
+                finally:
+                    shutil.rmtree(staging, ignore_errors=True)
+            return fail(self.ledger.read().revision, "rejected",
+                        (f"the project head kept moving; gave up after {self.rounds} reconciliations",))
+
+    def _commit_files(self, staged: LeanWorkspace, plan: ChangeSet) -> None:
+        for change in plan.files:
+            guard, name = guard_for(self.workspace.root, PurePosixPath(change.path), create=True)
+            if change.operation == "delete":
+                guard.unlink(name, missing_ok=True)
+            else:
+                with guard.open(name, "w", encoding="utf-8") as handle:
+                    handle.write(change.content or "")
+        if self.workspace.build.is_dir():
+            shutil.rmtree(self.workspace.build)
+        shutil.copytree(staged.build, self.workspace.build)
+
+    def recover(self) -> tuple[AdmissionAttempt, ...]:
+        """Attempts left without a terminal phase; files-committed ones become sticky attention."""
+        latest: dict[str, tuple[str, AdmissionAttempt]] = {}
+        for event in self.store.events():
+            if event.kind == "admission.attempt":
+                attempt = AdmissionAttempt.model_validate(event.payload["attempt"])
+                latest[attempt.id] = (event.delegation_id, attempt)
+        incomplete = []
+        inbox = AttentionInbox(self.store)
+        for delegation_id, attempt in latest.values():
+            if attempt.phase in _TERMINAL:
+                continue
+            incomplete.append(attempt)
+            if attempt.phase in _INCOMPLETE:
+                event = self.store.append(delegation_id, "admission.incomplete",
+                                          {"attempt": attempt.id, "phase": attempt.phase.value})
+                item = inbox.derive(event, self.store.tree())
+                if item is not None:
+                    inbox.record(item)
+        return tuple(incomplete)
