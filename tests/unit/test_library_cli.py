@@ -88,3 +88,26 @@ def test_report_prints_counts_per_dimension(tmp_path, capsys):
     payload = _json.loads(capsys.readouterr().out)
     assert payload["sources"]["artifacts"] == 1 and payload["semantics"]["claims"] == 0
     assert "extraction_quality" in payload["sources"] and "links_by_status" in payload["semantics"]
+
+
+def test_seeding_refuses_a_symlinked_problem_directory(tmp_path, capsys):
+    import pytest
+
+    library = ManagedLibrary(tmp_path / "library")
+    config = make_config(tmp_path)
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(build_pdf(book_pages()))
+    run(["library", "import", str(pdf), "--no-extract"], config, library)
+    sha = library.artifacts.stored()[0]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = config.root / "linked"
+    try:
+        linked.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    hostile = config_module.load(tmp_path / "config.toml", root=config.root, project="linked")
+    capsys.readouterr()
+    assert run(["library", "seed", sha[:10]], hostile, library) == 1
+    assert "refusing to touch seeds" in capsys.readouterr().out
+    assert not (outside / "sources").exists()

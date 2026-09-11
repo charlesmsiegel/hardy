@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from hardy.app.config import Config
+from hardy.foundation.files import LayoutError
 from hardy.literature.sources.artifacts import ArtifactError, ImportRefused, ImportRequest
 from hardy.literature.sources.catalog import CatalogError
 from hardy.literature.sources.contracts import (
@@ -213,6 +214,15 @@ def _confirm(args: argparse.Namespace, held: ManagedLibrary) -> int:
 
 
 def _seeds(args: argparse.Namespace, config: Config, held: ManagedLibrary) -> int:
+    # The whole layout is proven before any seed file is read or written: a
+    # cloned problem directory that is a symlink would otherwise carry the
+    # seed journal outside the root, and the journal's own guard cannot see
+    # the missing root-level check from where it stands.
+    try:
+        config.layout.ensure()
+    except LayoutError as error:
+        print(f"refusing to touch seeds: {error}")
+        return 1
     problem = config.layout.problem
     store = SeedStore(problem)
     if args.library_command == "seeds":
@@ -238,7 +248,6 @@ def _seeds(args: argparse.Namespace, config: Config, held: ManagedLibrary) -> in
         tree = held.trees.preferred(sha)
     except SourceUnavailable:
         tree = None
-    problem.mkdir(parents=True, exist_ok=True)
     seed = new_seed(sha, edition=edition.id if edition else None, tree=tree.id if tree else None, priority=args.priority, intent=args.intent)
     store.add(seed, expected_revision=store.revision())
     print(f"seeded {config.project} with {sha[:16]} as {seed.id}" + ("" if tree else "; no tree yet, run `hardy library tree`"))
