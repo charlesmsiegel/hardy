@@ -73,3 +73,18 @@ def test_confirm_refuses_unknown_edition(tmp_path, capsys):
     sha = library.artifacts.stored()[0]
     assert run(["library", "confirm", sha[:10], "edition-missing"], config, library) == 1
     assert "not in the catalog" in capsys.readouterr().out
+
+
+def test_report_prints_counts_per_dimension(tmp_path, capsys):
+    import json as _json
+
+    library = ManagedLibrary(tmp_path / "library")
+    config = make_config(tmp_path)
+    pdf = tmp_path / "tiny.pdf"
+    pdf.write_bytes(build_pdf(book_pages(), title="Tiny Algebra"))
+    run(["library", "import", str(pdf)], config, library)
+    capsys.readouterr()
+    assert run(["library", "report"], config, library) == 0
+    payload = _json.loads(capsys.readouterr().out)
+    assert payload["sources"]["artifacts"] == 1 and payload["semantics"]["claims"] == 0
+    assert "extraction_quality" in payload["sources"] and "links_by_status" in payload["semantics"]

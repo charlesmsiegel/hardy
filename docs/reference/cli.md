@@ -376,6 +376,10 @@ Withdraws one seed by id. The withdrawal is itself a journal record, so the hist
 
 Lists the active problem's seeds with their priorities and intents.
 
+### hardy library report
+
+Prints, as JSON, the evaluation counts the library's own records support: artifacts by format and extraction quality, representations by kind, trees with their node kinds, boundary statuses and diagnostics, unknown regions and model repairs, groupings confirmed and pending, weak pages and OCR readings; and, from the shared ledger, claims, relations, clusters, links by status, realizations by origin and status, and promotions by outcome and blocker. Every figure is reported on its own; nothing is folded into a single score.
+
 ## Project publication commands
 
 These run inside the interactive session, through the `/project` and `/publish` prompt commands, rather than as `hardy` subcommands.
