@@ -162,23 +162,47 @@ def build_writeup(
         output = work / "output"
         output.mkdir()
         (work / "paper.tex").write_text(compiled_source, encoding="utf-8", newline="\n")
-        process = runner(
-            ProcessSpec(
-                argv=(
-                    str(identities.tectonic_executable),
-                    "--bundle",
-                    identities.tectonic_bundle,
-                    "--keep-logs",
-                    "--keep-intermediates",
-                    "--outdir",
-                    str(output),
-                    "paper.tex",
-                ),
-                cwd=work,
-                timeout_seconds=limits.tex_process_seconds,
-                max_output_bytes=limits.process_output_bytes,
-            )
+        spec = ProcessSpec(
+            argv=(
+                str(identities.tectonic_executable),
+                "--bundle",
+                identities.tectonic_bundle,
+                "--keep-logs",
+                "--keep-intermediates",
+                "--outdir",
+                str(output),
+                "paper.tex",
+            ),
+            cwd=work,
+            timeout_seconds=limits.tex_process_seconds,
+            max_output_bytes=limits.process_output_bytes,
         )
+        try:
+            process = runner(spec)
+        except OSError as error:
+            # A compiler that cannot be started -- not installed, or the
+            # configured path is wrong -- is a compile that failed, not a
+            # reason to lose the run. Left to propagate, `Popen`'s
+            # `FileNotFoundError` ended the run in a traceback after the proof
+            # work was done, with no manifest and no saved source; the grade
+            # then said the document was never attempted, which is not what
+            # happened. It is recorded the way every other failed compile is:
+            # the source is kept, the log names the cause and the remedy, and
+            # the document says on its front page that it did not compile.
+            process = ProcessResult(
+                argv=spec.argv,
+                cwd=spec.cwd,
+                returncode=None,
+                stdout="",
+                stderr=(
+                    f"{identities.tectonic_executable} could not be run: {error}\n"
+                    "Install Tectonic with `hardy setup`, or point the `tectonic` "
+                    "setting at an existing binary.\n"
+                ),
+                timed_out=False,
+                output_overflow=False,
+                duration_ms=0,
+            )
         pdf_path = output / "paper.pdf"
         compiler_log = output / "paper.log"
         log_text = (

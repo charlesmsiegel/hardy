@@ -58,7 +58,7 @@ Opens the durable terminal session. `--root` and `--project` live here rather th
 
 ### hardy doctor
 
-Checks the SDK, CLI and login for the configured backend, Lean, LaTeX, and the computer algebra kernel, and prints what each one reported. The model check only checks that a model identity is *set*, not that it exists: any non-empty identity passes, so a typo in `model` is reported ready here and only fails on the first call. A named non-default CAS backend is treated as required; the built-in SymPy is advisory. Exits `1` when a required check failed.
+Checks the SDK, CLI and login for the configured backend, Lean, LaTeX, Tectonic, and the computer algebra kernel, and prints what each one reported. LaTeX is the `latex_command` the interactive session compiles cells with; Tectonic is the `tectonic` executable `prove`, a live `accept` and staged `evals` rows build their document with, and a machine without it fails their preflight rather than the document. The model check only checks that a model identity is *set*, not that it exists: any non-empty identity passes, so a typo in `model` is reported ready here and only fails on the first call. A named non-default CAS backend is treated as required; the built-in SymPy is advisory. Exits `1` when a required check failed.
 
 | Option | Default | Env var | Meaning |
 | --- | --- | --- | --- |

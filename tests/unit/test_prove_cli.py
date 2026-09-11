@@ -3,6 +3,7 @@ import importlib
 import json
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -222,6 +223,26 @@ def test_doctor_asked_for_a_backend_checks_that_one(tmp_path):
     names = [check.name for check in doctor_module.run_checks(config, backend='claude')]
 
     assert 'claude sdk' in names and 'anthropic key' not in names
+
+
+def test_doctor_checks_the_compiler_prove_builds_its_document_with(tmp_path):
+    """`latex_command` serves the interactive session's cells; `prove`, a live
+    `accept` and staged `evals` rows compile their document with Tectonic. The
+    doctor probed only the first, so a machine it called ready -- and that
+    `prove`'s preflight therefore let through -- ran a whole proof and then
+    could not start its compiler."""
+    import sys
+
+    doctor_module = importlib.import_module('hardy.app.doctor')
+    absent = dataclasses.replace(_staged_config(tmp_path), tectonic=tmp_path / 'no-tectonic.exe')
+    present = dataclasses.replace(_staged_config(tmp_path), tectonic=Path(sys.executable))
+
+    missing = {check.name: check for check in doctor_module.run_checks(absent)}['tectonic']
+    found = {check.name: check for check in doctor_module.run_checks(present)}['tectonic']
+
+    assert missing.ok is False and missing.required is True
+    assert 'no-tectonic.exe' in missing.detail and 'hardy setup' in missing.detail
+    assert found.ok is True
 
 
 @runs_the_fake_lake
