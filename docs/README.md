@@ -45,4 +45,4 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 
 ## Archive
 
-- [Ideas](archive/ideas/README.md): collects retained research and audit proposals that do not override the roadmap.
+- [Ideas](archive/ideas/README.md): archived planning material; start with [the roadmap](roadmap.md) and [research architecture](research-architecture.md) instead.

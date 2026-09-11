@@ -55,7 +55,9 @@ Code agent SDK owns the loop and Hardy's tools run in process behind it; the
 `api` backend runs that loop inside Hardy instead, which is what lets a run
 decline a further provider call rather than pay for a turn it does not need.
 Either way the tools, the checks and the writes are Hardy's, and which
-transport carried a run is part of that run's recorded identity. See
+transport carried a run is part of that run's recorded identity. `codex` is a
+third transport, but it is a `--backend` choice on `prove` and `accept` only,
+not one of the config file's `backend` values. See
 [configuration](../reference/configuration.md) for choosing between them.
 
 Three of these steps deserve their reasons stated.
@@ -128,6 +130,7 @@ flowchart TD
 
     app -->|constructs| workflows
     app -->|adapts| evals
+    app -->|serves| formal
     evals -->|runs| workflows
     evals -->|reads statements| corpus
     workflows -->|calls| capabilities
@@ -153,6 +156,13 @@ provider that could reach the interactive session would be able to write the
 record it is supposed to be a witness to. [Module
 boundaries](module-boundaries.md) names the exact modules on both sides of that
 line.
+
+The construction layer also reaches past `workflows/` into a capability
+directly: `app/mcp.py` and `app/wiring.py` import `formal.tools` to build the
+Lean tool runtime a session or MCP server hands to a provider. That is
+construction wiring concrete implementations together, not a workflow calling
+a capability, and it is why the package graph carries an edge straight from
+`app/` to `formal/`.
 
 Paths below are relative to `src/hardy/`.
 
