@@ -52,6 +52,7 @@ from hardy.foundation.files import LayoutError, WriteGuard, read_text
 from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 from hardy.foundation.values import FrozenModel
 from hardy.literature.metadata import PaperRecord
+from hardy.literature.sources.contracts import BibliographicWork, EditionOrVersion
 from hardy.workflows.layout import LOCAL_DIR
 
 #: The canonical store, beside the session record: versioned, hand-readable,
@@ -170,6 +171,22 @@ class Entry(FrozenModel):
     #: reader did not see.
     also_read: tuple[str, ...] = ()
     cited_at: str = ""
+    #: A general source cites an edition or version, not a title and not an
+    #: artifact path. These name the catalog records in the personal library
+    #: (`hardy.literature.sources.catalog`) the entry was made from; an arXiv
+    #: entry written by `cite` leaves them empty and is unchanged by them.
+    work: str | None = None
+    edition: str | None = None
+    edition_label: str | None = None
+    publisher: str | None = None
+    isbn: str | None = None
+    #: Every artifact digest Hardy read this edition through. The first is
+    #: `content_sha256`; a PDF and an EPUB of one authoritatively grouped
+    #: edition share this entry and both digests stay recorded.
+    read_artifacts: tuple[str, ...] = ()
+    #: Exact source spans (`SourceSpan` ids) that supported a use of this
+    #: citation, when a caller recorded them. Provenance, not rendering.
+    cited_spans: tuple[str, ...] = ()
 
     @field_validator("content_sha256")
     @classmethod
@@ -209,13 +226,14 @@ class Entry(FrozenModel):
             )
         return value
 
-    @field_validator("also_read")
+    @field_validator("also_read", "read_artifacts")
     @classmethod
-    def _digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+    def _digests(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
         """The same rule for the same reason, one field over."""
+        name = getattr(info, "field_name", "also_read")
         for digest in value:
             if not DIGEST.fullmatch(digest):
-                raise ValueError(f"also_read must hold sha256 digests; got {digest[:80]!r}")
+                raise ValueError(f"{name} must hold sha256 digests; got {digest[:80]!r}")
         return value
 
     @field_validator("title", "identities", "authors")
@@ -260,10 +278,16 @@ class Entry(FrozenModel):
         """
         parts = [_escaped(", ".join(self.authors)) if self.authors else ""]
         parts.append(f"\\emph{{{_escaped(self.title)}}}")
+        if self.edition_label:
+            parts.append(_escaped(self.edition_label))
+        if self.publisher:
+            parts.append(_escaped(self.publisher))
         if self.year:
             parts.append(f"({self.year})")
         if self.journal_ref:
             parts.append(_escaped(self.journal_ref))
+        if self.isbn:
+            parts.append(f"ISBN {_escaped(self.isbn)}")
         if self.arxiv_id:
             parts.append(f"arXiv:{_escaped(self.arxiv_id)}")
         if self.doi:
@@ -341,6 +365,47 @@ def base_key(record: PaperRecord) -> str:
     # then unable to compile. The digest `cite_key` appends is what keeps it
     # unique; this half only has to be readable.
     return SAFE_KEY.sub("", key)[:STEM_CHARACTERS] or "ref"
+
+
+def edition_identities(work: BibliographicWork, edition: EditionOrVersion) -> tuple[str, ...]:
+    """Every name an edition answers to; the catalog identity first, because only it is exact.
+
+    An ISBN, a DOI or an arXiv version is recorded as an alias for discovery.
+    None of them settles a match on its own here: two printings share an ISBN
+    and two arXiv versions share a DOI, and a citation is about the exact
+    edition the reader read.
+    """
+    names = [f"edition:{edition.id}"]
+    for kind, value in edition.identifiers:
+        cleaned = value.strip().lower() if kind == "doi" else value.strip()
+        if cleaned:
+            names.append(f"{kind}:{cleaned}")
+    return tuple(dict.fromkeys(names))
+
+
+def edition_base_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
+    """Author, year and first real title word of an edition, capped like `base_key`."""
+    author = ""
+    if work.authors:
+        first = work.authors[0]
+        surname = first.split(",")[0] if "," in first else first.split()[-1]
+        author = "".join(WORD.findall(surname)).lower()
+    year = ""
+    if edition.year:
+        found = YEAR.search(edition.year)
+        year = found.group(1) if found else ""
+    word = ""
+    for candidate in WORD.findall(work.title.lower()):
+        if candidate not in STOPWORDS and len(candidate) > 2:
+            word = candidate
+            break
+    key = f"{author}{year}{word}" or edition.id
+    return SAFE_KEY.sub("", key)[:STEM_CHARACTERS] or "ref"
+
+
+def edition_cite_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
+    """A pure function of the edition: readable stem plus a digest of its exact identity."""
+    return f"{edition_base_key(work, edition)}-{hashlib.sha256(edition_identities(work, edition)[0].encode()).hexdigest()[:10]}"
 
 
 def cite_key(record: PaperRecord) -> str:
@@ -507,6 +572,65 @@ class Bibliography:
             url=record.abs_url,
             content_sha256=record.content_sha256,
             cited_at=stamp,
+        )
+        self._write(store.model_copy(update={"entries": (*store.entries, entry)}))
+        return entry, True
+
+    def cite_edition(
+        self, work: BibliographicWork, edition: EditionOrVersion, *, read_artifacts: tuple[str, ...],
+        spans: tuple[str, ...] = (), now: datetime | None = None,
+    ) -> tuple[Entry, bool]:
+        """Record an edition read through exact artifacts; the same controlled path as `cite`.
+
+        An edition already present under its catalog identity comes back with
+        its key unchanged and any newly read artifact digests and spans added.
+        Two distinct editions are two entries however alike their titles,
+        DOIs or ISBNs are: only the catalog identity matches.
+        """
+        if edition.work != work.id:
+            raise BibliographyError(f"edition {edition.id} belongs to work {edition.work}, not {work.id}")
+        if not read_artifacts:
+            raise BibliographyError("a citation names at least one artifact Hardy actually read")
+        try:
+            with FileLock(self._lock_target(), timeout=self.lock_timeout):
+                return self._cite_edition(work, edition, read_artifacts, spans, now)
+        except LockUnavailable as error:
+            raise BibliographyError(f"this bibliography's lock could not be taken: {error}") from error
+        except LockTimeout as error:
+            raise BibliographyError(f"another session is writing this bibliography: {error}") from error
+
+    def _cite_edition(
+        self, work: BibliographicWork, edition: EditionOrVersion, read_artifacts: tuple[str, ...],
+        spans: tuple[str, ...], now: datetime | None,
+    ) -> tuple[Entry, bool]:
+        store = self.read()
+        names = edition_identities(work, edition)
+        held = next((entry for entry in store.entries if names[0] in entry.identities), None)
+        if held is not None:
+            merged_reads = tuple(dict.fromkeys((*held.read_artifacts, *read_artifacts)))
+            merged_spans = tuple(dict.fromkeys((*held.cited_spans, *spans)))
+            merged_names = tuple(dict.fromkeys((*held.identities, *names)))
+            later = tuple(d for d in merged_reads if d != held.content_sha256)
+            updated = held.model_copy(update={"identities": merged_names, "read_artifacts": merged_reads, "also_read": later, "cited_spans": merged_spans})
+            if updated == held:
+                self._write(store)
+                return held, False
+            self._write(store.model_copy(update={"entries": tuple(updated if e.key == held.key else e for e in store.entries)}))
+            return updated, False
+        wanted = edition_cite_key(work, edition)
+        for entry in store.entries:
+            if entry.key == wanted:
+                raise BibliographyError(f"edition {edition.id} wants the cite key {wanted}, which already belongs to {entry.identities[0]}")
+        identifiers = dict(edition.identifiers)
+        stamp = (now or datetime.now(UTC)).isoformat(timespec="seconds")
+        found_year = YEAR.search(edition.year) if edition.year else None
+        entry = Entry(
+            key=wanted, identities=names, title=work.title, authors=work.authors or ("Unknown",),
+            year=found_year.group(1) if found_year else "",
+            arxiv_id=identifiers.get("arxiv"), doi=identifiers.get("doi"),
+            content_sha256=read_artifacts[0], also_read=tuple(dict.fromkeys(read_artifacts[1:])), cited_at=stamp,
+            work=work.id, edition=edition.id, edition_label=edition.label, publisher=edition.venue, isbn=identifiers.get("isbn"),
+            read_artifacts=tuple(dict.fromkeys(read_artifacts)), cited_spans=tuple(dict.fromkeys(spans)),
         )
         self._write(store.model_copy(update={"entries": (*store.entries, entry)}))
         return entry, True
