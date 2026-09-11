@@ -196,6 +196,8 @@ class DelegationSpec(FrozenModel):
     seeded_sources: tuple[str, ...] = ()
     #: An explicit scheduling lane; None lets the scheduler derive one from the task mode.
     lane: str | None = None
+    #: Whether the worker needs writable project files: a private overlay and a change set.
+    writable: bool = False
 
     @property
     def digest(self) -> str:

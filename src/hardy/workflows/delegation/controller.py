@@ -62,12 +62,14 @@ from hardy.workflows.delegation.scheduler import (
     graph_urgency,
 )
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
-from hardy.workflows.delegation.worker import OpenWorker, WorkerLaunch, run_worker
+from hardy.workflows.delegation.worker import CasFactory, OpenWorker, WorkerLaunch, run_worker
+from hardy.workflows.delegation.workspace import WorkspaceOverlay
 from hardy.workflows.ledger.contracts import VersionRef
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.storage import RunStore
 
 if TYPE_CHECKING:
+    from hardy.formal.workspace import LeanWorkspace
     from hardy.literature.tools import PaperToolRuntime
 
 #: The synthetic node every user-created job hangs from; it owns the root ceilings.
@@ -94,11 +96,17 @@ class DelegationController:
                  open_worker: OpenWorker, root: RootResources, notify: Callable[[str], None],
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC),
                  papers: PaperToolRuntime | None = None,
-                 constraints: PortfolioConstraints | None = None) -> None:
+                 constraints: PortfolioConstraints | None = None,
+                 workspace: LeanWorkspace | None = None,
+                 cas_factory: CasFactory | None = None) -> None:
         self.store = store
         self.ledger = ledger
         self.executor = executor
         self.papers = papers
+        self.workspace = workspace
+        self.cas_factory = cas_factory
+        #: Live overlays by delegation id; children snapshot their parent's.
+        self._overlays: dict[str, WorkspaceOverlay] = {}
         self.constraints = constraints or PortfolioConstraints()
         #: Created but not yet holding a slot; the scheduler decides when.
         self._pending: dict[str, WorkerLaunch] = {}
@@ -188,9 +196,36 @@ class DelegationController:
         prompt_path = artifacts.path / "prompt.md"
         if not prompt_path.exists():
             return None
+        overlay = self._overlays.get(delegation.id)
+        if overlay is None and delegation.spec.writable and self.workspace is not None:
+            for event in reversed(self.store.events()):
+                if event.delegation_id == delegation.id and event.kind == "workspace.overlay_created":
+                    generation = str(event.payload["generation"]["id"])
+                    overlay = WorkspaceOverlay.open(artifacts.path / "overlay", generation, like=self.workspace)
+                    self._overlays[delegation.id] = overlay
+                    break
         return WorkerLaunch(delegation_id=delegation.id, prompt=prompt_path.read_text(encoding="utf-8"),
                             model=delegation.spec.model, store=artifacts, lease=lease,
-                            retriever=self._retriever(delegation.spec, artifacts))
+                            retriever=self._retriever(delegation.spec, artifacts), overlay=overlay,
+                            cas_factory=self.cas_factory)
+
+    def _overlay_for(self, id: str, spec: DelegationSpec, parent: str, artifacts: RunStore,
+                     revision: int) -> WorkspaceOverlay | None:
+        """A private overlay when the work writes files: the parent's snapshot if it has one, else the project's."""
+        if not spec.writable:
+            return None
+        root = artifacts.path / "overlay"
+        inherited = self._overlays.get(parent)
+        if inherited is not None:
+            overlay = inherited.child_snapshot(id, root=root, now=self._clock())
+        elif self.workspace is not None:
+            overlay = WorkspaceOverlay.snapshot(self.workspace, delegation_id=id, base_revision=revision, root=root,
+                                                now=self._clock())
+        else:
+            raise ValueError("writable delegation requested but no workspace is configured")
+        self._overlays[id] = overlay
+        self.store.append(id, "workspace.overlay_created", {"generation": overlay.generation.model_dump(mode="json")})
+        return overlay
 
     def _retriever(self, spec: DelegationSpec, artifacts: RunStore) -> WorkerRetriever:
         return WorkerRetriever(
@@ -260,6 +295,7 @@ class DelegationController:
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
+            overlay = self._overlay_for(id, spec, parent, artifacts, core.project_revision)
             if spec.spawn.can_spawn:
                 # An interior node: a container for coordinated children. It
                 # runs no worker of its own and is live from creation until a
@@ -268,7 +304,8 @@ class DelegationController:
                 return self.tree().get(id)
             launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
                                   model=spec.model, store=artifacts, lease=lease,
-                                  retriever=self._retriever(spec, artifacts))
+                                  retriever=self._retriever(spec, artifacts), overlay=overlay,
+                                  cas_factory=self.cas_factory)
             self._pending[id] = launch
             self._dispatch()
             return self.tree().get(id)
@@ -445,6 +482,12 @@ class DelegationController:
         with self._lock:
             self.store.append(id, "usage.reported", {"usage": result.usage.model_dump(mode="json")})
             self._propose_findings(id, launch)
+            if result.change_set is not None:
+                change_set = json.loads((launch.store.path / "change_set.json").read_text(encoding="utf-8"))
+                self.store.append(id, "workspace.changeset_proposed", {
+                    "change_set": result.change_set, "generation": change_set["generation"],
+                    "base_project_revision": change_set["base_project_revision"],
+                    "files": [f["path"] for f in change_set["files"]]})
             event = self.store.append(id, _TERMINAL_EVENT[result.status], {
                 "result": result.model_dump(mode="json"),
                 **({"reason": result.terminal_reason} if result.terminal_reason else {})})

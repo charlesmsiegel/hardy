@@ -15,6 +15,7 @@ from delegation_helpers import ScriptedWorkerRuntime, call, seed_project
 
 from hardy.agents.executor import LocalExecutor
 from hardy.agents.usage import Usage
+from hardy.workflows.delegation.context import WORKER_MARKER
 from hardy.workflows.delegation.contracts import (
     ConcurrencyLease,
     CoordinationPolicy,
@@ -35,7 +36,6 @@ from hardy.workflows.delegation.coordinator import (
     apply_plan,
     build_view,
 )
-from hardy.workflows.delegation.context import WORKER_MARKER
 from hardy.workflows.delegation.findings import Finding, FindingLedger
 from hardy.workflows.delegation.store import DelegationStore
 from hardy.workflows.delegation.worker import OpenedWorker
