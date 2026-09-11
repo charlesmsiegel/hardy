@@ -50,6 +50,8 @@ class FileChange(FrozenModel):
     base_digest: str | None
     result_digest: str | None
     content: str | None
+    #: The text at the base, so a same-file edit can be merged three ways on the head.
+    base_content: str | None = None
 
 
 class ChangeSet(FrozenModel):
@@ -189,10 +191,10 @@ class WorkspaceOverlay:
                                         result_digest=_sha(after or ""), content=after))
             elif after is None:
                 files.append(FileChange(path=path, operation="delete", base_digest=_sha(before),
-                                        result_digest=None, content=None))
+                                        result_digest=None, content=None, base_content=before))
             else:
                 files.append(FileChange(path=path, operation="modify", base_digest=_sha(before),
-                                        result_digest=_sha(after), content=after))
+                                        result_digest=_sha(after), content=after, base_content=before))
         return ChangeSet(
             id=f"cs-{uuid4().hex[:10]}", delegation_id=self.generation.delegation_id,
             generation=self.generation.id, base_project_revision=self.generation.base_project_revision,
