@@ -224,3 +224,14 @@ def test_readme_does_not_promise_isolation_codex_cannot_give() -> None:
     assert "codex" in hits[0].lower()
     assert "no tools" in hits[0]
     assert "read" in hits[0]
+
+
+def test_every_copy_of_the_deciding_sources_names_them_all() -> None:
+    """Three pages list the sweep's deciding sources by hand; the code decides."""
+    from hardy.evals.sweep import DECIDING_SOURCES
+
+    names = {str(source).replace("\\", "/").rsplit("/", 1)[-1] for source in DECIDING_SOURCES}
+    for page in ("AGENTS.md", "CONTRIBUTING.md", "docs/design/module-boundaries.md"):
+        text = (ROOT / page).read_text(encoding="utf-8")
+        missing = sorted(name for name in names if name not in text)
+        assert not missing, f"{page} omits deciding sources {missing}"
