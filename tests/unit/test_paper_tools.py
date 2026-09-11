@@ -733,4 +733,4 @@ def test_a_refused_archive_is_reported_as_a_tool_answer(tmp_path: Path):
     result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
 
     assert not result.ok
-    assert "gzip, tar, or PDF" in result.output
+    assert "gzip, tar, zip, or PDF" in result.output
