@@ -46,6 +46,6 @@ hardy-output/
 # with a leading slash so this is the top-level output directory only -- bare
 # `evals/` matches at any depth and silently swallows `src/hardy/evals/`, whose
 # already-tracked files keep working while any file added there goes unnoticed.
-# `evals/baseline.json` stays tracked (ignoring a tracked path does not untrack
-# it); it is regenerable with `hardy evals baseline --status active`.
+# `evals/baseline.json` is ignored with the rest and never committed; it is
+# regenerable with `hardy evals baseline`.
 /evals/

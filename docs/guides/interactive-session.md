@@ -469,7 +469,11 @@ standing preference the way `--no-project-context` is.
 
 Esc cancels a turn in flight: the model stops, no further tool call runs, and
 the Lean, LaTeX or computer algebra process it started is interrupted rather
-than left running to its own timeout. On the subscription backends this is
+than left running to its own timeout. One child stays out of reach: an export.
+`/cas export`, and the `cas_export` tool, replay the accepted cells in a fresh
+kernel of their own and run the exported script to check it, and neither
+belongs to the session's tracked set, so both run to their own limits whatever
+Esc does. On the subscription backends this is
 exact, the SDK genuinely stops the model; on `backend = "api"` the in-flight
 request cannot be aborted, so it runs to its answer, which is discarded rather
 than shown, and no tool call runs either way. A second Esc stops waiting and

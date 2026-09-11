@@ -9,7 +9,7 @@ Every `hardy prove` attempt, staged or live, ends with a `manifest.json` in its 
 | Field | Meaning |
 | --- | --- |
 | `schema_version` | The manifest shape this file was written under. A reader that does not recognise the version refuses the file rather than guessing at its meaning. |
-| `run_id` | The run's UUID; also the last segment of the run directory's own name. |
+| `run_id` | The run's UUID, with hyphens. The run directory's name ends with the first eight hex characters of this id, not the whole of it, so match on the prefix rather than comparing the two. |
 | `created_at` | When the run started. |
 | `phase` | Where the run reached: `setup`, `formalizing`, `awaiting_approval`, `proving`, `final_verification`, `writeup`, `completed`, or `cancelled`. |
 | `model` | The model identity the run was launched with. |
@@ -19,7 +19,7 @@ Every `hardy prove` attempt, staged or live, ends with a `manifest.json` in its 
 | `claim_sha256` | The digest of the frozen, approved claim (`formalization.json`) this run proved or attempted. Absent before a claim was approved. |
 | `grades` | The four independent grades; see below. |
 | `terminal_reason` | Why the run stopped, when it stopped for a reason other than reaching `completed` cleanly. `null` on an ordinary completion. |
-| `artifacts` | Every file in the run directory, keyed by its path relative to the directory, valued by its SHA-256. This is what the manifest is taken over. |
+| `artifacts` | Every file in the run directory other than `manifest.json` itself, keyed by its path relative to the directory, valued by its SHA-256. The map is computed before the manifest is written, so the manifest cannot hash itself; this is what the manifest is taken over. |
 | `timings_ms` | Named durations in milliseconds, such as active work time. |
 | `usage` | What the provider reported the run cost: `cost_usd`, the four token counters, and `exchanges`, each `null` where the provider reported nothing rather than `0`; `reported` says how many exchanges each figure actually covers. Empty for a run that never opened a provider thread. |
 
@@ -133,6 +133,11 @@ An interactive workspace (`<root>/<slug>/`) keeps two committed records. `sessio
 | `tex_signature`, `tex_open`, `writeup_sha256` | The writeup's own compiled signature, its open (unclosed) names, and the compiled document's digest. |
 | `automation` | Records from automated checks run against the workspace. |
 | `quarantine` | Proposals held aside rather than admitted. |
+| `goal` | The assignment text set for this workspace, when one was set. |
+| `imported` | One entry per file a human brought in through the import path: its `kind`, `path`, `origin`, and the `sha256` of the bytes as they arrived, before any normalisation. |
+| `reports` | One entry per `report` call: the `theorems` claimed, their `statements`, the `assumptions` they rest on, the `summary`, and a `status` (`clean`, `modulo`, or `partial`) computed from the audit records rather than taken from the model. |
+| `cas_export` | The last computer algebra export: the `script` and `notebook` paths relative to the problem directory, and whether the replay `reproduces` the recorded output. |
+| `project_context` | The identity of the project instructions last shown to the model: `file`, `sha256`, `bytes`, and whether the text was `truncated`. The text itself is in the transcript, not here. Absent when the instructions are withheld. |
 
 `transcript.jsonl` is the append-only trace of the conversation that produced `session.json`: one JSON object per line, each carrying `timestamp`, `parent_id`, an `entry_id` derived from the event's own content (so the file forms a hash-linked chain, not just a sequence), and a `type`. A `turn` event's `status` is `cancelled` when the user interrupted it directly, or `abandoned` when the session moved on without a reply arriving at all; both matter to a later reader because a turn the user walked away from is otherwise indistinguishable from one they waited for, and only the transcript survives to say which. A `conversation_branch` event records a fork or an abandonment of a leaf, each naming the branch it acted on.
 

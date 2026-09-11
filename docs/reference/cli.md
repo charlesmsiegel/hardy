@@ -146,9 +146,9 @@ Sweeps a committed tactic set over every canonical statement and writes the tier
 | --- | --- | --- | --- |
 | `--problems` | `corpus` |  | The corpus to sweep. |
 | `--out` | `evals/baseline.json` |  | Where the tier file is written. |
-| `--only` | every entry |  | Comma-separated entry ids. |
-| `--only-file` | every entry |  | A file of entry ids, one per line; `-` reads stdin. |
-| `--status` | every status |  | Select by corpus status, e.g. `--status active`. Repeatable. |
+| `--only` | the active entries with no baseline row |  | Comma-separated entry ids. With no `--only`, `--only-file` or `--status`, the sweep covers the active entries the tier file does not yet cover, and refuses with exit `2` when there are none, naming `--only` as the way to force a resweep. |
+| `--only-file` | as `--only` |  | A file of entry ids, one per line; `-` reads stdin. |
+| `--status` | unset |  | Select by corpus status, e.g. `--status active`. Repeatable. Given alone it selects every entry at that status, including those already swept; given with `--only` it narrows the named set. |
 | `--acknowledge-unsafe-execution` | required |  | The sweep elaborates Lean built from the problem file's imports, binders and conclusion, without isolation. Without this flag the command refuses. |
 | `--workers` | `1` |  | Concurrent Lean elaborations. |
 
@@ -169,9 +169,9 @@ hardy evals run --label first-pass --acknowledge-unsafe-execution
 | `--backend` | `claude` |  | `claude` or `codex` are the parser's own choices, but only `claude` is accepted at run time: the batch runner, the canonical reader and staged tool-event counting are Claude-shaped, so a `codex` value is refused with exit `2` rather than recorded as a condition it is not. |
 | `--model` | the global `--model` |  | Who does the work. |
 | `--repeats` | `1` |  | Times each entry is run. Must be at least 1, since a zero-row run would still write a scoreboard `evals check` would pass. |
-| `--only` | every entry |  | Comma-separated entry ids. |
-| `--only-file` | every entry |  | A file of entry ids, one per line; `-` reads stdin. |
-| `--status` | every status |  | Select by corpus status, e.g. `--status active`. Repeatable. |
+| `--only` | the active entries not yet run under this condition |  | Comma-separated entry ids. With no `--only`, `--only-file` or `--status`, the run covers the active entries with no scoreboard row under this exact model, mode, limits and environment (what `evals todo` lists), and refuses with exit `2` when there are none, naming `--only` as the way to force a rerun. |
+| `--only-file` | as `--only` |  | A file of entry ids, one per line; `-` reads stdin. |
+| `--status` | unset |  | Select by corpus status, e.g. `--status active`. Repeatable. Given alone it selects every entry at that status, including those already run; given with `--only` it narrows the named set. |
 | `--tiers` | every tier |  | Comma-separated tiers, e.g. `2,3`. |
 | `--no-twins` | twins run |  | Drop the twin runs. |
 | `--max-turns` | `60` in batch mode |  | Refused under `--mode staged`, whose budgets are `active_seconds`, `proof_seconds`, and `official_checks` instead. |
