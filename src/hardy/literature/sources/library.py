@@ -33,12 +33,15 @@ from .contracts import (
     Diagnostic,
     GroupingProposal,
     IdentityEvidence,
+    RepresentationKind,
     SourceFormat,
+    SourceTree,
     StructuralObservation,
     WorkKind,
 )
-from .observations import ObservationStore
+from .observations import PRODUCER, PRODUCER_VERSION, ObservationStore, observe_text
 from .representations import RepresentationStore
+from .trees import TreeStore, build_tree, page_spans_from
 
 ARTIFACTS = "artifacts"
 CATALOG = "catalog"
@@ -75,6 +78,7 @@ class ManagedLibrary:
         self.catalog = Catalog(self.root / CATALOG)
         self.representations = RepresentationStore(self.root / REPRESENTATIONS)
         self.observations = ObservationStore(self.root / TREES)
+        self.trees = TreeStore(self.root / TREES)
         self.adapters = adapters if adapters is not None else default_adapters()
         self._clock = clock
 
@@ -155,6 +159,35 @@ class ManagedLibrary:
         for proposal in fresh:
             snapshot = self.catalog.propose_grouping(proposal, expected_revision=snapshot.revision)
         return fresh
+
+
+    def build_tree(self, sha256: str, *, representation: str | None = None) -> SourceTree:
+        """Build, validate and admit a deterministic tree over one normalized text representation.
+
+        Text observations are produced and stored once per producer version; native
+        observations stored at extraction time are used as they are. A previously
+        preferred tree is named as superseded and unchanged nodes keep their identity.
+        """
+        artifact = self.artifacts.record(sha256)
+        if representation is None:
+            candidates = self.representations.list(sha256, RepresentationKind.NORMALIZED_TEXT)
+            if not candidates:
+                raise ValueError(f"artifact {sha256} has no normalized text representation to build a tree from")
+            record = candidates[-1]
+        else:
+            record = self.representations.get(sha256, representation)
+        text = self.representations.text(sha256, record.id)
+        set_id = f"{PRODUCER}-{PRODUCER_VERSION}-{record.id}".replace(".", "_")
+        text_observations = self.observations.get(sha256, set_id) or self.observations.admit(sha256, set_id, observe_text(record, text))
+        native = tuple(o for name in self.observations.sets(sha256) if name != set_id for o in self.observations.get(sha256, name))
+        page_spans: dict = {}
+        for mapping in self.representations.mappings(sha256, left=record.id):
+            page_spans.update(page_spans_from(mapping))
+        previous = self.trees.preferred(sha256)
+        tree = build_tree(artifact, record, text, tuple(native) + tuple(text_observations), page_spans=page_spans, previous=previous)
+        texts = self.representations.texts(sha256)
+        representations = {r.id: r for r in self.representations.list(sha256)}
+        return self.trees.admit(tree, representations, texts)
 
 
 def default_library(*, adapters: AdapterRegistry | None = None) -> ManagedLibrary:
