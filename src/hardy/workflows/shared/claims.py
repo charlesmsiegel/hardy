@@ -154,6 +154,8 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
                 raise LinkError("an admitted link names an exact shared claim")
             if not ((record.faithfulness is not None and record.faithfulness.agreed) or record.approval is not None):
                 raise LinkError("admission needs an agreeing faithfulness verdict or an explicit human approval")
+            if record.approval is not None and not record.approval.actor.startswith("user:"):
+                raise LinkError("a human approval names a user; a model is not an approver")
             if record.proposed_claim is not None:
                 raise LinkError("an admitted link carries no unadmitted proposed claim")
         elif record.status in {LinkStatus.PROPOSED, LinkStatus.AMBIGUOUS}:
@@ -189,23 +191,31 @@ class ClaimLinker:
         if proposal.new_claim is not None and proposal.new_claim.context is not None:
             raise LinkError("a proposed shared claim cannot be context-local")
         ambiguous = len(proposal.claim_candidates) + (1 if proposal.new_claim else 0) > 1
-        existing = self.links.links_for_node(sha256, node_id)
-        suffix = len(existing) + 1
-        link = SourceClaimLink(
-            id=f"link-{sha256[:12]}-{node_id[2:]}-{suffix}", artifact_sha256=sha256, tree=tree_id, node=node_id, node_version=node.version,
-            span=span, claim=proposal.claim_candidates[0] if len(proposal.claim_candidates) == 1 and proposal.new_claim is None else None,
-            proposed_claim=proposal.new_claim, candidates=proposal.claim_candidates if ambiguous else (),
-            relation=proposal.relation, notation_mapping=proposal.notation_mapping, context_mapping=proposal.context_mapping,
-            status=LinkStatus.AMBIGUOUS if ambiguous else LinkStatus.PROPOSED, interpreter=proposal.interpreter,
-            history=(f"proposed by {proposal.interpreter}" + (f" (confidence {proposal.confidence})" if proposal.confidence is not None else ""),),
-            at=_stamp(),
-        )
-
-        def fresh(heads: dict[str, SourceClaimLink]) -> None:
+        for _ in range(RETRIES):
+            # The id counts the node's links in the snapshot this attempt appends
+            # against, so two interpretations proposed at once both survive: the
+            # loser recomputes from the head the winner made, not from the one
+            # both started from.
+            snapshot = self.links.snapshot()
+            heads = self.links.heads(snapshot)
+            suffix = sum(1 for held in heads.values() if held.artifact_sha256 == sha256 and held.node == node_id) + 1
+            link = SourceClaimLink(
+                id=f"link-{sha256[:12]}-{node_id[2:]}-{suffix}", artifact_sha256=sha256, tree=tree_id, node=node_id, node_version=node.version,
+                span=span, claim=proposal.claim_candidates[0] if len(proposal.claim_candidates) == 1 and proposal.new_claim is None else None,
+                proposed_claim=proposal.new_claim, candidates=proposal.claim_candidates if ambiguous else (),
+                relation=proposal.relation, notation_mapping=proposal.notation_mapping, context_mapping=proposal.context_mapping,
+                status=LinkStatus.AMBIGUOUS if ambiguous else LinkStatus.PROPOSED, interpreter=proposal.interpreter,
+                history=(f"proposed by {proposal.interpreter}" + (f" (confidence {proposal.confidence})" if proposal.confidence is not None else ""),),
+                at=_stamp(),
+            )
             if link.id in heads:
                 raise LinkError(f"link {link.id} already exists")
-
-        return self.links.append_retrying(link, precondition=fresh)
+            try:
+                self.links.append(link, expected_revision=snapshot.revision)
+                return link
+            except StaleRevision:
+                continue
+        raise LinkError("the link journal kept moving; try again")
 
     # --- admitting ----------------------------------------------------------
 
@@ -279,6 +289,14 @@ class ClaimLinker:
         ledger = self.claims.snapshot()
         item = ledger.head(claim_ref.id)
         assert isinstance(item, ProjectItem)
+        if item.ref != claim_ref:
+            # Attaching a source is itself a revision, so the head may move by
+            # provenance alone; what must not have moved is the statement the
+            # interpretation was of.
+            selected = self.claims.get(claim_ref)
+            if selected.model_dump(mode="json", exclude={"artifacts"}) != item.model_dump(mode="json", exclude={"artifacts"}):
+                raise LinkError(f"claim {claim_ref.id} was revised since the proposal ({claim_ref.digest[:12]} is no longer its head); "
+                                "the interpretation was of the earlier statement, so review it against the revision before admitting")
         artifact = source_artifact_ref(link)
         if artifact in item.artifacts:
             return
@@ -313,8 +331,8 @@ class ClaimLinker:
             for _ in range(RETRIES):
                 snapshot = self.links.snapshot()
                 current = self.links.heads(snapshot)[link.id]
-                if current.status is LinkStatus.REVIEW_NEEDED:
-                    break
+                if current.status in {LinkStatus.REVIEW_NEEDED, LinkStatus.REJECTED}:
+                    break  # already under review, or rejected meanwhile: a rejection is final and is not softened
                 flagged = current.model_copy(update={"status": LinkStatus.REVIEW_NEEDED, "at": _stamp(),
                                                      "history": (*current.history, f"node changed under tree {new_tree_id}; the old tree {link.tree} still resolves this link")})
                 try:

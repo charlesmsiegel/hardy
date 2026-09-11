@@ -47,7 +47,13 @@ from hardy.workflows.ledger.contracts import ArtifactRef, EvidenceRef, VersionRe
 
 from .claims import HumanApproval
 from .ledger import SharedClaims
-from .realizations import FormalRealization, RealizationOrigin, RealizationStore, realization_id
+from .realizations import (
+    FormalRealization,
+    RealizationOrigin,
+    RealizationStore,
+    formalization_digest,
+    realization_id,
+)
 
 NAMESPACE = "HardyShared"
 PRODUCER = "hardy.workflows.shared.promotion"
@@ -65,7 +71,7 @@ class ClosureEntry(FrozenModel):
 
 class PromotionBlocker(FrozenModel):
     kind: Literal["project_local_assumption", "project_specific_dependency", "unverified", "unfaithful", "build_failed", "audit_failed", "stale_shared_head",
-                  "missing_module", "unknown_claim", "admission_failed"]
+                  "missing_module", "unknown_claim", "admission_failed", "target_conflict"]
     detail: Text
 
 
@@ -108,8 +114,13 @@ def _stamp() -> str:
 
 
 def _sanitize(name: str) -> str:
+    """A Lean-safe segment for a project name; distinct names never share one segment."""
     cleaned = re.sub(r"[^A-Za-z0-9]+", "", name)
-    return cleaned if cleaned and not cleaned[0].isdigit() else f"P{cleaned}"
+    if cleaned == name and cleaned and not cleaned[0].isdigit():
+        return cleaned
+    # `prym-1` and `prym1` would otherwise both become `prym1`; the digest
+    # keeps them apart, so one project's promotion never lands on another's path.
+    return f"{cleaned or 'P'}_{json_digest(name)[:8]}"
 
 
 def shared_module_name(project: str, module: str) -> str:
@@ -259,7 +270,7 @@ class Promoter:
             self.claims.get(request.claim)
         except Exception as error:
             blockers.append(PromotionBlocker(kind="unknown_claim", detail=f"claim {request.claim.id} is not in the shared ledger: {error}"))
-        blockers.extend(_semantic_blockers(request))
+        blockers.extend(_semantic_blockers(request, _formal_type(sources, request.module, request.declaration)))
         closure = compute_closure(sources, request.module, shared_modules=shared_modules_in(self.shared_root), audit=audit)
         blockers.extend(blockers_of(closure))
         if request.module in sources and request.declaration not in _declared(sources[request.module]):
@@ -281,7 +292,7 @@ class Promoter:
             raise PromotionError(f"promotion {record_id} is {record.status}; only a prepared promotion is promoted")
         if (record.project, record.source_module, record.declaration, record.claim) != (request.project, request.module, request.declaration, request.claim):
             raise PromotionError("the request does not match the prepared promotion")
-        semantic = _semantic_blockers(request)
+        semantic = _semantic_blockers(request, _formal_type(sources, record.source_module, record.declaration))
         if semantic:
             return self._fail(record, semantic[0])
         if shared_head(self.shared_root) != record.shared_head:
@@ -345,6 +356,13 @@ class Promoter:
                 if shared_head(self.shared_root) != record.shared_head:
                     return self._fail(record, PromotionBlocker(kind="stale_shared_head", detail="another promotion changed the shared library during this one; prepare it again"))
                 before = {shared: _read_if_file(self.shared_root / module_path(shared)) for shared in staged}
+                for shared, source in staged.items():
+                    published = before[shared]
+                    if published is not None and published.decode("utf-8", "replace").replace("\r\n", "\n") != source.replace("\r\n", "\n"):
+                        # A published module is what its consumers import; different
+                        # mathematics under the same name would change what an old
+                        # realization means. Identical bytes are a harmless re-promotion.
+                        return self._fail(record, PromotionBlocker(kind="target_conflict", detail=f"{shared} is already published with different content; a changed module is a new realization line, not an overwrite"))
                 build_before = temporary / "build-before"
                 if self.shared_build.is_dir():
                     shutil.copytree(self.shared_build, build_before)
@@ -356,9 +374,13 @@ class Promoter:
                     shutil.rmtree(self.shared_build)
                 shutil.copytree(shadow_build, self.shared_build)
                 try:
-                    self.realizations.propose(realization)
-                    attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness,
-                                                        approval=request.approval, actor=record.actor)
+                    held = self.realizations.heads().get(realization.id)
+                    if held is not None and held.status == "attached" and held.source_sha256 == source_sha:
+                        attached = held  # the same bytes were promoted before; nothing new to vouch for
+                    else:
+                        self.realizations.propose(realization)
+                        attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness,
+                                                            approval=request.approval, actor=record.actor)
                 except Exception as error:
                     # Files without an admitted realization would be a shared
                     # module nothing vouches for: put the tree back as it was.
@@ -401,12 +423,19 @@ class Promoter:
         return self.promotions.append(failed)
 
 
-def _semantic_blockers(request: PromotionRequest) -> tuple[PromotionBlocker, ...]:
+def _formal_type(sources: Mapping[str, str], module: str, declaration: str) -> str | None:
+    source = sources.get(module)
+    return None if source is None else (statements(source).get(declaration) or declaration)
+
+
+def _semantic_blockers(request: PromotionRequest, formal_type: str | None) -> tuple[PromotionBlocker, ...]:
     if request.faithfulness is None and request.approval is None:
         return (PromotionBlocker(kind="unfaithful", detail="no faithfulness verdict or human approval ties the declaration to the claim"),)
     found: list[PromotionBlocker] = []
     if request.faithfulness is not None and not request.faithfulness.agreed:
         found.append(PromotionBlocker(kind="unfaithful", detail=f"the faithfulness verdict is {request.faithfulness.outcome.value}"))
+    if request.faithfulness is not None and formal_type is not None and request.faithfulness.claim_sha256 != formalization_digest(request.claim, formal_type):
+        found.append(PromotionBlocker(kind="unfaithful", detail="the faithfulness verdict names a different formalization than this declaration's statement for this claim version"))
     if request.approval is not None and not request.approval.actor.startswith("user:"):
         found.append(PromotionBlocker(kind="unfaithful", detail=f"an approval by {request.approval.actor!r} is not a human approval; a model is not an approver"))
     return tuple(found)

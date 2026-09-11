@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 import pytest
 
 from hardy.formal.contracts import EnvironmentIdentity
-from hardy.formal.syntax import declarations, module_path
+from hardy.formal.syntax import declarations, module_path, statements
 from hardy.workflows.contracts import FaithfulnessOutcome, FaithfulnessReview, FaithfulnessVerdict
 from hardy.workflows.ledger.contracts import ProjectItem
 from hardy.workflows.shared.claims import LinkStore
@@ -22,7 +22,11 @@ from hardy.workflows.shared.promotion import (
     rewrite_imports,
     shared_head,
 )
-from hardy.workflows.shared.realizations import RealizationOrigin, RealizationStore
+from hardy.workflows.shared.realizations import (
+    RealizationOrigin,
+    RealizationStore,
+    formalization_digest,
+)
 from hardy.workflows.shared.reuse import ReuseClass, resolve_reusable_claim
 
 ENV = EnvironmentIdentity(lean_version="4.32.0", lean_commit="abc", mathlib_revision="m1", lake_manifest_sha256="1" * 64)
@@ -73,7 +77,8 @@ def setup(tmp_path, *, failing=(), audit=clean_audit):
     compiled: list[str] = []
     promoter = Promoter(shared_root=root / "lean", shared_build=root / ".build" / "lean", compile=fake_compile(compiled, failing), environment=ENV,
                         claims=claims, realizations=RealizationStore(root / "realizations"), promotions=PromotionStore(root / "promotions"), audit=audit)
-    request = PromotionRequest(project="prym-1", module="Prym.Main", declaration="Prym.fibers_bound", claim=claim.ref, faithfulness=verdict(),
+    bound = verdict().model_copy(update={"claim_sha256": formalization_digest(claim.ref, statements(MAIN)["Prym.fibers_bound"])})
+    request = PromotionRequest(project="prym1", module="Prym.Main", declaration="Prym.fibers_bound", claim=claim.ref, faithfulness=bound,
                                actor="user:c", reason="reused by later Prym projects")
     return root, claims, claim, promoter, request, compiled
 
@@ -243,3 +248,41 @@ def test_failed_admission_restores_the_shared_tree(tmp_path):
     assert sorted(p.name for p in (root / ".build" / "lean").iterdir()) == ["Other.olean"]
     assert shared_head(root / "lean") == prepared.shared_head
     assert [r.status for r in promoter.realizations.for_claim(claim.id)] == ["rejected"]
+
+
+def test_project_names_never_alias_a_shared_module_path():
+    from hardy.workflows.shared.promotion import shared_module_name
+
+    assert shared_module_name("prym1", "Prym.Main") == "HardyShared.prym1.Prym.Main"
+    dashed = shared_module_name("prym-1", "Prym.Main")
+    assert dashed != shared_module_name("prym1", "Prym.Main") and dashed.startswith("HardyShared.prym1_") and "-" not in dashed
+    assert shared_module_name("1st", "Prym.Main") != shared_module_name("st", "Prym.Main")
+    assert shared_module_name("prym-1", "Prym.Main") == dashed  # stable
+
+
+def test_a_published_module_is_not_overwritten_by_a_later_promotion(tmp_path):
+    root, claims, claim, promoter, request, compiled = setup(tmp_path)
+    first = promoter.promote(promoter.prepare(request, SOURCES, AUDIT).id, request, SOURCES)
+    assert first.status == "admitted"
+    published = (root / "lean" / module_path("HardyShared.prym1.Prym.Main")).read_bytes()
+    changed = {"Prym.Lemmas": LEMMAS, "Prym.Main": MAIN.replace(":= Prym.two_le_three", ":= by decide")}
+    bound = request.faithfulness.model_copy(update={"claim_sha256": formalization_digest(claim.ref, statements(changed["Prym.Main"])["Prym.fibers_bound"])})
+    again = request.model_copy(update={"faithfulness": bound})
+    prepared = promoter.prepare(again, changed, AUDIT)
+    assert prepared.status == "prepared" and prepared.id != first.id
+    failed = promoter.promote(prepared.id, again, changed)
+    assert failed.status == "failed" and failed.blockers[-1].kind == "target_conflict"
+    assert (root / "lean" / module_path("HardyShared.prym1.Prym.Main")).read_bytes() == published
+    assert [r.status for r in promoter.realizations.for_claim(claim.id)] == ["attached"]
+    same = promoter.prepare(request, SOURCES, AUDIT)
+    assert promoter.promote(same.id, request, SOURCES).status == "admitted"  # identical bytes are a harmless re-promotion
+
+
+def test_a_verdict_about_another_formalization_blocks_promotion(tmp_path):
+    root, claims, claim, promoter, request, compiled = setup(tmp_path)
+    unbound = request.model_copy(update={"faithfulness": verdict()})
+    blocked = promoter.prepare(unbound, SOURCES, AUDIT)
+    assert blocked.status == "blocked" and any("different formalization" in b.detail for b in blocked.blockers)
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+    failed = promoter.promote(prepared.id, unbound, SOURCES)
+    assert failed.status == "failed" and failed.blockers[-1].kind == "unfaithful" and compiled == []

@@ -14,6 +14,7 @@ from hardy.workflows.shared.realizations import (
     RealizationError,
     RealizationOrigin,
     RealizationStore,
+    formalization_digest,
     realization_id,
     revalidate,
 )
@@ -30,6 +31,14 @@ def verdict(agreed=True):
     review = FaithfulnessReview(formalization_entails_claim=agreed, claim_entails_formalization=agreed, divergences=() if agreed else ("wrong quantifier",))
     return FaithfulnessVerdict(claim_sha256="c" * 64, reviewer_model="reader", reviewer_backend="test", reviewer_isolation="tools-refused",
                                prompt_sha256="p" * 64, outcome=FaithfulnessOutcome.AGREED if agreed else FaithfulnessOutcome.DISPUTED, review=review)
+
+
+FORMAL_TYPE = "{G : Type} [Group G] [IsCyclic G] (H : Subgroup G) : IsCyclic H"
+
+
+def bound(c, agreed=True, formal_type=FORMAL_TYPE):
+    """A verdict that names this claim version read against this formal statement."""
+    return verdict(agreed).model_copy(update={"claim_sha256": formalization_digest(c.ref, formal_type)})
 
 
 def formal_evidence(subject, uri="mathlib:m1/Subgroup.isCyclic"):
@@ -50,7 +59,7 @@ def test_one_claim_can_have_mathlib_and_shared_realizations(tmp_path):
     assert mathlib.id != shared.id
     assert {r.origin for r in store.for_claim(c.id)} == {RealizationOrigin.MATHLIB, RealizationOrigin.HARDY_SHARED}
     for r in (mathlib, shared):
-        store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="test")
+        store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="test")
     assert all(r.status == "attached" for r in store.for_claim(c.id))
     assert len(store.for_claim(c.id)) == 2
 
@@ -82,14 +91,14 @@ def test_formally_valid_but_unfaithful_is_not_attached(tmp_path):
     c = claim()
     r = store.propose(realization(c))
     with pytest.raises(RealizationError, match="agreeing"):
-        store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=verdict(agreed=False), actor="test")
+        store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=bound(c, agreed=False), actor="test")
     with pytest.raises(RealizationError, match="lead"):
         store.attach(r.id, verification=formal_evidence(c.ref), actor="test")
     with pytest.raises(RealizationError, match="names a user"):
         store.attach(r.id, verification=formal_evidence(c.ref), approval=HumanApproval(actor="model:x", reason="looks right", at="now"), actor="test")
     unverified = EvidenceRef(kind="faithfulness", subject=c.ref, producer="reader", artifact=ArtifactRef(uri="x", digest="f" * 64))
     with pytest.raises(RealizationError, match="formal evidence"):
-        store.attach(r.id, verification=unverified, faithfulness=verdict(), actor="test")
+        store.attach(r.id, verification=unverified, faithfulness=bound(c), actor="test")
     assert store.get(r.id).status == "candidate"
     attached = store.attach(r.id, verification=formal_evidence(c.ref), approval=HumanApproval(actor="user:c", reason="read the docstring and type", at="now"), actor="user:c")
     assert attached.status == "attached" and attached.semantically_attached
@@ -98,7 +107,7 @@ def test_formally_valid_but_unfaithful_is_not_attached(tmp_path):
 def test_stale_environment_is_flagged_not_delivered(tmp_path):
     store = RealizationStore(tmp_path / "realizations")
     c = claim()
-    r = store.attach(store.propose(realization(c)).id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="t")
+    r = store.attach(store.propose(realization(c)).id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="t")
     assert revalidate(r, environment=ENV, importable=lambda real: True) == "importable"
     assert revalidate(r, environment=NEWER, importable=lambda real: True) == "stale_environment"
     assert revalidate(r, environment=ENV, importable=lambda real: False) == "unimportable"
@@ -115,7 +124,7 @@ def test_project_local_realization_is_not_importable_elsewhere(tmp_path):
     store = RealizationStore(tmp_path / "realizations")
     c = claim()
     local = store.propose(realization(c, origin=RealizationOrigin.PROJECT, module="Prym.Donagi", declaration="Prym.donagi_fibers", project="prym-1"))
-    attached = store.attach(local.id, verification=formal_evidence(c.ref, uri="prym-1/lean/verification.json"), faithfulness=verdict(), actor="t")
+    attached = store.attach(local.id, verification=formal_evidence(c.ref, uri="prym-1/lean/verification.json"), faithfulness=bound(c), actor="t")
     assert attached.status == "attached" and attached.globally_importable is False and attached.project == "prym-1"
 
 
@@ -123,7 +132,7 @@ def test_meaning_change_creates_new_realization_with_supersession(tmp_path):
     store = RealizationStore(tmp_path / "realizations")
     c = claim()
     old = store.attach(store.propose(realization(c, origin=RealizationOrigin.HARDY_SHARED, module="HardyShared.Cyclic", declaration="Hardy.cyclic")).id,
-                       verification=formal_evidence(c.ref), faithfulness=verdict(), actor="t")
+                       verification=formal_evidence(c.ref), faithfulness=bound(c), actor="t")
     with pytest.raises(RealizationError, match="new realization"):
         store._append(old.model_copy(update={"formal_type": "changed type"}), precondition=lambda heads: None)
     replacement = realization(c, origin=RealizationOrigin.HARDY_SHARED, module="HardyShared.Cyclic", declaration="Hardy.cyclic_v2", formal_type="stronger type")
@@ -132,7 +141,7 @@ def test_meaning_change_creates_new_realization_with_supersession(tmp_path):
     assert store.get(old.id).status == "superseded"
     assert [r.status for r in store.history(old.id)] == ["candidate", "attached", "superseded"]
     with pytest.raises(RealizationError, match="superseded"):
-        store.attach(old.id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="t")
+        store.attach(old.id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="t")
     other = claim("other-claim", "Other")
     with pytest.raises(RealizationError, match="same claim"):
         store.supersede(new.id, realization(other, origin=RealizationOrigin.HARDY_SHARED), reason="x")
@@ -141,7 +150,7 @@ def test_meaning_change_creates_new_realization_with_supersession(tmp_path):
 def test_restart_preserves_realizations(tmp_path):
     store = RealizationStore(tmp_path / "realizations")
     c = claim()
-    r = store.attach(store.propose(realization(c)).id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="t")
+    r = store.attach(store.propose(realization(c)).id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="t")
     assert RealizationStore(tmp_path / "realizations").get(r.id) == r
 
 
@@ -150,6 +159,44 @@ def test_evidence_about_another_claim_does_not_attach(tmp_path):
     c, other = claim(), claim(id="other-claim", name="Something else")
     r = store.propose(realization(c))
     with pytest.raises(RealizationError, match="does not transfer"):
-        store.attach(r.id, verification=formal_evidence(other.ref), faithfulness=verdict(), actor="test")
+        store.attach(r.id, verification=formal_evidence(other.ref), faithfulness=bound(c), actor="test")
     assert store.get(r.id).status == "candidate"
-    assert store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="test").status == "attached"
+    assert store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="test").status == "attached"
+
+
+def test_a_verdict_about_another_formalization_does_not_attach(tmp_path):
+    store = RealizationStore(tmp_path / "realizations")
+    c = claim()
+    r = store.propose(realization(c))
+    assert r.formalization_sha256 == formalization_digest(c.ref, FORMAL_TYPE)
+    with pytest.raises(RealizationError, match="different formalization"):
+        store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=verdict(), actor="test")  # "c" * 64 names nothing here
+    with pytest.raises(RealizationError, match="different formalization"):
+        store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=bound(c, formal_type="(n : Nat) : n = n"), actor="test")
+    assert store.get(r.id).status == "candidate"
+    assert store.attach(r.id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="test").status == "attached"
+
+
+def test_a_mark_does_not_overwrite_a_concurrent_attachment(tmp_path):
+    from hardy.foundation.journal import StaleRevision
+
+    store = RealizationStore(tmp_path / "realizations")
+    c = claim()
+    r = store.propose(realization(c))
+    other = RealizationStore(tmp_path / "realizations")
+    real_append = store._journal.append
+    calls = []
+
+    def racing(records, *, expected_revision, validate=None):
+        calls.append(records[0].status)
+        if len(calls) == 1:
+            other.attach(r.id, verification=formal_evidence(c.ref), faithfulness=bound(c), actor="reviewer")
+            raise StaleRevision("the attachment landed first")
+        return real_append(records, expected_revision=expected_revision, validate=validate)
+
+    store._journal.append = racing
+    with pytest.raises(RealizationError, match="changed under the mark"):
+        store.mark(r.id, "rejected", reason="looked wrong at first")
+    head = store.get(r.id)
+    assert head.status == "attached" and head.verification is not None and head.faithfulness is not None
+    assert calls == ["rejected"]

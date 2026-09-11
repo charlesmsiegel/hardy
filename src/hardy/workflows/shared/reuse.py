@@ -68,9 +68,13 @@ def resolve_reusable_claim(
     exact = [h for h in hits if h.rank <= 2]
     related = [h for h in hits if h.rank > 2]
     for hit in exact:
-        attached = [r for r in realizations.for_claim(hit.ref.id) if r.status == "attached"]
-        candidates = [r for r in realizations.for_claim(hit.ref.id) if r.status == "candidate"]
-        admitted_links = tuple(link.id for link in links.links_for_claim(hit.ref.id) if link.status is LinkStatus.ADMITTED)
+        # Evidence is about an exact claim version. A realization or link of
+        # an earlier revision of the same id is not evidence for the head.
+        every = realizations.for_claim(hit.ref.id)
+        attached = [r for r in every if r.status == "attached" and r.claim == hit.ref]
+        outdated = [r for r in every if r.status == "attached" and r.claim != hit.ref]
+        candidates = [r for r in every if r.status == "candidate" and r.claim == hit.ref]
+        admitted_links = tuple(link.id for link in links.links_for_claim(hit.ref.id) if link.status is LinkStatus.ADMITTED and link.claim == hit.ref)
         for realization in sorted(attached, key=lambda r: (ORIGIN_ORDER.get(r.origin, 9), r.id)):
             if realization.globally_importable:
                 availability = revalidate(realization, environment=environment, importable=importable)
@@ -86,7 +90,7 @@ def resolve_reusable_claim(
                 continue
             other = relation.source if relation.target.id == hit.ref.id else relation.target
             for realization in realizations.for_claim(other.id):
-                if realization.status != "attached" or not realization.globally_importable:
+                if realization.status != "attached" or not realization.globally_importable or realization.claim != other:
                     continue
                 availability = revalidate(realization, environment=environment, importable=importable)
                 results.append(ReuseResult(cls=ReuseClass.RELATED_CLAIM_WITH_RELATION, claim=other, claim_name=claims.head(other.id).name, realization=realization,
@@ -99,8 +103,10 @@ def resolve_reusable_claim(
             results.append(ReuseResult(cls=ReuseClass.FORMAL_CANDIDATE, claim=hit.ref, claim_name=hit.name, realization=realization, availability="unverified",
                                        reason=f"{realization.origin.value} declaration {realization.declaration} was found by name and is not semantically authenticated"))
         if not attached and not admitted_links and not candidates:
+            stale_note = (f"; {len(outdated)} realization(s) attach to an earlier revision of this claim and need a new faithfulness read"
+                          if outdated else "")
             results.append(ReuseResult(cls=ReuseClass.EXACT_CLAIM_SOURCE_ONLY, claim=hit.ref, claim_name=hit.name,
-                                       reason=f"exact claim ({hit.match}) is registered with no admitted source link and no realization"))
+                                       reason=f"exact claim ({hit.match}) is registered with no admitted source link and no realization" + stale_note))
     for hit in related:
         results.append(ReuseResult(cls=ReuseClass.RELATED_FAMILY, claim=hit.ref, claim_name=hit.name, reason=f"{hit.match}; navigational only, not an identity match"))
     if not results:

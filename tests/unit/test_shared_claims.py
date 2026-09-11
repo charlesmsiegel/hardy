@@ -223,3 +223,88 @@ def test_a_retried_admission_reuses_the_claim_it_minted(tmp_path):
     admitted = linker.admit(link.id, verdict=verdict())
     assert admitted.status is LinkStatus.ADMITTED and admitted.claim.id == "c-retry" and len(calls) == 2
     assert [c.id for c in claims.claims()] == ["c-retry"]
+
+
+def test_the_link_store_itself_refuses_a_model_approval(tmp_path):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    theorem = node_numbered(tree, "1.2")
+    claims.add_claim(claim("c-store", "store", "store"), expected_revision=0)
+    link = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(claims.head("c-store").ref,), interpreter="m"))
+    forged = link.model_copy(update={"status": LinkStatus.ADMITTED, "approval": HumanApproval(actor="model:test", reason="sure", at="now")})
+    with pytest.raises(LinkError, match="not an approver"):
+        links.append(forged, expected_revision=links.snapshot().revision)
+    assert links.get(link.id).status is LinkStatus.PROPOSED
+
+
+def test_concurrent_proposals_on_one_node_both_survive(tmp_path):
+    from hardy.foundation.journal import StaleRevision
+
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    theorem = node_numbered(tree, "1.2")
+    rival = ClaimLinker(library=lib, claims=claims, links=LinkStore(lib.root / "links"))
+    real_append = links.append
+    calls = []
+
+    def racing(link, *, expected_revision):
+        calls.append(link.id)
+        if len(calls) == 1:
+            rival.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c-rival", "rival", "rival"), interpreter="r"))
+            raise StaleRevision("the rival appended first")
+        return real_append(link, expected_revision=expected_revision)
+
+    links.append = racing
+    mine = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c-mine", "mine", "mine"), interpreter="m"))
+    held = links.links_for_node(sha, theorem.id)
+    assert len(held) == 2 and len({held_link.id for held_link in held}) == 2
+    assert calls[0] != calls[1] and mine.id == calls[1]  # the retry minted a new id from the moved head
+    assert {held_link.proposed_claim.id for held_link in held} == {"c-mine", "c-rival"}
+
+
+def test_admission_refuses_a_claim_revised_since_the_proposal(tmp_path):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    theorem = node_numbered(tree, "1.2")
+    claims.add_claim(claim("c-move", "move", "The original statement."), expected_revision=0)
+    chosen = claims.head("c-move").ref
+    link = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(chosen,), interpreter="m"))
+    revised = claims.head("c-move").model_copy(update={"statement": "A stronger statement."})
+    claims.append((ProjectItem.model_validate(revised.model_dump(mode="json")),), expected_revision=claims.snapshot().revision)
+    assert claims.head("c-move").ref != chosen
+    with pytest.raises(LinkError, match="revised"):
+        linker.admit(link.id, verdict=verdict())
+    assert links.get(link.id).status is LinkStatus.PROPOSED
+    assert all(source_artifact_ref(link) != a for a in claims.head("c-move").artifacts)  # the source was not attached to the revision
+
+
+def test_a_rejection_during_stale_review_is_kept(tmp_path):
+    from hardy.foundation.journal import StaleRevision
+    from hardy.literature.sources.adapters import ExtractionBudget
+    from hardy.literature.sources.contracts import RepresentationKind
+    from hardy.literature.sources.pdf import PdfAdapter
+    from hardy.literature.sources.representations import payload_digest
+
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    gap = node_numbered(tree, "1.8")
+    link = linker.propose(sha, tree.id, gap.id, InterpretationProposal(new_claim=claim("c-stale", "stale", "stale"), interpreter="m"))
+    pages = book_pages()
+    pages[1] = Page((("Proposition 1.3. By Theorem 1.2, every quotient of a cyclic group is cyclic.", 72, 720), ("Proof. Immediate. Q.E.D.", 72, 690),
+                     ("Theorem 1.8. A gap in numbering is not evidence of missing theorems, reworded.", 72, 660)))
+    result = PdfAdapter().extract(lib.artifacts.record(sha), build_pdf(pages), budget=ExtractionBudget())
+    normalized, payloads = next((r, p) for r, p in result.representations if r.kind is RepresentationKind.NORMALIZED_TEXT)
+    better = normalized.model_copy(update={"id": "normalized_text-v2", "extractor_version": "2", "output_sha256": payload_digest(payloads), "derived_at": "2026-09-12T00:00:00+00:00"})
+    lib.representations.admit(better, payloads)
+    refined = lib.build_tree(sha, representation=better.id)
+    real_append = links.append
+    calls = []
+
+    def racing(record, *, expected_revision):
+        calls.append(record.status)
+        if len(calls) == 1:
+            ClaimLinker(library=lib, claims=claims, links=LinkStore(lib.root / "links")).reject(link.id, actor="user:c", reason="misread")
+            raise StaleRevision("the rejection landed first")
+        return real_append(record, expected_revision=expected_revision)
+
+    links.append = racing
+    assert linker.stale_links(sha, refined.id) == ()
+    assert calls == [LinkStatus.REVIEW_NEEDED] and links.get(link.id).status is LinkStatus.REJECTED
+    with pytest.raises(LinkError, match="rejected"):
+        linker.admit(link.id, verdict=verdict())
