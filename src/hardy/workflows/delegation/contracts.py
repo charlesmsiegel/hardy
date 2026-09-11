@@ -242,6 +242,8 @@ class Delegation(FrozenModel):
     research_brief_digest: str | None = None
     context_manifest_id: str | None = None
     result: WorkerResult | None = None
+    #: Started as a container for coordinated children, with no worker of its own.
+    interior: bool = False
 
     @property
     def spawn(self) -> SpawnPolicy:

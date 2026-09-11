@@ -165,3 +165,23 @@ def test_a_released_child_with_unknown_usage_leaves_that_dimension_unallocatable
                                                           "usage": ResourceUsage(unknown=("tokens",)).model_dump(mode="json")}})
     store.release("a")
     assert LeaseLedger(store.tree()).allocatable("root") == ResourceLease(official_checks=3, tokens=0)
+
+
+def test_two_processes_that_both_passed_grant_cannot_both_record_their_reservation(tmp_path):
+    """The check is repeated inside the journal lock at append time, so the second recorder is refused."""
+    first, second = DelegationStore(tmp_path), DelegationStore(tmp_path)
+    _tree(first, ("root", None, {"official_checks": 4}))
+    stale = first.tree()                                     # both processes read the same balance
+    for store, id in ((first, "a"), (second, "b")):
+        lease, _ = grant(stale, "root", ResourceLease(official_checks=3), requested_slots=0)
+        store.append(id, "delegation.created", {"spec": _spec({"official_checks": 3}).model_dump(mode="json"),
+                                                "parent_id": "root", "created_at": "t"})
+        if id == "a":
+            store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"), "slots": 1})
+        else:
+            with pytest.raises(LeaseRefused, match="official_checks"):
+                store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"), "slots": 1})
+            # The refused node is retired, as the controller does, so it stops counting at its requested lease.
+            store.append(id, "delegation.cancelled", {"reason": "reservation refused"})
+            store.release(id)
+    assert LeaseLedger(first.tree()).allocatable("root") == ResourceLease(official_checks=1)

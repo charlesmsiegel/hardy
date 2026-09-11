@@ -164,8 +164,8 @@ A problem's `delegations/journal.jsonl` is the append-only record of background 
 
 | Event kind | Payload | Meaning |
 | --- | --- | --- |
-| `delegation.created` | `spec`, `parent_id`, `created_at` | A node exists; `spec` is the frozen request (objective, exact project refs, scope, lease, concurrency, policies, who asked). The synthetic `root` node carries the session's ceilings. |
-| `budget.reserved` / `budget.released` | `lease`, `slots` | A reservation under the parent's allocatable resources, and its return once the node is terminal. |
+| `delegation.created` | `spec`, `parent_id`, `created_at` | A node exists; `spec` is the frozen request (objective, exact project refs, scope, lease, concurrency, policies, who asked). The synthetic `root` node carries the session's ceilings. A `delegation.started` whose payload says `interior` marks a container for coordinated children: it runs no worker, and recovery leaves it live rather than marking it unknown. |
+| `budget.reserved` / `budget.released` | `lease`, `slots` | A reservation under the parent's allocatable resources, and its return once the node is terminal. The reservation is re-checked against the parent's balance under the journal's own lock as it is recorded, so two processes that both passed the check on one stale balance cannot both record; the loser is journaled cancelled and released. |
 | `delegation.context` | `problem_core_digest`, `research_brief_digest`, `context_manifest_id` | What the worker was launched with; the files are beside the journal. |
 | `delegation.started` / `progress` / `paused` / `resumed` / `waiting` | | Lifecycle. |
 | `usage.reported` | `usage` | Measured spend. A dimension listed in `unknown` was not reported and is liability, never zero. |

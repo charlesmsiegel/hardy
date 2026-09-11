@@ -667,3 +667,66 @@ def test_the_core_and_the_working_set_describe_one_revision_even_when_the_ledger
         assert LedgerStore(tmp_path).read().revision > seen[0]
     finally:
         controller.shutdown()
+
+
+def test_an_interrupt_subscribed_by_the_human_alone_never_cancels_the_main_turn(tmp_path):
+    from hardy.workflows.delegation.attention import AttentionSubscription, DeliveryMode
+
+    notices, interrupts = [], []
+    script = [call("propose_finding", {"kind": "counterexample", "summary": "a conic bundle", "payload": "p",
+                                       "related_refs": ["L17"]}), FINISH]
+    seed_lemma(tmp_path)
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=_open(script),
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=notices.append, interrupt=interrupts.append)
+    try:
+        spec = _spec(tmp_path).model_copy(update={"notify_human": False})
+        first = controller.delegate(spec)
+        controller.wait(first.id, timeout=5)
+        controller.subscribe(AttentionSubscription(owner="human", source=ROOT_ID, triggers=("counterexample",),
+                                                   mode=DeliveryMode.INTERRUPT, recipient="human"))
+        controller.subscribe(AttentionSubscription(owner="human", source=ROOT_ID, triggers=("counterexample",),
+                                                   mode=DeliveryMode.QUEUE, recipient="main_agent"))
+        loud = controller.delegate(spec)
+        controller.wait(loud.id, timeout=5)
+        assert any("counterexample" in n for n in notices) and interrupts == []
+        item = next(i for i in controller.attention().items() if i.delegation_id == loud.id and i.finding_kind == "counterexample")
+        assert [r.mode for r in controller.attention().receipts(item.id)] == ["interrupt"]
+        assert item.id in {i.id for i in controller.attention().pending("main_agent")}       # queued for the model
+    finally:
+        controller.shutdown()
+
+
+def test_a_delegation_with_no_active_time_is_refused_before_anything_is_reserved(tmp_path):
+    controller = _controller(tmp_path, _open([FINISH]))
+    try:
+        before = controller.tree().revision
+        with pytest.raises(ValueError, match="active_seconds"):
+            controller.delegate(_spec(tmp_path).model_copy(
+                update={"lease": ResourceLease(official_checks=1, active_seconds=0.0)}))
+        assert controller.tree().revision in {before, before + 2}          # at most the lazily created root
+    finally:
+        controller.shutdown()
+
+
+def test_recovery_routes_a_terminal_event_the_dead_process_never_delivered(tmp_path):
+    seed_lemma(tmp_path)
+    controller = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    controller.shutdown()
+    stuck = controller.delegate(_spec(tmp_path, checks=1))
+    store = controller.store
+    store.append(stuck.id, "delegation.started", {})
+    store.append(stuck.id, "delegation.completed", {"result": {"delegation_id": stuck.id, "status": "completed",
+                                                              "synthesis": "done before the crash", "usage": {}}})
+    notices = []
+    again = _controller(tmp_path, _open([FINISH]), checks=4, slots=1, notices=notices)
+    try:
+        again.recover()
+        pending = again.attention().pending("main_agent")
+        assert [i.delegation_id for i in pending] == [stuck.id] and "done before the crash" in pending[0].summary
+        assert any(stuck.id in n for n in notices)
+        again.recover()
+        assert len(again.attention().items()) == 1                              # idempotent
+    finally:
+        again.shutdown()

@@ -1,11 +1,9 @@
 # Hardy delegation and research-swarm architecture
 
-Status: **implementation-ready architectural specification**, finalized for the
-first implementation push on 2026-09-10. This file is the durable record of the
-delegation/swarm design discussion. The chat was the design workshop; this file is
-the source of truth.
-
-Baseline: `main` on 2026-09-10. Design branch: `delegation-swarm-spec`.
+This file is the durable record of the delegation/swarm design: the reasoning
+behind the architecture and the criteria an implementation must meet. The chat
+was the design workshop; this file is the source of truth for the design.
+Implementation status lives in [the roadmap](../../roadmap.md).
 
 Related but deliberately separate design seed:
 `docs/superpowers/specs/2026-09-10-general-literature-sources-design.md`. That

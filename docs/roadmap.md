@@ -1692,7 +1692,7 @@ No separate hole ledger, concept database, representation database, context/nota
 
 **Deps:** Core B-D, X2
 
-Specification: [the delegation and research-swarm design](superpowers/specs/2026-09-10-delegation-swarm-design.md); plan: [the delegation backend implementation plan](superpowers/plans/2026-09-10-delegation-swarm-backend.md). One hierarchy from a single background worker to a coordinated swarm, all execution state under `workflows/delegation/` and `agents/executor.py`; mathematics stays in the ledger and every result routes back through the existing owners.
+Specification: [the delegation and research-swarm design](superpowers/specs/2026-09-10-delegation-swarm-design.md). One hierarchy from a single background worker to a coordinated swarm, all execution state under `workflows/delegation/` and `agents/executor.py`; mathematics stays in the ledger and every result routes back through the existing owners.
 
 ---
 

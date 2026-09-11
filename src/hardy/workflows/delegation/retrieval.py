@@ -36,6 +36,9 @@ def _stem(paper_id: str) -> str:
 #: The most project items one `read_project` answer carries, whatever limit the model
 #: asks for: an observation stays bounded on a large ledger.
 MAX_PROJECT_RESULTS = 25
+#: The most rows `read_neighborhood` carries in each direction; a hub item's fan-in is
+#: reported as a count beyond that, never as thousands of statements in one result.
+MAX_NEIGHBORHOOD_ROWS = 25
 
 
 class VisibilityPolicy(FrozenModel):
@@ -167,17 +170,25 @@ class WorkerRetriever:
                     key=lambda r: r.id)
         withheld = [ref.id for ref in (*down, *up) if not self.policy.permits_ref(ref)]
 
+        truncated = 0
+
         def rows(refs: list[VersionRef]) -> list[dict[str, Any]]:
+            nonlocal truncated
             out = []
             for ref in refs:
                 if not self.policy.permits_ref(ref):
                     continue
                 item = snapshot.get(ref)
-                if isinstance(item, ProjectItem):
-                    out.append(self._describe(snapshot, item))
+                if not isinstance(item, ProjectItem):
+                    continue
+                if len(out) >= MAX_NEIGHBORHOOD_ROWS:
+                    truncated += 1
+                    continue
+                out.append(self._describe(snapshot, item))
             return out
 
-        payload = {"id": record.id, "depends_on": rows(down), "used_by": rows(up), "withheld": len(withheld)}
+        payload = {"id": record.id, "depends_on": rows(down), "used_by": rows(up), "withheld": len(withheld),
+                   "truncated": truncated}
         self._note("read_neighborhood", delivered=[d["id"] for d in (*payload["depends_on"], *payload["used_by"])],
                    refused=withheld, selector=selector)
         return ToolResult(True, json.dumps(payload, ensure_ascii=False))

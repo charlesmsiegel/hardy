@@ -55,7 +55,7 @@ class Reopener:
         if self.fail is not None:
             raise self.fail
         (self.root / slug).mkdir(parents=True, exist_ok=True)
-        return dataclasses.replace(current, project=slug), object()
+        return dataclasses.replace(current, project=slug), getattr(self, "session", None) or object()
 
 
 @pytest.fixture
@@ -601,3 +601,19 @@ async def test_switching_closes_the_session_it_leaves(ui, root):
     same = await handlers.handle_project(ui, "switch sylow", State(config=_settings(root, "burnside"), session=kept,
                                                                    reopen=failed))
     assert same.session is kept and kept.closed == 0                              # a refused switch keeps the session
+
+
+async def test_a_switched_session_reports_its_notices_to_the_terminal(ui, root):
+    _record(root, "burnside")
+    _record(root, "sylow")
+
+    class Noticing:
+        on_notice = None
+
+    reopener = Reopener(root)
+    reopener.session = Noticing()
+    before = State(config=_settings(root, "burnside"), session=object(), reopen=reopener)
+    after = await handlers.handle_project(ui, "switch sylow", before)
+    assert after.session.on_notice is not None
+    after.session.on_notice("d-7 (prove L17) completed: done")
+    assert "d-7 (prove L17) completed" in ui.text

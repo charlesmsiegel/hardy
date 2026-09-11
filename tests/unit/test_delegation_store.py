@@ -194,3 +194,16 @@ def test_cancelling_paused_work_ends_it_outright_like_queued_work(tmp_path):
     store.append("p", "delegation.paused", {"by": "human"})
     assert store.cancel_subtree("p", reason="user") == ("p",)
     assert store.tree().get("p").state is DelegationState.CANCELLED
+
+
+def test_recovery_keeps_an_interior_cell_live_since_it_ran_no_worker(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "cell")
+    store.append("cell", "delegation.started", {"interior": True})
+    _create(store, "leaf")
+    store.append("leaf", "delegation.started", {})
+    recovered = DelegationStore(tmp_path).recover(now="t")
+    assert [d.id for d in recovered] == ["leaf"]
+    tree = store.tree()
+    assert tree.get("cell").state is DelegationState.ACTIVE and tree.get("cell").interior
+    assert not tree.get("leaf").interior

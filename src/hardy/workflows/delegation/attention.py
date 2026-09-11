@@ -73,6 +73,14 @@ class AttentionItem(FrozenModel):
     finding_kind: str | None = None
     #: Who this item is for. Default routing addresses both; a subscription narrows it.
     recipients: tuple[Recipient, ...] = ("human", "main_agent")
+    #: How each recipient hears, when subscriptions differ per recipient; empty means one mode for all.
+    delivery: tuple[tuple[Recipient, DeliveryMode], ...] = ()
+
+    def mode_for(self, recipient: Recipient, default: DeliveryMode = DeliveryMode.NOTIFY) -> DeliveryMode:
+        for name, mode in self.delivery:
+            if name == recipient:
+                return mode
+        return default
 
 
 class DeliveryReceipt(FrozenModel):
@@ -243,10 +251,16 @@ def route(event: DelegationEvent, tree: DelegationTree, subscriptions: tuple[Att
         item = derive_item(event, tree, force=True)
         if item is None:
             return None
-        wanted = {r for s in matched for r in (("human", "main_agent") if s.recipient == "both" else (s.recipient,))}
-        recipients = tuple(r for r in ("human", "main_agent") if r in wanted)
-        return item.model_copy(update={"recipients": recipients}), max((s.mode for s in matched),
-                                                                       key=_MODE_RANK.__getitem__)
+        per_recipient: dict[str, DeliveryMode] = {}
+        for subscription in matched:
+            for name in (("human", "main_agent") if subscription.recipient == "both" else (subscription.recipient,)):
+                current = per_recipient.get(name)
+                if current is None or _MODE_RANK[subscription.mode] > _MODE_RANK[current]:
+                    per_recipient[name] = subscription.mode
+        recipients = tuple(r for r in ("human", "main_agent") if r in per_recipient)
+        delivery = tuple((r, per_recipient[r]) for r in recipients)
+        return item.model_copy(update={"recipients": recipients, "delivery": delivery}), max(
+            per_recipient.values(), key=_MODE_RANK.__getitem__)
     item = derive_item(event, tree)
     if item is None:
         return None

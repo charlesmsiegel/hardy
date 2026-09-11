@@ -60,10 +60,10 @@ class LeaseLedger:
             total = total + self.usage(child)
         return total
 
-    def child_reservations(self, id: str) -> ResourceLease:
+    def child_reservations(self, id: str, *, excluding: str | None = None) -> ResourceLease:
         total = ResourceLease(**{name: 0 for name in DIMENSIONS})
         for child in self.tree.children(id):
-            if child in self._released:
+            if child in self._released or child == excluding:
                 continue
             total = total + self.reserved(child)
         return total
@@ -78,11 +78,23 @@ class LeaseLedger:
         is promised in it: the whole remainder is treated as spent rather
         than as available.
         """
+        return self._allocatable(id, excluding=None)
+
+    def allocatable_excluding(self, id: str, child: str) -> ResourceLease:
+        """What `child` may hold in total: the parent's balance with the child's own reservation set aside.
+
+        A child that was created but not yet reserved is counted at its
+        requested lease, and a re-reservation is judged as a whole rather
+        than as an increase, so both are answered by the same figure.
+        """
+        return self._allocatable(id, excluding=child)
+
+    def _allocatable(self, id: str, *, excluding: str | None) -> ResourceLease:
         spent = self.tree.usage_reported.get(id, ResourceUsage())
         for child in self.tree.children(id):
             if child in self._released:
                 spent = spent + self.usage(child)
-        remaining = self.reserved(id) - self.child_reservations(id)
+        remaining = self.reserved(id) - self.child_reservations(id, excluding=excluding)
         values: dict[str, Any] = {}
         for name in DIMENSIONS:
             ceiling = getattr(remaining, name)

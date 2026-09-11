@@ -367,3 +367,29 @@ def test_eight_worker_tree_with_a_blind_cell_an_adversary_a_coordinator_and_conf
 def _trajectory_kinds(store: DelegationStore, delegation_id: str) -> set[str]:
     lines = store.artifacts(delegation_id).trajectory_path.read_text(encoding="utf-8").splitlines()
     return {json.loads(line)["kind"] for line in lines}
+
+
+def test_reopening_a_session_with_owners_surfaces_an_incomplete_admission(tmp_path):
+    from hardy.workflows.delegation.admission import AdmissionAttempt, AdmissionPhase
+    from hardy.workflows.delegation.store import DelegationStore
+
+    seed_project(tmp_path)
+    owners = ScriptedOwners(tmp_path / "capabilities")
+    chat = _session(tmp_path, WORKER_A, owners=owners)
+    try:
+        delegation = chat.delegate("L17", objective="prove a helper lemma", checks=2)
+        chat.delegations.wait(delegation.id, timeout=15)
+    finally:
+        chat.delegations.shutdown()
+    store = DelegationStore(tmp_path)
+    attempt = AdmissionAttempt(id="att-1", candidate_id="cand-1", phase=AdmissionPhase.FILES_COMMITTING,
+                               head_revision=0, detail="")
+    store.append(delegation.id, "admission.attempt", {"attempt": attempt.model_dump(mode="json")})
+    reopened = _session(tmp_path, WORKER_A, owners=owners)
+    try:
+        pending = reopened.delegations.attention().pending("human")
+        assert any(i.category == "admission" and i.sticky for i in pending)
+        assert "admission.incomplete" in [e.kind for e in reopened.delegations.store.events()]
+        assert any("admission" in n for n in reopened.notices)
+    finally:
+        reopened.delegations.shutdown()

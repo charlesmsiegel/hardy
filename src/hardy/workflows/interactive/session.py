@@ -569,7 +569,19 @@ class MathematicsSession:
         )
         # Work that was active when the last process died is unknown, not done.
         self.delegations.recover()
+        # And an admission the last process left mid-mutation is a sticky notice, never a success.
+        if admission is not None:
+            AuthoritativeAdmission(LedgerStore(workspace), self.lean_workspace, self.delegations.store,
+                                   verify=admission.verify, policy=admission.policy,
+                                   decide=admission.decide).recover()
+            for item in self.delegations.attention().pending("human"):
+                if item.category == "admission" and not self.delegations.attention().receipts(item.id):
+                    self._notify(item.summary)
+                    self.delegations.attention().receipt(item.id, "human", "notify")
         self._closed = False
+        #: Model receipts owed for the attention block of the turn being started; committed
+        #: only once the runtime has accepted the request.
+        self._attention_owed: list[tuple[str, str | None, int]] = []
 
     @property
     def state(self) -> dict[str, Any]:
@@ -800,12 +812,22 @@ class MathematicsSession:
             if attention:
                 epoch = self.record.history().epoch
                 offset = self._transcript_end()
-                for item in pending[:DEFAULT_BUDGET_ITEMS]:
-                    for delivered in (item.id, *item.supersedes):
-                        inbox.receipt(delivered, "main_agent", "queue", epoch=epoch, offset=offset)
+                # Owed, not yet receipted: the runtime has not accepted the request.
+                self._attention_owed = [(delivered, epoch, offset) for item in pending[:DEFAULT_BUDGET_ITEMS]
+                                        for delivered in (item.id, *item.supersedes)]
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return block
         return "\n\n".join(part for part in (block, attention) if part)
+
+    def _commit_attention_receipts(self) -> None:
+        """The request crossed the runtime boundary: what it carried is now delivered to the model."""
+        owed, self._attention_owed = self._attention_owed, []
+        inbox = self.delegations.attention()
+        for item_id, epoch, offset in owed:
+            try:
+                inbox.receipt(item_id, "main_agent", "queue", epoch=epoch, offset=offset)
+            except ValueError:
+                continue
 
     def _interrupt(self, item: AttentionItem) -> None:
         """A subscribed INTERRUPT reached the session: end the in-flight turn at the runtime boundary.
@@ -4683,7 +4705,14 @@ class MathematicsSession:
             if self._runtime_epoch != self.record.history().epoch:
                 raise ValueError("Conversation changed; reopen the session before starting a turn.")
             self._in_flight_text = text
-            events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
+            self._attention_owed = []
+            try:
+                events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
+            except BaseException:
+                # The request never reached the provider: nothing was delivered.
+                self._attention_owed = []
+                raise
+            self._commit_attention_receipts()
             turn = _ConversationTurn(events)
             self._conversation_turns.add(turn)
             return turn

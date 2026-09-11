@@ -212,7 +212,8 @@ def test_restart_recovers_interrupted_delegation_as_unknown(tmp_path):
     spec = chat.delegations.tree().get(delegation.id).spec
     store.append("d-crashed", "delegation.created", {"spec": spec.model_dump(mode="json"), "parent_id": "root",
                                                      "created_at": "t"})
-    store.append("d-crashed", "budget.reserved", {"lease": ResourceLease(official_checks=1).model_dump(mode="json"), "slots": 1})
+    store.append("d-crashed", "budget.reserved", {"lease": ResourceLease(official_checks=1, active_seconds=60.0).model_dump(mode="json"),
+                                                  "slots": 1})
     store.append("d-crashed", "delegation.started", {})
     reopened = session_with_worker(tmp_path, main_script=["Hello."], worker_script=WORKER_SCRIPT)
     try:
@@ -371,3 +372,40 @@ def test_closing_the_session_cancels_its_delegations_and_stops_the_pool(tmp_path
     with pytest.raises(RuntimeError):
         chat.delegations.executor.submit(WorkerJob("late", lambda token: None))
     chat.close()                                                                  # idempotent
+
+
+def test_attention_is_receipted_for_the_model_only_once_the_request_was_accepted(tmp_path):
+    """A runtime that refuses the request leaves the items pending for the next turn."""
+    seed_lemma(tmp_path)
+
+    class RefusingOnce(FakeChatRuntime):
+        refused = False
+
+        def stream(self, text):
+            if not RefusingOnce.refused:
+                RefusingOnce.refused = True
+                raise RuntimeError("provider unavailable")
+            self.last_prompt = text
+            return super().stream(text)
+
+    mains = []
+
+    def make(model=None, **context):
+        if context.get("system_prompt") == WORKER_SYSTEM_PROMPT:
+            return GatedWorkerRuntime(WORKER_SCRIPT, **context)
+        mains.append(RefusingOnce(["Noted."], **context))
+        return mains[-1]
+
+    chat = MathematicsSession(tmp_path, make, FAKE_LEAN, FAKE_LATEX, lambda proposal: False, delegation_slots=2)
+    try:
+        delegation = chat.delegate("L17", objective="prove L17", checks=1)
+        chat.delegations.wait(delegation.id, timeout=10)
+        assert chat.delegations.attention().pending("main_agent")
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            chat.send("First try.")
+        assert chat.delegations.attention().pending("main_agent")                    # still owed to the model
+        chat.send("Second try.")
+        assert "[Hardy delegation attention" in mains[0].last_prompt
+        assert chat.delegations.attention().pending("main_agent") == ()
+    finally:
+        chat.delegations.shutdown()

@@ -253,12 +253,15 @@ class Scheduler:
             reasons.append(str(error))
             resulting = prior
         parent = delegation.parent_id
-        if parent is not None and not request.tranche.increases.fits_within(self.ledger.allocatable(parent)):
+        if parent is not None:
+            # Only the dimensions the tranche names are asked of the parent; a
+            # dimension it leaves alone is unchanged, not an unbounded request.
             available = self.ledger.allocatable(parent)
             over = [name for name in DIMENSIONS
                     if getattr(available, name) is not None and getattr(request.tranche.increases, name) is not None
                     and getattr(request.tranche.increases, name) > getattr(available, name)]
-            reasons.append(f"tranche exceeds the parent's allocatable resources: {', '.join(over)}")
+            if over:
+                reasons.append(f"tranche exceeds the parent's allocatable resources: {', '.join(over)}")
         used = self.ledger.usage(delegation.id)
         for name in DIMENSIONS:
             ceiling, spent = getattr(resulting, name), getattr(used, name)

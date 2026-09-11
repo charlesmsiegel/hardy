@@ -1,4 +1,5 @@
 """A leaf worker runs one bounded exchange in its own provider context and returns structure."""
+import dataclasses
 import json
 import threading
 from datetime import UTC, datetime
@@ -172,3 +173,30 @@ def test_the_active_time_lease_ends_a_worker_that_never_calls_a_tool(tmp_path):
     assert started.is_set() and opened[0].cancelled
     assert result.status is DelegationState.EXHAUSTED and "active" in (result.terminal_reason or "")
     assert result.usage.active_seconds >= 0.3
+
+
+def test_a_zero_second_lease_never_opens_a_provider(tmp_path):
+    store = RunStore.create(tmp_path, "d-z", now=datetime.now(UTC), run_id=uuid4())
+    launch = WorkerLaunch(delegation_id="d-z", prompt="p", model=None, store=store,
+                          lease=ResourceLease(official_checks=1, active_seconds=0.0))
+    opened = []
+    result = run_worker(launch, _open([call("finish", {"status": "completed", "synthesis": "x"})], opened=opened),
+                        CancelToken())
+    assert result.status is DelegationState.EXHAUSTED and opened == [] and result.usage.provider_calls == 0
+
+
+def test_an_unbounded_check_lease_is_not_a_zero_check_budget(tmp_path):
+    from hardy.formal.budget import BudgetExhausted
+
+    store = RunStore.create(tmp_path, "d-u", now=datetime.now(UTC), run_id=uuid4())
+    launch = WorkerLaunch(delegation_id="d-u", prompt="p", model=None, store=store,
+                          lease=ResourceLease(official_checks=None, active_seconds=None))
+    seen = []
+    result = run_worker(dataclasses.replace(launch, on_budget=seen.append),
+                        _open([call("finish", {"status": "completed", "synthesis": "x"})]), CancelToken())
+    assert result.status is DelegationState.COMPLETED
+    budget = seen[0]
+    for _ in range(3):
+        budget.acquire()
+    assert budget.remaining_checks > 1000
+    assert not isinstance(budget, BudgetExhausted)

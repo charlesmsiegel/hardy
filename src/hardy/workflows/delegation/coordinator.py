@@ -147,7 +147,9 @@ def build_view(controller: DelegationController, subtree: str, *, authority: Coo
     neighborhood = ""
     if node.spec.project_refs:
         try:
-            neighborhood = structural_map(snapshot, node.spec.project_refs[0])
+            # Under the subtree's inherited isolation: a coordinator steers by
+            # the same map its workers may see.
+            neighborhood = structural_map(snapshot, node.spec.project_refs[0], hidden=controller.hidden_for(subtree))
         except ValueError:
             neighborhood = "(target not at this revision)"
     return CoordinationView(
@@ -179,6 +181,16 @@ def _checks(action: PlanAction) -> int | str:
     return raw
 
 
+def _hidden_ids(action: PlanAction) -> tuple[str, ...] | str:
+    """The `hidden_ids` argument as stable ids, or the reason it is malformed."""
+    raw = action.args.get("hidden_ids", ())
+    if raw is None or isinstance(raw, str | bytes) or not isinstance(raw, list | tuple):
+        return f"hidden_ids must be a list of stable ids, not {raw!r}"
+    if not all(isinstance(value, str) and value for value in raw):
+        return "hidden_ids must be a list of non-empty stable ids"
+    return tuple(raw)
+
+
 def _in_subtree(controller: DelegationController, subtree: str, target: str | None) -> str | None:
     if target is None:
         return "the action names no target"
@@ -204,6 +216,9 @@ def _spawn(controller: DelegationController, subtree: str, action: PlanAction, a
     checks = _checks(action)
     if isinstance(checks, str):
         return _refused(action, checks)
+    hidden = _hidden_ids(action)
+    if isinstance(hidden, str):
+        return _refused(action, hidden)
     if authority.approval_threshold_checks is not None and checks > authority.approval_threshold_checks:
         controller.request_human_decision(subtree, f"spawn of {checks} checks exceeds the coordinator's threshold",
                                           by=f"coordinator:{subtree}")
@@ -218,9 +233,11 @@ def _spawn(controller: DelegationController, subtree: str, action: PlanAction, a
         task_mode=task_mode or str(action.args.get("task_mode") or node.spec.task_mode),
         lease=ResourceLease(official_checks=checks, active_seconds=node.spec.lease.active_seconds),
         concurrency=ConcurrencyLease(slots=1), model=node.spec.model, created_by=f"coordinator:{subtree}",
-        notify_human=False, hidden_ids=tuple(dict.fromkeys((*node.spec.hidden_ids,
-                                                           *map(str, action.args.get("hidden_ids", ()))))),
+        notify_human=False, hidden_ids=tuple(dict.fromkeys((*node.spec.hidden_ids, *hidden))),
         lane=action.args.get("lane"),
+        # A proof-oriented child works in files as its cell does; a literature
+        # reader needs no overlay and gets none.
+        writable=node.spec.writable and (task_mode or "") != "reduce",
     )
     try:
         child = controller.delegate(spec, parent_id=subtree)
