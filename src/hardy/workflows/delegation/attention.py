@@ -71,12 +71,21 @@ class AttentionInbox:
     def derive(self, event: DelegationEvent, tree: DelegationTree) -> AttentionItem | None:
         """The item this event owes the root, or None when it stays local."""
         delegation = tree.get(event.delegation_id)
+        item_id = f"attention:{event.sequence}"
+        detail = (f"delegations/{delegation.id}/result.json",)
+        if event.kind == "coordinator.human_decision_requested":
+            # A request for the human's decision always reaches the human.
+            return AttentionItem(
+                id=item_id, delegation_id=delegation.id, source_event=event.sequence,
+                summary=f"{delegation.id} ({delegation.spec.objective}) needs a decision: "
+                        f"{event.payload.get('question', '')} (asked by {event.payload.get('by', 'a coordinator')})",
+                category="decision", importance="high", actionable=True, sticky=True,
+                related_refs=delegation.spec.project_refs, detail_refs=detail,
+            )
         # Only work somebody asked to hear about: a direct job says so in its
         # spec; autonomously spawned descendants do not implicitly notify.
         if not delegation.spec.notify_human:
             return None
-        item_id = f"attention:{event.sequence}"
-        detail = (f"delegations/{delegation.id}/result.json",)
         if event.kind == "finding.proposed":
             finding = Finding.model_validate(event.payload["finding"])
             if finding.kind not in PRIORITY_FINDINGS:

@@ -104,6 +104,7 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
     delegations: dict[str, Delegation] = {}
     usage: dict[str, ResourceUsage] = {}
     cancel_requests: set[str] = set()
+    started: set[str] = set()
     for event in events:
         id = event.delegation_id
         if event.kind == "delegation.created":
@@ -139,7 +140,11 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
         if event.kind in _STATE_EVENTS:
             if current.terminal:
                 raise ValueError(f"journal continues terminal delegation {id} with {event.kind}")
+            if event.kind == "delegation.started":
+                started.add(id)
             update: dict[str, Any] = {"state": _STATE_EVENTS[event.kind]}
+            if event.kind == "delegation.resumed" and id not in started:
+                update["state"] = DelegationState.QUEUED     # never started: back to the queue
             if "result" in event.payload:
                 update["result"] = WorkerResult.model_validate(event.payload["result"])
             if "reason" in event.payload:

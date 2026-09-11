@@ -44,6 +44,7 @@ from hardy.workflows.delegation.contracts import (
     DelegationState,
     ResourceDelta,
     ResourceLease,
+    ResourceUsage,
     WorkerResult,
 )
 from hardy.workflows.delegation.diversity import assign_briefs
@@ -52,6 +53,7 @@ from hardy.workflows.delegation.retrieval import VisibilityPolicy, WorkerRetriev
 from hardy.workflows.delegation.scheduler import (
     AllocationRequest,
     GraphUrgency,
+    Lane,
     Pin,
     PinKind,
     PortfolioConstraints,
@@ -100,6 +102,9 @@ class DelegationController:
         self.constraints = constraints or PortfolioConstraints()
         #: Created but not yet holding a slot; the scheduler decides when.
         self._pending: dict[str, WorkerLaunch] = {}
+        #: Coordinators attached explicitly, never instantiated on worker count.
+        self._coordinators: dict[str, Any] = {}
+        self._closed = False
         self._open_worker = open_worker
         self.root = root
         self._notify = notify
@@ -235,6 +240,10 @@ class DelegationController:
                 policy = owner.spawn
                 if not policy.can_spawn or len(owner.children) >= policy.max_children:
                     raise ValueError(f"parent delegation {parent} may not spawn another child")
+                for ancestor_id in (parent, *tree.ancestors(parent)):
+                    ancestor = tree.get(ancestor_id)
+                    if ancestor.spawn.can_spawn and owner.depth + 1 - ancestor.depth > ancestor.spawn.max_depth:
+                        raise ValueError(f"delegation {ancestor_id} allows no descendants deeper than {ancestor.spawn.max_depth}")
             lease, _ = grant(tree, parent, spec.lease, requested_slots=spec.concurrency.slots)
             id = f"d-{uuid4().hex[:10]}"
             now = self._clock().isoformat()
@@ -251,12 +260,75 @@ class DelegationController:
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
+            if spec.spawn.can_spawn:
+                # An interior node: a container for coordinated children. It
+                # runs no worker of its own and is live from creation until a
+                # coordinator or the human finishes, retires or cancels it.
+                self.store.append(id, "delegation.started", {"interior": True})
+                return self.tree().get(id)
             launch = WorkerLaunch(delegation_id=id, prompt=render_launch_prompt(core, brief, working),
                                   model=spec.model, store=artifacts, lease=lease,
                                   retriever=self._retriever(spec, artifacts))
             self._pending[id] = launch
             self._dispatch()
             return self.tree().get(id)
+
+    # -- interior nodes and human steering --------------------------------------
+
+    def finish_subtree(self, id: str, *, synthesis: str, by: str) -> Delegation:
+        """Close an interior node with a synthesis; children still running are cancelled."""
+        with self._lock:
+            node = self.tree().get(id)
+            if not node.spawn.can_spawn:
+                raise ValueError(f"{id} is a leaf; it finishes through its worker")
+            if node.terminal:
+                raise ValueError(f"{id} is already terminal")
+            for child in node.children:
+                if not self.tree().get(child).terminal:
+                    self.cancel(child, reason=f"parent {id} finished by {by}")
+            result = WorkerResult(delegation_id=id, status=DelegationState.COMPLETED, synthesis=synthesis,
+                                  usage=ResourceUsage(), findings=tuple(
+                                      f.id for f in FindingLedger(self.store).visible_to(id)))
+            event = self.store.append(id, "delegation.completed", {"result": result.model_dump(mode="json"),
+                                                                   "reason": f"finished by {by}"})
+            self._after_terminal(id, event)
+            return self.tree().get(id)
+
+    def pause(self, id: str, *, by: str) -> None:
+        with self._lock:
+            node = self.tree().get(id)
+            if node.state is not DelegationState.QUEUED:
+                raise ValueError(f"only queued work can be paused; {id} is {node.state.value}")
+            self.store.append(id, "delegation.paused", {"by": by})
+
+    def resume(self, id: str, *, by: str) -> None:
+        with self._lock:
+            node = self.tree().get(id)
+            if node.state is not DelegationState.PAUSED:
+                raise ValueError(f"{id} is not paused")
+            self.store.append(id, "delegation.resumed", {"by": by})
+            self._dispatch()
+
+    def set_lane(self, id: str, lane: Lane, *, by: str) -> None:
+        with self._lock:
+            self.tree().get(id)
+            self.store.append(id, "scheduler.lane_changed", {"lane": lane.value, "by": by})
+            self._dispatch()
+
+    def request_human_decision(self, id: str, question: str, *, by: str) -> None:
+        with self._lock:
+            self.tree().get(id)
+            event = self.store.append(id, "coordinator.human_decision_requested", {"question": question, "by": by})
+            self._route(id, event)
+
+    def attach_coordinator(self, id: str, coordinator: Any) -> None:
+        """Explicit: a coordinator exists because somebody decided one was useful here."""
+        with self._lock:
+            self.tree().get(id)
+            self._coordinators[id] = coordinator
+
+    def coordinator_for(self, id: str) -> Any | None:
+        return self._coordinators.get(id)
 
     # -- scheduling ---------------------------------------------------------
 
@@ -273,6 +345,13 @@ class DelegationController:
     def pins(self) -> tuple[tuple[str, str], ...]:
         return tuple((pin.delegation_id, pin.kind) for pin in self._pins())
 
+    def _lanes(self) -> dict[str, Lane]:
+        lanes: dict[str, Lane] = {}
+        for event in self.store.events():
+            if event.kind == "scheduler.lane_changed":
+                lanes[event.delegation_id] = Lane(str(event.payload["lane"]))
+        return lanes
+
     def _scheduler(self) -> Scheduler:
         tree = self.tree()
         snapshot = self.ledger.read()
@@ -288,20 +367,25 @@ class DelegationController:
             return cache[delegation.id]
 
         return Scheduler(tree, LeaseLedger(tree), constraints=self.constraints, pins=self._pins(),
-                         urgency=urgency)
+                         lanes=self._lanes(), urgency=urgency)
 
     def _dispatch(self) -> None:
         """Hand free slots to the leaves the scheduler chooses; nothing else starts work."""
         with self._lock:
             free = self.executor.slots - len(self._handles)
-            if free <= 0 or not self._pending:
+            if free <= 0 or not self._pending or self._closed:
                 return
             for chosen in self._scheduler().choose(free):
-                launch = self._pending.pop(chosen.id, None)
+                launch = self._pending.get(chosen.id)
                 if launch is None:
                     continue
-                handle = self.executor.submit(
-                    WorkerJob(chosen.id, lambda token, launch=launch: self._run(launch, token)))
+                try:
+                    handle = self.executor.submit(
+                        WorkerJob(chosen.id, lambda token, launch=launch: self._run(launch, token)))
+                except RuntimeError:
+                    # The executor is gone; the work stays queued for a restart to relaunch.
+                    return
+                self._pending.pop(chosen.id, None)
                 self._handles[chosen.id] = handle
                 handle.add_done_callback(self._settle)
 
@@ -447,4 +531,6 @@ class DelegationController:
             time.sleep(0.02)
 
     def shutdown(self) -> None:
+        with self._lock:
+            self._closed = True
         self.executor.shutdown(wait=True)
