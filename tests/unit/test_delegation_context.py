@@ -176,3 +176,44 @@ def test_hidden_optional_records_are_absent_from_the_structural_map(tmp_path):
     assert "T1" not in blind.structural_map and "L12" in blind.structural_map
     with pytest.raises(ValueError, match="correctness"):
         build_working_set(store, heads["L17"].ref, _scope(tmp_path), brief, ContextPolicy(hidden_ids=("L12",)))
+
+
+def test_a_revised_statement_is_not_verified_by_evidence_for_its_previous_revision(tmp_path):
+    from hardy.workflows.delegation.context import _trust
+    from hardy.workflows.ledger import contracts as c
+    from hardy.workflows.ledger.state import LedgerSnapshot
+
+    heads = seed_project(tmp_path)
+    snapshot = LedgerStore(tmp_path).read()
+    old = heads["L14"]
+    new = old.model_copy(update={"statement": "The generic fiber is connected and reduced", "previous": old.ref})
+    prove = c.Obligation(id="prove-L14", item=old.ref, kind=c.ObligationKind.PROVE, scope=snapshot.head("scope"),
+                         context=old.context)
+    resolution = c.Resolution(id="res-L14", obligation=prove.ref, item=old.ref, explanation="proved")
+    closed = prove.model_copy(update={"previous": prove.ref, "status": c.ObligationStatus.RESOLVED,
+                                      "resolution": resolution})
+    with_evidence = LedgerSnapshot(snapshot.records + (prove, closed, new), snapshot.revision + 3,
+                                   snapshot.active_context)
+    assert _trust(with_evidence, old.ref) == "verified"
+    assert _trust(with_evidence, new.ref) != "verified"
+
+
+def test_the_structural_map_is_bounded_by_the_preload_budget_and_the_manifest_says_so(tmp_path):
+    from hardy.workflows.explore import ExploreWorkflow
+    from hardy.workflows.ledger import contracts as c
+
+    heads = seed_project(tmp_path)
+    store = LedgerStore(tmp_path)
+    flow = ExploreWorkflow(store)
+    for n in range(60):
+        flow.record_item(id=f"C{n}", kind=c.ProjectItemKind.LEMMA, name=f"Consumer {n}",
+                         statement=f"Consequence number {n} of the generic fiber being integral",
+                         dependencies=(heads["L17"].ref,))
+    brief = ResearchBrief(target=heads["L17"].ref, task_mode="prove")
+    wide = build_working_set(store, heads["L17"].ref, _scope(tmp_path), brief, ContextPolicy(preload_tokens=20000))
+    assert wide.structural_map_truncated == 0 and "C59" in wide.structural_map
+    narrow = build_working_set(store, heads["L17"].ref, _scope(tmp_path), brief, ContextPolicy(preload_tokens=800))
+    assert narrow.structural_map_truncated > 0 and "withheld" in narrow.structural_map
+    assert narrow.structural_map.splitlines()[0].startswith("Target L17")
+    manifest = narrow.manifest("m", problem_core_digest="x", research_brief_digest="y")
+    assert manifest.structural_map_truncated == narrow.structural_map_truncated

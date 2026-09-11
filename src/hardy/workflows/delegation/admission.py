@@ -243,14 +243,34 @@ def find_duplicates(candidate: ProjectItem, snapshot: LedgerSnapshot, *, thresho
 # -- local admission ----------------------------------------------------------------------
 
 class LocalAdmission:
-    """Admit candidates into a subtree overlay; provenance from many findings to one record is kept."""
+    """Admit candidates into a subtree overlay; provenance from many findings to one record is kept.
 
-    def __init__(self, overlay: SubtreeProjectOverlay) -> None:
+    Given a delegation store, every admission is journaled as `admission.local`
+    and the finding-to-record map is rebuilt from the journal, so convergent
+    findings keep their shared identity across a restart.
+    """
+
+    def __init__(self, overlay: SubtreeProjectOverlay, *, store: DelegationStore | None = None,
+                 delegation_id: str | None = None) -> None:
         self.overlay = overlay
+        self.store = store
+        self.delegation_id = delegation_id
         self._provenance: dict[VersionRef, list[str]] = {}
+        if store is not None and delegation_id is not None:
+            for event in store.events():
+                if event.kind == "admission.local" and event.delegation_id == delegation_id:
+                    ref = VersionRef.model_validate(event.payload["ref"])
+                    self._provenance.setdefault(ref, []).extend(str(f) for f in event.payload["finding_ids"])
 
     def provenance(self, ref: VersionRef) -> tuple[str, ...]:
         return tuple(self._provenance.get(ref, ()))
+
+    def _remember(self, ref: VersionRef, candidate: AdmissionCandidate, action: str) -> None:
+        self._provenance.setdefault(ref, []).extend(candidate.finding_ids)
+        if self.store is not None and self.delegation_id is not None:
+            self.store.append(self.delegation_id, "admission.local", {
+                "candidate": candidate.id, "finding_ids": list(candidate.finding_ids),
+                "ref": ref.model_dump(mode="json"), "action": action})
 
     def admit(self, candidate: AdmissionCandidate) -> AdmissionOutcome:
         if candidate.target != "local":
@@ -264,7 +284,7 @@ class LocalAdmission:
         exact, near = find_duplicates(primary, snapshot)
         if exact:
             existing = exact[0]
-            self._provenance.setdefault(existing, []).extend(candidate.finding_ids)
+            self._remember(existing, candidate, "reused_existing")
             return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
                                     action="reused_existing", authoritative_refs=(existing,),
                                     identity_map=((primary.id, existing.id),), near_duplicates=near)
@@ -275,7 +295,7 @@ class LocalAdmission:
         except ValueError as error:
             return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids, action="rejected",
                                     reasons=(str(error),), near_duplicates=near)
-        self._provenance.setdefault(primary.ref, []).extend(candidate.finding_ids)
+        self._remember(primary.ref, candidate, "created")
         return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids, action="created",
                                 authoritative_refs=(primary.ref,), near_duplicates=near)
 
@@ -435,7 +455,8 @@ def admit_delegation(admission: AuthoritativeAdmission, delegation_id: str) -> t
     """
     outcomes: list[AdmissionOutcome] = []
     for candidate, change_set in delegation_candidates(admission.store, admission.ledger, delegation_id):
-        provable = any(isinstance(r, Obligation) and r.kind is ObligationKind.PROVE for r in candidate.records)
+        provable = (candidate.route == "verified_proof" and candidate.subject is not None) or any(
+            isinstance(r, Obligation) and r.kind is ObligationKind.PROVE for r in candidate.records)
         if change_set is None or not provable:
             outcomes.append(AdmissionOutcome(
                 candidate_id=candidate.id, proposal_refs=candidate.finding_ids, action="kept_local",
@@ -504,6 +525,13 @@ class AuthoritativeAdmission:
                     exact, near = find_duplicates(primary, snapshot)
                     if exact:
                         existing = snapshot.get(exact[0])
+                elif candidate.route == "verified_proof" and candidate.subject is not None:
+                    # A proof of an authoritative statement: nothing new is minted,
+                    # the subject's own obligation is what closes.
+                    subject = snapshot.get(candidate.subject)
+                    if not isinstance(subject, ProjectItem) or snapshot.head(subject.id).ref != subject.ref:
+                        return fail(head, "rejected", ("the proof names a subject that is not the current head",))
+                    existing = subject
                 # What this round admits: new records with their own PROVE
                 # obligation, or -- when the statement is already authoritative
                 # but unproved -- nothing new, and the existing obligation closes.
@@ -515,11 +543,13 @@ class AuthoritativeAdmission:
                     open_prove = next((o for o in snapshot.current(Obligation)
                                        if o.item == existing.ref and o.kind is ObligationKind.PROVE
                                        and o.status is not ObligationStatus.RESOLVED), None)
-                    if open_prove is None or prove is None or not change_set.files:
+                    proof_offered = prove is not None or candidate.route == "verified_proof"
+                    if open_prove is None or not proof_offered or not change_set.files:
                         phase(AdmissionPhase.COMPLETED, head, f"reused {existing.id}")
                         return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
                                                 action="reused_existing", authoritative_refs=(existing.ref,),
-                                                identity_map=((primary.id, existing.id),), near_duplicates=near)
+                                                identity_map=((primary.id, existing.id),) if primary else (),
+                                                near_duplicates=near)
                     records, target_prove, created_ref, action = (), open_prove, existing.ref, "resolved_obligation"
                 plan, conflicts = reconcile(change_set, self.workspace, head_revision=head)
                 if conflicts:

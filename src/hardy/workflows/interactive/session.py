@@ -832,8 +832,8 @@ class MathematicsSession:
         recorded after its offset.
         """
         started = self.delegations.resolve_continuations(
-            epoch=self.record.history().epoch, advanced_since=self._human_turn_since)
-        return started[-1].resume_text if started else None
+            epoch=self.record.history().epoch, advanced_since=self._human_turn_since, limit=1)
+        return started[0].resume_text if started else None
 
     def _human_turn_since(self, offset: int) -> bool:
         return any(event.get("type") == "user" for event in self.record._recorded(offset))

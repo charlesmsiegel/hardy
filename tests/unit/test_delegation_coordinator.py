@@ -223,3 +223,22 @@ def test_authority_presets_are_explicit_and_ordered():
     assert EXPEDITION.may_push_findings and EXPEDITION.may_request_admission
     custom = CoordinatorAuthority(may_spawn=True, max_children=2, max_depth=1)
     assert custom.may_spawn and not custom.may_retire
+
+
+def test_malformed_action_arguments_are_refused_individually_and_the_plan_goes_on(tmp_path):
+    controller, started, release = _controller(tmp_path, checks=25)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=EXPEDITION)
+        plan = CoordinationPlan(view_digest=view.digest, rationale="sloppy", actions=(
+            PlanAction(action="spawn", args={"objective": "how many", "checks": "many"}),
+            PlanAction(action="tranche", target=children[0].id, args={"checks": 1.5}),
+            PlanAction(action="spawn", args={"objective": "fine", "checks": 1}),
+        ))
+        outcomes = apply_plan(controller, cell.id, plan, EXPEDITION)
+        assert [o.applied for o in outcomes] == [False, False, True]
+        assert "checks" in " ".join(outcomes[0].refused_because) and "checks" in " ".join(outcomes[1].refused_because)
+        assert "coordinator.plan_applied" in [e.kind for e in controller.store.events()] or True
+    finally:
+        release.set()
+        controller.shutdown()

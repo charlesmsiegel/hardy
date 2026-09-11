@@ -279,3 +279,39 @@ def test_a_proof_for_an_existing_unverified_statement_resolves_its_obligation_no
     assert owners.verified == ["LX"] and (tmp_path / "lean" / "A.lean").read_text(encoding="utf-8") == A
     again = _admission(tmp_path, base, owners).admit(candidate, change_set)
     assert again.action == "reused_existing" and again.authoritative_refs == (existing.ref,)
+
+
+def test_a_proof_submission_for_a_subject_resolves_that_subjects_open_obligation(tmp_path):
+    from hardy.workflows.delegation.admission import admit_delegation
+    from hardy.workflows.explore import ExploreWorkflow
+
+    seed_project(tmp_path)
+    ledger = LedgerStore(tmp_path)
+    subject = ExploreWorkflow(ledger).record_item(id="LZ", kind=c.ProjectItemKind.LEMMA, name="Lemma Z",
+                                                  statement="The generic fiber is geometrically reduced")
+    snapshot = ledger.read()
+    ledger.append((c.Obligation(id="prove-LZ", item=subject.ref, kind=c.ObligationKind.PROVE,
+                                scope=snapshot.head("scope"), context=subject.context),),
+                  expected_revision=snapshot.revision)
+    heads = {"L12": subject}
+    base = _base(tmp_path)
+    owners = ScriptedOwners(tmp_path / "capabilities")
+    store = DelegationStore(tmp_path)
+    overlay = _overlay(base, tmp_path, "p", LedgerStore(tmp_path).read().revision)
+    assert overlay.save(PurePosixPath("Twelve.lean"), A) is None
+    snapshot = LedgerStore(tmp_path).read()
+    store.append("p", "delegation.created", {
+        "spec": {"objective": "prove LZ", "project_refs": [heads["L12"].ref.model_dump()],
+                 "scope": snapshot.head("scope").ref.model_dump(), "lease": {"official_checks": 1},
+                 "concurrency": {"slots": 1}, "created_by": "human"}, "parent_id": None, "created_at": "t"})
+    artifacts = store.artifacts("p")
+    finding = Finding(id="p:finding:0", source_delegation="p", kind="proof_submission", summary="L12 proved",
+                      payload="by flatness", related_refs=(heads["L12"].ref,), sequence=0)
+    artifacts.write_json(PurePosixPath("findings.json"), [finding.model_dump(mode="json")])
+    artifacts.write_json(PurePosixPath("change_set.json"), overlay.change_set())
+    outcomes = admit_delegation(_admission(tmp_path, base, owners), "p")
+    assert [o.action for o in outcomes] == ["resolved_obligation"], [o.reasons for o in outcomes]
+    after = LedgerStore(tmp_path).read()
+    prove = after.head("prove-LZ")
+    assert prove.status is c.ObligationStatus.RESOLVED and owners.policy.is_accepted(after, prove.resolution)
+    assert owners.verified == ["LZ"] and (tmp_path / "lean" / "Twelve.lean").exists()

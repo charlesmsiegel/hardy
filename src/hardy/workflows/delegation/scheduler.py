@@ -18,7 +18,7 @@ from typing import Literal
 from pydantic import Field
 
 from hardy.foundation.values import FrozenModel
-from hardy.workflows.delegation.budget import LeaseLedger
+from hardy.workflows.delegation.budget import HOLDING_SLOTS, LeaseLedger
 from hardy.workflows.delegation.contracts import (
     DIMENSIONS,
     Delegation,
@@ -216,12 +216,20 @@ class Scheduler:
                     chosen.append(inside)
                     need -= 1
         total = self.ledger.slots(self.tree.roots[0]) if self.tree.roots else free_slots
+        # A floor is a share of all slots, so what already runs in the lane
+        # counts toward it: only the deficit is taken from the free ones.
+        running: dict[Lane, int] = {lane: 0 for lane in Lane}
+        for delegation in self.tree.delegations.values():
+            if (delegation.parent_id is not None and delegation.state in HOLDING_SLOTS
+                    and not delegation.spawn.can_spawn):
+                running[self.lane(delegation)] += delegation.spec.concurrency.slots
         # A `reserve_exploration` pin holds `value` slots for exploration on top of the floor.
         reserved = sum((pin.value if pin.value is not None else 1) for pin in self.pins
                        if pin.kind == "reserve_exploration")
         if not self.constraints.collapse_exploration or reserved:
-            take(Lane.EXPLORE, max(reserved, math.ceil(total * self.constraints.exploration_floor)))
-        take(Lane.VERIFY, max(0, math.ceil(total * self.constraints.verify_floor)))
+            wanted = max(reserved, math.ceil(total * self.constraints.exploration_floor))
+            take(Lane.EXPLORE, max(0, wanted - running[Lane.EXPLORE]))
+        take(Lane.VERIFY, max(0, math.ceil(total * self.constraints.verify_floor) - running[Lane.VERIFY]))
         for lane in (Lane.EXPLOIT, Lane.VERIFY, Lane.EXPLORE):
             if lane is Lane.EXPLORE and self.constraints.collapse_exploration and by_lane[Lane.EXPLOIT]:
                 continue

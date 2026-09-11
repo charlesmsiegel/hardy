@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -46,6 +47,7 @@ from hardy.workflows.delegation.context import (
     render_launch_prompt,
 )
 from hardy.workflows.delegation.contracts import (
+    DIMENSIONS,
     ConcurrencyLease,
     Delegation,
     DelegationEvent,
@@ -205,6 +207,13 @@ class DelegationController:
             tree = self.tree()
             ledger = LeaseLedger(tree)
             for delegation in tree.delegations.values():
+                # A worker whose end was journaled but whose lease the dead
+                # process never returned would charge its parent forever.
+                if delegation.terminal and delegation.parent_id is not None and not ledger.released(delegation.id):
+                    self.store.release(delegation.id)
+            tree = self.tree()
+            ledger = LeaseLedger(tree)
+            for delegation in tree.delegations.values():
                 if (delegation.state is DelegationState.QUEUED and delegation.parent_id is not None
                         and delegation.id not in self._pending and delegation.id not in self._handles):
                     launch = self._relaunch(delegation, ledger.reserved(delegation.id))
@@ -289,7 +298,9 @@ class DelegationController:
         if not spec.project_refs:
             raise ValueError("a delegation needs at least one exact project ref")
         target = spec.project_refs[0]
-        core = build_problem_core(self.ledger, target, scope=spec.scope)
+        # One read: the core and the working set describe the same revision.
+        snapshot = self.ledger.read()
+        core = build_problem_core(snapshot, target, scope=spec.scope)
         # One worker is the direct role; its framing carries the objective as asked.
         (brief,) = assign_briefs(target, 1, task_mode=spec.task_mode, model=spec.model)
         brief = brief.model_copy(update={"framing": f"{brief.framing} Objective: {spec.objective}"})
@@ -297,7 +308,7 @@ class DelegationController:
         # this node at preload and at every retrieval, whatever its own spec says.
         hidden = self._effective_hidden(parent_id or ROOT_ID, spec)
         policy = ContextPolicy(hidden_ids=hidden, seeded_sources=spec.seeded_sources)
-        working = build_working_set(self.ledger, target, spec.scope, brief, policy,
+        working = build_working_set(snapshot, target, spec.scope, brief, policy,
                                     sources=self._source_index(spec.seeded_sources))
         with self._lock:
             self._ensure_root(spec.scope)
@@ -314,19 +325,27 @@ class DelegationController:
                     ancestor = tree.get(ancestor_id)
                     if ancestor.spawn.can_spawn and owner.depth + 1 - ancestor.depth > ancestor.spawn.max_depth:
                         raise ValueError(f"delegation {ancestor_id} allows no descendants deeper than {ancestor.spawn.max_depth}")
+            if parent != ROOT_ID:
+                self._check_child_fraction(owner, spec.lease)
             lease, _ = grant(tree, parent, spec.lease, requested_slots=spec.concurrency.slots)
             id = f"d-{uuid4().hex[:10]}"
             now = self._clock().isoformat()
-            self.store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"),
-                                                         "parent_id": parent, "created_at": now})
-            self.store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"),
-                                                      "slots": spec.concurrency.slots})
+            # The launch package lands before the journal exposes a queued
+            # node: a crash in between leaves artifacts nobody references,
+            # never a queued delegation nothing can relaunch.
             artifacts = self.store.artifacts(id)
             manifest = working.manifest(f"{id}:manifest", problem_core_digest=core.digest,
                                         research_brief_digest=brief.digest)
             artifacts.write_json(PurePosixPath("core.json"), core)
             artifacts.write_json(PurePosixPath("brief.json"), brief)
             artifacts.write_json(PurePosixPath("manifest.json"), manifest)
+            prompt = render_launch_prompt(core, brief, working)
+            if not spec.spawn.can_spawn:
+                artifacts.write_text(PurePosixPath("prompt.md"), prompt)
+            self.store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"),
+                                                         "parent_id": parent, "created_at": now})
+            self.store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"),
+                                                      "slots": spec.concurrency.slots})
             self.store.append(id, "delegation.context", {
                 "problem_core_digest": core.digest, "research_brief_digest": brief.digest,
                 "context_manifest_id": manifest.id})
@@ -337,16 +356,29 @@ class DelegationController:
                 # coordinator or the human finishes, retires or cancels it.
                 self.store.append(id, "delegation.started", {"interior": True})
                 return self.tree().get(id)
-            prompt = render_launch_prompt(core, brief, working)
-            # Persisted when the work is queued, not when it starts: a restart
-            # relaunches from this file, and a job that never ran still has one.
-            artifacts.write_text(PurePosixPath("prompt.md"), prompt)
             launch = WorkerLaunch(delegation_id=id, prompt=prompt, model=spec.model, store=artifacts, lease=lease,
                                   retriever=self._retriever(hidden, artifacts), overlay=overlay,
                                   cas_factory=self.cas_factory, **self._hooks(id))
             self._pending[id] = launch
             self._dispatch()
             return self.tree().get(id)
+
+    @staticmethod
+    def _check_child_fraction(owner: Delegation, requested: ResourceLease) -> None:
+        """A frozen spawn policy caps what any one child may take of its parent's lease."""
+        fraction = owner.spawn.max_child_fraction
+        if fraction >= 1:
+            return
+        over = []
+        for name in DIMENSIONS:
+            ceiling, asked = getattr(owner.spec.lease, name), getattr(requested, name)
+            if ceiling is None or asked is None:
+                continue
+            if Decimal(str(asked)) > Decimal(str(ceiling)) * fraction:
+                over.append(name)
+        if over:
+            raise ValueError(f"child lease exceeds max_child_fraction {fraction} of {owner.id}'s lease: "
+                             f"{', '.join(over)}")
 
     def _hooks(self, id: str) -> dict[str, Any]:
         """What a launch needs from the controller while it runs: its budget registry and its pushes."""
@@ -370,13 +402,25 @@ class DelegationController:
             for child in node.children:
                 if not self.tree().get(child).terminal:
                     self.cancel(child, reason=f"parent {id} finished by {by}")
-            result = WorkerResult(delegation_id=id, status=DelegationState.COMPLETED, synthesis=synthesis,
-                                  usage=ResourceUsage(), findings=tuple(
-                                      f.id for f in FindingLedger(self.store).visible_to(id)))
-            event = self.store.append(id, "delegation.completed", {"result": result.model_dump(mode="json"),
-                                                                   "reason": f"finished by {by}"})
-            self._after_terminal(id, event)
+            if any(not self.tree().get(child).terminal for child in node.children):
+                # A child is still winding down on this lease: the synthesis is
+                # recorded now, the cell ends and releases when the last child has.
+                self.store.append(id, "delegation.finish_requested", {"synthesis": synthesis, "by": by})
+                return self.tree().get(id)
+            self._complete_interior(id, synthesis=synthesis, by=by)
             return self.tree().get(id)
+
+    def _complete_interior(self, id: str, *, synthesis: str, by: str) -> None:
+        result = WorkerResult(delegation_id=id, status=DelegationState.COMPLETED, synthesis=synthesis,
+                              usage=ResourceUsage(), findings=tuple(
+                                  f.id for f in FindingLedger(self.store).visible_to(id)))
+        event = self.store.append(id, "delegation.completed", {"result": result.model_dump(mode="json"),
+                                                               "reason": f"finished by {by}"})
+        self._after_terminal(id, event)
+
+    def _finish_request(self, id: str) -> dict[str, Any] | None:
+        return next((e.payload for e in reversed(self.store.events())
+                     if e.delegation_id == id and e.kind == "delegation.finish_requested"), None)
 
     def pause(self, id: str, *, by: str) -> None:
         with self._lock:
@@ -633,12 +677,17 @@ class DelegationController:
         with self._lock:
             tree = self.tree()
             node = tree.get(id)
-            if node.terminal or not node.spawn.can_spawn or not tree.cancel_requested(id):
+            if node.terminal or not node.spawn.can_spawn:
                 return
             if any(not tree.get(child).terminal for child in node.children):
                 return
-            event = self.store.append(id, "delegation.cancelled", {"reason": "cancelled after its children ended"})
-            self._after_terminal(id, event)
+            if tree.cancel_requested(id):
+                event = self.store.append(id, "delegation.cancelled", {"reason": "cancelled after its children ended"})
+                self._after_terminal(id, event)
+                return
+            finish = self._finish_request(id)
+            if finish is not None:
+                self._complete_interior(id, synthesis=str(finish.get("synthesis") or ""), by=str(finish.get("by") or ""))
 
     def _route(self, id: str, event: DelegationEvent) -> None:
         """Raw events stay in the journal; what the root owes attention to is routed by mode.
@@ -709,14 +758,16 @@ class DelegationController:
                 open_.pop(str(event.payload["continuation"]["id"]), None)
         return tuple(open_.values())
 
-    def resolve_continuations(self, *, epoch: str | None,
-                              advanced_since: Callable[[int], bool]) -> tuple[MainContinuation, ...]:
+    def resolve_continuations(self, *, epoch: str | None, advanced_since: Callable[[int], bool],
+                              limit: int | None = None) -> tuple[MainContinuation, ...]:
         """Which continuations may start now; the rest that are due become queued items instead.
 
         A continuation starts only when the conversation has not moved since
         it was recorded: same epoch and no human turn after its offset. One
         that has been overtaken is never replayed; it is reported as stale so
-        the human and the model both see what would have happened.
+        the human and the model both see what would have happened. `limit`
+        caps how many are marked started: a caller that will submit one turn
+        starts one, and the rest stay due for the next call.
         """
         started: list[MainContinuation] = []
         tree = self.tree()
@@ -727,6 +778,8 @@ class DelegationController:
             verdict = resolve_continuation(continuation, epoch=epoch,
                                            advanced=advanced_since(continuation.transcript_offset))
             if verdict == "start":
+                if limit is not None and len(started) >= limit:
+                    continue
                 self.store.append(continuation.awaiting, "continuation.started", payload)
                 started.append(continuation)
                 continue

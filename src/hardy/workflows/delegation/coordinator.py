@@ -167,6 +167,18 @@ def _refused(action: PlanAction, *reasons: str) -> ActionOutcome:
     return ActionOutcome(action=action, applied=False, refused_because=tuple(reasons))
 
 
+def _checks(action: PlanAction) -> int | str:
+    """The `checks` argument as a whole positive number, or the reason it is not one."""
+    raw = action.args.get("checks", 1)
+    if raw is None:
+        raw = 1
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return f"checks must be a whole number of official checks, not {raw!r}"
+    if raw < 1:
+        return f"checks must be at least 1, not {raw}"
+    return raw
+
+
 def _in_subtree(controller: DelegationController, subtree: str, target: str | None) -> str | None:
     if target is None:
         return "the action names no target"
@@ -189,7 +201,9 @@ def _spawn(controller: DelegationController, subtree: str, action: PlanAction, a
     spawned = [c for c in node.children if tree.get(c).spec.created_by == f"coordinator:{subtree}"]
     if len(spawned) >= authority.max_children:
         return _refused(action, f"authority: max_children {authority.max_children} already spawned")
-    checks = int(action.args.get("checks", 1) or 1)
+    checks = _checks(action)
+    if isinstance(checks, str):
+        return _refused(action, checks)
     if authority.approval_threshold_checks is not None and checks > authority.approval_threshold_checks:
         controller.request_human_decision(subtree, f"spawn of {checks} checks exceeds the coordinator's threshold",
                                           by=f"coordinator:{subtree}")
@@ -249,7 +263,10 @@ def apply_plan(controller: DelegationController, subtree: str, plan: Coordinatio
             elif problem:
                 outcomes.append(_refused(action, problem))
             else:
-                checks = int(action.args.get("checks", 1) or 1)
+                checks = _checks(action)
+                if isinstance(checks, str):
+                    outcomes.append(_refused(action, checks))
+                    continue
                 if authority.approval_threshold_checks is not None and checks > authority.approval_threshold_checks:
                     outcomes.append(_refused(action, "authority: above the approval threshold"))
                     continue

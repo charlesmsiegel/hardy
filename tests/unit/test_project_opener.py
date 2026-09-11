@@ -758,3 +758,23 @@ def test_a_scaffold_left_by_a_cancel_during_preparation_is_still_retryable(opene
 
     assert config.project == "burnside"
     assert session is not None
+
+
+def test_a_switched_session_keeps_the_worker_pool_and_a_per_worker_cas_factory(monkeypatch, live, root):
+    """The launch session had them; a session a switch opens must not silently fall back."""
+    kwargs_seen: list[dict] = []
+    calls: list[dict] = []
+
+    def fake_build_runtime(**kwargs):
+        calls.append(kwargs)
+        return FakeCas(kwargs["cwd"]), "fake 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: kwargs_seen.append(k) or object())
+    opener = cli.ProjectOpener(live.project, FakeCas(live.layout.cas), search=None, search_detail="")
+    wide = dataclasses.replace(live, delegation_workers=9)
+    opener("burnside", _decline, wide)
+    assert kwargs_seen[-1]["delegation_slots"] == 9
+    worker_dir = root / "burnside" / "worker-cas"
+    assert isinstance(kwargs_seen[-1]["cas_factory"](worker_dir), FakeCas)
+    assert calls[-1]["cwd"] == worker_dir and calls[-1]["log_path"] == worker_dir / "cells.jsonl"

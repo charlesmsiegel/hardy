@@ -138,8 +138,9 @@ def test_artifact_store_is_per_delegation_and_reopenable(tmp_path):
     again = DelegationStore(tmp_path).artifacts("d-1")
     assert again.path == run.path and again.trajectory_path.exists()
     assert again.path.parent == tmp_path / "delegations"
-    with pytest.raises(ValueError, match="unknown delegation"):
-        store.artifacts("missing")
+    assert store.artifacts("not-yet-journaled").path.parent == tmp_path / "delegations"   # launch precedes journal
+    with pytest.raises(ValueError, match="invalid delegation id"):
+        store.artifacts("../elsewhere")
 
 
 def test_cancelling_a_subtree_requests_descendants_deepest_first_and_cancels_queued(tmp_path):
@@ -185,3 +186,11 @@ def test_recovery_keeps_deliberately_paused_work_paused(tmp_path):
     store.append("p", "delegation.paused", {"by": "human"})
     assert DelegationStore(tmp_path).recover(now="t") == ()
     assert store.tree().get("p").state is DelegationState.PAUSED
+
+
+def test_cancelling_paused_work_ends_it_outright_like_queued_work(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "p")
+    store.append("p", "delegation.paused", {"by": "human"})
+    assert store.cancel_subtree("p", reason="user") == ("p",)
+    assert store.tree().get("p").state is DelegationState.CANCELLED

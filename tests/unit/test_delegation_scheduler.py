@@ -244,3 +244,19 @@ def test_min_attention_and_reserve_exploration_pins_change_what_is_chosen(tmp_pa
     assert [d.id for d in one.choose(2)] == ["c1", "x1"]
     explore = _scheduler(store, constraints=quiet, pins=(Pin(delegation_id="root", kind="reserve_exploration", by="human", value=1),))
     assert [d.id for d in explore.choose(2)] == ["e1", "x1"]                       # one slot held for exploration
+
+
+def test_a_lane_floor_counts_the_workers_already_running_in_it(tmp_path):
+    """Three exploration workers active against a floor of two: the freed slot goes to exploitation."""
+    store = _store(tmp_path, ("e1", _spec(lane="explore")), ("e2", _spec(lane="explore")),
+                   ("e3", _spec(lane="explore")), ("e4", _spec(lane="explore")), ("x1", _spec()), root_slots=4)
+    for id in ("e1", "e2", "e3"):
+        store.append(id, "delegation.started", {})
+    floors = PortfolioConstraints(exploration_floor=Decimal("0.5"), verify_floor=0)
+    assert [d.id for d in _scheduler(store, constraints=floors).choose(1)] == ["x1"]
+    store.append("e3", "delegation.completed", {"result": {"delegation_id": "e3", "status": "completed",
+                                                          "synthesis": "", "usage": {}}})
+    assert [d.id for d in _scheduler(store, constraints=floors).choose(1)] == ["x1"]     # two still meet the floor
+    store.append("e2", "delegation.completed", {"result": {"delegation_id": "e2", "status": "completed",
+                                                          "synthesis": "", "usage": {}}})
+    assert [d.id for d in _scheduler(store, constraints=floors).choose(1)] == ["e4"]     # now one short
