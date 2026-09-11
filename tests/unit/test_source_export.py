@@ -136,3 +136,35 @@ def test_formal_library_export_carries_shared_lean(tmp_path):
     target = tmp_path / "other-lean"
     summary = import_export(ManagedLibrary(tmp_path / "other"), tmp_path / "bundle", shared_lean=target)
     assert summary.copied == ("lean/HardyShared/Cyclic.lean",) and (target / "HardyShared" / "Cyclic.lean").is_file()
+
+
+def test_export_needs_a_fresh_destination_and_import_confines_paths(tmp_path):
+    import json
+
+    import pytest
+
+    from hardy.literature.sources.export import ExportError, safe_relative
+
+    root, lib, sha, tree, theorem, link = populated(tmp_path)
+    bundle = tmp_path / "bundle"
+    export_library(lib, classes=frozenset({ExportClass.PRIVATE_SOURCE_CACHE, ExportClass.METADATA_SEMANTICS}), into=bundle)
+    with pytest.raises(ExportError, match="fresh destination"):
+        export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=bundle)
+    assert (bundle / "artifacts" / sha / "content").is_file()  # the earlier bundle is untouched, not silently relabelled
+    for bad in ("../escape.json", "/abs/x.json", "a/../../b", "C:/x", "a\\b", ""):
+        with pytest.raises(ExportError):
+            safe_relative(bad)
+    assert safe_relative("ledger/00000000000000000001.json").as_posix() == "ledger/00000000000000000001.json"
+    crafted = tmp_path / "crafted"
+    crafted.mkdir()
+    payload = b"{}"
+    (crafted / "evil.json").write_bytes(payload)
+    import hashlib
+
+    manifest = {"format": "hardy.library-export/v1", "classes": ["metadata_semantics"], "artifacts": [], "withheld_payloads": [],
+                "created_at": "now", "files": [["../outside.json", hashlib.sha256(payload).hexdigest()], ["evil.json", hashlib.sha256(payload).hexdigest()]]}
+    (crafted / "export.json").write_text(json.dumps(manifest), encoding="utf-8")
+    target = ManagedLibrary(tmp_path / "victim" / "library")
+    summary = import_export(target, crafted)
+    assert not (tmp_path / "victim" / "outside.json").exists()
+    assert any("would leave" in s for s in summary.skipped) and summary.copied == ("evil.json",)

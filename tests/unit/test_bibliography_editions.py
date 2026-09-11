@@ -86,3 +86,12 @@ def test_entry_without_edition_fields_still_parses_and_arxiv_path_is_unchanged(t
     assert legacy.edition is None and legacy.read_artifacts == () and legacy.rendered().startswith("\\bibitem{perelman2002entropy-0123456789}")
     with pytest.raises(ValueError, match="read_artifacts"):
         Entry(key="k", identities=("edition:x",), title="t", authors=("a",), content_sha256="f" * 64, read_artifacts=("not-a-digest",))
+
+
+def test_a_malformed_digest_on_a_merge_is_refused_and_the_store_stays_readable(tmp_path: Path):
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite_edition(HARTSHORNE, GTM52, read_artifacts=(PDF,))
+    with pytest.raises(BibliographyError, match="sha256"):
+        bibliography.cite_edition(HARTSHORNE, GTM52, read_artifacts=("not-a-digest",))
+    entries = bibliography.entries()
+    assert len(entries) == 1 and entries[0].read_artifacts == (PDF,)

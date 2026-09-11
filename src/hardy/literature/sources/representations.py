@@ -82,6 +82,12 @@ class RepresentationStore:
             except OSError:
                 if not (target / RECORD).is_file():
                     raise
+                # Another admitter won the rename. The winner is authoritative
+                # only if it recorded the same output; a different reading
+                # under this id is the conflict the sequential path refuses.
+                winner = self.get(record.artifact_sha256, record.id)
+                if winner.output_sha256 != record.output_sha256:
+                    raise RepresentationError(f"representation {record.id} was admitted concurrently with different output") from None
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         self.add_mappings(record.artifact_sha256, mappings)

@@ -591,6 +591,9 @@ class Bibliography:
             raise BibliographyError(f"edition {edition.id} belongs to work {edition.work}, not {work.id}")
         if not read_artifacts:
             raise BibliographyError("a citation names at least one artifact Hardy actually read")
+        for digest in read_artifacts:
+            if not DIGEST.fullmatch(digest):
+                raise BibliographyError(f"read_artifacts must hold sha256 digests; got {digest[:80]!r}")
         try:
             with FileLock(self._lock_target(), timeout=self.lock_timeout):
                 return self._cite_edition(work, edition, read_artifacts, spans, now)
@@ -611,7 +614,11 @@ class Bibliography:
             merged_spans = tuple(dict.fromkeys((*held.cited_spans, *spans)))
             merged_names = tuple(dict.fromkeys((*held.identities, *names)))
             later = tuple(d for d in merged_reads if d != held.content_sha256)
-            updated = held.model_copy(update={"identities": merged_names, "read_artifacts": merged_reads, "also_read": later, "cited_spans": merged_spans})
+            # Rebuilt through validation, not `model_copy`: a merged value that
+            # the validators would refuse must not reach the store on this path
+            # when the new-entry path would have refused it.
+            updated = Entry.model_validate({**held.model_dump(), "identities": merged_names, "read_artifacts": merged_reads,
+                                            "also_read": later, "cited_spans": merged_spans})
             if updated == held:
                 self._write(store)
                 return held, False

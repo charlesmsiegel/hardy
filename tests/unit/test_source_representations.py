@@ -120,3 +120,28 @@ def test_missing_representation_is_reported_as_not_held(tmp_path):
     with pytest.raises(RepresentationError, match="not held"):
         store.get(SHA, "rep-missing")
     assert store.list(SHA) == ()
+
+
+def test_raced_admission_with_different_output_is_refused(tmp_path, monkeypatch):
+    import os
+
+    store = RepresentationStore(tmp_path / "reps")
+    winner_store = RepresentationStore(tmp_path / "winner")
+    winner = winner_store.admit(record("rep-1", {"text.txt": b"winner"}), {"text.txt": b"winner"})
+    real_replace = os.replace
+    target = tmp_path / "reps" / SHA / "rep-1"
+
+    def race(src, dst):
+        if os.fspath(dst) == os.fspath(target) and not target.exists():
+            import shutil
+
+            shutil.copytree(tmp_path / "winner" / SHA / "rep-1", target)
+            raise OSError("the winner got there first")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", race)
+    with pytest.raises(RepresentationError, match="concurrently with different output"):
+        store.admit(record("rep-1", {"text.txt": b"loser"}), {"text.txt": b"loser"})
+    assert store.get(SHA, "rep-1") == winner and store.text(SHA, "rep-1") == "winner"
+    same = store.admit(record("rep-1", {"text.txt": b"winner"}), {"text.txt": b"winner"})
+    assert same == winner

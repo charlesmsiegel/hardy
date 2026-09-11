@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from datetime import UTC, datetime
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from hardy.foundation.files import files_under
 from hardy.foundation.values import FrozenModel, json_digest
@@ -35,6 +36,20 @@ SCHEMA = "hardy.library-export/v1"
 JOURNALS = ("catalog", "ledger", "links", "realizations", "promotions")
 PRIVATE = frozenset({AccessPolicy.PRIVATE_LOCAL, AccessPolicy.UNKNOWN_RESTRICTED})
 PORTABLE_KINDS = frozenset({RepresentationKind.PAGE_MANIFEST})
+
+
+class ExportError(ValueError):
+    """An export or import Hardy will not perform."""
+
+
+def safe_relative(relative: str) -> PurePosixPath:
+    """A manifest path as a normalized child path, or a refusal; never absolute, never climbing."""
+    if not isinstance(relative, str) or not relative or "\\" in relative or "\x00" in relative:
+        raise ExportError(f"bundle path {relative!r} is not a plain relative path")
+    path = PurePosixPath(relative)
+    if path.is_absolute() or re.match(r"^[A-Za-z]:", relative) or any(part in {"", ".", ".."} for part in path.parts):
+        raise ExportError(f"bundle path {relative!r} would leave its destination; refusing it")
+    return path
 
 
 class ExportClass(str, Enum):
@@ -78,6 +93,8 @@ def export_library(
     library: ManagedLibrary, *, classes: frozenset[ExportClass], into: Path, shared_lean: Path | None = None,
 ) -> ExportManifest:
     into = Path(into)
+    if into.exists() and (not into.is_dir() or any(into.iterdir())):
+        raise ExportError(f"{into} is not an empty directory; an export needs a fresh destination so a bundle holds only what its manifest claims")
     into.mkdir(parents=True, exist_ok=True)
     files: list[tuple[str, str]] = []
     withheld: list[str] = []
@@ -133,8 +150,13 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
         journal_state[journal] = existing.is_dir() and any(existing.glob("*.json"))
         (kept if journal_state[journal] else seeded).append(journal)
     for relative, digest in manifest.files:
-        source = bundle / relative
-        if not source.is_file():
+        try:
+            safe = safe_relative(relative)
+        except ExportError as error:
+            skipped.append(f"{relative}: {error}")
+            continue
+        source = bundle / safe
+        if not source.is_file() or source.is_symlink():
             skipped.append(f"{relative}: missing from bundle")
             continue
         if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
@@ -144,9 +166,9 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
             if shared_lean is None:
                 skipped.append(f"{relative}: no shared Lean root given")
                 continue
-            target = shared_lean / relative[len("lean/"):]
+            target = shared_lean / PurePosixPath(*safe.parts[1:])
         else:
-            target = library.root / relative
+            target = library.root / safe
         owner = next((j for j in journal_state if relative.startswith(j + "/")), None)
         if owner is not None and journal_state[owner]:
             skipped.append(f"{relative}: local journal {owner} already has history; merging is synchronization, which is deferred")
