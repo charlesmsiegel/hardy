@@ -259,3 +259,35 @@ def test_hidden_ids_in_the_spec_are_enforced_at_preload_and_retrieval(tmp_path):
         assert manifest["hidden_selectors"] == ["A1"]
     finally:
         controller.shutdown()
+
+
+def test_worker_findings_reach_the_parent_and_a_counterexample_draws_attention(tmp_path):
+    """Criterion 13 at the controller: proposed, parent-visible, not admitted, and priority-routed."""
+    from hardy.workflows.delegation.findings import FindingLedger
+
+    script = [
+        call("propose_finding", {"kind": "reduction", "summary": "reduce to L12", "payload": "L17 <= L12",
+                                 "related_refs": ["L17"]}),
+        call("propose_finding", {"kind": "counterexample", "summary": "a conic bundle breaks L17",
+                                 "payload": "the conic bundle over P1", "related_refs": ["L17"]}),
+        call("finish", {"status": "completed", "synthesis": "found a counterexample"}),
+    ]
+    notices = []
+    controller = _controller(tmp_path, _open(script), notices=notices)
+    try:
+        delegation = controller.delegate(_spec(tmp_path))
+        done = controller.wait(delegation.id, timeout=5)
+        assert len(done.result.findings) == 2
+        ledger = FindingLedger(controller.store)
+        visible = ledger.visible_to(ROOT_ID)
+        assert [f.kind for f in visible] == ["reduction", "counterexample"]
+        assert all(f.evidence_profile.value == "speculative" for f in visible)
+        assert LedgerStore(tmp_path).read().revision == controller.ledger.read().revision   # nothing admitted
+        items = controller.attention().pending("main_agent")
+        categories = {item.category for item in items}
+        assert "completion" in categories and "finding" in categories
+        priority = next(item for item in items if item.category == "finding")
+        assert priority.importance == "high" and "counterexample" in priority.summary
+        assert any("counterexample" in text for text in notices)
+    finally:
+        controller.shutdown()

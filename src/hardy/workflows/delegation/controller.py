@@ -9,6 +9,7 @@ happened and marks what was interrupted as unknown.
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -45,6 +46,7 @@ from hardy.workflows.delegation.contracts import (
     WorkerResult,
 )
 from hardy.workflows.delegation.diversity import assign_briefs
+from hardy.workflows.delegation.findings import Finding, FindingLedger
 from hardy.workflows.delegation.retrieval import VisibilityPolicy, WorkerRetriever
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
 from hardy.workflows.delegation.worker import OpenWorker, WorkerLaunch, run_worker
@@ -241,6 +243,7 @@ class DelegationController:
         result = run_worker(launch, self._open_worker, token)
         with self._lock:
             self.store.append(id, "usage.reported", {"usage": result.usage.model_dump(mode="json")})
+            self._propose_findings(id, launch)
             event = self.store.append(id, _TERMINAL_EVENT[result.status], {
                 "result": result.model_dump(mode="json"),
                 **({"reason": result.terminal_reason} if result.terminal_reason else {})})
@@ -269,8 +272,23 @@ class DelegationController:
             # Last, so `wait` sees a settled journal once the handle is gone.
             self._handles.pop(id, None)
 
+    def _propose_findings(self, id: str, launch: WorkerLaunch) -> None:
+        """Every finding the worker recorded reaches its parent; priority ones draw attention."""
+        path = launch.store.path / "findings.json"
+        if not path.exists():
+            return
+        ledger = FindingLedger(self.store)
+        for raw in json.loads(path.read_text(encoding="utf-8")):
+            finding = ledger.propose(Finding.model_validate(raw))
+            event = next(e for e in reversed(self.store.events())
+                         if e.kind == "finding.proposed" and e.payload["finding"]["id"] == finding.id)
+            self._route(id, event)
+
     def _after_terminal(self, id: str, event: DelegationEvent) -> None:
         self.store.release(id)
+        self._route(id, event)
+
+    def _route(self, id: str, event: DelegationEvent) -> None:
         item = self._inbox.derive(event, self.tree())
         if item is None:
             return

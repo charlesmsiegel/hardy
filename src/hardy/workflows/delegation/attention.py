@@ -14,6 +14,7 @@ from typing import Literal
 
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.delegation.contracts import DelegationEvent, DelegationState, WorkerResult
+from hardy.workflows.delegation.findings import Finding, FindingKind
 from hardy.workflows.delegation.store import DelegationStore, DelegationTree
 from hardy.workflows.ledger.contracts import VersionRef
 
@@ -23,6 +24,11 @@ MODEL_MARKER = "[Hardy delegation attention — written by Hardy, not the user]"
 DEFAULT_BUDGET_ITEMS = 5
 
 Recipient = Literal["human", "main_agent"]
+
+#: Findings that deserve prompt parent attention without global broadcast (spec 11.5).
+PRIORITY_FINDINGS = frozenset({
+    FindingKind.COUNTEREXAMPLE.value, FindingKind.OBSTRUCTION.value, FindingKind.VERIFIED_LEMMA.value,
+})
 
 _TERMINAL_KINDS = {
     "delegation.completed": ("completion", "normal"),
@@ -71,6 +77,18 @@ class AttentionInbox:
             return None
         item_id = f"attention:{event.sequence}"
         detail = (f"delegations/{delegation.id}/result.json",)
+        if event.kind == "finding.proposed":
+            finding = Finding.model_validate(event.payload["finding"])
+            if finding.kind not in PRIORITY_FINDINGS:
+                return None
+            return AttentionItem(
+                id=item_id, delegation_id=delegation.id, source_event=event.sequence,
+                summary=f"{delegation.id} ({delegation.spec.objective}) proposed a {finding.kind}: {finding.summary} "
+                        f"[{finding.evidence_profile.value}]",
+                category="finding", importance="high", actionable=False, sticky=False,
+                related_refs=finding.related_refs,
+                detail_refs=(f"delegations/{delegation.id}/findings.json",),
+            )
         if event.kind == "delegation.recovered":
             return AttentionItem(
                 id=item_id, delegation_id=delegation.id, source_event=event.sequence,
