@@ -8,7 +8,7 @@ from pathlib import PurePosixPath
 import pytest
 
 from hardy.formal.contracts import EnvironmentIdentity
-from hardy.formal.syntax import module_path
+from hardy.formal.syntax import declarations, module_path
 from hardy.workflows.contracts import FaithfulnessOutcome, FaithfulnessReview, FaithfulnessVerdict
 from hardy.workflows.ledger.contracts import ProjectItem
 from hardy.workflows.shared.claims import LinkStore
@@ -56,7 +56,13 @@ def fake_compile(compiled, failing=()):
 
 
 def clean_audit(space, targets):
-    return {name: {"status": "clean", "assumed": [], "declarations": []} for name in targets}
+    """A clean audit that names what it established: the declarations of each staged module."""
+    found = {}
+    for name in targets:
+        source = (space.root / module_path(name)).read_text(encoding="utf-8")
+        names = [n for kind in ("theorem", "lemma") for n in declarations(source).get(kind, ())]
+        found[name] = {"status": "clean", "assumed": [], "declarations": names}
+    return found
 
 
 def setup(tmp_path, *, failing=(), audit=clean_audit):
@@ -172,3 +178,68 @@ def test_second_project_reuses_promoted_claim_without_new_formalization(tmp_path
 def test_rewrite_imports_only_touches_named_modules():
     rewritten = rewrite_imports("import Mathlib\nimport Prym.Lemmas\nimport Prym.LemmasExtra\n", {"Prym.Lemmas": "HardyShared.p.Prym.Lemmas"})
     assert rewritten == "import Mathlib\nimport HardyShared.p.Prym.Lemmas\nimport Prym.LemmasExtra\n"
+
+
+def test_audit_must_cover_the_promoted_declaration(tmp_path):
+    def elsewhere(space, targets):
+        return {name: {"status": "clean", "assumed": [], "declarations": ["Prym.two_le_three"]} for name in targets}
+
+    root, claims, claim, promoter, request, compiled = setup(tmp_path, audit=elsewhere)
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+    failed = promoter.promote(prepared.id, request, SOURCES)
+    assert failed.status == "failed" and failed.blockers[-1].kind == "audit_failed" and "does not cover Prym.fibers_bound" in failed.blockers[-1].detail
+    assert not (root / "lean").exists() and promoter.realizations.for_claim(claim.id) == ()
+
+
+def test_a_model_approval_is_blocked_before_anything_is_staged(tmp_path):
+    from hardy.workflows.shared.claims import HumanApproval
+
+    root, claims, claim, promoter, request, compiled = setup(tmp_path)
+    by_model = request.model_copy(update={"faithfulness": None, "approval": HumanApproval(actor="model:reader", reason="looks right", at="now")})
+    blocked = promoter.prepare(by_model, SOURCES, AUDIT)
+    assert blocked.status == "blocked" and [b.kind for b in blocked.blockers] == ["unfaithful"] and "not a human approval" in blocked.blockers[0].detail
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+    failed = promoter.promote(prepared.id, by_model, SOURCES)
+    assert failed.status == "failed" and failed.blockers[-1].kind == "unfaithful"
+    assert compiled == [] and not (root / "lean").exists() and promoter.realizations.for_claim(claim.id) == ()
+
+
+def test_a_promotion_landing_during_the_build_is_seen_before_the_commit(tmp_path):
+    root, claims, claim, promoter, request, compiled = setup(tmp_path)
+    inner = promoter._compile
+
+    def racing(module, source_root, build_root, source_file):
+        (root / "lean").mkdir(parents=True, exist_ok=True)
+        (root / "lean" / "Other.lean").write_text("theorem other : True := trivial\n", encoding="utf-8")
+        return inner(module, source_root, build_root, source_file)
+
+    promoter._compile = racing
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+    failed = promoter.promote(prepared.id, request, SOURCES)
+    assert failed.status == "failed" and failed.blockers[-1].kind == "stale_shared_head" and "during" in failed.blockers[-1].detail
+    assert compiled  # the build ran; the head check inside the lock still caught the change
+    assert not (root / "lean" / "HardyShared").exists() and not (root / ".build").exists()
+    assert promoter.realizations.for_claim(claim.id) == ()
+
+
+def test_failed_admission_restores_the_shared_tree(tmp_path):
+    from hardy.workflows.shared.realizations import RealizationError
+
+    root, claims, claim, promoter, request, compiled = setup(tmp_path)
+    (root / "lean").mkdir(parents=True)
+    (root / "lean" / "Other.lean").write_text("theorem other : True := trivial\n", encoding="utf-8")
+    (root / ".build" / "lean").mkdir(parents=True)
+    (root / ".build" / "lean" / "Other.olean").write_bytes(b"old olean")
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+
+    def refuse(*args, **kwargs):
+        raise RealizationError("the realization journal refused the attachment")
+
+    promoter.realizations.attach = refuse
+    failed = promoter.promote(prepared.id, request, SOURCES)
+    assert failed.status == "failed" and failed.blockers[-1].kind == "admission_failed" and "restored" in failed.blockers[-1].detail
+    assert not (root / "lean" / "HardyShared").exists()
+    assert (root / "lean" / "Other.lean").read_text(encoding="utf-8") == "theorem other : True := trivial\n"
+    assert sorted(p.name for p in (root / ".build" / "lean").iterdir()) == ["Other.olean"]
+    assert shared_head(root / "lean") == prepared.shared_head
+    assert [r.status for r in promoter.realizations.for_claim(claim.id)] == ["rejected"]

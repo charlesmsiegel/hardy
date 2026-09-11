@@ -102,6 +102,8 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
                 raise RealizationError("attachment needs formal verification evidence; faithfulness alone is not proof reuse")
             if record.verification.kind.value != "formal":
                 raise RealizationError("verification evidence must be formal evidence")
+            if record.verification.subject != record.claim:
+                raise RealizationError(f"verification evidence is about {record.verification.subject.id}, not {record.claim.id}; evidence does not transfer between claims")
         previous = heads.get(record.id)
         if previous is not None:
             if (previous.claim.id, previous.declaration, previous.module, previous.origin) != (record.claim.id, record.declaration, record.module, record.origin):

@@ -219,6 +219,7 @@ class ClaimLinker:
             raise LinkError("admission needs an agreeing faithfulness verdict or an explicit human approval")
         if approval is not None and not approval.actor.startswith("user:"):
             raise LinkError("a human approval names a user; a model is not an approver")
+        created: VersionRef | None = None  # the claim this admission minted, remembered across retries
         for _ in range(RETRIES):
             snapshot = self.links.snapshot()
             link = self.links.heads(snapshot).get(link_id)
@@ -231,12 +232,18 @@ class ClaimLinker:
             claim_ref, proposed = self._chosen(link, choose)
             if claim_ref is None:
                 assert proposed is not None
-                ledger = self.claims.snapshot()
-                if any(i.id == proposed.id for i in ledger.current(ProjectItem)):
-                    raise LinkError(f"shared claim {proposed.id} already exists; propose a link to it instead")
-                claim_item = proposed.model_copy(update={"artifacts": tuple(dict.fromkeys((*proposed.artifacts, source_artifact_ref(link))))})
-                self.claims.add_claim(ProjectItem.model_validate(claim_item.model_dump(mode="json")), expected_revision=ledger.revision)
-                claim_ref = self.claims.head(proposed.id).ref
+                if created is not None and created.id == proposed.id:
+                    # The ledger write already happened on an earlier pass; only
+                    # the link append lost its race. Minting again would refuse
+                    # the claim as a duplicate of our own.
+                    claim_ref = self.claims.head(created.id).ref
+                else:
+                    ledger = self.claims.snapshot()
+                    if any(i.id == proposed.id for i in ledger.current(ProjectItem)):
+                        raise LinkError(f"shared claim {proposed.id} already exists; propose a link to it instead")
+                    claim_item = proposed.model_copy(update={"artifacts": tuple(dict.fromkeys((*proposed.artifacts, source_artifact_ref(link))))})
+                    self.claims.add_claim(ProjectItem.model_validate(claim_item.model_dump(mode="json")), expected_revision=ledger.revision)
+                    created = claim_ref = self.claims.head(proposed.id).ref
             else:
                 self._attach_source(link, claim_ref)
                 claim_ref = self.claims.head(claim_ref.id).ref
