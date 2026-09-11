@@ -280,3 +280,16 @@ def test_mixed_subscriptions_keep_a_delivery_mode_per_recipient(tmp_path):
     item, mode = route(_finding_event(store, "w1", "counterexample"), store.tree(), (quiet_human, loud_model))
     assert mode is DeliveryMode.INTERRUPT and item.recipients == ("human", "main_agent")
     assert item.mode_for("human") is DeliveryMode.QUEUE and item.mode_for("main_agent") is DeliveryMode.INTERRUPT
+
+
+def test_a_terminal_summary_keeps_a_bounded_excerpt_of_the_synthesis(tmp_path):
+    from hardy.workflows.delegation.attention import SUMMARY_EXCERPT_CHARS
+
+    store = DelegationStore(tmp_path)
+    store.append("d-long", "delegation.created", {"spec": _spec(True).model_dump(mode="json"), "parent_id": None, "created_at": "t"})
+    store.append("d-long", "delegation.started", {})
+    result = WorkerResult(delegation_id="d-long", status=DelegationState.COMPLETED, synthesis="x" * 50_000,
+                          usage=ResourceUsage())
+    event = store.append("d-long", "delegation.completed", {"result": result.model_dump(mode="json")})
+    item = AttentionInbox(store).derive(event, store.tree())
+    assert len(item.summary) < SUMMARY_EXCERPT_CHARS + 200 and "result.json" in " ".join(item.detail_refs)

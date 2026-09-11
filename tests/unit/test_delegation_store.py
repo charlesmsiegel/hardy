@@ -207,3 +207,17 @@ def test_recovery_keeps_an_interior_cell_live_since_it_ran_no_worker(tmp_path):
     tree = store.tree()
     assert tree.get("cell").state is DelegationState.ACTIVE and tree.get("cell").interior
     assert not tree.get("leaf").interior
+
+
+def test_recovery_leaves_work_alone_while_its_owning_process_is_alive(tmp_path):
+    """A second process opening the workspace must not retire a worker the first still runs."""
+    from hardy.workflows.delegation.store import OwnerToken
+
+    store = DelegationStore(tmp_path)
+    _create(store, "mine")
+    with OwnerToken.hold(tmp_path) as owner:                       # the first process, alive for this block
+        store.append("mine", "delegation.started", {"owner": owner.id})
+        assert DelegationStore(tmp_path).recover(now="t") == ()      # the other process: nothing to doubt
+        assert store.tree().get("mine").state is DelegationState.ACTIVE
+    recovered = DelegationStore(tmp_path).recover(now="t2")          # the first process died: now unknown
+    assert [d.id for d in recovered] == ["mine"]

@@ -21,7 +21,7 @@ from hardy.agents.parsing import json_object
 from hardy.foundation.values import FrozenModel, json_digest
 from hardy.prompts import render
 from hardy.workflows.delegation.budget import LeaseLedger
-from hardy.workflows.delegation.context import structural_map
+from hardy.workflows.delegation.context import bounded_structural_map
 from hardy.workflows.delegation.contracts import (
     ConcurrencyLease,
     DelegationSpec,
@@ -35,6 +35,10 @@ from hardy.workflows.delegation.scheduler import Lane, Pin
 
 if TYPE_CHECKING:
     from hardy.workflows.delegation.controller import DelegationController
+
+
+#: The most tokens a coordinator view spends on its neighbourhood map.
+VIEW_MAP_TOKENS = 1500
 
 
 class CoordinatorAuthority(FrozenModel):
@@ -84,6 +88,8 @@ class CoordinationView(FrozenModel):
     slots_available: int
     children: tuple[ChildSummary, ...]
     neighborhood: str
+    #: Rows the neighbourhood map lost to its bound; zero when complete.
+    neighborhood_truncated: int = 0
     visible_findings: tuple[str, ...]
     isolation: VisibilityPolicy
     pins: tuple[Pin, ...]
@@ -144,19 +150,22 @@ def build_view(controller: DelegationController, subtree: str, *, authority: Coo
             findings=tuple(own), blockers=tuple(blockers), progress=progress,
         ))
     snapshot = controller.ledger.read()
-    neighborhood = ""
+    neighborhood, withheld = "", 0
     if node.spec.project_refs:
         try:
-            # Under the subtree's inherited isolation: a coordinator steers by
-            # the same map its workers may see.
-            neighborhood = structural_map(snapshot, node.spec.project_refs[0], hidden=controller.hidden_for(subtree))
+            # Under the subtree's inherited isolation and a bound, as a
+            # worker's launch map is: a coordinator steers by the same map.
+            neighborhood, withheld = bounded_structural_map(snapshot, node.spec.project_refs[0],
+                                                            hidden=controller.hidden_for(subtree),
+                                                            max_tokens=VIEW_MAP_TOKENS)
         except ValueError:
             neighborhood = "(target not at this revision)"
     return CoordinationView(
         subtree=subtree, objective=node.spec.objective, authority=authority,
         budget=ledger.reserved(subtree), allocatable=ledger.allocatable(subtree),
         slots_available=ledger.slots_available(subtree), children=tuple(children),
-        neighborhood=neighborhood, visible_findings=tuple(f.id for f in findings.visible_to(subtree)),
+        neighborhood=neighborhood, neighborhood_truncated=withheld,
+        visible_findings=tuple(f.id for f in findings.visible_to(subtree)),
         isolation=findings.policy_for(subtree), pins=tuple(p for p in controller._pins()
                                                              if p.delegation_id in {subtree, *node.children}),
         events_since=max(0, tree.revision - since), revision=tree.revision,

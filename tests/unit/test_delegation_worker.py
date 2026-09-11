@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from delegation_helpers import ScriptedWorkerRuntime, call
 
+from hardy.agents.contracts import TurnEvent
 from hardy.agents.executor import CancelToken
 from hardy.agents.usage import Usage
 from hardy.workflows.contracts import RunPhase
@@ -200,3 +201,37 @@ def test_an_unbounded_check_lease_is_not_a_zero_check_budget(tmp_path):
         budget.acquire()
     assert budget.remaining_checks > 1000
     assert not isinstance(budget, BudgetExhausted)
+
+
+def test_a_zero_provider_call_lease_never_opens_a_provider(tmp_path):
+    store = RunStore.create(tmp_path, "d-p", now=datetime.now(UTC), run_id=uuid4())
+    launch = WorkerLaunch(delegation_id="d-p", prompt="p", model=None, store=store,
+                          lease=ResourceLease(official_checks=1, provider_calls=0, active_seconds=60.0))
+    opened = []
+    result = run_worker(launch, _open([call("finish", {"status": "completed", "synthesis": "x"})], opened=opened),
+                        CancelToken())
+    assert result.status is DelegationState.EXHAUSTED and opened == [] and "provider_calls" in (result.terminal_reason or "")
+
+
+def test_concurrent_tool_calls_from_one_worker_are_serialized(tmp_path):
+    """The SDK may call several tools at once on separate threads; findings still get distinct sequence ids."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    class Parallel(ScriptedWorkerRuntime):
+        def stream(self, text):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(lambda n: self.dispatch("propose_finding", {"kind": "note", "summary": f"n{n}",
+                                                                          "payload": "p"}), range(40)))
+            self.dispatch("finish", {"status": "completed", "synthesis": "all in"})
+            yield TurnEvent("reply", text="done")
+
+    def open_worker(launch, dispatch, observe):
+        return OpenedWorker(context_id="ctx", runtime=Parallel([], dispatch=dispatch, observe=observe),
+                            usage=lambda: Usage())
+
+    launch = _launch(tmp_path)
+    result = run_worker(launch, open_worker, CancelToken())
+    findings = json.loads((launch.store.path / "findings.json").read_text(encoding="utf-8"))
+    assert result.status is DelegationState.COMPLETED and len(findings) == 40
+    assert sorted(f["sequence"] for f in findings) == list(range(40))
+    assert len({f["id"] for f in findings}) == 40

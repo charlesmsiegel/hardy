@@ -72,7 +72,7 @@ from hardy.workflows.delegation.scheduler import (
     SchedulerDecision,
     graph_urgency,
 )
-from hardy.workflows.delegation.store import DelegationStore, DelegationTree
+from hardy.workflows.delegation.store import DelegationStore, DelegationTree, OwnerToken
 from hardy.workflows.delegation.worker import (
     CasFactory,
     OpenWorker,
@@ -141,6 +141,8 @@ class DelegationController:
         self._clock = clock
         self._lock = threading.RLock()
         self._handles: dict[str, WorkerHandle] = {}
+        #: This process's claim on the workers it starts, for as long as it lives.
+        self._owner = OwnerToken.hold(store.workspace)
         #: Live check budgets by delegation id, so a granted tranche reaches a running worker.
         self._budgets: dict[str, CheckBudget] = {}
         self._inbox = AttentionInbox(store)
@@ -205,6 +207,17 @@ class DelegationController:
                              if e.delegation_id == delegation.id and e.kind == "delegation.recovered")
                 self._after_terminal(delegation.id, event)
             tree = self.tree()
+            if ROOT_ID in tree.delegations:
+                # This session's ceilings, not the last one's: the root follows
+                # them before any queued work is measured against it.
+                self._ensure_root(tree.get(ROOT_ID).spec.scope)
+                tree = self.tree()
+            for delegation in tree.delegations.values():
+                # A cell exposed by its creation event but never started: it
+                # runs no worker, so nothing else would ever start it.
+                if delegation.state is DelegationState.QUEUED and delegation.spawn.can_spawn:
+                    self.store.append(delegation.id, "delegation.started", {"interior": True})
+            tree = self.tree()
             ledger = LeaseLedger(tree)
             derived = {item.source_event for item in self._inbox.items()}
             for delegation in tree.delegations.values():
@@ -219,14 +232,36 @@ class DelegationController:
                         self._route(delegation.id, terminal)
             tree = self.tree()
             ledger = LeaseLedger(tree)
-            for delegation in tree.delegations.values():
-                if (delegation.state is DelegationState.QUEUED and delegation.parent_id is not None
-                        and delegation.id not in self._pending and delegation.id not in self._handles):
-                    launch = self._relaunch(delegation, ledger.reserved(delegation.id))
+            queued = [d for d in tree.delegations.values()
+                      if d.state is DelegationState.QUEUED and d.parent_id is not None
+                      and d.id not in self._pending and d.id not in self._handles]
+            # Ceilings that shrank: first whatever no longer fits its parent's
+            # whole lease, then the rest measured against what remains, in turn.
+            for delegation in queued:
+                if not ledger.reserved(delegation.id).fits_within(ledger.reserved(delegation.parent_id)):
+                    self._retire_queued(delegation.id, "reservation exceeds the current ceiling")
+            tree = self.tree()
+            ledger = LeaseLedger(tree)
+            for delegation in queued:
+                delegation = tree.get(delegation.id)
+                if delegation.state is DelegationState.QUEUED:
+                    reserved = ledger.reserved(delegation.id)
+                    if not reserved.fits_within(ledger.allocatable_excluding(delegation.parent_id, delegation.id)):
+                        self._retire_queued(delegation.id, "reservation exceeds the current ceiling")
+                        ledger = LeaseLedger(self.tree())
+                        continue
+                    launch = self._relaunch(delegation, reserved)
                     if launch is not None:
                         self._pending[delegation.id] = launch
             self._dispatch()
             return recovered
+
+    def _retire_queued(self, id: str, reason: str) -> None:
+        """Queued work whose reservation no longer exists to run on: cancelled and released."""
+        self.store.cancel_subtree(id, reason=reason)
+        event = next(e for e in reversed(self.store.events())
+                     if e.delegation_id == id and e.kind == "delegation.cancelled")
+        self._after_terminal(id, event)
 
     def _relaunch(self, delegation: Delegation, lease: ResourceLease) -> WorkerLaunch | None:
         artifacts = self.store.artifacts(delegation.id)
@@ -241,6 +276,14 @@ class DelegationController:
                     overlay = WorkspaceOverlay.open(artifacts.path / "overlay", generation, like=self.workspace)
                     self._overlays[delegation.id] = overlay
                     break
+            if overlay is None:
+                # Promised writable, never given its copy: the crash came first. Made now,
+                # at the revision the launch was built against.
+                core_path = artifacts.path / "core.json"
+                revision = int(json.loads(core_path.read_text(encoding="utf-8"))["project_revision"]) if core_path.exists() \
+                    else self.ledger.read().revision
+                overlay = self._overlay_for(delegation.id, delegation.spec, delegation.parent_id or ROOT_ID,
+                                            artifacts, revision)
         hidden = self._effective_hidden(delegation.parent_id or ROOT_ID, delegation.spec)
         return WorkerLaunch(delegation_id=delegation.id, prompt=prompt_path.read_text(encoding="utf-8"),
                             model=delegation.spec.model, store=artifacts, lease=lease,
@@ -447,6 +490,8 @@ class DelegationController:
             node = self.tree().get(id)
             if node.state is not DelegationState.QUEUED:
                 raise ValueError(f"only queued work can be paused; {id} is {node.state.value}")
+            if id in self._handles:
+                raise ValueError(f"{id} is already handed to the executor; cancel it instead of pausing")
             self.store.append(id, "delegation.paused", {"by": by})
 
     def resume(self, id: str, *, by: str) -> None:
@@ -621,7 +666,9 @@ class DelegationController:
             tree = self.tree()
             if tree.get(id).terminal:
                 raise WorkerCancelled
-            self.store.append(id, "delegation.started", {})
+            if tree.get(id).state is DelegationState.PAUSED:
+                raise WorkerCancelled
+            self.store.append(id, "delegation.started", {"owner": self._owner.id})
         result = run_worker(launch, self._open_worker, token)
         with self._lock:
             if result.status is DelegationState.CANCELLED:
@@ -851,3 +898,4 @@ class DelegationController:
         with self._lock:
             self._closed = True
         self.executor.shutdown(wait=True)
+        self._owner.release()

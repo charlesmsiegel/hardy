@@ -160,3 +160,30 @@ def test_findings_survive_restart_and_unknown_recipients_are_refused(tmp_path):
                       reason="x")
     with pytest.raises(ValueError, match="unknown finding"):
         again.get("nope:finding:0")
+
+
+def test_a_promotion_that_would_disclose_a_hidden_subject_is_refused(tmp_path):
+    """The recipient hides L14: a sibling finding about L14 cannot be pushed or made discoverable there."""
+    from hardy.workflows.delegation.contracts import ConcurrencyLease, DelegationSpec, ResourceLease
+    from hardy.workflows.ledger.contracts import VersionRef
+
+    store = DelegationStore(tmp_path)
+    for id, parent, hidden in (("A", None, ()), ("a1", "A", ()), ("blind", "A", ("L14",))):
+        spec = DelegationSpec(objective=id, project_refs=(VersionRef(id="L17", digest="a" * 64),),
+                              scope=VersionRef(id="scope", digest="b" * 64), lease=ResourceLease(official_checks=1),
+                              concurrency=ConcurrencyLease(slots=1), created_by="human", hidden_ids=hidden)
+        store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"), "parent_id": parent, "created_at": "t"})
+    ledger = FindingLedger(store)
+    about_hidden = Finding(id="a1:finding:0", source_delegation="a1", kind="reduction", summary="use L14",
+                           payload="L17 follows from L14", related_ids=("L14",), sequence=0)
+    by_ref = Finding(id="a1:finding:1", source_delegation="a1", kind="note", summary="about connectedness",
+                     payload="p", related_refs=(VersionRef(id="L14", digest="c" * 64),), sequence=1)
+    harmless = Finding(id="a1:finding:2", source_delegation="a1", kind="note", summary="about D3", payload="p",
+                       related_ids=("D3",), sequence=2)
+    for finding in (about_hidden, by_ref, harmless):
+        ledger.propose(finding)
+    for finding in (about_hidden, by_ref):
+        with pytest.raises(PromotionRefused, match="hidden"):
+            ledger.promote(finding.id, recipient="blind", mode="push", selector="human", authorized_by="A", reason="r")
+    ledger.promote(harmless.id, recipient="blind", mode="discoverable", selector="human", authorized_by="A", reason="r")
+    assert [f.id for f in ledger.visible_to("blind")] == [harmless.id]

@@ -1,8 +1,11 @@
 """The controller is nonblocking orchestration over the journal, the executor and the leases."""
 import json
+import shutil
+import sys
 import threading
 import time
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -372,13 +375,13 @@ def test_cancelling_a_cell_ends_it_once_its_active_child_has_settled_and_release
         assert started.wait(5)
         requested = controller.cancel(cell.id)
         assert set(requested) == {cell.id, child.id, queued.id}
-        tree = controller.tree()
-        assert tree.get(queued.id).state is DelegationState.CANCELLED
-        assert tree.get(cell.id).state is DelegationState.ACTIVE            # its child is still ending
+        assert controller.tree().get(queued.id).state is DelegationState.CANCELLED
         release.set()
         controller.wait(child.id, timeout=5)
         ended = controller.wait(cell.id, timeout=5)
         assert ended.state is DelegationState.CANCELLED
+        kinds = [(e.delegation_id, e.kind) for e in controller.store.events()]
+        assert kinds.index((child.id, "delegation.cancelled")) < kinds.index((cell.id, "delegation.cancelled"))
         assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 4
         empty = controller.delegate(_spec(tmp_path, checks=1).model_copy(
             update={"spawn": SpawnPolicy(can_spawn=True, max_children=1, max_depth=1)}))
@@ -730,3 +733,193 @@ def test_recovery_routes_a_terminal_event_the_dead_process_never_delivered(tmp_p
         assert len(again.attention().items()) == 1                              # idempotent
     finally:
         again.shutdown()
+
+
+def test_recovery_activates_an_interior_cell_exposed_before_it_started(tmp_path):
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    seed_lemma(tmp_path)
+    controller = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    controller.shutdown()
+    controller.delegate(_spec(tmp_path, checks=1))                              # creates the root; stays queued
+    snapshot = LedgerStore(tmp_path).read()
+    cell = DelegationSpec(objective="cell", project_refs=(snapshot.head("L17").ref,), scope=snapshot.head("scope").ref,
+                          lease=ResourceLease(official_checks=2), concurrency=ConcurrencyLease(slots=1), created_by="human",
+                          spawn=SpawnPolicy(can_spawn=True, max_children=2, max_depth=1))
+    controller.store.append("cell-x", "delegation.created", {"spec": cell.model_dump(mode="json"), "parent_id": ROOT_ID,
+                                                             "created_at": "t"})
+    controller.store.append("cell-x", "budget.reserved", {"lease": cell.lease.model_dump(mode="json"), "slots": 1})
+    again = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    try:
+        again.recover()
+        node = again.tree().get("cell-x")
+        assert node.state is DelegationState.ACTIVE and node.interior
+        child = again.delegate(_spec(tmp_path, checks=1), parent_id="cell-x")
+        assert again.wait(child.id, timeout=5).state is DelegationState.COMPLETED
+    finally:
+        again.shutdown()
+
+
+def test_recovery_recreates_the_overlay_a_writable_leaf_was_promised(tmp_path):
+    from delegation_helpers import seed_project
+
+    from hardy.formal.contracts import Request
+    from hardy.formal.lean import LeanTools
+    from hardy.formal.workspace import LeanWorkspace
+
+    seed_project(tmp_path)
+    fake = (sys.executable, str(Path(__file__).resolve().parents[1] / "fake_lean.py"))
+    lean = LeanTools(Request("example : True", "workspace", ("Mathlib",)), fake)
+    root = tmp_path / "lean"
+    root.mkdir()
+    (root / "Main.lean").write_text("import Mathlib\n\ntheorem base_fact : True := by exact True.intro\n", encoding="utf-8")
+
+    def compile(module, source_root, build_root, source_file):
+        result = lean.compile_module(source_root, build_root, source_file, lean_path=str(build_root))
+        return result.ok, result.output
+
+    base = LeanWorkspace(root, tmp_path / ".build" / "lean", compile, environment="test-env")
+    script = [call("save_lean", {"path": "Worker.lean", "source": "import Mathlib\n\ntheorem w : True := by exact True.intro\n"}),
+              FINISH]
+
+    def make(open_worker):
+        return DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                    open_worker=open_worker,
+                                    root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                    notify=lambda text: None, workspace=base)
+
+    first = make(_open(script))
+    first.shutdown()
+    queued = first.delegate(_spec(tmp_path, checks=2).model_copy(update={"writable": True}))
+    # Forge the crash shape: the queued node is durable, the overlay event never landed.
+    overlay_dir = first.store.artifacts(queued.id).path / "overlay"
+    shutil.rmtree(overlay_dir, ignore_errors=True)
+    events = [e for e in first.store.events() if e.kind != "workspace.overlay_created"]
+    assert len(events) < len(first.store.events())
+    journal = first.store.workspace / "delegations" / "journal.jsonl"
+    journal.write_text("".join(json.dumps({"event": e.model_dump(mode="json"), "digest": e.digest}) + "\n"
+                               for e in _rechain(events)), encoding="utf-8")
+    again = make(_open(script))
+    try:
+        again.recover()
+        done = again.wait(queued.id, timeout=10)
+        assert done.state is DelegationState.COMPLETED and done.result.change_set
+        assert "workspace.overlay_created" in [e.kind for e in again.store.events()]
+    finally:
+        again.shutdown()
+
+
+def _rechain(events):
+    from hardy.workflows.delegation.contracts import DelegationEvent
+
+    out, previous = [], None
+    for number, event in enumerate(events):
+        fresh = DelegationEvent(sequence=number, previous=previous, delegation_id=event.delegation_id, kind=event.kind,
+                                timestamp=event.timestamp, payload=event.payload)
+        out.append(fresh)
+        previous = fresh.digest
+    return out
+
+
+def test_work_already_handed_to_the_executor_cannot_be_paused(tmp_path):
+    class Stuck:
+        def submit(self, job):
+            class Handle:
+                name = job.name
+                token = job.token if hasattr(job, "token") else None
+
+                def done(self):
+                    return False
+
+                def result(self, timeout=None):
+                    raise TimeoutError
+
+                def cancel(self):
+                    pass
+
+                def add_done_callback(self, fn):
+                    pass
+
+            return Handle()
+
+        slots = 1
+
+        def active(self):
+            return 1
+
+        def shutdown(self, *, wait):
+            pass
+
+    seed_lemma(tmp_path)
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=Stuck(),
+                                      open_worker=_open([FINISH]),
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=lambda text: None)
+    submitted = controller.delegate(_spec(tmp_path, checks=1))
+    assert controller.tree().get(submitted.id).state is DelegationState.QUEUED     # submitted, not yet started
+    with pytest.raises(ValueError, match="executor"):
+        controller.pause(submitted.id, by="human")
+
+
+def test_two_processes_cannot_both_fill_the_last_child_slot_of_a_cell(tmp_path):
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    seed_lemma(tmp_path)
+    controller = _controller(tmp_path, _open([FINISH]), checks=8, slots=1)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=4).model_copy(
+            update={"spawn": SpawnPolicy(can_spawn=True, max_children=1, max_depth=1)}))
+        stale = controller.store.tree()
+        other = DelegationStore(tmp_path)                                    # the second process
+        for store, id in ((controller.store, "c-1"), (other, "c-2")):
+            assert len(stale.get(cell.id).children) == 0                      # both saw a free slot
+            if id == "c-1":
+                store.append(id, "delegation.created", {"spec": _spec(tmp_path, checks=1).model_dump(mode="json"),
+                                                        "parent_id": cell.id, "created_at": "t"})
+            else:
+                with pytest.raises(ValueError, match="max_children"):
+                    store.append(id, "delegation.created", {"spec": _spec(tmp_path, checks=1).model_dump(mode="json"),
+                                                            "parent_id": cell.id, "created_at": "t"})
+        assert controller.tree().get(cell.id).children == ("c-1",)
+    finally:
+        controller.shutdown()
+
+
+def test_recovery_applies_the_current_root_ceilings_before_relaunching_queued_work(tmp_path):
+    seed_lemma(tmp_path)
+    generous = _controller(tmp_path, _open([FINISH]), checks=8, slots=1)
+    generous.shutdown()
+    small = generous.delegate(_spec(tmp_path, checks=1))
+    big = generous.delegate(_spec(tmp_path, checks=6))
+    strict = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    try:
+        strict.recover()
+        assert LeaseLedger(strict.tree()).reserved(ROOT_ID).official_checks == 4
+        assert strict.wait(small.id, timeout=5).state is DelegationState.COMPLETED
+        node = strict.tree().get(big.id)
+        assert node.state is DelegationState.CANCELLED and "ceiling" in (node.terminal_reason or "")
+        assert LeaseLedger(strict.tree()).released(big.id)
+    finally:
+        strict.shutdown()
+
+
+def test_a_second_controller_over_a_live_workspace_does_not_retire_its_running_worker(tmp_path):
+    started, release = threading.Event(), threading.Event()
+    first = _controller(tmp_path, _open([FINISH], gate=(started, release)), checks=4, slots=1)
+    try:
+        running = first.delegate(_spec(tmp_path, checks=1))
+        assert started.wait(5)
+        second = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=_open([FINISH]),
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=lambda text: None)
+        try:
+            assert second.recover() == ()
+            assert second.tree().get(running.id).state is DelegationState.ACTIVE
+        finally:
+            second.shutdown()
+        release.set()
+        assert first.wait(running.id, timeout=5).state is DelegationState.COMPLETED
+    finally:
+        release.set()
+        first.shutdown()

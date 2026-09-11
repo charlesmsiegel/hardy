@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.locking import FileLock
@@ -152,6 +152,8 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
             update: dict[str, Any] = {"state": _STATE_EVENTS[event.kind]}
             if event.kind == "delegation.started" and event.payload.get("interior"):
                 update["interior"] = True
+            if event.kind == "delegation.started" and event.payload.get("owner"):
+                update["owner"] = str(event.payload["owner"])
             if event.kind == "delegation.resumed" and id not in started:
                 update["state"] = DelegationState.QUEUED     # never started: back to the queue
             if "result" in event.payload:
@@ -169,6 +171,64 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
             delegations[id] = current.model_copy(update={
                 key: str(event.payload[key]) for key in _CONTEXT_KEYS if key in event.payload})
     return DelegationTree(delegations, usage, events, frozenset(cancel_requests))
+
+
+def _refuse_overspawn(tree: DelegationTree, event: DelegationEvent) -> None:
+    """A parent's frozen spawn policy is re-checked as the child is recorded, under the journal lock."""
+    parent = event.payload.get("parent_id")
+    if parent is None or parent not in tree.delegations:
+        return
+    owner = tree.get(parent)
+    if owner.spawn.can_spawn and len(owner.children) >= owner.spawn.max_children:
+        raise ValueError(f"parent delegation {parent} may not spawn another child: max_children "
+                         f"{owner.spawn.max_children} already recorded")
+
+
+class OwnerToken:
+    """A process's claim on the workers it runs, held as an OS lock for as long as it lives.
+
+    Recovery asks whether a token's lock can be taken: if it can, the owner is
+    gone and its work is interrupted; if it cannot, another live process is
+    still running that work and this one leaves it alone.
+    """
+
+    DIRECTORY = "owners"
+
+    def __init__(self, workspace: Path, id: str, lock: FileLock) -> None:
+        self.workspace = Path(workspace)
+        self.id = id
+        self._lock = lock
+
+    @classmethod
+    def _path(cls, workspace: Path, id: str) -> Path:
+        guard = WriteGuard(WriteGuard(Path(workspace), create=True).directory / DIRECTORY, create=True)
+        owners = WriteGuard(guard.directory / cls.DIRECTORY, create=True)
+        return owners.reserve(f"{id}.lock")
+
+    @classmethod
+    def hold(cls, workspace: Path) -> OwnerToken:
+        id = uuid4().hex[:16]
+        lock = FileLock(cls._path(workspace, id), timeout=1.0).__enter__()
+        return cls(workspace, id, lock)
+
+    @classmethod
+    def alive(cls, workspace: Path, id: str) -> bool:
+        probe = FileLock(cls._path(workspace, id), timeout=0.0, required=False).__enter__()
+        try:
+            return not probe.held
+        finally:
+            if probe.held:
+                probe.__exit__(None, None, None)
+
+    def release(self) -> None:
+        if self._lock.held:
+            self._lock.__exit__(None, None, None)
+
+    def __enter__(self) -> OwnerToken:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
 
 
 def _refuse_overdraft(tree: DelegationTree, delegation_id: str, event: DelegationEvent) -> None:
@@ -252,6 +312,8 @@ class DelegationStore:
                 # Re-checked here, under the journal's own lock: two processes
                 # that both passed `grant` on one stale balance cannot both record.
                 _refuse_overdraft(before, delegation_id, event)
+            if kind == "delegation.created":
+                _refuse_overspawn(before, event)
             line = json.dumps({"event": event.model_dump(mode="json"), "digest": event.digest},
                               ensure_ascii=False, allow_nan=False) + "\n"
             with guard.open(JOURNAL, "a", encoding="utf-8", newline="\n") as handle:
@@ -309,12 +371,18 @@ class DelegationStore:
         return None
 
     def recover(self, *, now: str) -> tuple[Delegation, ...]:
-        """Mark every active or waiting delegation interrupted; paused work stays paused. Idempotent."""
+        """Mark every active or waiting delegation interrupted; paused work stays paused. Idempotent.
+
+        Work whose owning process still holds its token is another live
+        process's, not this one's to retire.
+        """
         recovered = []
         for delegation in self.tree().delegations.values():
             # An interior cell runs no worker: it is structure the next process
             # continues, not work the last one was in the middle of.
             if delegation.state in INTERRUPTIBLE and not delegation.interior:
+                if delegation.owner is not None and OwnerToken.alive(self.workspace, delegation.owner):
+                    continue
                 self.append(delegation.id, "delegation.recovered",
                             {"reason": "interrupted", "recovered_at": now})
                 recovered.append(self.tree().get(delegation.id))

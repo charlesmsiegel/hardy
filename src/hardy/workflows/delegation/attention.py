@@ -34,6 +34,9 @@ PRIORITY_FINDINGS = frozenset({
     FindingKind.COUNTEREXAMPLE.value, FindingKind.OBSTRUCTION.value, FindingKind.VERIFIED_LEMMA.value,
 })
 
+#: The most of a worker's synthesis an attention summary carries.
+SUMMARY_EXCERPT_CHARS = 400
+
 #: Findings that contradict or block: never coalesced into a terminal summary.
 CONTRADICTION_FINDINGS = frozenset({FindingKind.COUNTEREXAMPLE.value, FindingKind.OBSTRUCTION.value})
 
@@ -211,6 +214,10 @@ def derive_item(event: DelegationEvent, tree: DelegationTree, *, force: bool = F
         if "result" in event.payload:
             synthesis = WorkerResult.model_validate(event.payload["result"]).synthesis
         reason = event.payload.get("reason")
+        if len(synthesis) > SUMMARY_EXCERPT_CHARS:
+            # A worker writes its synthesis; the summary carries an excerpt and
+            # the whole of it stays behind result.json.
+            synthesis = synthesis[:SUMMARY_EXCERPT_CHARS].rstrip() + " ... (full synthesis in result.json)"
         tail = synthesis or (f"reason: {reason}" if reason else "")
         summary = f"{delegation.id} ({delegation.spec.objective}) {delegation.state.value}"
         if tail:

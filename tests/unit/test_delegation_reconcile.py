@@ -315,3 +315,34 @@ def test_a_proof_submission_for_a_subject_resolves_that_subjects_open_obligation
     prove = after.head("prove-LZ")
     assert prove.status is c.ObligationStatus.RESOLVED and owners.policy.is_accepted(after, prove.resolution)
     assert owners.verified == ["LZ"] and (tmp_path / "lean" / "Twelve.lean").exists()
+
+
+def test_identical_edits_on_both_sides_merge_instead_of_conflicting(tmp_path):
+    base = _base(tmp_path)
+    same = _overlay(base, tmp_path, "same", 100)
+    assert same.save(PurePosixPath("Main.lean"), MAIN.replace("base_fact", "shared_fact")) is None
+    (tmp_path / "lean" / "Main.lean").write_text(MAIN.replace("base_fact", "shared_fact"), encoding="utf-8")
+    plan, conflicts = reconcile(same.change_set(), base, head_revision=101)
+    assert conflicts == () and plan.files == ()                                  # already on the head
+    partial = _overlay(base, tmp_path, "partial", 100)
+    assert partial.save(PurePosixPath("Main.lean"),
+                        MAIN.replace("base_fact", "shared_fact") + "\ntheorem extra : True := by exact True.intro\n") is None
+    plan, conflicts = reconcile(partial.change_set(), base, head_revision=101)
+    assert conflicts == () and "extra" in plan.files[0].content and plan.files[0].content.count("shared_fact") == 1
+
+
+def test_an_incomplete_admission_is_reported_once_across_reopenings(tmp_path):
+    seed_project(tmp_path)
+    base = _base(tmp_path)
+    owners = ScriptedOwners(tmp_path / "capabilities")
+    overlay = _overlay(base, tmp_path, "w", LedgerStore(tmp_path).read().revision)
+    assert overlay.save(PurePosixPath("A.lean"), A) is None
+    candidate, change_set = _candidate(tmp_path, overlay, "w")
+    with pytest.raises(RuntimeError):
+        _admission(tmp_path, base, owners, crash_after=AdmissionPhase.FILES_COMMITTED).admit(candidate, change_set)
+    for _ in range(3):
+        _admission(tmp_path, base, owners).recover()
+    events = DelegationStore(tmp_path).events()
+    assert [e.kind for e in events].count("admission.incomplete") == 1
+    from hardy.workflows.delegation.attention import AttentionInbox
+    assert len([i for i in AttentionInbox(DelegationStore(tmp_path)).items() if i.category == "admission"]) == 1

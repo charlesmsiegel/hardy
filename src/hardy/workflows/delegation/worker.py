@@ -124,7 +124,7 @@ OpenWorker = Callable[[WorkerLaunch, Dispatch, Observe], OpenedWorker]
 
 
 class _NoTime(Exception):
-    """The active-time lease was spent before the worker opened."""
+    """A lease dimension was spent before the worker opened; the message names it."""
 
 
 class _WorkerState:
@@ -142,10 +142,17 @@ class _WorkerState:
             launch.on_budget(self.checks)
         #: Set by the active-time timer: the provider was still running when the lease ran out.
         self.deadline_hit = False
+        #: One tool call at a time: the SDK may dispatch several concurrently, and the
+        #: overlay, the finding sequence and the finish flag are one worker's state.
+        self._serial = threading.Lock()
         self.cas: CasToolRuntime | None = None
         self.cas_opened = False
 
     def tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        with self._serial:
+            return self._tool(name, arguments)
+
+    def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if self.finished is not None:
             return ToolResult(False, "this delegation already called finish; nothing further is accepted")
         if name == "propose_finding":
@@ -322,7 +329,9 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
         token.check()
         if launch.lease.active_seconds is not None and launch.lease.active_seconds <= 0:
             # Nothing to spend: no provider context is opened for a lease that is already over.
-            raise _NoTime
+            raise _NoTime("active_seconds")
+        if launch.lease.provider_calls is not None and launch.lease.provider_calls <= 0:
+            raise _NoTime("provider_calls")
         opened = open_worker(launch, dispatch, observe)
         store.append("worker.opened", {"context_id": opened.context_id, "model": getattr(opened.runtime, "model", None)},
                      phase=RunPhase.PROVING)
@@ -353,8 +362,8 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
             status, reason = DelegationState.PARTIAL, "no_finish_call"
         else:
             status, synthesis = state.finished
-    except _NoTime:
-        status, reason = DelegationState.EXHAUSTED, "active_seconds lease exhausted before the provider was opened"
+    except _NoTime as spent:
+        status, reason = DelegationState.EXHAUSTED, f"{spent} lease exhausted before the provider was opened"
     except WorkerCancelled:
         status, reason = DelegationState.CANCELLED, "cancelled"
     except Exception as error:  # noqa: BLE001 - a worker's failure is a result, not a crash upstream

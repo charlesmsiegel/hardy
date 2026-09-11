@@ -244,6 +244,8 @@ class Delegation(FrozenModel):
     result: WorkerResult | None = None
     #: Started as a container for coordinated children, with no worker of its own.
     interior: bool = False
+    #: The token of the process that started this work; recovery leaves a live owner's work alone.
+    owner: str | None = None
 
     @property
     def spawn(self) -> SpawnPolicy:

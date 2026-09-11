@@ -319,6 +319,17 @@ def _merge_three_way(base: str, head: str, proposed: str) -> str | None:
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, base_lines, lines).get_opcodes():
             if tag != "equal":
                 edits.append((i1, i2, lines[j1:j2], side))
+    # The same replacement made independently on both sides is one edit, not
+    # a conflict: convergent proof changes merge as already applied.
+    seen: set[tuple[int, int, tuple[str, ...]]] = set()
+    unique: list[tuple[int, int, list[str], str]] = []
+    for edit in edits:
+        key = (edit[0], edit[1], tuple(edit[2]))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(edit)
+    edits = unique
     edits.sort(key=lambda edit: (edit[0], edit[1]))
     for (a1, a2, _, side_a), (b1, b2, _, side_b) in zip(edits, edits[1:], strict=False):
         if side_a == side_b:
@@ -644,17 +655,22 @@ class AuthoritativeAdmission:
     def recover(self) -> tuple[AdmissionAttempt, ...]:
         """Attempts left without a terminal phase; files-committed ones become sticky attention."""
         latest: dict[str, tuple[str, AdmissionAttempt]] = {}
+        warned: set[str] = set()
         for event in self.store.events():
             if event.kind == "admission.attempt":
                 attempt = AdmissionAttempt.model_validate(event.payload["attempt"])
                 latest[attempt.id] = (event.delegation_id, attempt)
+            elif event.kind == "admission.incomplete":
+                warned.add(str(event.payload.get("attempt")))
         incomplete = []
         inbox = AttentionInbox(self.store)
         for delegation_id, attempt in latest.values():
             if attempt.phase in _TERMINAL:
                 continue
             incomplete.append(attempt)
-            if attempt.phase in _INCOMPLETE:
+            # Warned once: the sticky item stays until a human handles it, and
+            # every reopening after that must not mint another.
+            if attempt.phase in _INCOMPLETE and attempt.id not in warned:
                 event = self.store.append(delegation_id, "admission.incomplete",
                                           {"attempt": attempt.id, "phase": attempt.phase.value})
                 item = inbox.derive(event, self.store.tree())
