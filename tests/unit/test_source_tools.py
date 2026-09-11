@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from pdf_helpers import Page, book_outline, book_pages, build_pdf
 
@@ -95,3 +96,63 @@ def test_runtime_is_a_thin_facade_over_the_reader(tmp_path):
     assert isinstance(runtime, SourceToolRuntime)
     children = json.loads(runtime.call("source_map", {"source": sha[:12], "node": json.loads(runtime.call("source_map", {"source": sha[:12]}).output)["entries"][0]["node"]}).output)
     assert children["children"]
+
+
+def test_tools_read_the_tree_the_seed_names_not_the_preferred_one(tmp_path):
+    from hardy.literature.sources.contracts import NodeKind
+    from hardy.literature.sources.repair import (
+        ProposedUnit,
+        RepairProposal,
+        apply_repair,
+        weak_regions,
+    )
+
+    pages = [Page((("THEOREM 2.3 Every compact set is closed.", 72, 720), ("PROOF Standard. Q.E.D.", 72, 690),
+                   ("Lemma 2.4. A clean lemma.", 72, 660), ("Proof. Clear. Q.E.D.", 72, 630)))]
+    runtime, sha = seeded(tmp_path, pages=pages)
+    lib = runtime.library
+    first = lib.trees.preferred(sha)
+    texts = lib.representations.texts(sha)
+    (window,) = weak_regions(first, texts)
+    proof_at = window.text.index("PROOF")
+    proposal = RepairProposal(window=window, proposer="m", proposer_version="0", units=(
+        ProposedUnit(kind=NodeKind.THEOREM, start=window.start, end=window.start + proof_at - 1, number="2.3", boundary_status="high",
+                     statement_end=window.start + proof_at - 1),
+        ProposedUnit(kind=NodeKind.PROOF, start=window.start + proof_at, end=window.end, boundary_status="high", proof_of="2.3")))
+    second = lib.trees.admit(apply_repair(first, proposal, texts), {r.id: r for r in lib.representations.list(sha)}, texts)
+    assert lib.trees.preferred(sha).id == second.id and second.id != first.id
+    listed = json.loads(runtime.call("list_sources", {}).output)["sources"][0]
+    assert listed["tree"] == first.id
+    found = json.loads(runtime.call("find_source_statements", {"source": sha[:12], "number": "2.3"}).output)
+    assert found["tree"] == first.id and found["statements"] == []  # 2.3 only exists in the repaired tree
+    hits = json.loads(runtime.call("search_source", {"source": sha[:12], "query": "2.4"}).output)
+    read = json.loads(runtime.call("read_source", {"source": sha[:12], "node": hits["hits"][0]["node"]}).output)
+    assert read["tree"] == first.id
+    region = json.loads(runtime.call("show_source_region", {"source": sha[:12], "node": hits["hits"][0]["node"]}).output)
+    assert region["tree"] == first.id
+    source_map = json.loads(runtime.call("source_map", {"source": sha[:12]}).output)
+    assert source_map["tree"] == first.id
+    later = datetime(2030, 1, 1, tzinfo=UTC)
+    runtime.seeds.add(new_seed(sha, tree=second.id, priority=0, now=later), expected_revision=runtime.seeds.revision())
+    refused = runtime.call("source_map", {"source": sha[:12]})
+    assert refused.ok is False and "several trees" in refused.output
+
+
+def test_delivery_refuses_when_no_cut_fits_the_budget(tmp_path):
+    runtime, sha = seeded(tmp_path)
+    found = json.loads(runtime.call("find_source_statements", {"source": sha[:12], "number": "1.2"}).output)
+    (node,) = found["statements"]
+    full = json.loads(runtime.call("read_source", {"source": sha[:12], "node": node["node"]}).output)
+    assert full["span"]["anchors"]
+    elided = {**full, "text": "", "truncated": True, "span": {**full["span"], "anchors": [], "anchors_elided": True}}
+    size = len(json.dumps(elided, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    tight = SourceToolRuntime(runtime.seeds, runtime.library, observation_bytes=size + 8)
+    kept = tight.call("read_source", {"source": sha[:12], "node": node["node"]})
+    assert kept.ok, kept.output
+    payload = json.loads(kept.output)
+    assert payload["span"]["anchors_elided"] is True and payload["span"]["content_sha256"] == full["span"]["content_sha256"]
+    assert len(kept.output.encode("utf-8")) <= size + 8
+    hopeless = SourceToolRuntime(runtime.seeds, runtime.library, observation_bytes=size - 8)
+    refused = hopeless.call("read_source", {"source": sha[:12], "node": node["node"]})
+    assert refused.ok is False and "does not fit the observation budget" in refused.output
+    assert len(refused.output.encode("utf-8")) <= size - 8

@@ -83,5 +83,6 @@ def default_adapters() -> AdapterRegistry:
     from .epub import EpubAdapter
     from .pdf import PdfAdapter
     from .tex import TexAdapter
+    from .text import TextAdapter
 
-    return AdapterRegistry((PdfAdapter(), TexAdapter(), EpubAdapter()))
+    return AdapterRegistry((PdfAdapter(), TexAdapter(), EpubAdapter(), TextAdapter()))
