@@ -174,6 +174,8 @@ A problem's `delegations/journal.jsonl` is the append-only record of background 
 | `cancel.requested` | `reason` | A cancellation request; the executor ends the worker. |
 | `attention.derived` / `attention.delivered` / `attention.handled` | `item` / `receipt` / `item_id` | An attention item derived from an event; a delivery receipt naming the recipient (`human` or `main_agent`), mode, conversation epoch and transcript offset; a human handling it. |
 
+A worker's own `trajectory.jsonl` additionally carries `context.retrieved` events, one per query it made while running: the `operation` (`read_project`, `read_item`, `read_neighborhood`, `search_literature`, `fetch_source`, `read_source`), what it asked for, the `intent` of a literature search, the ids `delivered`, and the ids `refused` by the delegation's visibility policy. Together with `manifest.json`, which records what was preloaded and why, this is what distinguishes preloaded from independently retrieved from seeded material.
+
 Each `<delegation-id>/` directory holds `core.json` (the frozen problem core, hashable, shared by every worker on one target), `brief.json` (the worker's own research brief), `manifest.json` (the context manifest), `prompt.md`, `trajectory.jsonl` (a run trajectory in the same shape as a staged run's), `findings.json` and `result.json`. A finding is execution provenance with a `kind`, `summary`, `payload`, related refs and an `evidence_profile` that defaults to `speculative`; recording one admits nothing to the ledger.
 
 ## Scoreboards, baselines, pools
