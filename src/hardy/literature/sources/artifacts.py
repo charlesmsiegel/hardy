@@ -28,6 +28,7 @@ from pathlib import Path
 from hardy.foundation.files import LayoutError, WriteGuard, guard_for, read_bytes, read_text
 
 from .contracts import (
+    RESTRICTION,
     AccessPolicy,
     ArtifactAvailability,
     ImportProvenance,
@@ -187,6 +188,13 @@ class ArtifactStore:
             )
             reused = not self._admit(artifact, data)
         artifact = self.record(sha256)
+        if reused and RESTRICTION[request.access] > RESTRICTION[artifact.access]:
+            # Identical bytes imported again under a stricter policy: the record
+            # tightens. The looser policy of an earlier import never survives
+            # a later correction, whatever order the imports came in.
+            artifact = SourceArtifact.model_validate({**artifact.model_dump(mode="json"), "access": request.access.value})
+            guard, name = guard_for(self.root, f"{sha256}/{RECORD}")
+            guard.write_json(name, artifact.model_dump(mode="json"))
         provenance = ImportProvenance(
             id=f"import-{secrets.token_hex(8)}", artifact_sha256=sha256,
             original_name=request.original_name or (request.path.name if request.path else None),

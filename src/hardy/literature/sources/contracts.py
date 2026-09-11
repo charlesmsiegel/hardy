@@ -33,6 +33,18 @@ class AccessPolicy(str, Enum):
     UNKNOWN_RESTRICTED = "unknown_restricted"
 
 
+#: How much each policy withholds; a higher rank never loosens under a lower one.
+RESTRICTION = {
+    AccessPolicy.REDISTRIBUTABLE: 0, AccessPolicy.PUBLIC_PROVIDER_RETRIEVABLE: 1,
+    AccessPolicy.PRIVATE_LOCAL: 2, AccessPolicy.UNKNOWN_RESTRICTED: 3,
+}
+
+
+def most_restrictive(*policies: AccessPolicy) -> AccessPolicy:
+    """The policy that governs when several apply: a derived text is never freer than its artifact."""
+    return max(policies, key=lambda p: RESTRICTION[p])
+
+
 class SourceFormat(str, Enum):
     PDF = "pdf"
     EPUB = "epub"

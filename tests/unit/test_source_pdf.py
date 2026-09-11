@@ -124,3 +124,23 @@ def test_extraction_is_deterministic_for_one_extractor_version():
     first, second = extract(data), extract(data)
     assert [r.id for r, _ in first.representations] == [r.id for r, _ in second.representations]
     assert [r.output_sha256 for r, _ in first.representations] == [r.output_sha256 for r, _ in second.representations]
+
+
+def test_fragment_bound_is_part_of_representation_identity(tmp_path):
+    from hardy.literature.sources.artifacts import ImportRequest
+    from hardy.literature.sources.library import ManagedLibrary
+
+    lib = ManagedLibrary(tmp_path / "library")
+    data = build_pdf(book_pages())
+    sha = lib.import_source(ImportRequest(data=data), extract=False).outcome.artifact.sha256
+    small = lib.extract(sha, budget=ExtractionBudget(max_fragments=3))
+    assert small.status == "partial" and any(d.code == "fragment_bound" for d in small.diagnostics)
+    full = lib.extract(sha)
+    assert full.status == "ok"
+    ids = {r.kind: r.id for r in small.representations}, {r.kind: r.id for r in full.representations}
+    assert ids[0][RepresentationKind.NATIVE_TEXT] != ids[1][RepresentationKind.NATIVE_TEXT]
+    assert ids[0][RepresentationKind.NORMALIZED_TEXT] != ids[1][RepresentationKind.NORMALIZED_TEXT]
+    assert ids[0][RepresentationKind.PAGE_MANIFEST] == ids[1][RepresentationKind.PAGE_MANIFEST]  # page geometry does not depend on the bound
+    native = {r.id: r for r in lib.representations.list(sha, RepresentationKind.NATIVE_TEXT)}
+    assert len(native) == 2 and {dict(r.configuration)["max_fragments"] for r in native.values()} == {"3", str(ExtractionBudget().max_fragments)}
+    assert len(lib.representations.text(sha, ids[1][RepresentationKind.NATIVE_TEXT])) > len(lib.representations.text(sha, ids[0][RepresentationKind.NATIVE_TEXT]))

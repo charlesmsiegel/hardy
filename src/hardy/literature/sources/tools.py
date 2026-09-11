@@ -156,12 +156,13 @@ class SourceToolRuntime:
 
     # --- resolution ---------------------------------------------------------
 
-    def _resolve(self, source: str) -> tuple[str, str | None]:
-        """The seeded artifact and the tree the seed pins, if it pins one.
+    def _resolve(self, source: str) -> tuple[str, str | None, frozenset[str] | None]:
+        """The seeded artifact, the tree the seed pins, and the node ids it grants.
 
         A seed that names a tree grants that tree, not whichever tree the
         library prefers today; a later rebuild must not silently change what
-        the session reads.
+        the session reads. A seed that names a subtree grants that subtree's
+        nodes and nothing else in the source.
         """
         seeds = self.seeds.by_prefix(source)
         if not seeds:
@@ -176,7 +177,35 @@ class SourceToolRuntime:
         trees = {s.tree for s in seeds if s.tree}
         if len(trees) > 1:
             raise SourceUnavailable(f"{source!r} is seeded under several trees ({', '.join(sorted(trees))}); unseed one first")
-        return digests.pop(), (trees.pop() if trees else None)
+        subtrees = {s.subtree for s in seeds if s.subtree}
+        if len(subtrees) > 1:
+            raise SourceUnavailable(f"{source!r} is seeded under several subtrees ({', '.join(sorted(subtrees))}); unseed one first")
+        sha, tree = digests.pop(), (trees.pop() if trees else None)
+        return sha, tree, (self._scope(sha, tree, subtrees.pop()) if subtrees else None)
+
+    def _scope(self, sha: str, tree_id: str | None, subtree: str) -> frozenset[str]:
+        """The subtree node and every descendant, in the tree the seed reads."""
+        tree = self.library.trees.get(sha, tree_id) if tree_id else self.library.trees.preferred(sha)
+        if tree is None:
+            raise SourceUnavailable(f"artifact {sha[:12]} has no tree in which to find the seeded subtree {subtree}")
+        children: dict[str | None, list[str]] = {}
+        for node in tree.nodes:
+            children.setdefault(node.parent, []).append(node.id)
+        if not any(node.id == subtree for node in tree.nodes):
+            raise SourceUnavailable(f"the seed names subtree {subtree}, which tree {tree.id} does not hold")
+        found = {subtree}
+        stack = [subtree]
+        while stack:
+            for child in children.get(stack.pop(), ()):
+                if child not in found:
+                    found.add(child)
+                    stack.append(child)
+        return frozenset(found)
+
+    @staticmethod
+    def _within(scope: frozenset[str] | None, node: str) -> None:
+        if scope is not None and node not in scope:
+            raise SourceUnavailable(f"node {node} is outside the seeded subtree; this problem was granted only part of the source")
 
     # --- operations ---------------------------------------------------------
 
@@ -184,32 +213,43 @@ class SourceToolRuntime:
         entries = []
         for seed in self.seeds.seeds()[:MAX_LIST_ENTRIES]:
             source_map = self.reader.source_map(seed.artifact_sha256, depth=1, max_nodes=MAX_MAP_NODES, tree=seed.tree)
+            unavailable = source_map.unavailable
+            shown = list(source_map.entries)
+            if seed.subtree and unavailable is None:
+                try:
+                    scope = self._scope(seed.artifact_sha256, seed.tree, seed.subtree)
+                except SourceUnavailable as error:
+                    unavailable, shown = str(error), []
+                else:
+                    shown = [e for e in shown if e.node in scope]
             entries.append({
                 "seed": seed.id, "artifact": seed.artifact_sha256, "edition": seed.edition or source_map.edition, "title": source_map.title,
                 "priority": seed.priority, "intent": seed.intent, "pages": source_map.page_count, "nodes": source_map.node_count,
-                "statements": source_map.statement_count, "tree": source_map.tree, "unavailable": source_map.unavailable,
-                "map": [_entry(e) for e in source_map.entries[:24]], "map_truncated": source_map.truncated or len(source_map.entries) > 24,
+                "statements": source_map.statement_count, "tree": source_map.tree, "subtree": seed.subtree, "unavailable": unavailable,
+                "map": [_entry(e) for e in shown[:24]], "map_truncated": source_map.truncated or len(shown) > 24,
             })
         note = "Seeded sources are readable through source_map, find_source_statements, search_source and read_source. A source not listed here is not readable." if entries else "This problem has no seeded sources; ask the user to run `hardy library seed <digest>`."
         return self._json({"sources": entries, "note": note})
 
     def source_map(self, source: str, *, depth: int = 2, node: str | None = None) -> ToolResult:
-        sha, tree = self._resolve(source)
+        sha, tree, scope = self._resolve(source)
         if node:
+            self._within(scope, node)
             children = self.reader.list_children(sha, node, tree=tree)
             return self._json({"artifact": sha, "tree": tree, "node": node, "children": [_node_summary(n) for n in children[:MAX_MAP_NODES]],
                                "truncated": len(children) > MAX_MAP_NODES})
         source_map = self.reader.source_map(sha, depth=max(1, min(depth, 4)), max_nodes=MAX_MAP_NODES, tree=tree)
         if source_map.unavailable:
             return ToolResult(False, self._bounded(source_map.unavailable))
+        entries = [e for e in source_map.entries if scope is None or e.node in scope]
         return self._json({
             "artifact": sha, "tree": source_map.tree, "edition": source_map.edition, "title": source_map.title, "pages": source_map.page_count,
-            "nodes": source_map.node_count, "statements": source_map.statement_count, "entries": [_entry(e) for e in source_map.entries],
-            "truncated": source_map.truncated,
+            "nodes": source_map.node_count, "statements": source_map.statement_count, "entries": [_entry(e) for e in entries],
+            "truncated": source_map.truncated, "subtree": None if scope is None else "this problem was granted one subtree; entries outside it are not listed",
         })
 
     def find_statements(self, source: str, *, number: str | None, kind: str | None, query: str | None, limit: int) -> ToolResult:
-        sha, tree = self._resolve(source)
+        sha, tree, scope = self._resolve(source)
         kinds: tuple[NodeKind, ...] = ()
         if kind:
             try:
@@ -217,21 +257,26 @@ class SourceToolRuntime:
             except ValueError:
                 return ToolResult(False, f"unknown statement kind {kind!r}")
         found = self.reader.find_statements(sha, kinds=kinds, number=number, query=query, limit=max(1, min(limit, 100)), tree=tree)
+        found = tuple(n for n in found if scope is None or n.id in scope)
         note = "" if found else "no matching unit was recovered from this source; the source may still contain one the extraction missed"
+        if not found and scope is not None:
+            note += "; only the seeded subtree is searched"
         return self._json({"artifact": sha, "tree": tree, "statements": [_node_summary(n) for n in found], "note": note})
 
     def search(self, source: str, query: str, *, limit: int) -> ToolResult:
-        sha, tree = self._resolve(source)
+        sha, tree, scope = self._resolve(source)
         hits = self.reader.search_text(sha, query, limit=max(1, min(limit, 50)), tree=tree)
+        hits = tuple(h for h in hits if scope is None or h.node in scope)
         return self._json({"artifact": sha, "tree": tree, "query": query, "hits": [h.model_dump(mode="json") for h in hits],
                            "note": "ranks 0-2 are exact (id, printed number, title); 3-4 are fuzzy word matches and are leads, not identity"})
 
     def read(self, source: str, node: str, *, part: str, start: int) -> ToolResult:
-        sha, tree = self._resolve(source)
+        sha, tree, scope = self._resolve(source)
+        self._within(scope, node)
         if part == "statement":
             delivery = self.reader.read_statement(sha, node, tree=tree)
         elif part == "proof":
-            delivery = self.reader.read_proof(sha, node, tree=tree)
+            delivery = self.reader.read_proof(sha, node, start=start, tree=tree)
         elif part == "context":
             delivery = self.reader.read_context(sha, node, tree=tree)
         elif part == "node":
@@ -241,7 +286,8 @@ class SourceToolRuntime:
         return self._delivery(delivery, part)
 
     def region(self, source: str, node: str) -> ToolResult:
-        sha, tree = self._resolve(source)
+        sha, tree, scope = self._resolve(source)
+        self._within(scope, node)
         anchors = self.reader.original_region(sha, node, tree=tree)
         labels = dict(self.library.representations.page_labels(sha))
         pages = sorted({a.locator.page_index for a in anchors if hasattr(a.locator, "page_index")})

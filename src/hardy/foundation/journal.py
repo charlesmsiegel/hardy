@@ -65,6 +65,41 @@ def record_digest(record: BaseModel) -> str:
     })
 
 
+def verify_chain(directory: Path) -> int:
+    """Check a chained directory's envelopes and hash chain without reading its records into types.
+
+    The revision count when every file is in sequence and every digest holds;
+    a `JournalError` naming the first fault otherwise. This is what an import
+    runs over a staged copy before any of it becomes a journal Hardy reads.
+    The project ledger writes the same chain with two more envelope keys, so
+    the check is on the chain (sequence, previous, content digest) and the
+    record envelopes' shape, not on one schema string.
+    """
+    directory = Path(directory)
+    names = sorted(p.name for p in directory.iterdir() if p.suffix.lower() == ".json") if directory.is_dir() else []
+    previous: str | None = None
+    for sequence, name in enumerate(names, 1):
+        if name != f"{sequence:020d}.json":
+            raise JournalError(f"journal sequence gap or invalid filename at {name}")
+        try:
+            event = json.loads((directory / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise JournalError(f"journal file {name} is not readable JSON") from error
+        if not isinstance(event, dict) or not {"schema", "sequence", "previous", "records", "digest"} <= set(event):
+            raise JournalError(f"invalid journal transaction envelope in {name}")
+        if not isinstance(event["schema"], str) or not event["schema"]:
+            raise JournalError("unsupported journal schema")
+        payload = {k: v for k, v in event.items() if k != "digest"}
+        if event["digest"] != json_digest(payload):
+            raise JournalError(f"journal transaction content digest mismatch in {name}")
+        if type(event["sequence"]) is not int or event["sequence"] != sequence or event["previous"] != previous:
+            raise JournalError(f"journal transaction history mismatch at {name}")
+        if not isinstance(event["records"], list) or any(not isinstance(e, dict) or not {"type", "value"} <= set(e) for e in event["records"]):
+            raise JournalError(f"invalid journal record envelope in {name}")
+        previous = event["digest"]
+    return len(names)
+
+
 class Journal:
     def __init__(self, directory: Path, *, types: Mapping[str, type[BaseModel]], lock_timeout: float = 30.0) -> None:
         self.directory = Path(directory)

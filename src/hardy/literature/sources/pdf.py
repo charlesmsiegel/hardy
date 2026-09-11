@@ -154,9 +154,13 @@ class PdfAdapter:
         status = "ok" if coverage >= 0.9 else "partial" if coverage >= 0.5 else "poor"
         native_quality = QualityProfile(status=status, coverage=coverage, unmapped_regions=page_count - text_pages, diagnostics=tuple(diagnostics))
 
+        # Reaching the fragment bound truncates the text and layout, so the
+        # bound is a result-affecting setting: a different bound is a
+        # different representation, never a conflicting write under one id.
+        bound = (("max_fragments", str(budget.max_fragments)),)
         manifest_id = representation_id(RepresentationKind.PAGE_MANIFEST, self.name, self.version)
-        native_id = representation_id(RepresentationKind.NATIVE_TEXT, self.name, self.version)
-        normalized_id = representation_id(RepresentationKind.NORMALIZED_TEXT, self.name, self.version, (("whitespace", "collapsed"),))
+        native_id = representation_id(RepresentationKind.NATIVE_TEXT, self.name, self.version, bound)
+        normalized_id = representation_id(RepresentationKind.NORMALIZED_TEXT, self.name, self.version, (("whitespace", "collapsed"), *bound))
         stamp = _stamp()
 
         manifest_payload = {PAGES_PAYLOAD: json.dumps(pages, ensure_ascii=False, sort_keys=True).encode("utf-8")}
@@ -171,14 +175,14 @@ class PdfAdapter:
         }
         native = DerivedRepresentation(
             id=native_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.NATIVE_TEXT, extractor=self.name,
-            extractor_version=self.version, inputs=(manifest_id,), output_sha256=payload_digest(native_payload), derived_at=stamp,
+            extractor_version=self.version, configuration=bound, inputs=(manifest_id,), output_sha256=payload_digest(native_payload), derived_at=stamp,
             quality=native_quality, access=artifact.access, payload_files=tuple(native_payload),
         )
         normalized_text, normalized_spans = _normalize(native_text, page_spans)
         normalized_payload = {TEXT_PAYLOAD: normalized_text.encode("utf-8")}
         normalized = DerivedRepresentation(
             id=normalized_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.NORMALIZED_TEXT, extractor=self.name,
-            extractor_version=self.version, configuration=(("whitespace", "collapsed"),), inputs=(native_id,),
+            extractor_version=self.version, configuration=(("whitespace", "collapsed"), *bound), inputs=(native_id,),
             output_sha256=payload_digest(normalized_payload), derived_at=stamp, quality=native_quality.model_copy(update={"diagnostics": ()}),
             access=artifact.access, payload_files=tuple(normalized_payload),
         )

@@ -232,20 +232,20 @@ class SourceReader:
             return self._unavailable(sha256, error)
         return self._deliver(loaded, record.statement_span or record.span, node=record.id)
 
-    def read_proof(self, sha256: str, node: str, *, tree: str | None = None) -> Delivery:
+    def read_proof(self, sha256: str, node: str, *, start: int = 0, tree: str | None = None) -> Delivery:
         try:
             loaded = self._load(sha256, tree)
             statement = loaded.tree.node(node)
         except (SourceUnavailable, KeyError) as error:
             return self._unavailable(sha256, error)
         if statement.kind is NodeKind.PROOF:
-            return self._deliver(loaded, statement.span, node=statement.id)
+            return self._deliver(loaded, statement.span, node=statement.id, start=start)
         proofs = [e.source for e in loaded.tree.edges if e.kind is SourceEdgeKind.PROOF_OF and e.target == node]
         if not proofs:
             return Delivery(text="", artifact_sha256=sha256, tree=loaded.tree.id, node=node,
                             unavailable="no proof node is recorded for this statement; that is not evidence the source has none")
         proof = loaded.tree.node(proofs[0])
-        return self._deliver(loaded, proof.span, node=proof.id)
+        return self._deliver(loaded, proof.span, node=proof.id, start=start)
 
     def read_context(self, sha256: str, node: str, *, before: int = 400, after: int = 400, tree: str | None = None) -> Delivery:
         try:
