@@ -1,0 +1,198 @@
+"""One leaf worker: an independent provider context, bounded tools, a structured result.
+
+The worker owns its conversation, its trajectory and its findings. It never
+receives the main session's transcript, dispatcher or tools; the session
+opens a fresh runtime for it through the same factory it uses for itself.
+What comes back is a WorkerResult and artifacts under the delegation's store,
+never a transcript pasted into anyone else's context.
+"""
+from __future__ import annotations
+
+import json
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import PurePosixPath
+from typing import Any
+from uuid import uuid4
+
+from hardy.agents.contracts import ChatRuntime
+from hardy.agents.executor import CancelToken, WorkerCancelled
+from hardy.agents.usage import Usage
+from hardy.foundation.values import ToolResult
+from hardy.workflows.contracts import RunPhase
+from hardy.workflows.delegation.contracts import (
+    DelegationState,
+    ResourceLease,
+    ResourceUsage,
+    WorkerResult,
+)
+from hardy.workflows.delegation.findings import Finding
+from hardy.workflows.storage import RunStore
+
+WORKER_SYSTEM_PROMPT = (
+    "You are a Hardy delegation worker. You receive one exact mathematical target and a "
+    "research brief. Work on the target only; the statement is fixed and you may not change it. "
+    "Record every useful discovery with `propose_finding` (a finding is a proposal, not project "
+    "truth) and end your work with exactly one `finish` call stating completed, partial or failed "
+    "with a short synthesis for the mathematician. Nothing you say outside `finish` is reported."
+)
+
+WORKER_TOOLS: list[dict[str, Any]] = [
+    {"type": "function", "function": {"name": "propose_finding", "description": "Record one structured discovery: a candidate lemma, reduction, counterexample, computation, literature lead, obstruction, failed approach, strategy, question or note. Proposing a finding never resolves anything; it is provenance the mathematician can inspect.", "parameters": {"type": "object", "properties": {"kind": {"type": "string"}, "summary": {"type": "string"}, "payload": {"type": "string"}, "related_refs": {"type": "array", "items": {"type": "string"}}}, "required": ["kind", "summary", "payload"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "finish", "description": "End this delegation with a terminal status (completed, partial or failed) and a short synthesis. Call it exactly once; nothing after it is accepted.", "parameters": {"type": "object", "properties": {"status": {"type": "string"}, "synthesis": {"type": "string"}}, "required": ["status", "synthesis"], "additionalProperties": False}}},
+]
+
+FINISH_STATUSES = {
+    "completed": DelegationState.COMPLETED,
+    "partial": DelegationState.PARTIAL,
+    "failed": DelegationState.FAILED,
+}
+
+
+@dataclass(frozen=True)
+class WorkerLaunch:
+    delegation_id: str
+    prompt: str
+    model: str | None
+    store: RunStore
+    lease: ResourceLease
+
+
+@dataclass(frozen=True)
+class OpenedWorker:
+    """An independently opened provider context, like a race attempt."""
+
+    context_id: str
+    runtime: ChatRuntime
+    usage: Callable[[], Usage | None]
+
+
+Dispatch = Callable[[str, dict[str, Any]], ToolResult]
+Observe = Callable[[dict[str, Any]], None]
+OpenWorker = Callable[[WorkerLaunch, Dispatch, Observe], OpenedWorker]
+
+
+class _WorkerState:
+    """Worker-private, mutable, and thrown away with the worker."""
+
+    def __init__(self, launch: WorkerLaunch, token: CancelToken) -> None:
+        self.launch = launch
+        self.token = token
+        self.findings: list[Finding] = []
+        self.finished: tuple[DelegationState, str] | None = None
+
+    def tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        if self.finished is not None:
+            return ToolResult(False, "this delegation already called finish; nothing further is accepted")
+        if name == "propose_finding":
+            refs = arguments.get("related_refs") or []
+            finding = Finding(
+                id=f"{self.launch.delegation_id}:finding:{len(self.findings)}",
+                source_delegation=self.launch.delegation_id,
+                kind=str(arguments["kind"]), summary=str(arguments["summary"]),
+                payload=str(arguments.get("payload") or ""),
+                related_ids=tuple(str(ref) for ref in refs),
+                sequence=len(self.findings),
+            )
+            self.findings.append(finding)
+            return ToolResult(True, f"recorded finding {finding.id}")
+        if name == "finish":
+            status = FINISH_STATUSES.get(str(arguments.get("status", "")).strip().lower())
+            if status is None:
+                return ToolResult(False, "finish requires status completed, partial or failed")
+            self.finished = (status, str(arguments.get("synthesis") or ""))
+            return ToolResult(True, f"delegation {self.launch.delegation_id} finished {status.value}")
+        return ToolResult(False, f"unknown tool: {name}")
+
+
+def _usage_of(usage: Usage | None, *, exchanges: int, seconds: float) -> ResourceUsage:
+    """Measured spend; anything the provider did not state stays unknown."""
+    if usage is None:
+        return ResourceUsage(provider_calls=exchanges, active_seconds=seconds,
+                             unknown=("cost_usd", "tokens"))
+    unknown = []
+    cost = Decimal(str(usage.cost_usd)) if usage.reports.get("cost_usd") else None
+    if cost is None:
+        unknown.append("cost_usd")
+    tokens = usage.total_tokens if usage.counted else None
+    if tokens is None:
+        unknown.append("tokens")
+    return ResourceUsage(cost_usd=cost, tokens=tokens, provider_calls=max(usage.turns, exchanges),
+                         active_seconds=seconds, unknown=tuple(unknown))
+
+
+def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken, *,
+               clock: Callable[[], float] = time.monotonic) -> WorkerResult:
+    store = launch.store
+    state = _WorkerState(launch, token)
+    started = clock()
+
+    def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
+        if token.cancelled:
+            result = ToolResult(False, "the delegation was cancelled before this tool call was made")
+            store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict()},
+                         phase=RunPhase.PROVING)
+            return result
+        call_id = uuid4().hex
+        store.append("tool_started", {"name": name, "arguments": arguments, "call_id": call_id},
+                     phase=RunPhase.PROVING)
+        try:
+            result = state.tool(name, arguments)
+        except (KeyError, TypeError, ValueError) as error:
+            result = ToolResult(False, f"invalid tool call: {error}")
+        store.append("tool", {"name": name, "arguments": arguments, "result": result.as_dict(),
+                              "call_id": call_id}, phase=RunPhase.PROVING)
+        return result
+
+    def observe(event: dict[str, Any]) -> None:
+        store.append("provider", event, phase=RunPhase.PROVING)
+
+    store.write_text(PurePosixPath("prompt.md"), launch.prompt)
+    exchanges = 0
+    opened: OpenedWorker | None = None
+    status: DelegationState
+    reason: str | None = None
+    synthesis = ""
+    try:
+        token.check()
+        opened = open_worker(launch, dispatch, observe)
+        store.append("worker.opened", {"context_id": opened.context_id, "model": getattr(opened.runtime, "model", None)},
+                     phase=RunPhase.PROVING)
+        token.on_cancel(opened.runtime.cancel)
+        exchanges = 1
+        for event in opened.runtime.stream(launch.prompt):
+            if event.kind == "reply":
+                store.append("worker.reply", {"text": event.text}, phase=RunPhase.PROVING)
+            if token.cancelled:
+                break
+        if token.cancelled:
+            raise WorkerCancelled
+        if state.finished is None:
+            status, reason = DelegationState.PARTIAL, "no_finish_call"
+        else:
+            status, synthesis = state.finished
+    except WorkerCancelled:
+        status, reason = DelegationState.CANCELLED, "cancelled"
+    except Exception as error:  # noqa: BLE001 - a worker's failure is a result, not a crash upstream
+        status, reason = DelegationState.FAILED, f"{type(error).__name__}: {error}"
+        store.append("worker.failed", {"error": reason}, phase=RunPhase.PROVING)
+    usage = None
+    if opened is not None:
+        try:
+            usage = opened.usage()
+        except Exception as error:  # noqa: BLE001 - unknown usage is recorded as unknown
+            store.append("worker.usage_error", {"error": f"{type(error).__name__}: {error}"},
+                         phase=RunPhase.PROVING)
+    measured = _usage_of(usage, exchanges=exchanges, seconds=max(0.0, clock() - started))
+    store.write_json(PurePosixPath("findings.json"), [f.model_dump(mode="json") for f in state.findings])
+    result = WorkerResult(
+        delegation_id=launch.delegation_id, status=status, synthesis=synthesis, usage=measured,
+        findings=tuple(f.id for f in state.findings), terminal_reason=reason,
+        artifacts=("prompt.md", "findings.json", "result.json"),
+    )
+    store.write_json(PurePosixPath("result.json"), result)
+    store.append("worker.finished", {"status": status.value, "reason": reason,
+                                     "usage": json.loads(measured.model_dump_json())}, phase=RunPhase.PROVING)
+    return result
