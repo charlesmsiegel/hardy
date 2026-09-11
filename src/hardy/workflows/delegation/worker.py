@@ -13,13 +13,15 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import PurePosixPath
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from hardy.agents.contracts import ChatRuntime
 from hardy.agents.executor import CancelToken, WorkerCancelled
 from hardy.agents.usage import Usage
+from hardy.formal.budget import BudgetExhausted, CheckBudget
+from hardy.formal.syntax import WorkspacePathError, safe_relative
 from hardy.foundation.values import ToolResult
 from hardy.prompts import DELEGATION_WORKER_PROMPT
 from hardy.workflows.contracts import RunPhase
@@ -31,7 +33,11 @@ from hardy.workflows.delegation.contracts import (
 )
 from hardy.workflows.delegation.findings import Finding
 from hardy.workflows.delegation.retrieval import WorkerRetriever
+from hardy.workflows.delegation.workspace import WorkspaceOverlay
 from hardy.workflows.storage import RunStore
+
+if TYPE_CHECKING:
+    from hardy.algebra.tools import CasToolRuntime
 
 #: The worker's system prompt, kept with every other prompt under hardy/prompts.
 WORKER_SYSTEM_PROMPT = DELEGATION_WORKER_PROMPT
@@ -48,6 +54,24 @@ WORKER_TOOLS: list[dict[str, Any]] = [
 
 RETRIEVAL_TOOLS = frozenset({"read_project", "read_item", "read_neighborhood", "search_literature", "read_source"})
 
+WORKSPACE_TOOLS: list[dict[str, Any]] = [
+    {"type": "function", "function": {"name": "check_lean", "description": "Build one Lean file, and everything in your private overlay that imports it, without keeping it. Charged as one official check.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "source": {"type": "string"}}, "required": ["path", "source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "save_lean", "description": "Build and keep one Lean file in your private overlay. Nothing here reaches the project until admission re-verifies it against the current head. Charged as one official check.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "source": {"type": "string"}}, "required": ["path", "source"], "additionalProperties": False}}},
+]
+WORKER_TOOLS += WORKSPACE_TOOLS
+
+CAS_WORKER_TOOLS: list[dict[str, Any]] = [
+    {"type": "function", "function": {"name": "cas_run", "description": "Run one cell in a computer algebra kernel private to this delegation. State carries over between your own cells only. No computation is evidence.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "cas_state", "description": "List the accepted cells of your private computer algebra kernel.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
+]
+WORKER_TOOLS += CAS_WORKER_TOOLS
+
+CasFactory = Callable[[Path], "CasToolRuntime | None"]
+
+#: Active-time ceilings are enforced by the executor and the lease; the check
+#: budget only needs a finite deadline to construct.
+_UNBOUNDED_SECONDS = 10.0 ** 9
+
 FINISH_STATUSES = {
     "completed": DelegationState.COMPLETED,
     "partial": DelegationState.PARTIAL,
@@ -63,6 +87,8 @@ class WorkerLaunch:
     store: RunStore
     lease: ResourceLease
     retriever: WorkerRetriever | None = None
+    overlay: WorkspaceOverlay | None = None
+    cas_factory: CasFactory | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +113,11 @@ class _WorkerState:
         self.token = token
         self.findings: list[Finding] = []
         self.finished: tuple[DelegationState, str] | None = None
+        seconds = launch.lease.active_seconds if launch.lease.active_seconds is not None else _UNBOUNDED_SECONDS
+        self.checks = CheckBudget(official_checks=launch.lease.official_checks or 0,
+                                  active_seconds=seconds, proof_seconds=seconds)
+        self.cas: CasToolRuntime | None = None
+        self.cas_opened = False
 
     def tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if self.finished is not None:
@@ -111,7 +142,50 @@ class _WorkerState:
             return ToolResult(True, f"delegation {self.launch.delegation_id} finished {status.value}")
         if name in RETRIEVAL_TOOLS:
             return self.retrieve(name, arguments)
+        if name in {"check_lean", "save_lean"}:
+            return self.lean(name, arguments)
+        if name in {"cas_run", "cas_state"}:
+            return self.algebra(name, arguments)
         return ToolResult(False, f"unknown tool: {name}")
+
+    def lean(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        overlay = self.launch.overlay
+        if overlay is None:
+            return ToolResult(False, "this delegation has no writable workspace")
+        try:
+            relative = safe_relative(str(arguments["path"]))
+        except WorkspacePathError as error:
+            return ToolResult(False, str(error))
+        source = str(arguments["source"]).rstrip() + "\n"
+        try:
+            self.checks.acquire()
+        except BudgetExhausted:
+            return ToolResult(False, "official check budget exhausted for this delegation; finish with what you have")
+        failure = overlay.check(relative, source) if name == "check_lean" else overlay.save(relative, source)
+        if failure is not None:
+            verb = "check" if name == "check_lean" else "save"
+            return ToolResult(False, f"this {verb} breaks {failure.module}, so nothing was written:\n{failure.output}")
+        if name == "check_lean":
+            return ToolResult(True, f"{relative.as_posix()} builds with its dependents in your overlay; nothing was kept")
+        return ToolResult(True, f"{relative.as_posix()} saved in your private overlay (generation {overlay.generation.id})")
+
+    def algebra(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        if not self.cas_opened:
+            self.cas_opened = True
+            if self.launch.cas_factory is not None:
+                self.cas = self.launch.cas_factory(self.launch.store.path / "cas")
+        if self.cas is None:
+            return ToolResult(False, "no computer algebra kernel is available to this delegation")
+        if name == "cas_state":
+            return ToolResult(True, self.cas.state().model_dump_json())
+        result = self.cas.run(str(arguments["source"]))
+        return ToolResult(result.accepted, result.model_dump_json())
+
+    def close(self) -> None:
+        if self.cas is not None:
+            close = getattr(getattr(self.cas, "session", None), "close", None)
+            if close is not None:
+                close()
 
     def retrieve(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         retriever = self.launch.retriever
@@ -210,12 +284,21 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
         except Exception as error:  # noqa: BLE001 - unknown usage is recorded as unknown
             store.append("worker.usage_error", {"error": f"{type(error).__name__}: {error}"},
                          phase=RunPhase.PROVING)
+    state.close()
     measured = _usage_of(usage, exchanges=exchanges, seconds=max(0.0, clock() - started))
+    measured = measured.model_copy(update={"official_checks": state.checks.checks})
     store.write_json(PurePosixPath("findings.json"), [f.model_dump(mode="json") for f in state.findings])
+    change_set_id = None
+    artifacts: tuple[str, ...] = ("prompt.md", "findings.json", "result.json")
+    if launch.overlay is not None:
+        change_set = launch.overlay.change_set()
+        store.write_json(PurePosixPath("change_set.json"), change_set)
+        change_set_id = change_set.id
+        artifacts = (*artifacts, "change_set.json")
     result = WorkerResult(
         delegation_id=launch.delegation_id, status=status, synthesis=synthesis, usage=measured,
         findings=tuple(f.id for f in state.findings), terminal_reason=reason,
-        artifacts=("prompt.md", "findings.json", "result.json"),
+        artifacts=artifacts, change_set=change_set_id,
     )
     store.write_json(PurePosixPath("result.json"), result)
     store.append("worker.finished", {"status": status.value, "reason": reason,

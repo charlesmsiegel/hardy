@@ -119,6 +119,34 @@ class LeanWorkspace:
         self._environment = environment
 
     @property
+    def environment(self) -> str:
+        """What this tree is built against; part of every signature."""
+        return self._environment
+
+    def sibling(self, root: Path, build: Path) -> LeanWorkspace:
+        """Another tree built exactly as this one is, at another location."""
+        return LeanWorkspace(root, build, self._compile, environment=self._environment, external=self._external)
+
+    def copy_to(self, root: Path, build: Path) -> LeanWorkspace:
+        """A private copy of this tree and its compiled mirror, built as this one is.
+
+        The same guarded walk `stage` uses proves the tree first, so a symlinked
+        module is refused rather than materialised in the copy. The copy shares
+        nothing mutable with this workspace afterwards: an overlay a delegation
+        writes cannot reach the tree it was taken from.
+        """
+        if self.root.is_dir():
+            files_under(self.root, ".lean")
+            shutil.copytree(self.root, root, dirs_exist_ok=False)
+        else:
+            root.mkdir(parents=True)
+        if self.build.is_dir():
+            shutil.copytree(self.build, build, dirs_exist_ok=False)
+        else:
+            build.mkdir(parents=True)
+        return self.sibling(root, build)
+
+    @property
     def index_path(self) -> Path:
         return self.build / "index.json"
 
