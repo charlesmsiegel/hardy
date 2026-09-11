@@ -171,7 +171,11 @@ class ContextManager:
                 and self.policy.is_accepted(snapshot, current.resolution))
 
     def render(self, context: VersionRef | None = None) -> str:
-        snapshot = self.store.read()
+        return self.render_snapshot(self.store.read(), context)
+
+    @staticmethod
+    def render_snapshot(snapshot: LedgerSnapshot, context: VersionRef | None = None) -> str:
+        """`render` over a snapshot the caller already holds, so one launch reads the ledger once."""
         ref = context or snapshot.active_context
         if ref is None:
             raise ValueError("no active mathematical context")

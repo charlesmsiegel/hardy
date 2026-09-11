@@ -8,6 +8,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from hardy.algebra import tools as cas_tools
@@ -380,6 +381,14 @@ class ProjectOpener:
             # would silently discard the conversation of every problem visited
             # afterwards -- the standing-preference behaviour the flag refuses
             # to be.
+            def worker_cas(cwd: Path):
+                """A kernel of its own for one background worker, as `_chat` gives the launch session."""
+                runtime, _detail = cas_tools.build_runtime(
+                    backend_name=config.cas_backend, command=config.cas_command, limits=config.limits,
+                    log_path=cwd / "cells.jsonl", cwd=cwd,
+                )
+                return runtime
+
             session = MathematicsSession(
                 config.layout.problem,
                 runtime_factory(str(config.model), config.backend),
@@ -395,6 +404,8 @@ class ProjectOpener:
                 project_context=config.project_context,
                 limits=config.limits,
                 context_window=config.context_window,
+                delegation_slots=config.delegation_workers,
+                cas_factory=worker_cas,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the

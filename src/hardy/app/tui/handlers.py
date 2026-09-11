@@ -1322,7 +1322,11 @@ async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
         elif words[0] == "reinforce" and len(words) == 3:
             decision = delegations.reinforce(words[1], ResourceDelta(official_checks=int(words[2])),
                                              by="human", reason="reinforced from the terminal")
-            ui.write(f"Reinforced {words[1]} by {words[2]} checks: {decision.reason}")
+            if decision.granted is not None:
+                ui.write(f"Granted {words[1]} {words[2]} more checks; its ceiling is now "
+                         f"{decision.resulting.official_checks}.")
+            else:
+                ui.write(f"Refused: {'; '.join(decision.refused_because)}", style="error")
         elif words[0] == "finish" and len(words) >= 3:
             delegations.finish_subtree(words[1], synthesis=" ".join(words[2:]), by="human")
             ui.write(f"Finished {words[1]}; running children were cancelled.")

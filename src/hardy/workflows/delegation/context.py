@@ -156,12 +156,15 @@ class ContextManifest(FrozenModel):
     literature_retrieval: Literal["permitted", "denied"] = "permitted"
     preload_budget: int = 0
     context_policy_digest: str | None = None
+    structural_map_truncated: int = 0
     builder: str = Field(default=BUILDER)
 
 
 class InitialWorkingSet(FrozenModel):
     items: tuple[ContextItem, ...]
     structural_map: str
+    #: Rows the structural map lost to the budget; zero when it is complete.
+    structural_map_truncated: int = 0
     budget_tokens: int
     overflow: bool
     selection: Literal["deterministic", "planner"] = "deterministic"
@@ -176,6 +179,7 @@ class InitialWorkingSet(FrozenModel):
             included_refs=tuple(item.ref for item in self.items if item.ref is not None),
             included_items=self.items, hidden_selectors=self.manifest_hidden,
             preload_budget=self.budget_tokens, context_policy_digest=self.policy_digest,
+            structural_map_truncated=self.structural_map_truncated,
         )
 
     def rendered(self, *, without: VersionRef | None = None) -> str:
@@ -199,16 +203,26 @@ def _short(ref: VersionRef) -> str:
 
 
 def _trust(snapshot: LedgerSnapshot, ref: VersionRef) -> str:
-    """What the ledger's own obligations say, and nothing more."""
+    """What the ledger's own obligations say, and nothing more.
+
+    `verified` needs a resolved proof obligation over this exact revision: a
+    statement revised under the same id inherits nothing from evidence the
+    kernel checked against its predecessor.
+    """
     open_work = []
     for obligation in snapshot.current(Obligation):
         if obligation.item.id != ref.id:
             continue
-        if obligation.status is ObligationStatus.RESOLVED and obligation.kind in _PROOF_WORK:
+        if obligation.status is ObligationStatus.RESOLVED and obligation.kind in _PROOF_WORK and obligation.item == ref:
             return "verified"
         if obligation.status not in {ObligationStatus.RESOLVED, ObligationStatus.DISMISSED}:
             open_work.append(obligation.kind.value)
     return f"open: {', '.join(sorted(set(open_work)))}" if open_work else "no open work"
+
+
+def _snapshot(source: LedgerStore | LedgerSnapshot) -> LedgerSnapshot:
+    """One read per launch: a builder handed a snapshot never reads the ledger again."""
+    return source if isinstance(source, LedgerSnapshot) else source.read()
 
 
 def _render(record: LedgerRecord, resolution: ContextResolution) -> str:
@@ -245,8 +259,8 @@ def _item(snapshot: LedgerSnapshot, ref: VersionRef, resolution: ContextResoluti
 
 # -- the core --------------------------------------------------------------------
 
-def build_problem_core(store: LedgerStore, target: VersionRef, *, scope: VersionRef) -> ProblemCore:
-    snapshot = store.read()
+def build_problem_core(store: LedgerStore | LedgerSnapshot, target: VersionRef, *, scope: VersionRef) -> ProblemCore:
+    snapshot = _snapshot(store)
     item = snapshot.get(target)
     if not isinstance(item, ProjectItem):
         raise ValueError("a problem core requires a project item target")
@@ -258,7 +272,7 @@ def build_problem_core(store: LedgerStore, target: VersionRef, *, scope: Version
     graph = LedgerGraph(snapshot)
     dependencies = graph.dependency_closure(target)
     verified = tuple(ref for ref in dependencies if _trust(snapshot, ref) == "verified")
-    context_text = ContextManager(store).render(item.context) if item.context is not None else ""
+    context_text = ContextManager.render_snapshot(snapshot, item.context) if item.context is not None else ""
     return ProblemCore(
         target=target, kind=item.kind.value, name=item.name, statement=item.statement,
         context=item.context, context_text=context_text, scope=scope,
@@ -312,6 +326,17 @@ def structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int =
     Built under the same visibility as the preload: a hidden record's id,
     kind and trust state are as much project information as its statement.
     """
+    return bounded_structural_map(snapshot, target, depth=depth, hidden=hidden)[0]
+
+
+def bounded_structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int = 3,
+                           hidden: Collection[str] = (), max_tokens: int | None = None) -> tuple[str, int]:
+    """The map and how many rows were withheld to keep it under `max_tokens`.
+
+    Depth is bounded already; width is not, and a target with thousands of
+    consumers would otherwise put a prompt far past the preload budget on
+    its own. The target line always survives; rows are cut in order.
+    """
     graph = LedgerGraph(snapshot)
     hidden = frozenset(hidden)
 
@@ -342,7 +367,20 @@ def structural_map(snapshot: LedgerSnapshot, target: VersionRef, *, depth: int =
                        key=lambda r: r.id)
     for index, consumer in enumerate(consumers):
         lines.append(f"{'└── ' if index == len(consumers) - 1 else '├── '}used_by {label(consumer)}")
-    return "\n".join(lines)
+    if max_tokens is None:
+        return "\n".join(lines), 0
+    kept: list[str] = [lines[0]]
+    used = estimate_tokens(lines[0])
+    for line in lines[1:]:
+        cost = estimate_tokens(line)
+        if used + cost > max_tokens:
+            break
+        kept.append(line)
+        used += cost
+    withheld = len(lines) - len(kept)
+    if withheld:
+        kept.append(f"... {withheld} more rows withheld under the preload budget; read_neighborhood shows them")
+    return "\n".join(kept), withheld
 
 
 def candidate_pool(snapshot: LedgerSnapshot, target: VersionRef, policy: ContextPolicy, *,
@@ -416,12 +454,16 @@ def fit_to_budget(mandatory: tuple[ContextItem, ...], candidates: tuple[ContextI
 Planner = Callable[[tuple[ContextItem, ...]], tuple[ContextItem, ...]]
 
 
-def build_working_set(store: LedgerStore, target: VersionRef, scope: VersionRef, brief: ResearchBrief,
+#: The share of the preload budget the structural map may take.
+MAP_BUDGET_SHARE = 4
+
+
+def build_working_set(store: LedgerStore | LedgerSnapshot, target: VersionRef, scope: VersionRef, brief: ResearchBrief,
                       policy: ContextPolicy, *, portfolio: tuple[ContextManifest, ...] = (),
                       planner: Planner | None = None,
                       sources: Mapping[str, str] | None = None) -> InitialWorkingSet:
     """Stages A-E over one snapshot. Routine jobs use no model; a planner only reorders candidates."""
-    snapshot = store.read()
+    snapshot = _snapshot(store)
     mandatory = mandatory_kernel(snapshot, target, scope, policy)
     kernel_refs = frozenset(item.ref for item in mandatory)
     candidates = candidate_pool(snapshot, target, policy, exclude=kernel_refs)
@@ -437,8 +479,10 @@ def build_working_set(store: LedgerStore, target: VersionRef, scope: VersionRef,
         if item.ref is not None and item.selected_by != "mandatory" and item.preload)
     items, overflow = fit_to_budget(mandatory, candidates, policy, already_preloaded=sibling_preloads,
                                     seeded=seeded_items(policy, sources))
+    rendered_map, withheld = bounded_structural_map(snapshot, target, hidden=policy.hidden_identities,
+                                                    max_tokens=max(1, policy.preload_tokens // MAP_BUDGET_SHARE))
     return InitialWorkingSet(
-        items=items, structural_map=structural_map(snapshot, target, hidden=policy.hidden_identities),
+        items=items, structural_map=rendered_map, structural_map_truncated=withheld,
         budget_tokens=policy.preload_tokens,
         overflow=overflow, selection=selection, project_revision=snapshot.revision,
         manifest_hidden=policy.hidden_selectors, policy_digest=policy.digest,

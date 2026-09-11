@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +52,10 @@ _CONTEXT_KEYS = ("problem_core_digest", "research_brief_digest", "context_manife
 #: What a dead process may have been in the middle of. A pause holds no worker and no
 #: slot, so it is a control that survives a restart rather than work to doubt.
 INTERRUPTIBLE = frozenset({DelegationState.ACTIVE, DelegationState.WAITING})
+
+
+#: A delegation id is one path segment; the store never joins anything else onto the journal directory.
+_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}")
 
 
 class DelegationTree:
@@ -227,7 +232,14 @@ class DelegationStore:
             return event
 
     def artifacts(self, delegation_id: str) -> RunStore:
-        self.tree().get(delegation_id)
+        """The per-delegation artifact store, created on first use.
+
+        Not gated on the journal: the launch package is written before the
+        `delegation.created` event exposes a queued node, so a crash between
+        the two leaves unreferenced artifacts rather than an unlaunchable job.
+        """
+        if not _ID.fullmatch(delegation_id):
+            raise ValueError(f"invalid delegation id: {delegation_id}")
         guard = self._guard(create=True)
         path = guard.directory / delegation_id
         run_id = uuid5(NAMESPACE_URL, f"hardy:delegation:{delegation_id}")
@@ -239,7 +251,7 @@ class DelegationStore:
     def cancel_subtree(self, id: str, *, reason: str) -> tuple[str, ...]:
         """Request cancellation of a node and every live descendant, deepest first.
 
-        Queued work has no executor to wait for and is cancelled outright.
+        Queued or paused work has no executor to wait for and is cancelled outright.
         Active work only receives the request; whoever runs it ends it. The
         store records; it does not stop threads.
         """
@@ -250,7 +262,8 @@ class DelegationStore:
             if delegation.terminal or tree.cancel_requested(node):
                 continue
             self.append(node, "cancel.requested", {"reason": reason})
-            if delegation.state is DelegationState.QUEUED:
+            if delegation.state in {DelegationState.QUEUED, DelegationState.PAUSED}:
+                # Nothing runs it, so nothing else will ever end it.
                 self.append(node, "delegation.cancelled", {"reason": reason})
             requested.append(node)
         return tuple(requested)

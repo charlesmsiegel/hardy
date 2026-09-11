@@ -75,7 +75,10 @@ class _Delegations:
     def reinforce(self, id, delta, *, by, reason):
         self._known(id)
         self.calls.append(("reinforce", id, delta))
-        return SimpleNamespace(started=(), reason="reinforced")
+        if delta.official_checks > 5:
+            return SimpleNamespace(granted=None, refused_because=("tranche exceeds the parent's allocatable resources",),
+                                   resulting=SimpleNamespace(official_checks=2))
+        return SimpleNamespace(granted=delta, refused_because=(), resulting=SimpleNamespace(official_checks=2 + delta.official_checks))
 
     def finish_subtree(self, id, *, synthesis, by):
         self._known(id)
@@ -267,3 +270,12 @@ async def test_delegate_derives_the_default_objective_from_the_mode_and_refuses_
     assert session.delegate_kwargs[-1]["task_mode"] == "refute"
     await handlers.handle_delegate(ui, "L17 --mode bogus", State(config=settings, session=session))
     assert "Usage" in ui.text and len(session.delegated) == 1
+
+
+async def test_jobs_reinforce_reports_a_grant_or_the_refusal_reasons(ui, settings):
+    session = _Session()
+    state = State(config=settings, session=session)
+    await handlers.handle_jobs(ui, "reinforce d-1 3", state)
+    assert "granted" in ui.text.lower() and "5" in ui.text                     # the resulting ceiling
+    await handlers.handle_jobs(ui, "reinforce d-1 9", state)
+    assert "refused" in ui.text.lower() and "allocatable" in ui.text

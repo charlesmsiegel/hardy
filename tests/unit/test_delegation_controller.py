@@ -519,3 +519,151 @@ def test_pushed_findings_reach_a_queued_recipient_in_its_prompt_and_an_active_on
     finally:
         release.set()
         controller.shutdown()
+
+
+def test_finishing_a_cell_waits_for_its_running_child_before_releasing_its_lease(tmp_path):
+    """A synthesis is recorded at once, but the cell ends and its lease returns only when the child has."""
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    started, release = threading.Event(), threading.Event()
+    controller = _controller(tmp_path, _open([FINISH], gate=(started, release)), checks=4, slots=2)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=3).model_copy(
+            update={"spawn": SpawnPolicy(can_spawn=True, max_children=2, max_depth=1)}))
+        child = controller.delegate(_spec(tmp_path, checks=1), parent_id=cell.id)
+        assert started.wait(5)
+        pending = controller.finish_subtree(cell.id, synthesis="enough", by="human")
+        assert pending.state is DelegationState.ACTIVE and controller.tree().cancel_requested(child.id)
+        release.set()
+        controller.wait(child.id, timeout=5)
+        ended = controller.wait(cell.id, timeout=5)
+        assert ended.state is DelegationState.COMPLETED and ended.result.synthesis == "enough"
+        assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 4
+        kinds = [(e.delegation_id, e.kind) for e in controller.store.events()]
+        assert kinds.index((cell.id, "delegation.finish_requested")) < kinds.index((child.id, "delegation.cancelled"))
+        assert kinds.index((child.id, "budget.released")) < kinds.index((cell.id, "delegation.completed"))
+        assert kinds.index((cell.id, "delegation.completed")) < kinds.index((cell.id, "budget.released"))
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_a_paused_delegation_is_cancelled_outright_and_cannot_be_resumed(tmp_path):
+    controller = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    controller.shutdown()
+    paused = controller.delegate(_spec(tmp_path, checks=1))
+    controller.pause(paused.id, by="human")
+    assert controller.cancel(paused.id) == (paused.id,)
+    assert controller.tree().get(paused.id).state is DelegationState.CANCELLED
+    with pytest.raises(ValueError):
+        controller.resume(paused.id, by="human")
+
+
+def test_the_launch_is_persisted_before_the_queued_node_is_exposed(tmp_path):
+    """A crash between the journal entry and the prompt would otherwise leave a queued node nothing can relaunch."""
+
+    class Crashing(DelegationStore):
+        def append(self, delegation_id, kind, payload, *, now=None):
+            if kind == "delegation.created" and delegation_id != ROOT_ID:
+                assert (self.artifacts(delegation_id).path / "prompt.md").exists(), "prompt must precede the journal"
+                raise RuntimeError("simulated crash at the journal")
+            return super().append(delegation_id, kind, payload, now=now)
+
+    seed_lemma(tmp_path)
+    controller = DelegationController(Crashing(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=_open([FINISH]),
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=lambda text: None)
+    try:
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            controller.delegate(_spec(tmp_path, checks=1))
+    finally:
+        controller.shutdown()
+
+
+def test_recovery_releases_a_terminal_reservation_the_dead_process_never_returned(tmp_path):
+    seed_lemma(tmp_path)
+    controller = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    controller.shutdown()
+    stuck = controller.delegate(_spec(tmp_path, checks=2))
+    store = controller.store
+    store.append(stuck.id, "delegation.started", {})
+    store.append(stuck.id, "delegation.completed", {"result": {"delegation_id": stuck.id, "status": "completed",
+                                                              "synthesis": "done", "usage": {}}})
+    assert not LeaseLedger(store.tree()).released(stuck.id)
+    again = _controller(tmp_path, _open([FINISH]), checks=4, slots=1)
+    try:
+        assert again.recover() == ()
+        assert LeaseLedger(again.tree()).released(stuck.id)
+        assert LeaseLedger(again.tree()).allocatable(ROOT_ID).official_checks == 4
+    finally:
+        again.shutdown()
+
+
+def test_one_continuation_starts_per_invocation_and_the_rest_stay_due(tmp_path):
+    controller = _controller(tmp_path, _open([FINISH]))
+    try:
+        first = controller.delegate(_spec(tmp_path))
+        second = controller.delegate(_spec(tmp_path))
+        controller.wait(first.id, timeout=5)
+        controller.wait(second.id, timeout=5)
+        a = controller.record_continuation(first.id, condition="terminal", epoch="e", offset=0, resume_text="use A")
+        b = controller.record_continuation(second.id, condition="terminal", epoch="e", offset=0, resume_text="use B")
+        started = controller.resolve_continuations(epoch="e", advanced_since=lambda offset: False, limit=1)
+        assert [c.id for c in started] == [a.id] and [c.id for c in controller.continuations()] == [b.id]
+        started = controller.resolve_continuations(epoch="e", advanced_since=lambda offset: False, limit=1)
+        assert [c.id for c in started] == [b.id] and controller.continuations() == ()
+    finally:
+        controller.shutdown()
+
+
+def test_a_child_may_not_take_more_than_its_parents_child_fraction(tmp_path):
+    from decimal import Decimal
+
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    controller = _controller(tmp_path, _open([FINISH]), checks=8, slots=2)
+    try:
+        cell = controller.delegate(_spec(tmp_path, checks=4).model_copy(update={
+            "spawn": SpawnPolicy(can_spawn=True, max_children=4, max_depth=1, max_child_fraction=Decimal("0.5"))}))
+        with pytest.raises(ValueError, match="max_child_fraction"):
+            controller.delegate(_spec(tmp_path, checks=3), parent_id=cell.id)
+        child = controller.delegate(_spec(tmp_path, checks=2), parent_id=cell.id)
+        assert controller.wait(child.id, timeout=5).state is DelegationState.COMPLETED
+    finally:
+        controller.shutdown()
+
+
+def test_the_core_and_the_working_set_describe_one_revision_even_when_the_ledger_moves_between_reads(tmp_path):
+    """The launch is built from one snapshot: a head that advances mid-build cannot split core from context."""
+    from delegation_helpers import seed_project
+
+    from hardy.workflows.explore import ExploreWorkflow
+    from hardy.workflows.ledger import contracts as c
+
+    seen: list[int] = []
+
+    class Advancing(LedgerStore):
+        def read(self):
+            snapshot = super().read()
+            seen.append(snapshot.revision)
+            if len(seen) == 1:
+                # Another process lands a record right after this read.
+                ExploreWorkflow(LedgerStore(tmp_path)).record_item(
+                    id="N-late", kind=c.ProjectItemKind.RESEARCH_NOTE, name="Late", statement="arrived mid-build")
+            return snapshot
+
+    seed_project(tmp_path)
+    controller = DelegationController(DelegationStore(tmp_path), Advancing(tmp_path), executor=LocalExecutor(1),
+                                      open_worker=_open([FINISH]),
+                                      root=RootResources(lease=ResourceLease(official_checks=4), slots=1),
+                                      notify=lambda text: None)
+    try:
+        delegation = controller.delegate(_spec(tmp_path, checks=1))
+        controller.wait(delegation.id, timeout=5)
+        manifest = json.loads((controller.store.artifacts(delegation.id).path / "manifest.json").read_text(encoding="utf-8"))
+        core = json.loads((controller.store.artifacts(delegation.id).path / "core.json").read_text(encoding="utf-8"))
+        assert manifest["project_revision"] == core["project_revision"] == seen[0]
+        assert LedgerStore(tmp_path).read().revision > seen[0]
+    finally:
+        controller.shutdown()

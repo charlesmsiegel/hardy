@@ -174,3 +174,28 @@ def test_local_admission_reuses_exact_duplicates_and_clusters_near_ones(tmp_path
                                         overlay.effective(), scope=scope, delegation_id="f")
     reused = admission.admit(exact_authoritative)
     assert reused.action == "reused_existing" and reused.authoritative_refs == (heads["L12"].ref,)
+
+
+def test_local_admission_provenance_is_durable_across_a_restart(tmp_path):
+    from hardy.workflows.delegation.store import DelegationStore
+
+    heads = seed_project(tmp_path)
+    base = LedgerStore(tmp_path)
+    store = DelegationStore(tmp_path)
+    scope = base.read().head("scope").ref
+    store.append("cell", "delegation.created", {
+        "spec": {"objective": "cell", "project_refs": [heads["L17"].ref.model_dump()], "scope": scope.model_dump(),
+                 "lease": {"official_checks": 1}, "concurrency": {"slots": 1}, "created_by": "human"},
+        "parent_id": None, "created_at": "t"})
+    overlay = SubtreeProjectOverlay.open(base, tmp_path / "delegations" / "cell", ancestors=())
+    admission = LocalAdmission(overlay, store=store, delegation_id="cell")
+    for source in ("a", "b"):
+        candidate = route_finding(_finding(source, 0, "candidate_lemma", "The special fiber is connected",
+                                           refs=(heads["L17"].ref,)), overlay.effective(), scope=scope, delegation_id=source)
+        outcome = admission.admit(candidate)
+    ref = outcome.authoritative_refs[0]
+    assert admission.provenance(ref) == ("a:finding:0", "b:finding:0")
+    reopened = LocalAdmission(SubtreeProjectOverlay.open(base, tmp_path / "delegations" / "cell", ancestors=()),
+                              store=DelegationStore(tmp_path), delegation_id="cell")
+    assert reopened.provenance(ref) == ("a:finding:0", "b:finding:0")
+    assert [e.kind for e in store.events() if e.kind == "admission.local"] == ["admission.local"] * 2
