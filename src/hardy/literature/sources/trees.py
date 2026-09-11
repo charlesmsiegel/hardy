@@ -142,7 +142,10 @@ def node_record(
         statement_span = SourceSpan(id=f"stmt-{node_id}", artifact_sha256=artifact_sha256,
                                     ranges=(RepresentationSpan(representation=rep, start=unit.start, end=unit.statement_end),), anchors=anchors,
                                     content_sha256=text_digest(statement_text), node=node_id, mapping_provenance=provenance)
-    version = json_digest([unit.kind.value, parent, [r.model_dump() for r in ranges], unit.number, unit.label, unit.title])
+    # Content-based, not offset-based: a re-extraction that leaves this unit's
+    # text, kind, number and parent unchanged leaves its version unchanged.
+    version = json_digest([unit.kind.value, parent, span.content_sha256,
+                           statement_span.content_sha256 if statement_span else None, unit.number, unit.label, unit.title])
     return SourceNode(id=node_id, version=version, kind=unit.kind, parent=parent, order=order, title=unit.title, number=unit.number,
                       number_origin=unit.number_origin, label=unit.label, span=span, statement_span=statement_span,  # type: ignore[arg-type]
                       confidence=unit.confidence, boundary_status=unit.boundary, observations=unit.observations)  # type: ignore[arg-type]

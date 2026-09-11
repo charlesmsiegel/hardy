@@ -164,6 +164,7 @@ def test_refined_tree_keeps_unchanged_node_identity(tmp_path):
     assert second.supersedes == first.id and second.version == 2
     before, after = statements(first), statements(second)
     assert before[("theorem", "1.2")].id == after[("theorem", "1.2")].id
+    assert before[("theorem", "1.2")].version == after[("theorem", "1.2")].version  # unchanged text keeps its version too
     assert before[("theorem", "1.8")].id != after[("theorem", "1.8")].id  # its statement text changed
     assert lib.trees.get(sha, first.id) == first
     assert lib.trees.preferred(sha) == first
