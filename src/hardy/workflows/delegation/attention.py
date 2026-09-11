@@ -19,6 +19,9 @@ from hardy.workflows.ledger.contracts import VersionRef
 
 MODEL_MARKER = "[Hardy delegation attention — written by Hardy, not the user]"
 
+#: How many items one turn's attention block names; the rest are counted.
+DEFAULT_BUDGET_ITEMS = 5
+
 Recipient = Literal["human", "main_agent"]
 
 _TERMINAL_KINDS = {
@@ -161,7 +164,7 @@ class AttentionInbox:
     # -- rendering ----------------------------------------------------------
 
     @staticmethod
-    def render_for_model(items: tuple[AttentionItem, ...], *, budget_items: int = 5) -> str:
+    def render_for_model(items: tuple[AttentionItem, ...], *, budget_items: int = DEFAULT_BUDGET_ITEMS) -> str:
         """A compact harness-owned block; details stay behind exact refs."""
         if not items:
             return ""

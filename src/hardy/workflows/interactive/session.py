@@ -10,12 +10,15 @@ import sys
 import tempfile
 import threading
 import weakref
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
+from uuid import uuid4
 
 from hardy.agents import compaction
 from hardy.agents.contracts import ChatRuntime, TurnEvent, final_text, provenance
+from hardy.agents.executor import LocalExecutor
 from hardy.agents.loop import Message
 from hardy.agents.parsing import json_object
 from hardy.agents.spend_budget import bind_spend_budget
@@ -90,6 +93,21 @@ from hardy.workflows.admission import (
     _vacuity_source as _vacuity_source,
 )
 from hardy.workflows.contracts import RunLimits
+from hardy.workflows.delegation.attention import DEFAULT_BUDGET_ITEMS
+from hardy.workflows.delegation.contracts import (
+    ConcurrencyLease,
+    Delegation,
+    DelegationSpec,
+    ResourceLease,
+)
+from hardy.workflows.delegation.controller import DelegationController, RootResources
+from hardy.workflows.delegation.store import DelegationStore
+from hardy.workflows.delegation.worker import (
+    WORKER_SYSTEM_PROMPT,
+    WORKER_TOOLS,
+    OpenedWorker,
+    WorkerLaunch,
+)
 from hardy.workflows.interactive import summary as summary_module
 from hardy.workflows.interactive.admission import AdmissionOperations, AssumptionAdmission
 from hardy.workflows.interactive.context import (
@@ -111,6 +129,8 @@ from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
 from hardy.workflows.interactive.turns import _digest as _digest
 from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT, Layout
+from hardy.workflows.ledger.contracts import ProjectItem, Scope, VersionRef
+from hardy.workflows.ledger.store import LedgerStore
 
 # Where the two artifact trees live inside a workspace, and the path a tool
 # call gets when it names neither -- the one file most sessions ever need.
@@ -293,7 +313,7 @@ class _ConversationTurn(Iterator[TurnEvent]):
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -517,6 +537,23 @@ class MathematicsSession:
         self._sync_provenance()
         self._sync_fresh_context()
         self._sync_project_context()
+        # Background delegation. The controller is orchestration over the
+        # delegation journal beside the record; it reads the project ledger
+        # and never writes it. Notices are kept here for whoever draws the
+        # session; the model learns of them only through the steering block
+        # at its next turn, never mid-request.
+        self.notices: deque[str] = deque(maxlen=200)
+        self.on_notice: Callable[[str], None] | None = None
+        self.delegations = DelegationController(
+            DelegationStore(workspace), LedgerStore(workspace),
+            executor=LocalExecutor(delegation_slots), open_worker=self._open_worker,
+            root=RootResources(lease=ResourceLease(official_checks=self.limits.official_checks,
+                                                   active_seconds=float(self.limits.active_seconds)),
+                               slots=delegation_slots),
+            notify=self._notify,
+        )
+        # Work that was active when the last process died is unknown, not done.
+        self.delegations.recover()
 
     @property
     def state(self) -> dict[str, Any]:
@@ -618,6 +655,88 @@ class MathematicsSession:
 
     def conversation_tree(self) -> HistorySnapshot:
         return self.record.history()
+
+    # -- delegation ---------------------------------------------------------
+
+    def delegate(self, target: str, *, objective: str, task_mode: str = "prove", checks: int = 1,
+                 model: str | None = None) -> Delegation:
+        """Start one background worker on a ledger item and return at once.
+
+        `target` is a stable id or `id@digest`. The worker reserves `checks`
+        official Lean checks from the session's root ceiling and runs under
+        the same active-time limit; it receives its own provider context and
+        none of this conversation.
+        """
+        snapshot = LedgerStore(self.workspace).read()
+        if "@" in target:
+            identity, digest = target.rsplit("@", 1)
+            record = snapshot.get(VersionRef(id=identity, digest=digest))
+        else:
+            record = snapshot.head(target)
+        if not isinstance(record, ProjectItem):
+            raise ValueError(f"{target} must identify a project item")
+        scopes = snapshot.current(Scope)
+        if not scopes:
+            raise ValueError("delegation requires a recorded trust scope in the project ledger")
+        spec = DelegationSpec(
+            objective=objective, project_refs=(record.ref,), scope=scopes[0].ref, context=record.context,
+            task_mode=task_mode, model=model, created_by="human",
+            lease=ResourceLease(official_checks=checks, active_seconds=float(self.limits.active_seconds)),
+            concurrency=ConcurrencyLease(slots=1),
+        )
+        return self.delegations.delegate(spec)
+
+    def _open_worker(self, launch: WorkerLaunch, dispatch: Callable[[str, dict[str, Any]], ToolResult],
+                     observe: Callable[[dict[str, Any]], None]) -> OpenedWorker:
+        """A fresh provider context for one worker, through the session's own factory.
+
+        Nothing of this conversation crosses: not the system prompt with the
+        manifest, not the thread id, not the dispatcher. The spend budget
+        bound into the factory is shared on purpose: it is the root's.
+        """
+        usage = Usage()
+        lock = threading.Lock()
+
+        def observed(event: dict[str, Any]) -> None:
+            nonlocal usage
+            if event.get("type") == "result":
+                with lock:
+                    usage = usage.record(event)
+            observe(event)
+
+        runtime = self._make_runtime(
+            model=launch.model, system_prompt=WORKER_SYSTEM_PROMPT, specs=WORKER_TOOLS,
+            dispatch=dispatch, cwd=launch.store.path, session_id=None, observe=observed,
+        )
+        return OpenedWorker(context_id=f"delegation:{launch.delegation_id}:{uuid4().hex}",
+                            runtime=runtime, usage=lambda: usage)
+
+    def _notify(self, text: str) -> None:
+        """A human-facing notice from background work; never model context."""
+        self.notices.append(text)
+        if self.on_notice is not None:
+            self.on_notice(text)
+
+    def _steering_with_attention(self) -> str:
+        """The workspace block plus pending delegation attention, receipted for the model.
+
+        Called by the turn coordinator ahead of the `user` event and prepended
+        to the provider request, so the model reads background results before
+        the human's next message and never in the middle of a request.
+        """
+        block = self._steering_block()
+        try:
+            inbox = self.delegations.attention()
+            pending = inbox.pending("main_agent")
+            attention = inbox.render_for_model(pending, budget_items=DEFAULT_BUDGET_ITEMS)
+            if attention:
+                epoch = self.record.history().epoch
+                offset = self._transcript_end()
+                for item in pending[:DEFAULT_BUDGET_ITEMS]:
+                    inbox.receipt(item.id, "main_agent", "queue", epoch=epoch, offset=offset)
+        except Exception:  # noqa: BLE001 - a status line must never end a turn
+            return block
+        return "\n\n".join(part for part in (block, attention) if part)
 
     def _project_operations(self):
         """Named ledger operations; called while both session gates are held."""
@@ -4463,7 +4582,7 @@ class MathematicsSession:
         with self._conversation_gate:
             if self._runtime_epoch != self.record.history().epoch:
                 raise ValueError("Conversation changed; reopen the session before starting a turn.")
-            events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_block, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
+            events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
             turn = _ConversationTurn(events)
             self._conversation_turns.add(turn)
             return turn
