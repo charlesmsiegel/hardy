@@ -46,7 +46,8 @@ recomputing a Gröbner basis on every turn is not a cost this work can absorb.
 
 Replay is kept for the two jobs it is good at, rebuilding state after a kernel
 dies and checking that an exported script reproduces the session, and
-`algebra/replay.py` is a few dozen lines because that is all it has to be.
+`algebra/replay.py` is only that: a thin driver over `CasSession`, not a
+second execution path.
 
 The Jupyter *protocol* is rejected after checking its bridges. Both
 `macaulay2-jupyter-kernel` and `jupyter-kernel-singular` have gone more than a
@@ -105,13 +106,15 @@ this one is spoken to over a pipe.
 
 ## Two output bounds, and why they are not one bound
 
-`cas_output_bytes` (256 KiB) caps what Hardy captures from the kernel at all,
-and it is enforced **inside the kernel**, not by the parent's pipe reader. A
-length-prefixed reply that the parent stopped reading at a byte cap could never
-be assembled, so an over-large answer would consume the whole cell timeout and
-then be reported as a dead kernel. The driver clips before it serialises and
-sets `capture_truncated` (`algebra/driver.py`); a sentinel backend keeps
-scanning for its marker past the retention cap for the same reason.
+`cas_output_bytes` (256 KiB) caps what Hardy captures from the kernel at all.
+For the length-framed backend it is enforced **inside the kernel**, not by the
+parent's pipe reader: a length-prefixed reply that the parent stopped reading
+at a byte cap could never be assembled, so an over-large answer would consume
+the whole cell timeout and then be reported as a dead kernel. The driver clips
+before it serialises and sets `capture_truncated` (`algebra/driver.py`)
+instead. A sentinel backend has no such framing to protect, so the parent's
+reader enforces the cap directly and keeps scanning for the marker past the
+retention cap.
 
 `model_observation_bytes` (32 KiB) caps what is handed back to the model, and
 is what triggers a spill (`algebra/tools.py`). A cell can therefore be fully
@@ -129,9 +132,12 @@ and for a CAS the spilled thing is usually the answer rather than an error
 dump. So the summary tells the model that the value is bound to `_` in the live
 session and can be narrowed in a following cell: `len(_)`, `_[0]`,
 `_.args[:3]`. Inspecting live state is cheaper and more useful than paging
-through a file, and it needs no further tool. The binding is the driver's own
-`sys.displayhook` behaviour (`algebra/driver.py`); the wording is
-`prompts/cas_spill.md.j2`.
+through a file, and it needs no further tool. This is Python's own `_`
+convention: the driver assigns `namespace["_"]` directly after evaluating the
+trailing expression (`algebra/driver.py`), the same binding a REPL makes
+through `sys.displayhook`; the exported script, with no live kernel behind it,
+calls `sys.displayhook` itself to reproduce it (`algebra/backends.py`). The
+wording is `prompts/cas_spill.md.j2`.
 
 ## A truncated capture is recorded, and not accepted
 
@@ -145,11 +151,12 @@ and reported in full, with a note saying why, and is *not* accepted
 it.
 
 That refusal has a cost and the note names it. The cell did change the live
-namespace, and that change is now outside the accepted set, so a later cell
-depending on it diverges on export and fails to rebuild after a restart,
-exactly as one depending on an errored cell does. The remedy is to rerun the
-cell printing less, or to raise `cas_output_bytes` and rerun it, before
-building on it.
+namespace, and that change is now outside the accepted set, so recovery
+refuses the whole rebuild rather than only the cells that depend on it,
+exactly as an unaccepted errored cell does -- see
+[recovery](#recovery-what-may-rebuild-accepted-state-and-what-may-not). The
+remedy is to rerun the cell printing less, or to raise `cas_output_bytes` and
+rerun it, before building on it.
 
 The default backend is different and the difference is stated rather than
 smoothed over: there the child reports its own status and clips afterwards, so
@@ -295,9 +302,11 @@ Refused, so an explicit reset is required:
 
 Permitted to rebuild accepted state:
 
-- A known terminal interrupt, recorded as `kernel_lost`.
-- Legacy `timeout` and `kernel_died` statuses, where the kernel demonstrably
-  did not survive.
+- A known terminal interrupt, recorded as `kernel_lost`; on current records
+  `kernel_lost` is also set for a `timeout` or `kernel_died` status
+  (`algebra/session.py`), not only for an interrupt.
+- Legacy `timeout` and `kernel_died` statuses that predate the `kernel_lost`
+  field, where the kernel demonstrably did not survive.
 
 Reopening the session and later kernel deaths do not clear an earlier live
 unaccepted cell. A rebuild that runs out of session budget partway poisons the

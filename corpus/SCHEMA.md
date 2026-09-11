@@ -169,7 +169,7 @@ and the analysis plan):
 Comparing version *strings* alone cannot see an unversioned edit: a shard
 changes, both strings stay put, and the gate passes on a version that is no
 longer reproducible. `CHANGELOG.md` and this file are outside the manifest, as a
-corpus-side measurements tree would be were one built — a baseline re-sweep or a
+corpus-side measurements tree would be were one built: a baseline re-sweep or a
 documentation edit must not manufacture a release.
 
 `hardy evals corpus check` reports every mechanical objection: unregistered

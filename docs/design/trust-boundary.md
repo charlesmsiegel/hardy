@@ -119,17 +119,21 @@ proofs (`propext`, `Classical.choice`, `Quot.sound`) and their presence is not
 news; anything else is either an approved assumption or an unapproved one that
 refuses the save.
 
-The audited scope is the registered names, because those are the declarations
-the model itself said matter and linked to the writeup; helper lemmas are
-covered transitively, since an unsound helper appears in its consumer's axiom
-set. An empty registry therefore means there is nothing to audit, and a save
+The audited scope is every non-private theorem and lemma in the rebuilt
+modules, not only the names the model registered, because a scope the model
+chooses is a gate it can switch off: a session registering nothing would have
+nothing to audit. Private declarations are skipped, since the probe elaborates
+a file that imports the module and cannot name a private declaration from
+there; a module with nothing auditable records "not established" rather than
+refusing. An empty scope therefore means there is nothing to audit, and a save
 with nothing to audit is refused rather than waved through. Treating it as a
-pass would make the gate optional: a model that simply never registers a name
-would save `sorryAx`-dependent work after an exit-code check alone. For the
-same reason the grade is derived from the audit verdict rather than from
-Lean's exit code, and a kernel-verified grade with no faithfulness verdict
-behind it is refused on read-back rather than believed. What each grade means
-and where it is written is in [the artifacts reference](../reference/artifacts.md).
+pass would make the gate optional: a model that simply declares nothing
+auditable would save `sorryAx`-dependent work after an exit-code check alone.
+For the same reason the grade is derived from the audit verdict rather than
+from Lean's exit code, and a kernel-verified grade with no faithfulness
+verdict behind it is refused on read-back rather than believed. What each
+grade means and where it is written is in
+[the artifacts reference](../reference/artifacts.md).
 
 Who may widen the trust base, and when, differs by path. In an interactive
 session a human approves each axiom at the moment it is requested, with the
