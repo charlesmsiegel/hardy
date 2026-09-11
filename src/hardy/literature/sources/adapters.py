@@ -81,5 +81,6 @@ class AdapterRegistry:
 
 def default_adapters() -> AdapterRegistry:
     from .pdf import PdfAdapter
+    from .tex import TexAdapter
 
-    return AdapterRegistry((PdfAdapter(),))
+    return AdapterRegistry((PdfAdapter(), TexAdapter()))
