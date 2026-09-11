@@ -80,7 +80,8 @@ class AdapterRegistry:
 
 
 def default_adapters() -> AdapterRegistry:
+    from .epub import EpubAdapter
     from .pdf import PdfAdapter
     from .tex import TexAdapter
 
-    return AdapterRegistry((PdfAdapter(), TexAdapter()))
+    return AdapterRegistry((PdfAdapter(), TexAdapter(), EpubAdapter()))

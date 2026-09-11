@@ -166,11 +166,15 @@ def build_tree(
     units: list[Unit] = []
 
     # 1. Headings: text headings first, outline entries located inside their page.
+    seen_heading_starts: set[int] = set()
     for o in text_obs:
         if o.kind is not ObservationKind.HEADING:
             continue
         r = _range(o)
         assert r is not None
+        if r.start in seen_heading_starts:
+            continue  # a native producer and the text observer saw the same heading
+        seen_heading_starts.add(r.start)
         level = LEVELS.get(o.value("level"), 2)
         units.append(Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=r.start, end=r.end, title=o.value("title") or None,
                            number=o.value("number") or None, number_origin="explicit" if o.value("number") else "none",
