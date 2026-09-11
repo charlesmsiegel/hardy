@@ -16,6 +16,7 @@ ROOT = Path(__file__).parents[2]
 # Pages in scope. Tasks that add a page append it here. The old root
 # documents join in Task 26, when they are deleted or rewritten.
 NEW_TREE: list[Path] = [
+    ROOT / "README.md",
     ROOT / "AGENTS.md",
     ROOT / "CLAUDE.md",
     ROOT / "CONTRIBUTING.md",
@@ -196,3 +197,30 @@ def test_docs_index_lists_every_page() -> None:
         if rel == "README.md" or rel.startswith(("archive/", "superpowers/", "ideas/")) or rel in {"INSTALL.md", "security.md"}:
             continue
         assert rel in listed, f"docs/README.md does not list {rel}"
+
+
+def _flat(text: str) -> str:
+    """Prose with hard wraps folded, so a pinned phrase matches across lines."""
+    return re.sub(r"[ \t]*\n[ \t]*", " ", text)
+
+
+def test_readme_records_the_prose_route_past_the_theorem_gate() -> None:
+    """Two live runs walked past the theorem gate, one in prose and one in a
+    `lemma` environment; the README must say so beside what covers them."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    paragraphs = [_flat(p) for p in readme.split("\n\n")]
+    hits = [p for p in paragraphs if "Saying it in prose instead does" in p]
+    assert hits, "the README does not name the prose route past the theorem gate"
+    assert "`lemma`" in hits[0] and "banner" in hits[0]
+
+
+def test_readme_does_not_promise_isolation_codex_cannot_give() -> None:
+    """The Codex reader cannot be confined; the README must not hand users a
+    stronger no-tools guarantee than the implementation provides."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    sections = [_flat(s) for s in readme.split("\n## ")]
+    hits = [s for s in sections if "That faithfulness check is the one gate" in s]
+    assert hits, "the README does not name the faithfulness gate"
+    assert "codex" in hits[0].lower()
+    assert "no tools" in hits[0]
+    assert "read" in hits[0]
