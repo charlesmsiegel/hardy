@@ -177,6 +177,11 @@ Similarity, theorem names, or embeddings are not sufficient to merge them.
     500-page book should not require resolving or formalizing every statement
     before the source becomes useful.
 
+13. **Indexed source bytes are Hardy-owned immutable imports.** External files,
+    downloads, or mounted paths are acquisition inputs/provenance, not mutable
+    backing stores for an indexed source. Once admitted, Hardy's exact managed copy
+    is what every source node, extraction, claim link, and citation refers to.
+
 ## 4. Persistent personal mathematical library
 
 Hardy should maintain a reusable user-level library shared across projects. The
@@ -260,7 +265,111 @@ For arXiv, the exact versioned arXiv record/source already supplies much of this
 identity. General literature should preserve rather than weaken the current exact
 version/digest discipline.
 
-### 5.2 SourceTree
+### 5.2 Managed immutable import
+
+Hardy should not index user-supplied scholarly material in place. Importing a local
+PDF, EPUB, TeX tree, scan, downloaded file, or provider result copies the exact
+admitted bytes into Hardy's user-level managed literature store. The external path
+or URL remains provenance only.
+
+Conceptually:
+
+```text
+C:/Downloads/Hartshorne.pdf
+        │ import
+        ▼
+~/.hardy/.../literature/artifacts/<sha256>/original.pdf
+        │
+        ├── immutable exact bytes
+        ├── import/provenance record
+        ├── derived text/OCR representations
+        └── SourceTree/indexes
+```
+
+The literal layout/name above is illustrative; Hardy already has a user-level
+`~/.hardy` root, but this spec does not freeze the final directory names.
+
+The import contract is:
+
+```text
+read bounded/validated input
+→ compute content digest
+→ copy to a temporary managed location
+→ verify copied bytes/digest
+→ atomically admit the artifact record + managed bytes
+→ derive/index only from the managed copy
+```
+
+A refused or interrupted import must not leave a half-admitted artifact that later
+looks valid.
+
+Identical bytes deduplicate by content digest. Importing the same PDF from two
+paths may add provenance/aliases, but should not duplicate the immutable artifact.
+Different bytes are different artifact identities even when metadata says they are
+the same title/edition.
+
+After import, edits, deletion, renaming, cloud-sync changes, or replacement of the
+external original do not change Hardy's artifact. To consume changed bytes, the
+user/provider imports again, producing either the same digest (no mathematical
+change) or a new `SourceArtifact` identity.
+
+### 5.3 Import provenance
+
+The managed artifact retains acquisition facts separately from byte identity, such
+as:
+
+```text
+original filename/path or provider handle
+source URL/provider identity when fetched
+time imported/fetched
+media/MIME type and detected format
+user/provider supplied bibliographic metadata
+acquisition adapter/version
+privacy/access classification
+```
+
+Original local paths can be useful diagnostics but are not durable semantic
+identity and should not be required for later reading.
+
+### 5.4 Derived representations are artifact-bound
+
+Normalized text, OCR output, page images, extracted TeX, layout analysis,
+SourceTrees, and search indexes are **derived from one exact managed artifact**.
+Their identity should therefore include at least the source artifact digest and the
+extractor/parser/model/configuration identity needed to reproduce or distinguish
+the derivation.
+
+A better OCR pass or parser version can create a new derived representation without
+changing the underlying source artifact. Historical source-to-claim links remain
+bound to the representation/span they actually interpreted rather than silently
+moving to a newer extraction.
+
+Derived caches that are purely reconstructable may be discarded/rebuilt; derived
+representations that serve as cited/evidenced interpretation inputs need durable
+identity/provenance even if their bytes can be regenerated.
+
+### 5.5 Storage boundary and portability
+
+Managed source bytes belong to the user's Hardy library, not individual project
+repositories. Projects carry exact artifact/source-node references and portable
+metadata/digests rather than private book bytes.
+
+This gives Hardy a stable object to index once and reuse across projects while
+preserving the current desirable split:
+
+```text
+USER-LEVEL PRIVATE LIBRARY
+  exact third-party bytes + derived source structures + reusable formal library
+
+PROJECT
+  uses/citations/claims/obligations/evidence references to shared material
+```
+
+Backup/multi-machine synchronization of the personal library is a later design
+question; any such mechanism must preserve content identity and privacy rather than
+turning external sync paths back into mutable backing stores.
+
+### 5.6 SourceTree
 
 A `SourceTree` is analogous to an AST for the scholarly artifact: it records the
 artifact's structural organization and exact locations without initially claiming
@@ -310,7 +419,7 @@ Source numbering must distinguish what the source actually provides from numberi
 Hardy inferred. Page identity should distinguish printed page labels from PDF/image
 page indices.
 
-### 5.3 Source graph beyond the tree
+### 5.7 Source graph beyond the tree
 
 The literal containment tree is not enough. Source nodes may also carry derived
 structural/reference edges such as:
@@ -326,7 +435,7 @@ continues_from
 These are claims about the source document's structure/reference behavior, not yet
 semantic mathematical dependency edges.
 
-### 5.4 Progressive source enrichment
+### 5.8 Progressive source enrichment
 
 Import should be useful before semantic understanding is complete.
 
@@ -954,6 +1063,7 @@ shared existence does not automatically widen a project's trust scope
 citation provenance and formal proof provenance remain independent
 source/claim/formal histories are versioned; no silent retargeting
 indexes accelerate discovery but never establish identity/truth
+managed imported bytes, not external mutable paths, define indexed source identity
 ```
 
 ## 22. Evaluation questions
@@ -980,6 +1090,10 @@ The following are considered agreed unless later discussion revises them:
 general literature and existing paper handling converge on one source architecture
 user has a persistent personal mathematical library shared across projects
 exact source artifacts/editions are content-identified and remain distinct
+Hardy copies admitted source bytes into its own managed user-level library
+external paths/URLs are provenance/acquisition inputs, not live backing stores
+managed imports are immutable, digest-verified, atomic, and deduplicate identical bytes
+derived representations remain explicitly bound to exact managed artifact identity
 large sources are represented by navigable SourceTrees with exact locators
 source structure is useful before semantic/formal enrichment is complete
 there is a cross-project exact mathematical claim registry
@@ -1006,24 +1120,27 @@ The semantic/formal reuse architecture above should be treated as foundational.
 The next sections to design are primarily source-management mechanics rather than a
 reconsideration of this layer:
 
-1. **Import/acquisition UX and artifact formats:** PDF, EPUB, TeX/source trees,
+1. **Artifact/edition/representation identity:** distinguish bibliographic work,
+   edition/version, exact imported artifact, and derived text/OCR/source-tree
+   representations without conflating any of them.
+2. **Import/acquisition interfaces and formats:** PDF, EPUB, TeX/source trees,
    HTML, plaintext, scans, directories, URLs/provider fetches, and user-supplied
    files.
-2. **Text extraction/OCR and normalization:** what representations are produced,
+3. **Text extraction/OCR and normalization:** what representations are produced,
    confidence/failure handling, and preserving exact page/span mappings.
-3. **SourceTree construction:** parsing native structure vs model-assisted
+4. **SourceTree construction:** parsing native structure vs model-assisted
    reconstruction; tables of contents; theorem/proof/example/exercise extraction;
    page/section/label locators.
-4. **Library storage/layout and portability:** persistent user library, private
-   source bytes, caches/indexes, backup/export, multiple machines.
-5. **Bibliography/citation generalization:** extend current arXiv-centric
+5. **Library portability:** backup/export, multiple machines, privacy, and shared
+   metadata without redistributing private source bytes.
+6. **Bibliography/citation generalization:** extend current arXiv-centric
    bibliography identity while preserving exact artifact provenance and stable
    citation keys.
-6. **Claim interpretation/admission workflow:** when source nodes get claim IDs,
+7. **Claim interpretation/admission workflow:** when source nodes get claim IDs,
    how candidate matches are reviewed, and how much can be automated.
-7. **Shared formal-library packaging:** module layout, dependency promotion,
+8. **Shared formal-library packaging:** module layout, dependency promotion,
    environment/version compatibility, and how promoted Lean is built/imported.
-8. **Source/claim/formal search API:** operations used by Explore, Research,
+9. **Source/claim/formal search API:** operations used by Explore, Research,
    acquisition, and delegation.
 
 This document should be updated in place as each section is settled so that the
