@@ -1686,6 +1686,14 @@ The following former issue concepts are intentionally represented here rather th
 
 No separate hole ledger, concept database, representation database, context/notation database, conjecture database, approach/dead-end database, patch database, citation database, stale-prose store, publication graph, or theorem-memory database should be added unless this architecture is explicitly reconsidered.
 
+## J0 — Delegation and research-swarm backend — P1
+
+**Status:** Slices 1-3 implemented (2026-09-10): delegation contracts and the hash-chained journal, ancestor-bounded leases with unknown liability and recursive cancellation, a local worker executor, the leaf worker with its own provider context, the attention inbox with separate human and model receipts, the nonblocking controller, and the session wiring behind `/delegate`, `/jobs` and `/cancel`. Slices 4-14 (staged context construction, lazy retrieval with enforced isolation, findings and promotion, the mechanical scheduler, the optional coordinator, workspace overlays and change sets, subtree overlays and admission, current-head reconciliation, routed attention and continuations, the fuller control surface, end-to-end acceptance) are not started.
+
+**Deps:** Core B-D, X2
+
+Specification: [the delegation and research-swarm design](superpowers/specs/2026-09-10-delegation-swarm-design.md); plan: [the delegation backend implementation plan](superpowers/plans/2026-09-10-delegation-swarm-backend.md). One hierarchy from a single background worker to a coordinated swarm, all execution state under `workflows/delegation/` and `agents/executor.py`; mathematics stays in the ledger and every result routes back through the existing owners.
+
 ---
 
 # First three release-like milestones

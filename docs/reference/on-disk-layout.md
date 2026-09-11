@@ -84,6 +84,15 @@ Everything one problem owns lives under its own directory, and all of it is mean
 │   ├── 00000000000000000001.json              # one committed transaction per file
 │   ├── 00000000000000000002.json
 │   └── writer.lock                              # the ledger's OS-level lock file, left in place after use
+├── delegations/
+│   ├── journal.jsonl                              # append-only, hash-chained delegation events
+│   ├── journal.lock                               # the journal's OS-level lock file, left in place
+│   └── <delegation-id>/                           # one worker's artifacts
+│       ├── core.json, brief.json, manifest.json   # what it was launched with
+│       ├── prompt.md                              # the launch prompt it was sent
+│       ├── trajectory.jsonl                       # its own provider events and tool calls
+│       ├── findings.json                          # every finding it proposed
+│       └── result.json                            # its structured terminal result
 ├── publications/
 │   └── <name>/                                   # one immutable bundle per /project publish
 │       ├── publication.json
@@ -106,6 +115,8 @@ Everything one problem owns lives under its own directory, and all of it is mean
 **`bibliography.json`** is the one file that names every citation, keyed so that the same paper gets the same cite key wherever it is cited; `tex/references.tex` is rendered whole from it on every write and would be overwritten by the next citation if hand-edited, so it carries no information `bibliography.json` does not already have.
 
 **`ledger/`** holds one append-only transaction file per write, named by a 20-digit sequence number, each carrying its own content digest and a reference to the previous file's digest, under schema `hardy.ledger/transaction/v1`. `writer.lock` is the OS-level lock's rendezvous file: it is created once and never unlinked, since an empty file at a known path makes no claim on anything by itself, so it is harmless to commit alongside the transactions it once serialized.
+
+**`delegations/`** is execution state, not mathematics: `journal.jsonl` is the append-only, hash-chained record of every background delegation (creation, lease reservation, start, usage, terminal state, attention and its deliveries), and each `<delegation-id>/` directory holds that worker's own launch package, trajectory, findings and result. A worker never writes anywhere else in the problem. The mathematical objects it works on stay in `ledger/`; nothing here is evidence. Committed, like the transcript, because what was tried is part of the record; `journal.lock` is a rendezvous file on the same terms as `ledger/writer.lock`.
 
 **`publications/<name>/`** is one immutable bundle per `/project publish`, described in [Project publication commands](cli.md#project-publication-commands); an existing bundle at a given name is never overwritten, so a later publication needs a new name.
 

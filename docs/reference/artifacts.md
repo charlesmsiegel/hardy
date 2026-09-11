@@ -158,6 +158,24 @@ A project's `ledger/` is an append-only, hash-chained sequence of transactions, 
 
 Every committed version of the project remains addressable; there is no separate mutable database to repair, only replay of this chain. `writer.lock` is the OS-level lock's rendezvous file, created once and left in place; an empty file at a known path makes no claim on anything by itself, so it is harmless committed alongside the transactions it once serialized.
 
+## `delegations/`
+
+A problem's `delegations/journal.jsonl` is the append-only record of background work started from the session: one JSON object per line, `{"event": {...}, "digest": ...}`, where the event carries `sequence` (0-based, must equal its line), `previous` (the prior event's digest, or `null`), `delegation_id`, `kind`, `timestamp` and a `payload`, and `digest` is the event's own content digest under schema `hardy.delegation/event/v1`. A line whose digest or chain does not match is refused on read. The tree of delegations, their leases, their usage and their attention state are all replayed from this file; nothing else is consulted.
+
+| Event kind | Payload | Meaning |
+| --- | --- | --- |
+| `delegation.created` | `spec`, `parent_id`, `created_at` | A node exists; `spec` is the frozen request (objective, exact project refs, scope, lease, concurrency, policies, who asked). The synthetic `root` node carries the session's ceilings. |
+| `budget.reserved` / `budget.released` | `lease`, `slots` | A reservation under the parent's allocatable resources, and its return once the node is terminal. |
+| `delegation.context` | `problem_core_digest`, `research_brief_digest`, `context_manifest_id` | What the worker was launched with; the files are beside the journal. |
+| `delegation.started` / `progress` / `paused` / `resumed` / `waiting` | | Lifecycle. |
+| `usage.reported` | `usage` | Measured spend. A dimension listed in `unknown` was not reported and is liability, never zero. |
+| `delegation.completed` / `partial` / `failed` / `cancelled` / `exhausted` | `result`, `reason` | Terminal. `result` is the worker's structured `WorkerResult`. |
+| `delegation.recovered` | `reason`, `recovered_at` | Work that was active when the process died; state `unknown`, every usage dimension unknown. Distinct from every other ending. |
+| `cancel.requested` | `reason` | A cancellation request; the executor ends the worker. |
+| `attention.derived` / `attention.delivered` / `attention.handled` | `item` / `receipt` / `item_id` | An attention item derived from an event; a delivery receipt naming the recipient (`human` or `main_agent`), mode, conversation epoch and transcript offset; a human handling it. |
+
+Each `<delegation-id>/` directory holds `core.json` (the frozen problem core, hashable, shared by every worker on one target), `brief.json` (the worker's own research brief), `manifest.json` (the context manifest), `prompt.md`, `trajectory.jsonl` (a run trajectory in the same shape as a staged run's), `findings.json` and `result.json`. A finding is execution provenance with a `kind`, `summary`, `payload`, related refs and an `evidence_profile` that defaults to `speculative`; recording one admits nothing to the ledger.
+
 ## Scoreboards, baselines, pools
 
 `hardy evals baseline` writes `evals/baseline.json`: the automation floor's own measurement, over the corpus as it stood when the sweep ran.
