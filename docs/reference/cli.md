@@ -316,6 +316,66 @@ Writes a Markdown report over every scoreboard, one row per model. Read-only.
 | `--baseline` | `evals/baseline.json` |  | The tier file the scoreboards were scored against. |
 | `--out` | `corpus/EVALS.md` |  | Where the report is written. |
 
+### hardy library
+
+The personal mathematical library at `~/.hardy/library/`, described in [the on-disk layout](on-disk-layout.md#user-level-hardy). Every verb prints what the backend recorded and nothing it inferred; a bibliographic grouping proposed from a file's own metadata stays a candidate until `confirm` records the user's word. The verbs that touch a problem (`seed`, `unseed`, `seeds`) act on the active problem, chosen the way `hardy chat` chooses it. Takes no options of its own.
+
+### hardy library import
+
+Copies one file into the managed library under the SHA-256 of its bytes, runs the format adapter over the managed copy, and proposes a work and edition from whatever metadata the file carries. The original path is recorded as provenance and never read again. Importing the same bytes twice reuses the artifact and adds a second provenance record; a file whose bytes changed lands as a second artifact. Exits `1` when the input is refused.
+
+| Option | Default | Env var | Meaning |
+| --- | --- | --- | --- |
+| `--access` | `private_local` |  | The access policy recorded on the artifact: `private_local`, `redistributable`, `public_provider_retrievable` or `unknown_restricted`. |
+| `--title` | none |  | A title to propose the bibliographic identity from when the file carries none. |
+| `--author` | none |  | An author recorded beside the title. |
+| `--no-extract` | off |  | Admit the bytes and stop; no adapter runs. |
+
+### hardy library list
+
+Lists every artifact the library holds with its format, the title of its authoritatively grouped edition or a note that none is confirmed, and how many source trees it has.
+
+### hardy library show
+
+Prints one artifact's record, availability, every provenance record, every derived representation with its quality, every tree, the edition it authoritatively belongs to, and the candidate editions still awaiting a decision. The argument is the digest or any unique prefix of it.
+
+### hardy library tree
+
+Builds, validates and admits a deterministic source tree over the artifact's normalized text, printing the node and edge counts and every diagnostic; a numbering gap is reported here, not filled in. A tree that fails mechanical validation is not admitted. Exits `1` when there is no text to build from.
+
+### hardy library map
+
+Prints the preferred tree's structural map: containers and statement-like units with their printed numbers, page indices where known, and the node ids the session's `read_source` tool takes.
+
+| Option | Default | Env var | Meaning |
+| --- | --- | --- | --- |
+| `--depth` | `2` |  | How many container levels to expand. |
+
+### hardy library confirm
+
+Records the user's confirmation that an artifact is a copy of a catalogued edition, which is what makes the grouping authoritative when the file carries no ISBN, DOI or exact arXiv version. Refused when the artifact already belongs to a different edition.
+
+| Option | Default | Env var | Meaning |
+| --- | --- | --- | --- |
+| `--reason` | `confirmed by the user` |  | Why the user is sure; kept on the decision record. |
+
+### hardy library seed
+
+Seeds the active problem with one artifact: from then on the session's source tools may map, search and read it, in bounded excerpts, and the problem's `sources/` journal records the artifact digest, edition and preferred tree as refs. No bytes enter the problem.
+
+| Option | Default | Env var | Meaning |
+| --- | --- | --- | --- |
+| `--priority` | `0` |  | Retrieval priority among the problem's seeds; higher first. |
+| `--intent` | none |  | What the problem wants from this source, kept on the seed. |
+
+### hardy library unseed
+
+Withdraws one seed by id. The withdrawal is itself a journal record, so the history of what the problem could read stays readable.
+
+### hardy library seeds
+
+Lists the active problem's seeds with their priorities and intents.
+
 ## Project publication commands
 
 These run inside the interactive session, through the `/project` and `/publish` prompt commands, rather than as `hardy` subcommands.
