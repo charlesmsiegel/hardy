@@ -66,7 +66,7 @@ class TreeError(ValueError):
 
 
 @dataclass(frozen=True)
-class _Unit:
+class Unit:
     kind: NodeKind
     start: int
     end: int
@@ -118,6 +118,36 @@ def _trim(text: str, start: int, end: int) -> int:
     return end
 
 
+def node_record(
+    artifact_sha256: str, rep: str, text: str, unit: Unit, *, parent: str | None, start: int, end: int, order: int,
+    page_spans: Mapping[int, RepresentationSpan] | None, taken: set[str], provenance: str,
+) -> SourceNode:
+    """One node with a content-derived, artifact-bound identity and exact spans."""
+    statement_text = text[unit.start:(unit.statement_end or unit.end)]
+    seed = f"{artifact_sha256}|{unit.kind.value}|{unit.number or ''}|{unit.title or ''}|{text_digest(statement_text)}"
+    node_id = "n-" + hashlib.sha256(seed.encode()).hexdigest()[:16]
+    suffix = 2
+    while node_id in taken:
+        node_id = "n-" + hashlib.sha256(f"{seed}|{suffix}".encode()).hexdigest()[:16]
+        suffix += 1
+    ranges = (RepresentationSpan(representation=rep, start=start, end=end),)
+    anchors = tuple(
+        SourceAnchor(artifact_sha256=artifact_sha256, locator=PageRegion(page_index=page, precision="page"), derivation="page span overlap")
+        for page, span in sorted((page_spans or {}).items()) if span.start < end and start < span.end
+    )
+    span = SourceSpan(id=f"span-{node_id}", artifact_sha256=artifact_sha256, ranges=ranges, anchors=anchors,
+                      content_sha256=text_digest(text[start:end]), node=node_id, mapping_provenance=provenance)
+    statement_span = None
+    if unit.statement_end is not None and unit.kind in STATEMENT_KINDS:
+        statement_span = SourceSpan(id=f"stmt-{node_id}", artifact_sha256=artifact_sha256,
+                                    ranges=(RepresentationSpan(representation=rep, start=unit.start, end=unit.statement_end),), anchors=anchors,
+                                    content_sha256=text_digest(statement_text), node=node_id, mapping_provenance=provenance)
+    version = json_digest([unit.kind.value, parent, [r.model_dump() for r in ranges], unit.number, unit.label, unit.title])
+    return SourceNode(id=node_id, version=version, kind=unit.kind, parent=parent, order=order, title=unit.title, number=unit.number,
+                      number_origin=unit.number_origin, label=unit.label, span=span, statement_span=statement_span,  # type: ignore[arg-type]
+                      confidence=unit.confidence, boundary_status=unit.boundary, observations=unit.observations)  # type: ignore[arg-type]
+
+
 def build_tree(
     artifact: SourceArtifact, representation: DerivedRepresentation, text: str,
     observations: tuple[StructuralObservation, ...], *, page_spans: Mapping[int, RepresentationSpan] | None = None,
@@ -130,7 +160,7 @@ def build_tree(
     text_obs = [o for o in observations if o.artifact_sha256 == artifact.sha256 and (r := _range(o)) is not None and r.representation == rep]
     page_obs = [o for o in observations if o.artifact_sha256 == artifact.sha256 and _page(o) is not None]
     boundaries = _boundaries(text, text_obs)
-    units: list[_Unit] = []
+    units: list[Unit] = []
 
     # 1. Headings: text headings first, outline entries located inside their page.
     for o in text_obs:
@@ -139,7 +169,7 @@ def build_tree(
         r = _range(o)
         assert r is not None
         level = LEVELS.get(o.value("level"), 2)
-        units.append(_Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=r.start, end=r.end, title=o.value("title") or None,
+        units.append(Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=r.start, end=r.end, title=o.value("title") or None,
                            number=o.value("number") or None, number_origin="explicit" if o.value("number") else "none",
                            level=level, observations=(o.id,), confidence=o.confidence))
     heading_starts = {u.start for u in units}
@@ -168,7 +198,7 @@ def build_tree(
         if start in heading_starts:
             continue
         heading_starts.add(start)
-        units.append(_Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=start, end=end, title=(match.group("title") if match else title) or None,
+        units.append(Unit(kind=LEVEL_KINDS.get(level, NodeKind.SUBSECTION), start=start, end=end, title=(match.group("title") if match else title) or None,
                            number=number, number_origin="explicit" if number else "none", level=level, boundary=boundary,
                            observations=(o.id,), confidence=o.confidence))
     if any(u.start in heading_starts for u in units):
@@ -185,7 +215,7 @@ def build_tree(
             # A statement that runs to the end of the text with no structural marker
             # after it may have swallowed following prose; say so rather than claim it.
             boundary = "high" if limit < len(text) else "probable"
-            units.append(_Unit(kind=kind, start=r.start, end=end, title=o.value("name") or None, number=o.value("number") or None,
+            units.append(Unit(kind=kind, start=r.start, end=end, title=o.value("name") or None, number=o.value("number") or None,
                                number_origin=o.value("number_origin", "none"), statement_end=end, boundary=boundary,
                                observations=(o.id,), confidence=o.confidence))
         elif o.kind is ObservationKind.PROOF_START:
@@ -203,7 +233,7 @@ def build_tree(
             proof_of = re.search(r"of\s+(?:Theorem|Lemma|Proposition|Corollary|Claim)\s+([0-9]+(?:\.[0-9]+)*)", text[r.start:r.end])
             if proof_of:
                 target = proof_of.group(1)
-            units.append(_Unit(kind=NodeKind.PROOF, start=r.start, end=end, label=label, boundary=boundary, observations=(o.id,),
+            units.append(Unit(kind=NodeKind.PROOF, start=r.start, end=end, label=label, boundary=boundary, observations=(o.id,),
                                confidence=o.confidence, proof_target_number=target))
 
     units.sort(key=lambda u: (u.start, 0 if u.kind in CONTAINER_KINDS else 1))
@@ -219,7 +249,7 @@ def build_tree(
                 break
         container_end[id(unit)] = _trim(text, unit.start, end)
 
-    def container_of(position: int) -> _Unit | None:
+    def container_of(position: int) -> Unit | None:
         best = None
         for unit in containers:
             if unit.start <= position < max(container_end[id(unit)], unit.start + 1) and (best is None or (unit.level or 0) > (best.level or 0)):
@@ -231,33 +261,12 @@ def build_tree(
     ids: dict[int, str] = {}
     counters: dict[str | None, int] = {}
 
-    def make_node(unit: _Unit, parent: str | None, start: int, end: int) -> SourceNode:
-        statement_text = text[unit.start:(unit.statement_end or unit.end)]
-        seed = f"{artifact.sha256}|{unit.kind.value}|{unit.number or ''}|{unit.title or ''}|{text_digest(statement_text)}"
-        node_id = "n-" + hashlib.sha256(seed.encode()).hexdigest()[:16]
-        suffix = 2
-        while node_id in ids.values():
-            node_id = "n-" + hashlib.sha256(f"{seed}|{suffix}".encode()).hexdigest()[:16]
-            suffix += 1
-        ranges = (RepresentationSpan(representation=rep, start=start, end=end),)
-        anchors = tuple(
-            SourceAnchor(artifact_sha256=artifact.sha256, locator=PageRegion(page_index=page, precision="page"), derivation="page span overlap")
-            for page, span in sorted((page_spans or {}).items()) if span.start < end and start < span.end
-        )
-        span = SourceSpan(id=f"span-{node_id}", artifact_sha256=artifact.sha256, ranges=ranges, anchors=anchors,
-                          content_sha256=text_digest(text[start:end]), node=node_id, mapping_provenance=f"{BUILDER}/{builder_version}")
-        statement_span = None
-        if unit.statement_end is not None and unit.kind in STATEMENT_KINDS:
-            statement_span = SourceSpan(id=f"stmt-{node_id}", artifact_sha256=artifact.sha256,
-                                        ranges=(RepresentationSpan(representation=rep, start=unit.start, end=unit.statement_end),), anchors=anchors,
-                                        content_sha256=text_digest(statement_text), node=node_id, mapping_provenance=f"{BUILDER}/{builder_version}")
+    def make_node(unit: Unit, parent: str | None, start: int, end: int) -> SourceNode:
         order = counters.get(parent, 0)
         counters[parent] = order + 1
-        version = json_digest([unit.kind.value, parent, [r.model_dump() for r in ranges], unit.number, unit.label, unit.title])
-        node = SourceNode(id=node_id, version=version, kind=unit.kind, parent=parent, order=order, title=unit.title, number=unit.number,
-                          number_origin=unit.number_origin, label=unit.label, span=span, statement_span=statement_span,  # type: ignore[arg-type]
-                          confidence=unit.confidence, boundary_status=unit.boundary, observations=unit.observations)  # type: ignore[arg-type]
-        ids[id(unit)] = node_id
+        node = node_record(artifact.sha256, rep, text, unit, parent=parent, start=start, end=end, order=order,
+                           page_spans=page_spans, taken=set(ids.values()), provenance=f"{BUILDER}/{builder_version}")
+        ids[id(unit)] = node.id
         nodes.append(node)
         return node
 
@@ -298,7 +307,7 @@ def build_tree(
         if start >= end:
             continue
         owner = container_of(start)
-        unit = _Unit(kind=NodeKind.UNKNOWN, start=start, end=end, boundary="high")
+        unit = Unit(kind=NodeKind.UNKNOWN, start=start, end=end, boundary="high")
         make_node(unit, ids.get(id(owner)) if owner else None, start, end)
     nodes.sort(key=lambda n: n.span.ranges[0].start)
     reordered: list[SourceNode] = []
