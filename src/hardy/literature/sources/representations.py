@@ -60,6 +60,13 @@ class RepresentationStore:
             held = self.get(record.artifact_sha256, record.id)
             if held.output_sha256 != record.output_sha256:
                 raise RepresentationError(f"representation {record.id} already exists with different output")
+            # A record whose payloads were withheld from a portable export and
+            # have now been regenerated from the restored bytes: the same
+            # output under the same identity, so the payloads are put back.
+            guard = WriteGuard(existing)
+            for name, data in payloads.items():
+                if not (existing / name).is_file():
+                    guard.write_bytes(name, data)
             self.add_mappings(record.artifact_sha256, mappings)
             return held
         parent = WriteGuard(self.root / record.artifact_sha256, create=True)
@@ -138,8 +145,14 @@ class RepresentationStore:
         """Every text-bearing representation of an artifact, by id, for span resolution."""
         found: dict[str, str] = {}
         for record in self.list(artifact_sha256):
-            if TEXT_PAYLOAD in record.payload_files:
+            if TEXT_PAYLOAD not in record.payload_files:
+                continue
+            try:
                 found[record.id] = self.text(artifact_sha256, record.id)
+            except (FileNotFoundError, LayoutError):
+                # A record whose payload was withheld from a portable export:
+                # the representation is identifiable here and its text is not.
+                continue
         return found
 
     def mappings(
