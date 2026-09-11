@@ -280,6 +280,25 @@ def run_checks(config: Config, *, deep: bool = False, backend: str | None = None
         ok, detail = _probe([latex_executable, "--version"], timeout=60)
         checks.append(Check("latex", ok, detail))
 
+    # Not the same compiler. `latex_command` serves the interactive session's
+    # cells; `prove`, a live `accept` and staged `evals` rows build their
+    # document with Tectonic, and this check set is their preflight. Probing
+    # only the first let a machine through that ran a whole proof and then
+    # could not start the compiler its document needed.
+    tectonic = str(config.tectonic)
+    if shutil.which(tectonic) is None:
+        checks.append(
+            Check(
+                "tectonic",
+                False,
+                f"{tectonic} not found; `prove` compiles its document with it. "
+                "Install it with `hardy setup`, or point the `tectonic` setting at an existing binary",
+            )
+        )
+    else:
+        ok, detail = _probe([tectonic, "--version"], timeout=60)
+        checks.append(Check("tectonic", ok, detail))
+
     checks.append(_cas_check(config))
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
     checks.append(Check("backend", True, selected, required=False))

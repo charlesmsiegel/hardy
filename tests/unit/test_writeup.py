@@ -235,6 +235,55 @@ def test_tex_failure_preserves_mathematical_grades_and_marks_saved_source(tmp_pa
     assert 'induction step remains' in tex
 
 
+def test_a_compiler_that_cannot_be_run_is_a_failed_document_not_a_crash(tmp_path) -> None:
+    """A machine without Tectonic raised `FileNotFoundError` out of `Popen`
+    and the run died in a traceback after the proof was done: no manifest,
+    no saved source, and a document graded as never attempted. The compiler
+    being absent is a compile that failed, and the document says so."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    writeup = importlib.import_module('hardy.documents.writeup')
+    claim = _claim(domain)
+    store = storage.RunStore.create(tmp_path, 'absent', now=NOW, run_id=RUN_ID)
+    grades = domain.Grades(
+        formal=domain.FormalStatus.PARTIAL,
+        faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(domain, claim.content_hash),
+        informal=domain.InformalStatus.KNOWN_GAPS,
+        known_gaps=('induction step remains',),
+    )
+
+    def missing(spec):
+        raise FileNotFoundError(2, 'The system cannot find the file specified', spec.argv[0])
+
+    result = writeup.build_writeup(
+        claim,
+        writeup.WriteupContent(
+            title='Partial result',
+            theorem_text='The intended theorem.',
+            proof_text='Progress only.',
+            known_gaps=('induction step remains',),
+        ),
+        grades,
+        None,
+        _identities(writeup, tmp_path),
+        store,
+        limits=domain.RunLimits(),
+        runner=missing,
+    )
+
+    tex = (store.path / 'writeup' / 'paper.tex').read_text(encoding='utf-8')
+    log = (store.path / 'writeup' / 'compile.log').read_text(encoding='utf-8')
+    assert result.status is domain.DocumentStatus.TEX_FAILED
+    assert result.pdf_artifact is None
+    assert result.process.returncode is None
+    assert 'Document status: TeX failed' in tex
+    assert 'induction step remains' in tex
+    assert 'could not be run' in log
+    assert str(tmp_path / 'tectonic.exe') in log
+    assert 'hardy setup' in log
+
+
 def test_the_paper_discloses_a_reader_whose_isolation_was_not_established(
     tmp_path,
 ) -> None:
