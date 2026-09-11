@@ -42,6 +42,7 @@ import io
 import re
 import shutil
 import tarfile
+import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -150,16 +151,18 @@ class _Bounded(io.RawIOBase):
 
 
 def kind_of(data: bytes) -> str:
-    """Which of the three shapes arXiv serves these bytes are, or a refusal."""
+    """Which shape these bytes are: the three arXiv serves, a zip (an EPUB), or a refusal."""
     if data[:2] == b"\x1f\x8b":
         return "gzip"
     if data[:5] == b"%PDF-":
         return "pdf"
+    if data[:4] == b"PK\x03\x04":
+        return "zip"
     if len(data) > TAR_MAGIC_OFFSET + len(TAR_MAGIC) and data[
         TAR_MAGIC_OFFSET : TAR_MAGIC_OFFSET + len(TAR_MAGIC)
     ] == TAR_MAGIC:
         return "tar"
-    raise ArchiveError("the download is not a gzip, tar, or PDF; refusing to unpack it")
+    raise ArchiveError("the download is not a gzip, tar, zip, or PDF; refusing to unpack it")
 
 
 def extract(data: bytes, into: Path, *, limits: Limits = DEFAULT_LIMITS) -> Extraction:
@@ -181,6 +184,8 @@ def extract(data: bytes, into: Path, *, limits: Limits = DEFAULT_LIMITS) -> Extr
         if kind == "tar":
             stream = _Bounded(io.BytesIO(data), limits.stream_bytes, "archive")
             return Extraction("tar", _extract_tar(stream, into, limits))
+        if kind == "zip":
+            return Extraction("zip", _extract_zip(data, into, limits))
         # gzip: a tar inside it, or one bare file.
         with gzip.GzipFile(fileobj=io.BytesIO(data)) as peek:
             head = _Bounded(peek, limits.stream_bytes, "gzip stream").read(512)
@@ -189,7 +194,7 @@ def extract(data: bytes, into: Path, *, limits: Limits = DEFAULT_LIMITS) -> Extr
         if head[TAR_MAGIC_OFFSET : TAR_MAGIC_OFFSET + len(TAR_MAGIC)] == TAR_MAGIC:
             return Extraction("tar", _extract_tar(stream, into, limits))
         return Extraction("gzip", (_write_whole(into, SINGLE_FILE_NAME, stream, limits),))
-    except tarfile.TarError as error:
+    except (tarfile.TarError, zipfile.BadZipFile) as error:
         _clear(into)
         raise ArchiveError(f"the archive is corrupt: {error}") from error
     except ArchiveError:
@@ -307,6 +312,54 @@ def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[Extracte
             # member named `a` -- after `a/b.tex` created `a` -- reached the
             # open as a directory and raised `IsADirectoryError` from three
             # frames down instead of this module's own refusal.
+            directories.update(_prefixes(path)[:-1])
+            total += files[-1].size
+    if not files:
+        raise ArchiveError("the archive holds no files")
+    return tuple(sorted(files, key=lambda item: item.path))
+
+
+def _extract_zip(data: bytes, into: Path, limits: Limits) -> tuple[ExtractedFile, ...]:
+    """The tar rules over a zip: same path rule, same quotas on the decompressed bytes.
+
+    Entries are read in central-directory order through `ZipFile.open`, so
+    the bytes counted are the inflated ones; a member whose inflated size
+    passes its declared size or the file ceiling refuses the archive. A
+    symlink is a zip entry whose Unix mode says so, and is refused by name.
+    """
+    files: list[ExtractedFile] = []
+    written: set[str] = set()
+    directories: set[str] = set()
+    total = 0
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for member in archive.infolist():
+            path = member_path(member.filename, limits)
+            mode = (member.external_attr >> 16) & 0o170000
+            if member.is_dir():
+                _no_file_on_the_way(path, written, include_self=True)
+                if len(files) + len(directories) + 1 > limits.max_files:
+                    raise ArchiveError(f"the archive holds more than {limits.max_files} entries")
+                directories.update(_prefixes(path))
+                (into / path).mkdir(parents=True, exist_ok=True)
+                continue
+            if mode == 0o120000:
+                raise ArchiveError(f"{member.filename!r} is a symlink; only files and directories are unpacked")
+            if mode and mode != 0o100000:
+                raise ArchiveError(f"{member.filename!r} is not a regular file; only files and directories are unpacked")
+            if path in written:
+                raise ArchiveError(f"the archive names {path!r} twice")
+            if path in directories:
+                raise ArchiveError(f"the archive names {path!r} as a file and as a directory")
+            _no_file_on_the_way(path, written, include_self=False)
+            if len(files) + len(directories) + 1 > limits.max_files:
+                raise ArchiveError(f"the archive holds more than {limits.max_files} entries")
+            if member.file_size > limits.max_file_bytes:
+                raise ArchiveError(f"{path!r} is {member.file_size} bytes, over the {limits.max_file_bytes}-byte limit for one file")
+            if total + member.file_size > limits.max_total_bytes:
+                raise ArchiveError(f"the archive inflates past {limits.max_total_bytes} bytes in total")
+            with archive.open(member) as body:
+                files.append(_write(into, path, body, limits, member.file_size))
+            written.add(path)
             directories.update(_prefixes(path)[:-1])
             total += files[-1].size
     if not files:

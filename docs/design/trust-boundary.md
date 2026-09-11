@@ -46,7 +46,8 @@ Controlled:
 - **No extension surface.** Nothing can register a tool, sit on a tool result,
   or supply a summary of a session.
 - **A faithfulness reader with no tools**, described below.
-- **Bounded archive unpacking.** `literature/archives.py` normalises every
+- **Bounded archive unpacking.** `literature/archives.py` unpacks tar, gzip
+  and zip (an EPUB is a zip) under one rule set: it normalises every
   member path to a relative POSIX path, refuses `..`, a leading separator, a
   drive letter, a backslash and a NUL byte, bounds path depth, refuses
   symlinks, hardlinks, devices and FIFOs rather than skipping them, and

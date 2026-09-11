@@ -106,7 +106,7 @@ def test_an_uncompressed_tar_is_accepted(into: Path) -> None:
 
 
 def test_bytes_that_are_none_of_these_are_refused(into: Path) -> None:
-    with pytest.raises(archives.ArchiveError, match="not a gzip, tar, or PDF"):
+    with pytest.raises(archives.ArchiveError, match="not a gzip, tar, zip, or PDF"):
         archives.extract(b"<html>maintenance</html>", into)
     assert _files(into) == set()
 
