@@ -225,6 +225,14 @@ anchors back to the artifact actually supporting a source claim.
     objects and explicit correspondences rather than mutating old source nodes or
     spans underneath claim/evidence links.
 
+17. **Ingestion preserves plurality instead of flattening sources.** Importers
+    produce artifact-bound derived representations, mappings, diagnostics, and
+    quality information rather than one supposedly canonical text blob.
+
+18. **Expensive extraction is adaptive.** Native structure/text is preferred when
+    it is high quality; OCR, formula recognition, and model-assisted reconstruction
+    are invoked lazily on weak, missing, or explicitly requested regions.
+
 ## 4. Persistent personal mathematical library
 
 Hardy should maintain a reusable user-level library shared across projects. The
@@ -1366,6 +1374,11 @@ new extraction/parser versions create new identities rather than relocating old 
 cross-artifact source correspondence is explicit and evidenced
 formulas/diagrams/images remain first-class source material rather than lossy text only
 
+ingestion never collapses an artifact immediately to one canonical text blob
+native/high-fidelity extraction precedes expensive OCR/model assistance
+OCR/model assistance is lazy/adaptive unless explicitly requested or native extraction is inadequate
+partial extraction failure does not invalidate an otherwise valid imported artifact
+
 formal reuse is keyed by exact claim or authenticated claim relation,
 not theorem name or textual similarity
 
@@ -1397,7 +1410,9 @@ This architecture should eventually let Hardy measure:
 - source-span remapping quality across PDF/EPUB/TeX artifacts;
 - staleness after Mathlib/toolchain/source revisions;
 - cumulative formal coverage of important books/papers;
-- whether source seeding improves retrieval without excessive anchoring.
+- whether source seeding improves retrieval without excessive anchoring;
+- cost/quality tradeoffs of eager versus lazy OCR/model-assisted extraction;
+- how often native extraction quality was sufficient without expensive fallback.
 
 ## 25. Design decisions settled so far
 
@@ -1427,6 +1442,15 @@ formulas, diagrams, page regions, and other non-text material remain first-class
 OCR is a derived reading with provenance/quality metadata, not replacement source bytes
 source retrieval always preserves machine-visible provenance refs
 
+all source types use one common ingestion envelope
+importers produce one or more artifact-bound DerivedRepresentations plus mappings/diagnostics
+byte acquisition, extraction, SourceTree construction, and semantic interpretation remain separate stages
+native source/text/layout structure is preferred when high quality
+OCR, formula recognition, and model-assisted extraction are lazy/adaptive fallbacks or augmentations
+multi-pass extraction is normal; no premature canonical-text collapse
+per-representation quality profiles expose coverage/confidence/warnings/unmapped regions
+partial extractor failure is recorded granularly instead of failing the whole import
+
 large sources are represented by navigable versioned SourceTrees
 source structure is useful before semantic/formal enrichment is complete
 there is a cross-project exact mathematical claim registry
@@ -1447,31 +1471,277 @@ source, claim, and formal versions never silently retarget one another
 existing project/shared retrieval is reused rather than adding a hidden memory path
 ```
 
-## 26. Next design areas
+## 26. Remaining design areas
 
-The semantic/formal/source-provenance architecture above is foundational. Next
-design sections should focus on source-management mechanics:
+With the ingestion contract now settled below, remaining source-management design
+areas are:
 
-1. **Import/acquisition interfaces and per-format pipelines:** PDF, scanned PDF,
-   EPUB, HTML, TeX/source trees, plaintext, directories, URLs/provider fetches,
-   and user-supplied files; each pipeline must produce artifact-bound derived
-   representations plus locator mappings rather than one flattened text blob.
-2. **Extraction/OCR policy:** native extraction first vs OCR fallback/augmentation,
-   formula/layout extraction, confidence/failure handling, and quality comparison
-   among competing representations.
-3. **SourceTree construction policy:** native structure versus deterministic parser
+1. **SourceTree construction policy:** native structure versus deterministic parser
    versus model-assisted reconstruction; TOCs; theorem/proof/example/exercise
    extraction; review/refinement workflow.
-4. **Library portability:** backup/export, multiple machines, privacy, and shared
+2. **Library portability:** backup/export, multiple machines, privacy, and shared
    metadata without redistributing private source bytes.
-5. **Bibliography/citation generalization:** extend current arXiv-centric identity
+3. **Bibliography/citation generalization:** extend current arXiv-centric identity
    while preserving exact artifact/source-span provenance and stable cite keys.
-6. **Claim interpretation/admission workflow:** when source nodes get claim IDs,
+4. **Claim interpretation/admission workflow:** when source nodes get claim IDs,
    candidate matching/review, and acceptable automation.
-7. **Shared formal-library packaging:** module layout, dependency promotion,
+5. **Shared formal-library packaging:** module layout, dependency promotion,
    environment/version compatibility, and how promoted Lean is built/imported.
-8. **Source/claim/formal search API:** operations used by Explore, Research,
+6. **Source/claim/formal search API:** operations used by Explore, Research,
    acquisition, and delegation.
 
-This document should be updated in place as each section is settled so that the
-architecture does not depend on conversation memory.
+## 27. Ingestion and extraction pipeline contract
+
+### 27.1 Common outer pipeline
+
+Every source type uses one common ingestion envelope:
+
+```text
+external input/provider result
+        ↓
+managed immutable SourceArtifact
+        ↓
+format-specific extractor(s)
+        ↓
+one or more DerivedRepresentations
+        ↓
+RepresentationMappings + diagnostics + quality profiles
+        ↓
+SourceTree builder(s)
+        ↓
+later semantic claim interpretation
+```
+
+An importer therefore does not return “the text of the book.” It returns exact
+artifact identity plus attributable representations and enough mapping/provenance
+for later structural and semantic work.
+
+Acquisition/import, extraction, SourceTree construction, and mathematical
+interpretation are separate stages with separate failure modes and owners.
+
+### 27.2 Common ingestion result
+
+A format adapter should conceptually produce:
+
+```text
+IngestionResult
+  source_artifact
+  representations
+  representation_mappings
+  diagnostics
+  quality_summary
+  suggested SourceTree inputs
+```
+
+The exact class split is an implementation detail, but consumers must not need to
+know whether a source entered as PDF, EPUB, TeX, or scan merely to ask for a
+representation or source-tree input.
+
+### 27.3 Born-digital PDF
+
+A typical PDF pipeline may produce:
+
+```text
+PDF SourceArtifact
+├── page manifest / page geometry
+├── native text + layout representation
+│   ├── blocks/lines/glyph or word ranges as available
+│   └── page/bbox alignment
+├── rendered page-image representation
+├── printed-page-label mapping when recoverable
+└── optional OCR/formula/layout augmentation
+```
+
+Native embedded text/layout should be preferred when quality is high. A 500-page
+publisher PDF with clean text should not be OCRed in full simply because OCR exists.
+
+### 27.4 Scanned or image-heavy PDF
+
+A scan may instead use page images as the primary artifact-facing representation:
+
+```text
+scanned PDF SourceArtifact
+├── page images
+├── OCR text representation
+│   ├── words/lines/tokens
+│   ├── region confidence
+│   └── image-region alignment
+├── layout segmentation
+└── formula/diagram recognition where needed
+```
+
+OCR remains a derived reading. The page image is the evidence-bearing source
+region. Mathematical-symbol uncertainty should remain visible in quality metadata.
+
+### 27.5 EPUB and HTML
+
+EPUB/HTML adapters preserve document-native structure rather than flattening it
+immediately:
+
+```text
+EPUB/HTML SourceArtifact
+├── manifest/spine/resource graph
+├── DOM/XHTML representation
+├── normalized reading-order text
+├── headings/anchors/links
+└── DOM ↔ normalized-text mappings
+```
+
+Native structural IDs and hyperlinks are useful locators even when normalized text
+is the representation sent to a model.
+
+### 27.6 TeX/source trees
+
+TeX/source archives or directories preserve native files and inclusion structure:
+
+```text
+TeX/source SourceArtifact
+├── immutable admitted file tree/archive identity
+├── native-source representation
+├── include/input graph
+├── assembled reading-order representation
+├── theorem/environment/label hints
+└── file/range ↔ assembled-text mappings
+```
+
+Nothing in an imported source tree is executed merely to ingest/read it. Existing
+hostile-archive and source-admission principles from arXiv handling should be
+reused/generalized.
+
+Native TeX structure is often the highest-quality input to later `SourceTree`
+construction, but published PDF artifacts may still supply authoritative pagination
+and visual/formula evidence.
+
+### 27.7 Plaintext and other simple text formats
+
+Plaintext/Markdown-like scholarly material can produce a native text
+representation directly, but still receives exact artifact identity and
+representation-relative locators. Simplicity of format does not bypass provenance.
+
+### 27.8 Multi-pass extraction is normal
+
+One artifact may support several useful readings:
+
+```text
+native PDF text R1
+OCR text R2
+formula-aware layer R3
+layout segmentation R4
+page images R5
+```
+
+No representation is automatically “the canonical text.” A workflow may prefer R1
+for prose, R3 for formula-heavy regions, and R5 when visual inspection is needed.
+
+If Hardy later decides one representation is preferred for a particular operation,
+that preference is a policy/view, not destruction or identity-merging of the others.
+
+### 27.9 Quality profiles and granular failure
+
+Each representation/extraction pass should expose quality and failure information
+sufficient for downstream policy, such as:
+
+```text
+coverage
+text confidence/quality
+layout confidence
+formula confidence
+unmapped or unreadable regions
+truncation
+extractor warnings/errors
+native-vs-OCR disagreement where measured
+```
+
+A source import can therefore succeed with partial derived quality:
+
+```text
+artifact admitted          ✓
+page map                    ✓
+native prose text           ✓
+formula extraction          poor
+TOC reconstruction          partial
+OCR                         not needed / not run
+```
+
+Failure of one expensive or optional extractor does not invalidate the immutable
+source artifact or successful representations. Diagnostics remain durable enough to
+avoid treating missing work as a negative mathematical finding.
+
+### 27.10 Lazy/adaptive expensive extraction
+
+OCR, formula recognition, vision/model-assisted layout recovery, and other expensive
+passes should be lazy/adaptive by default.
+
+A typical policy is:
+
+```text
+import exact artifact
+→ run cheap/native extraction and basic quality checks
+→ build coarse navigational structure where possible
+→ mark weak/unmapped regions
+→ invoke expensive extraction only when:
+     native extraction is missing or poor,
+     SourceTree construction needs repair,
+     a retrieval request reaches a weak region,
+     a formula/diagram needs interpretation,
+     or user/workflow explicitly requests enrichment
+```
+
+This reduces cost and avoids processing large books unnecessarily while preserving
+the ability to enrich any region later.
+
+“Lazy” does not mean ephemeral: once a materially used expensive representation is
+created, it receives normal durable identity/provenance if later source nodes or
+evidence depend on it.
+
+### 27.11 Extraction planning is policy, not truth
+
+A model may help decide that page 217 needs OCR or formula reconstruction, but the
+model's choice to run an extractor establishes nothing about source content. The
+resulting representation remains ordinary derived evidence with its own quality and
+provenance.
+
+Likewise, heuristics may automatically trigger OCR when a page has almost no native
+text or obvious extraction corruption. These are execution policies, not semantic
+claims.
+
+### 27.12 Security/resource boundaries
+
+All adapters should obey explicit byte/page/file/resource limits appropriate to the
+format. Archives/directories remain hostile input; embedded objects do not gain
+execution authority; extraction tools operate on managed copies rather than source
+paths.
+
+Resource exhaustion or unsupported features produce diagnostics and partial
+results where safe. They do not authorize silently dropping pages/chapters and
+presenting the remaining representation as complete.
+
+### 27.13 Provenance-bearing delivery
+
+Any representation text/image/formula returned to a later model or workflow carries
+machine-visible refs to:
+
+```text
+SourceArtifact
+DerivedRepresentation
+SourceAnchor/SourceSpan or mapping segments
+extractor/model/version provenance when relevant
+quality/truncation status
+```
+
+The user-facing rendering can stay compact; provenance must survive internally so
+claims/citations can reference exact source material without reconstructing where it
+came from.
+
+### 27.14 Format adapters do not own semantic interpretation
+
+A PDF extractor may identify a visual block headed “Theorem 3.2”; a TeX parser may
+identify a `theorem` environment. Those facts are candidates/structural evidence for
+`SourceTree` construction.
+
+They do not by themselves mint `MathematicalClaim`s, decide source-to-claim
+faithfulness, admit external results into a project, or create formal realizations.
+Those remain downstream semantic/trust operations.
+
+This document should be updated in place as each remaining section is settled so
+that the architecture does not depend on conversation memory.
