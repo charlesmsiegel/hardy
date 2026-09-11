@@ -219,8 +219,13 @@ def build_tree(
             # after it may have swallowed following prose; say so rather than claim it.
             boundary = "high" if limit < len(text) else "probable"
             units.append(Unit(kind=kind, start=r.start, end=end, title=o.value("name") or None, number=o.value("number") or None,
-                               number_origin=o.value("number_origin", "none"), statement_end=end, boundary=boundary,
+                               number_origin=o.value("number_origin", "none"), label=o.value("label") or None, statement_end=end, boundary=boundary,
                                observations=(o.id,), confidence=o.confidence))
+        elif o.kind is ObservationKind.ENVIRONMENT:
+            # A display environment the source delimits itself: equation,
+            # figure, table, diagram. Its span is exactly the environment.
+            kind = {"equation": NodeKind.EQUATION, "figure": NodeKind.FIGURE, "table": NodeKind.TABLE, "diagram": NodeKind.DIAGRAM}.get(o.value("kind"), NodeKind.UNKNOWN)
+            units.append(Unit(kind=kind, start=r.start, end=r.end, boundary="high", observations=(o.id,), confidence=o.confidence))
         elif o.kind is ObservationKind.PROOF_START:
             limit = _next_boundary(boundaries, r.start)
             ends = [e for e in text_obs if e.kind is ObservationKind.PROOF_END and (er := _range(e)) is not None and r.end <= er.end <= limit]
