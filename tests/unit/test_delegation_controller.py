@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from delegation_helpers import ScriptedWorkerRuntime, call, seed_lemma
+from delegation_helpers import ScriptedWorkerRuntime, call, seed_lemma, seed_project
 
 from hardy.agents.executor import LocalExecutor
 from hardy.agents.usage import Usage
@@ -229,5 +229,33 @@ def test_status_and_inspect_are_derived_views(tmp_path):
         assert view["artifacts"].endswith(delegation.id)
         with pytest.raises(ValueError, match="unknown delegation"):
             controller.inspect("nope")
+    finally:
+        controller.shutdown()
+
+
+def test_hidden_ids_in_the_spec_are_enforced_at_preload_and_retrieval(tmp_path):
+    """Criterion 8 at the controller: the launch package and the worker's queries agree."""
+    seed_project(tmp_path)
+    script = [call("read_item", {"selector": "A1"}), call("read_item", {"selector": "L12"}),
+              call("finish", {"status": "partial", "synthesis": "looked"})]
+    controller = _controller(tmp_path, _open(script))
+    try:
+        snapshot = LedgerStore(tmp_path).read()
+        spec = DelegationSpec(objective="prove L17 blind", project_refs=(snapshot.head("L17").ref,),
+                              scope=snapshot.head("scope").ref, lease=ResourceLease(official_checks=1),
+                              concurrency=ConcurrencyLease(slots=1), created_by="human", hidden_ids=("A1",))
+        delegation = controller.delegate(spec)
+        controller.wait(delegation.id, timeout=5)
+        artifacts = controller.store.artifacts(delegation.id)
+        prompt = (artifacts.path / "prompt.md").read_text(encoding="utf-8")
+        assert "A1" not in prompt and "L12" in prompt
+        events = [json.loads(line) for line in artifacts.trajectory_path.read_text().splitlines()]
+        tools = [e["payload"] for e in events if e["kind"] == "tool"]
+        assert not tools[0]["result"]["ok"] and "not available" in tools[0]["result"]["output"]
+        assert tools[1]["result"]["ok"]
+        retrieved = [e["payload"] for e in events if e["kind"] == "context.retrieved"]
+        assert retrieved[0]["refused"] == ["A1"]
+        manifest = json.loads((artifacts.path / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["hidden_selectors"] == ["A1"]
     finally:
         controller.shutdown()
