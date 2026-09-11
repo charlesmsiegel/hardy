@@ -13,10 +13,12 @@ admission is a separate act with current-head verification.
 from __future__ import annotations
 
 import difflib
+import json
 import re
 import shutil
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -388,6 +390,58 @@ _INCOMPLETE = frozenset({AdmissionPhase.FILES_COMMITTED})
 _TERMINAL = frozenset({AdmissionPhase.COMPLETED, AdmissionPhase.FAILED})
 
 
+@dataclass(frozen=True)
+class AdmissionOwners:
+    """The capability owners authoritative admission speaks to; nothing is minted without them.
+
+    `verify` builds a change set on the staged current head and returns
+    evidence bound to the exact subject; `policy` reads that evidence back
+    through its own authenticated readers; `decide` records the acceptance
+    decision. An application that installs no readers cannot admit anything,
+    which is the ledger policy's own stance.
+    """
+
+    verify: Verify
+    policy: LedgerPolicy
+    decide: Decide
+
+
+def delegation_candidates(store: DelegationStore, ledger: LedgerStore, delegation_id: str,
+                          ) -> tuple[tuple[AdmissionCandidate, ChangeSet | None], ...]:
+    """Every finding a finished delegation recorded, routed against the current head, with its change set."""
+    artifacts = store.artifacts(delegation_id).path
+    findings_path = artifacts / "findings.json"
+    change_path = artifacts / "change_set.json"
+    findings = ([Finding.model_validate(raw) for raw in json.loads(findings_path.read_text(encoding="utf-8"))]
+                if findings_path.exists() else [])
+    change_set = (ChangeSet.model_validate(json.loads(change_path.read_text(encoding="utf-8")))
+                  if change_path.exists() else None)
+    snapshot = ledger.read()
+    spec = store.tree().get(delegation_id).spec
+    return tuple((route_finding(finding, snapshot, scope=spec.scope, delegation_id=delegation_id,
+                                change_set=change_set.id if change_set is not None else None), change_set)
+                 for finding in findings)
+
+
+def admit_delegation(admission: AuthoritativeAdmission, delegation_id: str) -> tuple[AdmissionOutcome, ...]:
+    """Admit what a delegation's findings can stand on: a proof obligation and a change set to verify it with.
+
+    A finding with no verifiable proof behind it stays what it is, a finding
+    in the delegation journal; the outcome says so rather than inventing a
+    record for it. Admission never changes an evidence grade.
+    """
+    outcomes: list[AdmissionOutcome] = []
+    for candidate, change_set in delegation_candidates(admission.store, admission.ledger, delegation_id):
+        provable = any(isinstance(r, Obligation) and r.kind is ObligationKind.PROVE for r in candidate.records)
+        if change_set is None or not provable:
+            outcomes.append(AdmissionOutcome(
+                candidate_id=candidate.id, proposal_refs=candidate.finding_ids, action="kept_local",
+                reasons=("no verifiable proof accompanies this finding; it stays a finding in the journal",)))
+            continue
+        outcomes.append(admission.admit(candidate.model_copy(update={"target": "authoritative"}), change_set))
+    return tuple(outcomes)
+
+
 class AuthoritativeAdmission:
     """Serialized: read head, reconcile, stage, verify, accept, commit files, commit ledger.
 
@@ -439,6 +493,13 @@ class AuthoritativeAdmission:
                 snapshot = self.ledger.read()
                 head = snapshot.revision
                 near: tuple[VersionRef, ...] = ()
+                if primary is not None and any(record.id == primary.id for record in snapshot.records):
+                    # The same candidate again: its identity is already authoritative.
+                    existing = snapshot.head(primary.id)
+                    phase(AdmissionPhase.COMPLETED, head, f"already admitted as {existing.ref.id}")
+                    return AdmissionOutcome(candidate_id=candidate.id, proposal_refs=candidate.finding_ids,
+                                            action="reused_existing", authoritative_refs=(existing.ref,),
+                                            identity_map=((primary.id, existing.id),))
                 if primary is not None:
                     exact, near = find_duplicates(primary, snapshot)
                     if exact:

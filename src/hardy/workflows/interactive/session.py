@@ -93,6 +93,12 @@ from hardy.workflows.admission import (
     _vacuity_source as _vacuity_source,
 )
 from hardy.workflows.contracts import RunLimits
+from hardy.workflows.delegation.admission import (
+    AdmissionOutcome,
+    AdmissionOwners,
+    AuthoritativeAdmission,
+    admit_delegation,
+)
 from hardy.workflows.delegation.attention import DEFAULT_BUDGET_ITEMS, AttentionItem
 from hardy.workflows.delegation.budget import LeaseLedger
 from hardy.workflows.delegation.contracts import (
@@ -314,7 +320,7 @@ class _ConversationTurn(Iterator[TurnEvent]):
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -548,6 +554,9 @@ class MathematicsSession:
         #: What the human asked for in the turn now in flight, if any; an
         #: interrupt records it as the continuation's resume text.
         self._in_flight_text: str | None = None
+        #: Capability owners for authoritative admission. None means none are
+        #: installed, and `admit` says so rather than minting evidence itself.
+        self.admission_owners = admission
         self.delegations = DelegationController(
             DelegationStore(workspace), LedgerStore(workspace),
             executor=LocalExecutor(delegation_slots), open_worker=self._open_worker,
@@ -666,7 +675,7 @@ class MathematicsSession:
 
     def delegate(self, target: str, *, objective: str, task_mode: str = "prove", checks: int = 1,
                  model: str | None = None, seconds: float | None = None,
-                 hidden_ids: tuple[str, ...] = ()) -> Delegation:
+                 hidden_ids: tuple[str, ...] = (), writable: bool = True) -> Delegation:
         """Start one background worker on a ledger item and return at once.
 
         `target` is a stable id or `id@digest`. The worker reserves `checks`
@@ -675,7 +684,9 @@ class MathematicsSession:
         promise across its free slots, so one worker never takes the whole
         ceiling from the next. It receives its own provider context and none
         of this conversation; `hidden_ids` names ledger items it must not be
-        shown or able to retrieve, for an independent attempt.
+        shown or able to retrieve, for an independent attempt. A writable
+        worker gets a private copy of the Lean tree and returns a change set;
+        nothing it saves reaches the project until `admit`.
         """
         snapshot = LedgerStore(self.workspace).read()
         if "@" in target:
@@ -690,12 +701,28 @@ class MathematicsSession:
             raise ValueError("delegation requires a recorded trust scope in the project ledger")
         spec = DelegationSpec(
             objective=objective, project_refs=(record.ref,), scope=scopes[0].ref, context=record.context,
-            task_mode=task_mode, model=model, created_by="human", hidden_ids=tuple(hidden_ids),
+            task_mode=task_mode, model=model, created_by="human", hidden_ids=tuple(hidden_ids), writable=writable,
             lease=ResourceLease(official_checks=checks,
                                 active_seconds=self._worker_seconds() if seconds is None else seconds),
             concurrency=ConcurrencyLease(slots=1),
         )
         return self.delegations.delegate(spec)
+
+    def admit(self, delegation_id: str) -> tuple[AdmissionOutcome, ...]:
+        """Admit a finished delegation's provable findings into the project through the installed owners.
+
+        Every candidate is reconciled onto the current head and re-verified
+        there; an exact duplicate is reused, a conflict keeps both sides, and
+        nothing counts as success until the ledger commit. Without owners
+        there is nothing to verify with, so the request is refused outright.
+        """
+        owners = self.admission_owners
+        if owners is None:
+            raise ValueError("authoritative admission needs capability owners (evidence and decision readers); "
+                             "none are installed in this session")
+        admission = AuthoritativeAdmission(LedgerStore(self.workspace), self.lean_workspace, self.delegations.store,
+                                           verify=owners.verify, policy=owners.policy, decide=owners.decide)
+        return admit_delegation(admission, delegation_id)
 
     def _worker_seconds(self) -> float:
         """One worker's default share of the root's remaining active time."""

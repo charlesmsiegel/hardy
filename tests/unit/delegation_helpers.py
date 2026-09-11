@@ -1,14 +1,19 @@
 """Shared scaffolding for delegation tests: a seeded ledger and a scripted worker runtime."""
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable, Sequence
+from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 from hardy.agents.contracts import TurnEvent, final_text
+from hardy.formal.workspace import LeanWorkspace
 from hardy.workflows.context import ContextManager, DeclarationSpec
 from hardy.workflows.explore import ExploreWorkflow
 from hardy.workflows.ledger import contracts as c
+from hardy.workflows.ledger.policy import AcceptanceDecision, AuthenticatedEvidence, LedgerPolicy
 from hardy.workflows.ledger.store import LedgerStore
 
 
@@ -125,3 +130,43 @@ def seed_project(project):
                                context=l12.context),), expected_revision=snapshot.revision)
     snapshot = store.read()
     return {record.id: record for record in snapshot.current(c.ProjectItem)}
+
+
+class ScriptedOwners:
+    """Scripted capability owners over real bytes, as the acceptance suites do."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.evidence = {}
+        self.decisions = {}
+        self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.decisions.get)
+        self.verified: list[str] = []
+
+    def verify(self, workspace: LeanWorkspace, candidate, obligation):
+        """Build the change set's modules on the staged head; mint evidence bound to the exact subject."""
+        for path in candidate.files:
+            failure = workspace.build_modules([path.removesuffix(".lean").replace("/", ".")])
+            if failure is not None:
+                return None, f"{failure.module}: {failure.output}"
+        self.root.mkdir(parents=True, exist_ok=True)
+        artifact = self.root / f"{obligation.id.replace(':', '_')}.json"     # a colon is a drive letter on Windows
+        artifact.write_text(json.dumps({"subject": obligation.item.model_dump(), "files": candidate.files}), encoding="utf-8")
+        reference = c.EvidenceRef(kind="formal", subject=obligation.item, producer="scripted-verifier",
+                                  artifact=c.ArtifactRef(uri=str(artifact), digest=sha256(artifact.read_bytes()).hexdigest()))
+        self.evidence[reference] = AuthenticatedEvidence(reference, obligation.scope.ref, obligation.context, "kernel_proof")
+        self.verified.append(obligation.item.id)
+        return (reference,), "built on the current head"
+
+    def read_evidence(self, reference):
+        owned = self.evidence.get(reference)
+        path = Path(reference.artifact.uri)
+        if owned is None or not path.is_file() or sha256(path.read_bytes()).hexdigest() != reference.artifact.digest:
+            return None
+        return owned
+
+    def decide(self, snapshot, proposal):
+        work = snapshot.get(proposal.obligation)
+        receipt = c.ArtifactRef(uri=f"fixture:decision:{proposal.id}", digest=proposal.digest)
+        self.decisions[receipt] = AcceptanceDecision(proposal.ref, work.ref, work.item, work.scope.ref, work.context,
+                                                     self.policy.digest)
+        return receipt
