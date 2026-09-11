@@ -2,9 +2,9 @@
 
 Status: **living architectural design**, expanded 2026-09-10. This file is the
 durable design record for general scholarly sources and cross-project mathematical
-reuse. It began as a book-management seed during the delegation/swarm design, but
-the central requirement is broader: papers, books, theses, proceedings, Mathlib,
-and mathematics formalized inside Hardy projects should converge onto one reusable
+reuse. It began as a book-management seed during delegation/swarm design, but the
+central requirement is broader: papers, books, theses, proceedings, Mathlib, and
+mathematics formalized inside Hardy projects should converge onto one reusable
 mathematical library rather than remain separate silos.
 
 Design branch: `general-literature-sources-spec`.
@@ -31,12 +31,22 @@ translating and proving the same mathematics again.
 The core architecture is:
 
 ```text
+BIBLIOGRAPHIC WORK
+        │
+        ▼
+EDITION / VERSION
+        │
+        ▼
 SOURCE ARTIFACT
-exact edition/version/bytes
+exact bytes Hardy imported
+        │
+        ▼
+DERIVED REPRESENTATIONS
+text / OCR / layout / source assembly / page images
         │
         ▼
 SOURCE TREE
-what this artifact literally contains and where
+what the artifact literally contains and where
         │
         ▼
 MATHEMATICAL CLAIM REGISTRY
@@ -55,15 +65,17 @@ same mathematical claim. Two familiar theorem names may refer to materially
 different claims. A stronger formal theorem may be reusable for a weaker source
 claim through an explicit specialization or transport.
 
-The reusable unit is therefore **the exact mathematical claim**, not the paper,
-book, project, theorem name, or formal declaration that first introduced it.
+The reusable semantic unit is therefore **the exact mathematical claim**, not the
+paper, book, project, theorem name, or formal declaration that first introduced it.
+The authoritative textual unit remains the exact source artifact and source span
+Hardy actually read.
 
 ## 2. Motivating examples
 
 ### 2.1 Hartshorne
 
-A user supplies an exact artifact of Hartshorne's *Algebraic Geometry*.
-Hardy imports it once into a persistent personal literature library and derives a
+A user supplies an exact artifact of Hartshorne's *Algebraic Geometry*. Hardy
+imports it once into a persistent personal literature library and derives a
 navigable source tree:
 
 ```text
@@ -128,70 +140,96 @@ Textbook, Proposition 12.7 ─┘
 This is only one claim if semantic equivalence has actually been established.
 Similarity, theorem names, or embeddings are not sufficient to merge them.
 
+### 2.4 Multiple artifacts for one edition
+
+The user may possess several representations of the same edition:
+
+```text
+Hartshorne 1977 edition
+├── publisher PDF
+├── EPUB
+└── scanned PDF
+```
+
+Those are not one artifact. They are distinct exact byte sequences that may later
+be authoritatively grouped under one edition. One representation may be best for
+text extraction, another for page images, and another for structure. Hardy should
+be able to use the cleanest representation for reading while preserving exact
+anchors back to the artifact actually supporting a source claim.
+
 ## 3. Architectural principles
 
 1. **Source identity, mathematical identity, and formal identity are distinct.**
    Never collapse source nodes, claims, and Lean declarations into one object.
 
-2. **Exact claim identity controls reuse.** Search may use names, text, embeddings,
-   and neighboring concepts, but reuse requires an exact claim match or an
-   explicitly justified relation such as equivalence/generalization/specialization.
+2. **Bibliographic work, edition/version, exact artifact, and derived
+   representation are separate identities.** Metadata similarity may propose a
+   grouping, but exact grouping requires reliable identity evidence.
 
-3. **Formalization is cumulative across projects.** A reusable verified theorem
+3. **Exact claim identity controls formal reuse.** Search may use names, text,
+   embeddings, and neighboring concepts, but reuse requires an exact claim match
+   or an explicitly justified relation such as equivalence/generalization/
+   specialization.
+
+4. **Formalization is cumulative across projects.** A reusable verified theorem
    proved once should become discoverable to later projects when promotion policy
    permits.
 
-4. **Project-local does not automatically mean globally reusable.** Local
+5. **Project-local does not automatically mean globally reusable.** Local
    hypotheses, project-specific axioms, temporary declarations, contextual
    transports, or idiosyncratic helper facts remain local unless deliberately
    generalized and promoted.
 
-5. **Literature provenance survives semantic deduplication.** Three source nodes may
+6. **Literature provenance survives semantic deduplication.** Three source nodes may
    express one claim; all three source identities/spans remain available.
 
-6. **A formal proof is attached to a claim, not a citation.** A Lean realization
+7. **A formal proof is attached to a claim, not a citation.** A Lean realization
    can support every source node genuinely expressing that claim, but it does not
    prove that those source nodes were interpreted correctly. Source-to-claim
    faithfulness remains separately evidenced.
 
-7. **A source statement is not trusted merely because it is indexed.** Source
-   extraction and claim interpretation do not widen the project's trust scope.
+8. **A source statement is not trusted merely because it is indexed.** Source
+   extraction and claim interpretation do not widen a project's trust scope.
 
-8. **Mathlib is one formal provider, not the semantic registry.** Mathlib
+9. **Mathlib is one formal provider, not the semantic registry.** Mathlib
    declarations participate as formal realizations of claims. Hardy should not
    identify claims by Mathlib names alone.
 
-9. **The personal reusable library is a shared source, not a hidden memory system.**
-   Projects explicitly retrieve/authorize material from it through Hardy's
-   existing project/shared retrieval boundary.
+10. **The personal reusable library is a shared source, not a hidden memory
+    system.** Projects explicitly retrieve/authorize material from it through
+    Hardy's existing project/shared retrieval boundary.
 
-10. **Derived indexes are rebuildable.** Exact source artifacts, structured records,
+11. **Indexed source bytes are Hardy-owned immutable imports.** External files,
+    downloads, or mounted paths are acquisition inputs/provenance, not mutable
+    backing stores for indexed sources.
+
+12. **Derived indexes are rebuildable.** Exact artifacts, structured records,
     evidence, and formal artifacts are durable; semantic/full-text/vector indexes
     are derived acceleration structures.
 
-11. **Private copyrighted bytes remain private/local.** Durable mathematical and
+13. **Private copyrighted bytes remain private/local.** Durable mathematical and
     bibliographic records may reference exact digests/locators without assuming
-    Hardy may redistribute the original artifact.
+    Hardy may redistribute original artifacts.
 
-12. **Progressive enrichment beats eager whole-corpus formalization.** Importing a
+14. **Progressive enrichment beats eager whole-corpus formalization.** Importing a
     500-page book should not require resolving or formalizing every statement
     before the source becomes useful.
 
-13. **Indexed source bytes are Hardy-owned immutable imports.** External files,
-    downloads, or mounted paths are acquisition inputs/provenance, not mutable
-    backing stores for an indexed source. Once admitted, Hardy's exact managed copy
-    is what every source node, extraction, claim link, and citation refers to.
+15. **No locator exists outside a coordinate system.** Printed page labels,
+    artifact page indices, TeX byte ranges, OCR offsets, text blocks, DOM nodes,
+    and image bounding boxes are distinct coordinates. Every locator names the
+    exact artifact or derived representation in which it is meaningful.
 
-14. **Bibliographic work, edition/version, exact artifact, and derived
-    representation are separate identities.** Metadata matching can propose that
-    two artifacts belong to the same edition, but authoritative grouping requires
-    explicit/reliable identity evidence.
+16. **Improved extraction never silently moves old evidence.** New OCR, parsing,
+    layout analysis, or source-tree construction creates new versioned derived
+    objects and explicit correspondences rather than mutating old source nodes or
+    spans underneath claim/evidence links.
 
 ## 4. Persistent personal mathematical library
 
 Hardy should maintain a reusable user-level library shared across projects. The
-exact storage location is an implementation detail, but conceptually it contains
-several connected stores:
+exact storage layout remains an implementation choice, but conceptually it contains
+connected durable stores:
 
 ```text
 Personal Mathematical Library
@@ -200,6 +238,7 @@ Personal Mathematical Library
 ├── exact source artifacts
 ├── derived representations
 ├── source trees / structural inventories
+├── source spans / locator mappings
 ├── mathematical claim registry
 ├── source ↔ claim interpretation links
 ├── claim ↔ claim semantic relations
@@ -215,20 +254,19 @@ references to shared material.
 
 This generalizes the useful property of the current arXiv paper library: third-party
 bytes are machine-local while project bibliography records what exact bytes were
-used. The new library broadens the source types and adds the semantic/formal reuse
-layers.
+used. The new library broadens the source types and adds semantic/formal reuse.
 
 The existing retrieval layer already recognizes `project` and `shared_library`
 sources. The personal mathematical library should plug into that seam. Shared
-material remains subject to explicit source provenance, project authorization,
+material remains subject to explicit provenance, project authorization,
 scope/context checks, and current formal importability rather than being silently
 trusted because it exists on the machine.
 
-## 5. Source layer: work, edition/version, artifact, representation, and source tree
+## 5. Source identity hierarchy
 
 Hardy needs enough bibliographic structure to distinguish human-facing publication
 identity from the exact bytes and extraction pipeline it actually used, without
-adopting a full library-science ontology whose complexity does not serve
+adopting a full FRBR-style library-science ontology whose complexity does not serve
 mathematical work.
 
 The recommended hierarchy is:
@@ -268,14 +306,14 @@ BibliographicWork
   provenance for metadata assertions
 ```
 
-A work is **not** enough to identify what Hardy read. Mathematical extraction,
-source claims, page locators, and citations that depend on exact wording always
-continue down to an edition/version and artifact identity.
+A work is not enough to identify what Hardy read. Mathematical extraction, source
+claims, page locators, and citations depending on exact wording continue down to
+edition/version and artifact identity.
 
 ### 5.2 EditionOrVersion
 
 An `EditionOrVersion` identifies a specific published/released state of a work.
-Examples include:
+Examples:
 
 ```text
 Hartshorne, GTM 52, Springer, 1977 edition
@@ -302,17 +340,17 @@ EditionOrVersion
   metadata provenance
 ```
 
-The word “edition” is used broadly here to include exact source versions of papers.
-The architectural point is that this layer captures bibliographic/version identity
+“Edition” is used broadly enough to include exact source versions of papers. The
+architectural point is that this layer captures bibliographic/version identity
 above file-format bytes.
 
-Different editions/versions remain distinct even when most content is identical.
-A relation can later state that a theorem is unchanged across them; Hardy never
+Different editions/versions remain distinct even when most content is identical. A
+relation can later state that a theorem is unchanged across them; Hardy never
 assumes this from matching titles or page counts.
 
 ### 5.3 SourceArtifact
 
-A `SourceArtifact` represents the exact bytes Hardy actually imported/read for one
+A `SourceArtifact` is the exact managed bytes Hardy imported/read for one
 edition/version. Several artifacts may represent the same edition:
 
 ```text
@@ -337,49 +375,44 @@ SourceArtifact
   original filename/path/provider handle
 ```
 
-Artifact identity is content identity. Two identical byte sequences deduplicate as
-one artifact even if imported through different paths. Different bytes are
-separate artifact identities even when believed to represent the same edition.
+Artifact identity is content identity. Identical byte sequences deduplicate even if
+imported through different paths. Different bytes remain separate artifact
+identities even when believed to represent the same edition.
 
 ### 5.4 Candidate grouping versus authoritative grouping
 
-Hardy may automatically propose that two artifacts belong to one edition based on
-metadata such as title, authors, ISBN/DOI/arXiv version, publisher information,
-internal title pages, or high structural similarity. This is useful for import UX
-and deduplication assistance.
+Hardy may propose that two artifacts belong to one edition based on title, authors,
+ISBN/DOI/arXiv version, publisher information, internal front matter, provider
+metadata, or strong structural similarity. This is useful for import UX and
+reconciliation.
 
-But candidate grouping is not authoritative grouping.
+But candidate grouping is weaker than authoritative grouping:
 
 ```text
 artifact A ── candidate_same_edition ── artifact B
 ```
 
-is weaker than:
+is not yet:
 
 ```text
 artifact A ── belongs_to ── Edition E
 artifact B ── belongs_to ── Edition E
 ```
 
-Authoritative edition membership requires reliable identity evidence appropriate to
-the source type. Examples include matching exact ISBN/edition metadata corroborated
-by internal front matter, exact arXiv version identity, publisher/provider metadata,
-or explicit human confirmation where machine evidence cannot distinguish printings.
+Authoritative membership requires reliable evidence appropriate to the source type:
+matching exact identifiers corroborated by internal metadata, exact arXiv version,
+publisher/provider identity, or explicit human confirmation where machine evidence
+cannot distinguish printings.
 
-Title/year/author similarity alone is insufficient. This prevents a revised
-printing, unofficial scan, translation, or nearby version from silently inheriting
-source-node/claim links belonging to another artifact.
-
-The same principle applies at the work layer: fuzzy metadata may propose that two
-records describe the same work, but merging stable work identity is an explicit
-reconciliation operation with provenance.
+Title/year/author similarity alone is insufficient. The same principle applies to
+merging work identities.
 
 ### 5.5 Managed immutable import
 
 Hardy should not index user-supplied scholarly material in place. Importing a local
-PDF, EPUB, TeX tree, scan, downloaded file, or provider result copies the exact
-admitted bytes into Hardy's user-level managed literature store. The external path
-or URL remains provenance only.
+PDF, EPUB, TeX tree, scan, downloaded file, or provider result copies the admitted
+bytes into Hardy's user-level managed literature store. The external path or URL
+remains provenance only.
 
 Conceptually:
 
@@ -391,41 +424,33 @@ C:/Downloads/Hartshorne.pdf
         │
         ├── immutable exact bytes
         ├── import/provenance record
-        ├── derived text/OCR representations
+        ├── derived representations
         └── SourceTree/indexes
 ```
 
-The literal layout/name above is illustrative; Hardy already has a user-level
-`~/.hardy` root, but this spec does not freeze the final directory names.
+The literal layout is illustrative; the final directory names are not frozen.
 
 The import contract is:
 
 ```text
 read bounded/validated input
 → compute content digest
-→ copy to a temporary managed location
+→ copy to temporary managed location
 → verify copied bytes/digest
-→ atomically admit the artifact record + managed bytes
-→ derive/index only from the managed copy
+→ atomically admit artifact record + managed bytes
+→ derive/index only from managed copy
 ```
 
-A refused or interrupted import must not leave a half-admitted artifact that later
+A refused/interrupted import must not leave a half-admitted artifact that later
 looks valid.
 
-Identical bytes deduplicate by content digest. Importing the same PDF from two
-paths may add provenance/aliases, but should not duplicate the immutable artifact.
-Different bytes are different artifact identities even when metadata says they are
-the same title/edition.
-
 After import, edits, deletion, renaming, cloud-sync changes, or replacement of the
-external original do not change Hardy's artifact. To consume changed bytes, the
-user/provider imports again, producing either the same digest (no mathematical
-change) or a new `SourceArtifact` identity.
+external original do not change Hardy's artifact. Consuming changed bytes requires
+a new import and therefore either the same digest or a new `SourceArtifact`.
 
 ### 5.6 Import provenance
 
-The managed artifact retains acquisition facts separately from byte identity, such
-as:
+Managed artifacts retain acquisition facts separately from byte identity:
 
 ```text
 original filename/path or provider handle
@@ -437,15 +462,13 @@ acquisition adapter/version
 privacy/access classification
 ```
 
-Original local paths can be useful diagnostics but are not durable semantic
-identity and should not be required for later reading.
+Original local paths are useful diagnostics, not durable semantic identity.
 
 ### 5.7 DerivedRepresentation
 
-A `DerivedRepresentation` is a reproducible or attributable reading of one exact
-artifact produced by some extractor/parser/OCR/model/configuration. It is a
-first-class identity because two extraction pipelines may disagree while both
-remain useful historical inputs.
+A `DerivedRepresentation` is an attributable reading of one exact artifact produced
+by an extractor/parser/OCR/model/configuration. It is first-class because different
+pipelines may disagree while both remain historically relevant.
 
 Examples:
 
@@ -456,7 +479,7 @@ EPUB XHTML normalized text from artifact B
 TeX source assembly from arXiv source archive
 page-image manifest from PDF artifact A
 layout/block analysis from PDF artifact A
-SourceTree construction v4 from normalized representation R
+formula/diagram extraction from artifact A
 ```
 
 Representative fields:
@@ -466,50 +489,189 @@ DerivedRepresentation
   id / digest
   artifact ref
   kind: native_text | ocr_text | normalized_text | page_images |
-        source_tree_input | layout | other
-  bytes/artifact refs for derived output when retained
+        layout | native_source | dom | formula_layer | other
+  retained output artifact refs
   extractor/parser/model identity
   extractor version/configuration
   derivation timestamp
   input refs
   quality/confidence/failure metadata
-  locator mapping back to source artifact
+  locator mapping back to artifact/parent representation
 ```
 
 Derived identity includes the exact artifact plus enough pipeline identity to know
-what generated it. Improved OCR or a parser update creates a new representation,
-not a mutation of the old one.
+what generated it. Improved OCR/parser output creates a new representation, not a
+mutation of the old one.
 
-Derived caches that are purely reconstructable may be discarded/rebuilt. Derived
-representations that are cited by source nodes, interpretation evidence, or claim
-links must retain durable identity/provenance even if their bytes can later be
-regenerated.
+Purely reconstructable caches may be discarded. Representations referenced by
+source nodes, interpretation evidence, or claim links retain durable
+identity/provenance even if bytes can later be regenerated.
 
 ### 5.8 Artifact and representation plurality
 
-Hardy should not force one canonical text representation when multiple readings are
-useful. For the same edition/artifact, native PDF text may preserve searchable text
-well while page-image OCR recovers formulas or headers better. TeX source may offer
-superior theorem boundaries while the published PDF supplies authoritative printed
-pagination.
+Hardy should not force one canonical text representation when several readings are
+useful. Native PDF text may be best for prose; OCR/page images may recover formulas
+or headers; TeX source may expose theorem boundaries; published PDF pages may carry
+the authoritative printed pagination.
 
-The architecture should therefore permit several parallel representations and
-explicit mappings among them rather than overwriting one extraction with another.
+The system can prefer one representation for a particular operation while
+preserving the others and their explicit correspondences.
 
-A later “preferred representation” may be selected for ordinary retrieval, but
-preference is a policy/view and does not erase provenance or silently retarget
-source nodes already built from another representation.
+## 6. Multi-coordinate locators and alignment
 
-### 5.9 SourceTree
+### 6.1 No universal locator
+
+The same theorem may have several legitimate locations:
+
+```text
+Hartshorne II.5.8
+
+printed edition:
+  printed page 128
+
+publisher PDF artifact A:
+  PDF page index 147
+  bounding boxes across pages 147–148
+
+native PDF text representation R1:
+  blocks 3812–3830
+
+OCR representation R2:
+  token/character spans ...
+
+EPUB artifact B:
+  spine item 17 / DOM nodes ...
+
+TeX source artifact C:
+  chapter2.tex byte ranges ...
+```
+
+These are different coordinate systems. None is the universal location of the
+source unit.
+
+### 6.2 SourceAnchor
+
+Source nodes and evidence spans carry typed anchors rather than one opaque location
+string.
+
+Conceptually:
+
+```text
+SourceAnchor
+  artifact or representation ref
+  locator kind
+  exact typed locator payload
+  derivation/provenance
+  quality/confidence where relevant
+```
+
+Representative locator shapes include:
+
+```text
+RepresentationSpan
+  representation ref
+  block/token/character range
+
+ArtifactPageRegion
+  artifact ref
+  artifact page index
+  one or more bounding boxes/polygons
+
+PrintedPageLocator
+  edition/version ref
+  printed page label/range
+
+NativeSourceSpan
+  artifact/representation ref
+  file/path ref + file digest
+  byte/character range
+
+DOMLocator
+  EPUB/HTML representation ref
+  spine/resource id + structural selector/range
+
+ImageRegion
+  page/image representation ref
+  bounding region
+```
+
+Compound/noncontiguous ranges are allowed. A theorem, proof, or formula can cross
+pages, source files, columns, or layout blocks.
+
+### 6.3 Printed page labels versus artifact page indices
+
+Printed pagination and PDF/image page positions are explicitly different facts.
+For example:
+
+```text
+artifact page index 0   = cover
+artifact page index 7   = printed page vii
+artifact page index 20  = printed page 1
+artifact page index 147 = printed page 128
+```
+
+A second scan of the same edition may map a different artifact index to printed
+page 128. The edition-level printed locator can therefore serve as a human
+bibliographic coordinate while each artifact retains its own physical page index.
+
+Hardy should not infer equality merely because two artifacts both contain a string
+“128”; printed-page mapping is itself derived/evidenced metadata.
+
+### 6.4 Representation-relative offsets
+
+Character/token/block offsets are meaningful **only inside the exact
+`DerivedRepresentation` they name**.
+
+Never persist a naked offset such as:
+
+```text
+start_character = 193442
+```
+
+without the exact representation identity. Whitespace normalization, ligature
+handling, OCR improvements, or parser changes can all move offsets.
+
+Old offsets remain valid for the old representation; they are not silently migrated
+to a new one.
+
+### 6.5 RepresentationMapping
+
+Extraction pipelines should emit explicit alignment mappings when they can map one
+coordinate system to another.
+
+Conceptually:
+
+```text
+RepresentationMapping
+  from representation/artifact
+  to representation/artifact
+  ordered mapping segments
+  mapper/extractor identity + configuration
+  quality/confidence/failure metadata
+```
+
+Examples:
+
+```text
+PDF page/bbox      ↔ native text blocks
+page image/bbox    ↔ OCR words/lines/tokens
+EPUB DOM element   ↔ normalized text range
+TeX file/range     ↔ assembled reading-order text
+layout block       ↔ page region
+formula token span ↔ page image region
+```
+
+Mappings may be partial or many-to-many. A mapping that cannot confidently align a
+region should represent that uncertainty rather than invent an exact coordinate.
+
+This allows Hardy to read from a clean normalized representation while still
+showing the exact PDF/image region from which that text came.
+
+### 6.6 SourceTree and SourceNode
 
 A `SourceTree` is analogous to an AST for the scholarly artifact: it records the
 artifact's structural organization and exact locations without initially claiming
-that two mathematical statements are equivalent.
-
-A SourceTree is itself a derived structured representation. Its identity must name
-its input artifact/representations and parser/model/configuration. A newer parser can
-produce a new tree while historical source-node links continue to resolve against
-the old tree they used.
+semantic equivalence to other mathematical statements.
 
 Representative hierarchy:
 
@@ -530,6 +692,8 @@ book / paper
 │   │   ├── exercise
 │   │   ├── remark
 │   │   ├── equation/display
+│   │   ├── diagram
+│   │   ├── figure/table
 │   │   └── paragraph
 │   └── ...
 └── bibliography/index/etc.
@@ -539,76 +703,192 @@ A `SourceNode` should retain at least:
 
 ```text
 id
-SourceTree ref
-artifact/representation refs
+source-tree identity
+artifact/representation inputs
 parent / children
 kind
-title / heading / label / source numbering when known
-exact representation span(s)
-locator(s) back to artifact
-printed page or artifact page when known
+title / heading / source label / source numbering
 reading order
+one or more typed source anchors
+text/formula/image representation refs as appropriate
 parser/extractor provenance
-confidence/quality metadata for structural extraction
+quality/confidence metadata
 ```
 
-Source numbering must distinguish what the source actually provides from numbering
-Hardy inferred. Page identity should distinguish printed page labels from PDF/image
-page indices.
+Source numbering distinguishes what the source literally provides from numbering
+Hardy inferred.
 
-### 5.10 Source graph beyond the tree
+### 6.7 Versioned structural identity
 
-The literal containment tree is not enough. Source nodes may also carry derived
-structural/reference edges such as:
+A new parser or extraction pass may find better boundaries. It must not mutate an
+old `SourceNode` that existing source-to-claim links already cite.
+
+Example:
 
 ```text
-proof_of
-source_cites
-source_refers_to
-uses_notation_from
-continues_from
+SourceTree T1 / node N1
+  statement = blocks 3812–3820
+  proof     = 3821–3870
+
+SourceTree T2 / node N2
+  statement = blocks 3812–3823
+  proof     = 3824–3870
 ```
 
-These are claims about the source document's structure/reference behavior, not yet
-semantic mathematical dependency edges.
+T2 may be preferred for new work, and `N2` may be recorded as a refinement or
+correspondence of `N1`, but historical evidence tied to `N1` remains auditable.
 
-### 5.11 Progressive source enrichment
+### 6.8 Cross-artifact source correspondence
+
+Even after two artifacts are authoritatively grouped under the same edition, their
+source nodes are not automatically identical. Hardy may establish explicit
+correspondences:
+
+```text
+PDF SourceNode P52
+EPUB SourceNode E47
+
+SourceCorrespondence
+  P52 ↔ E47
+  relation: same_source_unit / overlapping_source_unit / variant
+  evidence/provenance
+```
+
+Candidate correspondence can be generated from headings, exact or controlled-
+normalized text, numbering, and structural position. Authoritative correspondence
+requires stronger evidence/review appropriate to how it will be used.
+
+This allows Hardy to read from a clean EPUB/TeX representation while citing or
+showing the publisher PDF location.
+
+### 6.9 Exact SourceSpan for evidence
+
+A structural `SourceNode` is navigation. Exact literature evidence should be able
+to point to a narrower durable span.
+
+Conceptually:
+
+```text
+SourceSpan
+  id
+  source node ref when applicable
+  exact representation range(s)
+  exact artifact anchor(s) where available
+  digest of extracted/normalized content used
+  representation/mapping provenance
+```
+
+A source-backed claim can therefore say not merely “Donagi Theorem 2.1” but “this
+exact statement/hypothesis span in this exact representation of this exact artifact.”
+
+### 6.10 Formulas, diagrams, figures, and non-text material
+
+Mathematics must not be irreversibly flattened to prose text. Source trees and
+representations should preserve first-class nodes/regions for:
+
+```text
+equations / aligned equations
+commutative diagrams
+figures
+tables
+displayed constructions
+page-image regions
+```
+
+A formula may simultaneously have:
+
+```text
+PDF/image bounding box
+TeX source span
+MathML/LaTeX extraction
+OCR or model interpretation
+normalized textual rendering
+```
+
+All remain distinct representations linked by mappings. A model-readable formula
+interpretation does not erase the underlying image/source evidence.
+
+### 6.11 OCR is a derived reading, not replacement source bytes
+
+For scans or image-heavy PDFs:
+
+```text
+exact page image
+      ↓
+OCR DerivedRepresentation
+```
+
+OCR output should carry region-level or segment-level confidence/failure metadata
+when available, especially for mathematical formulas and symbols. If an old
+source-to-claim interpretation used OCR representation R1 and improved OCR R2 later
+disagrees materially, Hardy can flag the old interpretation for review without
+rewriting historical provenance.
+
+### 6.12 Retrieval returns provenance-bearing source material
+
+A source read should always carry machine-visible identity for what was returned:
+
+```text
+source artifact / edition
+source-tree/node when applicable
+derived representation
+exact span/anchor refs
+mapping provenance where relevant
+```
+
+The model need not receive a verbose human-readable provenance header every time,
+but Hardy must preserve exact refs so a source-backed finding/citation can carry
+provenance forward rather than reconstruct it after the fact.
+
+Representative retrieval operations become natural:
+
+```text
+show Hartshorne II.5
+list theorem-like nodes in Hartshorne II.5
+read statement of II.5.8
+read proof of II.5.8
+show exact PDF pages/regions for II.5.8
+show original image region for this formula
+read two paragraphs before this theorem
+show corresponding EPUB/TeX representation
+give the exact source span supporting Claim C
+```
+
+## 7. Progressive source enrichment
 
 Import should be useful before semantic understanding is complete.
 
-A newly imported book can begin as:
+A newly imported book may begin as:
 
 ```text
-✓ exact work/edition/artifact identity where known
-✓ managed immutable bytes
+✓ exact artifact identity
+✓ derived page/text representations
 ✓ chapter/section/page map
 ✓ extracted theorem-like nodes where recoverable
-? some edition grouping still only candidate
 ? claim identities unresolved
 ? formal realizations unknown
 ```
 
-Later projects can enrich individual nodes without rebuilding or reinterpreting the
-entire artifact.
+Later projects enrich individual nodes without rebuilding or reinterpreting the
+whole artifact. New parsers may create improved SourceTrees while old interpretation
+links remain tied to the exact trees/spans they used.
 
-## 6. Mathematical claim layer
+## 8. Mathematical claim layer
 
-### 6.1 Why a claim registry is required
+### 8.1 Why a claim registry is required
 
 The source tree cannot itself provide cross-project formalization reuse because a
 source statement is tied to wording, notation, edition, and document context.
 Likewise a Lean declaration is tied to a formal representation and environment.
 
 Hardy therefore needs a persistent **mathematical claim registry** representing the
-mathematics between source and formalization.
-
-Conceptually:
+mathematics between source and formalization:
 
 ```text
 SourceNode ──expresses──> MathematicalClaim <──realizes── FormalRealization
 ```
 
-### 6.2 MathematicalClaim
+### 8.2 MathematicalClaim
 
 A claim is an exact mathematical proposition/definition/construction suitable for
 cross-project identity and dependency tracking.
@@ -621,14 +901,12 @@ MathematicalClaim
   kind
   canonical/navigational name
   normalized informal statement
-
   semantic context:
     concepts/objects
     declarations/parameters
     hypotheses
     conclusion/body
     representation choices where identity-relevant
-
   exact dependencies when established
   aliases / search terms
   family/concept tags
@@ -636,39 +914,36 @@ MathematicalClaim
   status/evidence of semantic review
 ```
 
-The claim registry must not pretend that natural-language canonicalization solves
-mathematical identity. A claim's stable identity is minted through an explicit
-semantic admission process, and later revisions that change mathematical meaning
-become new claims linked by explicit relations.
+Natural-language canonicalization does not solve mathematical identity. A stable
+claim identity is minted through an explicit semantic admission process; later
+meaning-changing revisions become new claims linked by explicit relations.
 
-The claim object should reuse Hardy's existing project mathematical semantics where
-possible rather than invent a contradictory theorem ontology. Exact integration
-with `ProjectItem`/context/representation records is an implementation-design
-question, but the architectural rule is that one cross-project exact mathematical
-identity must exist independently of a particular source or Lean declaration.
+The claim layer should reuse Hardy's existing mathematical project semantics where
+possible rather than invent a contradictory theorem ontology. The architectural
+requirement is one reusable exact mathematical identity independent of a particular
+source or Lean declaration.
 
-### 6.3 Claim families/concepts
+### 8.3 Claim families/concepts
 
-Names such as "Riemann–Roch" are useful for discovery but too coarse for exact
-reuse. Hardy should support a looser family/concept layer:
+Names such as “Riemann–Roch” are useful for discovery but too coarse for exact
+reuse.
 
 ```text
-ClaimFamily / Concept:
-  Riemann–Roch
+ClaimFamily / Concept: Riemann–Roch
 
 Exact claims:
-  divisor RR for smooth projective curves under hypotheses H1
-  line-bundle RR under hypotheses H2
+  divisor RR for smooth projective curves under H1
+  line-bundle RR under H2
   stronger field-general version
   scheme-theoretic generalization
 ```
 
-Family membership assists retrieval and UI. It never establishes equivalence or
-formal substitutability.
+Family membership assists retrieval/UI and never establishes formal
+substitutability.
 
-### 6.4 Claim relations
+### 8.4 Claim relations
 
-Exact claims can be connected by explicit semantic relations:
+Exact claims can carry semantic relations:
 
 ```text
 equivalent_to
@@ -679,23 +954,19 @@ refines
 reformulates
 ```
 
-A relation that permits proof reuse should carry sufficient evidence/transport to
-justify the mapping. Semantic similarity can propose candidate relations but cannot
-certify them.
+Relations permitting proof reuse carry enough evidence/transport to justify the
+mapping. Similarity can propose relations but cannot certify them.
 
-This lets a stronger existing theorem discharge a need for a weaker one when the
-specialization is authenticated instead of forcing a duplicate proof.
+## 9. Source-to-claim interpretation
 
-## 7. Source-to-claim interpretation
-
-### 7.1 SourceClaimLink
+### 9.1 SourceClaimLink
 
 A source node and mathematical claim are connected by an explicit interpretation
-record, conceptually:
+record:
 
 ```text
 SourceClaimLink
-  source node
+  source node / exact source span
   claim
   relation:
     expresses
@@ -705,14 +976,12 @@ SourceClaimLink
   notation/object mapping
   interpretation/faithfulness evidence
   interpreter/model/human provenance
-  exact source span/version
 ```
 
-A theorem extractor saying "this looks like a theorem" is not enough to produce a
-trusted `expresses` link. The semantic link represents the interpretation that the
-source statement has the claim's exact meaning.
+A theorem extractor saying “this looks like a theorem” is not enough to produce a
+trusted `expresses` link.
 
-### 7.2 Many source nodes, one claim
+### 9.2 Many sources, one claim
 
 Cross-source deduplication is expected:
 
@@ -722,42 +991,36 @@ Source B node ─┼──> Claim C
 Source C node ─┘
 ```
 
-Every source keeps its own artifact/span provenance. Claim reuse does not erase
-bibliographic differences.
+Every source keeps its own artifact/span provenance.
 
-### 7.3 One source node, multiple semantic records
+### 9.3 Ambiguity
 
-Ambiguity must be representable. If Hardy has two competing interpretations of a
-source statement, preserve them as proposals/assessments until adjudicated rather
-than silently choosing one because it matches an existing theorem.
+If Hardy has competing interpretations of a source statement, preserve them as
+proposals/assessments until adjudicated instead of silently choosing the one that
+matches an existing theorem.
 
-## 8. Formal realization layer
+## 10. Formal realization layer
 
-### 8.1 FormalRealization
+### 10.1 FormalRealization
 
-A `FormalRealization` records one formal declaration that represents an exact
+A `FormalRealization` records one formal declaration representing an exact
 mathematical claim.
-
-Representative fields:
 
 ```text
 FormalRealization
   id
   claim ref
   system: lean
-
   origin:
     mathlib
     hardy_shared
     project
     external_formal_library
-
   declaration/module
   exact formal statement
   source artifact/module digest
   environment/toolchain identity
   required imports
-
   formal proof/elaboration evidence
   semantic faithfulness evidence
   used assumptions / trust boundary
@@ -765,136 +1028,95 @@ FormalRealization
   provenance
 ```
 
-A declaration becomes reusable because the realization authenticates both formal
-validity and semantic correspondence to the exact claim. Kernel proof without
-faithful claim mapping is not enough; semantic mapping without formal verification
-is not enough.
+A declaration becomes reusable only when Hardy authenticates both formal validity
+and semantic correspondence to the exact claim.
 
-### 8.2 Mathlib participation
+### 10.2 Mathlib participation
 
-Mathlib should be continuously searchable as a provider of candidate formal
-realizations.
+Mathlib is continuously searchable as a provider of candidate realizations. A
+candidate must be checked for exact statement, implicit hypotheses/typeclasses,
+representations, ambient categories, and relevant conventions before attachment to
+a claim. Similar names/embeddings are leads only.
 
-When Hardy identifies a candidate Mathlib declaration it must check the exact
-statement, implicit hypotheses/typeclasses, representations, ambient categories,
-and relevant notation/conventions before attaching it to a claim.
+Formal realizations record Mathlib/environment revision so later retrieval can
+recheck availability/importability.
 
-A similar theorem name or embedding match is a lead only.
+### 10.3 Project-local realizations
 
-The realization also records the Mathlib/environment revision so later retrieval
-can tell whether the declaration remains available/importable and whether a changed
-library requires revalidation.
-
-### 8.3 Project-local realizations
-
-A theorem proved in Project A may initially remain a project-local formal
-realization:
+A Project A theorem may initially remain local:
 
 ```text
 Claim C
   formalized_by -> Project A / Foo.lean / theorem foo
 ```
 
-That is already useful to Project A and may be indexed for inspection, but it does
-not automatically become globally reusable. Context identity and trust boundary
-must be preserved.
+It may be indexed for inspection without becoming globally reusable. Context and
+trust boundary remain explicit.
 
-### 8.4 Shared Hardy formal library
+### 10.4 Shared Hardy formal library
 
-Hardy should support deliberate promotion of reusable project formalizations into
-a persistent user-level shared Lean library.
-
-Conceptually:
+Hardy supports deliberate promotion into a user-level shared Lean library:
 
 ```text
 Project A verified theorem
-        │
         │ reusable promotion
         ▼
 Hardy shared formal library
         │
-        └── registered as reusable FormalRealization of Claim C
+        └── reusable FormalRealization of Claim C
 ```
 
-Later projects can import/reuse this declaration through the normal authenticated
-shared-library retrieval boundary.
+The shared library is curated reusable mathematics, not every theorem ever proved.
 
-The shared formal library is not a dump of everything Hardy has ever proved. It is
-curated reusable mathematics.
+## 11. Promotion of project formalizations
 
-## 9. Promotion of project formalizations
+### 11.1 Promotion criteria
 
-### 9.1 Promotion criteria
+A project theorem is a shared-promotion candidate when:
 
-A project theorem is a candidate for shared promotion when:
-
-- the Lean declaration is authenticated/verified;
+- its Lean declaration is authenticated/verified;
 - semantic faithfulness to an exact reusable claim is established;
-- its trust boundary is explicit and acceptable for reuse;
-- it does not silently rely on project-only hypotheses or declarations;
-- its required representations/context can be reconstructed in another project;
-- its dependency closure can be satisfied from Mathlib/shared reusable material or
-  promoted with it;
-- the resulting shared artifact can be imported and revalidated independently of
-  the originating project workspace.
+- its trust boundary is explicit and acceptable;
+- it does not silently rely on project-only hypotheses/declarations;
+- required representations/context are reconstructable elsewhere;
+- dependencies are Mathlib/shared reusable material or promotable with it;
+- the resulting shared artifact can be imported/revalidated independently of the
+  originating workspace.
 
-Not every helper lemma should be promoted. Project-worthiness is distinct from
-formal correctness.
+Formal correctness alone does not imply project-worthiness.
 
-### 9.2 Reusable dependency closure
+### 11.2 Reusable dependency closure
 
-Promotion computes the minimal formal dependency closure needed for the theorem:
+Promotion computes a minimal reusable formal dependency closure:
 
 ```text
 RiemannRoch
-├── Mathlib dependency       → keep as external import
+├── Mathlib dependency       → external import
 ├── already shared lemma     → reuse
 ├── reusable project lemma   → promote too
-└── project-specific fact    → block/generalize/replace before promotion
+└── project-specific fact    → block/generalize/replace
 ```
 
-A theorem whose proof depends on a project-local axiom does not become a globally
-verified theorem merely because Lean accepted the axiom inside that project.
+A proof using a project-local axiom does not become globally verified because Lean
+accepted the axiom locally.
 
-The promotion workflow should expose blockers explicitly and allow the user/agent
-to generalize or separately prove them.
+### 11.3 Generalization during promotion
 
-### 9.3 Local context and generalization
+Promotion may generate work to remove project-specific hypotheses, generalize
+chosen objects to parameters, replace local definitions with shared
+representations, or prove transport/equivalence to a reusable formulation. The
+result can be a new claim/formal realization rather than mutation of historical
+project work.
 
-Sometimes a useful project theorem is stated in an unnecessarily local context. A
-promotion attempt may therefore generate work such as:
+### 11.4 Promotion provenance
 
-```text
-remove project-specific hypothesis
-generalize a chosen object to a parameter
-replace local definition with shared representation
-prove transport/equivalence to a reusable formulation
-```
+Promotion records originating project/result, claim identity, dependency closure,
+transports/generalizations, formal/faithfulness evidence, trust audit, shared
+module/declaration identity, environment/digest, actor/reason/time.
 
-The resulting reusable theorem may be a new claim/formal realization rather than a
-mutation of the original project result. Historical project identity remains intact.
+## 12. Reuse and acquisition behavior
 
-### 9.4 Promotion provenance
-
-Promotion records at least:
-
-```text
-originating project/result
-claim identity
-formal dependency closure
-rewrites/transports/generalizations performed
-formal verification evidence
-faithfulness evidence
-trust/assumption audit
-shared module/declaration identity
-shared artifact digest/environment
-promotion actor/reason/time
-```
-
-## 10. Reuse and acquisition behavior
-
-When a project needs mathematics, Hardy should prefer reuse before new proof work.
-A conceptual search order is:
+When a project needs mathematics, Hardy should prefer reuse before new proof work:
 
 ```text
 1. exact established result already in current project
@@ -905,58 +1127,37 @@ A conceptual search order is:
 6. new formalization/proof work
 ```
 
-This need not be implemented as six expensive sequential searches. Cheap indexes
-may search several layers together. The invariant is that Hardy should not ask an
-LLM to rediscover or reprove a theorem before checking known reusable formal
-mathematics.
+This is a preference hierarchy, not necessarily six expensive serial searches.
 
-Search results must distinguish:
+Search distinguishes:
 
 ```text
 EXACT CLAIM MATCH
-  reusable directly if formal/trust/context checks succeed
-
-RELATED CLAIM
-  family member / semantic similarity only; navigation
-
-STRONGER/WEAKER CLAIM
-  reusable only through established relation/transport
-
+RELATED CLAIM / family member
+STRONGER/WEAKER CLAIM with relation
 SOURCE ONLY
-  literature statement known, no reusable formal realization
-
-FORMAL CANDIDATE
-  possible Mathlib/shared declaration not yet semantically linked
+FORMAL CANDIDATE not yet semantically linked
 ```
 
-## 11. Project relationship to the shared library
+Hardy should not ask an LLM to rediscover/reprove a theorem before checking known
+reusable formal mathematics.
 
-The personal library is reusable infrastructure, but each project retains its own
+## 13. Project relationship to the shared library
+
+The personal library is reusable infrastructure; projects retain their own
 mathematical/trust decisions.
 
-A project can:
-
-- retrieve shared claims/formal realizations;
-- import a verified shared Lean theorem;
-- cite a source artifact/node;
-- admit a source result as background according to existing scope policy;
-- create project-specific relations/obligations around a shared claim;
-- contribute newly promoted reusable formalizations back to the shared library.
+A project can retrieve shared claims/realizations, import verified shared Lean,
+cite a source node/span, admit a literature result according to scope policy,
+create project-specific obligations/relations, and contribute promoted reusable
+formalizations.
 
 A project does **not** automatically trust every theorem stored in the shared
-library. Existing scope/evidence policy still decides whether a result is usable in
-that project's proof context.
+library. Existing scope/evidence policy remains authoritative.
 
-This matches Hardy's existing retrieval architecture, where a shared source must be
-authenticated/authorized for the requesting project's exact scope/context rather
-than becoming valid merely because it appears in a shared index.
+## 14. Progressive formalization of sources
 
-## 12. Progressive formalization of sources
-
-A source's formalization state should be queryable without requiring all nodes to
-be resolved.
-
-For example:
+Formalization coverage is a derived view:
 
 ```text
 Donagi 1991
@@ -965,227 +1166,171 @@ Donagi 1991
   ✓ Proposition 1.3 linked claim + Mathlib realization
   ○ Lemma 1.4        claim identified, no formal realization
   · Remark 1.5       structural source node only
-
 §2
   ✓ Theorem 2.1      shared Lean realization
   ◐ Proposition 2.4 project-local realization only
   ? Theorem 2.6      semantic identity unresolved
 ```
 
-These display symbols are illustrative UI, not stored truth states. The underlying
-records should derive the view.
+Symbols are illustrative UI only.
 
-Hardy should also answer the inverse question:
+Hardy should also answer inverse queries: sources expressing Claim C, projects
+using it, and all formal realizations.
 
-```text
-Claim C / shared theorem R
-Sources expressing it:
-  Donagi 1991, Theorem 2.1
-  Survey X, Theorem 5.4
-Projects using it:
-  genus-5 Schottky
-  genus-6 Schottky
-Formal realizations:
-  Hardy shared Lean module ...
-```
+## 15. Source seeding for projects and delegations
 
-## 13. Source seeding for projects and delegations
+“Seed this project/run with Hartshorne” means:
 
-"Seed this project/run with Hartshorne" means:
-
-- select an exact admitted source edition/version and artifact;
-- expose its work/edition identity and compact SourceTree/index prominently;
+- select an exact admitted work/edition/artifact;
+- expose compact SourceTree/index identity prominently;
 - increase retrieval priority for its nodes;
-- allow lazy retrieval of exact relevant spans/statements/proofs;
-- expose known claim/formalization links where policy permits;
+- allow lazy exact span/proof/formula retrieval;
+- expose known claim/formalization links where permitted;
 - do **not** inject the whole source into every context.
 
-Delegation workers may be given different subtrees or retrieval intents while
-sharing the same exact artifact identity.
+Delegation workers may receive different source subtrees/retrieval intents while
+sharing the exact source identity.
 
-## 14. Citation versus formal reuse
+## 16. Citation versus formal reuse
 
-Literature citation and formal reuse remain distinct even when they meet at one
-claim.
-
-Example:
+Literature citation and formal reuse remain distinct:
 
 ```text
-SourceNode S --expresses--> Claim C <--realizes-- Lean R
+SourceSpan S --expresses--> Claim C <--realizes-- Lean R
 ```
 
-A project may:
-
-- cite S because the paper/book is the historical/source authority;
-- use R because it is the verified formal theorem;
-- do both;
-- use R without citing S if the theorem is being used through Mathlib/shared
-  formal infrastructure and publication policy does not require that source;
-- cite S without having R if the project is deliberately accepting the literature
-  result as background under scope policy.
+A project may cite S, use R, do both, use R without citing S where publication
+policy permits, or cite S without R when admitting literature background.
 
 Formal proof does not retroactively certify that S expresses C. Source faithfulness
-is independently evidenced.
+is independent evidence.
 
-Citation identity normally targets the bibliographic work/edition appropriate to
-publication conventions, while Hardy's provenance additionally records the exact
-artifact/derived span it actually read. Thus a human-readable citation need not
-expose a content digest in prose, but the project can still audit which bytes stood
-behind the claim.
+## 17. Versioning, revisions, and staleness
 
-## 15. Versioning, revisions, and staleness
+### 17.1 Source changes
 
-### 15.1 Source changes
+New arXiv versions, new book editions, corrected scans, improved OCR, or improved
+SourceTrees create new identities. Old source-to-claim links remain tied to their
+exact artifact/representation/span.
 
-New arXiv versions and new book editions are new `EditionOrVersion` identities.
-Corrected scans, alternate file formats, or publisher/EPUB representations may be
-new `SourceArtifact`s within one edition when identity is established. Improved OCR
-or extraction is a new `DerivedRepresentation`.
+New artifacts may later be assessed as same mathematical statement, equivalent
+with notation changes, strengthened/weakened, meaningfully changed, or unknown.
 
-Do not silently retarget old source-to-claim links at any layer.
+### 17.2 Claim changes
 
-A new edition/artifact/representation may be assessed as:
+A corrected/strengthened mathematical statement receives a new claim identity with
+explicit relation to the prior claim. Claim identity is not mutable prose.
 
-```text
-same mathematical statement
-equivalent with notation changes
-strengthened/weakened statement
-meaningfully changed
-unknown
-```
+### 17.3 Formal environment changes
 
-Historical links remain tied to the exact artifact/representation/span they
-interpreted.
+Mathlib/toolchain changes may make a realization stale/unimportable without
+changing the claim. Formal validity/importability is environment-specific and can
+be rechecked independently from source interpretation.
 
-### 15.2 Claim changes
+## 18. Search and indexing
 
-A corrected or strengthened mathematical statement receives a new claim identity
-with an explicit relation to the prior claim. Claim identity is not mutable prose.
-
-### 15.3 Formal environment changes
-
-Mathlib/toolchain changes can make a formal realization stale/unimportable without
-changing the mathematical claim. Formal realization validity and importability are
-therefore version/environment-specific and can be rechecked independently of source
-interpretation.
-
-## 16. Search and indexing
-
-The system will need several derived indexes, but no index is authority:
+Useful rebuildable indexes include:
 
 ```text
-work/edition identifier index
-artifact digest/provenance index
 source full-text index
 SourceTree structural index
+page/locator index
 claim text/alias/concept index
 claim-relation graph
-source-node ↔ claim index
+source-node/span ↔ claim index
 claim ↔ formal-realization index
 formal declaration/name index
 vector/semantic retrieval index where useful
 project usage/citation index
 ```
 
-Exact IDs/aliases/structural relationships should outrank fuzzy similarity when
-available. Embeddings are candidate generators, not identity proofs.
+Exact IDs/aliases/structural relationships outrank fuzzy similarity when available.
+Embeddings are candidate generators, not identity proofs.
 
-Indexes must be rebuildable from durable records and immutable artifacts.
+## 19. Privacy, copyright, and storage boundary
 
-## 17. Privacy, copyright, and storage boundary
+User-supplied copyrighted books/papers may be stored/indexed locally for the user's
+own Hardy workflows. The architecture does not assume Hardy may independently
+acquire unavailable material, redistribute bytes, commit private artifacts into
+project repos, or send entire copyrighted sources to unrelated external services.
 
-User-supplied copyrighted books/papers may be stored and indexed locally for the
-user's own Hardy workflows. The architecture must not assume Hardy can:
+Access policy should remain explicit enough for later executors/plugins/UI to
+respect local/private restrictions.
 
-- independently acquire a source the user has not supplied or that an enabled
-  provider cannot legally/technically fetch;
-- redistribute source bytes;
-- commit private source artifacts into project repositories;
-- send an entire copyrighted source to unrelated external services merely because
-  it exists locally.
+Derived claim/formalization records can be more portable than source bytes, but
+retain enough provenance to identify what was interpreted.
 
-Source access policy should be explicit enough that later executor/plugin/UI work
-can respect local/private restrictions.
+## 20. Relationship to current arXiv paper handling
 
-Derived claim/formalization records may be much more portable than the source bytes,
-but must retain enough provenance to know what source was interpreted.
-
-## 18. Relationship to current arXiv paper handling
-
-Current arXiv support already has several valuable properties that should survive:
+Current arXiv support already has valuable properties to retain:
 
 - search results are leads, not citations;
-- exact versioned paper identity is pinned before use;
+- exact versioned identity is pinned before use;
 - metadata/content/source bytes carry digests;
 - library bytes are machine-local;
 - source bundles are treated as hostile archives;
 - bounded reads prevent uncontrolled context injection;
-- project bibliography is the one controlled citation writer;
-- extracted statements are inventoried separately from human approval/trust.
+- project bibliography is the controlled citation writer;
+- extracted statements are inventoried separately from approval/trust.
 
-The general architecture should **generalize** these properties.
+General literature should **generalize** these properties. `PaperRecord`/
+`PaperLibrary` becomes one acquisition compatibility layer beneath general source
+primitives rather than the downstream universal abstraction.
 
-What becomes less central is the assumption that `PaperRecord`/`PaperLibrary` is
-the downstream abstraction. An arXiv paper should become one `BibliographicWork`
-with versioned `EditionOrVersion` records and one or more exact artifacts/source
-bundles underneath. Its statement inventory feeds the same
-SourceTree/claim/formalization system used by books and other sources.
-
-Existing APIs may remain as compatibility/convenience layers while ownership moves
-toward general source primitives.
-
-## 19. Relationship to Hardy's project ledger and retrieval
+## 21. Relationship to Hardy's project ledger and retrieval
 
 Do not create a second theorem truth system.
 
-The shared claim/formalization registry supplies reusable mathematical identities
-and artifacts across projects. A concrete project still uses its existing ledger
-to record:
+The shared claim/formalization registry supplies reusable cross-project identities
+and artifacts. Concrete projects continue recording goals, contexts, dependencies,
+representations, transports, obligations, scope/trust, evidence, acceptance,
+citations, and publication relations in the existing ledger.
 
-- active goals/claims/approaches;
-- mathematical context and declarations;
-- dependencies/representations/transports;
-- obligations;
-- project scope/trust;
-- exact evidence and acceptance;
-- citations and publication relations.
+When shared material enters a project, Hardy links/imports/references it through
+existing project operations rather than bypassing them.
 
-When a shared claim enters a project, Hardy should link/import/reference it through
-existing project operations rather than silently bypassing them.
+The existing project/shared retrieval index remains the delivery boundary. The
+personal mathematical library appears as an authenticated shared source. Discovery
+establishes relevance; existing owners establish whether material can actually be
+used in the requesting scope/context/environment.
 
-Likewise, the existing project/shared retrieval index should remain the delivery
-boundary. The personal mathematical library appears as an authenticated shared
-source. Discovery establishes relevance; existing owners establish whether the
-material can actually be delivered/used in the requesting scope/context/environment.
+## 22. Key conceptual contracts
 
-## 20. Key conceptual contracts
-
-Names are provisional, but implementation should preserve these distinct roles:
+Names are provisional, but implementation should preserve these roles:
 
 ```text
 BibliographicWork
-  human-facing intellectual publication identity
+  human/intellectual publication identity
 
 EditionOrVersion
-  exact bibliographic/released version of a work
+  specific published/released/versioned state
 
 SourceArtifact
-  exact managed bytes and acquisition provenance
+  exact managed imported bytes
 
 DerivedRepresentation
-  artifact-bound extraction/OCR/layout/text representation with pipeline identity
+  attributable text/OCR/layout/source/image reading of one artifact
+
+RepresentationMapping
+  explicit mapping among representation/artifact coordinate systems
 
 SourceTree / SourceNode
-  document structure and exact locators/spans
+  versioned document structure and source-unit identity
+
+SourceAnchor / SourceSpan
+  exact typed location/evidence ranges within named coordinate systems
+
+SourceCorrespondence
+  evidenced source-unit relation across trees/artifacts
 
 MathematicalClaim
   exact reusable semantic proposition/definition/construction
 
 ClaimFamily / Concept
-  looser discovery grouping such as "Riemann–Roch"
+  looser discovery grouping such as “Riemann–Roch”
 
 SourceClaimLink
-  evidenced interpretation from exact source node to exact claim
+  evidenced interpretation from exact source material to exact claim
 
 ClaimRelation
   exact semantic relation between claims
@@ -1197,29 +1342,32 @@ PromotionRecord
   project theorem → reusable shared formal artifact, including dependency closure
 
 SourceUsage / ProjectLink
-  project-specific citation/use/authorization of shared source/claim/formal result
+  project-specific citation/use/authorization of shared material
 ```
 
-Do not merge these merely because an early implementation could use fewer classes.
-Their separations carry correctness semantics.
+Do not merge these simply because an early implementation could use fewer classes.
+Their separation carries correctness semantics.
 
-## 21. Core invariants for cross-project formal reuse
-
-The following should be treated as architectural invariants:
+## 23. Core invariants for source provenance and formal reuse
 
 ```text
-work identity != edition/version identity != artifact identity != derived identity
-
+work != edition/version != artifact != derived representation
 source node identity != mathematical claim identity != Lean declaration identity
+
+all indexed source bytes are Hardy-managed immutable imports
+external paths/URLs are acquisition provenance, not live backing stores
+
+printed page labels != PDF/image page indices
+representation offsets have meaning only relative to exact representation identity
+source evidence never stores naked offsets without coordinate-system identity
+
+extraction pipelines preserve mappings back to exact artifact/source coordinates
+new extraction/parser versions create new identities rather than relocating old evidence
+cross-artifact source correspondence is explicit and evidenced
+formulas/diagrams/images remain first-class source material rather than lossy text only
 
 formal reuse is keyed by exact claim or authenticated claim relation,
 not theorem name or textual similarity
-
-metadata similarity can propose grouping but cannot authoritatively merge editions
-or works without reliable identity evidence
-
-one edition may have multiple artifacts; one artifact may have multiple derived
-representations; historical links stay attached to the representation actually used
 
 one claim may have many source nodes and many formal realizations
 one source may contain many independently reusable claims
@@ -1231,50 +1379,59 @@ shared existence does not automatically widen a project's trust scope
 citation provenance and formal proof provenance remain independent
 source/claim/formal histories are versioned; no silent retargeting
 indexes accelerate discovery but never establish identity/truth
-managed imported bytes, not external mutable paths, define indexed source identity
 ```
 
-## 22. Evaluation questions
+## 24. Evaluation questions
 
 This architecture should eventually let Hardy measure:
 
-- how often a project need is satisfied by existing Mathlib/shared formalization
-  rather than new proof work;
+- how often project needs are satisfied by existing Mathlib/shared formalization;
 - how often two sources are correctly linked to one reusable claim;
-- false-positive rates in proposed source/claim and claim/formal matches;
-- false-positive rates in proposed same-work/same-edition artifact grouping;
-- how much formalization effort is saved across projects;
-- which project-local results are actually worth promoting;
-- how often promotion is blocked by project-local dependencies;
-- how often stronger/generalizing claims can satisfy weaker needs through transport;
-- staleness rates after Mathlib/toolchain/source revisions;
+- false-positive rates in source/claim and claim/formal candidate matching;
+- formalization effort saved across projects;
+- which project-local results are worth promoting;
+- promotion blockers due to project-local dependencies;
+- stronger/generalizing claims satisfying weaker needs through transport;
+- source-tree/extraction disagreement rates across representations;
+- OCR/formula extraction error rates that affect mathematical interpretation;
+- source-span remapping quality across PDF/EPUB/TeX artifacts;
+- staleness after Mathlib/toolchain/source revisions;
 - cumulative formal coverage of important books/papers;
-- whether source seeding improves retrieval without excessive context anchoring.
+- whether source seeding improves retrieval without excessive anchoring.
 
-## 23. Design decisions settled in this section
+## 25. Design decisions settled so far
 
 The following are considered agreed unless later discussion revises them:
 
 ```text
 general literature and existing paper handling converge on one source architecture
 user has a persistent personal mathematical library shared across projects
-bibliographic work, edition/version, exact artifact, and derived representation are
-  distinct identities
-one edition may be represented by multiple exact file artifacts
-same-work/same-edition detection may be proposed automatically but authoritative
-  grouping requires reliable identity evidence
-exact source artifacts are content-identified and remain distinct
-Hardy copies admitted source bytes into its own managed user-level library
+
+BibliographicWork → EditionOrVersion → SourceArtifact → DerivedRepresentation
+is the core source identity hierarchy
+candidate metadata grouping is weaker than authoritative work/edition grouping
+exact source artifacts are content-identified and distinct
+Hardy copies admitted source bytes into its managed user-level library
 external paths/URLs are provenance/acquisition inputs, not live backing stores
 managed imports are immutable, digest-verified, atomic, and deduplicate identical bytes
-derived representations remain explicitly bound to exact managed artifact identity
-multiple derived representations may coexist; newer extraction never silently
-  replaces provenance of older SourceNodes/claim links
-large sources are represented by navigable SourceTrees with exact locators
+
+multiple derived representations may coexist for one artifact
+all representation-relative offsets name the exact representation
+printed pagination and artifact pagination are distinct coordinate systems
+source nodes carry typed multi-coordinate anchors, not one universal location
+extraction pipelines emit explicit alignment mappings where possible
+new extraction/parser versions create new representations/trees rather than moving old evidence
+cross-artifact source-unit correspondence is explicit/evidenced
+exact literature evidence can point to narrower durable SourceSpans than structural nodes
+formulas, diagrams, page regions, and other non-text material remain first-class
+OCR is a derived reading with provenance/quality metadata, not replacement source bytes
+source retrieval always preserves machine-visible provenance refs
+
+large sources are represented by navigable versioned SourceTrees
 source structure is useful before semantic/formal enrichment is complete
 there is a cross-project exact mathematical claim registry
 claim families/concepts assist discovery but do not control exact reuse
-source nodes connect to claims through evidenced interpretation links
+source nodes/spans connect to claims through evidenced interpretation links
 multiple sources can express one claim without losing source provenance
 claims can have explicit equivalence/generalization/specialization/etc. relations
 formal realizations attach to claims rather than directly to source documents
@@ -1290,33 +1447,30 @@ source, claim, and formal versions never silently retarget one another
 existing project/shared retrieval is reused rather than adding a hidden memory path
 ```
 
-## 24. Next design areas
+## 26. Next design areas
 
-The semantic/formal reuse and source-identity architecture above should be treated as
-foundational. The next sections to design are source-management mechanics rather
-than a reconsideration of these layers:
+The semantic/formal/source-provenance architecture above is foundational. Next
+design sections should focus on source-management mechanics:
 
-1. **Derived representation and locator model:** exact page/image/byte/text spans,
-   printed-page labels, cross-representation mappings, formulas/figures, and how a
-   SourceNode can cite robust locators even when PDF text/OCR/TeX disagree.
-2. **Import/acquisition interfaces and formats:** PDF, EPUB, TeX/source trees,
-   HTML, plaintext, scans, directories, URLs/provider fetches, and user-supplied
-   files.
-3. **Text extraction/OCR and normalization:** what representations are produced,
-   confidence/failure handling, and preserving exact page/span mappings.
-4. **SourceTree construction:** parsing native structure vs model-assisted
-   reconstruction; tables of contents; theorem/proof/example/exercise extraction;
-   page/section/label locators.
-5. **Library portability:** backup/export, multiple machines, privacy, and shared
+1. **Import/acquisition interfaces and per-format pipelines:** PDF, scanned PDF,
+   EPUB, HTML, TeX/source trees, plaintext, directories, URLs/provider fetches,
+   and user-supplied files; each pipeline must produce artifact-bound derived
+   representations plus locator mappings rather than one flattened text blob.
+2. **Extraction/OCR policy:** native extraction first vs OCR fallback/augmentation,
+   formula/layout extraction, confidence/failure handling, and quality comparison
+   among competing representations.
+3. **SourceTree construction policy:** native structure versus deterministic parser
+   versus model-assisted reconstruction; TOCs; theorem/proof/example/exercise
+   extraction; review/refinement workflow.
+4. **Library portability:** backup/export, multiple machines, privacy, and shared
    metadata without redistributing private source bytes.
-6. **Bibliography/citation generalization:** extend current arXiv-centric
-   bibliography identity while preserving exact artifact provenance and stable
-   citation keys.
-7. **Claim interpretation/admission workflow:** when source nodes get claim IDs,
-   how candidate matches are reviewed, and how much can be automated.
-8. **Shared formal-library packaging:** module layout, dependency promotion,
+5. **Bibliography/citation generalization:** extend current arXiv-centric identity
+   while preserving exact artifact/source-span provenance and stable cite keys.
+6. **Claim interpretation/admission workflow:** when source nodes get claim IDs,
+   candidate matching/review, and acceptable automation.
+7. **Shared formal-library packaging:** module layout, dependency promotion,
    environment/version compatibility, and how promoted Lean is built/imported.
-9. **Source/claim/formal search API:** operations used by Explore, Research,
+8. **Source/claim/formal search API:** operations used by Explore, Research,
    acquisition, and delegation.
 
 This document should be updated in place as each section is settled so that the
