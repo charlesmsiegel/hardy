@@ -120,16 +120,27 @@ proofs (`propext`, `Classical.choice`, `Quot.sound`) and their presence is not
 news; anything else is either an approved assumption or an unapproved one that
 refuses the save.
 
-The audited scope is every non-private theorem and lemma in the rebuilt
-modules, not only the names the model registered, because a scope the model
-chooses is a gate it can switch off: a session registering nothing would have
-nothing to audit. Private declarations are skipped, since the probe elaborates
-a file that imports the module and cannot name a private declaration from
-there; a module with nothing auditable records "not established" rather than
-refusing. An empty scope therefore means there is nothing to audit, and a save
-with nothing to audit is refused rather than waved through. Treating it as a
-pass would make the gate optional: a model that simply declares nothing
-auditable would save `sorryAx`-dependent work after an exit-code check alone.
+The audited scope is every literal `theorem` and `lemma` declaration the
+textual scan finds in the rebuilt modules, not only the names the model
+registered, because a scope the model chooses is a gate it can switch off: a
+session registering nothing would have nothing to audit. Two things fall
+outside that scope. Private declarations are skipped, since the probe
+elaborates a file that imports the module and cannot name a private declaration
+from there; an exported declaration that uses a private helper reports the
+helper's axioms as its own. A declaration a command macro or elaborator
+generates is not seen at all, since the scan is textual: a module with a
+literal lemma beside a generated theorem records `clean` over the literal one
+alone. The record names the declarations it covers, and a clean verdict is a
+statement about those names and nothing more; the
+[output contract](output-contract.md) lists this among the gate's known gaps.
+
+A module with nothing auditable, one declaring only definitions or only
+private lemmas, records "not established" and the save goes through carrying
+that record. Nothing there claims to be a result, so there is nothing to grade,
+and "not established" is a status of its own, distinct from "clean", so nothing
+downstream reads it as a pass. What refuses a save is a
+report Hardy could not read, which is not a report that found nothing, and an
+audited declaration resting on `sorryAx` or an unapproved axiom.
 For the same reason the grade is derived from the audit verdict rather than
 from Lean's exit code, and a kernel-verified grade with no faithfulness
 verdict behind it is refused on read-back rather than believed. What each
@@ -323,11 +334,17 @@ narrower than what was asked for.
   the presentation must not be able to fail this gate open.
 
 Two limits are worth naming. An axiom that arrives through an **imported file**
-Hardy did not write cannot be approved: approval matches on a normalised Lean
-statement Hardy reconstructed from its own source, and there is nothing to
-reconstruct for a foreign file. Such an axiom simply blocks the save, which is
-the correct failure, and a `sorry` in a shared file makes every dependent
-report `sorryAx`, which no human may approve either. And **who approved an
+Hardy did not write is approved by name alone. The declared-axiom gate compares
+an `axiom` the model writes in its own source against the approved
+`lean_statement`; an imported axiom declares nothing in Hardy's source, so the
+audit's refusal names it, `request_assumption` records the human's approval, and
+the audit thereafter matches the approved set by formal name only. The
+statement the human read at approval is never compared against the type the
+imported declaration actually has, so the approval is a trust decision about a
+name; re-printing every approved assumption and comparing it against the
+recorded statement is the drift-detection piece of the roadmap's audit-gate
+residue item ([roadmap](../roadmap.md)). A `sorry` in a shared file makes every
+dependent report `sorryAx`, which no human may approve. And **who approved an
 assumption is not recorded**: the durable record carries a status and no
 identity, so a versioned record cannot attribute a trust decision to a person.
 Capturing it means deciding what Hardy knows about its user and changing the

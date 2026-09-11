@@ -73,6 +73,8 @@ Everything one problem owns lives under its own directory, and all of it is mean
 │   ├── writeup.tex                    # the fixed document root; every fragment is \input from it
 │   └── references.tex                  # generated from bibliography.json; never hand-edited
 ├── cas/
+│   ├── cells.jsonl                      # every accepted cell, appended in order; the session's durable record, read back on open
+│   ├── cells.jsonl.spend.json           # the running kernel-seconds total, written on every charge
 │   ├── session.py                       # (session.sing or session.m2 for the other cas_backend values) the last export
 │   ├── session.ipynb                      # the same session as a notebook
 │   ├── export.json                         # the export manifest: verdicts, file hashes, backend
@@ -126,7 +128,7 @@ Nothing pairs a Lean file to a TeX file by name, and a slug-per-file scheme nami
 
 A Lean file's path *is* its module name: `lean/Group/Sylow.lean` is `import Group.Sylow`, files import each other, and a save that would break a dependent is refused whole. A name here is load-bearing, and cannot also encode which writeup fragment documents it.
 
-The TeX tree is many files but one document: `writeup.tex` is the fixed root, every fragment is `\input` from it, and a fragment the root does not include is refused. There is no notion of "this fragment's own file" to pair against.
+The TeX tree is many files but one document: `writeup.tex` is the fixed root and every fragment is `\input` from it. A fragment the root does not include yet can still be saved, since LaTeX stops on a missing `\input` and the fragment therefore has to exist before the root can name it; such a save is compiled through a probe document, which says the fragment is sound and nothing about the writeup, so the writeup stays unstamped until the root includes it. A root that names a fragment which does not exist is refused. There is no notion of "this fragment's own file" to pair against.
 
 The real link is per declaration, not per file: a naming registry maps one Lean declaration name to one LaTeX label, checked against what the compiler actually wrote. One Lean file can hold five theorems documented across three fragments, and one fragment can cover several modules; a same-name pairing would enforce nothing the label registry does not already enforce, at the cost of the module namespace. The slug that does the pairing sits one level up, on the problem directory itself.
 
@@ -154,7 +156,7 @@ A `lean_lib` name is a Lake *target* name; it does not rename the modules beneat
 ```
 runs/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8/
 ├── manifest.json               # the run's own record: phase, terminal reason, artifact identities
-├── trajectory.jsonl              # every tool call and model turn, sequenced and hash-linked
+├── trajectory.jsonl              # every tool call and model turn, numbered in sequence; hashed whole by the manifest
 ├── request.md                     # the request text as given
 ├── strategy.json                   # the proof-search strategy selected, and the source digests it was run against
 ├── formalization.json              # the frozen, human-approved claim
@@ -196,4 +198,4 @@ evals/
 
 `corpus/EVALS.md` is generated from these boards by `hardy evals summary` and lives on the corpus side rather than here, since it reports on the active corpus and is committed with it.
 
-The repository's own `.gitignore` ignores `/evals/` with a leading slash, deliberately not a bare `evals/`, because an unrooted pattern would match at any depth and silently swallow `src/hardy/evals/`, whose already-tracked files would keep working while anything newly added there went unnoticed. `evals/baseline.json` stays tracked despite living under an ignored directory, since ignoring a directory does not untrack a path already committed inside it; it is regenerable at any time with `hardy evals baseline --status active`, which is what keeps hand-editing it unnecessary.
+The repository's own `.gitignore` ignores `/evals/` with a leading slash, deliberately not a bare `evals/`, because an unrooted pattern would match at any depth and silently swallow `src/hardy/evals/`, whose already-tracked files would keep working while anything newly added there went unnoticed. `evals/baseline.json` is ignored along with the rest of the directory and is not committed: nothing under `evals/` is evidence the repository carries. It is regenerable at any time with `hardy evals baseline`, which is what keeps hand-editing it unnecessary.

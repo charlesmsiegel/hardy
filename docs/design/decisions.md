@@ -12,12 +12,15 @@ The mechanisms are on [the trust boundary](trust-boundary.md).
 
 ### The audit scope is every theorem and lemma, not the registered names
 
-We chose to audit every non-private theorem and lemma in the rebuilt modules,
-over only the names the model registered, because a scope the model chooses is
-a gate it can switch off: a session registering nothing has nothing to audit.
+We chose to audit every literal `theorem` and `lemma` the textual scan finds in
+the rebuilt modules, over only the names the model registered, because a scope
+the model chooses is a gate it can switch off: a session registering nothing
+has nothing to audit.
 
-Cost: private declarations are skipped, since the probe cannot name one, and a
-module with nothing auditable records "not established" rather than refusing.
+Cost: private declarations are skipped, since the probe cannot name one; a
+declaration a macro generates is not seen, so a clean verdict covers only the
+names it records; and a module with nothing auditable records "not established"
+and saves rather than refusing.
 
 ### The audit rides on the check's Lean invocation
 
