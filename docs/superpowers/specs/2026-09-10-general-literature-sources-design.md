@@ -182,6 +182,11 @@ Similarity, theorem names, or embeddings are not sufficient to merge them.
     backing stores for an indexed source. Once admitted, Hardy's exact managed copy
     is what every source node, extraction, claim link, and citation refers to.
 
+14. **Bibliographic work, edition/version, exact artifact, and derived
+    representation are separate identities.** Metadata matching can propose that
+    two artifacts belong to the same edition, but authoritative grouping requires
+    explicit/reliable identity evidence.
+
 ## 4. Persistent personal mathematical library
 
 Hardy should maintain a reusable user-level library shared across projects. The
@@ -190,7 +195,10 @@ several connected stores:
 
 ```text
 Personal Mathematical Library
-├── source artifacts
+├── bibliographic works
+├── editions / source versions
+├── exact source artifacts
+├── derived representations
 ├── source trees / structural inventories
 ├── mathematical claim registry
 ├── source ↔ claim interpretation links
@@ -216,56 +224,157 @@ material remains subject to explicit source provenance, project authorization,
 scope/context checks, and current formal importability rather than being silently
 trusted because it exists on the machine.
 
-## 5. Source layer: artifact and source tree
+## 5. Source layer: work, edition/version, artifact, representation, and source tree
 
-### 5.1 SourceArtifact
+Hardy needs enough bibliographic structure to distinguish human-facing publication
+identity from the exact bytes and extraction pipeline it actually used, without
+adopting a full library-science ontology whose complexity does not serve
+mathematical work.
 
-A `SourceArtifact` represents the exact thing Hardy actually read, not merely a
-bibliographic work title.
+The recommended hierarchy is:
+
+```text
+BibliographicWork
+  ↓
+EditionOrVersion
+  ↓
+SourceArtifact
+  ↓
+DerivedRepresentation
+  ↓
+SourceTree / SourceNode
+```
+
+Each layer answers a different question and has a different lifetime.
+
+### 5.1 BibliographicWork
+
+A `BibliographicWork` is the intellectual publication people usually mean when they
+say “Hartshorne's Algebraic Geometry” or “Donagi's Fibers of the Prym Map.” It is
+useful for discovery, citation grouping, human navigation, and grouping related
+editions/versions.
+
+Representative fields:
+
+```text
+BibliographicWork
+  stable id
+  kind: book | paper | thesis | proceedings | notes | other
+  title
+  authors/editors
+  broad publication identity
+  persistent external identifiers when work-level
+  aliases / alternate titles
+  provenance for metadata assertions
+```
+
+A work is **not** enough to identify what Hardy read. Mathematical extraction,
+source claims, page locators, and citations that depend on exact wording always
+continue down to an edition/version and artifact identity.
+
+### 5.2 EditionOrVersion
+
+An `EditionOrVersion` identifies a specific published/released state of a work.
+Examples include:
+
+```text
+Hartshorne, GTM 52, Springer, 1977 edition
+Hartshorne corrected printing, if materially identifiable as distinct
+Donagi journal publication
+arXiv:1302.5946v1
+arXiv:1302.5946v2
+thesis revision / institutional repository version
+```
+
+Representative fields:
+
+```text
+EditionOrVersion
+  stable id
+  work ref
+  edition/version label
+  publisher / journal / venue
+  year/date
+  volume / issue / pages when bibliographic
+  ISBN / DOI / arXiv version / repository identifier / other identifiers
+  language
+  known correction/revision metadata
+  metadata provenance
+```
+
+The word “edition” is used broadly here to include exact source versions of papers.
+The architectural point is that this layer captures bibliographic/version identity
+above file-format bytes.
+
+Different editions/versions remain distinct even when most content is identical.
+A relation can later state that a theorem is unchanged across them; Hardy never
+assumes this from matching titles or page counts.
+
+### 5.3 SourceArtifact
+
+A `SourceArtifact` represents the exact bytes Hardy actually imported/read for one
+edition/version. Several artifacts may represent the same edition:
+
+```text
+Edition: Hartshorne 1977
+├── publisher PDF artifact      sha256:A
+├── EPUB artifact               sha256:B
+└── scanned PDF artifact        sha256:C
+```
 
 Representative fields:
 
 ```text
 SourceArtifact
-  id
-  kind: paper | book | monograph | thesis | proceedings | notes | other
-
-  bibliographic metadata:
-    title
-    authors/editors
-    publisher/journal/venue
-    year
-    edition
-    volume
-    identifiers: arxiv / DOI / ISBN / stable URL / other
-
-  artifact identity:
-    content digest
-    byte size
-    format
-    acquisition/import provenance
-    imported/fetched timestamp
-
-  access/storage policy:
-    local/private
-    redistributable/not-known
-    original artifact location/reference
-
-  derived representations:
-    normalized text digest
-    source bundle/tree refs
-    OCR/text extraction refs
+  id / content digest
+  edition/version ref if established
+  byte size
+  format / media type
+  managed immutable storage ref
+  acquisition/import provenance
+  imported/fetched timestamp
+  privacy/access policy
+  original filename/path/provider handle
 ```
 
-Bibliographic identity and artifact identity are separate. Two scans of the same
-edition can be distinct artifacts. Two editions of the same title are distinct
-source artifacts even if most mathematics is unchanged.
+Artifact identity is content identity. Two identical byte sequences deduplicate as
+one artifact even if imported through different paths. Different bytes are
+separate artifact identities even when believed to represent the same edition.
 
-For arXiv, the exact versioned arXiv record/source already supplies much of this
-identity. General literature should preserve rather than weaken the current exact
-version/digest discipline.
+### 5.4 Candidate grouping versus authoritative grouping
 
-### 5.2 Managed immutable import
+Hardy may automatically propose that two artifacts belong to one edition based on
+metadata such as title, authors, ISBN/DOI/arXiv version, publisher information,
+internal title pages, or high structural similarity. This is useful for import UX
+and deduplication assistance.
+
+But candidate grouping is not authoritative grouping.
+
+```text
+artifact A ── candidate_same_edition ── artifact B
+```
+
+is weaker than:
+
+```text
+artifact A ── belongs_to ── Edition E
+artifact B ── belongs_to ── Edition E
+```
+
+Authoritative edition membership requires reliable identity evidence appropriate to
+the source type. Examples include matching exact ISBN/edition metadata corroborated
+by internal front matter, exact arXiv version identity, publisher/provider metadata,
+or explicit human confirmation where machine evidence cannot distinguish printings.
+
+Title/year/author similarity alone is insufficient. This prevents a revised
+printing, unofficial scan, translation, or nearby version from silently inheriting
+source-node/claim links belonging to another artifact.
+
+The same principle applies at the work layer: fuzzy metadata may propose that two
+records describe the same work, but merging stable work identity is an explicit
+reconciliation operation with provenance.
+
+### 5.5 Managed immutable import
 
 Hardy should not index user-supplied scholarly material in place. Importing a local
 PDF, EPUB, TeX tree, scan, downloaded file, or provider result copies the exact
@@ -313,7 +422,7 @@ external original do not change Hardy's artifact. To consume changed bytes, the
 user/provider imports again, producing either the same digest (no mathematical
 change) or a new `SourceArtifact` identity.
 
-### 5.3 Import provenance
+### 5.6 Import provenance
 
 The managed artifact retains acquisition facts separately from byte identity, such
 as:
@@ -331,49 +440,76 @@ privacy/access classification
 Original local paths can be useful diagnostics but are not durable semantic
 identity and should not be required for later reading.
 
-### 5.4 Derived representations are artifact-bound
+### 5.7 DerivedRepresentation
 
-Normalized text, OCR output, page images, extracted TeX, layout analysis,
-SourceTrees, and search indexes are **derived from one exact managed artifact**.
-Their identity should therefore include at least the source artifact digest and the
-extractor/parser/model/configuration identity needed to reproduce or distinguish
-the derivation.
+A `DerivedRepresentation` is a reproducible or attributable reading of one exact
+artifact produced by some extractor/parser/OCR/model/configuration. It is a
+first-class identity because two extraction pipelines may disagree while both
+remain useful historical inputs.
 
-A better OCR pass or parser version can create a new derived representation without
-changing the underlying source artifact. Historical source-to-claim links remain
-bound to the representation/span they actually interpreted rather than silently
-moving to a newer extraction.
-
-Derived caches that are purely reconstructable may be discarded/rebuilt; derived
-representations that serve as cited/evidenced interpretation inputs need durable
-identity/provenance even if their bytes can be regenerated.
-
-### 5.5 Storage boundary and portability
-
-Managed source bytes belong to the user's Hardy library, not individual project
-repositories. Projects carry exact artifact/source-node references and portable
-metadata/digests rather than private book bytes.
-
-This gives Hardy a stable object to index once and reuse across projects while
-preserving the current desirable split:
+Examples:
 
 ```text
-USER-LEVEL PRIVATE LIBRARY
-  exact third-party bytes + derived source structures + reusable formal library
-
-PROJECT
-  uses/citations/claims/obligations/evidence references to shared material
+PDF native text extraction v2 from artifact A
+OCR pass v1 from scanned artifact C
+EPUB XHTML normalized text from artifact B
+TeX source assembly from arXiv source archive
+page-image manifest from PDF artifact A
+layout/block analysis from PDF artifact A
+SourceTree construction v4 from normalized representation R
 ```
 
-Backup/multi-machine synchronization of the personal library is a later design
-question; any such mechanism must preserve content identity and privacy rather than
-turning external sync paths back into mutable backing stores.
+Representative fields:
 
-### 5.6 SourceTree
+```text
+DerivedRepresentation
+  id / digest
+  artifact ref
+  kind: native_text | ocr_text | normalized_text | page_images |
+        source_tree_input | layout | other
+  bytes/artifact refs for derived output when retained
+  extractor/parser/model identity
+  extractor version/configuration
+  derivation timestamp
+  input refs
+  quality/confidence/failure metadata
+  locator mapping back to source artifact
+```
+
+Derived identity includes the exact artifact plus enough pipeline identity to know
+what generated it. Improved OCR or a parser update creates a new representation,
+not a mutation of the old one.
+
+Derived caches that are purely reconstructable may be discarded/rebuilt. Derived
+representations that are cited by source nodes, interpretation evidence, or claim
+links must retain durable identity/provenance even if their bytes can later be
+regenerated.
+
+### 5.8 Artifact and representation plurality
+
+Hardy should not force one canonical text representation when multiple readings are
+useful. For the same edition/artifact, native PDF text may preserve searchable text
+well while page-image OCR recovers formulas or headers better. TeX source may offer
+superior theorem boundaries while the published PDF supplies authoritative printed
+pagination.
+
+The architecture should therefore permit several parallel representations and
+explicit mappings among them rather than overwriting one extraction with another.
+
+A later “preferred representation” may be selected for ordinary retrieval, but
+preference is a policy/view and does not erase provenance or silently retarget
+source nodes already built from another representation.
+
+### 5.9 SourceTree
 
 A `SourceTree` is analogous to an AST for the scholarly artifact: it records the
 artifact's structural organization and exact locations without initially claiming
 that two mathematical statements are equivalent.
+
+A SourceTree is itself a derived structured representation. Its identity must name
+its input artifact/representations and parser/model/configuration. A newer parser can
+produce a new tree while historical source-node links continue to resolve against
+the old tree they used.
 
 Representative hierarchy:
 
@@ -403,13 +539,14 @@ A `SourceNode` should retain at least:
 
 ```text
 id
-artifact ref
+SourceTree ref
+artifact/representation refs
 parent / children
 kind
 title / heading / label / source numbering when known
-exact source locator/span
+exact representation span(s)
+locator(s) back to artifact
 printed page or artifact page when known
-normalized/extracted text ref
 reading order
 parser/extractor provenance
 confidence/quality metadata for structural extraction
@@ -419,7 +556,7 @@ Source numbering must distinguish what the source actually provides from numberi
 Hardy inferred. Page identity should distinguish printed page labels from PDF/image
 page indices.
 
-### 5.7 Source graph beyond the tree
+### 5.10 Source graph beyond the tree
 
 The literal containment tree is not enough. Source nodes may also carry derived
 structural/reference edges such as:
@@ -435,16 +572,18 @@ continues_from
 These are claims about the source document's structure/reference behavior, not yet
 semantic mathematical dependency edges.
 
-### 5.8 Progressive source enrichment
+### 5.11 Progressive source enrichment
 
 Import should be useful before semantic understanding is complete.
 
 A newly imported book can begin as:
 
 ```text
-✓ exact artifact identity
+✓ exact work/edition/artifact identity where known
+✓ managed immutable bytes
 ✓ chapter/section/page map
 ✓ extracted theorem-like nodes where recoverable
+? some edition grouping still only candidate
 ? claim identities unresolved
 ? formal realizations unknown
 ```
@@ -854,8 +993,8 @@ Formal realizations:
 
 "Seed this project/run with Hartshorne" means:
 
-- select an exact admitted source artifact/edition;
-- expose its source identity and compact SourceTree/index prominently;
+- select an exact admitted source edition/version and artifact;
+- expose its work/edition identity and compact SourceTree/index prominently;
 - increase retrieval priority for its nodes;
 - allow lazy retrieval of exact relevant spans/statements/proofs;
 - expose known claim/formalization links where policy permits;
@@ -888,15 +1027,24 @@ A project may:
 Formal proof does not retroactively certify that S expresses C. Source faithfulness
 is independently evidenced.
 
+Citation identity normally targets the bibliographic work/edition appropriate to
+publication conventions, while Hardy's provenance additionally records the exact
+artifact/derived span it actually read. Thus a human-readable citation need not
+expose a content digest in prose, but the project can still audit which bytes stood
+behind the claim.
+
 ## 15. Versioning, revisions, and staleness
 
 ### 15.1 Source changes
 
-New arXiv versions, new book editions, corrected scans, or improved OCR are new
-artifact identities/derived representations. Do not silently retarget old
-source-to-claim links.
+New arXiv versions and new book editions are new `EditionOrVersion` identities.
+Corrected scans, alternate file formats, or publisher/EPUB representations may be
+new `SourceArtifact`s within one edition when identity is established. Improved OCR
+or extraction is a new `DerivedRepresentation`.
 
-A new artifact may be assessed as:
+Do not silently retarget old source-to-claim links at any layer.
+
+A new edition/artifact/representation may be assessed as:
 
 ```text
 same mathematical statement
@@ -906,7 +1054,8 @@ meaningfully changed
 unknown
 ```
 
-Historical links remain tied to the exact artifact/span they interpreted.
+Historical links remain tied to the exact artifact/representation/span they
+interpreted.
 
 ### 15.2 Claim changes
 
@@ -925,6 +1074,8 @@ interpretation.
 The system will need several derived indexes, but no index is authority:
 
 ```text
+work/edition identifier index
+artifact digest/provenance index
 source full-text index
 SourceTree structural index
 claim text/alias/concept index
@@ -975,10 +1126,10 @@ Current arXiv support already has several valuable properties that should surviv
 The general architecture should **generalize** these properties.
 
 What becomes less central is the assumption that `PaperRecord`/`PaperLibrary` is
-the downstream abstraction. An arXiv paper should become one kind of
-`SourceArtifact` with one kind of acquisition adapter. Its statement inventory
-feeds the same SourceTree/claim/formalization system used by books and other
-sources.
+the downstream abstraction. An arXiv paper should become one `BibliographicWork`
+with versioned `EditionOrVersion` records and one or more exact artifacts/source
+bundles underneath. Its statement inventory feeds the same
+SourceTree/claim/formalization system used by books and other sources.
 
 Existing APIs may remain as compatibility/convenience layers while ownership moves
 toward general source primitives.
@@ -1012,8 +1163,17 @@ material can actually be delivered/used in the requesting scope/context/environm
 Names are provisional, but implementation should preserve these distinct roles:
 
 ```text
+BibliographicWork
+  human-facing intellectual publication identity
+
+EditionOrVersion
+  exact bibliographic/released version of a work
+
 SourceArtifact
-  exact scholarly artifact/edition/version and byte provenance
+  exact managed bytes and acquisition provenance
+
+DerivedRepresentation
+  artifact-bound extraction/OCR/layout/text representation with pipeline identity
 
 SourceTree / SourceNode
   document structure and exact locators/spans
@@ -1048,10 +1208,18 @@ Their separations carry correctness semantics.
 The following should be treated as architectural invariants:
 
 ```text
+work identity != edition/version identity != artifact identity != derived identity
+
 source node identity != mathematical claim identity != Lean declaration identity
 
 formal reuse is keyed by exact claim or authenticated claim relation,
 not theorem name or textual similarity
+
+metadata similarity can propose grouping but cannot authoritatively merge editions
+or works without reliable identity evidence
+
+one edition may have multiple artifacts; one artifact may have multiple derived
+representations; historical links stay attached to the representation actually used
 
 one claim may have many source nodes and many formal realizations
 one source may contain many independently reusable claims
@@ -1074,6 +1242,7 @@ This architecture should eventually let Hardy measure:
   rather than new proof work;
 - how often two sources are correctly linked to one reusable claim;
 - false-positive rates in proposed source/claim and claim/formal matches;
+- false-positive rates in proposed same-work/same-edition artifact grouping;
 - how much formalization effort is saved across projects;
 - which project-local results are actually worth promoting;
 - how often promotion is blocked by project-local dependencies;
@@ -1089,11 +1258,18 @@ The following are considered agreed unless later discussion revises them:
 ```text
 general literature and existing paper handling converge on one source architecture
 user has a persistent personal mathematical library shared across projects
-exact source artifacts/editions are content-identified and remain distinct
+bibliographic work, edition/version, exact artifact, and derived representation are
+  distinct identities
+one edition may be represented by multiple exact file artifacts
+same-work/same-edition detection may be proposed automatically but authoritative
+  grouping requires reliable identity evidence
+exact source artifacts are content-identified and remain distinct
 Hardy copies admitted source bytes into its own managed user-level library
 external paths/URLs are provenance/acquisition inputs, not live backing stores
 managed imports are immutable, digest-verified, atomic, and deduplicate identical bytes
 derived representations remain explicitly bound to exact managed artifact identity
+multiple derived representations may coexist; newer extraction never silently
+  replaces provenance of older SourceNodes/claim links
 large sources are represented by navigable SourceTrees with exact locators
 source structure is useful before semantic/formal enrichment is complete
 there is a cross-project exact mathematical claim registry
@@ -1116,13 +1292,13 @@ existing project/shared retrieval is reused rather than adding a hidden memory p
 
 ## 24. Next design areas
 
-The semantic/formal reuse architecture above should be treated as foundational.
-The next sections to design are primarily source-management mechanics rather than a
-reconsideration of this layer:
+The semantic/formal reuse and source-identity architecture above should be treated as
+foundational. The next sections to design are source-management mechanics rather
+than a reconsideration of these layers:
 
-1. **Artifact/edition/representation identity:** distinguish bibliographic work,
-   edition/version, exact imported artifact, and derived text/OCR/source-tree
-   representations without conflating any of them.
+1. **Derived representation and locator model:** exact page/image/byte/text spans,
+   printed-page labels, cross-representation mappings, formulas/figures, and how a
+   SourceNode can cite robust locators even when PDF text/OCR/TeX disagree.
 2. **Import/acquisition interfaces and formats:** PDF, EPUB, TeX/source trees,
    HTML, plaintext, scans, directories, URLs/provider fetches, and user-supplied
    files.
