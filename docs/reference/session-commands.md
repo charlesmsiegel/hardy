@@ -103,3 +103,7 @@ The expansion is what gets recorded, never the `/name`: a shared transcript that
 | Esc | Cancels a turn in flight: the model stops, no further tool call runs, and the Lean, LaTeX or computer algebra process it started is interrupted rather than left running to its own timeout. Pressed again, a second Esc stops waiting and kills whatever had not stopped, at the cost of that child's state, such as a computer algebra kernel's namespace. Against a command that owns a child of its own, such as a running `/cas` cell or a `/prove` run, Esc stops that instead, with the same two presses. |
 | Ctrl+C | Once, while a turn is running, only warns. A second Ctrl+C leaves at once, at the cost of whatever that turn was still doing, and may orphan a Lean, LaTeX or computer algebra process it started. With no turn running, Ctrl+C leaves the session immediately. |
 | Ctrl+D | Leaves the session, the same as `/exit` or `/quit`. |
+
+## In the browser
+
+`hardy web` runs this same registry: every command above, the prompt shortcuts and a project's own commands work at the browser's composer exactly as at the prompt, and are refused while a turn or a command runs by the same rule. A selector, a line prompt, or a yes/no question, including the request to approve an assumption, appears as a card in the conversation; Esc dismisses it, which is a decline. Esc against a running turn stops it, and a second Esc kills what has not stopped, as at the terminal. `/exit` does not stop the server: Ctrl+C where `hardy web` runs does.

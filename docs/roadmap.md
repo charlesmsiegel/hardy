@@ -1336,6 +1336,22 @@ Do not solve concept/representation/declaration/goal handling by stuffing domain
 
 The current backend-blind menu is a defect and remains in Issues. Longer-term live/curated model-catalog discoverability belongs here rather than in that bug.
 
+## I3 — Browser client — P1
+
+**Status:** `hardy web` implemented (2026-09-14): a loopback client running the terminal's own registry over one live session per problem, with chats as separate transcripts under `chats/<id>/`, panels for the workspace summary, files and PDFs, jobs and spend, the conversation tree and sources, and the ledger's provenance graph, and uploads staged under `.local/uploads/` and promoted through `/import` or the library. Not done: concurrent chats, browser-side file editing, portable collaborator metadata.
+
+**Deps:** I0
+
+`hardy web` serves a browser page over `127.0.0.1` that talks to the same
+session, record and command registry `hardy chat` does, rather than a second
+implementation of any of them: every slash command, prompt shortcut and
+project command a project has, and the assumption-approval gate, run through
+the same handlers. A problem may hold several chats, each a separate
+transcript and provider thread so a chat's context is its own aspect of the
+problem rather than the whole history, while the record, ledger, Lean, TeX and
+CAS stay the problem's, shared by every chat. Opening a chat reopens the
+problem's one live session the way `/project switch` does.
+
 ---
 
 # Evaluation lane V — cross-cutting measurement and acceptance
