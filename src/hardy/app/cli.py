@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import math
@@ -68,13 +69,15 @@ def _project_prompt(args: argparse.Namespace) -> Callable[[list[str]], str | Non
 
     A TTY on both ends, for `_chat`'s reason: stdout piped somewhere means
     there is nowhere for the question to be seen, so asking would print into a
-    file and then read the next thing on stdin as the answer. Only for the
-    interactive session, too -- `doctor`, `latency` and `batch` resolve the
-    same configuration, and stopping any of them to ask which problem is
-    active would make a scripted invocation hang on a question its author
-    never asked for.
+    file and then read the next thing on stdin as the answer. Only for a
+    launch that opens a session -- the terminal's or the browser's -- too:
+    `doctor`, `latency` and `batch` resolve the same configuration, and
+    stopping any of them to ask which problem is active would make a scripted
+    invocation hang on a question its author never asked for. `web` asks at
+    the terminal it was started from, before the server is up, because that is
+    the terminal the user is standing at.
     """
-    if getattr(args, "command", None) not in (None, "chat"):
+    if getattr(args, "command", None) not in (None, "chat", "web"):
         return None
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return None
@@ -101,64 +104,29 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
         parser.error(str(error))
 
 
-def _chat(
+def _launch(
     config: configuration.Config,
-    *,
-    plain: bool = False,
-    parser: argparse.ArgumentParser | None = None,
     args: argparse.Namespace | None = None,
-) -> int:
-    from hardy.app.tui import run_session
+) -> tuple[ProjectOpener, Callable[[Callable[[dict[str, Any]], bool]], MathematicsSession], Callable[[], None]]:
+    """The machinery a launched session needs, and the one way to put it down.
 
-    def _report(error: Exception) -> None:
-        # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
-        # value in a config file -- reaches `_config` and goes through
-        # `parser.error`, which prints a clean message and exits 2. Both this
-        # and `SchemaError` below are raised later, once a session is
-        # actually opening, so without this they were the paths where the
-        # same kind of error surfaced as a raw traceback (or, for the schema
-        # refusal reached through the interactive shell, a misleading
-        # "Falling back to the plain session" line followed by one) instead.
-        # `parser` is optional because a direct caller (tests, or any future
-        # non-CLI embedding) has no parser to hand it and is better served by
-        # the real exception than a swallowed one.
-        if parser is None:
-            raise error
-        parser.error(str(error))
+    `hardy chat` and `hardy web` open the same session over the same
+    workspace; only what drives it afterwards differs. Both need the
+    computer algebra kernel, the search runtime, the opener a project
+    switch goes through, and the builder that turns a confirmation gate
+    into a session -- so those live here rather than in either command,
+    where a change to one launch would otherwise silently not be a change
+    to the other.
 
-    # `--chat` is a per-launch choice like `--fresh-thread`: applied to the
-    # config here, before anything reads `config.layout`, so every path below
-    # -- `prepare_layout`, the CAS log, the session itself -- already points at
-    # the requested chat rather than `main`.
-    requested = getattr(args, "chat", None)
-    if requested:
-        try:
-            config = dataclasses.replace(config, chat=layout.validate_chat(requested))
-        except layout.LayoutError as error:
-            _report(error)
-
-    try:
-        prepare_layout(config)
-    except layout.LayoutError as error:
-        _report(error)
-
-    # A TTY on both ends, not just stdin: stdout piped to a file or another
-    # process means there is nowhere for the prompt to be seen, so treating
-    # that as interactive would print a question no one can answer and then
-    # read whatever arrives on stdin as if it were the reply.
-    notice = offer_registration(
-        config,
-        interactive=sys.stdin.isatty() and sys.stdout.isatty(),
-        choice=getattr(args, "register_lakefile", None),
-    )
-    if notice:
-        print(notice)
-
+    Returns the opener, the builder, and `close`: the caller runs the
+    session however it likes and calls `close` in a `finally`, whatever
+    happened.
+    """
     # Built once, here -- not inside `build` below -- because `run_session`
     # can call its `session_factory` a second time (the interactive shell
     # falling back to the plain session after failing to start) and a second
-    # kernel process is not what that fallback should cost. `finally` closes
-    # it exactly once regardless of which path `run_session` actually took,
+    # kernel process is not what that fallback should cost. `close` below
+    # puts it down exactly once regardless of which path the caller took,
     # or how it ended.
     cas, cas_detail = cas_tools.build_runtime(
         backend_name=config.cas_backend,
@@ -177,7 +145,7 @@ def _chat(
 
     # How `/project switch` opens another problem without ending the process.
     # It owns the live CAS runtime from here on, because a switch replaces it
-    # and the `finally` below has to close whichever one is current.
+    # and `close` below has to put down whichever one is current.
     opener = ProjectOpener(
         config.project,
         cas,
@@ -242,6 +210,86 @@ def _chat(
             session.fresh_thread_detail = launch["detail"]
         return session
 
+    def close() -> None:
+        """Put down the live session and the live kernel, in that order.
+
+        Not reached at all if a forced double-Ctrl+C exit inside the shell
+        reaches `os._exit` -- that bypasses every `finally` in the process,
+        not just this one. Accepted for the same reason a forced exit
+        already leaves Lean/LaTeX subprocesses orphaned: the user was
+        warned before pressing Ctrl+C a second time.
+
+        `opener.cas`, not `cas`: a `/project switch` replaced the kernel, and
+        closing the one this function built would leave the live one running
+        and the session's own process behind.
+        The session first: its background workers hold the kernel factory
+        and a thread pool that would otherwise keep the process alive.
+        """
+        live = getattr(opener, "session", None)
+        closing = getattr(live, "close", None)
+        if closing is not None:
+            closing()
+        if opener.cas is not None:
+            opener.cas.session.close()
+
+    return opener, build, close
+
+
+def _chat(
+    config: configuration.Config,
+    *,
+    plain: bool = False,
+    parser: argparse.ArgumentParser | None = None,
+    args: argparse.Namespace | None = None,
+) -> int:
+    from hardy.app.tui import run_session
+
+    def _report(error: Exception) -> None:
+        # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
+        # value in a config file -- reaches `_config` and goes through
+        # `parser.error`, which prints a clean message and exits 2. Both this
+        # and `SchemaError` below are raised later, once a session is
+        # actually opening, so without this they were the paths where the
+        # same kind of error surfaced as a raw traceback (or, for the schema
+        # refusal reached through the interactive shell, a misleading
+        # "Falling back to the plain session" line followed by one) instead.
+        # `parser` is optional because a direct caller (tests, or any future
+        # non-CLI embedding) has no parser to hand it and is better served by
+        # the real exception than a swallowed one.
+        if parser is None:
+            raise error
+        parser.error(str(error))
+
+    # `--chat` is a per-launch choice like `--fresh-thread`: applied to the
+    # config here, before anything reads `config.layout`, so every path below
+    # -- `prepare_layout`, the CAS log, the session itself -- already points at
+    # the requested chat rather than `main`.
+    requested = getattr(args, "chat", None)
+    if requested:
+        try:
+            config = dataclasses.replace(config, chat=layout.validate_chat(requested))
+        except layout.LayoutError as error:
+            _report(error)
+
+    try:
+        prepare_layout(config)
+    except layout.LayoutError as error:
+        _report(error)
+
+    # A TTY on both ends, not just stdin: stdout piped to a file or another
+    # process means there is nowhere for the prompt to be seen, so treating
+    # that as interactive would print a question no one can answer and then
+    # read whatever arrives on stdin as if it were the reply.
+    notice = offer_registration(
+        config,
+        interactive=sys.stdin.isatty() and sys.stdout.isatty(),
+        choice=getattr(args, "register_lakefile", None),
+    )
+    if notice:
+        print(notice)
+
+    opener, build, close = _launch(config, args)
+
     try:
         return run_session(config, build, plain=plain, reopen=opener)
     except (SchemaError, layout.LayoutError) as error:
@@ -262,23 +310,55 @@ def _chat(
         _report(error)
         raise AssertionError("unreachable: _report always raises or exits") from None
     finally:
-        # Not reached at all if a forced double-Ctrl+C exit inside the shell
-        # reaches `os._exit` -- that bypasses every `finally` in the process,
-        # not just this one. Accepted for the same reason a forced exit
-        # already leaves Lean/LaTeX subprocesses orphaned: the user was
-        # warned before pressing Ctrl+C a second time.
-        #
-        # `opener.cas`, not `cas`: a `/project switch` replaced the kernel, and
-        # closing the one this function built would leave the live one running
-        # and the session's own process behind.
-        # The session first: its background workers hold the kernel factory
-        # and a thread pool that would otherwise keep the process alive.
-        live = getattr(opener, "session", None)
-        close = getattr(live, "close", None)
-        if close is not None:
-            close()
-        if opener.cas is not None:
-            opener.cas.session.close()
+        close()
+
+
+def _web(
+    config: configuration.Config,
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> int:
+    """Serve the same session `_chat` runs, to a browser instead of a terminal.
+
+    The launch is `_chat`'s, through `_launch`; what differs is that nothing
+    here reads stdin. The shutdown is the part worth reading: Ctrl+C returns
+    from `serve`, and a turn may still be streaming on a worker at that
+    moment. `stop` would close the session under it and the browser would
+    never see the turn end, so the turn is asked to stop first and only then
+    is the host put down -- and only then the kernel, because the session's
+    own workers still hold it.
+    """
+    from hardy.app.web.host import WebHost
+    from hardy.app.web.server import serve
+
+    requested = getattr(args, "chat", None)
+    if requested:
+        try:
+            config = dataclasses.replace(config, chat=layout.validate_chat(requested))
+        except layout.LayoutError as error:
+            parser.error(str(error))
+
+    try:
+        prepare_layout(config)
+    except layout.LayoutError as error:
+        parser.error(str(error))
+
+    opener, build, close = _launch(config, args)
+    host = WebHost(config, opener, lambda confirm, _config: build(confirm))
+    try:
+        host.start()
+        serve(host, port=args.port, open_browser=args.open)
+    finally:
+        # Suppressed, not asserted: a host that never finished starting is
+        # already stopped, and a teardown that raised here would skip the
+        # kernel's own close and leave a process behind.
+        with contextlib.suppress(RuntimeError):
+            if host.state()["turn_running"]:
+                host.cancel()
+        host.stop()
+        close()
+    return 0
 
 
 def _read_block(ask: Callable[[str], str] = input) -> str:
@@ -892,6 +972,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="never touch the host lakefile.toml",
     )
+    web = subparsers.add_parser("web", help="serve the browser client for this root on 127.0.0.1")
+    web.add_argument("--root", type=Path, help="project root (default: the current directory)")
+    web.add_argument("--project", help=f"which problem to open first (default: the active one, or {layout.DEFAULT_SLUG})")
+    web.add_argument("--chat", help=f"which chat to open first (default {layout.DEFAULT_CHAT})")
+    web.add_argument("--port", type=int, default=0, help="port to listen on (default: an ephemeral one)")
+    web.add_argument("--open", action="store_true", help="open the page in the default browser")
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
     # The evidence the interactive-session page (docs/design/interactive-session.md)
@@ -1028,6 +1114,8 @@ def main() -> int:
         from hardy.app.library import main as library_main
 
         return library_main(args, config)
+    if args.command == "web":
+        return _web(config, parser=parser, args=args)
     # No subcommand is intentionally the primary interactive experience.
     return _chat(config, plain=args.plain, parser=parser, args=args)
 
