@@ -241,8 +241,11 @@ class FakeCas:
     def reset(self, *, author: str) -> None:
         self.reset_calls.append(author)
 
-    def run(self, source: str, *, author: str) -> FakeCasResult:
-        self.run_calls.append((source, author))
+    def typed_path(self) -> str:
+        return "typed/0001.py"
+
+    def run(self, path: str, source: str | None = None, *, author: str) -> FakeCasResult:
+        self.run_calls.append((path, source, author))
         if self._run_error is not None:
             raise self._run_error
         return self._run_result
@@ -303,7 +306,7 @@ async def test_cas_export_reports_the_written_paths_and_replay_counts(ui, settin
 async def test_cas_runs_an_inline_expression_as_the_human(ui, settings, tmp_path):
     fake = FakeCas()
     await handlers.handle_cas(ui, "1+1", cas_state(fake, settings, tmp_path))
-    assert fake.run_calls == [("1+1", "human")]
+    assert fake.run_calls == [("typed/0001.py", "1+1", "human")]
     assert "4" in ui.text
 
 
@@ -314,7 +317,18 @@ async def test_cas_with_no_inline_argument_reads_a_multiline_block(ui, settings,
     ui.lines = ["for i in range(3):", "    print(i)", "/end"]
     fake = FakeCas()
     await handlers.handle_cas(ui, "", cas_state(fake, settings, tmp_path))
-    assert fake.run_calls == [("for i in range(3):\n    print(i)", "human")]
+    assert fake.run_calls == [("typed/0001.py", "for i in range(3):\n    print(i)", "human")]
+
+
+async def test_cas_run_reruns_a_file_and_cas_file_reads_a_block_into_one(ui, settings, tmp_path):
+    """Every cell is a file: `run` names one already there, `file` fills one."""
+    fake = FakeCas()
+    await handlers.handle_cas(ui, "run examples/first.py", cas_state(fake, settings, tmp_path))
+    ui.lines = ["x = 1", "/end"]
+    await handlers.handle_cas(ui, "file examples/second.py", cas_state(fake, settings, tmp_path))
+    assert fake.run_calls == [("examples/first.py", None, "human"), ("examples/second.py", "x = 1", "human")]
+    await handlers.handle_cas(ui, "run", cas_state(fake, settings, tmp_path))
+    assert ui.written[-1] == ("error", "CAS: /cas run takes the path of a file under cas/")
 
 
 async def test_cas_a_block_abandoned_by_escape_or_eof_runs_nothing(ui, settings, tmp_path):

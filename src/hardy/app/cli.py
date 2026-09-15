@@ -407,6 +407,21 @@ def _read_block(ask: Callable[[str], str] = input) -> str:
         lines.append(line)
 
 
+_BLOCK = object()
+
+
+def _cas_target(argument: str) -> tuple[str | None, Any]:
+    """`(path, source)` for a `/cas` line; `_BLOCK` for a source still to be read."""
+    words = argument.split(None, 1)
+    if len(words) == 2 and words[0] == "run":
+        return words[1].strip(), None
+    if len(words) == 2 and words[0] == "file":
+        return words[1].strip(), _BLOCK
+    if len(words) == 1 and words[0] in {"run", "file"}:
+        raise CasError(f"/cas {words[0]} takes the path of a file under cas/")
+    return None, argument if argument else _BLOCK
+
+
 def cas_command(
     argument: str,
     session: MathematicsSession,
@@ -440,12 +455,18 @@ def cas_command(
             out(f"Script, run as a whole: {report.script_verdict}"
                 + (f" — {report.script_detail}" if report.script_detail else ""))
             return
-        source = argument or _read_block(ask)
-        if not source.strip():
+        # Every cell is a file: `run <path>` reruns one, `file <path>` reads a
+        # block into one, and a typed cell is filed under `cas/typed/`.
+        path, source = _cas_target(argument)
+        if path is None:
+            path = session.cas.typed_path()
+        if source is _BLOCK:
+            source = _read_block(ask)
+        if source is not None and not source.strip():
             return
         # Human cells go into the same log, under the same lock, and are
         # replayed and exported exactly like the model's.
-        result = session.cas.run(source, author="human")
+        result = session.cas.run(path, source, author="human")
         # Hardy's own commentary, ahead of the kernel's: the cell below ran in
         # a rebuilt kernel, which the human should know before reading it.
         if result.restart_note:

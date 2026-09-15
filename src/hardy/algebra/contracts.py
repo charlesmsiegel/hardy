@@ -89,6 +89,11 @@ class CellRecord(FrozenModel):
     segment: int
     author: Literal["model", "human"]
     source: str
+    # The file under `cas/` this cell was read from, relative to that
+    # directory, or "" on a record written before cells were files. `source`
+    # stays beside it: the file may be rewritten later, and the record has to
+    # say what ran, not what the path holds now.
+    path: str = ""
     # "interrupted" is never accepted, and for the same reason "error" is not:
     # the cell did not finish, and it may well have changed the namespace on
     # its way to being stopped. What it leaves behind is outside the accepted

@@ -901,7 +901,7 @@ class CasSession:
         if self.spent_seconds >= self.limits.cas_session_seconds:
             raise CasError("CAS session budget exhausted")
 
-    def execute(self, source: str, *, author: str = "model") -> CellRecord:
+    def execute(self, source: str, *, author: str = "model", path: str = "") -> CellRecord:
         with self._lock:
             self._guard()
             if not source.strip():
@@ -1015,6 +1015,7 @@ class CasSession:
                 segment=self.segment,
                 author=author,  # type: ignore[arg-type]
                 source=source,
+                path=path,
                 status=status,  # type: ignore[arg-type]
                 accepted=status == "ok" and not unverifiable and not perturbed,
                 kernel_lost=outcome.kernel_lost or status in {"timeout", "kernel_died"},

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 
 import pytest
 
-from hardy.algebra.cas import CasSession, backend_for
+from hardy.algebra.cas import CasError, CasSession, backend_for
 from hardy.algebra.tools import CAS_TOOL_NAMES, CasToolRuntime, build_runtime
 from hardy.workflows.contracts import RunLimits
 
@@ -24,7 +25,7 @@ def make_runtime(session, spilled: dict, observation_bytes: int = 32 * 1024) -> 
 def test_a_normal_result_is_returned_whole(tmp_path, cas_session) -> None:
     spilled: dict = {}
     runtime = make_runtime(cas_session(), spilled)
-    result = runtime.run("a")
+    result = runtime.run("cells/a.py", "a")
     assert result.status == "ok"
     assert result.observation_truncated is False
     assert result.output_artifact is None
@@ -34,7 +35,7 @@ def test_a_normal_result_is_returned_whole(tmp_path, cas_session) -> None:
 @pytest.mark.parametrize("source", ["warning;", "flood;"])
 def test_merged_capture_is_disclosed_in_results_and_human_notes(sentinel_session, source):
     runtime = make_runtime(sentinel_session(), {}, observation_bytes=2048)
-    result = runtime.run(source)
+    result = runtime.run(f"cells/one{runtime.suffix}", source)
     assert result.model_dump()["capture_mode"] == "merged"
     assert "stdout and stderr" in (result.note or "")
     assert "stream origin" in (result.note or "")
@@ -46,7 +47,7 @@ def test_an_oversized_answer_is_spilled_and_points_at_the_live_value(tmp_path, c
     spilled: dict = {}
     runtime = make_runtime(cas_session(), spilled, observation_bytes=2_048)
 
-    result = runtime.run("flood")
+    result = runtime.run("cells/flood.py", "flood")
 
     assert result.observation_truncated is True
     assert result.output_artifact == "process/cas-cell-0-0.json"
@@ -59,18 +60,18 @@ def test_an_oversized_answer_is_spilled_and_points_at_the_live_value(tmp_path, c
 def test_a_truncated_capture_says_so_in_the_note(tmp_path, cas_session) -> None:
     spilled: dict = {}
     runtime = make_runtime(cas_session(cas_output_bytes=4_096), spilled, observation_bytes=2_048)
-    result = runtime.run("flood")
+    result = runtime.run("cells/flood.py", "flood")
     assert result.capture_truncated is True
     assert "missing this cell's tail" in (result.note or "")
 
 
 def test_state_lists_the_cells_that_built_the_session(tmp_path, cas_session) -> None:
     runtime = make_runtime(cas_session(), {})
-    runtime.run("first")
-    runtime.run("boom")
-    runtime.run("second")
+    runtime.run("cells/first.py", "first")
+    runtime.run("cells/boom.py", "boom")
+    runtime.run("cells/second.py", "second")
     state = runtime.state()
-    assert [line.split("] ")[1] for line in state.accepted] == ["first", "second"]
+    assert [line.split("] ")[1] for line in state.accepted] == ["cells/first.py: first", "cells/second.py: second"]
     assert state.kernel == "live"
 
 
@@ -82,8 +83,8 @@ def test_state_reports_the_session_spend_and_this_process_guard(tmp_path, cas_se
     opened it, and separately what this process will still allow.
     """
     first = make_runtime(cas_session(cas_cell_seconds=30), {})
-    first.run("slow")
-    first.run("slow")
+    first.run("cells/slow.py", "slow")
+    first.run("cells/slow.py", "slow")
     first.session.close()
 
     runtime = make_runtime(cas_session(cas_cell_seconds=30, cas_session_seconds=900), {})
@@ -91,7 +92,7 @@ def test_state_reports_the_session_spend_and_this_process_guard(tmp_path, cas_se
     assert before.seconds_spent >= 1
     assert before.process_seconds_remaining == 900
 
-    runtime.run("x")
+    runtime.run("cells/x.py", "x")
     after = runtime.state()
     assert after.seconds_spent >= 2
     assert after.process_seconds_remaining <= 899
@@ -99,7 +100,7 @@ def test_state_reports_the_session_spend_and_this_process_guard(tmp_path, cas_se
 
 def test_reset_clears_the_state_the_model_can_see(tmp_path, cas_session) -> None:
     runtime = make_runtime(cas_session(), {})
-    runtime.run("a")
+    runtime.run("cells/a.py", "a")
     assert runtime.state().accepted
     after = runtime.reset()
     assert after.accepted == ()
@@ -126,16 +127,17 @@ def test_every_binding_dispatches_into_the_same_runtime_and_budget(tmp_path, cas
     staged._cas = runtime
     staged._cas_directory = tmp_path / "cas"
 
-    chat_result = chat._cas_tool("cas_run", {"source": "one"})
-    staged_result = staged._cas_dispatch("cas_run", {"source": "two"})
-    mcp_result = runtime.run("three")  # what the MCP tool body calls
+    chat_result = chat._cas_tool("cas_run", {"path": "cells/one.py", "source": "one"})
+    staged_result = staged._cas_dispatch("cas_run", {"path": "cells/two.py", "source": "two"})
+    mcp_result = runtime.run("cells/three.py", "three")  # what the MCP tool body calls
 
     assert chat_result.ok and staged_result.ok
     assert json.loads(chat_result.output)["value_repr"] == "1"
     assert json.loads(staged_result.output)["value_repr"] == "2"
     assert mcp_result.value_repr == "3"
     # One log, one kernel, one budget, whichever door was used.
-    assert [record.source for record in session.accepted()] == ["one", "two", "three"]
+    assert [record.source for record in session.accepted()] == ["one\n", "two\n", "three\n"]
+    assert [record.path for record in session.accepted()] == ["cells/one.py", "cells/two.py", "cells/three.py"]
 
 
 def test_a_model_reset_is_recorded_as_the_models(tmp_path, cas_session) -> None:
@@ -144,7 +146,7 @@ def test_a_model_reset_is_recorded_as_the_models(tmp_path, cas_session) -> None:
     definitions disappeared."""
     session = cas_session()
     runtime = make_runtime(session, {})
-    runtime.run("a")
+    runtime.run("cells/a.py", "a")
     runtime.reset()
     boundary = session.records()[-1]
     assert boundary.segment == 1
@@ -183,7 +185,7 @@ def test_reopening_a_workspace_restores_the_state_it_lists(tmp_path) -> None:
     assert runtime is not None, detail
     try:
         assert len(runtime.state().accepted) == 2
-        result = runtime.run("x + 1")
+        result = runtime.run("cells/x + 1.py", "x + 1")
         assert result.status == "ok", result.stderr
         assert result.value_repr == "42"
         # Rebuilt, and said so as a reopen rather than as an incident: nothing
@@ -221,7 +223,7 @@ def test_state_is_bounded_by_the_observation_budget(tmp_path, cas_session) -> No
     relationship to `model_observation_bytes`."""
     runtime = make_runtime(cas_session(), {}, observation_bytes=1_024)
     for index in range(40):
-        runtime.run(f"cell{index} " + "z" * 60)
+        runtime.run(f"cells/{index}.py", f"cell{index} " + "z" * 60)
     state = runtime.state()
     assert len(state.model_dump_json().encode("utf-8")) <= 1_024
     assert state.omitted > 0
@@ -233,8 +235,8 @@ def test_state_is_bounded_by_the_observation_budget(tmp_path, cas_session) -> No
 
 def test_a_small_state_is_listed_whole(tmp_path, cas_session) -> None:
     runtime = make_runtime(cas_session(), {})
-    runtime.run("first")
-    runtime.run("second")
+    runtime.run("cells/first.py", "first")
+    runtime.run("cells/second.py", "second")
     state = runtime.state()
     assert state.omitted == 0 and state.note is None
     assert len(state.accepted) == 2
@@ -273,3 +275,44 @@ def test_an_observation_budget_that_cannot_hold_the_envelope_is_refused(cas_sess
             runtime._bound(record)
         else:
             runtime.state()
+
+
+def test_a_cell_is_a_file_written_before_it_runs_and_rerun_by_name(tmp_path, cas_session) -> None:
+    """Every computation is a file under cas/: the bytes on disk are what ran."""
+    session = cas_session()
+    runtime = make_runtime(session, {})
+    result = runtime.run("examples/first.py", "first  \n")
+    assert result.status == "ok"
+    filed = session.log_path.parent / "examples" / "first.py"
+    assert filed.read_text(encoding="utf-8") == "first\n"
+    assert session.accepted()[-1].path == "examples/first.py"
+    assert session.accepted()[-1].source == "first\n"
+    again = runtime.run("examples/first.py")
+    assert again.status == "ok" and session.accepted()[-1].path == "examples/first.py"
+    assert [line.split("] ")[1] for line in runtime.state().accepted] == ["examples/first.py: first"] * 2
+    assert runtime.listing() == (PurePosixPath("examples/first.py"),)
+
+
+def test_running_a_file_that_is_not_there_is_refused_before_the_kernel_is_asked(cas_session) -> None:
+    runtime = make_runtime(cas_session(), {})
+    with pytest.raises(CasError, match="no such file under cas/"):
+        runtime.run("missing.py")
+
+
+@pytest.mark.parametrize("path", [
+    "../escape.py", "/abs.py", "cells/../up.py", "nosuffix", ".py", "cells/x.sing",
+    "replay/x.py", "script-run/x.py", "session.py", "cells.jsonl", "export.json", "session.ipynb",
+])
+def test_paths_that_leave_the_tree_or_name_hardys_own_files_are_refused(cas_session, path) -> None:
+    runtime = make_runtime(cas_session(), {})
+    with pytest.raises(CasError):
+        runtime.run(path, "1")
+    assert runtime.listing() == ()
+
+
+def test_typed_cells_take_the_next_free_number(cas_session) -> None:
+    runtime = make_runtime(cas_session(), {})
+    assert runtime.typed_path() == "typed/0001.py"
+    runtime.run(runtime.typed_path(), "a", author="human")
+    assert runtime.typed_path() == "typed/0002.py"
+    assert runtime.listing() == (PurePosixPath("typed/0001.py"),)

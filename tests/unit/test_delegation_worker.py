@@ -135,7 +135,7 @@ def test_worker_tools_are_the_named_functions():
 
 
 def test_unknown_tool_and_bad_status_are_refused_not_crashed(tmp_path):
-    script = [call("cas_run", {"source": "1+1"}), call("finish", {"status": "victory", "synthesis": "no"})]
+    script = [call("cas_run", {"path": "sum.py", "source": "1+1"}), call("finish", {"status": "victory", "synthesis": "no"})]
     result = run_worker(_launch(tmp_path), _open(script), CancelToken())
     assert result.status is DelegationState.PARTIAL and result.terminal_reason == "no_finish_call"
 

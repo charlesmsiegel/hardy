@@ -357,6 +357,28 @@ async def _read_cas_block(ui: Ui) -> str:
         lines.append(line)
 
 
+#: `_cas_target`'s answer for a `/cas file <path>` whose block is still to be read.
+_BLOCK = object()
+
+
+def _cas_target(argument: str) -> tuple[str | None, Any]:
+    """Which file a `/cas` line names and what goes into it.
+
+    `run <path>` names a file and no source, so the file on disk runs again.
+    `file <path>` names a file whose source is a block still to be read.
+    Anything else is the source of a typed cell, filed where the runtime says
+    typed cells go; an empty line asks for a block.
+    """
+    words = argument.split(None, 1)
+    if len(words) == 2 and words[0] == "run":
+        return words[1].strip(), None
+    if len(words) == 2 and words[0] == "file":
+        return words[1].strip(), _BLOCK
+    if len(words) == 1 and words[0] in {"run", "file"}:
+        raise CasError(f"/cas {words[0]} takes the path of a file under cas/")
+    return None, argument if argument else _BLOCK
+
+
 async def handle_cas(ui: Ui, argument: str, state: State) -> State:
     """The human's own way into the same kernel the model is using.
 
@@ -406,8 +428,16 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
                 + (f" — {report.script_detail}" if report.script_detail else "")
             )
             return state
-        source = argument or await _read_cas_block(ui)
-        if not source.strip():
+        # Every cell is a file. `run <path>` reruns one already on disk;
+        # `file <path>` reads a block and files it there; anything else is
+        # typed and filed under `cas/typed/` with the next free number, so a
+        # cell a person typed is as much a file as one the model wrote.
+        path, source = _cas_target(argument)
+        if path is None:
+            path = cas.typed_path()
+        if source is _BLOCK:
+            source = await _read_cas_block(ui)
+        if source is not None and not source.strip():
             return state
         # Human cells go into the same log, under the same lock, and are
         # replayed and exported exactly like the model's.
@@ -421,7 +451,7 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
         # already refused while anything else is in flight, so nothing else
         # can reach the kernel during the await.
         try:
-            result = await asyncio.to_thread(cas.run, source, author="human")
+            result = await asyncio.to_thread(cas.run, path, source, author="human")
         except asyncio.CancelledError:
             # Cancelling the *await* does not stop the worker: `to_thread` has
             # no way to reach into the thread it handed the call to. Esc goes

@@ -1,6 +1,6 @@
 A persistent computer algebra session is available, running {{ backend }}.
 
-- `cas_run` executes one cell. State carries over between cells, so define a ring or a set of generators once and reuse it rather than rebuilding it each time.
+- `cas_run` runs one file as a cell. Every computation is a file under the problem's `cas/` directory: give `path`, named for what the file computes (`examples/sylow-orders{{ suffix }}`, not `cell1{{ suffix }}`), and `source` to write it before it runs, or `path` alone to run a file already there again. State carries over between cells, so file a ring or a set of generators once and build on it rather than rebuilding it each time. `read_workspace` lists the files, and `read_file` and `delete_file` take them.
 - The value of a trailing expression is reported and bound to `_`. When a result is too large to return you will be given a summary and an artifact name; narrow the value down with a further cell — `len(_)`, `_[0]`, `_.args[:3]` — rather than asking to read the file, which you cannot open.
 - `cas_state` lists the cells that built the current state. `cas_reset` discards it and starts a clean kernel.
 - `cas_export` writes a script and a notebook, replaying every cell in a fresh kernel to check they reproduce, and reports which cells diverged.
