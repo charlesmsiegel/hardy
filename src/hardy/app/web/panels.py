@@ -33,8 +33,16 @@ PDF_LIMIT = 32 << 20
 STATEMENT_LIMIT = 400
 #: The only trees served as plain text, because they are the only trees whose
 #: content is meant to be read raw: generated build output, the session
-#: record, and everything else stays off this path.
-SERVED_TREES = ("lean", "tex")
+#: record, and everything else stays off this path. `cas/` holds the cell
+#: files a computation is filed as, the last export, and the journal.
+SERVED_TREES = ("lean", "tex", "cas")
+#: Under `cas/`, what is not a file to read: the scratch trees an export
+#: empties, the writer lease, and the spend counter beside the journal.
+CAS_SKIPPED = frozenset({"replay", "script-run", "cells.jsonl.lock", "cells.jsonl.spend.json"})
+#: How many of the newest cells the journal view carries, and how much of one
+#: cell's source or output. The journal itself is served whole as text.
+CELLS_LIMIT = 500
+CELL_TEXT_LIMIT = 16 * 1024
 
 
 def summary(session: Any) -> dict[str, Any]:
@@ -150,7 +158,7 @@ def confine(problem: Path, relative: str) -> Path:
 
 def files(problem: Path) -> dict[str, list[str]]:
     """Every lean/tex source and every compiled PDF this problem currently has."""
-    out: dict[str, list[str]] = {"lean": [], "tex": [], "pdf": []}
+    out: dict[str, list[str]] = {"lean": [], "tex": [], "cas": [], "pdf": []}
     for tree_name in SERVED_TREES:
         root = problem / tree_name
         if root.is_dir():
@@ -158,6 +166,7 @@ def files(problem: Path) -> dict[str, list[str]]:
                 path.relative_to(problem).as_posix()
                 for path in root.rglob("*")
                 if path.is_file() and not path.is_symlink() and ".build" not in path.parts
+                and not (tree_name == "cas" and (path.relative_to(root).parts[0] in CAS_SKIPPED))
             )
     top = problem / "writeup.pdf"
     if top.is_file() and not top.is_symlink():
@@ -181,11 +190,54 @@ def file_text(problem: Path, relative: str) -> dict[str, Any]:
     not a stray file dropped anywhere else in the problem directory.
     """
     if Path(relative).parts[:1] not in {(name,) for name in SERVED_TREES}:
-        raise ValueError("only lean/ and tex/ are served as text")
+        raise ValueError("only lean/, tex/ and cas/ are served as text")
+    if Path(relative).parts[:1] == ("cas",) and (len(Path(relative).parts) < 2 or Path(relative).parts[1] in CAS_SKIPPED):
+        raise ValueError("not a computer algebra file of this problem")
     path = confine(problem, relative)
     data = path.read_bytes()
     truncated = len(data) > TEXT_LIMIT
     return {"path": relative, "text": data[:TEXT_LIMIT].decode("utf-8", errors="replace"), "truncated": truncated}
+
+
+def cas_cells(problem: Path) -> dict[str, Any]:
+    """The computer algebra journal as cells: what ran, from which file, and what it printed.
+
+    Read straight off `cas/cells.jsonl` rather than through a `CasSession`,
+    which would take the journal's writer lease from the live session. A
+    line that will not parse is skipped, as the session itself skips a torn
+    tail. Only the newest `CELLS_LIMIT` cells are carried, and each text
+    field is cut to `CELL_TEXT_LIMIT` and says so; the whole journal is
+    still served as text through `file_text`.
+    """
+    path = confine(problem, "cas/cells.jsonl")
+    if not path.is_file():
+        return {"cells": [], "segment": 0, "total": 0, "truncated": False}
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    segment = max((int(record.get("segment", 0) or 0) for record in records), default=0)
+
+    def cut(text: Any) -> dict[str, Any]:
+        shown = str(text or "")
+        return {"text": shown[:CELL_TEXT_LIMIT], "truncated": len(shown) > CELL_TEXT_LIMIT}
+
+    cells = [
+        {
+            "seq": record.get("seq"), "segment": record.get("segment", 0), "author": record.get("author", ""),
+            "path": record.get("path", ""), "status": record.get("status", ""),
+            "accepted": bool(record.get("accepted")), "live": int(record.get("segment", 0) or 0) == segment,
+            "duration_ms": record.get("duration_ms", 0), "source": cut(record.get("source")),
+            "stdout": cut(record.get("stdout")), "stderr": cut(record.get("stderr")),
+            "value_repr": cut(record.get("value_repr")), "restart_note": str(record.get("restart_note", "") or ""),
+        }
+        for record in records[-CELLS_LIMIT:]
+    ]
+    return {"cells": cells, "segment": segment, "total": len(records), "truncated": len(records) > CELLS_LIMIT}
 
 
 def pdf_bytes(problem: Path, relative: str) -> bytes:

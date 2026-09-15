@@ -44,6 +44,10 @@ const Message = memo(function Message({message}) {
   switch (message.kind) {
     case 'user':
       return <article className="message message--user">{message.text}</article>;
+    case 'hardy':
+      // A turn Hardy started on the model's behalf, to carry background
+      // results in: Hardy's line, never drawn as one the person typed.
+      return <article className="message message--hardy">{message.text}</article>;
     case 'assistant':
       return <Assistant message={message} />;
     case 'tool':

@@ -61,9 +61,20 @@ def test_files_and_confinement(tmp_path: Path) -> None:
     (problem / "writeup.pdf").write_bytes(b"%PDF-1.4 fake")
     (problem / "publications" / "v1").mkdir(parents=True)
     (problem / "publications" / "v1" / "writeup.pdf").write_bytes(b"%PDF-1.4 fake2")
+    (problem / "cas" / "examples").mkdir(parents=True)
+    (problem / "cas" / "examples" / "first.py").write_text("1 + 1\n", encoding="utf-8")
+    (problem / "cas" / "cells.jsonl").write_text("{}\n", encoding="utf-8")
+    (problem / "cas" / "cells.jsonl.lock").write_text("", encoding="utf-8")
+    (problem / "cas" / "replay").mkdir()
+    (problem / "cas" / "replay" / "scratch.py").write_text("x\n", encoding="utf-8")
     out = panels.files(problem)
-    assert out == {"lean": ["lean/Sylow.lean"], "tex": ["tex/writeup.tex"], "pdf": ["writeup.pdf", "publications/v1/writeup.pdf"]}
+    assert out == {"lean": ["lean/Sylow.lean"], "tex": ["tex/writeup.tex"],
+                   "cas": ["cas/cells.jsonl", "cas/examples/first.py"],
+                   "pdf": ["writeup.pdf", "publications/v1/writeup.pdf"]}
     assert panels.file_text(problem, "lean/Sylow.lean")["text"].startswith("theorem")
+    assert panels.file_text(problem, "cas/examples/first.py")["text"] == "1 + 1\n"
+    with pytest.raises(ValueError):
+        panels.file_text(problem, "cas/cells.jsonl.lock")
     assert panels.pdf_bytes(problem, "publications/v1/writeup.pdf") == b"%PDF-1.4 fake2"
     with pytest.raises(ValueError):
         panels.file_text(problem, "../other")
@@ -71,6 +82,29 @@ def test_files_and_confinement(tmp_path: Path) -> None:
         panels.file_text(problem, "session.json")     # only lean/, tex/ and PDFs are served
     with pytest.raises(ValueError):
         panels.pdf_bytes(problem, "lean/Sylow.lean")
+
+
+def test_cas_cells_reads_the_journal_as_cells(tmp_path: Path) -> None:
+    import json
+
+    problem = make_problem(tmp_path)
+    assert panels.cas_cells(problem) == {"cells": [], "segment": 0, "total": 0, "truncated": False}
+    (problem / "cas").mkdir(exist_ok=True)
+    lines = [
+        {"seq": 0, "segment": 0, "author": "model", "path": "examples/first.py", "source": "1 + 1\n",
+         "status": "ok", "accepted": True, "stdout": "", "stderr": "", "value_repr": "2", "duration_ms": 3},
+        "not json",
+        {"seq": 1, "segment": 1, "author": "human", "path": "typed/0001.py", "source": "x = 2\n",
+         "status": "error", "accepted": False, "stdout": "", "stderr": "boom", "value_repr": "", "duration_ms": 1},
+    ]
+    (problem / "cas" / "cells.jsonl").write_text(
+        "\n".join(json.dumps(line) if isinstance(line, dict) else line for line in lines) + "\n", encoding="utf-8")
+    out = panels.cas_cells(problem)
+    assert out["segment"] == 1 and out["total"] == 2 and out["truncated"] is False
+    first, second = out["cells"]
+    assert first["path"] == "examples/first.py" and first["live"] is False and first["value_repr"]["text"] == "2"
+    assert second["author"] == "human" and second["live"] is True and second["stderr"]["text"] == "boom"
+    assert second["accepted"] is False and second["status"] == "error"
 
 
 def test_files_excludes_symlinked_pdfs(tmp_path: Path) -> None:

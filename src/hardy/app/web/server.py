@@ -241,6 +241,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.graph(problem))
         elif name == "uploads":
             self._json(200, uploads.staged(problem))
+        elif name == "models":
+            self._json(200, host.models())
+        elif name == "cas/cells":
+            self._json(200, panels.cas_cells(problem))
         else:
             self._json(404, {"error": "unknown endpoint"})
 

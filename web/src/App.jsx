@@ -12,13 +12,14 @@ import {useCallback, useEffect, useMemo, useReducer, useRef} from 'react';
 import {ApiError, events, get, post} from './api.js';
 import Chat from './Chat.jsx';
 import Composer from './Composer.jsx';
+import ModelPicker from './ModelPicker.jsx';
 import Panels from './Panels.jsx';
 import Sidebar from './Sidebar.jsx';
 
 let counter = 0;
 const nextId = () => `m${++counter}`;
 
-const EMPTY_STATUS = {slug: '', chat: '', model: '', turn_running: false, command_running: false, prompts: []};
+const EMPTY_STATUS = {slug: '', chat: '', model: '', turn_running: false, command_running: false, queued: 0, prompts: []};
 
 //: What the composer says before the dispatcher has had a chance to say it
 //: itself. The host's own wording, so the first refusal a user sees and every
@@ -53,6 +54,7 @@ function fromTranscript(entries) {
       return {id, kind: 'tool', name: entry.name ?? '', ok: entry.ok ?? null, text: entry.text ?? ''};
     }
     if (entry.role === 'user') return {id, kind: 'user', text: entry.text ?? ''};
+    if (entry.role === 'hardy') return {id, kind: 'hardy', text: entry.text ?? ''};
     if (entry.role === 'turn') return {id, kind: 'turn', text: entry.text ?? ''};
     return {id, kind: 'notice', text: entry.text ?? ''};
   });
@@ -381,6 +383,9 @@ export default function App() {
         // sentence goes under it.
         dispatch({type: 'failed', text: result.message});
       }
+      // A `queued` answer needs nothing here: the echo stands where it was
+      // typed, the `state` event carries how many wait, and the line is sent
+      // by the server the moment the session is free.
     } catch (error) {
       dispatch({type: 'unsent', id, text: line});
       if (error instanceof ApiError && error.status === 409) {
@@ -435,7 +440,7 @@ export default function App() {
       <main className="main">
         <header className="header">
           <span className="header__title">{title || 'Hardy'}</span>
-          <span className="header__model">{state.status.model}</span>
+          <ModelPicker model={state.status.model} busy={busy} revision={state.revision} onSend={send} />
           {busy ? <span className="header__busy">working</span> : null}
         </header>
         <Chat
@@ -448,6 +453,7 @@ export default function App() {
           draft={state.draft}
           commands={state.commands}
           busy={busy}
+          queued={state.status.queued ?? 0}
           refusal={state.refusal}
           runningTool={state.runningTool}
           onDraft={setDraft}
