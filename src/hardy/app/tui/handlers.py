@@ -1495,7 +1495,7 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
         Command("model", "switch the model", handle_model, argument_hint="[identity]"),
         Command(
             "cas", "compute in the shared kernel", handle_cas,
-            argument_hint="[state|reset|export|expr]",
+            argument_hint="[state|reset|export|run <path>|file <path>|expr]",
         ),
         Command("goal", "state what this session is for", handle_goal, argument_hint="[text]"),
         Command(

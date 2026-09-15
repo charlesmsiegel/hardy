@@ -12,6 +12,7 @@
 import {useState} from 'react';
 import Files from './panels/Files.jsx';
 import Graph from './panels/Graph.jsx';
+import Help from './panels/Help.jsx';
 import Jobs from './panels/Jobs.jsx';
 import Summary from './panels/Summary.jsx';
 import Tree from './panels/Tree.jsx';
@@ -22,6 +23,7 @@ const TABS = [
   ['jobs', 'Jobs'],
   ['tree', 'Tree'],
   ['graph', 'Graph'],
+  ['help', 'Help'],
 ];
 
 export default function Panels({revision, onSend, onDraft}) {
@@ -51,6 +53,7 @@ export default function Panels({revision, onSend, onDraft}) {
         {tab === 'jobs' ? <Jobs revision={revision} /> : null}
         {tab === 'tree' ? <Tree revision={revision} onSend={onSend} /> : null}
         {tab === 'graph' ? <Graph revision={revision} onDraft={onDraft} /> : null}
+        {tab === 'help' ? <Help revision={revision} onDraft={onDraft} /> : null}
       </div>
     </aside>
   );

@@ -79,6 +79,16 @@ def test_index_embeds_the_token_and_assets_are_served(server) -> None:
     assert status in {400, 404}
 
 
+def test_commands_say_where_each_came_from(server) -> None:
+    status, _, body = _call(server, "GET", "/api/commands", token=False)
+    assert status == 200
+    commands = {command["name"]: command for command in json.loads(body)}
+    assert commands["model"]["kind"] == "builtin" and commands["model"]["alias_of"] is None
+    assert commands["quit"]["kind"] == "builtin" and commands["quit"]["alias_of"] == "exit"
+    assert commands["audit"]["kind"] == "shortcut" and commands["audit"]["template"] is True
+    assert commands["status"]["safe_in_flight"] is True
+
+
 def test_models_and_cas_cells_are_served(server) -> None:
     status, _, body = _call(server, "GET", "/api/models", token=False)
     assert status == 200

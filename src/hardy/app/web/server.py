@@ -218,8 +218,13 @@ class Handler(BaseHTTPRequestHandler):
         elif name == "projects":
             self._json(200, host.projects())
         elif name == "commands":
+            # `kind` says where an entry came from: a built-in the server runs,
+            # a bundled prompt shortcut, or a project's own template.
             self._json(200, [{"name": c.name, "summary": c.summary, "argument_hint": c.argument_hint,
-                              "safe_in_flight": c.safe_in_flight, "template": c.template is not None}
+                              "safe_in_flight": c.safe_in_flight, "template": c.template is not None,
+                              "alias_of": c.alias_of,
+                              "kind": ("builtin" if c.template is None
+                                       else "shortcut" if c.template.bundled else "project")}
                              for c in host.registry])
         elif name == "transcript":
             self._json(200, panels.transcript(session))

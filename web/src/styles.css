@@ -809,6 +809,60 @@ body {
   white-space: pre-wrap;
 }
 
+/* -- help ---------------------------------------------------------------- */
+
+.help {
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.help td {
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  padding: 4px 6px 4px 0;
+  vertical-align: top;
+}
+
+.help td:first-child {
+  width: 42%;
+}
+
+.help__command {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0;
+  text-align: left;
+  white-space: normal;
+}
+
+.help__key {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 5px;
+}
+
+.help__note {
+  color: var(--muted);
+}
+
+.help__flag {
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-left: 6px;
+  padding: 0 6px;
+}
+
 /* -- the computer algebra journal ---------------------------------------- */
 
 .cells {
