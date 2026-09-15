@@ -239,3 +239,22 @@ def test_esc_during_the_grace_keeps_the_call_inline(tmp_path: Path):
         assert chat.delegations.tree().delegations.keys() <= {"root"}
     finally:
         chat.close()
+
+
+def test_close_waits_for_a_detached_job_to_record_its_result(tmp_path: Path):
+    """The job's thread holds the gate and has a result to record; a session
+    closed under it would take the journal away first. `close` cancels the
+    job and waits for its thread, so the `job` event is on disk when it returns."""
+    runtime = FakeChatRuntime([call("check_lean", {"path": "Main.lean", "source": "x"}), "started"])
+    chat = session(tmp_path, runtime)
+    chat.jobs.detach_after = 0.2
+    tool = SlowTool(chat)
+    chat.send("check it")
+    assert chat.jobs.running()
+    # The tool answers half a second after the close begins, not before.
+    threading.Timer(0.5, tool.release.set).start()
+    chat.close()
+    assert chat.jobs.running() == ()
+    assert [e["status"] for e in events(tmp_path) if e["type"] == "job"] == ["cancelled"]
+    job_id = chat.runtime.results[0].output.split("background job ")[1].split(".")[0]
+    assert chat.delegations.tree().get(job_id).state is DelegationState.CANCELLED

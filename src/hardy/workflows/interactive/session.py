@@ -759,6 +759,12 @@ class MathematicsSession:
         self._closed = True
         try:
             self.delegations.cancel_all(reason="session closed")
+            # A detached computation is a thread of this session's, not the
+            # pool's: it is cancelled above with the rest and waited for here,
+            # so the kernel and the journal outlive the last write it makes.
+            still = self.jobs.close()
+            if still:
+                self._notify(f"background job{'s' if len(still) > 1 else ''} {', '.join(still)} did not stop in time")
         finally:
             self.delegations.shutdown()
 

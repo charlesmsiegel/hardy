@@ -208,6 +208,60 @@ def test_open_chat_reopens_through_the_opener_and_refuses_mid_turn(tmp_path: Pat
         host.stop()
 
 
+def test_open_chat_on_the_open_chat_is_a_no_op(tmp_path: Path) -> None:
+    """A click on the highlighted row must not rebuild the session: a reopen
+    cancels the problem's background workers, and nothing was asked for."""
+    host = _host(tmp_path)
+    try:
+        session = host.session
+        state = host.open_chat("sylow", "main")
+        assert state["slug"] == "sylow" and state["chat"] == "main"
+        assert host.opener.calls == [] and host.session is session and session.closed is False
+    finally:
+        host.stop()
+
+
+def test_a_cursor_older_than_the_ring_is_told_to_resync(tmp_path: Path) -> None:
+    """The ring is finite; a tab that asks for more than it holds is told so
+    first, rather than handed the suffix as if it were the whole."""
+    from hardy.app.web.host import RING
+
+    host = _host(tmp_path)
+    try:
+        for index in range(RING + 5):
+            last = host.emit({"type": "write", "text": str(index)})
+        gone = last - RING
+        oldest = host.subscribe(after=0).queue.get(timeout=1)
+        assert oldest["type"] == "resync" and oldest["lost"] == gone and oldest["seq"] == gone
+        # Inside the ring: no resync, just the events.
+        fresh = host.subscribe(after=last - 2).queue
+        assert fresh.get(timeout=1)["type"] == "write"
+        assert fresh.get(timeout=1)["type"] == "write"
+        assert fresh.empty()
+    finally:
+        host.stop()
+
+
+def test_turn_end_names_the_transcript_entry_the_turn_ended_on(tmp_path: Path) -> None:
+    """The page uses it to tell a replay of a turn it already drew from its
+    transcript from a turn it has not seen. Unchanged leaf means no name."""
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        host.submit("hello")
+        seen = _drain(sub, {"turn_end"})
+        end = next(event for event in seen if event["type"] == "turn_end")
+        assert end["leaf"] == host.session.conversation_tree().active_leaf and end["leaf"]
+        host.session.raise_on_stream = RuntimeError("no")
+        sub = host.subscribe()
+        host.submit("again")
+        seen = _drain(sub, {"turn_end"})
+        end = next(event for event in seen if event["type"] == "turn_end")
+        assert end["leaf"] is None
+    finally:
+        host.stop()
+
+
 def test_create_project_opens_the_new_slug(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
@@ -272,7 +326,8 @@ def test_a_command_that_replaces_the_config_is_what_the_next_open_uses(tmp_path:
         assert host.submit("/model other")["kind"] == "command"
         _drain(sub, {"changed"})
         assert host.state()["model"] == "other"
-        host.open_chat("sylow", "main")
+        from hardy.app.web import chats
+        host.open_chat("sylow", chats.create_chat(tmp_path / "sylow", "Lean proof").id)
         assert opener.configs[-1].model == "other"
     finally:
         host.stop()
@@ -354,7 +409,9 @@ def test_an_open_runs_off_the_loop_and_can_be_cancelled(tmp_path: Path) -> None:
     host = WebHost(make_config(tmp_path), opener,
                    lambda confirm, cfg: FakeSession(cfg.layout.problem))
     host.start()
-    opening = threading.Thread(target=host.open_chat, args=("sylow", "main"))
+    from hardy.app.web import chats
+    made = chats.create_chat(tmp_path / "sylow", "Lean proof")
+    opening = threading.Thread(target=host.open_chat, args=("sylow", made.id))
     try:
         opening.start()
         assert opener.entered.wait(5)

@@ -370,7 +370,13 @@ def _web(
     opener, build, close = _launch(config, args)
     host = WebHost(config, opener, lambda confirm, _config: build(confirm))
     try:
-        host.start()
+        try:
+            host.start()
+        except (SchemaError, layout.LayoutError) as error:
+            # The refusals `_chat` reports as a sentence and exit status 2 --
+            # an obsolete `session.json`, a transcript that leaves the
+            # project -- are raised here by the same session being built.
+            parser.error(str(error))
         serve(host, port=args.port, open_browser=args.open)
     finally:
         # Suppressed, not asserted: a host that never finished starting is

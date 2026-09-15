@@ -189,10 +189,34 @@ function applyEvent(state, event) {
   switch (event.type) {
     case 'turn':
       return turnEvent(state, event);
-    case 'turn_end':
+    case 'turn_end': {
       // The one place the turn's message is closed. Everything else that
       // arrives mid-turn goes beside it and leaves `streamId` alone.
-      return {...settle(state), runningTool: ''};
+      //
+      // `leaf` names the transcript entry the turn ended on. A page that
+      // loaded its transcript while this turn was ending already holds that
+      // entry, so the message streamed here is a replay of one drawn, and
+      // is dropped rather than shown under it a second time. Otherwise the
+      // name is kept on the message, for a transcript that loads after it.
+      const leaf = event.leaf || null;
+      const replayed = leaf !== null && state.messages.some(
+        (message) => message.id === leaf && message.id !== state.streamId);
+      if (replayed) {
+        return {
+          ...state,
+          streamId: null,
+          runningTool: '',
+          messages: state.messages.filter((message) => message.id !== state.streamId),
+        };
+      }
+      const settled = settle(state);
+      return {
+        ...settled,
+        runningTool: '',
+        messages: leaf === null ? settled.messages : settled.messages.map((message) =>
+          message.id === state.streamId ? {...message, leaf} : message),
+      };
+    }
     case 'error':
       return push(state, {kind: 'system', style: 'error', text: event.text ?? ''});
     case 'write':
@@ -228,18 +252,38 @@ function applyEvent(state, event) {
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'loaded':
+    case 'loaded': {
       // The transcript goes *before* whatever has already arrived live. The
       // stream is subscribed to without waiting for these four fetches, so an
       // event can land first; replacing the list rather than prefixing it
-      // would drop that event for good.
+      // would drop that event for good. A turn that both ended live and is in
+      // the transcript is drawn once: its message carries the entry it ended
+      // on, and the transcript holds that entry.
+      const loaded = fromTranscript(action.transcript);
+      const known = new Set(loaded.map((message) => message.id));
+      const live = state.messages.filter((message) => !(message.leaf && known.has(message.leaf)));
       return {
         ...state, loaded: true, status: action.status, commands: action.commands,
-        projects: action.projects, messages: [...fromTranscript(action.transcript), ...state.messages],
+        projects: action.projects, messages: [...loaded, ...live],
         // A gate that was already open when this page loaded: its `prompt`
         // event predates the subscription, so the snapshot is the only place
         // the card can come from.
         prompts: mergePrompts(state.prompts, action.status.prompts ?? []),
+      };
+    }
+    case 'resynced':
+      // The stream told this page it had been away for longer than the ring
+      // holds, so what it drew since is not to be trusted as complete: the
+      // transcript is drawn again from the server's copy and the status
+      // taken fresh. Prompts are merged, not replaced, for the reason
+      // `state` gives: only `prompt_closed` closes a card.
+      return {
+        ...state,
+        status: {...state.status, ...action.status},
+        prompts: mergePrompts(state.prompts, action.status.prompts ?? []),
+        messages: fromTranscript(action.transcript),
+        streamId: null,
+        runningTool: '',
       };
     case 'projects':
       return {...state, projects: action.projects};
@@ -308,7 +352,17 @@ export default function App() {
     // Subscribed after the fetches are asked for but without waiting on them:
     // an event that lands while the transcript is in flight is still numbered,
     // and losing it would leave the page a turn behind until the next one.
-    const stop = events((event) => live && dispatch({type: 'event', event}));
+    // `resync` is the stream saying a reconnect asked for more than the ring
+    // holds: the transcript is fetched again rather than drawn from a suffix.
+    const resync = () =>
+      Promise.all([get('/api/state'), get('/api/transcript')])
+        .then(([status, transcript]) => live && dispatch({type: 'resynced', status, transcript}))
+        .catch((error) => live && failed(error));
+    const stop = events((event) => {
+      if (!live) return;
+      if (event.type === 'resync') resync();
+      else dispatch({type: 'event', event});
+    });
     return () => {
       live = false;
       stop();

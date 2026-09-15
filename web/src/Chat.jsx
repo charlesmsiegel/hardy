@@ -72,13 +72,17 @@ export default function Chat({messages, prompts, loaded, onAnswer}) {
   const end = useRef(null);
   const length = messages.length;
   const open = prompts.length;
+  // How much the last message holds: a streamed reply grows in place, without
+  // adding a message, and the tail has to follow that growth too.
+  const tail = messages[length - 1];
+  const grown = tail ? (tail.text?.length ?? 0) + (tail.thought?.length ?? 0) + (tail.tools?.length ?? 0) : 0;
 
-  // Follow the tail. Every new message and every prompt scrolls it into view;
-  // a page that streams a reply the reader cannot see is a page that streams
-  // nothing.
+  // Follow the tail. Every new message, every prompt and every piece of a
+  // streamed reply scrolls it into view; a page that streams a reply the
+  // reader cannot see is a page that streams nothing.
   useEffect(() => {
     end.current?.scrollIntoView({block: 'end'});
-  }, [length, open]);
+  }, [length, open, grown]);
 
   return (
     <div className="chat">

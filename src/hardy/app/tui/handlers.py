@@ -1205,13 +1205,20 @@ async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
         arm = getattr(state.reopen, "arm", None)
         if arm is not None:
             arm()
-        config, session = await asyncio.to_thread(state.reopen, paths.slug, confirm_assumption(ui), state.config)
+        # The checkpoint's own chat, not the one this command ran in: the
+        # checkpoint is the problem as it stood, and where the person was in
+        # it is part of that. A reopen with no chat named would land on `main`.
+        config, session = await asyncio.to_thread(
+            state.reopen, paths.slug, confirm_assumption(ui), state.config, chat=restored.chat
+        )
     except Exception as error:  # noqa: BLE001 - the tree is restored; the reopen is what failed
         ui.write(f"Restored the tree but could not reopen {paths.slug}: {error}. "
                  "Leave and start `hardy chat` again to continue from it.", style="error")
         return state
     if hasattr(session, "on_notice"):
         session.on_notice = lambda text: ui.write(f"Hardy: {text}")
+    if restored.chat != paths.chat:
+        ui.write(f"Reopened on chat {restored.chat}, where the checkpoint was taken.")
     ui.write(f"  {status_line(config)}")
     return dataclasses.replace(state, config=config, session=session)
 

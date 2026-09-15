@@ -188,8 +188,17 @@ def restore(paths: Layout, id: str, *, now: datetime | None = None) -> tuple[Che
         raise
     try:
         os.replace(problem, outgoing)
+    except OSError as error:
+        shutil.rmtree(incoming, ignore_errors=True)
+        raise LayoutError(f"could not move {problem} aside for {chosen.id}: {error}") from error
+    try:
         os.replace(incoming, problem)
     except OSError as error:
+        # The problem has been moved aside and nothing has taken its place:
+        # put it back before saying so, or a failed rename would leave the
+        # problem unreachable under a name only this function knows.
+        os.replace(outgoing, problem)
+        shutil.rmtree(incoming, ignore_errors=True)
         raise LayoutError(f"could not put {chosen.id} in {problem}'s place: {error}") from error
     shutil.rmtree(outgoing, ignore_errors=True)
     return chosen, kept

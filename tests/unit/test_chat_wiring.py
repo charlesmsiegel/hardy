@@ -434,3 +434,27 @@ def test_chat_closes_the_session_it_built_when_the_loop_ends(tmp_path, monkeypat
     FakeMathematicsSession.instances = []
     assert cli._chat(settings(tmp_path), plain=True) == 0
     assert [s.closed for s in FakeMathematicsSession.instances] == [1]
+
+
+def test_web_reports_a_schema_refusal_through_the_parser(tmp_path, monkeypatch, capsys):
+    """`hardy web` builds the same session `_chat` does, so the same open-time
+    refusals reach it -- and it owes the user the same one clean line and
+    exit status 2, not a traceback out of `host.start()`."""
+    from types import SimpleNamespace
+
+    def explode(*args, **kwargs):
+        raise cli.SchemaError("session.json is schema version 1; this Hardy reads version 2 only")
+
+    def fake_build_runtime(**kwargs):
+        return FakeCasRuntime(), "fakecas 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli._web(settings(tmp_path), parser=parser, args=SimpleNamespace(chat=None, port=0, open=False))
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "schema version 1" in err and "Traceback" not in err
