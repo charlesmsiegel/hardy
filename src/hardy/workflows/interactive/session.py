@@ -643,7 +643,7 @@ class MathematicsSession:
         """
         prompt = SYSTEM_PROMPT
         if self.cas is not None:
-            prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
+            prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name, self.cas.suffix)
         # Kept, because the runtime is handed it once and keeps it for the
         # life of the conversation. `_request_overhead` used to rebuild it from
         # the state as it stands now, so a goal shortened mid-session made the
@@ -2649,6 +2649,9 @@ class MathematicsSession:
             "manifest": self._without(*WITHHELD),
             "lean": lean,
             "tex": tex,
+            # The computer algebra files, each a cell that ran or can be run
+            # again by naming it to `cas_run` without source.
+            "cas": [relative.as_posix() for relative in self.cas.listing()] if self.cas is not None else [],
             # Files no `\input` chain from the root reaches: in no PDF,
             # whatever they say.
             "tex_unreached": self._unreached_tex(),
@@ -2728,6 +2731,8 @@ class MathematicsSession:
                 found = self.lean_workspace.read(PurePosixPath(relative))
                 if found is None:
                     return ToolResult(False, f"no such workspace file: {path}")
+            elif kind == "cas":
+                found = read_text(self.cas.files, relative)
             else:
                 found = read_text(self.tex_root, relative)
         except OSError as error:
@@ -2769,9 +2774,19 @@ class MathematicsSession:
         resolved = self._resolve(path)
         if isinstance(resolved, ToolResult):
             return resolved
-        target, kind, _ = resolved
+        target, kind, relative_name = resolved
         if not target.is_file():
             return ToolResult(False, f"no such workspace file: {path}")
+        if kind == "cas":
+            # The file goes; the cells it ran stay in the journal. A record
+            # that forgot a computation when its source was removed would be
+            # a record edited after the fact.
+            try:
+                guard, name = guard_for(self.cas.files, relative_name)
+                guard.unlink(name)
+            except (LayoutError, OSError) as error:
+                return ToolResult(False, f"{path} could not be deleted: {error}")
+            return ToolResult(True, f"deleted {path}; the cells it ran remain in the session's record")
         if kind == "tex":
             if is_generated_bibliography(path):
                 # Hardy's file, not the workspace's. Deleting it leaves every
@@ -3461,6 +3476,15 @@ class MathematicsSession:
                 return resolved
             relative, target = resolved
             return target, "tex", relative
+        if self.cas is not None and cleaned.endswith(self.cas.suffix):
+            # A computer algebra file: a cell's source under `cas/`, filed by
+            # `cas_run` or typed at `/cas`, and readable and deletable like
+            # any other workspace file.
+            try:
+                relative = self.cas.relative(cleaned)
+            except CasError as error:
+                return ToolResult(False, str(error))
+            return self.cas.files / relative, "cas", relative.as_posix()
         return ToolResult(False, f"not a workspace file: {path!r}")
 
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
@@ -4662,7 +4686,8 @@ class MathematicsSession:
             return ToolResult(False, "no computer algebra backend is configured")
         try:
             if name == "cas_run":
-                result = self.cas.run(str(arguments["source"]))
+                source = arguments.get("source")
+                result = self.cas.run(str(arguments["path"]), None if source is None else str(source))
                 return ToolResult(result.status == "ok", result.model_dump_json())
             if name == "cas_state":
                 return ToolResult(True, self.cas.state().model_dump_json())

@@ -208,7 +208,7 @@ def test_controller_gives_writable_workers_private_overlays_and_journals_the_cha
 
     controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(2),
                                       open_worker=_open([call("save_lean", {"path": "Worker.lean", "source": NEW}),
-                                                         call("cas_run", {"source": "1 + 1"}),
+                                                         call("cas_run", {"path": "sum.py", "source": "1 + 1"}),
                                                          call("finish", {"status": "completed", "synthesis": "ok"})]),
                                       root=RootResources(lease=ResourceLease(official_checks=6), slots=2),
                                       notify=lambda text: None, workspace=base, cas_factory=cas_factory)

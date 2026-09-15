@@ -685,7 +685,8 @@ def render_script(
             if verdict.verdict == "verified"
             else f"  [{verdict.verdict}: {_one_line(verdict.detail)}]"
         )
-        lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
+        filed = f" {record.path}" if record.path else ""
+        lines.append(f"{mark} --- cell {record.seq} ({record.author}){filed}{note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
     epilogue = _markers(backend.transcript_epilogue, completion)
@@ -741,6 +742,7 @@ def render_notebook(
                     "hardy": {
                         "seq": record.seq,
                         "author": record.author,
+                        "path": record.path,
                         "verification": verdict.verdict,
                         "detail": verdict.detail,
                         "capture_truncated": record.capture_truncated,

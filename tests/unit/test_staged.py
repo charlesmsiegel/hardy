@@ -13,7 +13,7 @@ def test_close_shuts_down_the_staged_cas_kernel(cas_session) -> None:
 
     session = cas_session()
     cas_runtime = cas_tools.CasToolRuntime(session=session, observation_bytes=32 * 1024)
-    cas_runtime.run('1')  # starts the kernel subprocess
+    cas_runtime.run('cells/one.py', '1')  # starts the kernel subprocess
     assert session._kernel is not None
 
     runtime = staged.ClaudeStagedRuntime(

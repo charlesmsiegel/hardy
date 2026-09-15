@@ -264,7 +264,7 @@ def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
 
     runtime = workflow._runtime_factory(store)
     try:
-        result = runtime._cas_dispatch('cas_run', {'source': '1 + 1'})
+        result = runtime._cas_dispatch('cas_run', {'path': 'cells/sum.py', 'source': '1 + 1'})
         assert result.ok is True
     finally:
         runtime.close()

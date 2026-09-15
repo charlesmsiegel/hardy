@@ -21,6 +21,7 @@ from uuid import uuid4
 from hardy.agents.contracts import ChatRuntime
 from hardy.agents.executor import CancelToken, WorkerCancelled
 from hardy.agents.usage import Usage
+from hardy.algebra.cas import CasError
 from hardy.formal.budget import BudgetExhausted, CheckBudget
 from hardy.formal.syntax import WorkspacePathError, safe_relative
 from hardy.foundation.values import ToolResult
@@ -63,7 +64,7 @@ WORKSPACE_TOOLS: list[dict[str, Any]] = [
 WORKER_TOOLS += WORKSPACE_TOOLS
 
 CAS_WORKER_TOOLS: list[dict[str, Any]] = [
-    {"type": "function", "function": {"name": "cas_run", "description": "Run one cell in a computer algebra kernel private to this delegation. State carries over between your own cells only. No computation is evidence.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "cas_run", "description": "Run one computer algebra file as a cell in a kernel private to this delegation. `path` names the file under your private cas/ directory, with the backend's suffix; with `source` the file is written first, without it the file runs again. State carries over between your own cells only. No computation is evidence.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "source": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "cas_state", "description": "List the accepted cells of your private computer algebra kernel.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
 ]
 WORKER_TOOLS += CAS_WORKER_TOOLS
@@ -242,7 +243,11 @@ class _WorkerState:
             return ToolResult(False, "no computer algebra kernel is available to this delegation")
         if name == "cas_state":
             return ToolResult(True, self.cas.state().model_dump_json())
-        result = self.cas.run(str(arguments["source"]))
+        source = arguments.get("source")
+        try:
+            result = self.cas.run(str(arguments["path"]), None if source is None else str(source))
+        except CasError as error:
+            return ToolResult(False, str(error))
         return ToolResult(result.accepted, result.model_dump_json())
 
     def close(self) -> None:

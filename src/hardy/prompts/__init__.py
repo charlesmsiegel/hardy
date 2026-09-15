@@ -115,8 +115,8 @@ SPELLINGS_HINT = render("spellings_hint") + "\n"
 CONCEPT_HINT = "\n" + render("concept_hint")
 # Appended only when a CAS backend was actually discovered, so a session with
 # no kernel never describes tools it does not have.
-def chat_cas_prompt(backend: str) -> str:
-    return render("chat_cas", backend=backend)
+def chat_cas_prompt(backend: str, suffix: str = ".py") -> str:
+    return render("chat_cas", backend=backend, suffix=suffix)
 
 
 def chat_project_context_prompt(*, name: str, text: str, truncated: bool, shown: int, total: int) -> str:

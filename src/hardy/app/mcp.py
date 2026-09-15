@@ -64,13 +64,16 @@ def register_cas_tools(runtime: CasToolRuntime, directory: Path) -> None:
     _cas, _cas_directory = runtime, directory
 
     @mcp.tool()
-    def cas_run(source: str) -> CasCellResult:
-        """Execute one cell in the persistent computer algebra session.
+    def cas_run(path: str, source: str | None = None) -> CasCellResult:
+        """Run one computer algebra file as a cell in the persistent session.
 
-        State carries over between cells. A trailing expression's value is
-        reported and bound to `_`. Cells are executed without any sandbox.
+        `path` names the file under the run's `cas/` directory, with the
+        backend's suffix. With `source` the file is written first and then
+        run; without it the file already there runs again. State carries over
+        between cells. A trailing expression's value is reported and bound to
+        `_`. Cells are executed without any sandbox.
         """
-        return _configured_cas().run(source)
+        return _configured_cas().run(path, source)
 
     @mcp.tool()
     def cas_state() -> CasStateResult:

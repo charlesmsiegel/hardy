@@ -17,16 +17,28 @@ down in a following cell instead of trying to read a path it cannot open.
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from hardy.algebra.cas import CasError, CasSession, CellRecord, backend_for
 from hardy.algebra.contracts import MERGED_CAPTURE_NOTE
+from hardy.foundation.files import LayoutError, files_under, guard_for, read_text
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import cas_spill_note
 from hardy.workflows.contracts import RunLimits
+from hardy.workflows.layout import CAS_SCRATCH
 
 SOURCE_LIMIT_BYTES = 64 * 1024
+
+#: Where a typed `/cas` cell is filed: `typed/0001.py` and so on, under `cas/`.
+TYPED_DIRECTORY = "typed"
+
+#: Hardy's own files under `cas/`, which a cell may not be filed as. The
+#: journal and its siblings hold the record; the session script, notebook and
+#: manifest are what `cas_export` writes; a cell filed over any of them would
+#: put model-chosen text where the record or the reproduction is read from.
+RESERVED_NAMES = frozenset({"cells.jsonl", "cells.jsonl.spend.json", "cells.jsonl.lock",
+                            "session.ipynb", "export.json"})
 
 CAS_TOOLS: list[dict[str, Any]] = [
     {
@@ -34,14 +46,18 @@ CAS_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "cas_run",
             "description": (
-                "Execute one cell in the persistent computer algebra session. State "
-                "carries over between cells. The value of a trailing expression is "
-                "reported and bound to `_`. Not sandboxed: only run trusted code."
+                "Run one computer algebra file as a cell in the persistent session. "
+                "`path` names the file under the problem's `cas/` directory, with the "
+                "backend's suffix (`.py` for SymPy). With `source`, the file is written "
+                "first and then run; without it, the file already there is run again. "
+                "State carries over between cells, so file a definition once and build "
+                "on it. The value of a trailing expression is reported and bound to `_`. "
+                "Not sandboxed: only run trusted code."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {"source": {"type": "string"}},
-                "required": ["source"],
+                "properties": {"path": {"type": "string"}, "source": {"type": "string"}},
+                "required": ["path"],
                 "additionalProperties": False,
             },
         },
@@ -173,8 +189,36 @@ class CasStateResult(FrozenModel):
     note: str | None = None
 
 
+def cas_relative(path: str, suffix: str) -> PurePosixPath:
+    """The `cas/`-relative path a cell is filed as, or a refusal.
+
+    A tool argument is model output and gets no benefit of the doubt: nothing
+    that could leave the tree, name one of Hardy's own files, or land in a
+    scratch directory an export empties is accepted. The suffix is the
+    backend's, so a Singular session cannot file a `.py` it would then feed to
+    Singular.
+    """
+    relative = PurePosixPath(str(path).replace("\\", "/"))
+    parts = relative.parts
+    if relative.is_absolute() or not parts or any(part in {"..", ".", ""} for part in parts):
+        raise CasError(f"not a path inside cas/: {path!r}")
+    if not relative.name.endswith(suffix) or relative.name == suffix:
+        raise CasError(f"a cell for this backend is filed with the {suffix} suffix: {path!r}")
+    if parts[0] in CAS_SCRATCH:
+        raise CasError(f"{parts[0]}/ is scratch an export empties; file the cell elsewhere: {path!r}")
+    if len(parts) == 1 and (relative.name in RESERVED_NAMES or relative.name == f"session{suffix}"):
+        raise CasError(f"{relative.name} is Hardy's own file under cas/ and not a cell's: {path!r}")
+    return relative
+
+
 class CasToolRuntime:
-    """Bounds and budget around one `CasSession`."""
+    """Bounds and budget around one `CasSession`, and the files its cells are.
+
+    Every cell is a file under `files`, the session's `cas/` directory by
+    default: written before it runs when source is given, read when it is
+    not. The journal still carries the source of every cell that ran, so a
+    file rewritten later does not rewrite the record.
+    """
 
     def __init__(
         self,
@@ -182,21 +226,75 @@ class CasToolRuntime:
         session: CasSession,
         observation_bytes: int,
         spill: Callable[[str, str], str] | None = None,
+        files: Path | None = None,
     ) -> None:
         self.session = session
         self.observation_bytes = observation_bytes
         self._spill = spill
         self._artifact_sequence = 0
+        self.files = files if files is not None else session.log_path.parent
 
-    def run(self, source: str, *, author: str = "model") -> CasCellResult:
-        if len(source.encode("utf-8")) > SOURCE_LIMIT_BYTES:
-            raise CasError("cell source exceeds the 64 KiB limit")
-        return self._bound(self.session.execute(source, author=author))
+    @property
+    def suffix(self) -> str:
+        return str(self.session.backend.script_suffix)
+
+    def relative(self, path: str) -> PurePosixPath:
+        """`path` proven to be a cell's place under `cas/`, or a refusal."""
+        return cas_relative(path, self.suffix)
+
+    def run(self, path: str, source: str | None = None, *, author: str = "model") -> CasCellResult:
+        """File a cell and run it, or run the file already there.
+
+        `source` is normalised to `source.rstrip() + "\\n"` exactly as a Lean
+        save is, so the bytes on disk are the bytes the record holds and the
+        digest of one is the digest of the other.
+        """
+        relative = self.relative(path)
+        if source is not None:
+            text = source.rstrip() + "\n"
+            if len(text.encode("utf-8")) > SOURCE_LIMIT_BYTES:
+                raise CasError("cell source exceeds the 64 KiB limit")
+            if not text.strip():
+                raise CasError("an empty cell has nothing to execute")
+            try:
+                guard, name = guard_for(self.files, relative, create=True)
+                with guard.open(name, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+            except (LayoutError, OSError) as error:
+                raise CasError(f"could not write {relative}: {error}") from error
+        else:
+            if not (self.files / relative).is_file():
+                raise CasError(f"no such file under cas/: {relative}; give `source` to write it")
+            try:
+                text = read_text(self.files, relative)
+            except (LayoutError, OSError) as error:
+                raise CasError(f"could not read {relative}: {error}") from error
+            if len(text.encode("utf-8")) > SOURCE_LIMIT_BYTES:
+                raise CasError("cell source exceeds the 64 KiB limit")
+        return self._bound(self.session.execute(text, author=author, path=relative.as_posix()))
+
+    def typed_path(self) -> str:
+        """Where the next typed cell is filed: the first free number under `typed/`."""
+        taken = {relative.name for relative in self.listing() if relative.parts[0] == TYPED_DIRECTORY}
+        number = 1
+        while f"{number:04d}{self.suffix}" in taken:
+            number += 1
+        return f"{TYPED_DIRECTORY}/{number:04d}{self.suffix}"
+
+    def listing(self) -> tuple[PurePosixPath, ...]:
+        """Every cell file under `cas/`, in sorted order; Hardy's own files left out."""
+        if not self.files.is_dir():
+            return ()
+        found = files_under(self.files, self.suffix)
+        return tuple(relative for relative in found
+                     if relative.parts[0] not in CAS_SCRATCH
+                     and not (len(relative.parts) == 1 and relative.name == f"session{self.suffix}"))
 
     def state(self) -> CasStateResult:
         session = self.session
         lines = [
-            f"[{record.seq}] {record.source.strip().splitlines()[0][:80]}"
+            f"[{record.seq}] {record.path + ': ' if record.path else ''}"
+            f"{record.source.strip().splitlines()[0][:80]}"
             for record in session.accepted()
         ]
         result = CasStateResult(

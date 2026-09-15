@@ -46,7 +46,9 @@ def test_a_human_cell_lands_in_the_same_log_as_the_models(tmp_path, cas_session)
 
     record = session.accepted()[0]
     assert record.author == "human"
-    assert record.source == "mine"
+    assert record.source == "mine\n"
+    assert record.path == "typed/0001.py"
+    assert (session.log_path.parent / "typed" / "0001.py").read_text(encoding="utf-8") == "mine\n"
     assert "1" in printed
 
 

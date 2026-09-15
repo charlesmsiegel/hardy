@@ -337,7 +337,8 @@ class ClaudeStagedRuntime:
             return ToolResult(False, "no computer algebra backend is configured")
         try:
             if name == "cas_run":
-                result = self._cas.run(str(arguments["source"]))
+                source = arguments.get("source")
+                result = self._cas.run(str(arguments["path"]), None if source is None else str(source))
                 return ToolResult(result.status == "ok", result.model_dump_json())
             if name == "cas_state":
                 return ToolResult(True, self._cas.state().model_dump_json())
