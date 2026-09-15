@@ -475,12 +475,101 @@ stable identities, because the menu prepends an unlisted current row and always
 appends the escape hatch, so a digit would name a different model than the
 number a user remembers.
 
+The browser's picker is sugar over the same command: `GET /api/models`
+returns the rows the menu draws, without the "Other…" sentinel a native select
+has no use for, and choosing one submits `/model <identity>` through the
+ordinary input path, so it is recorded, refused mid-turn, and followed by the
+same save-as-default question. A second switching path would drift.
+
 The switch itself is recorded in the transcript, because which model produced
 which turn is part of the experiment's identity rather than a display detail.
 The provider conversation carries over, and a backend that holds the
 conversation itself is handed it explicitly, so that switching model means the
 same thing on every transport rather than silently discarding the session's
 history on some of them.
+
+## Background computation
+
+A Lean check that imports Mathlib takes tens of seconds and a save takes two
+of them; a cell can take minutes. The turn used to hold for all of it, and so
+did the person: nothing could be typed, and the model's context sat idle while
+a process it had already asked for ran. The alternative was to let the check
+run and answer the turn with a promise.
+
+The call runs on a computation thread from the start and the turn waits a
+grace for it (`compute_detach_seconds`). Answered inside the grace, nothing
+changes: the result is inline and no delegation exists. Past it, the call is
+*detached* (`workflows/interactive/jobs.py`): the turn is answered with the
+job's id and the sentence that the result reaches the model at its next turn,
+the work is attached under the delegation hierarchy as a leaf with
+`task_mode="compute"` (`DelegationController.attach_computation`), and the
+human is told through the notice channel. Promotion after the grace rather
+than a delegation for every call keeps `/jobs` about work that took time.
+
+The tool gate travels with the work, and this is the one delicate mechanism.
+The coordinator's gate is a plain lock, and a plain lock may be released by a
+thread other than the one that took it. The dispatcher takes it, starts the
+computation and waits; if the call is answered in time the dispatcher releases
+it as always, and if the call is detached the dispatcher returns *without
+releasing* and the job releases the gate when the work and its bookkeeping are
+done. Every other tool call still waits its turn, so a detached save cannot
+interleave with anything, which is the whole reason the gate exists. The
+hand-off is decided under a lock the job and the dispatcher share, so a call
+finishing in the instant the grace expires is delivered exactly once.
+
+Esc during the grace keeps the call inline: the interrupt reached the child,
+and what the child does with that is answered in the turn rather than sent to
+the background to outlive the press. After detachment the children are the
+job's, not the turn's: `foundation/process.py` keeps the thread ids of
+detached jobs, Esc's sweeps pass over their children, and `/cancel` reaches
+them by thread. A detached cell holds the kernel's lock; Esc leaves the kernel
+alone while it does.
+
+The result is Hardy's own event. When the job ends, a `job` event with the
+whole tool output is appended to the transcript, owed to the model until a
+`job_delivered` event names it, and the owed results are rendered as a block
+ahead of the next provider request beside the workspace steering block and the
+delegation attention block. The `job_delivered` event is written once the
+runtime has accepted the request, as attention receipts are, so a request that
+never reached the provider leaves the results owed. Nothing enters the model's
+context mid-request.
+
+Background completion does not start unsolicited turns by default. A
+computation the model itself started is the named exception, because its next
+action explicitly depends on the result: when a job ends with the session idle,
+the host starts a turn whose text is Hardy's (`CONTINUATION_TEXT`), recorded
+with `author: "hardy"` on the `user` event and drawn as Hardy's line. It does
+not count as a human turn when a delegation continuation asks whether the
+conversation moved on. If the session is busy the result rides along on
+whatever starts the next turn, and a line the person queued goes first.
+
+## Messages during a turn
+
+A message typed while a turn or a command runs is queued rather than refused
+(`dispatch.classify` answers `queued`). Both hosts keep the lines in order and,
+when the turn or command ends, start one turn from all of them joined by blank
+lines. Nothing is written to the transcript until then, so the record's order
+is the order the model saw. A command that is not safe in flight is still
+refused: it takes the session over and cannot be deferred without changing
+what it means, and a `/cas` deferred behind a turn would run in a kernel whose
+state the turn was still changing.
+
+## Checkpoints
+
+`/checkpoint` copies the problem directory whole (`workflows/checkpoints.py`)
+to `<root>/.hardy/checkpoints/<slug>/<id>/tree/`, beside a manifest, and a
+restore puts that tree back. Two refusals keep the copy honest. A symlink
+anywhere in the tree refuses the checkpoint rather than being followed, which
+would copy a host file in as if it were the problem's, or dropped, which would
+save a tree that differs from the one on disk. And a restore always checkpoints
+what it replaces first, so restoring the wrong one costs nothing. The swap is
+two renames around a copy, so the problem directory is never half of each. A
+restore closes the session and the kernel before touching the tree, because
+the journal's lease, the delegation owner token and the provider thread belong
+to the process that opened the tree, and reopens through the project opener
+exactly as `/project switch` does; the kernel's namespace is rebuilt from the
+journal, which is the one thing a copy of files cannot carry, and the reopen
+says so on its first cell.
 
 ## Why there is no warm Lean pool
 
