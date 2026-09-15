@@ -98,6 +98,57 @@ def test_cancel_prompts_resolves_everything_as_a_refusal() -> None:
     _run(scenario())
 
 
+def test_answer_from_a_real_thread_resolves_the_pending_prompt() -> None:
+    """`answer`'s off-loop branch: a genuine OS thread, not the loop thread."""
+
+    async def scenario():
+        seen = []
+        loop = asyncio.get_running_loop()
+        ui = WebUi(loop, seen.append)
+        task = asyncio.create_task(ui.choose("Pick", [Choice("a", "A"), Choice("b", "B")]))
+        while not seen:
+            await asyncio.sleep(0.01)
+        prompt_id = seen[-1]["id"]
+        result = {}
+
+        def worker():
+            result["answered"] = ui.answer(prompt_id, "b")
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        await loop.run_in_executor(None, thread.join)
+        assert result["answered"] is True
+        assert await task == Choice("b", "B")
+
+    _run(scenario())
+
+
+def test_cancel_prompts_from_a_real_thread_refuses_everything() -> None:
+    """`cancel_prompts`'s off-loop branch: a genuine OS thread."""
+
+    async def scenario():
+        seen = []
+        loop = asyncio.get_running_loop()
+        ui = WebUi(loop, seen.append)
+        a = asyncio.create_task(ui.choose("Pick", [Choice("a", "A")]))
+        b = asyncio.create_task(ui.confirm("Sure?"))
+        while len(seen) < 2:
+            await asyncio.sleep(0.01)
+        result = {}
+
+        def worker():
+            result["count"] = ui.cancel_prompts()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        await loop.run_in_executor(None, thread.join)
+        assert result["count"] == 2
+        assert await a is None and await b is False
+        assert not ui.pending
+
+    _run(scenario())
+
+
 def test_from_thread_blocks_a_worker_and_refuses_the_loop_thread() -> None:
     async def scenario():
         seen = []
