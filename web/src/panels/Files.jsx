@@ -10,8 +10,13 @@
 
 import {useEffect, useState} from 'react';
 import {get} from '../api.js';
+import Cells from './Cells.jsx';
 import Uploads from './Uploads.jsx';
 import usePanel from './usePanel.js';
+
+//: The journal is a file like any other in `cas/`, and the one that is drawn
+//: as cells rather than as text when it is picked.
+const JOURNAL = 'cas/cells.jsonl';
 
 /** `lean/Sylow/Basic.lean` shown as `Sylow/Basic.lean`, indented by depth. */
 function shown(path, tree) {
@@ -97,6 +102,13 @@ export default function Files({revision, onSend}) {
             picked={pick && pick.kind === 'text' ? pick.path : ''}
             onPick={(path) => setPick({path, kind: 'text'})}
           />
+          <Tree
+            title="Computer algebra"
+            tree="cas"
+            paths={data.cas ?? []}
+            picked={pick && pick.kind !== 'pdf' ? pick.path : ''}
+            onPick={(path) => setPick({path, kind: path === JOURNAL ? 'cells' : 'text'})}
+          />
           <section>
             <h3 className="panel__subheading">PDF</h3>
             {data.pdf.length ? (
@@ -140,6 +152,7 @@ export default function Files({revision, onSend}) {
             </>
           ) : null}
           {pick.kind === 'text' && !text && !failure ? <p className="panel__note">Reading...</p> : null}
+          {pick.kind === 'cells' ? <Cells revision={revision} /> : null}
         </section>
       ) : null}
     </div>

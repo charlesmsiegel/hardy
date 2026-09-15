@@ -41,10 +41,10 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from hardy.app.config import existing_projects
+from hardy.app.config import DEFAULT_BACKEND, authentication, existing_projects
 from hardy.app.terminal import confirm_assumption
 from hardy.app.tui import dispatch
-from hardy.app.tui.handlers import build_registry, load_templates
+from hardy.app.tui.handlers import OTHER, build_registry, load_templates, model_rows
 from hardy.app.tui.ports import State
 from hardy.app.web import chats
 from hardy.app.web.ui import WebUi
@@ -327,6 +327,25 @@ class WebHost:
             except RuntimeError:
                 continue
         return []
+
+    def models(self) -> dict[str, Any]:
+        """The rows `/model` would offer, for the page's picker; nothing is queried.
+
+        The same `model_rows` the terminal menu draws, less the "Other…"
+        sentinel a native select has no use for: an identity the catalog
+        lacks is typed into the picker's own field and submitted as
+        `/model <identity>` like any other choice. Every row still says its
+        availability is unverified, because it is.
+        """
+        state = self._state
+        config = state.config if state is not None else self.config
+        backend = getattr(config, "backend", DEFAULT_BACKEND)
+        rows = [
+            {"value": row.value, "label": row.label, "note": row.note, "current": "current" in row.note}
+            for row in model_rows(config) if row.value != OTHER
+        ]
+        return {"current": str(config.model), "backend": backend, "authentication": authentication(backend),
+                "rows": rows}
 
     def projects(self) -> list[dict[str, Any]]:
         """Every problem in the root with its chats, the live one marked."""

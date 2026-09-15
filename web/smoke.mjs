@@ -113,7 +113,7 @@ function stream(wanted) {
 const PANEL_ENDPOINTS = [
   '/api/state', '/api/commands', '/api/transcript', '/api/projects',
   '/api/summary', '/api/files', '/api/uploads', '/api/jobs',
-  '/api/tree', '/api/sources', '/api/graph',
+  '/api/tree', '/api/sources', '/api/graph', '/api/models', '/api/cas/cells',
 ];
 
 async function panels() {

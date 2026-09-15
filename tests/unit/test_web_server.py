@@ -79,6 +79,19 @@ def test_index_embeds_the_token_and_assets_are_served(server) -> None:
     assert status in {400, 404}
 
 
+def test_models_and_cas_cells_are_served(server) -> None:
+    status, _, body = _call(server, "GET", "/api/models", token=False)
+    assert status == 200
+    models = json.loads(body)
+    assert models["current"] == "fake-model" and models["backend"] == "claude"
+    values = [row["value"] for row in models["rows"]]
+    assert "fake-model" in values and "claude-opus-5" in values and "…other" not in values
+    assert [row["current"] for row in models["rows"]].count(True) == 1
+    assert all("availability unverified" in row["note"] for row in models["rows"])
+    status, _, body = _call(server, "GET", "/api/cas/cells", token=False)
+    assert status == 200 and json.loads(body)["cells"] == []
+
+
 def test_unknown_routes_fall_back_to_the_page(server) -> None:
     status, ctype, body = _call(server, "GET", "/files/lean", token=False)
     assert status == 200 and "text/html" in ctype and server.token.encode() in body
