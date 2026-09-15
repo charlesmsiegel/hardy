@@ -467,6 +467,9 @@ TOOLING_RULES = (
     "/.build/",
     "/.local/",
     "/papers/",
+    # Whole-workspace checkpoints (`/checkpoint`): one machine's copies of a
+    # problem, never something to commit beside the problem itself.
+    "/checkpoints/",
     "/session.json",
     "/transcript.jsonl",
     "/input-history",

@@ -1133,6 +1133,89 @@ async def _project(ui: Ui, argument: str, state: State) -> State:
     return await _switch(ui, slug, state, creating=True)
 
 
+CHECKPOINT_USAGE = "Usage: /checkpoint [name] · /checkpoint list · /checkpoint restore <id>"
+
+
+async def handle_checkpoint(ui: Ui, argument: str, state: State) -> State:
+    """Save the whole workspace as it stands, list what was saved, or put one back.
+
+    `safe_in_flight` stays False: a checkpoint copies the record and the
+    transcript a running turn is appending to, and a restore replaces them.
+    Saving leaves the session open. Restoring closes it, swaps the problem's
+    tree for the checkpoint's, and reopens the same problem through the
+    project opener, the way `/project switch` reopens another: the kernel's
+    namespace is rebuilt from the journal's accepted cells rather than
+    carried, and the reopen says so on its first cell.
+    """
+    from hardy.workflows import checkpoints
+
+    verb, _, rest = argument.strip().partition(" ")
+    paths = state.config.layout
+    try:
+        if verb == "list":
+            found = checkpoints.list_checkpoints(paths)
+            if not found:
+                ui.write(f"No checkpoints of {paths.slug} yet. /checkpoint [name] takes one.")
+                return state
+            ui.write(f"Checkpoints of {paths.slug}, oldest first:", style="normal")
+            for checkpoint in found:
+                ui.write(f"  {checkpoint.label}  ({checkpoint.files} files)")
+            return state
+        if verb == "restore":
+            if not rest.strip():
+                ui.write(f"Which one? {CHECKPOINT_USAGE}", style="error")
+                return state
+            return await _restore_checkpoint(ui, rest.strip(), state)
+        name = argument.strip()
+        checkpoint = checkpoints.save(paths, name=name)
+    except (checkpoints.CheckpointError, layout.LayoutError, OSError) as error:
+        ui.write(f"Checkpoint failed: {error}", style="error")
+        return state
+    ui.write(f"Checkpoint {checkpoint.id} saved ({checkpoint.files} files"
+             + (f", {checkpoint.name!r}" if checkpoint.name else "") + "). /checkpoint restore "
+             f"{checkpoint.id} puts it back.")
+    return state
+
+
+async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
+    from hardy.app.terminal import confirm_assumption
+    from hardy.workflows import checkpoints
+
+    if state.reopen is None:
+        ui.write("This session cannot restore a checkpoint: it has no way to reopen the problem.", style="error")
+        return state
+    paths = state.config.layout
+    chosen = checkpoints.find(paths, id)
+    if not await ui.confirm(f"Replace {paths.slug} as it stands with checkpoint {chosen.id}? "
+                            "(What is replaced is checkpointed first.)"):
+        ui.write("Nothing restored.")
+        return state
+    # The session and its kernel let go of the tree before it is swapped: the
+    # cell journal's lease, the delegation owner token and the provider thread
+    # all belong to the process that opened this tree, not to the next one.
+    close = getattr(state.session, "close", None)
+    if close is not None:
+        close()
+    cas = getattr(state.reopen, "cas", None)
+    if cas is not None:
+        cas.session.close()
+    restored, kept = checkpoints.restore(paths, chosen.id)
+    ui.write(f"Restored {restored.id}; what was there is kept as checkpoint {kept.id}.")
+    try:
+        arm = getattr(state.reopen, "arm", None)
+        if arm is not None:
+            arm()
+        config, session = await asyncio.to_thread(state.reopen, paths.slug, confirm_assumption(ui), state.config)
+    except Exception as error:  # noqa: BLE001 - the tree is restored; the reopen is what failed
+        ui.write(f"Restored the tree but could not reopen {paths.slug}: {error}. "
+                 "Leave and start `hardy chat` again to continue from it.", style="error")
+        return state
+    if hasattr(session, "on_notice"):
+        session.on_notice = lambda text: ui.write(f"Hardy: {text}")
+    ui.write(f"  {status_line(config)}")
+    return dataclasses.replace(state, config=config, session=session)
+
+
 async def handle_tree(ui: Ui, argument: str, state: State) -> State:
     try:
         history = state.session.conversation_tree()
@@ -1440,6 +1523,10 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
             argument_hint="[path]",
         ),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
+        Command(
+            "checkpoint", "save the whole workspace, list checkpoints, or restore one", handle_checkpoint,
+            argument_hint="[name|list|restore <id>]",
+        ),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),
         Command("tree", "show conversation entries and the active leaf", handle_tree, safe_in_flight=True),
         Command("fork", "continue from a conversation entry", handle_fork, argument_hint="<entry-id|root>"),
