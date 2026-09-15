@@ -1,0 +1,21 @@
+{
+  "name": "hardy-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node notices.mjs",
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "dagre": "^0.8.5",
+    "katex": "^0.18.7",
+    "marked": "^18.0.13",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.3.0"
+  }
+}
