@@ -52,3 +52,28 @@ def test_validate_chat_refuses_bad_names(bad: str) -> None:
 
 def test_validate_chat_accepts_a_slug() -> None:
     assert layout.validate_chat("lean-proof-2") == "lean-proof-2"
+
+
+def test_session_record_writes_a_chats_transcript(tmp_path: Path) -> None:
+    from hardy.workflows.interactive.record import SessionRecord
+
+    problem = tmp_path / "sylow"
+    layout.Layout(root=tmp_path, slug="sylow", chat="lean-proof").ensure()
+    record = SessionRecord(problem, chat="lean-proof")
+    record.load()
+    record._record({"type": "user", "message": {"role": "user", "content": "hi"}})
+    assert (problem / "chats" / "lean-proof" / "transcript.jsonl").read_text(encoding="utf-8").count("\n") == 1
+    assert not (problem / "transcript.jsonl").exists()
+    record._save_local()
+    assert (problem / ".local" / "chats" / "lean-proof" / "state.json").exists()
+
+
+def test_session_record_main_is_the_legacy_transcript(tmp_path: Path) -> None:
+    from hardy.workflows.interactive.record import SessionRecord
+
+    problem = tmp_path / "sylow"
+    layout.Layout(root=tmp_path, slug="sylow").ensure()
+    record = SessionRecord(problem)
+    record.load()
+    record._record({"type": "user", "message": {"role": "user", "content": "hi"}})
+    assert (problem / "transcript.jsonl").exists()

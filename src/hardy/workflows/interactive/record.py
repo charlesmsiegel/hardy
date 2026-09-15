@@ -20,7 +20,7 @@ from hardy.agents.usage import Usage
 from hardy.foundation.files import LayoutError, WriteGuard
 from hardy.foundation.locking import FileLock
 from hardy.workflows.interactive.history import History, HistorySnapshot, identify
-from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT
+from hardy.workflows.layout import DEFAULT_CHAT, LOCAL_STATE, RECORD, TRANSCRIPT, Layout
 
 USAGE_KEY = "usage"
 CURSOR_KEY = "usage_cursor"
@@ -32,12 +32,20 @@ class SchemaError(ValueError):
     """A record whose schema or encoding this build cannot read."""
 
 class SessionRecord:
-    def __init__(self, workspace: Path, workspace_guard: WriteGuard | None = None):
+    def __init__(self, workspace: Path, workspace_guard: WriteGuard | None = None, chat: str = DEFAULT_CHAT):
+        paths = Layout(root=workspace.parent, slug=workspace.name, chat=chat)
+        self.chat = chat
         self.state_path = workspace / RECORD
-        self.transcript_path = workspace / TRANSCRIPT
-        self.local_path = workspace / LOCAL_DIR / LOCAL_STATE
+        self.transcript_path = paths.transcript
+        self.local_path = paths.local_state
         self._workspace_guard = workspace_guard or WriteGuard(workspace, create=True)
-        self._local_guard = WriteGuard(workspace / LOCAL_DIR, create=True)
+        # The transcript's own guard: the problem directory for `main`, the
+        # chat's directory otherwise. The record (`session.json`) always goes
+        # through `_workspace_guard`; only the conversation moves.
+        self._transcript_guard = (
+            self._workspace_guard if chat == DEFAULT_CHAT else WriteGuard(paths.transcript_dir, create=True)
+        )
+        self._local_guard = WriteGuard(paths.local_chat, create=True)
         self._writes = threading.Lock()
         # Separate from `_writes`: an append must never wait behind a rewrite
         # of `session.json`, and a rewrite has nothing to fear from an append.
@@ -250,7 +258,7 @@ class SessionRecord:
         if branch:
             HistorySnapshot((*self._history.entries.values(), entry), entry.entry_id, entry.entry_id).replay()
         line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-        with self._workspace_guard.open(TRANSCRIPT, "a+b") as handle:
+        with self._transcript_guard.open(TRANSCRIPT, "a+b") as handle:
             # Preserve a crashed writer's bytes, but isolate its unterminated
             # line. Otherwise this valid event becomes part of the torn JSON
             # and replay loses both. A complete line lacking only its newline
@@ -287,7 +295,7 @@ class SessionRecord:
             length = self._transcript_end()
         digest = hashlib.sha256()
         if length and self.transcript_path.exists():
-            with self._workspace_guard.open(TRANSCRIPT, "rb") as handle:
+            with self._transcript_guard.open(TRANSCRIPT, "rb") as handle:
                 remaining = length
                 while remaining > 0:
                     chunk = handle.read(min(remaining, 1 << 20))
@@ -504,7 +512,7 @@ class SessionRecord:
         # transcript that were refused only at append time would first be read
         # back as this workspace's own history -- counted as spend by
         # `_recover_spend` -- from a file belonging to whoever wrote the link.
-        with self._workspace_guard.open(TRANSCRIPT, encoding="utf-8", errors="replace") as handle:
+        with self._transcript_guard.open(TRANSCRIPT, encoding="utf-8", errors="replace") as handle:
             if start:
                 handle.seek(start)
             for line in handle:
