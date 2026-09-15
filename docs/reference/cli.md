@@ -51,6 +51,7 @@ Opens the durable terminal session. `--root` and `--project` live here rather th
 | --- | --- | --- | --- |
 | `--root` | `root` in the config file, else the current directory | `HARDY_ROOT` | The directory holding one or more problems. |
 | `--project` | the active one in `<root>/.hardy/config.toml`, else the sole recorded problem when there is exactly one, else `main` | `HARDY_PROJECT` | Which problem to open. |
+| `--chat` | `main` |  | Which chat of the problem to open. `main` is the transcript beside the record; the browser (`hardy web`) creates others under `chats/<id>/`, and this flag opens one of those at the terminal. A per-launch choice: no config key or environment variable. |
 | `--register-lakefile` | ask, when a host `lakefile.toml` exists and both streams are a TTY |  | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. Off a TTY there is no question and no registration, so a piped launch needs this flag to register at all. `--plain` alone does not suppress the offer: the offer is decided by the streams before `--plain` chooses the line-based session, so `hardy --plain chat` in a terminal still asks. |
 | `--no-register-lakefile` | off |  | Never touch the host `lakefile.toml`. Hardy's own resolution does not depend on registration. |
 

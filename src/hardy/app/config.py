@@ -257,6 +257,11 @@ class Config:
     latex_command: tuple[str, ...]
     root: Path
     project: str
+    # Which chat of the project this launch opens. A per-launch choice like
+    # `--fresh-thread`, not a standing preference: persisted, it would reopen
+    # a stale chat under an unrelated later launch. `main` is the transcript
+    # beside the record; the browser creates others under `chats/<id>/`.
+    chat: str = layout.DEFAULT_CHAT
     # Where staged `prove` runs are kept, and the pinned toolchain that builds
     # their documents. The budgets a run is frozen under travel with them.
     runs_root: Path = Path(DEFAULT_RUNS_ROOT)
@@ -309,7 +314,7 @@ class Config:
     @property
     def layout(self) -> layout.Layout:
         """Where this configuration says the active problem's parts live."""
-        return layout.Layout(root=self.root, slug=self.project)
+        return layout.Layout(root=self.root, slug=self.project, chat=self.chat)
 
 
 def read_file(path: Path) -> dict[str, Any]:
