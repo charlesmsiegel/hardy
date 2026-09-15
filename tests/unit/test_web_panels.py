@@ -1,0 +1,111 @@
+"""Panel serializers: pure views over a session or a problem's own artifacts."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from web_fakes import FakeSession, make_problem
+
+from hardy.app.web import panels
+
+
+def test_summary_serializes_sections(tmp_path: Path) -> None:
+    session = FakeSession(make_problem(tmp_path))
+    session.set_goal("prove Sylow II")
+    out = panels.summary(session)
+    assert out["goal"] == "prove Sylow II"
+    assert out["sections"][0] == {"title": "Goal", "lines": ["prove Sylow II"]}
+    assert out["sections"][1] == {"title": "Theorems", "lines": ["none saved"]}
+    assert out["obligations"] == ["prove X"]
+
+
+def test_transcript_renders_user_and_assistant_and_drops_superseded_partials(tmp_path: Path) -> None:
+    session = FakeSession(make_problem(tmp_path))
+    from hardy.workflows.interactive.history import identify
+
+    def add(event):
+        event = {**event, "parent_id": session._history.active_leaf, "timestamp": 1.0}
+        event["entry_id"] = identify(event)
+        session._history.append(event)
+
+    add({"type": "user", "message": {"role": "user", "content": "hi"}})
+    add({"type": "assistant", "block_id": "b1", "message": {"role": "assistant", "content": "hel"}, "partial": True})
+    add({"type": "assistant", "block_id": "b1", "message": {"role": "assistant", "content": "hello"}})
+    add({"type": "tool_started", "name": "lean_check", "arguments": {}, "call_id": "c1"})
+    add({"type": "tool", "name": "lean_check", "arguments": {}, "result": {"ok": True, "output": "fine", "source": None}, "call_id": "c1"})
+    add({"type": "turn", "status": "cancelled", "reason": "user_pressed_escape"})
+    out = panels.transcript(session)
+    assert [m["role"] for m in out] == ["user", "assistant", "tool", "turn"]
+    assert out[1]["text"] == "hello"
+    assert out[2] == {"role": "tool", "name": "lean_check", "ok": True, "text": "fine", "entry_id": out[2]["entry_id"], "call_id": "c1"}
+    assert out[3]["text"] == "cancelled: user_pressed_escape"
+
+
+def test_tree_and_jobs(tmp_path: Path) -> None:
+    session = FakeSession(make_problem(tmp_path))
+    list(session.stream("hi"))
+    tree = panels.tree(session)
+    assert tree["active_leaf"] == tree["entries"][-1]["entry_id"]
+    jobs = panels.jobs(session)
+    assert jobs["counts"] == {"running": 1}
+    assert jobs["delegations"] == [{"id": "d1", "state": "running", "objective": "prove lemma", "parent": "root"}]
+    assert jobs["attention"] == [{"id": "att-1", "summary": "needs a decision", "actionable": True}]
+    assert "cost_usd" in jobs["usage"]
+
+
+def test_files_and_confinement(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    (problem / "lean" / "Sylow.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+    (problem / "tex" / "writeup.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+    (problem / "writeup.pdf").write_bytes(b"%PDF-1.4 fake")
+    (problem / "publications" / "v1").mkdir(parents=True)
+    (problem / "publications" / "v1" / "writeup.pdf").write_bytes(b"%PDF-1.4 fake2")
+    out = panels.files(problem)
+    assert out == {"lean": ["lean/Sylow.lean"], "tex": ["tex/writeup.tex"], "pdf": ["writeup.pdf", "publications/v1/writeup.pdf"]}
+    assert panels.file_text(problem, "lean/Sylow.lean")["text"].startswith("theorem")
+    assert panels.pdf_bytes(problem, "publications/v1/writeup.pdf") == b"%PDF-1.4 fake2"
+    with pytest.raises(ValueError):
+        panels.file_text(problem, "../other")
+    with pytest.raises(ValueError):
+        panels.file_text(problem, "session.json")     # only lean/, tex/ and PDFs are served
+    with pytest.raises(ValueError):
+        panels.pdf_bytes(problem, "lean/Sylow.lean")
+
+
+def test_file_text_truncates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    problem = make_problem(tmp_path)
+    monkeypatch.setattr(panels, "TEXT_LIMIT", 8)
+    (problem / "lean" / "Big.lean").write_text("x" * 20, encoding="utf-8")
+    out = panels.file_text(problem, "lean/Big.lean")
+    assert out["truncated"] is True and len(out["text"]) == 8
+
+
+def test_graph_over_a_ledger_with_a_stale_relation(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import (
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Relation,
+        RelationKind,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    def _append(store: LedgerStore, records):
+        return store.append(records, expected_revision=store.read().revision)
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    lemma = ProjectItem(id="lemma-1", kind=ProjectItemKind.LEMMA, name="Lemma 1", origin=ProjectOrigin.TARGET_PAPER, statement="x" * 500)
+    theorem = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    relation = Relation(id="rel-1", kind=RelationKind.DEPENDS_ON, source=theorem.ref, target=lemma.ref)
+    _append(store, [lemma, theorem, relation])
+    revised = lemma.model_copy(update={"statement": "revised"})
+    _append(store, [revised])
+    out = panels.graph(problem)
+    nodes = {n["id"]: n for n in out["nodes"]}
+    assert set(nodes) == {"lemma-1", "thm-1"}
+    assert nodes["lemma-1"]["statement"] == "revised" and nodes["lemma-1"]["kind"] == "lemma"
+    assert len(nodes["lemma-1"]["statement"]) <= panels.STATEMENT_LIMIT
+    assert out["edges"] == [{"id": "rel-1", "kind": "depends_on", "source": "thm-1", "target": "lemma-1", "evidence": [], "stale": True}]
+    assert out["revision"] == store.read().revision
