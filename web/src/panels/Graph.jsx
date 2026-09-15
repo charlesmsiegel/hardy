@@ -5,9 +5,12 @@
 //
 // Colour is by kind *family* and not by kind, so a reader learns four groups
 // rather than twenty words: what has been established, what is being asked,
-// what a thing is, and what has been written up. The "F" badge is the one
-// per-node claim that matters more than its family -- a node carrying formal
-// evidence has been through the kernel, and nothing else on this panel says so.
+// what a thing is, and what has been written up. The "F" badge says one
+// further thing, and says exactly that much: a formal `EvidenceRef` is
+// RECORDED against this node. An evidence reference is claimed capability
+// provenance -- whoever produced it said what it was -- and this panel never
+// re-checks it, so the badge is not a kernel verdict and must not be read as
+// one. What the kernel found is in the record, under the audit that found it.
 //
 // Edge style is by family too: a hard dependency is drawn solid, an intention
 // dashed, a sameness dotted, and everything else thin. A `stale` edge is drawn
@@ -63,6 +66,11 @@ const DRAG_SLOP = 4;
 //: boxes it had placed, so a fit computed straight from it clipped the last
 //: node by a hair; this is wider than that discrepancy and reads as a margin.
 const FIT_PAD = 12;
+
+//: What the "F" badge claims, in the badge's own tooltip and in the bar, in
+//: the same words: a reader who hovers and a reader who does not must not come
+//: away with different beliefs about what it means.
+const BADGE_MEANING = 'formal evidence recorded in the ledger; the audit verdict is in the record, not this badge';
 
 const labelled = (node) => node.name || node.id;
 
@@ -137,8 +145,8 @@ function Drawer({node, onClose, onDraft}) {
           <dd>{node.origin}</dd>
         </div>
         <div className="kv__row">
-          <dt>evidence</dt>
-          <dd>{node.evidence.length ? node.evidence.join(', ') : 'none recorded'}</dd>
+          <dt>evidence recorded</dt>
+          <dd>{node.evidence.length ? node.evidence.join(', ') : 'none'}</dd>
         </div>
         <div className="kv__row">
           <dt>artifacts</dt>
@@ -285,6 +293,7 @@ export default function Graph({revision, onDraft}) {
           Fit
         </button>
       </div>
+      <p className="panel__note">F: {BADGE_MEANING}</p>
       {graph.dropped ? (
         <p className="panel__note">
           {graph.dropped} relation(s) point outside the current heads and are not drawn.
@@ -336,12 +345,15 @@ export default function Graph({revision, onDraft}) {
                   {fitted(node)}
                 </text>
                 {formal ? (
-                  <>
+                  <g>
+                    {/* First child, so this is the title the badge's own
+                        hover resolves to rather than the node's. */}
+                    <title>{BADGE_MEANING}</title>
                     <circle className="node__badge" cx={width - 11} cy="11" r="8" />
                     <text className="node__badge-text" x={width - 11} y="15" textAnchor="middle">
                       F
                     </text>
-                  </>
+                  </g>
                 ) : null}
                 <title>{`${node.name || node.id} (${node.kind})`}</title>
               </g>
