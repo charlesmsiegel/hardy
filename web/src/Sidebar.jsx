@@ -66,18 +66,28 @@ export default function Sidebar({projects, slug, chat, onProjects, onRefresh}) {
       return next;
     });
 
-  const createChat = (projectSlug) => {
+  const createChat = async (projectSlug) => {
     const wanted = title.trim();
     if (!wanted) return;
-    post(`/api/projects/${encodeURIComponent(projectSlug)}/chats`, {title: wanted})
-      .then((created) => {
-        setAdding('');
-        setTitle('');
-        // Made and then opened, in that order: a chat nobody is in is a
-        // directory with a title in it, and "+ chat" means "start one".
-        return open(projectSlug, created.id);
-      })
-      .catch((error) => say(`${projectSlug}/+chat`, String(error?.message ?? error)));
+    try {
+      const created = await post(`/api/projects/${encodeURIComponent(projectSlug)}/chats`, {title: wanted});
+      setAdding('');
+      setTitle('');
+      // The rail is redrawn *before* the open is attempted, and waited for.
+      // The two halves of "+ chat" are not refused together: making the chat
+      // is file I/O with no busy check, while `/api/open` raises `Busy` and
+      // answers 409 whenever a turn owns the session. So "made but not
+      // opened" is an ordinary outcome, and the user has to see both halves
+      // of it -- the chat in the rail and the reason it is not open. The
+      // refusal is keyed on the new chat's own row, which does not exist
+      // until this refetch lands: without the wait the sentence would render
+      // nowhere and the chat would appear, unopened and unexplained,
+      // whenever the next `changed` happened to arrive.
+      await onRefresh();
+      await open(projectSlug, created.id);
+    } catch (error) {
+      say(`${projectSlug}/+chat`, String(error?.message ?? error));
+    }
   };
 
   const rename = (projectSlug, chatId) => {

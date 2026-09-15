@@ -129,6 +129,30 @@ async function panels() {
   return PANEL_ENDPOINTS.length;
 }
 
+/** The graph panel's own answer, checked for the cases the drawing distinguishes.
+ *
+ *  Not a test of `panels.graph` -- `test_web_panels.py` owns that -- but of the
+ *  fixture the browser check is run against. An empty ledger answers 200 and
+ *  two empty lists, so a smoke that only asked for a status code would pass
+ *  while the panel had never drawn a node, an edge family, or the one thing
+ *  the graph says that nothing else does: a relation gone stale.
+ */
+async function graph() {
+  const response = await fetch(`${base}/api/graph`);
+  check(response.status === 200, `GET /api/graph answered ${response.status}`);
+  const {nodes, edges} = JSON.parse(await response.text());
+  check(nodes.length >= 4, `the ledger has ${nodes.length} nodes, fewer than four`);
+  check(edges.length >= 3, `the ledger has ${edges.length} edges, fewer than three`);
+  check(edges.some((edge) => edge.stale), 'no edge in the ledger is stale');
+  const families = new Set(edges.map((edge) => edge.kind));
+  check(families.size >= 3, `the edges are of ${families.size} kinds, fewer than three`);
+  check(
+    nodes.some((node) => node.evidence.includes('formal')),
+    'no node carries formal evidence, so the "F" badge is never drawn',
+  );
+  return {nodes: nodes.length, edges: edges.length};
+}
+
 /** Stage one `.lean` file the way the drop zone does, and see the panel list it. */
 async function staged(token) {
   const name = `smoke-${Date.now()}.lean`;
@@ -217,10 +241,12 @@ async function main() {
   );
 
   const endpoints = await panels();
+  const ledger = await graph();
   const name = await staged(token);
 
   console.log(
-    `smoke ok (${count} assets, ${endpoints} panel endpoints, staged ${name}, ` +
+    `smoke ok (${count} assets, ${endpoints} panel endpoints, ` +
+      `${ledger.nodes} ledger nodes and ${ledger.edges} edges with one stale, staged ${name}, ` +
       'reply "hello", interrupted turn replies "one two" once)',
   );
 }

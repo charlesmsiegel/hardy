@@ -355,11 +355,19 @@ export default function App() {
   // through the session, so neither emits a `changed` the effect above would
   // see, and a rail still showing the old title would be wrong about the one
   // thing it exists to say.
-  const refreshProjects = useCallback(() => {
-    get('/api/projects')
-      .then((projects) => dispatch({type: 'projects', projects}))
-      .catch((error) => failed(error));
-  }, [failed]);
+  //
+  // The promise is returned, and it always resolves: "+ chat" waits for the
+  // redraw before it tries to open what it made, so the new chat has a row for
+  // a refusal to be printed beside. A failure here is reported in the
+  // transcript by `failed` and must not also reject the caller, which would
+  // turn a stale rail into a chat that is never opened.
+  const refreshProjects = useCallback(
+    () =>
+      get('/api/projects')
+        .then((projects) => dispatch({type: 'projects', projects}))
+        .catch((error) => failed(error)),
+    [failed],
+  );
 
   const send = useCallback(async (text) => {
     const line = text.trim();

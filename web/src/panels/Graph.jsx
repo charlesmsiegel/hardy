@@ -58,6 +58,11 @@ const MAX_ZOOM = 3;
 //: Past this much pointer movement the gesture was a pan, and the click that
 //: ends it must not also open a node.
 const DRAG_SLOP = 4;
+//: Slack left around the graph when it is fitted to the frame. Dagre's own
+//: reported size came out a couple of pixels short of the real extent of the
+//: boxes it had placed, so a fit computed straight from it clipped the last
+//: node by a hair; this is wider than that discrepancy and reads as a margin.
+const FIT_PAD = 12;
 
 const labelled = (node) => node.name || node.id;
 
@@ -169,13 +174,36 @@ export default function Graph({revision, onDraft}) {
   const [view, setView] = useState({x: 0, y: 0, k: 1});
   const [openId, setOpenId] = useState('');
   const frame = useRef(null);
+  //: The gesture in flight: where the pointer was last seen, how far it has
+  //: travelled, and which node it went down on.
   const drag = useRef(null);
-  //: Whether the gesture that just ended was a pan. Read by the click that
-  //: follows the pointer-up, so a drag released over a node does not open it.
-  const panned = useRef(false);
 
   const graph = useMemo(() => (data ? laid(data.nodes, data.edges) : null), [data]);
   const open = graph ? graph.placed.find((node) => node.id === openId) : null;
+  //: Whether this panel has framed its graph yet. The fit happens once per
+  //: opening of the tab and never on a refetch: `changed` fires at the end of
+  //: every turn, and a view that snapped back to the fit each time would undo
+  //: the reader's pan while they were reading.
+  const framed = useRef(false);
+
+  /** The whole graph centred in the frame, never magnified past life size. */
+  const fit = useCallback(() => {
+    const element = frame.current;
+    if (!element || !graph) return;
+    const box = element.getBoundingClientRect();
+    const room = {width: box.width - FIT_PAD, height: box.height - FIT_PAD};
+    const k = Math.max(MIN_ZOOM, Math.min(1, room.width / graph.width, room.height / graph.height));
+    setView({k, x: (box.width - graph.width * k) / 2, y: (box.height - graph.height * k) / 2});
+  }, [graph]);
+
+  useEffect(() => {
+    // The rail is 420px wide and a project's graph is wider than that almost
+    // at once, so opening the tab at life size shows a corner of the map and
+    // leaves the reader to find the rest by dragging.
+    if (!graph || framed.current) return;
+    framed.current = true;
+    fit();
+  }, [graph, fit]);
 
   useEffect(() => {
     const element = frame.current;
@@ -201,7 +229,18 @@ export default function Graph({revision, onDraft}) {
 
   const down = useCallback((event) => {
     if (event.button !== 0) return;
-    drag.current = {x: event.clientX, y: event.clientY, travelled: 0};
+    // Which node the press landed on is read from the DOM rather than from a
+    // handler on the node itself, because capturing the pointer on the svg
+    // retargets the `click` that follows to the svg as well: an `onClick` on
+    // the node's `<g>` is never called once the drag has captured, so a node
+    // could be panned from and never opened. Down and up on the svg are the
+    // whole gesture, and `dataset.id` is what says where it began.
+    drag.current = {
+      x: event.clientX,
+      y: event.clientY,
+      travelled: 0,
+      id: event.target.closest?.('g.node')?.dataset.id ?? '',
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   }, []);
 
@@ -210,7 +249,12 @@ export default function Graph({revision, onDraft}) {
     if (!held) return;
     const dx = event.clientX - held.x;
     const dy = event.clientY - held.y;
-    drag.current = {x: event.clientX, y: event.clientY, travelled: held.travelled + Math.abs(dx) + Math.abs(dy)};
+    drag.current = {
+      ...held,
+      x: event.clientX,
+      y: event.clientY,
+      travelled: held.travelled + Math.abs(dx) + Math.abs(dy),
+    };
     setView((current) => ({...current, x: current.x + dx, y: current.y + dy}));
   }, []);
 
@@ -220,13 +264,12 @@ export default function Graph({revision, onDraft}) {
     }
     const held = drag.current;
     drag.current = null;
-    panned.current = Boolean(held && held.travelled > DRAG_SLOP);
+    // A press that went nowhere is a click on the node it went down on; one
+    // that travelled was a pan, and a pan released over a node must not open
+    // it.
+    if (!held || !held.id || held.travelled > DRAG_SLOP) return;
+    setOpenId((current) => (current === held.id ? '' : held.id));
   }, []);
-
-  const pick = (id) => {
-    if (panned.current) return;
-    setOpenId((current) => (current === id ? '' : id));
-  };
 
   if (error) return <p className="panel__error">{error}</p>;
   if (!graph) return <p className="panel__note">Reading the ledger...</p>;
@@ -238,8 +281,8 @@ export default function Graph({revision, onDraft}) {
         <span className="panel__note">
           {graph.placed.length} items · {graph.routed.length} relations · revision {data.revision}
         </span>
-        <button type="button" className="button" onClick={() => setView({x: 0, y: 0, k: 1})}>
-          Reset view
+        <button type="button" className="button" onClick={fit}>
+          Fit
         </button>
       </div>
       {graph.dropped ? (
@@ -284,9 +327,9 @@ export default function Graph({revision, onDraft}) {
             return (
               <g
                 key={node.id}
+                data-id={node.id}
                 className={node.id === openId ? 'node node--open' : 'node'}
                 transform={`translate(${x - width / 2} ${y - height / 2})`}
-                onClick={() => pick(node.id)}
               >
                 <rect className={`node__box node__box--${FAMILY[node.kind] ?? 'other'}`} width={width} height={height} rx="6" />
                 <text className="node__label" x="10" y={height / 2 + 4}>

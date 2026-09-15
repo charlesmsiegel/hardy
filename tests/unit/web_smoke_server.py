@@ -7,7 +7,13 @@ actual page without a model, a provider, or a Lean toolchain. The session is
 then a `reply` of "hello", so a smoke can assert the whole streaming path
 end to end and finish in milliseconds.
 
-One line is special. Sending `interleave` runs a turn that interrupts itself
+Two lines are special. Sending `slow` runs the ordinary scripted turn with a
+three-second pause before each event, so a person at a browser can click
+something while a turn owns the session and see it refused -- `+ chat` during
+a turn is the case that matters, since making the chat is plain file I/O and
+opening it is not.
+
+Sending `interleave` runs a turn that interrupts itself
 with a session notice between two pieces of text, which is what a delegation
 finishing mid-turn does. It exists because that interruption used to make the
 page draw the turn twice -- the notice ended the streaming message, the text
@@ -41,6 +47,12 @@ SLUG = "sylow"
 #: The line that runs the interrupted turn described in the module docstring.
 INTERLEAVE = "interleave"
 NOTICE = "a delegation finished while the turn was still streaming"
+#: The line that holds a turn open long enough to click something during it.
+#: Everything that refuses while a turn owns the session -- opening a chat
+#: above all -- can only be seen refusing if there is a turn to refuse under,
+#: and the scripted turn is otherwise over in microseconds.
+SLOW = "slow"
+SLOW_DELAY = 3.0
 #: Long enough for the loop to drain what the worker has already posted.
 PAUSE = 0.1
 
@@ -49,6 +61,18 @@ class ScriptedSession(FakeSession):
     """`FakeSession`, plus one turn that interrupts itself with a notice."""
 
     def stream(self, text: str):
+        if text.strip() == SLOW:
+            # Wrapped rather than set on `self.delay`: the delay is read inside
+            # the generator, so assigning it would outlive this turn the way
+            # the interleave script used to.
+            events = super().stream(text)
+
+            def slowly():
+                for event in events:
+                    time.sleep(SLOW_DELAY)
+                    yield event
+
+            return slowly()
         if text.strip() != INTERLEAVE:
             return super().stream(text)
         # Swapped for this turn and put back, not assigned. Assigning left the
@@ -78,6 +102,87 @@ class ScriptedSession(FakeSession):
                     self.on_notice(NOTICE)
 
         return interleaved()
+
+
+def seed_ledger(problem: Path) -> None:
+    """A small project ledger, so the graph panel has something to draw.
+
+    Without it `/api/graph` answers two empty lists and the panel can only be
+    seen in its empty state: no layout, no kind colours, no formal badge, no
+    edge families, and above all no stale edge -- the one thing the graph says
+    that nothing else in the page says. What is written here is chosen for what
+    it makes the panel draw:
+
+    * four items across three kind families (a theorem and a lemma in
+      *results*, a question in *research*, a section in *documents*), so the
+      fill colours can be told apart;
+    * a theorem carrying `formal` evidence, for the "F" badge. It takes two
+      transactions: a record cannot pin its own digest, since the digest would
+      then have to include the reference that names it, and
+      `validate_structure` refuses a reference to a version the snapshot does
+      not hold. So the bare theorem is committed first and the evidenced
+      revision pins that committed version;
+    * three relations of three different stroke families: `depends_on` solid,
+      `poses` dashed, `documents` thin, the last because it is deliberately not
+      in the panel's list;
+    * one stale edge. The lemma is revised in a second transaction, after
+      `depends_on` pinned the version it had, which is exactly the state the
+      panel draws in the error colour: the relation was recorded against a
+      lemma that has since changed and nothing has re-checked it.
+
+    Imported inside the function, like `library_import` does, so a smoke server
+    that is only serving the page does not pull the ledger package in.
+    """
+    from hardy.workflows.ledger.contracts import (
+        ArtifactRef,
+        EvidenceKind,
+        EvidenceRef,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Relation,
+        RelationKind,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    store = LedgerStore(problem)
+
+    def append(records):
+        return store.append(records, expected_revision=store.read().revision)
+
+    lemma = ProjectItem(
+        id="lemma-conjugacy", kind=ProjectItemKind.LEMMA, name="Conjugacy of Sylow subgroups",
+        origin=ProjectOrigin.TARGET_PAPER,
+        statement="Any two Sylow p-subgroups of a finite group are conjugate.",
+    )
+    bare = ProjectItem(
+        id="thm-sylow-three", kind=ProjectItemKind.THEOREM, name="Sylow III",
+        origin=ProjectOrigin.TARGET_PAPER,
+        statement="The number of Sylow p-subgroups is congruent to 1 modulo p and divides the index.",
+    )
+    question = ProjectItem(
+        id="q-how-many", kind=ProjectItemKind.QUESTION, name="How many Sylow subgroups?",
+        origin=ProjectOrigin.HUMAN_AUTHORED,
+        statement="For which groups is the Sylow count exactly one?",
+    )
+    section = ProjectItem(
+        id="sec-counting", kind=ProjectItemKind.SECTION, name="Counting the subgroups",
+        origin=ProjectOrigin.GENERATED_LOCAL,
+    )
+    append([lemma, bare, question, section])
+    theorem = bare.model_copy(update={"evidence": (
+        EvidenceRef(kind=EvidenceKind.FORMAL, subject=bare.ref, producer="web-smoke-fixture",
+                    artifact=ArtifactRef(uri="lean/Sylow.lean", digest="0" * 64)),
+    )})
+    append([theorem])
+    # Pinned after the theorem gained its evidence, so all three start fresh
+    # and exactly one of them is made stale below.
+    append([
+        Relation(id="rel-depends", kind=RelationKind.DEPENDS_ON, source=theorem.ref, target=lemma.ref),
+        Relation(id="rel-poses", kind=RelationKind.POSES, source=question.ref, target=theorem.ref),
+        Relation(id="rel-documents", kind=RelationKind.DOCUMENTS, source=section.ref, target=theorem.ref),
+    ])
+    append([lemma.model_copy(update={"statement": "Any two Sylow p-subgroups are conjugate; see Lemma 2."})])
 
 
 class FakeOpener:
@@ -111,7 +216,8 @@ def main(argv: list[str] | None = None) -> int:
 
     with tempfile.TemporaryDirectory(prefix="hardy-web-smoke-") as directory:
         root = Path(directory)
-        make_problem(root, SLUG)
+        problem = make_problem(root, SLUG)
+        seed_ledger(problem)
         config = make_config(root, SLUG)
         host = WebHost(config, FakeOpener(root), lambda confirm, cfg: ScriptedSession(cfg.layout.problem))
         host.start()
