@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -778,3 +779,14 @@ def test_a_switched_session_keeps_the_worker_pool_and_a_per_worker_cas_factory(m
     worker_dir = root / "burnside" / "worker-cas"
     assert isinstance(kwargs_seen[-1]["cas_factory"](worker_dir), FakeCas)
     assert calls[-1]["cwd"] == worker_dir and calls[-1]["log_path"] == worker_dir / "cells.jsonl"
+
+
+def test_opener_opens_the_requested_chat(opener, live, root, monkeypatch):
+    """A chat is per-open, like `--project`: named at the call, not carried on `current`."""
+    monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: SimpleNamespace(chat=k.get("chat")))
+
+    config, session = opener("sylow", _decline, live, chat="lean-proof")
+
+    assert config.chat == "lean-proof"
+    assert session.chat == "lean-proof"
+    assert (root / "sylow" / "chats" / "lean-proof").is_dir()

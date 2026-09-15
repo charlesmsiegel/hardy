@@ -68,6 +68,24 @@ def test_session_record_writes_a_chats_transcript(tmp_path: Path) -> None:
     assert (problem / ".local" / "chats" / "lean-proof" / "state.json").exists()
 
 
+def test_config_layout_carries_the_chat(tmp_path: Path) -> None:
+    from hardy.app import config as configuration
+
+    config = configuration.Config(
+        model="m", lean_command=("lean",), lean_project=None, lean_timeout=1.0,
+        latex_command=("pdflatex",), root=tmp_path, project="sylow", chat="lean-proof",
+    )
+    assert config.layout.transcript == tmp_path / "sylow" / "chats" / "lean-proof" / "transcript.jsonl"
+
+
+def test_chat_flag_is_parsed() -> None:
+    from hardy.app.cli import build_parser
+
+    args = build_parser().parse_args(["chat", "--chat", "lean-proof"])
+    assert args.chat == "lean-proof"
+    assert build_parser().parse_args(["chat"]).chat is None
+
+
 def test_session_record_main_is_the_legacy_transcript(tmp_path: Path) -> None:
     from hardy.workflows.interactive.record import SessionRecord
 

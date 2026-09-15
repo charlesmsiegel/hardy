@@ -271,7 +271,7 @@ class ProjectOpener:
             return False
         return opening.cancel()
 
-    def _configure(self, slug: str, current: configuration.Config) -> configuration.Config:
+    def _configure(self, slug: str, current: configuration.Config, chat: str) -> configuration.Config:
         """The configuration the session is running, pointed at another problem.
 
         Derived from `current`, not re-resolved from the layers. Re-reading was
@@ -293,11 +293,21 @@ class ProjectOpener:
         handler already refuses a bad one, but this is a seam, and
         `dataclasses.replace` reaches `Config.layout` with whatever it is
         given.
+
+        `chat` is the same seam for the same reason, and `/project switch`
+        never passes one: it calls `__call__` with the default, so a switch
+        always lands the problem's `main` chat rather than whichever chat a
+        browser session had left the previous problem in.
         """
-        return dataclasses.replace(current, project=layout.validate_slug(slug))
+        return dataclasses.replace(current, project=layout.validate_slug(slug), chat=layout.validate_chat(chat))
 
     def __call__(
-        self, slug: str, confirm: Callable[[dict[str, Any]], bool], current: configuration.Config
+        self,
+        slug: str,
+        confirm: Callable[[dict[str, Any]], bool],
+        current: configuration.Config,
+        *,
+        chat: str = layout.DEFAULT_CHAT,
     ) -> tuple[configuration.Config, Any]:
         # Whatever `arm` published, or a fresh one for a caller that did not
         # arm. The worker's first statement is still too late for a terminal:
@@ -309,7 +319,7 @@ class ProjectOpener:
         # synchronously.
         opening = self._opening or self.arm()
         try:
-            return self._open(slug, confirm, current, opening)
+            return self._open(slug, confirm, current, opening, chat)
         finally:
             # Every exit, not just the successful one. Left set, a failed or
             # cancelled attempt makes `cancel` answer True for the rest of the
@@ -337,6 +347,7 @@ class ProjectOpener:
         confirm: Callable[[dict[str, Any]], bool],
         current: configuration.Config,
         opening: _Reopen,
+        chat: str,
     ) -> tuple[configuration.Config, Any]:
         # Before the filesystem is touched at all. `arm` publishes the guard
         # on the event loop, so a cancel can already be marked by the time this
@@ -346,7 +357,7 @@ class ProjectOpener:
         # anyway. `_configure` is pure, so this is the first statement that
         # could leave anything behind.
         opening.refuse_if_cancelled(None)
-        config = self._configure(slug, current)
+        config = self._configure(slug, current, chat)
         prepare_layout(config)
         # Again, because `prepare_layout` is not atomic: a cancel arriving
         # while it runs leaves whatever it had made by then. That is bounded
@@ -406,6 +417,7 @@ class ProjectOpener:
                 context_window=config.context_window,
                 delegation_slots=config.delegation_workers,
                 cas_factory=worker_cas,
+                chat=config.chat,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the

@@ -126,6 +126,17 @@ def _chat(
             raise error
         parser.error(str(error))
 
+    # `--chat` is a per-launch choice like `--fresh-thread`: applied to the
+    # config here, before anything reads `config.layout`, so every path below
+    # -- `prepare_layout`, the CAS log, the session itself -- already points at
+    # the requested chat rather than `main`.
+    requested = getattr(args, "chat", None)
+    if requested:
+        try:
+            config = dataclasses.replace(config, chat=layout.validate_chat(requested))
+        except layout.LayoutError as error:
+            _report(error)
+
     try:
         prepare_layout(config)
     except layout.LayoutError as error:
@@ -219,6 +230,7 @@ def _chat(
                 limits=config.limits,
                 delegation_slots=config.delegation_workers,
                 cas_factory=worker_cas,
+                chat=config.chat,
             )
         except BaseException:
             launch["fresh_thread"] = fresh
@@ -865,6 +877,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat = subparsers.add_parser("chat", help="start or resume an interactive session")
     chat.add_argument("--root", type=Path, help="project root (default: the current directory)")
     chat.add_argument("--project", help=f"which problem to open (default: the active one, or {layout.DEFAULT_SLUG})")
+    chat.add_argument("--chat", help=f"which chat of the problem to open (default {layout.DEFAULT_CHAT}); the browser creates others")
     registration = chat.add_mutually_exclusive_group()
     registration.add_argument(
         "--register-lakefile",
