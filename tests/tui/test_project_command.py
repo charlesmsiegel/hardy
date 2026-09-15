@@ -45,17 +45,19 @@ class Reopener:
         self.root = root
         self.fail = fail
         self.opened: list[str] = []
+        self.chats: list[str] = []
         self.carried: list[object] = []
         self.confirmed: list[object] = []
 
-    def __call__(self, slug: str, confirm, current) -> tuple[configuration.Config, object]:
+    def __call__(self, slug: str, confirm, current, *, chat: str = layout.DEFAULT_CHAT) -> tuple[configuration.Config, object]:
         self.opened.append(slug)
+        self.chats.append(chat)
         self.carried.append(current)
         self.confirmed.append(confirm)
         if self.fail is not None:
             raise self.fail
         (self.root / slug).mkdir(parents=True, exist_ok=True)
-        return dataclasses.replace(current, project=slug), getattr(self, "session", None) or object()
+        return dataclasses.replace(current, project=slug, chat=chat), getattr(self, "session", None) or object()
 
 
 @pytest.fixture
@@ -659,11 +661,31 @@ async def test_checkpoint_saves_lists_and_restores_through_the_reopener(ui, root
     (paths.lean / "Main.lean").write_text("theorem t : False := sorry\n", encoding="utf-8")
     ui.confirmations = [True]
     restored = await handlers.handle_checkpoint(ui, f"restore {saved.id}", state)
-    assert session.closed and reopener.opened == ["sylow"]
+    assert session.closed and reopener.opened == ["sylow"] and reopener.chats == ["main"]
     assert restored.session is reopener.session and restored.config.project == "sylow"
     assert (paths.lean / "Main.lean").read_text(encoding="utf-8") == "theorem t : True := trivial\n"
     assert len(checkpoints.list_checkpoints(paths)) == 2         # what was replaced is kept
     assert "Restored" in ui.text
+
+
+async def test_checkpoint_restore_reopens_the_chat_the_checkpoint_was_taken_in(ui, root):
+    """The checkpoint is the problem as it stood, and where the person was in
+    it is part of that: a checkpoint taken in `aside` reopens on `aside`,
+    even when the restore was asked for from `main`."""
+    from hardy.workflows import checkpoints
+
+    _live_problem(root, "sylow")
+    aside = dataclasses.replace(_settings(root, "sylow"), chat="aside")
+    aside.layout.ensure()
+    saved = checkpoints.save(aside.layout, name="in aside")
+    assert saved.chat == "aside"
+
+    reopener = Reopener(root)
+    state = State(config=_settings(root, "sylow"), session=None, reopen=reopener)
+    ui.confirmations = [True]
+    restored = await handlers.handle_checkpoint(ui, f"restore {saved.id}", state)
+    assert reopener.chats == ["aside"] and restored.config.chat == "aside"
+    assert "Reopened on chat aside" in ui.text
 
 
 async def test_checkpoint_restore_asks_first_and_refuses_an_unknown_id(ui, root):

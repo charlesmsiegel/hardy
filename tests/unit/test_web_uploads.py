@@ -49,6 +49,36 @@ def test_stage_lists_and_suffixes(tmp_path: Path) -> None:
         uploads.discard(problem, "missing.lean")
 
 
+def test_stage_takes_a_name_exclusively_across_threads(tmp_path: Path) -> None:
+    """Two tabs dropping `A.lean` at once each get their own file and their
+    own bytes: the name is taken by creating it, not by looking first."""
+    import threading
+
+    problem = make_problem(tmp_path)
+    results: list[dict] = []
+    errors: list[BaseException] = []
+    go = threading.Barrier(8)
+
+    def drop(index: int) -> None:
+        try:
+            go.wait(5)
+            results.append(uploads.stage(problem, "A.lean", f"-- {index}\n".encode()))
+        except BaseException as error:  # noqa: BLE001 - reported below
+            errors.append(error)
+
+    threads = [threading.Thread(target=drop, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert errors == []
+    names = sorted(result["name"] for result in results)
+    assert len(set(names)) == 8 and names[0] == "A-2.lean" and "A.lean" in names
+    for result in results:
+        assert Path(result["path"]).read_bytes().startswith(b"-- ")
+    assert len({Path(result["path"]).read_bytes() for result in results}) == 8
+
+
 def test_stage_refuses_oversize(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(uploads, "MAX_UPLOAD", 4)
     with pytest.raises(ValueError):

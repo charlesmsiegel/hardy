@@ -75,6 +75,30 @@ def test_restore_puts_the_tree_back_and_keeps_what_it_replaced(tmp_path: Path) -
     assert not any(child.name.startswith(".") for child in tmp_path.iterdir() if child.name != ".hardy")
 
 
+def test_a_failed_swap_puts_the_problem_back_where_it_was(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The swap is two renames. If the second fails after the first moved the
+    problem aside, the problem is put back before the failure is raised: a
+    restore that fails must not make the problem unreachable."""
+    import os
+
+    paths = _problem(tmp_path)
+    first = checkpoints.save(paths, name="first")
+    (paths.lean / "Main.lean").write_text("theorem t : False := sorry\n", encoding="utf-8")
+    real = os.replace
+
+    def flaky(source, destination):
+        if Path(source).name.endswith(".restoring"):
+            raise PermissionError("locked")
+        return real(source, destination)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    with pytest.raises(layout.LayoutError, match="locked"):
+        checkpoints.restore(paths, first.id)
+    assert (paths.lean / "Main.lean").read_text(encoding="utf-8") == "theorem t : False := sorry\n"
+    assert paths.record.is_file()
+    assert not any(child.name.startswith(".") for child in tmp_path.iterdir() if child.name != ".hardy")
+
+
 def test_an_unknown_id_is_a_refusal_naming_the_listing(tmp_path: Path) -> None:
     paths = _problem(tmp_path)
     with pytest.raises(checkpoints.CheckpointError, match="/checkpoint list"):

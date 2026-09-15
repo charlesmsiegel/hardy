@@ -11,6 +11,7 @@ to.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -84,11 +85,28 @@ def stage(problem: Path, name: str, data: bytes) -> dict[str, Any]:
     guard = WriteGuard(_dir(problem), create=True)
     stem, suffix = Path(name).stem, Path(name).suffix
     candidate, count = name, 1
-    while guard.path(candidate).exists():
-        count += 1
-        candidate = f"{stem}-{count}{suffix}"
-    guard.write_bytes(candidate, data)
-    return _describe(guard.path(candidate))
+    while True:
+        # The name is taken by creating it exclusively, not by looking first:
+        # two tabs dropping `A.lean` at once both saw it free, and the second
+        # write replaced the first. `x` is `O_CREAT | O_EXCL`, so the loser
+        # of that race is told and moves on to `A-2.lean`.
+        try:
+            handle = guard.open(candidate, "xb")
+        except FileExistsError:
+            count += 1
+            candidate = f"{stem}-{count}{suffix}"
+            continue
+        break
+    path = guard.path(candidate)
+    try:
+        with handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return _describe(path)
 
 
 def staged(problem: Path) -> list[dict[str, Any]]:

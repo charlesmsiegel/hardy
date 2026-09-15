@@ -270,6 +270,13 @@ class WebHost:
         sub = Subscription(self)
         with self._lock:
             if after is not None:
+                # The ring is finite. A tab that was away for longer than it
+                # holds is told so, first, rather than handed the suffix as if
+                # it were the whole: a reply that resumed at its tail would be
+                # missing its head and the page would not know.
+                oldest = self._ring[0]["seq"] if self._ring else self._seq + 1
+                if after < oldest - 1:
+                    sub.queue.put({"seq": oldest - 1, "type": "resync", "lost": oldest - 1 - after})
                 for event in self._ring:
                     if event["seq"] > after:
                         sub.queue.put(event)
@@ -392,6 +399,14 @@ class WebHost:
             )
         if chat != DEFAULT_CHAT and chat not in {known.id for known in chats.list_chats(root / slug)}:
             raise ValueError(f"no chat {chat!r} in {slug}")
+        reason = self._busy()
+        if reason:
+            raise Busy(reason)
+        current = self.state()
+        if slug == current["slug"] and chat == current["chat"]:
+            # Already open. A reopen would rebuild the session and cancel its
+            # background workers over a click on the row that is highlighted.
+            return current
         self._await(self._reopen(slug, chat=chat))
         return self.state()
 
@@ -569,12 +584,13 @@ class WebHost:
             self.emit({"type": "notice", "text": text})
         self.emit({"type": "state", **self.state()})
         arrivals: asyncio.Queue = asyncio.Queue()
+        before = self._leaf()
         try:
             events = self.session.stream(text, author=author) if author else self.session.stream(text)
         except Exception as error:  # noqa: BLE001 - never lose the session
             self._state = dataclasses.replace(self._state, turn_running=False)
             self.emit({"type": "error", "text": f"{type(error).__name__}: {error}"})
-            self.emit({"type": "turn_end", "ok": False})
+            self.emit({"type": "turn_end", "ok": False, "leaf": None})
             self.emit({"type": "state", **self.state()})
             # `changed` too, like every other way a turn ends: a browser that
             # refetches on it would otherwise be left holding the state it had
@@ -583,7 +599,17 @@ class WebHost:
             return
         future = self._loop.run_in_executor(None, self._drain, events, arrivals)
         self._pending_future = future
-        self._loop.create_task(self._run_turn(future, arrivals))
+        self._loop.create_task(self._run_turn(future, arrivals, before))
+
+    def _leaf(self) -> str | None:
+        """The transcript entry the conversation currently ends on, if the session can say."""
+        tree = getattr(self.session, "conversation_tree", None)
+        if tree is None:
+            return None
+        try:
+            return tree().active_leaf
+        except Exception:  # noqa: BLE001 - a leaf is a hint to the page, never a failure of the turn
+            return None
 
     def _drain(self, events: Any, arrivals: asyncio.Queue) -> None:
         """Iterate one turn on a worker; post what arrives back to the loop.
@@ -606,12 +632,17 @@ class WebHost:
         with contextlib.suppress(RuntimeError):
             self._loop.call_soon_threadsafe(arrivals.put_nowait, item)
 
-    async def _run_turn(self, future: Any, arrivals: asyncio.Queue) -> None:
+    async def _run_turn(self, future: Any, arrivals: asyncio.Queue, before: str | None = None) -> None:
         """Republish a turn already running on a worker, event by event.
 
         Every `turn` event carries all five fields even when four of them are
         empty: a browser that has to ask whether a key is present is a browser
         that will one day guess wrong about which it was.
+
+        `turn_end` names the transcript entry the turn left the conversation
+        on, when it moved it: a page loading its transcript while this turn
+        ended holds the same entry under that id, and uses it to tell a replay
+        of a turn already drawn from a turn it has not seen.
         """
         ok = True
         try:
@@ -633,7 +664,8 @@ class WebHost:
             if self._pending_future is future:
                 self._pending_future = None
             self._state = dataclasses.replace(self._state, turn_running=False)
-            self.emit({"type": "turn_end", "ok": ok})
+            after = self._leaf()
+            self.emit({"type": "turn_end", "ok": ok, "leaf": after if after != before else None})
             self.emit({"type": "state", **self.state()})
             self.emit({"type": "changed"})
             self._after_turn()

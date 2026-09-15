@@ -523,7 +523,10 @@ the background to outlive the press. After detachment the children are the
 job's, not the turn's: `foundation/process.py` keeps the thread ids of
 detached jobs, Esc's sweeps pass over their children, and `/cancel` reaches
 them by thread. A detached cell holds the kernel's lock; Esc leaves the kernel
-alone while it does.
+alone while it does. Closing the session -- leaving, restoring a checkpoint,
+switching problems -- cancels every detached job and waits for its thread
+before the kernel and the delegation journal go, so the job's result is
+recorded rather than lost with a session torn down under it.
 
 The result is Hardy's own event. When the job ends, a `job` event with the
 whole tool output is appended to the transcript, owed to the model until a

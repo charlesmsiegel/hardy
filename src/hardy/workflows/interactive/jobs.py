@@ -146,9 +146,12 @@ class ComputationJobs:
             job.attached.set()
             job.done.wait()
             raise
-        job.attached.set()
+        # Registered before the job's thread is woken: a job that finished in
+        # the meantime pops itself from `_running` on waking, and a job put
+        # there afterwards would be listed as running for good.
         with self._lock:
             self._running[job.id] = job
+        job.attached.set()
         self._notify(f"detached {job.objective} as background job {job.id}; its result arrives as a notice "
                      "and at the model's next turn")
         return Detached(ToolResult(True, (
@@ -224,6 +227,24 @@ class ComputationJobs:
         """Whether a detached cell owns the kernel, so an Esc must not interrupt it."""
         with self._lock:
             return any(job.name == "cas_run" for job in self._running.values())
+
+    def close(self, timeout: float = 30.0) -> tuple[str, ...]:
+        """Cancel every detached job and wait for its thread to finish; the ids still running after `timeout`.
+
+        For the session's own close: a job's thread holds the tool gate and
+        may be writing a Lean file or running a cell on the kernel, and a
+        session torn down under it would close the kernel and the delegation
+        journal while the job still had a result to record. Cancelling reaches
+        the job's children and its cell; the wait is for the bookkeeping that
+        follows, which is what makes the result a `job` event rather than a
+        thread that died with the process.
+        """
+        with self._lock:
+            jobs = list(self._running.values())
+        for job in jobs:
+            self._cancel(job)
+        deadline = time.monotonic() + max(0.0, timeout)
+        return tuple(job.id for job in jobs if not job.done.wait(max(0.0, deadline - time.monotonic())))
 
     # -- delivery to the model -----------------------------------------------------
 
