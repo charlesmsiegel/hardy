@@ -617,3 +617,63 @@ async def test_a_switched_session_reports_its_notices_to_the_terminal(ui, root):
     assert after.session.on_notice is not None
     after.session.on_notice("d-7 (prove L17) completed: done")
     assert "d-7 (prove L17) completed" in ui.text
+
+
+# -- checkpoints ----------------------------------------------------------
+
+
+def _live_problem(root: Path, slug: str) -> None:
+    paths = layout.Layout(root=root, slug=slug)
+    paths.ensure()
+    paths.record.write_text('{"schema": "hardy.session/v1"}', encoding="utf-8")
+    (paths.lean / "Main.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+
+
+async def test_checkpoint_saves_lists_and_restores_through_the_reopener(ui, root):
+    """`/checkpoint` copies the tree while the session stays open; `restore` closes,
+    swaps and reopens the same problem, keeping what it replaced."""
+    from hardy.workflows import checkpoints
+
+    _live_problem(root, "sylow")
+
+    class Session:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    session = Session()
+    reopener = Reopener(root)
+    reopener.session = object()
+    state = State(config=_settings(root, "sylow"), session=session, reopen=reopener)
+    paths = state.config.layout
+
+    after = await handlers.handle_checkpoint(ui, "before the lemma", state)
+    assert after is state and not session.closed
+    (saved,) = checkpoints.list_checkpoints(paths)
+    assert saved.name == "before the lemma" and saved.id in ui.text
+
+    await handlers.handle_checkpoint(ui, "list", state)
+    assert saved.id in ui.text and "before the lemma" in ui.text
+
+    (paths.lean / "Main.lean").write_text("theorem t : False := sorry\n", encoding="utf-8")
+    ui.confirmations = [True]
+    restored = await handlers.handle_checkpoint(ui, f"restore {saved.id}", state)
+    assert session.closed and reopener.opened == ["sylow"]
+    assert restored.session is reopener.session and restored.config.project == "sylow"
+    assert (paths.lean / "Main.lean").read_text(encoding="utf-8") == "theorem t : True := trivial\n"
+    assert len(checkpoints.list_checkpoints(paths)) == 2         # what was replaced is kept
+    assert "Restored" in ui.text
+
+
+async def test_checkpoint_restore_asks_first_and_refuses_an_unknown_id(ui, root):
+    _live_problem(root, "sylow")
+    state = State(config=_settings(root, "sylow"), session=object(), reopen=Reopener(root))
+    await handlers.handle_checkpoint(ui, "restore nope", state)
+    assert "no checkpoint 'nope'" in ui.text
+    await handlers.handle_checkpoint(ui, "", state)
+    (saved,) = __import__("hardy.workflows.checkpoints", fromlist=["x"]).list_checkpoints(state.config.layout)
+    ui.confirmations = [False]
+    same = await handlers.handle_checkpoint(ui, f"restore {saved.id}", state)
+    assert same is state and "Nothing restored" in ui.text
+    assert dispatch.classify("/checkpoint", handlers.build_registry(), turn_running=True).kind == "refused"
