@@ -97,6 +97,38 @@ def test_a_symlinked_chats_directory_yields_only_main(tmp_path: Path) -> None:
     assert [c.id for c in chats.list_chats(problem)] == ["main"]
 
 
+def test_a_symlinked_chats_directory_refuses_the_write_too(tmp_path: Path) -> None:
+    """Listing already refuses a symlinked `chats/`; writing must refuse it too.
+
+    A single guard on `chats/<id>` proves the leaf against its own RESOLVED
+    parent, so `chats -> /elsewhere` passes it and `chat.json` lands outside
+    the problem -- where `list_chats` will then never look, because it refuses
+    the same link.
+    """
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    outside = tmp_path / "outside-chats"
+    outside.mkdir()
+    try:
+        os.symlink(outside, problem / "chats", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    with pytest.raises(LayoutError):
+        chats.create_chat(problem, "Escaped")
+    assert list(outside.iterdir()) == []
+
+
+def test_a_planted_main_directory_is_not_listed_twice(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    planted = problem / "chats" / "main"
+    planted.mkdir(parents=True)
+    (planted / "chat.json").write_text(
+        json.dumps({"schema": "hardy.chat/v1", "title": "Not the real one", "created": 1.0}), encoding="utf-8"
+    )
+    assert [c.id for c in chats.list_chats(problem)] == ["main"]
+    assert [c.title for c in chats.list_chats(problem)] == ["main"]
+
+
 def test_a_malformed_created_value_is_ignored_not_fatal(tmp_path: Path) -> None:
     problem = tmp_path / "sylow"
     good = chats.create_chat(problem, "Good")

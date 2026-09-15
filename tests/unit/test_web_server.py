@@ -93,6 +93,10 @@ def test_security_headers_and_refusals(server) -> None:
     assert status == 403
     status, _, _ = _call(server, "GET", "/api/state", token=False, headers={"Sec-Fetch-Site": "cross-site"})
     assert status == 403
+    # A token is whatever the client sent, and `compare_digest` raises
+    # `TypeError` on a non-ASCII str: the wrong answer to a wrong token.
+    status, _, _ = _call(server, "POST", "/api/input", {"text": "hi"}, headers={"X-Hardy-Token": "tokén"})
+    assert status == 403
     conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
     conn.request("GET", "/api/state", headers={"Host": "evil.test"})
     assert conn.getresponse().status == 403
@@ -159,6 +163,62 @@ def test_chats_create_rename_open(server) -> None:
     assert status == 200 and json.loads(body)["chat"] == made["id"]
 
 
+def test_projects_route_creates_one_and_refuses_the_rest(server, tmp_path: Path) -> None:
+    """`POST /api/projects` is held to `/project new`'s guards, not to none.
+
+    `prepare_layout` scatters `lean/`, `tex/`, `cas/` and a record through
+    whatever directory it is pointed at, so a name that is already a project
+    -- or a directory somebody else made -- has to be refused before the
+    opener is ever called.
+    """
+    status, _, body = _call(server, "POST", "/api/projects", {"name": "frobenius"})
+    assert status == 200
+    assert "frobenius" in {entry["slug"] for entry in json.loads(body)}
+    status, _, body = _call(server, "POST", "/api/projects", {"name": "sylow"})
+    assert status == 400 and "already a project" in json.loads(body)["error"]
+    stray = tmp_path / "somebody-elses"
+    stray.mkdir()
+    (stray / "notes.txt").write_text("mine", encoding="utf-8")
+    status, _, body = _call(server, "POST", "/api/projects", {"name": "somebody-elses"})
+    assert status == 400 and "not a Hardy project" in json.loads(body)["error"]
+    assert (stray / "notes.txt").read_text(encoding="utf-8") == "mine"
+    assert not (stray / "lean").exists() and not (stray / ".gitignore").exists()
+
+
+def test_open_route_refuses_a_slug_or_chat_nothing_made(server) -> None:
+    status, _, body = _call(server, "POST", "/api/open", {"slug": "nowhere", "chat": "main"})
+    assert status == 400 and "nowhere" in json.loads(body)["error"]
+    status, _, body = _call(server, "POST", "/api/open", {"slug": "sylow", "chat": "never-made"})
+    assert status == 400 and "never-made" in json.loads(body)["error"]
+
+
+def test_library_route_imports_a_staged_document_and_refuses_mid_turn(
+    server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hardy.literature.sources import tools
+
+    monkeypatch.setattr(tools, "library_root", lambda: tmp_path / "library")
+    status, _, body = _call(server, "POST", "/api/upload", raw=b"# A note\n\nTheorem 1. Fine.\n",
+                            headers={"X-Hardy-Filename": "notes.md", "Content-Type": "application/octet-stream"})
+    assert status == 200 and json.loads(body)["kind"] == "source"
+    status, _, body = _call(server, "POST", "/api/library", {"name": "notes.md", "intent": "background"})
+    assert status == 200, body
+    imported = json.loads(body)
+    assert len(imported["artifact"]) == 64 and imported["seed"]
+
+    from hardy.agents.contracts import TurnEvent
+
+    server.host.session.script = [TurnEvent("text", "a")] * 40
+    server.host.session.delay = 0.01
+    _call(server, "POST", "/api/input", {"text": "one"})
+    status, _, body = _call(server, "POST", "/api/library", {"name": "notes.md", "intent": "background"})
+    assert status == 409 and "still running" in json.loads(body)["error"]
+    deadline = time.time() + 5
+    while server.host.state()["turn_running"] and time.time() < deadline:
+        time.sleep(0.02)
+    assert not server.host.state()["turn_running"]
+
+
 def test_panels_and_files(server) -> None:
     problem = server.host.config.layout.problem
     (problem / "lean" / "A.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
@@ -198,7 +258,7 @@ def test_answer_and_cancel(server) -> None:
 
 
 def test_body_limit(server) -> None:
-    status, *_ = _call(server, "POST", "/api/input", raw=b"x" * (1 << 20 + 1),
+    status, *_ = _call(server, "POST", "/api/input", raw=b"x" * ((1 << 20) + 1),
                        headers={"Content-Type": "application/json"})
     assert status == 413
 

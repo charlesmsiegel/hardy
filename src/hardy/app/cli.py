@@ -235,6 +235,28 @@ def _launch(
     return opener, build, close
 
 
+def _requested_chat(config: configuration.Config, requested: str) -> configuration.Config:
+    """`config` aimed at `requested`, or a refusal naming the chat.
+
+    Validated AND checked for existence. `prepare_layout` calls `ensure`,
+    which makes `chats/<id>/` and leaves a transcript in it without a
+    `chat.json` beside it -- and `list_chats` ignores exactly such a
+    directory, so `--chat typo` silently started a transcript the browser
+    never shows and nothing can ever reopen. Chats are made in the browser;
+    this flag only names one.
+    """
+    chat = layout.validate_chat(requested)
+    if chat != layout.DEFAULT_CHAT:
+        from hardy.app.web import chats as web_chats
+
+        known = {listed.id for listed in web_chats.list_chats(config.root / config.project)}
+        if chat not in known:
+            raise layout.LayoutError(
+                f"no chat {chat!r} in {config.project}; chats are created in the browser (`hardy web`)"
+            )
+    return dataclasses.replace(config, chat=chat)
+
+
 def _chat(
     config: configuration.Config,
     *,
@@ -267,7 +289,7 @@ def _chat(
     requested = getattr(args, "chat", None)
     if requested:
         try:
-            config = dataclasses.replace(config, chat=layout.validate_chat(requested))
+            config = _requested_chat(config, requested)
         except layout.LayoutError as error:
             _report(error)
 
@@ -335,7 +357,7 @@ def _web(
     requested = getattr(args, "chat", None)
     if requested:
         try:
-            config = dataclasses.replace(config, chat=layout.validate_chat(requested))
+            config = _requested_chat(config, requested)
         except layout.LayoutError as error:
             parser.error(str(error))
 
@@ -353,11 +375,18 @@ def _web(
         # Suppressed, not asserted: a host that never finished starting is
         # already stopped, and a teardown that raised here would skip the
         # kernel's own close and leave a process behind.
-        with contextlib.suppress(RuntimeError):
-            if host.state()["turn_running"]:
-                host.cancel()
-        host.stop()
-        close()
+        try:
+            with contextlib.suppress(RuntimeError):
+                if host.state()["turn_running"]:
+                    host.cancel()
+            host.stop()
+        finally:
+            # Its own `finally`: `stop` joins a loop thread and closes a
+            # session, and either can raise. The kernel is the session's own
+            # and outlives the host, so a teardown that skipped this left a
+            # computer algebra process behind for the rest of the machine's
+            # uptime.
+            close()
     return 0
 
 

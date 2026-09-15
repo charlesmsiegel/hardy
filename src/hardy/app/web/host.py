@@ -48,6 +48,7 @@ from hardy.app.tui.handlers import build_registry, load_templates
 from hardy.app.tui.ports import State
 from hardy.app.web import chats
 from hardy.app.web.ui import WebUi
+from hardy.workflows.layout import DEFAULT_CHAT, Layout, validate_chat, validate_slug
 
 T = TypeVar("T")
 
@@ -282,10 +283,15 @@ class WebHost:
         it is waiting for, which is the one thing it must always be able to do.
         """
         state = self._state
+        # The STATE's config, not the session's and not the host's launch one.
+        # `MathematicsSession` carries no `model` attribute at all, so asking
+        # it for one always fell through to a config `/model` never touches --
+        # and the header went on naming the model the user had moved off.
+        config = state.config if state is not None else self.config
         return {
-            "slug": self.config.project,
-            "chat": self.config.chat,
-            "model": str(getattr(self.session, "model", self.config.model)),
+            "slug": config.project,
+            "chat": config.chat,
+            "model": str(config.model),
             "turn_running": bool(state and state.turn_running),
             "command_running": self._commands_running > 0,
             "prompts": self._prompts(),
@@ -340,13 +346,50 @@ class WebHost:
     # -- opening ---------------------------------------------------------
 
     def open_chat(self, slug: str, chat: str) -> dict[str, Any]:
-        """Reopen `slug` on `chat` through the opener, replacing the live session."""
+        """Reopen `slug` on `chat` through the opener, replacing the live session.
+
+        Both names are held to what already exists. The opener PREPARES a
+        layout, so an unknown slug did not fail -- it scaffolded a whole
+        problem out of a typo in a request body, and an unlisted chat id left
+        a `chats/<id>/` with a transcript in it and no `chat.json` beside it,
+        which `list_chats` then ignores forever. `/project switch` refuses the
+        first for the same reason; the second has no terminal equivalent
+        because only the browser makes chats.
+        """
+        slug = validate_slug(slug)
+        chat = validate_chat(chat)
+        root = self.config.root
+        if slug != self.config.project and slug not in existing_projects(root):
+            raise ValueError(
+                f"No project named {slug} here. Create it first; /project list shows what is."
+            )
+        if chat != DEFAULT_CHAT and chat not in {known.id for known in chats.list_chats(root / slug)}:
+            raise ValueError(f"no chat {chat!r} in {slug}")
         self._await(self._reopen(slug, chat=chat))
         return self.state()
 
     def create_project(self, name: str) -> list[dict[str, Any]]:
-        """Make a problem and open it; answers with the list the browser redraws."""
-        self._await(self._reopen(name))
+        """Make a problem and open it; answers with the list the browser redraws.
+
+        `/project new`'s guards, and they are not decoration: the opener's
+        `prepare_layout` is `Layout.ensure`, which writes `lean/`, `tex/`,
+        `cas/`, `.local/`, `.build/` and a `.gitignore` into the directory it
+        is given and then a record beside them. Pointed at somebody else's
+        `src/` or `docs/` it scatters a problem through a tree Hardy did not
+        make. Hardy's own abandoned scaffold is the one exception, for the
+        reason `is_bare_scaffold` gives.
+        """
+        slug = validate_slug(name)
+        root = self.config.root
+        if slug in existing_projects(root):
+            raise ValueError(f"{slug} is already a project here. /project switch {slug} opens it.")
+        intended = Layout(root=root, slug=slug)
+        if (root / slug).exists() and not intended.is_bare_scaffold():
+            raise ValueError(
+                f"{slug} already exists here and is not a Hardy project. "
+                f"Remove {root / slug} or choose another name."
+            )
+        self._await(self._reopen(slug))
         return self.projects()
 
     async def _reopen(self, slug: str, chat: str | None = None) -> None:
@@ -380,16 +423,33 @@ class WebHost:
         if arm is not None:
             arm()
         confirm = confirm_assumption(self.ui)
+        # `_state.config`, the way the terminal's `_switch` passes `state.config`:
+        # `/model` replaces the configuration on the state and nowhere else, so
+        # the launch config would reopen on a model the user has moved off.
+        current = self._state.config if self._state is not None else self.config
         call = (
-            functools.partial(self.opener, slug, confirm, self.config, chat=chat)
+            functools.partial(self.opener, slug, confirm, current, chat=chat)
             if chat is not None
-            else functools.partial(self.opener, slug, confirm, self.config)
+            else functools.partial(self.opener, slug, confirm, current)
         )
+        previous = self.session
         try:
             config, session = await self._loop.run_in_executor(None, call)
         finally:
             self._commands_running -= 1
             self.emit({"type": "state", **self.state()})
+        # Only once the opener has returned: a raise leaves the user in the
+        # session they are still in, and closing it would take its worker pool
+        # and its running delegations down under them. The problem being left
+        # takes its background work with it -- `_switch` does the same, and a
+        # failure to clean up is a notice rather than a refusal to switch.
+        if previous is not None and previous is not session:
+            close = getattr(previous, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
+                    self.ui.write(f"Could not close the previous session cleanly: {error}", style="error")
         self._attach(config, session)
         self.opener.session = self.session
         self.emit({"type": "changed"})
@@ -563,6 +623,12 @@ class WebHost:
                 # chat switch moves the session without moving the directory.
                 self._attach(self._state.config, self._state.session)
                 self.opener.session = self.session
+            # Unconditionally, and after the keyed re-attach rather than
+            # inside it: `/model` moves neither the history directory nor the
+            # session, so it takes that branch never -- and the host went on
+            # holding the launch configuration, which is the one `_reopen`
+            # hands the opener and the one every `config.` read here sees.
+            self.config = self._state.config
             queued = self._state.queued_text
             if queued is not None:
                 self._state = dataclasses.replace(self._state, queued_text=None)

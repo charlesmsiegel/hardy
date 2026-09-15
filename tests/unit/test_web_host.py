@@ -20,10 +20,14 @@ class FakeOpener:
         self.tmp_path = tmp_path
         self.session = None
         self.calls = []
+        #: The configuration each open was handed, so a test can say which one
+        #: the host believes is current.
+        self.configs = []
 
     def __call__(self, slug, confirm, current, *, chat="main"):
         import dataclasses
         self.calls.append((slug, chat))
+        self.configs.append(current)
         config = dataclasses.replace(current, project=slug, chat=chat)
         self.session = FakeSession(self.tmp_path / slug, chat)
         return config, self.session
@@ -145,9 +149,14 @@ def test_open_chat_reopens_through_the_opener_and_refuses_mid_turn(tmp_path: Pat
     try:
         from hardy.app.web import chats
         made = chats.create_chat(tmp_path / "sylow", "Lean proof")
+        previous = host.session
         state = host.open_chat("sylow", made.id)
         assert state["chat"] == made.id and host.session.chat == made.id
         assert host.opener.calls == [("sylow", made.id)]
+        # The problem being left takes its background work with it, exactly as
+        # `/project switch` does: a session nobody closed keeps its worker pool
+        # and its running delegations alive behind the one the browser now has.
+        assert previous.closed is True
         host.session.script = [TurnEvent("text", "a")] * 100
         host.session.delay = 0.02
         host.submit("hello")
@@ -166,6 +175,64 @@ def test_create_project_opens_the_new_slug(tmp_path: Path) -> None:
         assert host.state()["slug"] == "frobenius"
         assert {entry["slug"] for entry in listed} >= {"sylow", "frobenius"}
         assert [entry["active"] for entry in listed if entry["slug"] == "frobenius"] == [True]
+    finally:
+        host.stop()
+
+
+def test_create_project_refuses_a_name_that_is_not_hardys_to_take(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        stray = tmp_path / "somebody-elses"
+        stray.mkdir()
+        (stray / "notes.txt").write_text("mine", encoding="utf-8")
+        with pytest.raises(ValueError):
+            host.create_project("somebody-elses")
+        with pytest.raises(ValueError):
+            host.create_project("sylow")
+        assert host.opener.calls == []
+        assert (stray / "notes.txt").read_text(encoding="utf-8") == "mine"
+    finally:
+        host.stop()
+
+
+def test_open_chat_refuses_a_slug_or_chat_nothing_made(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            host.open_chat("nowhere", "main")
+        with pytest.raises(ValueError):
+            host.open_chat("sylow", "never-made")
+        assert host.opener.calls == []
+        assert not (tmp_path / "nowhere").exists()
+        assert not (tmp_path / "sylow" / "chats" / "never-made").exists()
+    finally:
+        host.stop()
+
+
+def test_a_command_that_replaces_the_config_is_what_the_next_open_uses(tmp_path: Path) -> None:
+    """`/model` replaces the config and nothing else; the host must follow it.
+
+    The terminal's `_switch` hands `state.config` to the opener for exactly
+    this reason, and the header reads the same field. A host that kept the
+    launch config reopened on the model the user had already moved off, and
+    said so in the header for as long as the session lasted.
+    """
+    make_problem(tmp_path, "sylow")
+
+    async def remodel(ui, argument, state):
+        return dataclasses.replace(state, config=dataclasses.replace(state.config, model="other"))
+
+    opener = FakeOpener(tmp_path)
+    host = WebHost(make_config(tmp_path), opener, lambda confirm, cfg: FakeSession(cfg.layout.problem),
+                   registry=[Command("model", "switch the model", remodel)])
+    host.start()
+    try:
+        sub = host.subscribe()
+        assert host.submit("/model other")["kind"] == "command"
+        _drain(sub, {"changed"})
+        assert host.state()["model"] == "other"
+        host.open_chat("sylow", "main")
+        assert opener.configs[-1].model == "other"
     finally:
         host.stop()
 

@@ -122,7 +122,12 @@ class Handler(BaseHTTPRequestHandler):
             ok = ok and origin == f"http://{host}"
         if mutation:
             ok = ok and origin == f"http://{host}"
-            ok = ok and secrets.compare_digest(self.headers.get("X-Hardy-Token", ""), self.server.token)
+            # `isascii` first: `compare_digest` raises `TypeError` on a str
+            # holding a codepoint above 127, and a header is whatever the
+            # client sent. A traceback out of the handler thread is a worse
+            # answer to a wrong token than the 403 a wrong token gets.
+            token = self.headers.get("X-Hardy-Token", "")
+            ok = ok and token.isascii() and secrets.compare_digest(token, self.server.token)
         if not ok:
             self._discard_body()
             self._json(403, {"error": "Open this action from the local Hardy page."})
