@@ -64,10 +64,14 @@ def test_a_complete_installation_passes_every_required_check(tmp_path: Path, pro
     binaries = tmp_path / "bin"
     fake_tool(binaries, "lake", message="Lake version 5.0.0")
     fake_tool(binaries, "pdflatex", message="pdfTeX 3.141592653")
+    # The staged document compiler is a required check of its own, apart from
+    # the interactive session's `latex_command`.
+    fake_tool(binaries, "tectonic", message="Tectonic 0.15.0")
     monkeypatch.setenv("PATH", str(binaries), prepend=os.pathsep)
     checks = doctor.run_checks(configuration(tmp_path))
     assert [check.name for check in checks if check.required and not check.ok] == []
     assert named(checks, "lean").detail == "Lake version 5.0.0"
+    assert named(checks, "tectonic").detail == "Tectonic 0.15.0"
     assert doctor.report(checks) == 0
 
 
