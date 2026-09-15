@@ -44,6 +44,7 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 - [Isolation](isolation.md): specifies the confinement boundary a sandboxed run must implement.
 - [Delegation and research-swarm design](superpowers/specs/2026-09-10-delegation-swarm-design.md): the architectural specification for background workers and research swarms over the project ledger.
 - [General literature sources design](superpowers/specs/2026-09-10-general-literature-sources-design.md): the architecture for managed scholarly sources, shared mathematical claims and reusable formalizations.
+- [Workbench second pass design](superpowers/specs/2026-09-15-workbench-second-pass-design.md): computations as files under `cas/`, a model picker in the browser, background computation under the delegation hierarchy, and messages queued during a turn.
 
 ## Archive
 
