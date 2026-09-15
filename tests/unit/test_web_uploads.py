@@ -8,10 +8,19 @@ from web_fakes import make_problem
 from hardy.app.web import uploads
 
 
-@pytest.mark.parametrize("bad", ["", ".", "..", ".hidden", "a/b", "a\\b", "con.lean", "x:y", "trailing ", "nul"])
+@pytest.mark.parametrize(
+    "bad",
+    ["", ".", "..", ".hidden", "a/b", "a\\b", "con.lean", "x:y", "trailing ", "nul",
+     "con.v2.lean", "nul.tar.gz", "a\x7fb"],
+)
 def test_safe_name_refuses(bad: str) -> None:
     with pytest.raises(ValueError):
         uploads.safe_name(bad)
+
+
+def test_safe_name_refuses_overlong() -> None:
+    with pytest.raises(ValueError):
+        uploads.safe_name("a" * 256 + ".lean")
 
 
 def test_safe_name_keeps_interior_dots() -> None:

@@ -20,6 +20,9 @@ from hardy.workflows.layout import LOCAL_DIR, RESERVED_CHARACTERS, RESERVED_NAME
 #: A generous ceiling on one staged file, well under what a browser upload
 #: or the loopback server would hold in memory at once.
 MAX_UPLOAD = 32 << 20
+#: Comfortably past any real file name; a browser drop that names a file
+#: longer than this is not a name Hardy needs to accommodate.
+MAX_NAME_LENGTH = 255
 UPLOADS_DIR = "uploads"
 SOURCE_SUFFIXES = {".pdf", ".epub", ".djvu", ".txt", ".md", ".html", ".htm", ".xml"}
 
@@ -29,15 +32,21 @@ def safe_name(name: str) -> str:
 
     Interior dots are kept -- `Sylow.v2.lean` is an ordinary name -- but a
     leading or trailing dot, a trailing space, a path separator, a control
-    character, a Windows-forbidden character, or a reserved device name by
-    its stem (`con.lean`, `nul`) is refused outright, the same shape of check
-    `hardy.workflows.layout.validate_slug` applies to a project slug.
+    character, a Windows-forbidden character, or a reserved device name is
+    refused outright, the same shape of check
+    `hardy.workflows.layout.validate_slug` applies to a project slug. The
+    reserved-name check matches everything before the *first* dot, the way
+    Windows reserves it and the way `validate_slug` checks it
+    (`text.partition(".")[0]`) -- `Path.stem` strips only the last suffix, so
+    it would wave `con.v2.lean` and `nul.tar.gz` through.
     """
     if not name or name in {".", ".."} or name.startswith(".") or name != name.rstrip(" ."):
         raise ValueError(f"not a usable file name: {name!r}")
-    if "/" in name or "\\" in name or any(ord(c) < 32 for c in name) or set(name) & RESERVED_CHARACTERS:
+    if len(name) > MAX_NAME_LENGTH:
+        raise ValueError(f"file name is longer than {MAX_NAME_LENGTH} characters: {name!r}")
+    if "/" in name or "\\" in name or any(ord(c) < 32 or c == "\x7f" for c in name) or set(name) & RESERVED_CHARACTERS:
         raise ValueError(f"not a usable file name: {name!r}")
-    if Path(name).stem.lower() in RESERVED_NAMES:
+    if name.partition(".")[0].lower() in RESERVED_NAMES:
         raise ValueError(f"not a usable file name: {name!r}")
     return name
 
