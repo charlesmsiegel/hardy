@@ -47,6 +47,15 @@ INPUT_HISTORY = "input-history"
 DEFAULT_SLUG = "main"
 
 
+#: The chat every problem has: the legacy `transcript.jsonl` beside the
+#: record, and `.local/state.json`. Other chats live under `chats/<id>/`.
+DEFAULT_CHAT = "main"
+
+CHATS_DIR = "chats"
+
+CHAT_META = "chat.json"
+
+
 #: The working directories a CAS export gives a kernel that runs the user's own
 #: cells. Named here rather than in `cas_export.py` because the ignore rules
 #: below have to name the same directories, and two spellings of one name is
@@ -127,12 +136,21 @@ def validate_slug(slug: str) -> str:
     return text
 
 
+def validate_chat(name: str) -> str:
+    """A chat id is held to the same rule as a slug: it becomes a path."""
+    try:
+        return validate_slug(name)
+    except LayoutError as error:
+        raise LayoutError(str(error).replace("project slug", "chat id", 1)) from None
+
+
 @dataclass(frozen=True)
 class Layout:
-    """Every path a single problem owns, derived from a root and a slug."""
+    """Every path a single problem owns, derived from a root, a slug and a chat."""
 
     root: Path
     slug: str
+    chat: str = DEFAULT_CHAT
 
     @property
     def problem(self) -> Path:
@@ -163,12 +181,30 @@ class Layout:
         return self.problem / RECORD
 
     @property
+    def chats_root(self) -> Path:
+        return self.problem / CHATS_DIR
+
+    @property
+    def transcript_dir(self) -> Path:
+        """Where this chat's transcript lives: the problem itself for `main`."""
+        if self.chat == DEFAULT_CHAT:
+            return self.problem
+        return self.chats_root / self.chat
+
+    @property
     def transcript(self) -> Path:
-        return self.problem / TRANSCRIPT
+        return self.transcript_dir / TRANSCRIPT
+
+    @property
+    def local_chat(self) -> Path:
+        """This chat's machine-local directory: `.local/` itself for `main`."""
+        if self.chat == DEFAULT_CHAT:
+            return self.local
+        return self.local / CHATS_DIR / self.chat
 
     @property
     def local_state(self) -> Path:
-        return self.local / LOCAL_STATE
+        return self.local_chat / LOCAL_STATE
 
     @property
     def hardy_dir(self) -> Path:
@@ -315,6 +351,12 @@ class Layout:
         # the root's.
         for directory in (self.lean, self.tex, self.cas, self.local, self.build):
             _ensure_dir(directory, problem)
+        if self.chat != DEFAULT_CHAT:
+            # Each level proven to be its parent's own child, like `.local`.
+            _ensure_dir(self.chats_root, problem)
+            _ensure_dir(self.transcript_dir, self.chats_root.resolve())
+            _ensure_dir(self.local / CHATS_DIR, self.local.resolve())
+            _ensure_dir(self.local_chat, (self.local / CHATS_DIR).resolve())
         _ensure_dir(self.hardy_dir, root)
         # The ignore files this layout generates have no legitimate reason to
         # be symlinks at all -- unlike a directory, which a user might
