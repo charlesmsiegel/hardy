@@ -18,11 +18,15 @@ Thread ownership, since three threads meet here:
   `_abandoned`. Everything that touches them goes through `_call`, which
   marshals from an HTTP worker and runs inline when it is already on the loop.
 * Any thread may `emit`: a tool call writing through `WebUi.from_thread`, the
-  session's `on_notice`, an HTTP request. The sequence counter, the ring and
-  the subscriber set are therefore under `_lock`, and each subscriber has its
-  own `queue.Queue` so a slow reader never blocks the writer.
-* The executor thread owns only the iteration of one turn, and posts what it
-  sees back through `call_soon_threadsafe`.
+  session's `on_notice`, an HTTP request. Numbering, the ring and the delivery
+  are one critical section under `_lock`, because the number is a promise
+  about the order a subscriber sees; each subscriber has its own unbounded
+  `queue.Queue`, so holding the lock across delivery waits on nothing.
+* The executor threads own the two things that block: the iteration of one
+  turn, and the opener. Neither touches the host except through
+  `call_soon_threadsafe` or by returning to the loop, and both are there so
+  the loop can keep answering while they run -- a turn has to be cancellable,
+  and a reopen probing a cold computer algebra kernel has to be too.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import functools
 import queue
 import threading
 from collections import deque
@@ -131,15 +136,28 @@ class WebHost:
             self.ui.write(notice, style="error")
 
     def _attach(self, config: Any, session: Any) -> None:
-        """Adopt a session as the live one. Loop thread only."""
+        """Adopt a session as the live one. Loop thread only.
+
+        A retarget REPLACES the four fields that name the session and leaves
+        the rest of the state alone, the way `Shell.retarget` does. Rebuilding
+        it reverted `turn_running`, `queued_text` and `done` to their defaults,
+        which is not bookkeeping: `_run_command` reads `queued_text` after a
+        retarget, so a resumed continuation was dropped; and a safe-in-flight
+        command finishing after a switch could clear `turn_running` under a
+        turn that was already streaming, leaving the next `submit` free to
+        call `stream` on a session in the middle of one.
+        """
         self.config, self.session = config, session
         if hasattr(session, "on_notice"):
             # Called from whichever thread the session is on, which is why
             # `emit` takes a lock rather than assuming the loop.
             session.on_notice = lambda text: self.emit({"type": "notice", "text": text})
-        self._state = State(
-            config=config, session=session, reopen=self.opener, commands=tuple(self.registry)
-        )
+        fields = {
+            "config": config, "session": session,
+            "reopen": self.opener, "commands": tuple(self.registry),
+        }
+        # Only the launch builds one from nothing; there is no state to keep.
+        self._state = State(**fields) if self._state is None else dataclasses.replace(self._state, **fields)
         self.emit({"type": "state", **self.state()})
 
     def stop(self) -> None:
@@ -199,24 +217,44 @@ class WebHost:
     async def _wrap(self, fn: Callable[[], T]) -> T:
         return fn()
 
+    def _await(self, coro: Any) -> Any:
+        """Run `coro` on the loop thread and wait for it, from another thread.
+
+        `_call`'s guard, for work that has to await something -- an open on a
+        worker -- rather than run straight through. There is no inline branch
+        for the loop thread: a coroutine cannot be run by the thread already
+        waiting on it, so that call is refused rather than left to deadlock.
+        The coroutine is closed on every refusal, or it would warn that it was
+        never awaited.
+        """
+        if not self._running:
+            coro.close()
+            raise RuntimeError("the web host is not running")
+        if threading.current_thread() is self._thread:
+            coro.close()
+            raise RuntimeError("this must be awaited on the loop, not called through the host")
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
     # -- events ----------------------------------------------------------
 
     def emit(self, event: dict[str, Any]) -> int:
         """Number `event` and hand it to every subscriber. Callable from any thread.
 
-        The number is assigned under the lock with the append, so the ring is
-        ordered by it and a reconnecting tab can ask for everything after the
-        last one it drew. Delivery happens outside the lock: a queue put is
-        unbounded and cannot block, but holding a lock across a caller's data
-        structure is how a broadcaster acquires a deadlock later.
+        Numbering, the ring append and the delivery are all one critical
+        section, because the number is a promise about the order a subscriber
+        sees. Delivering outside the lock let an SDK tool thread writing
+        through `WebUi.from_thread` hand a queue `seq` 6 while the loop's own
+        emit was still handing it `seq` 5 -- and a tab that reconnects with
+        `after=` the last number it drew would then have skipped one for good.
+        Safe to hold: every subscriber queue is unbounded, so `put` returns
+        without waiting on anything.
         """
         with self._lock:
             self._seq += 1
             event = {"seq": self._seq, **event}
             self._ring.append(event)
-            subscribers = list(self._subscribers)
-        for sub in subscribers:
-            sub.queue.put(event)
+            for sub in self._subscribers:
+                sub.queue.put(event)
         return event["seq"]
 
     def subscribe(self, after: int | None = None) -> Subscription:
@@ -297,46 +335,58 @@ class WebHost:
 
     def open_chat(self, slug: str, chat: str) -> dict[str, Any]:
         """Reopen `slug` on `chat` through the opener, replacing the live session."""
-        def go() -> dict[str, Any]:
-            reason = self._busy()
-            if reason:
-                raise Busy(reason)
-            if self.ui is not None:
-                # The prompts belong to the session being replaced; leaving
-                # them open would let an answer resolve a gate for a session
-                # that no longer exists.
-                self.ui.cancel_prompts()
-            self._commands_running += 1
-            try:
-                config, session = self.opener(slug, confirm_assumption(self.ui), self.config, chat=chat)
-            finally:
-                self._commands_running -= 1
-            self._attach(config, session)
-            self.opener.session = self.session
-            self.emit({"type": "changed"})
-            return self.state()
-
-        return self._call(go)
+        self._await(self._reopen(slug, chat=chat))
+        return self.state()
 
     def create_project(self, name: str) -> list[dict[str, Any]]:
         """Make a problem and open it; answers with the list the browser redraws."""
-        def go() -> list[dict[str, Any]]:
-            reason = self._busy()
-            if reason:
-                raise Busy(reason)
-            if self.ui is not None:
-                self.ui.cancel_prompts()
-            self._commands_running += 1
-            try:
-                config, session = self.opener(name, confirm_assumption(self.ui), self.config)
-            finally:
-                self._commands_running -= 1
-            self._attach(config, session)
-            self.opener.session = self.session
-            self.emit({"type": "changed"})
-            return self.projects()
+        self._await(self._reopen(name))
+        return self.projects()
 
-        return self._call(go)
+    async def _reopen(self, slug: str, chat: str | None = None) -> None:
+        """Open `slug` on a worker and adopt what comes back. Loop thread only.
+
+        The opener is not quick and it is not interruptible from where it runs:
+        it prepares the layout, probes a computer algebra kernel -- tens of
+        seconds, on a cold one -- and builds a session, all synchronously. Run
+        on the loop it would pin the one thread that answers everything else,
+        so a status read, a cancel and a prompt answer would all queue behind
+        an open the user is precisely trying to stop. Handed to a worker, the
+        loop stays live and `cancel` can reach `opener.cancel()`, which is the
+        only thing that can stop a reopen at all.
+
+        `arm` is called here, on the loop, before the work is dispatched, for
+        the reason the shell counts a command synchronously: a cancel arriving
+        between the dispatch and the worker's first line has to have something
+        to mark.
+        """
+        reason = self._busy()
+        if reason:
+            raise Busy(reason)
+        if self.ui is not None:
+            # The prompts belong to the session being replaced; leaving them
+            # open would let an answer resolve a gate for a session that no
+            # longer exists.
+            self.ui.cancel_prompts()
+        self._commands_running += 1
+        self.emit({"type": "state", **self.state()})
+        arm = getattr(self.opener, "arm", None)
+        if arm is not None:
+            arm()
+        confirm = confirm_assumption(self.ui)
+        call = (
+            functools.partial(self.opener, slug, confirm, self.config, chat=chat)
+            if chat is not None
+            else functools.partial(self.opener, slug, confirm, self.config)
+        )
+        try:
+            config, session = await self._loop.run_in_executor(None, call)
+        finally:
+            self._commands_running -= 1
+            self.emit({"type": "state", **self.state()})
+        self._attach(config, session)
+        self.opener.session = self.session
+        self.emit({"type": "changed"})
 
     def run_exclusive(self, fn: Callable[[], T]) -> T:
         """Run `fn` on the calling thread while the session is held as if a command ran.
@@ -424,6 +474,10 @@ class WebHost:
             self.emit({"type": "error", "text": f"{type(error).__name__}: {error}"})
             self.emit({"type": "turn_end", "ok": False})
             self.emit({"type": "state", **self.state()})
+            # `changed` too, like every other way a turn ends: a browser that
+            # refetches on it would otherwise be left holding the state it had
+            # before a turn that never started.
+            self.emit({"type": "changed"})
             return
         future = self._loop.run_in_executor(None, self._drain, events, arrivals)
         self._pending_future = future
