@@ -766,11 +766,12 @@ class CasCommandSession(Streams):
         # both count.
         self.cas = types.SimpleNamespace(
             run=self._run,
+            typed_path=lambda: "typed/0001.py",
             session=types.SimpleNamespace(interrupt=self._interrupt_cell),
         )
         self.workspace = Path(".")
 
-    def _run(self, source: str, *, author: str):
+    def _run(self, path: str, source: str | None = None, *, author: str):
         self.running.set()
         self.release.wait(timeout=5)
         return types.SimpleNamespace(
@@ -901,7 +902,8 @@ async def test_a_command_in_flight_refuses_a_second_one(settings):
     assert "cannot run while a command is still running" in written
 
 
-async def test_a_command_in_flight_refuses_a_model_turn(settings):
+async def test_a_command_in_flight_queues_a_model_turn(settings):
+    """A line typed during a cell waits for it, and is sent once the cell ends."""
     session = CasCommandSession()
     _, written = await drive(
         settings,
@@ -913,7 +915,8 @@ async def test_a_command_in_flight_refuses_a_model_turn(settings):
             ("\x03", None),
         ],
     )
-    assert "A command is still running" in written
+    assert "queued behind the running command" in written
+    assert "> prove something" in written          # sent once the cell ended
 
 
 async def test_a_safe_command_does_not_steal_a_running_cells_ownership(settings):

@@ -13,6 +13,7 @@ from hardy.agents.contracts import TurnEvent
 from hardy.app.tui.commands import Command
 from hardy.app.tui.handlers import build_registry
 from hardy.app.web.host import Busy, WebHost
+from hardy.workflows.interactive.jobs import CONTINUATION_TEXT
 
 
 class FakeOpener:
@@ -82,15 +83,55 @@ def test_start_publishes_state_and_a_turn_streams(tmp_path: Path) -> None:
         host.stop()
 
 
-def test_second_input_during_a_turn_is_refused_with_the_dispatcher_message(tmp_path: Path) -> None:
+def test_input_during_a_turn_is_queued_and_becomes_the_next_turn_in_order(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
-        host.session.script = [TurnEvent("text", "a")] * 100
+        sub = host.subscribe()
+        host.session.script = [TurnEvent("text", "a")] * 20
         host.session.delay = 0.02
         host.submit("one")
         result = host.submit("two")
-        assert result["kind"] == "refused" and "still running" in result["message"]
-        _drain(host.subscribe(), {"changed"})
+        assert result["kind"] == "queued" and "queued" in result["message"]
+        assert host.submit("three")["kind"] == "queued"
+        assert host.state()["queued"] == 2
+        _drain(sub, {"turn_end"})
+        # The queued lines start the next turn together, in the order typed.
+        _drain(sub, {"turn_end"})
+        assert host.session.sent == ["one", "two\n\nthree"]
+        assert host.state()["queued"] == 0
+        # A command that is not safe in flight is still refused, not queued.
+        host.session.delay = 0.02
+        host.submit("again")
+        refused = host.submit("/goal x")
+        assert refused["kind"] == "refused" and "cannot run" in refused["message"]
+        _drain(sub, {"turn_end"})
+    finally:
+        host.stop()
+
+
+def test_a_finished_job_starts_a_hardy_authored_turn_only_when_the_session_is_idle(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        session = host.session
+        session.owed = True
+        # Idle: the job's end starts a turn of Hardy's, told to the page as a notice.
+        session.on_job_finished()
+        seen = _drain(sub, {"turn_end"})
+        assert any(e["type"] == "notice" and "background work" in e["text"] for e in seen)
+        assert session.sent == [CONTINUATION_TEXT] and session.authors == ["hardy"]
+        # Busy: nothing starts under the running turn. Still owed when that
+        # turn ends, the result starts Hardy's turn then.
+        session.script = [TurnEvent("text", "a")] * 20
+        session.delay = 0.02
+        host.submit("hello")
+        session.owed = True
+        session.on_job_finished()
+        assert session.sent == [CONTINUATION_TEXT, "hello"]
+        _drain(sub, {"turn_end"})
+        _drain(sub, {"turn_end"})
+        assert session.sent == [CONTINUATION_TEXT, "hello", CONTINUATION_TEXT] and not session.owed
+        assert session.authors == ["hardy", None, "hardy"]
     finally:
         host.stop()
 
@@ -262,7 +303,7 @@ def test_a_retarget_mid_turn_keeps_the_turn_running(tmp_path: Path) -> None:
         # Re-attaching names a new session; it does not end the turn that is
         # still streaming out of the old one.
         assert host.state()["turn_running"] is True
-        assert host.submit("second")["kind"] == "refused"
+        assert host.submit("/goal x")["kind"] == "refused"
         _drain(sub, {"turn_end"})
         assert host.state()["turn_running"] is False
     finally:
@@ -319,7 +360,7 @@ def test_an_open_runs_off_the_loop_and_can_be_cancelled(tmp_path: Path) -> None:
         assert opener.entered.wait(5)
         # The loop is still answering, which is the whole point of the worker.
         assert host.state()["command_running"] is True
-        refused = host.submit("x")
+        refused = host.submit("/goal x")
         assert refused["kind"] == "refused" and "command is still running" in refused["message"]
         assert host.cancel() == {
             "stopped": 1,

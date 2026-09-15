@@ -65,6 +65,7 @@ nothing.
 | `context_window` | `HARDY_CONTEXT_WINDOW` | `200000` (tokens) | The context window compaction plans against. Settable because this is a property of the endpoint, not of Hardy: a gateway serving `claude-opus-5` may offer a smaller window than Anthropic does. |
 | `provider_budget` | `HARDY_PROVIDER_BUDGET` | unset | Path to a JSON spend-policy file, resolved relative to the config file that names it. Requires `backend = "api"`. See [Provider budget](cli.md#provider-budget-api-backend) in the command reference for the policy format. |
 | `delegation_workers` | `HARDY_DELEGATION_WORKERS` | `4` | How many background delegation workers an interactive session runs at once. Each worker is its own provider context and its own computer algebra kernel; the pool is a slot count, not a spend limit, and the session's Lean-check and active-time ceilings are what every worker draws from. There is no upper bound here: the machine and the provider set it. |
+| `compute_detach_seconds` | `HARDY_COMPUTE_DETACH_SECONDS` | `10` (seconds) | How long a Lean check or save, a LaTeX check or save, or a computer algebra cell may hold an interactive turn before it is detached into a background job under `/jobs` and the turn goes on without it; the result reaches the model at its next turn. `0` disables detaching, so every such call blocks the turn until it finishes. |
 
 Five settings are constrained beyond their type, and a config file or
 environment value outside the constraint is refused where the file is read:
@@ -77,6 +78,7 @@ environment value outside the constraint is refused where the file is read:
 - `provider_budget` is refused unless `backend` is `api`; the harness-owned
   loop it meters does not exist on the other backends.
 - `delegation_workers` must be a whole number of at least `1`.
+- `compute_detach_seconds` must be zero or a finite number of seconds.
 
 ## Environment variables without a setting
 

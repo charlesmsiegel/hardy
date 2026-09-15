@@ -133,6 +133,7 @@ from hardy.workflows.interactive.documents import (
 from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
 from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
 from hardy.workflows.interactive.history import HistorySnapshot
+from hardy.workflows.interactive.jobs import ComputationJobs
 from hardy.workflows.interactive.record import SchemaError as SchemaError
 from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
@@ -325,7 +326,7 @@ class _ConversationTurn(Iterator[TurnEvent]):
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None, chat: str = DEFAULT_CHAT):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None, chat: str = DEFAULT_CHAT, detach_after: float = 10.0):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -582,6 +583,16 @@ class MathematicsSession:
             notify=self._notify, papers=self.papers, workspace=self.lean_workspace,
             cas_factory=cas_factory,
         )
+        # Detached computation: a check, save or cell that outlives the grace
+        # leaves the turn and continues as a delegation leaf. The owner holds
+        # the tool gate on the job's behalf, records the result as a `job`
+        # event, and renders what is owed ahead of the next provider request.
+        self.jobs = ComputationJobs(
+            detach_after=detach_after, gate=self._gate, record=self._record, recorded=self._recorded,
+            delegations=self.delegations, notify=self._notify, tally=self._tally,
+            cas_session=lambda: self.cas.session if self.cas is not None else None,
+            cancelled=self.turns._cancelled.is_set,
+        )
         # Work that was active when the last process died is unknown, not done.
         self.delegations.recover()
         # And an admission the last process left mid-mutation is a sticky notice, never a success.
@@ -830,12 +841,16 @@ class MathematicsSession:
                 # Owed, not yet receipted: the runtime has not accepted the request.
                 self._attention_owed = [(delivered, epoch, offset) for item in pending[:DEFAULT_BUDGET_ITEMS]
                                         for delivered in (item.id, *item.supersedes)]
+            # The results of detached computations, in full: the attention
+            # item names that a job finished, this is what it found.
+            results = self.jobs.render()
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return block
-        return "\n\n".join(part for part in (block, attention) if part)
+        return "\n\n".join(part for part in (block, attention, results) if part)
 
     def _commit_attention_receipts(self) -> None:
         """The request crossed the runtime boundary: what it carried is now delivered to the model."""
+        self.jobs.mark_delivered()
         owed, self._attention_owed = self._attention_owed, []
         inbox = self.delegations.attention()
         for item_id, epoch, offset in owed:
@@ -873,7 +888,21 @@ class MathematicsSession:
         return started[0].resume_text if started else None
 
     def _human_turn_since(self, offset: int) -> bool:
-        return any(event.get("type") == "user" for event in self.record._recorded(offset))
+        # A turn Hardy started to carry background results is not the
+        # conversation moving on; only a person's line is.
+        return any(event.get("type") == "user" and not event.get("author") for event in self.record._recorded(offset))
+
+    def job_results_owed(self) -> bool:
+        """Whether a detached computation has finished and the model has not yet read its result."""
+        return bool(self.jobs.owed())
+
+    @property
+    def on_job_finished(self) -> Callable[[], None] | None:
+        return self.jobs.on_finished
+
+    @on_job_finished.setter
+    def on_job_finished(self, callback: Callable[[], None] | None) -> None:
+        self.jobs.on_finished = callback
 
     def _project_operations(self):
         """Named ledger operations; called while both session gates are held."""
@@ -4742,17 +4771,18 @@ class MathematicsSession:
             end=self._transcript_end,
         )
 
-    def stream(self, text: str) -> Iterator[TurnEvent]:
+    def stream(self, text: str, *, author: str | None = None) -> Iterator[TurnEvent]:
         with self._conversation_gate:
             if self._runtime_epoch != self.record.history().epoch:
                 raise ValueError("Conversation changed; reopen the session before starting a turn.")
             self._in_flight_text = text
             self._attention_owed = []
             try:
-                events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice)
+                events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice, author=author)
             except BaseException:
                 # The request never reached the provider: nothing was delivered.
                 self._attention_owed = []
+                self.jobs.forget_owed()
                 raise
             self._commit_attention_receipts()
             turn = _ConversationTurn(events)
@@ -4826,16 +4856,18 @@ class MathematicsSession:
         return self.turns.resume_work(self.cas.session if self.cas is not None else None)
 
     def interrupt_work(self) -> int:
-        return self.turns.interrupt_work(self.cas.session if self.cas is not None else None)
+        # A cell a detached job owns is not the turn's to interrupt.
+        return self.turns.interrupt_work(self.cas.session if self.cas is not None and not self.jobs.holds_cas() else None)
 
     def escalate(self) -> int:
-        return self.turns.escalate(self.cas.session if self.cas is not None else None)
+        return self.turns.escalate(self.cas.session if self.cas is not None and not self.jobs.holds_cas() else None)
 
     def record_abandonment(self, reason: str) -> None:
         return self.turns.record_abandonment(reason, self._turn_persistence())
 
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        return self.turns._dispatch(name, arguments, tool=self._tool, persistence=self._turn_persistence())
+        return self.turns._dispatch(name, arguments, tool=self._tool, persistence=self._turn_persistence(),
+                                    detach=self.jobs.call)
 
     def _refuse_cancelled(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         return self.turns._refuse_cancelled(name, arguments, self._turn_persistence())

@@ -586,3 +586,30 @@ def test_a_guarded_run_does_not_leave_its_group_behind_when_the_caller_is_interr
             return
         time.sleep(0.05)
     raise AssertionError('the probe was left running after the caller unwound')
+
+
+def test_a_detached_threads_child_is_outside_the_turns_sweeps_and_reached_by_thread(tmp_path) -> None:
+    """A background job's child is not what Esc was pressed for; `/cancel` reaches it by thread."""
+    process = importlib.import_module('hardy.foundation.process')
+    ready = tmp_path / 'ready'
+    spec = process.ProcessSpec(
+        argv=(sys.executable, str(EMITTER), '--ready', str(ready), '--sleep-after', '30'),
+        cwd=tmp_path, timeout_seconds=30, max_output_bytes=4_096,
+    )
+    outcome = []
+    worker = threading.Thread(target=lambda: outcome.append(process.run_process(spec)))
+    worker.start()
+    process.detach_thread(worker.ident)
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not ready.exists():
+            time.sleep(0.01)
+        assert ready.exists()
+        assert process.interrupt_children() == 0      # the sweep passes over it
+        assert worker.is_alive()
+        assert process.interrupt_thread(worker.ident) == 1
+        worker.join(timeout=10)
+        assert not worker.is_alive() and outcome[0].interrupted
+    finally:
+        process.reattach_thread(worker.ident)
+        process.resume_children()

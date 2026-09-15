@@ -19,6 +19,12 @@ DEFAULT_LEAN_COMMAND = "lake env lean"
 # Importing Mathlib costs tens of seconds on a cold machine, so the default is
 # generous; a fast environment simply never reaches it.
 DEFAULT_LEAN_TIMEOUT = 180.0
+# How long a Lean check, a Lean save, a LaTeX check or save, or a computer
+# algebra cell may hold an interactive turn before it is detached into a
+# background job and the turn goes on without it. Ten seconds keeps a quick
+# check inline and hands a Mathlib-sized one to the background; zero disables
+# detaching and every call blocks the turn as it used to.
+DEFAULT_COMPUTE_DETACH_SECONDS = 10.0
 DEFAULT_LATEX_COMMAND = "pdflatex -interaction=nonstopmode -halt-on-error"
 DEFAULT_RUNS_ROOT = "runs"
 DEFAULT_LAKE = "lake"
@@ -54,6 +60,7 @@ SETTINGS = {
     "context_window": "HARDY_CONTEXT_WINDOW",
     "provider_budget": "HARDY_PROVIDER_BUDGET",
     "delegation_workers": "HARDY_DELEGATION_WORKERS",
+    "compute_detach_seconds": "HARDY_COMPUTE_DETACH_SECONDS",
 }
 
 # What a project's own committed config may say. Deliberately tiny: the file
@@ -289,6 +296,9 @@ class Config:
     provider_budget: SpendPolicy | None = None
     # Concurrent background workers a session may run; see DEFAULT_DELEGATION_WORKERS.
     delegation_workers: int = DEFAULT_DELEGATION_WORKERS
+    # See DEFAULT_COMPUTE_DETACH_SECONDS: the grace a computation gets before
+    # it is detached from the turn into a background job.
+    compute_detach_seconds: float = DEFAULT_COMPUTE_DETACH_SECONDS
     # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
@@ -554,6 +564,14 @@ def load(
     if delegation_workers < 1:
         raise ValueError(f"delegation_workers must be at least 1, not {delegation_workers}")
 
+    raw_detach = values.get("compute_detach_seconds", DEFAULT_COMPUTE_DETACH_SECONDS)
+    try:
+        compute_detach_seconds = float(raw_detach)
+    except (TypeError, ValueError):
+        raise ValueError(f"compute_detach_seconds must be a number of seconds, not {raw_detach!r}") from None
+    if compute_detach_seconds != compute_detach_seconds or compute_detach_seconds < 0 or compute_detach_seconds == float("inf"):
+        raise ValueError(f"compute_detach_seconds must be zero or a finite number of seconds, not {raw_detach!r}")
+
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
@@ -597,6 +615,7 @@ def load(
         project_context=flag("project_context", True),
         context_window=context_window,
         delegation_workers=delegation_workers,
+        compute_detach_seconds=compute_detach_seconds,
         provider_budget=provider_budget,
         path=path if path.exists() else None,
         requested_path=path,

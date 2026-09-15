@@ -79,7 +79,10 @@ class WorkerExecutor(Protocol):
     def shutdown(self, *, wait: bool) -> None: ...
 
 
-class _LocalHandle:
+class JobHandle:
+    """A `WorkerHandle` over a future: the pool's own jobs use it, and so does a
+    computation that runs on a thread of its own and resolves the future itself."""
+
     def __init__(self, name: str, token: CancelToken, future: Future) -> None:
         self.name = name
         self.token = token
@@ -123,7 +126,7 @@ class LocalExecutor:
                 with self._lock:
                     self._running -= 1
 
-        return _LocalHandle(job.name, token, self._pool.submit(run))
+        return JobHandle(job.name, token, self._pool.submit(run))
 
     def active(self) -> int:
         with self._lock:

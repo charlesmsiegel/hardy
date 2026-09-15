@@ -73,6 +73,11 @@ class FakeSession:
         self.usage = Usage()
         self.delegations = FakeDelegations()
         self.on_notice = None
+        self.on_job_finished = None
+        #: Whether a detached job's result is waiting for the model; set by a test.
+        self.owed = False
+        #: Who each turn was started by: None for a person, "hardy" for the host.
+        self.authors: list = []
         self.confirm = None
         self._history = History()
         self.raise_on_stream: Exception | None = None
@@ -80,13 +85,21 @@ class FakeSession:
         #: turn open long enough to submit a second line against it.
         self.delay = 0.0
 
-    def stream(self, text: str):
+    def job_results_owed(self) -> bool:
+        return self.owed
+
+    def stream(self, text: str, *, author: str | None = None):
         self.sent.append(text)
+        self.authors.append(author)
+        # A request that starts carries whatever results were owed, as the
+        # real session's `mark_delivered` does when the runtime accepts it.
+        self.owed = False
         if self.raise_on_stream is not None:
             raise self.raise_on_stream
         event: dict[str, Any] = {
             "type": "user",
             "message": {"role": "user", "content": text},
+            **({"author": author} if author else {}),
             "parent_id": self._history.active_leaf,
             "timestamp": time.time(),
         }

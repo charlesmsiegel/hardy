@@ -50,7 +50,13 @@ def classify(
     # had just been aimed at the cell still running.
     if text.startswith(" ") or not text.startswith("/"):
         if turn_running or command_running:
-            return Outcome("refused", message=f"{busy} is still running. Wait for it to finish.")
+            # Queued, not refused: the line is kept, in order, and becomes
+            # the next turn's text the moment what is running ends. Only a
+            # message can wait like this -- a command takes the session over
+            # and cannot be deferred without changing what it means.
+            running = "turn" if turn_running else "command"
+            return Outcome("queued", argument=text.strip(),
+                           message=f"queued behind the running {running}; it is sent when that ends")
         return Outcome("send", argument=text.strip())
 
     found = resolve(text, commands)

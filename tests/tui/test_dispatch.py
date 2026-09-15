@@ -34,8 +34,13 @@ def test_a_leading_space_escapes_command_interpretation():
     assert outcome.kind == "send"
 
 
-def test_a_turn_in_flight_refuses_another_submission():
-    assert dispatch.classify("more maths", registry(), turn_running=True).kind == "refused"
+def test_a_message_during_a_turn_is_queued_not_refused():
+    """It is sent, in order, the moment the turn ends; a command still cannot wait."""
+    outcome = dispatch.classify("more maths", registry(), turn_running=True)
+    assert outcome.kind == "queued" and outcome.argument == "more maths"
+    assert "queued behind the running turn" in outcome.message
+    during = dispatch.classify("more maths", registry(), turn_running=False, command_running=True)
+    assert during.kind == "queued" and "command" in during.message
 
 
 def test_a_turn_in_flight_refuses_model_by_name():
@@ -60,16 +65,17 @@ def test_a_turn_in_flight_still_allows_read_only_commands():
         assert dispatch.classify(text, registry(), turn_running=True).kind == "command", text
 
 
-def test_the_leading_space_escape_hatch_is_refused_in_flight():
+def test_the_leading_space_escape_hatch_is_queued_in_flight():
     """It is an ordinary message wearing a different hat, and the busy guard
     used to sit below it -- so it could start a second turn on top of a running
-    one, and start one on top of a `/cas` cell whose Esc it would then disarm."""
+    one, and start one on top of a `/cas` cell whose Esc it would then disarm.
+    Now it waits like any other message rather than starting anything."""
     outcome = dispatch.classify(" prove something", registry(), turn_running=True)
-    assert outcome.kind == "refused"
+    assert outcome.kind == "queued" and outcome.argument == "prove something"
     outcome = dispatch.classify(
         " prove something", registry(), turn_running=False, command_running=True
     )
-    assert outcome.kind == "refused"
+    assert outcome.kind == "queued"
 
 
 def test_the_leading_space_escape_hatch_still_works_when_idle():

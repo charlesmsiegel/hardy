@@ -65,7 +65,9 @@ def transcript(session: Any) -> list[dict[str, Any]]:
             continue
         kind = event.get("type")
         if kind == "user":
-            out.append({"role": "user", "text": str(event.get("message", {}).get("content", "")), "entry_id": entry.entry_id})
+            # A line Hardy started a turn with is Hardy's, and drawn as such.
+            role = "hardy" if event.get("author") == "hardy" else "user"
+            out.append({"role": role, "text": str(event.get("message", {}).get("content", "")), "entry_id": entry.entry_id})
         elif kind == "assistant":
             out.append({
                 "role": "assistant", "text": str(event.get("message", {}).get("content", "")),

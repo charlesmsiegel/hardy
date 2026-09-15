@@ -276,6 +276,11 @@ class _Running:
 
     def __init__(self, child: subprocess.Popen) -> None:
         self.child = child
+        # Which thread started it. A child belongs to whoever owns that thread
+        # at the moment a sweep looks: the turn's, unless the thread has been
+        # detached into a background job -- then Esc's sweeps leave it alone
+        # and `/cancel` reaches it by thread.
+        self.thread = threading.get_ident()
         self.interrupted = threading.Event()
         # That a stop was asked of this child at all, whatever its leader was
         # doing at the time. `interrupted` is the *record* and is set only for
@@ -291,9 +296,36 @@ class _Running:
         # while the terminal had already said the waiting was over.
         self.escalated = threading.Event()
 
+    @property
+    def detached(self) -> bool:
+        return self.thread in _DETACHED
+
 
 _RUNNING: set[_Running] = set()
 _RUNNING_LOCK = threading.Lock()
+#: Threads running a detached computation, by ident, for as long as they do.
+_DETACHED: set[int] = set()
+
+
+def detach_thread(ident: int) -> None:
+    """From now on, the children of thread `ident` are a background job's, not the turn's.
+
+    `interrupt_children` and `stop_children`, which are Esc's, pass over
+    them: a person stopping the model's reply has not asked to stop a check
+    they were told is running in the background. `interrupt_thread` and
+    `stop_thread` are how a cancellation aimed at the job reaches exactly its
+    own children. Decided at the moment of detaching rather than when the
+    thread starts, so a child spawned while the call still held the turn is
+    the turn's until the turn lets it go.
+    """
+    with _RUNNING_LOCK:
+        _DETACHED.add(ident)
+
+
+def reattach_thread(ident: int) -> None:
+    """The job is over; the thread ident may be reused by whoever starts next."""
+    with _RUNNING_LOCK:
+        _DETACHED.discard(ident)
 # How hard a stop is in force, and until when. Cleared at the start of the next
 # turn. Without it, stopping is a one-time sweep over whoever happened to be
 # registered at that instant, and a tool call already past the cancellation gate
@@ -330,7 +362,10 @@ def tracked(child: subprocess.Popen):
         # the snapshot they took or sees the level they set. It cannot fall
         # between the two.
         arriving_into = _STOP_LEVEL
-    if arriving_into:
+    if arriving_into and not entry.detached:
+        # A detached job's child arriving into a stop is not what the stop
+        # was pressed for; `tracked` is inside the lock's shadow no longer,
+        # but `detached` reads the set under it.
         # Signalled regardless -- a group can outlive its leader -- but only
         # *recorded* as stopped if it was still running. A child that finished
         # between the spawn and this line produced a real result, and marking
@@ -366,7 +401,23 @@ def interrupt_children() -> int:
         # `max`, not assignment: a first press arriving after a second one has
         # already escalated must not talk the stop back down.
         _STOP_LEVEL = max(_STOP_LEVEL, _ASKED)
-        entries = list(_RUNNING)
+        entries = [entry for entry in _RUNNING if not entry.detached]
+    return _interrupt(entries)
+
+
+def interrupt_thread(ident: int) -> int:
+    """Ask the children the thread `ident` started to stop. Returns how many.
+
+    A cancellation aimed at one detached computation, not a press aimed at
+    the turn: it leaves the stop level alone, so nothing else is stopped on
+    arrival, and it reaches detached children the sweeps pass over.
+    """
+    with _RUNNING_LOCK:
+        entries = [entry for entry in _RUNNING if entry.thread == ident]
+    return _interrupt(entries)
+
+
+def _interrupt(entries: list[_Running]) -> int:
     for entry in entries:
         # Read before signalling, and it decides only the *record*: a child
         # that had already exited when the press landed finished on its own,
@@ -392,7 +443,18 @@ def stop_children() -> int:
     global _STOP_LEVEL
     with _RUNNING_LOCK:
         _STOP_LEVEL = _INSISTED
-        entries = list(_RUNNING)
+        entries = [entry for entry in _RUNNING if not entry.detached]
+    return _stop(entries)
+
+
+def stop_thread(ident: int) -> int:
+    """Terminate the children the thread `ident` started. Returns how many."""
+    with _RUNNING_LOCK:
+        entries = [entry for entry in _RUNNING if entry.thread == ident]
+    return _stop(entries)
+
+
+def _stop(entries: list[_Running]) -> int:
     for entry in entries:
         running = entry.child.poll() is None
         entry.asked.set()
