@@ -95,24 +95,6 @@ body {
   padding: 0;
 }
 
-.rail__item {
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-family: var(--mono);
-  font-size: 13px;
-}
-
-.rail__item--active {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-}
-
-.rail__note {
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 14px;
-}
-
 .main {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -511,4 +493,563 @@ body {
 .button--yes {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* -- the projects rail --------------------------------------------------- */
+
+.rail__project {
+  list-style: none;
+  margin-bottom: 6px;
+}
+
+.rail__row {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.rail__twist {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 0 2px;
+}
+
+.rail__slug {
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.rail__slug--active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rail__chats {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0 0 0 16px;
+}
+
+.rail__chat,
+.rail__add {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  padding: 3px 6px;
+  text-align: left;
+  width: 100%;
+}
+
+.rail__chat:hover,
+.rail__add:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.rail__chat--live {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.rail__add {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rail__input {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  width: 100%;
+}
+
+.rail__error {
+  color: var(--error);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+/* -- the panels rail ----------------------------------------------------- */
+
+.rail--right {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.tabs {
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 8px 0;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 10px;
+}
+
+.tab--on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.panel__body > :first-child {
+  margin-top: 0;
+}
+
+.panel__heading {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  margin: 18px 0 6px;
+  text-transform: uppercase;
+}
+
+.panel__subheading {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 14px 0 4px;
+}
+
+.panel__note {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.panel__error {
+  color: var(--error);
+  font-size: 12px;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.panel__goal {
+  margin: 0;
+}
+
+.panel__counts,
+.panel__lines {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.panel__lines {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.panel__lines li {
+  overflow-wrap: anywhere;
+}
+
+/* -- files --------------------------------------------------------------- */
+
+.files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.files__item {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  padding: 2px 6px;
+  text-align: left;
+  width: 100%;
+}
+
+.files__item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.files__item--on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.viewer {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.viewer__path {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.viewer__pdf {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: 60vh;
+  width: 100%;
+}
+
+.viewer__text {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+/* -- uploads ------------------------------------------------------------- */
+
+.drop {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.drop--over {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--accent);
+}
+
+.drop input[type="file"] {
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.cards {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+}
+
+.card__name {
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.card__meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card__input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  margin-top: 6px;
+  padding: 4px 6px;
+  width: 100%;
+}
+
+.card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.card__result {
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+.card__result dt {
+  color: var(--muted);
+}
+
+.card__result dd {
+  font-family: var(--mono);
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+/* -- key/value tables ---------------------------------------------------- */
+
+.kv {
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.kv__row {
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.kv dt {
+  color: var(--muted);
+  flex: 0 0 38%;
+  overflow-wrap: anywhere;
+}
+
+.kv dd {
+  flex: 1;
+  font-family: var(--mono);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* -- jobs and branches --------------------------------------------------- */
+
+.jobs,
+.branches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.jobs__row,
+.branch {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.jobs__head,
+.branch__head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.jobs__id,
+.branch__id {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.jobs__objective {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.branch__type {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.branch__lesson {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.branch__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.branch__ask {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* -- the ledger graph ---------------------------------------------------- */
+
+:root {
+  --result: #cfe6d8;
+  --research: #e6dcc4;
+  --concept: #d6dded;
+  --document: #e5d8e6;
+  --other: #e2e2dd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --result: #24463a;
+    --research: #47401f;
+    --concept: #26334c;
+    --document: #3f2a41;
+    --other: #2c2e33;
+  }
+}
+
+.graph__bar {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.graph {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: grab;
+  display: block;
+  height: 55vh;
+  touch-action: none;
+  width: 100%;
+}
+
+.graph:active {
+  cursor: grabbing;
+}
+
+.node {
+  cursor: pointer;
+}
+
+.node__box {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.node__box--result {
+  fill: var(--result);
+}
+
+.node__box--research {
+  fill: var(--research);
+}
+
+.node__box--concept {
+  fill: var(--concept);
+}
+
+.node__box--document {
+  fill: var(--document);
+}
+
+.node__box--other {
+  fill: var(--other);
+}
+
+.node--open .node__box {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.node__label {
+  fill: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.node__badge {
+  fill: var(--accent);
+}
+
+.node__badge-text {
+  fill: var(--panel);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--muted);
+}
+
+.edge--solid {
+  stroke-width: 1.6;
+}
+
+.edge--dashed {
+  stroke-dasharray: 6 4;
+  stroke-width: 1.6;
+}
+
+.edge--dotted {
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+  stroke-width: 1.6;
+}
+
+.edge--thin {
+  stroke-width: 0.8;
+}
+
+.edge--stale {
+  stroke: var(--error);
+}
+
+.edge__head {
+  fill: var(--muted);
+}
+
+.edge__head--stale {
+  fill: var(--error);
+}
+
+.drawer {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+}
+
+.drawer__head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.drawer__statement {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 8px 0 0;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
 }

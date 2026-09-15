@@ -51,8 +51,18 @@ class ScriptedSession(FakeSession):
     def stream(self, text: str):
         if text.strip() != INTERLEAVE:
             return super().stream(text)
-        self.script = [TurnEvent("text", "one "), TurnEvent("text", "two"), TurnEvent("reply", "one two")]
-        events = super().stream(text)
+        # Swapped for this turn and put back, not assigned. Assigning left the
+        # session scripted for every turn after it, so a second `npm run smoke`
+        # against the same server answered `hello` with "one two" and failed on
+        # the fixture rather than on the page. Materialised while the swap is
+        # in place, because `FakeSession.stream` reads `self.script` lazily.
+        original, self.script = self.script, [
+            TurnEvent("text", "one "), TurnEvent("text", "two"), TurnEvent("reply", "one two"),
+        ]
+        try:
+            events = list(super().stream(text))
+        finally:
+            self.script = original
 
         def interleaved():
             for index, event in enumerate(events):

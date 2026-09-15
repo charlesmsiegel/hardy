@@ -1,10 +1,12 @@
 // End-to-end smoke against the real bundle and the real server.
 //
 // Run `uv run python tests/unit/web_smoke_server.py --port 8765` in one shell
-// and this in another. It proves four things no unit test can: the built page
+// and this in another. It proves six things no unit test can: the built page
 // still carries the token placeholder the server stamps, every asset the page
-// asks for is actually served, the event stream opens, and a line posted to
-// `/api/input` comes back down that stream as a `reply`.
+// asks for is actually served, the event stream opens, a line posted to
+// `/api/input` comes back down that stream as a `reply`, every endpoint a
+// panel reads answers JSON, and a file dropped on the page is staged where the
+// uploads panel will find it.
 //
 // Deliberately not a test runner. It exits 0 and prints `smoke ok`, or it
 // throws with the first thing that was wrong.
@@ -104,6 +106,57 @@ function stream(wanted) {
   });
 }
 
+//: Every GET the page makes for a panel, in the order the tabs sit in. A
+//: panel whose endpoint 404s or answers HTML is a panel that would draw the
+//: server's error text and nothing else, and no unit test of `panels.py`
+//: catches a route that was never wired.
+const PANEL_ENDPOINTS = [
+  '/api/state', '/api/commands', '/api/transcript', '/api/projects',
+  '/api/summary', '/api/files', '/api/uploads', '/api/jobs',
+  '/api/tree', '/api/sources', '/api/graph',
+];
+
+async function panels() {
+  for (const path of PANEL_ENDPOINTS) {
+    const response = await fetch(`${base}${path}`);
+    check(response.status === 200, `GET ${path} answered ${response.status}`);
+    const type = response.headers.get('content-type') ?? '';
+    // The static handler answers an unknown route with the page, so a 200
+    // alone does not prove the endpoint exists.
+    check(type.startsWith('application/json'), `GET ${path} answered ${type}, not JSON`);
+    JSON.parse(await response.text());
+  }
+  return PANEL_ENDPOINTS.length;
+}
+
+/** Stage one `.lean` file the way the drop zone does, and see the panel list it. */
+async function staged(token) {
+  const name = `smoke-${Date.now()}.lean`;
+  const put = await fetch(`${base}/api/upload`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Hardy-Token': token,
+      'X-Hardy-Filename': name,
+      Origin: base,
+    },
+    body: 'theorem smoke : True := trivial\n',
+  });
+  const body = await put.text();
+  check(put.status === 200, `POST /api/upload answered ${put.status}: ${body}`);
+  const described = JSON.parse(body);
+  check(described.name === name, `the upload was staged as ${JSON.stringify(described.name)}`);
+  check(described.kind === 'lean', `a .lean file was staged as ${JSON.stringify(described.kind)}`);
+
+  const listed = await fetch(`${base}/api/uploads`);
+  check(listed.status === 200, `GET /api/uploads answered ${listed.status}`);
+  const files = JSON.parse(await listed.text());
+  const found = files.find((file) => file.name === name);
+  check(found, `${name} is not in /api/uploads`);
+  check(found.path.includes(name), `the staged path ${JSON.stringify(found.path)} does not name the file`);
+  return name;
+}
+
 async function send(token, text) {
   const sent = await fetch(`${base}/api/input`, {
     method: 'POST',
@@ -163,7 +216,13 @@ async function main() {
     `the notice did not land between the two text events: ${order.join(' ')}`,
   );
 
-  console.log(`smoke ok (${count} assets, reply "hello", interrupted turn replies "one two" once)`);
+  const endpoints = await panels();
+  const name = await staged(token);
+
+  console.log(
+    `smoke ok (${count} assets, ${endpoints} panel endpoints, staged ${name}, ` +
+      'reply "hello", interrupted turn replies "one two" once)',
+  );
 }
 
 main().catch((error) => {
