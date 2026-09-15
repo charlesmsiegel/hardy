@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import queue
 import threading
 import time
@@ -9,6 +10,8 @@ import pytest
 from web_fakes import FakeSession, make_config, make_problem
 
 from hardy.agents.contracts import TurnEvent
+from hardy.app.tui.commands import Command
+from hardy.app.tui.handlers import build_registry
 from hardy.app.web.host import Busy, WebHost
 
 
@@ -167,6 +170,38 @@ def test_create_project_opens_the_new_slug(tmp_path: Path) -> None:
         host.stop()
 
 
+def test_a_retarget_mid_turn_keeps_the_turn_running(tmp_path: Path) -> None:
+    make_problem(tmp_path, "sylow")
+    config = make_config(tmp_path)
+    replacement = FakeSession(tmp_path / "sylow")
+
+    async def swap(ui, argument, state):
+        # What `/project switch` and a chat switch do to the state: a new
+        # session, everything else carried.
+        return dataclasses.replace(state, session=replacement)
+
+    registry = [*build_registry(), Command("swap", "swap the session", swap, safe_in_flight=True)]
+    host = WebHost(config, FakeOpener(tmp_path),
+                   lambda confirm, cfg: FakeSession(cfg.layout.problem), registry=registry)
+    host.start()
+    try:
+        sub = host.subscribe()
+        host.session.script = [TurnEvent("text", "a")] * 100
+        host.session.delay = 0.02
+        host.submit("hello")
+        assert host.submit("/swap")["kind"] == "command"
+        _drain(sub, {"changed"})  # the command's, long before the turn's
+        assert host.session is replacement
+        # Re-attaching names a new session; it does not end the turn that is
+        # still streaming out of the old one.
+        assert host.state()["turn_running"] is True
+        assert host.submit("second")["kind"] == "refused"
+        _drain(sub, {"turn_end"})
+        assert host.state()["turn_running"] is False
+    finally:
+        host.stop()
+
+
 def test_run_exclusive_refuses_while_a_turn_runs(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
@@ -178,6 +213,99 @@ def test_run_exclusive_refuses_while_a_turn_runs(tmp_path: Path) -> None:
         with pytest.raises(Busy):
             host.run_exclusive(lambda: "never")
         _drain(host.subscribe(), {"turn_end"})
+    finally:
+        host.stop()
+
+
+class BlockingOpener(FakeOpener):
+    """An opener that parks on the loop's behalf, the way a cold kernel probe does."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        super().__init__(tmp_path)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.armed = 0
+        self.cancels = 0
+
+    def __call__(self, slug, confirm, current, *, chat="main"):
+        self.entered.set()
+        self.release.wait(5)
+        return super().__call__(slug, confirm, current, chat=chat)
+
+    def arm(self) -> None:
+        self.armed += 1
+
+    def cancel(self) -> bool:
+        self.cancels += 1
+        return True
+
+
+def test_an_open_runs_off_the_loop_and_can_be_cancelled(tmp_path: Path) -> None:
+    make_problem(tmp_path, "sylow")
+    opener = BlockingOpener(tmp_path)
+    host = WebHost(make_config(tmp_path), opener,
+                   lambda confirm, cfg: FakeSession(cfg.layout.problem))
+    host.start()
+    opening = threading.Thread(target=host.open_chat, args=("sylow", "main"))
+    try:
+        opening.start()
+        assert opener.entered.wait(5)
+        # The loop is still answering, which is the whole point of the worker.
+        assert host.state()["command_running"] is True
+        refused = host.submit("x")
+        assert refused["kind"] == "refused" and "command is still running" in refused["message"]
+        assert host.cancel() == {
+            "stopped": 1,
+            "note": "stopped opening the project; the one you are in is unchanged",
+        }
+        assert opener.armed == 1
+    finally:
+        opener.release.set()
+        opening.join(timeout=5)
+        host.stop()
+    assert not opening.is_alive()
+
+
+class _SlowQueue(queue.Queue):
+    """A subscriber whose delivery takes a moment -- as a real one's does.
+
+    `queue.Queue.put` is fast but not instantaneous: it takes the queue's own
+    mutex and notifies a condition, and a reader holding that mutex makes it
+    wait. Exaggerating the moment is what makes the ordering property
+    observable instead of a coin flip.
+    """
+
+    def put(self, item, *args, **kwargs) -> None:
+        time.sleep(0.0005)
+        super().put(item, *args, **kwargs)
+
+
+def test_concurrent_emits_reach_a_subscriber_in_order(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        sub.queue = _SlowQueue()
+
+        def spam(tag: str) -> None:
+            for index in range(50):
+                host.emit({"type": "notice", "text": f"{tag}-{index}"})
+
+        writers = [threading.Thread(target=spam, args=(tag,)) for tag in ("a", "b")]
+        for writer in writers:
+            writer.start()
+        for writer in writers:
+            writer.join(timeout=30)
+        seen = []
+        while True:
+            try:
+                seen.append(sub.queue.get_nowait()["seq"])
+            except queue.Empty:
+                break
+        assert len(seen) >= 100
+        # The number is a promise about the order a subscriber sees: a tab
+        # reconnecting with `after=` the last one it drew must not have been
+        # handed a later event before an earlier one.
+        assert seen == sorted(seen) and len(set(seen)) == len(seen)
     finally:
         host.stop()
 
