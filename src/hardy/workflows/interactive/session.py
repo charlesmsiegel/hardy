@@ -137,7 +137,7 @@ from hardy.workflows.interactive.record import SchemaError as SchemaError
 from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
 from hardy.workflows.interactive.turns import _digest as _digest
-from hardy.workflows.layout import LOCAL_DIR, LOCAL_STATE, RECORD, TRANSCRIPT, Layout
+from hardy.workflows.layout import DEFAULT_CHAT, RECORD, Layout
 from hardy.workflows.ledger.contracts import ProjectItem, Scope, VersionRef
 from hardy.workflows.ledger.store import LedgerStore
 
@@ -325,7 +325,7 @@ class _ConversationTurn(Iterator[TurnEvent]):
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None, chat: str = DEFAULT_CHAT):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -393,14 +393,21 @@ class MathematicsSession:
         # Named through `layout`, not spelled again here: these two paths and
         # the names the guard is asked for have to agree, and two string
         # literals that must match are one edit away from not matching.
+        #
+        # `chat` selects which conversation this session opens: `main` is the
+        # legacy layout beside the record, any other id lives under
+        # `chats/<id>/`. The record (`session.json`) is shared by every chat
+        # and never moves.
+        paths = Layout(root=workspace.parent, slug=workspace.name, chat=chat)
+        self.chat = chat
         self.state_path = workspace / RECORD
-        self.transcript_path = workspace / TRANSCRIPT
+        self.transcript_path = paths.transcript
         # Machine-local state, beside the record but never part of it. The
         # record is versioned and describes the mathematics; the provider
         # thread and the spend ledger describe this machine and this account,
         # and a clone of the project must not inherit either.
-        self.local_path = workspace / LOCAL_DIR / LOCAL_STATE
-        self.record = SessionRecord(workspace, self._workspace_guard)
+        self.local_path = paths.local_state
+        self.record = SessionRecord(workspace, self._workspace_guard, chat=chat)
         self._local_guard = self.record._local_guard
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
