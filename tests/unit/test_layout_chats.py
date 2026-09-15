@@ -86,6 +86,72 @@ def test_chat_flag_is_parsed() -> None:
     assert build_parser().parse_args(["chat"]).chat is None
 
 
+def _cli_config(tmp_path: Path):
+    from hardy.app import config as configuration
+
+    return configuration.Config(
+        model="m", lean_command=("lean",), lean_project=None, lean_timeout=1.0,
+        latex_command=("pdflatex",), root=tmp_path, project="sylow",
+    )
+
+
+def test_chat_flag_refuses_a_chat_the_browser_never_made(tmp_path: Path, monkeypatch) -> None:
+    """`--chat` names an existing chat; it does not conjure one.
+
+    `prepare_layout` would happily `ensure` `chats/missing/` and leave a
+    transcript there with no `chat.json` beside it -- a directory `list_chats`
+    ignores, so the browser never shows it and nothing can ever reopen it.
+    `prepare_layout` is replaced by a marker here so the refusal can be shown
+    to land BEFORE it, rather than being inferred from a missing directory.
+    """
+    from types import SimpleNamespace
+
+    from hardy.app import cli
+
+    def reached(_config):
+        raise RuntimeError("reached prepare_layout")
+
+    monkeypatch.setattr(cli, "prepare_layout", reached)
+    with pytest.raises(layout.LayoutError) as excinfo:
+        cli._chat(_cli_config(tmp_path), plain=True, args=SimpleNamespace(chat="missing"))
+    assert "missing" in str(excinfo.value) and "hardy web" in str(excinfo.value)
+    assert not (tmp_path / "sylow" / "chats" / "missing").exists()
+
+
+def test_web_refuses_the_same_chat_through_the_parser(tmp_path: Path, capsys, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from hardy.app import cli
+
+    def reached(_config):
+        raise RuntimeError("reached prepare_layout")
+
+    monkeypatch.setattr(cli, "prepare_layout", reached)
+    parser = cli.build_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        cli._web(_cli_config(tmp_path), parser=parser,
+                 args=SimpleNamespace(chat="missing", port=0, open=False))
+    assert excinfo.value.code == 2
+    assert "hardy web" in capsys.readouterr().err
+    assert not (tmp_path / "sylow" / "chats" / "missing").exists()
+
+
+def test_an_existing_chat_is_accepted_by_the_flag(tmp_path: Path, monkeypatch) -> None:
+    """The gate names a chat, not every chat: one the browser made goes through."""
+    from types import SimpleNamespace
+
+    from hardy.app import cli
+    from hardy.app.web import chats
+
+    def reached(_config):
+        raise RuntimeError("reached prepare_layout")
+
+    monkeypatch.setattr(cli, "prepare_layout", reached)
+    made = chats.create_chat(tmp_path / "sylow", "Lean proof")
+    with pytest.raises(RuntimeError, match="reached prepare_layout"):
+        cli._chat(_cli_config(tmp_path), plain=True, args=SimpleNamespace(chat=made.id))
+
+
 def test_session_record_main_is_the_legacy_transcript(tmp_path: Path) -> None:
     from hardy.workflows.interactive.record import SessionRecord
 

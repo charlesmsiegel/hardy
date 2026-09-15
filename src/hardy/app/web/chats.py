@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from hardy.foundation.files import LayoutError, WriteGuard, read_text
+from hardy.foundation.files import LayoutError, guard_for, read_text
 from hardy.workflows.layout import CHAT_META, CHATS_DIR, DEFAULT_CHAT, validate_chat
 
 SCHEMA = "hardy.chat/v1"
@@ -64,6 +64,12 @@ def list_chats(problem: Path) -> list[Chat]:
         for child in root.iterdir():
             if child.is_symlink() or not child.is_dir():
                 continue
+            # A planted `chats/main/chat.json` would otherwise list `main`
+            # twice, once as the legacy transcript above and once as itself --
+            # two rows the browser draws as two chats, both opening the same
+            # one, and the second carrying whatever title the file chose.
+            if child.name == DEFAULT_CHAT:
+                continue
             meta = _read(problem, child.name)
             if meta is None:
                 continue
@@ -77,9 +83,18 @@ def list_chats(problem: Path) -> list[Chat]:
 
 
 def _write(problem: Path, chat: Chat) -> None:
-    WriteGuard(problem / CHATS_DIR / chat.id, create=True).write_json(
-        CHAT_META, {"schema": SCHEMA, "title": chat.title, "created": chat.created}
-    )
+    """Write `chat`'s metadata, proving every component on the way down.
+
+    One guard on `chats/<id>` was not enough and reading already knew it: that
+    rule is "resolved, this is its own parent's immediate child", which
+    `chats -> /elsewhere` satisfies, so a cloned repository carrying that link
+    had `create_chat` write into a directory outside the problem -- one
+    `list_chats` then refuses to read, so the chat existed and was invisible.
+    `guard_for` proves `chats/`, `chats/<id>/` and the leaf in turn, which is
+    exactly what `_read` does through `read_text`.
+    """
+    guard, name = guard_for(problem, f"{CHATS_DIR}/{chat.id}/{CHAT_META}", create=True)
+    guard.write_json(name, {"schema": SCHEMA, "title": chat.title, "created": chat.created})
 
 
 def create_chat(problem: Path, title: str) -> Chat:

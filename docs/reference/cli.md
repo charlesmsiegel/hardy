@@ -51,7 +51,7 @@ Opens the durable terminal session. `--root` and `--project` live here rather th
 | --- | --- | --- | --- |
 | `--root` | `root` in the config file, else the current directory | `HARDY_ROOT` | The directory holding one or more problems. |
 | `--project` | the active one in `<root>/.hardy/config.toml`, else the sole recorded problem when there is exactly one, else `main` | `HARDY_PROJECT` | Which problem to open. |
-| `--chat` | `main` |  | Which chat of the problem to open. `main` is the transcript beside the record; the browser (`hardy web`) creates others under `chats/<id>/`, and this flag opens one of those at the terminal. A per-launch choice: no config key or environment variable. |
+| `--chat` | `main` |  | Which chat of the problem to open. `main` is the transcript beside the record; the browser (`hardy web`) creates others under `chats/<id>/`, and this flag opens one of those at the terminal. It names an existing chat and never makes one: an id with no `chats/<id>/chat.json` behind it is refused, because a chat created here would carry no metadata and the browser would never list it. A per-launch choice: no config key or environment variable. |
 | `--register-lakefile` | ask, when a host `lakefile.toml` exists and both streams are a TTY |  | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. Off a TTY there is no question and no registration, so a piped launch needs this flag to register at all. `--plain` alone does not suppress the offer: the offer is decided by the streams before `--plain` chooses the line-based session, so `hardy --plain chat` in a terminal still asks. |
 | `--no-register-lakefile` | off |  | Never touch the host `lakefile.toml`. Hardy's own resolution does not depend on registration. |
 
@@ -59,13 +59,13 @@ Opens the durable terminal session. `--root` and `--project` live here rather th
 
 ### hardy web
 
-Serves the browser client on `127.0.0.1` and prints the URL. The page runs the same session, record and slash-command registry as `hardy chat`, one live session per problem, and adds a list of chats per problem: `main` is the transcript beside the record, and every other chat is its own `chats/<id>/transcript.jsonl`. Opening a chat reopens the problem's session the way `/project switch` does, so it is refused while a turn or a command is running. Stop the server with Ctrl+C.
+Serves the browser client on `127.0.0.1` and prints the URL. The page runs the same session, record and slash-command registry as `hardy chat`, one live session per problem, and adds a list of chats per problem: `main` is the transcript beside the record, and every other chat is its own `chats/<id>/transcript.jsonl`. Opening a chat reopens the problem's session the way `/project switch` does, so it is refused while a turn or a command is running, and it names a problem and a chat that already exist rather than creating either. Making a problem from the page is held to `/project new`'s guard: a name already taken, or a directory Hardy did not scaffold, is refused rather than having a record and a `lean/` tree scattered through it. Stop the server with Ctrl+C.
 
 | Option | Default | Env var | Meaning |
 | --- | --- | --- | --- |
 | `--root` | `root` in the config file, else the current directory | `HARDY_ROOT` | The directory holding one or more problems. |
 | `--project` | as for `hardy chat` | `HARDY_PROJECT` | Which problem to open first. |
-| `--chat` | `main` |  | Which chat of that problem to open first. |
+| `--chat` | `main` |  | Which chat of that problem to open first; as for `hardy chat`, it must already exist. |
 | `--port` | an ephemeral port |  | The loopback port to listen on. |
 | `--open` | off |  | Open the page in the default browser once the server is up. |
 
