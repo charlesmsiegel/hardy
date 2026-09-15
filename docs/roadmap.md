@@ -1338,7 +1338,7 @@ The current backend-blind menu is a defect and remains in Issues. Longer-term li
 
 ## I3 — Browser client — P1
 
-**Status:** `hardy web` implemented (2026-09-14): a loopback client running the terminal's own registry over one live session per problem, with chats as separate transcripts under `chats/<id>/`, panels for the workspace summary, files and PDFs, jobs and spend, the conversation tree and sources, and the ledger's provenance graph, and uploads staged under `.local/uploads/` and promoted through `/import` or the library. Not done: concurrent chats, browser-side file editing, portable collaborator metadata.
+**Status:** `hardy web` implemented (2026-09-14): a loopback client running the terminal's own registry over one live session per problem, with chats as separate transcripts under `chats/<id>/`, panels for the workspace summary, files and PDFs, jobs and spend, the conversation tree and sources, and the ledger's provenance graph, and uploads staged under `.local/uploads/` and promoted through `/import` or the library. Second pass (2026-09-15, [design](superpowers/specs/2026-09-15-workbench-second-pass-design.md)): every computer algebra cell is a file under `cas/`; a model picker in the header; slash-command completion in the composer; a message sent during a turn is queued; long Lean, LaTeX and CAS calls detach into background jobs under the delegation hierarchy and their results reach the model at its next turn, with Hardy starting a turn of its own when the session is idle; `/checkpoint` saves and restores the whole workspace; the files panel lists `cas/` and draws the journal as cells. Not done: concurrent chats, browser-side file editing, portable collaborator metadata.
 
 **Deps:** I0
 

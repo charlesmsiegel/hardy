@@ -64,6 +64,8 @@ A **root** is any directory holding `.hardy/`; that is the whole of what makes i
 
 `.hardy/lean/` and `.hardy/.build/lean/` are a Lean library shared by every problem in this root, the project-level counterpart to the personal library at `~/.hardy/lean/`. The source directory is committed; its `.build/` is not.
 
+`.hardy/checkpoints/<slug>/<id>/` holds one whole-workspace checkpoint taken by `/checkpoint`: `checkpoint.json` (the id, the name given, the slug, the chat, when it was taken, and how many files and bytes it copied) beside `tree/`, a copy of the problem directory as it stood, less the `cas/` scratch trees and the writer lease files. A checkpoint is one machine's copy and is ignored by `.hardy/.gitignore`; `/checkpoint restore` puts its tree back in the problem's place after checkpointing what it replaces.
+
 `.hardy/papers/` is this root's arXiv library: the full text and metadata of every paper any problem in this root has fetched, shared so that fetching once serves every problem. It is machine-local and never committed. What travels with a clone instead is each problem's own `bibliography.json`, which records the sha256 of the bytes a citation was made against, so a clone with an empty library can still say what a citation is a citation of.
 
 Hardy writes `.hardy/.gitignore` the first time it opens a project under this root, and appends to it (rather than overwriting) on every later open, so a rule already there from a user's own file is left alone. It opens with:
@@ -96,8 +98,10 @@ Everything one problem owns lives under its own directory, and all of it is mean
 │   ├── writeup.tex                    # the fixed document root; every fragment is \input from it
 │   └── references.tex                  # generated from bibliography.json; never hand-edited
 ├── cas/
-│   ├── cells.jsonl                      # every accepted cell, appended in order; the session's durable record, read back on open
+│   ├── cells.jsonl                      # every cell, accepted or not, appended in order with the file it ran from; the session's durable record, read back on open
 │   ├── cells.jsonl.spend.json           # the running kernel-seconds total, written on every charge
+│   ├── examples/orders.py               # a cell the model filed (`cas_run` with a path); any path under cas/ with the backend's suffix
+│   ├── typed/0001.py                    # a cell typed at /cas, numbered in order
 │   ├── session.py                       # (session.sing or session.m2 for the other cas_backend values) the last export
 │   ├── session.ipynb                      # the same session as a notebook
 │   ├── export.json                         # the export manifest: verdicts, file hashes, backend
@@ -110,7 +114,7 @@ Everything one problem owns lives under its own directory, and all of it is mean
 ├── delegations/
 │   ├── journal.jsonl                              # append-only, hash-chained delegation events
 │   ├── journal.lock                               # the journal's OS-level lock file, left in place
-│   └── <delegation-id>/                           # one worker's artifacts
+│   └── <delegation-id>/                           # one worker's artifacts, or a detached computation's (result.json alone)
 │       ├── core.json, brief.json, manifest.json   # what it was launched with
 │       ├── prompt.md                              # the launch prompt it was sent
 │       ├── trajectory.jsonl                       # its own provider events and tool calls
@@ -141,7 +145,7 @@ Everything one problem owns lives under its own directory, and all of it is mean
 
 **`chats/`** holds every conversation but the first. A problem always has the chat `main`: its transcript is `transcript.jsonl` beside the record and its machine-local state is `.local/state.json`, exactly as before. The browser (`hardy web`) can add chats, each with its own `chats/<id>/transcript.jsonl`, committed like the first, and its own `.local/chats/<id>/state.json`, ignored like the first. They share everything else: the record, the ledger, `lean/`, `tex/`, `cas/` and `delegations/` are the problem's, not a chat's. A chat id follows the slug rule. `chat.json` carries the title and creation time and nothing mathematical.
 
-**`lean/`** and **`tex/`** are not paired by name; see the next section for why. **`cas/`** is committed as a whole except its two scratch subdirectories: `replay/` is a fresh kernel's working directory for replaying every accepted cell on export, and `script-run/` is where the rendered script is run to check it against that replay. Both are reset on every export and neither is meant to be read afterward, so neither is versioned.
+**`lean/`** and **`tex/`** are not paired by name; see the next section for why. **`cas/`** holds every cell as a file, filed by the model through `cas_run` under a path of its choosing or by `/cas` under `typed/`, and is committed as a whole except its two scratch subdirectories: `replay/` is a fresh kernel's working directory for replaying every accepted cell on export, and `script-run/` is where the rendered script is run to check it against that replay. Both are reset on every export and neither is meant to be read afterward, so neither is versioned.
 
 **`sources/`** is the problem's seed journal, written by `hardy library seed` and read by the session's source tools: which artifacts of the personal library at `~/.hardy/library/` this problem may read, by digest, with the edition and tree it was seeded under. It holds refs only, so it is committed like `bibliography.json` while the bytes it names stay on the machine that imported them.
 

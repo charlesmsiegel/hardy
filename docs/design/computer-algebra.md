@@ -66,6 +66,34 @@ that cannot promise is obedience: a cell inside a C loop that never returns to
 its interpreter does not see the signal, so an interrupt unanswered within a
 short grace escalates to exactly what a timeout did.
 
+## A cell is a file
+
+A cell used to be a string that lived only in a tool call and the journal. It
+is now a file under the problem's `cas/` directory: `cas_run` takes a path and
+optional source, writes the file first when source is given, and runs the file
+in the persistent kernel as one cell (`algebra/tools.py`). Without source the
+file already there runs again. A typed `/cas` cell is filed under `typed/`
+with the next free number. What this buys is the same thing `lean/` buys: a
+computation a reader can open, diff, and rerun, and a tree that git tracks
+beside the theorems the computation was about.
+
+The persistent kernel is untouched by this. State still carries over between
+cells, so a file that defines a ring and a file that uses it are two files run
+in order, as Lean modules are saved in dependency order; the exported script
+remains the whole reproduction, and each cell's header line in it, and each
+notebook cell's metadata, names the file the cell came from. The record keeps
+the cell's source beside its `path`, because the file may be rewritten later
+and the journal has to say what ran, not what the path holds now. Deleting a
+file deletes the file and not the cells it ran: a record that forgot a
+computation when its source was removed would be a record edited after the
+fact.
+
+The path is model output and gets no benefit of the doubt: it must stay under
+`cas/`, carry the backend's own suffix so a Singular session cannot file a
+`.py` it would then feed to Singular, and name none of Hardy's own files, the
+journal and its siblings, the export's script, notebook and manifest, nor land
+in the scratch trees an export empties.
+
 ## The log is append-only and single-schema
 
 Every line of the journal is a `CellRecord` (`algebra/contracts.py`). `reset`

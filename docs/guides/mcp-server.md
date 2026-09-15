@@ -50,7 +50,7 @@ them rather than with tools that could only fail:
 
 | Tool | What it does |
 | --- | --- |
-| `cas_run` | Execute one cell in the persistent computer algebra session. |
+| `cas_run` | Run one file under the run's `cas/` directory as a cell in the persistent session: with `source` the file is written first, without it the file runs again. |
 | `cas_state` | List the accepted cells that built the current session state. |
 | `cas_reset` | Discard the session state and start a clean kernel. |
 | `cas_export` | Export the session, replaying it in a fresh kernel to check it reproduces. |

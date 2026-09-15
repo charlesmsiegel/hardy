@@ -224,6 +224,9 @@ A persistent computer algebra kernel sits alongside the conversation, shared
 between the model's own `cas_*` tool calls and your own hand:
 
 ```text
+/cas run <path>
+/cas file <path>
+/end
 /cas <source>
 /cas
 /end
@@ -232,16 +235,22 @@ between the model's own `cas_*` tool calls and your own hand:
 /cas export
 ```
 
-`/cas <source>` runs one cell. A bare `/cas` opens a multi-line block,
-terminated by a line reading `/end`, which is the way to send something whose
-indentation matters, since a one-line send would otherwise have to be stripped
-and could silently change what you wrote. `/cas state` reports the backend and
-version, the kernel, the segment, how much time has been spent, how much of this
-process's budget is left, and the cells accepted so far; `/cas reset` starts a
-clean kernel. Because it is the one locked kernel a model tool call may already
-be using, `/cas` is refused while a turn or another command is running, and a
-cell you send goes into the same append-only log as one the model runs, replayed
-and exported the same way.
+Every computation is a file under the problem's `cas/` directory. The model
+files each cell it runs under a path of its own choosing (`cas_run` takes the
+path and, to write the file first, the source), and `/cas run <path>` runs a
+file again. `/cas file <path>` opens a multi-line block, terminated by a line
+reading `/end`, and writes it to `<path>` before running it; a bare `/cas`
+opens the same kind of block for a typed cell, and `/cas <source>` runs a
+one-line one, both filed as `cas/typed/NNNN.py` with the next free number so
+that a cell you typed is as much a file as one the model wrote. `/cas state`
+reports the backend and version, the kernel, the segment, how much time has
+been spent, how much of this process's budget is left, and the cells accepted
+so far, each with its file; `/cas reset` starts a clean kernel. Because it is
+the one locked kernel a model tool call may already be using, `/cas` is
+refused while a turn or another command is running, and a cell you send goes
+into the same append-only log as one the model runs, replayed and exported the
+same way. The files appear in `read_workspace`, and in the browser's files
+panel beside the journal, which the page draws as cells.
 
 `/cas export` writes a script (`session.py`, or the `.sing`/`.m2` equivalent)
 and a notebook covering the current segment's accepted cells, replays them in a
@@ -501,9 +510,42 @@ running, Ctrl+C leaves immediately.
 While a turn is running, most commands wait or refuse outright, because a
 running turn owns the record, the transcript, and the one locked computer
 algebra kernel. Only `/help`, `/status` (`--full` included), `/clear`, `/tree`,
-`/exit` and `/quit` work alongside one; everything else, including `/model`,
-`/cas`, `/project`, `/import` and `/prove`, has to wait for the turn to end or
-be cancelled first.
+`/jobs`, `/cancel`, `/exit` and `/quit` work alongside one; everything else,
+including `/model`, `/cas`, `/project`, `/import` and `/prove`, has to wait for
+the turn to end or be cancelled first. A plain message does not wait to be
+typed: it is queued and sent as the next turn the moment the running one ends,
+several lines joined in the order typed.
+
+Esc does not reach a computation that has already been detached into a
+background job (the section below): that work was handed to the background on
+purpose, and `/cancel <job-id>` is how it is stopped.
+
+## While Lean computes
+
+A Lean check or save, a LaTeX check or save, or a computer algebra cell holds
+the turn for at most `compute_detach_seconds` (ten by default; see
+[configuration](../reference/configuration.md)). Past that it is detached: the
+model is told the job's id and to go on without waiting, the turn ends when
+the model has nothing more to say, and you can keep talking while Lean works.
+`/jobs` lists the job with the check or save it is running, and `/cancel`
+stops it. When it ends, Hardy prints a notice, and the result, the whole of
+Lean's output, reaches the model ahead of its next turn. If nothing else is
+running at that moment, Hardy starts a turn of its own, drawn as Hardy's line
+rather than yours, so the result is acted on rather than left until you speak
+again; a line you queued meanwhile goes first. Setting the grace to `0`
+restores the old behaviour, where every such call blocks the turn.
+
+## Checkpoints
+
+`/checkpoint [name]` copies the whole problem directory as it stands, the
+provider thread and spend ledger included, to `<root>/.hardy/checkpoints/`;
+`/checkpoint list` names what was taken, and `/checkpoint restore <id>`
+checkpoints what it is about to replace, closes the session, swaps the tree
+for the checkpoint's and reopens the problem where it was. The computer
+algebra kernel's namespace is rebuilt from the journal rather than carried, as
+after any reopen, and the first cell afterwards says so. A checkpoint is one
+machine's copy and not a commit: it is ignored by the tooling directory's own
+`.gitignore`, and committing the problem is still how work leaves the machine.
 
 ## Project context files
 

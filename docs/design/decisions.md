@@ -252,9 +252,67 @@ of it is the shortest slice that cannot diverge from the terminal.
 Limit: switching chats reopens the one live session a problem has, so two
 chats cannot run concurrently yet.
 
+### A long computation is detached, not waited for
+
+We chose to run a Lean, LaTeX or computer algebra call on its own thread and
+detach it into a background job once it outlives a grace, over holding the
+turn for it, because a person and a model both sat idle for a check that took
+a minute, and over detaching every call, because a two-second check answered
+inline is a better answer than a job id.
+
+Cost: the tool gate is released by a thread other than the one that took it,
+and the model must be told to end its turn rather than wait.
+
+### A message during a turn is queued
+
+We chose to queue a plain message typed during a turn and send it as the next
+turn, over refusing it, because a person watching a long turn has something to
+say and no way to say it; and over injecting it mid-request, because a request
+the provider has already accepted cannot be changed, and the SDK-owned loop
+offers no seam for it.
+
+Limit: a command is still refused, since it takes the session over.
+
+### Hardy's own turn is recorded as Hardy's
+
+We chose to let a host start a turn when a detached job ends with the session
+idle, recorded with `author: "hardy"`, over leaving the result until the
+person spoke again, because a result nobody acts on is a check that was run
+for nothing; and over recording it as the person's line, because the
+transcript would then claim words nobody typed.
+
+Cost: a provider request the person did not initiate, once per finished job.
+
+### A checkpoint copies the tree and refuses a symlink
+
+We chose to implement `/checkpoint` as a whole copy of the problem directory,
+kept outside the versioned tree and refused over any symlink, over a git
+commit, because a checkpoint has to carry the machine-local state git ignores
+on purpose; and over following or skipping links, because either would save
+a tree that is not the one on disk.
+
+Cost: a checkpoint is one machine's copy and can be large.
+
+### The model picker is sugar over the command
+
+We chose to have the browser's model picker submit `/model <identity>`
+through the ordinary input path, over a switching endpoint of its own,
+because two paths to one switch drift.
+
+Cost: the save-as-default question appears as a card after every pick.
+
 ## Computer algebra
 
 The mechanisms are on [the computer algebra page](computer-algebra.md).
+
+### A cell is a file
+
+We chose to make every computer algebra cell a file under `cas/`, filed
+before it runs and rerun by name, over cells that live only in tool calls and
+the journal, because a computation a reader can open, diff and rerun is what
+reproducibility means here, and the Lean tree already works that way.
+
+Cost: every binding names a path, and a typed cell is filed under `typed/`.
 
 ### A persistent kernel, not replay
 
