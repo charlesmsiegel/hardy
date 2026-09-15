@@ -923,3 +923,56 @@ def test_a_second_controller_over_a_live_workspace_does_not_retire_its_running_w
     finally:
         release.set()
         first.shutdown()
+
+
+def test_a_computation_is_a_leaf_with_no_worker_no_slot_and_a_result_of_its_own(tmp_path):
+    """A detached check joins the tree as a delegation and ends through `finish_computation`."""
+    from concurrent.futures import Future
+
+    from hardy.agents.executor import CancelToken, JobHandle
+
+    notices = []
+    controller = _controller(tmp_path, _open([FINISH]), notices=notices, slots=1)
+    try:
+        future, token = Future(), CancelToken()
+        handle = JobHandle("check_lean Main.lean", token, future)
+        delegation = controller.attach_computation(objective="check_lean Main.lean", handle=handle)
+        assert delegation.state is DelegationState.ACTIVE and delegation.spec.task_mode == "compute"
+        assert delegation.parent_id == ROOT_ID and delegation.owner is not None
+        ledger = LeaseLedger(controller.tree())
+        assert ledger.slots_in_use(ROOT_ID) == 0, "a computation must not take a worker's slot"
+        # A worker still gets the one slot while the computation runs.
+        worker = controller.delegate(_spec(tmp_path))
+        assert controller.wait(worker.id, timeout=10).state is DelegationState.COMPLETED
+        controller.finish_computation(delegation.id, output="no errors", ok=True, seconds=12.5)
+        future.set_result(None)
+        done = controller.wait(delegation.id, timeout=5)
+        assert done.state is DelegationState.COMPLETED
+        assert done.result.synthesis == "ok: no errors" and done.result.usage.active_seconds == 12.5
+        assert done.result.usage.unknown == () and done.result.usage.cost_usd == 0
+        assert json.loads((tmp_path / "delegations" / delegation.id / "result.json").read_text())["output"] == "no errors"
+        assert LeaseLedger(controller.tree()).released(delegation.id)
+        assert any(delegation.id in notice and "completed" in notice for notice in notices)
+    finally:
+        controller.shutdown()
+
+
+def test_cancelling_a_computation_reaches_its_token_and_the_end_is_journaled_cancelled(tmp_path):
+    from concurrent.futures import Future
+
+    from hardy.agents.executor import CancelToken, JobHandle
+
+    controller = _controller(tmp_path, _open([FINISH]))
+    try:
+        future, token = Future(), CancelToken()
+        reached = []
+        token.on_cancel(lambda: reached.append(True))
+        delegation = controller.attach_computation(objective="cas_run examples.py", handle=JobHandle("cas", token, future))
+        assert controller.cancel(delegation.id, reason="user") == (delegation.id,)
+        assert reached == [True]
+        controller.finish_computation(delegation.id, output="interrupted", ok=False, seconds=1.0, cancelled=True)
+        future.set_result(None)
+        done = controller.wait(delegation.id, timeout=5)
+        assert done.state is DelegationState.CANCELLED and done.terminal_reason == "user"
+    finally:
+        controller.shutdown()

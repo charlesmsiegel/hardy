@@ -197,6 +197,7 @@ def _launch(
                 fresh_thread=fresh,
                 limits=config.limits,
                 delegation_slots=config.delegation_workers,
+                detach_after=config.compute_detach_seconds,
                 cas_factory=worker_cas,
                 chat=config.chat,
             )

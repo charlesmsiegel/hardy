@@ -145,6 +145,8 @@ class DelegationController:
         self._owner = OwnerToken.hold(store.workspace)
         #: Live check budgets by delegation id, so a granted tranche reaches a running worker.
         self._budgets: dict[str, CheckBudget] = {}
+        #: Computations attached on threads of their own: handles that hold no pool slot.
+        self._computations: set[str] = set()
         self._inbox = AttentionInbox(store)
 
     # -- views --------------------------------------------------------------
@@ -328,7 +330,7 @@ class DelegationController:
             record=lambda event, store=artifacts: store.append(event["kind"], event["payload"],
                                                                phase=RunPhase.PROVING))
 
-    def _ensure_root(self, scope: VersionRef) -> None:
+    def _ensure_root(self, scope: VersionRef | None) -> None:
         tree = self.tree()
         lease = ResourceLease.model_validate(self.root.lease.model_dump())
         if ROOT_ID not in tree.delegations:
@@ -424,6 +426,82 @@ class DelegationController:
                                   cas_factory=self.cas_factory, **self._hooks(id))
             self._pending[id] = launch
             self._dispatch()
+            return self.tree().get(id)
+
+    # -- computations -----------------------------------------------------
+
+    def attach_computation(self, *, objective: str, handle: WorkerHandle, created_by: str = "model") -> Delegation:
+        """A computation already running on its own thread joins the tree as a leaf.
+
+        Not a worker: no provider context, no ledger refs, no scope, no
+        findings and no slot. It is journaled `created`, reserved with an
+        empty lease and `started` under this process's owner token, so a
+        restart finds it interrupted rather than done, `/jobs` lists it and
+        `cancel` reaches it through the handle it was attached with. Whoever
+        runs it reports the end through `finish_computation` before the
+        handle resolves; `_settle` then only releases.
+        """
+        # Reserves nothing: a computation is bounded by its tool's own timeout,
+        # not by a lease, and reports what it used against a ceiling of zero.
+        nothing = ResourceLease(cost_usd=Decimal(0), tokens=0, provider_calls=0, official_checks=0, active_seconds=0.0)
+        spec = DelegationSpec(objective=objective, project_refs=(), scope=None, task_mode="compute",
+                              lease=nothing, concurrency=ConcurrencyLease(slots=1), created_by=created_by)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("the delegation controller is closed")
+            self._ensure_root(None)
+            id = f"d-{uuid4().hex[:10]}"
+            now = self._clock().isoformat()
+            self.store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"),
+                                                         "parent_id": ROOT_ID, "created_at": now})
+            # No slot: a computation is one process, not a worker occupying a
+            # place in the pool, and it must not keep a `/delegate` waiting.
+            self.store.append(id, "budget.reserved", {"lease": spec.lease.model_dump(mode="json"), "slots": 0})
+            self.store.append(id, "delegation.started", {"owner": self._owner.id, "compute": True})
+            # `_settle` finds the delegation by the handle's name.
+            handle.name = id
+            self._computations.add(id)
+            self._handles[id] = handle
+            handle.add_done_callback(self._settle)
+            return self.tree().get(id)
+
+    def finish_computation(self, id: str, *, output: str, ok: bool, seconds: float,
+                           cancelled: bool = False, failed: bool = False) -> Delegation:
+        """Journal a computation's end: its whole output as the artifact, an excerpt as the synthesis.
+
+        `completed` whether the answer was green or red: a check that found an
+        error is a computation that finished. `cancelled` and `failed` are for
+        a job that was stopped or that raised.
+        """
+        with self._lock:
+            tree = self.tree()
+            if tree.get(id).terminal:
+                return tree.get(id)
+            state = DelegationState.COMPLETED
+            reason = None
+            if cancelled:
+                state = DelegationState.CANCELLED
+                reason = next((e.payload.get("reason") for e in reversed(self.store.events())
+                               if e.delegation_id == id and e.kind == "cancel.requested"), None) or "cancelled"
+            elif failed:
+                state, reason = DelegationState.FAILED, output.splitlines()[0] if output else "failed"
+            verdict = "ok" if ok else "not ok"
+            synthesis = f"{verdict}: {output}" if output else verdict
+            artifacts = self.store.artifacts(id)
+            artifacts.write_json(PurePosixPath("result.json"), {"objective": tree.get(id).spec.objective,
+                                                                "ok": ok, "output": output, "status": state.value,
+                                                                "seconds": seconds})
+            # Known zeros, not unknowns: a computation makes no provider call,
+            # so nothing was spent there, and saying so keeps the root's
+            # allocatable money and tokens whole rather than liable.
+            usage = ResourceUsage(cost_usd=Decimal(0), tokens=0, active_seconds=max(0.0, seconds))
+            result = WorkerResult(delegation_id=id, status=state, synthesis=synthesis, usage=usage,
+                                  artifacts=("result.json",), terminal_reason=str(reason) if reason else None)
+            self.store.append(id, "usage.reported", {"usage": usage.model_dump(mode="json")})
+            event = self.store.append(id, _TERMINAL_EVENT[state], {
+                "result": result.model_dump(mode="json"),
+                **({"reason": result.terminal_reason} if result.terminal_reason else {})})
+            self._after_terminal(id, event)
             return self.tree().get(id)
 
     @staticmethod
@@ -575,7 +653,9 @@ class DelegationController:
         and what is submitted but not yet journaled as started.
         """
         with self._lock:
-            free = self.executor.slots - len(self._handles)
+            # A computation's handle is registered for `cancel` and `_settle`,
+            # never as a slot: it runs on a thread of its own.
+            free = self.executor.slots - sum(1 for id in self._handles if id not in self._computations)
             if free <= 0 or not self._pending or self._closed:
                 return
             tree = self.tree()
@@ -712,6 +792,7 @@ class DelegationController:
                 self.store.release(id)
             # Last, so `wait` sees a settled journal once the handle is gone.
             self._handles.pop(id, None)
+            self._computations.discard(id)
         # A freed slot goes to whatever the scheduler chooses next.
         self._dispatch()
 

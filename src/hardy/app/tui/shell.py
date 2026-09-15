@@ -54,6 +54,7 @@ from hardy.app.tui import banner, dispatch, select, stream, transcript
 from hardy.app.tui.commands import Command, canonical, complete, resolve, suggest
 from hardy.app.tui.ports import Choice, State
 from hardy.foundation.files import LayoutError, WriteGuard
+from hardy.workflows.interactive.jobs import CONTINUATION_TEXT
 from hardy.workflows.layout import INPUT_HISTORY
 
 # Posted to a turn's queue when nothing further is coming. An object of its
@@ -247,6 +248,10 @@ class Shell:
         # one finishing cleared the state belonging to the cell, after which Esc
         # found nothing to stop and the runaway was unreachable.
         self._commands_running = 0
+        # Lines typed while a turn or a command ran, in order. Sent as one
+        # turn the moment the session is free; nothing is written to the
+        # transcript until then, so the record's order is the model's.
+        self._queued: list[str] = []
         # `_command_stopping` is a command's `_abandoned`: the first press
         # interrupts, the second gives up and kills. Reset when the first
         # command starts, not when any does, for the same reason.
@@ -388,6 +393,10 @@ class Shell:
         # for the person; the model gets its own copy at its next turn.
         if hasattr(session, "on_notice"):
             session.on_notice = lambda text: self.write(f"Hardy: {text}")
+        # A detached computation ending is the session's cue to continue,
+        # from the job's thread; the look itself happens on the loop.
+        if hasattr(session, "on_job_finished"):
+            session.on_job_finished = self._job_finished
 
     # -- rendering --------------------------------------------------------
 
@@ -646,6 +655,10 @@ class Shell:
             if outcome.kind == "send":
                 self._start_turn(outcome.argument)
                 return
+            if outcome.kind == "queued":
+                self._queued.append(outcome.argument)
+                self.write(outcome.message)
+                return
             if outcome.kind == "command":
                 # Counted here, synchronously, for exactly the reason
                 # `turn_running` is flipped here: a lone Escape typed behind
@@ -834,8 +847,13 @@ class Shell:
         finally:
             loop.call_soon_threadsafe(arrivals.put_nowait, _TURN_OVER)
 
-    def _start_turn(self, text: str) -> None:
-        """Start a model turn for `text` exactly as Enter does; also how a handler's queued line is sent."""
+    def _start_turn(self, text: str, *, author: str | None = None) -> None:
+        """Start a model turn for `text` exactly as Enter does; also how a handler's queued line is sent.
+
+        `author` is "hardy" for a turn the shell starts on the model's behalf,
+        to carry background results in: recorded as Hardy's and drawn as
+        Hardy's line rather than as something typed.
+        """
         # `turn_running` flips here, synchronously, not inside
         # `_run_turn` once it gets to run. A lone Escape typed right
         # behind this Enter can be resolved -- by both the vt100
@@ -878,7 +896,8 @@ class Shell:
         loop = asyncio.get_running_loop()
         arrivals: asyncio.Queue = asyncio.Queue()
         try:
-            events = self._state.session.stream(text)
+            session = self._state.session
+            events = session.stream(text, author=author) if author else session.stream(text)
         except Exception as error:  # noqa: BLE001 - never lose the session
             self._state = dataclasses.replace(self._state, turn_running=False)
             self.write(f"{type(error).__name__}: {error}", style="error")
@@ -886,9 +905,35 @@ class Shell:
         future = loop.run_in_executor(None, self._drain, events, arrivals, loop)
         self._pending_future = future
         self._app.create_background_task(
-            self._run_turn(text, future, arrivals)
+            self._run_turn(text, future, arrivals, author=author)
         )
         return
+
+    def _after_turn(self) -> None:
+        """What starts once the session is free: queued lines first, then a job continuation.
+
+        Loop thread only. Lines typed while something ran become one turn, in
+        the order typed. With nothing queued, a finished background job whose
+        result the model has not read starts a turn of Hardy's own, so the
+        result is acted on rather than left until the person speaks again.
+        """
+        if self._state.turn_running or self._commands_running or self._state.done:
+            return
+        if self._queued:
+            text, self._queued = "\n\n".join(self._queued), []
+            self._start_turn(text)
+            return
+        session = self._state.session
+        owed = getattr(session, "job_results_owed", None)
+        if owed is not None and owed():
+            self.write("Hardy: background work has finished; continuing with its results.")
+            self._start_turn(CONTINUATION_TEXT, author="hardy")
+
+    def _job_finished(self) -> None:
+        """A detached job ended, on its own thread: look again once the loop is free."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._after_turn)
 
     async def _run_command(self, outcome: dispatch.Outcome) -> None:
         # The count was raised by `_submit_key` before this task existed, and
@@ -946,6 +991,8 @@ class Shell:
             self._commands_running -= 1
         if self._state.done:
             self._app.exit(result=0)
+            return
+        self._after_turn()
 
     def _stop_command(self) -> None:
         """Esc against a command rather than a turn.
@@ -1030,7 +1077,7 @@ class Shell:
         )
 
     async def _run_turn(
-        self, text: str, future: asyncio.Future, arrivals: asyncio.Queue
+        self, text: str, future: asyncio.Future, arrivals: asyncio.Queue, *, author: str | None = None
     ) -> None:
         """Draw a turn already submitted to the executor by `_submit_key`.
 
@@ -1045,7 +1092,8 @@ class Shell:
         event as it arrives, and the future is awaited afterwards only to
         collect whatever it raised.
         """
-        self._echo(transcript.user_lines(text, self._size().columns))
+        columns = self._size().columns
+        self._echo(transcript.hardy_lines(text, columns) if author else transcript.user_lines(text, columns))
         started = asyncio.get_running_loop().time()
         painter = stream.TurnPainter(self._size().columns)
 
@@ -1111,8 +1159,10 @@ class Shell:
         self._echo(tail)
         if failure is not None:
             self.write(f"{type(failure).__name__}: {failure}", style="error")
-            return
-        print()
+        else:
+            print()
+        # The session is free: a line typed meanwhile, or a job's result, goes now.
+        self._after_turn()
 
     # -- resize -----------------------------------------------------------
 

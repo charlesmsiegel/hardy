@@ -21,6 +21,7 @@ from hardy.agents.usage import Usage
 from hardy.foundation import process
 from hardy.foundation.values import ToolResult
 from hardy.workflows.interactive import summary as summary_module
+from hardy.workflows.interactive.jobs import Detached
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ class TurnCoordinator:
 
     def stream(self, text: str, *, runtime: ChatRuntime, persistence: TurnPersistence,
         steering: Callable[[], str], reset_formal: Callable[[], None],
-        resume_work: Callable[[], None], closing_notice: Callable[[], list[TurnEvent]]) -> Iterator[TurnEvent]:
+        resume_work: Callable[[], None], closing_notice: Callable[[], list[TurnEvent]], author: str | None = None) -> Iterator[TurnEvent]:
         """One exchange, as it arrives. The SDK decides how many tools to call.
 
         Hardy no longer counts the turns — see issue #23. What it still does is
@@ -161,7 +162,11 @@ class TurnCoordinator:
         block = steering()
         if block:
             persistence.event({"type": "steering", "text": block})
-        persistence.event({"type": "user", "message": {"role": "user", "content": text}})
+        # `author` says whose line this is when it is not the person's: a turn
+        # Hardy starts to carry background results is recorded as Hardy's, so
+        # a reader of the trajectory never mistakes it for something typed.
+        persistence.event({"type": "user", "message": {"role": "user", "content": text},
+                           **({"author": author} if author else {})})
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
@@ -335,12 +340,20 @@ class TurnCoordinator:
         persistence.event({"type": "turn", "status": "abandoned", "reason": reason})
 
 
-    def _dispatch(self, name: str, arguments: dict[str, Any], *, tool: Callable[[str, dict[str, Any]], ToolResult], persistence: TurnPersistence) -> ToolResult:
+    def _dispatch(self, name: str, arguments: dict[str, Any], *, tool: Callable[[str, dict[str, Any]], ToolResult], persistence: TurnPersistence, detach: Callable[..., Any] | None = None) -> ToolResult:
         """The single door every tool call goes through, whoever asked for it.
 
         Recorded here rather than by the caller: the SDK reports that it *asked*
         for a tool, but only Hardy knows what running it produced, and a
         trajectory without the results is not an account of what happened.
+
+        `detach` is the session's computation owner. Given one, a detachable
+        call runs through it, and may come back `Detached`: the turn has been
+        answered with a placeholder, the work goes on, and the gate is NOT
+        released here. A plain lock may be released by a thread other than
+        the one that took it, and that is the hand-off: the job releases the
+        gate when its work and its bookkeeping are done, so every other tool
+        call still waits behind a save that has not finished writing.
         """
         # Checked before the gate, not inside it: a cancelled turn's queued
         # tool calls must not first wait behind the Lean check that is still
@@ -349,7 +362,9 @@ class TurnCoordinator:
         # interrupting it halfway would leave worse behind than letting it end.
         if self._cancelled.is_set():
             return self._refuse_cancelled(name, arguments, persistence)
-        with self._gate:
+        self._gate.acquire()
+        release = True
+        try:
             # Checked again, now that the gate is held. The SDK may launch
             # several calls at once: one of them can pass the check above,
             # block here behind a Lean run that takes minutes, and reach this
@@ -367,16 +382,27 @@ class TurnCoordinator:
             # never follows it is the record that it did not finish.
             call_id = uuid4().hex
             persistence.event({"type": "tool_started", "name": name, "arguments": arguments, "call_id": call_id})
+            detached = False
             try:
-                result = tool(name, arguments)
+                result = detach(name, arguments, tool, call_id) if detach is not None else tool(name, arguments)
             except (KeyError, TypeError, ValueError) as error:
                 result = ToolResult(False, f"invalid tool call: {error}")
-            self._tally(name, result.ok)
+            if isinstance(result, Detached):
+                # The job tallies and records its own result when it has one;
+                # here only the placeholder the model was handed is recorded.
+                detached, release = True, False
+                result = result.result
+            if not detached:
+                self._tally(name, result.ok)
             persistence.event({
                 "type": "tool", "name": name, "arguments": arguments,
                 "result": result.as_dict(), "call_id": call_id,
+                **({"detached": True} if detached else {}),
             })
             return result
+        finally:
+            if release:
+                self._gate.release()
 
 
     def _refuse_cancelled(self, name: str, arguments: dict[str, Any], persistence: TurnPersistence) -> ToolResult:

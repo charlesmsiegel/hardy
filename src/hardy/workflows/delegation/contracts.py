@@ -179,7 +179,9 @@ class DelegationSpec(FrozenModel):
 
     objective: Text
     project_refs: tuple[VersionRef, ...]
-    scope: VersionRef
+    #: The trust scope a worker reads the project under. None only for a
+    #: computation, which reads no project state at all.
+    scope: VersionRef | None = None
     context: VersionRef | None = None
     task_mode: Text = "prove"
     lease: ResourceLease

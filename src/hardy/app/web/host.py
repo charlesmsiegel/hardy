@@ -48,6 +48,7 @@ from hardy.app.tui.handlers import build_registry, load_templates
 from hardy.app.tui.ports import State
 from hardy.app.web import chats
 from hardy.app.web.ui import WebUi
+from hardy.workflows.interactive.jobs import CONTINUATION_TEXT
 from hardy.workflows.layout import DEFAULT_CHAT, Layout, validate_chat, validate_slug
 
 T = TypeVar("T")
@@ -114,6 +115,9 @@ class WebHost:
         self._lock = threading.Lock()
         self._state: State | None = None
         self._commands_running = 0
+        # Lines submitted while a turn or a command ran, in order; one turn
+        # the moment the session is free. Loop thread only.
+        self._queued: list[str] = []
         self._abandoned = False
         self._pending_future: Any = None
         self._running = False
@@ -153,6 +157,9 @@ class WebHost:
             # Called from whichever thread the session is on, which is why
             # `emit` takes a lock rather than assuming the loop.
             session.on_notice = lambda text: self.emit({"type": "notice", "text": text})
+        if hasattr(session, "on_job_finished"):
+            # From the job's thread; the look at what to start next is the loop's.
+            session.on_job_finished = lambda: self._loop.call_soon_threadsafe(self._after_turn)
         fields = {
             "config": config, "session": session,
             "reopen": self.opener, "commands": tuple(self.registry),
@@ -294,6 +301,7 @@ class WebHost:
             "model": str(config.model),
             "turn_running": bool(state and state.turn_running),
             "command_running": self._commands_running > 0,
+            "queued": len(self._queued),
             "prompts": self._prompts(),
         }
 
@@ -499,6 +507,9 @@ class WebHost:
             )
             if outcome.kind == "send":
                 self._start_turn(outcome.argument)
+            elif outcome.kind == "queued":
+                self._queued.append(outcome.argument)
+                self.emit({"type": "state", **self.state()})
             elif outcome.kind == "command":
                 # Counted here, synchronously, for the reason `turn_running`
                 # is flipped in `_start_turn`: a cancel arriving on another
@@ -521,20 +532,26 @@ class WebHost:
             return False
         return self.ui.answer(prompt_id, value)
 
-    def _start_turn(self, text: str) -> None:
+    def _start_turn(self, text: str, *, author: str | None = None) -> None:
         """Start a model turn; also how a handler's queued line is sent. Loop thread only.
 
         `session.stream` is *called* here and only its iteration handed to a
         worker, for the reason the shell gives: starting the turn is what
         clears the per-turn cancellation flags, and a cancel racing this from
         another thread must not be erased by a reset that lands after it.
+
+        `author` is "hardy" for a turn the host starts to carry background
+        results in; the page is told the line as a notice, since it is not
+        one the person typed and echoed.
         """
         self._state = dataclasses.replace(self._state, turn_running=True)
         self._abandoned = False
+        if author:
+            self.emit({"type": "notice", "text": text})
         self.emit({"type": "state", **self.state()})
         arrivals: asyncio.Queue = asyncio.Queue()
         try:
-            events = self.session.stream(text)
+            events = self.session.stream(text, author=author) if author else self.session.stream(text)
         except Exception as error:  # noqa: BLE001 - never lose the session
             self._state = dataclasses.replace(self._state, turn_running=False)
             self.emit({"type": "error", "text": f"{type(error).__name__}: {error}"})
@@ -600,6 +617,25 @@ class WebHost:
             self.emit({"type": "turn_end", "ok": ok})
             self.emit({"type": "state", **self.state()})
             self.emit({"type": "changed"})
+            self._after_turn()
+
+    def _after_turn(self) -> None:
+        """What starts once the session is free: queued lines first, then a job continuation.
+
+        Loop thread only, and a no-op while anything runs or the host has
+        stopped. Lines submitted meanwhile become one turn in the order
+        submitted; with nothing queued, a finished background job whose
+        result the model has not read starts a turn of Hardy's own.
+        """
+        if not self._running or self._state is None or self._state.turn_running or self._commands_running:
+            return
+        if self._queued:
+            text, self._queued = "\n\n".join(self._queued), []
+            self._start_turn(text)
+            return
+        owed = getattr(self.session, "job_results_owed", None)
+        if owed is not None and owed():
+            self._start_turn(CONTINUATION_TEXT, author="hardy")
 
     async def _run_command(self, outcome: dispatch.Outcome) -> None:
         """Run one slash command on the loop, against `WebUi`. Mirrors `Shell._run_command`."""
@@ -646,6 +682,7 @@ class WebHost:
             self.ui.stopping(None)
             self.emit({"type": "state", **self.state()})
             self.emit({"type": "changed"})
+            self._after_turn()
 
     # -- cancel ----------------------------------------------------------
 

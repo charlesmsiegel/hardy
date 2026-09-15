@@ -416,6 +416,7 @@ class ProjectOpener:
                 limits=config.limits,
                 context_window=config.context_window,
                 delegation_slots=config.delegation_workers,
+                detach_after=config.compute_detach_seconds,
                 cas_factory=worker_cas,
                 chat=config.chat,
             )

@@ -138,8 +138,12 @@ def test_refusal_is_409_with_the_dispatcher_text(server) -> None:
     server.host.session.script = [TurnEvent("text", "a")] * 40
     server.host.session.delay = 0.01
     _call(server, "POST", "/api/input", {"text": "one"})
+    # A message mid-turn is queued, and says so with a 200; a command that
+    # cannot run mid-turn is the refusal, with the dispatcher's own sentence.
     status, _, body = _call(server, "POST", "/api/input", {"text": "two"})
-    assert status == 409 and "still running" in json.loads(body)["error"]
+    assert status == 200 and json.loads(body)["kind"] == "queued"
+    status, _, body = _call(server, "POST", "/api/input", {"text": "/goal x"})
+    assert status == 409 and "cannot run" in json.loads(body)["error"]
     status, _, body = _call(server, "POST", "/api/open", {"slug": "sylow", "chat": "main"})
     assert status == 409
     # Let the scripted turn finish before the fixture stops the host: this
