@@ -17,9 +17,19 @@ from hardy.app.tui.ports import BlockingUi, Choice
 
 
 class _Pending:
-    def __init__(self, kind: str, future: asyncio.Future) -> None:
+    """One parked prompt: what was emitted for it, and what resolves it.
+
+    The payload is kept and not merely emitted. A prompt reaches a tab as an
+    event, and a tab that loads *after* it was emitted never saw that event;
+    without the payload the only thing a fresh page could learn is that some
+    gate is open, which is worse than not knowing. Keeping it means
+    `state()` can hand a reloading page the card itself.
+    """
+
+    def __init__(self, kind: str, future: asyncio.Future, payload: dict[str, Any]) -> None:
         self.kind = kind
         self.future = future
+        self.payload = payload
 
 
 class WebUi:
@@ -47,6 +57,16 @@ class WebUi:
         """A read-only view of open prompts: id -> kind."""
         return {prompt_id: item.kind for prompt_id, item in self._pending.items()}
 
+    def open_prompts(self) -> list[dict[str, Any]]:
+        """Every open prompt's emitted payload, in the order they were opened.
+
+        What a page that missed the events needs in order to draw the gates
+        that are actually waiting on it. Order matters: prompts nest, and a
+        page that drew the inner one above the outer one would ask the reader
+        to answer them backwards.
+        """
+        return [item.payload for item in self._pending.values()]
+
     def write(self, text: str, *, style: str = "system") -> None:
         self._emit({"type": "write", "text": text, "style": style})
 
@@ -62,19 +82,20 @@ class WebUi:
     ) -> Any:
         prompt_id = uuid4().hex
         future: asyncio.Future = self._loop.create_future()
-        self._pending[prompt_id] = _Pending(kind, future)
-        self._emit(
-            {
-                "type": "prompt",
-                "id": prompt_id,
-                "kind": kind,
-                "title": title,
-                "subtitle": subtitle,
-                "rows": [{"value": row.value, "label": row.label, "note": row.note} for row in rows],
-                "current": current,
-                "preamble": [[text, style] for text, style in preamble],
-            }
-        )
+        payload = {
+            "type": "prompt",
+            "id": prompt_id,
+            "kind": kind,
+            "title": title,
+            "subtitle": subtitle,
+            "rows": [{"value": row.value, "label": row.label, "note": row.note} for row in rows],
+            "current": current,
+            "preamble": [[text, style] for text, style in preamble],
+        }
+        # Recorded before it is emitted: a status read racing this must find
+        # the prompt open or not at all, never emitted but unrecorded.
+        self._pending[prompt_id] = _Pending(kind, future, payload)
+        self._emit(payload)
         try:
             return await future
         finally:

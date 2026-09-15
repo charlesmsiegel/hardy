@@ -83,6 +83,35 @@ def test_ask_line_and_confirm() -> None:
     _run(scenario())
 
 
+def test_open_prompts_carries_the_payloads_a_reloaded_page_missed() -> None:
+    """The full cards, in the order they opened, and nothing once they close."""
+
+    async def scenario():
+        ui = WebUi(asyncio.get_running_loop(), lambda event: None)
+        outer = asyncio.create_task(ui.choose("Pick", [Choice("a", "A"), Choice("b", "B", "note")]))
+        inner = asyncio.create_task(ui.ask_line("Name it"))
+        await asyncio.sleep(0)
+
+        open_now = ui.open_prompts()
+        assert [prompt["kind"] for prompt in open_now] == ["choose", "line"]
+        assert [prompt["title"] for prompt in open_now] == ["Pick", "Name it"]
+        assert all(prompt["type"] == "prompt" and prompt["id"] for prompt in open_now)
+        assert open_now[0]["rows"] == [
+            {"value": "a", "label": "A", "note": ""},
+            {"value": "b", "label": "B", "note": "note"},
+        ]
+        assert open_now[1]["rows"] == []
+        # The ids are the ones an answer is addressed to, so a reloaded page
+        # can resolve exactly the gate it drew.
+        assert [prompt["id"] for prompt in open_now] == list(ui.pending)
+
+        assert ui.cancel_prompts() == 2
+        assert await outer is None and await inner is None
+        assert ui.open_prompts() == []
+
+    _run(scenario())
+
+
 def test_cancel_prompts_resolves_everything_as_a_refusal() -> None:
     async def scenario():
         seen = []
