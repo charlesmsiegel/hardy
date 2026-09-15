@@ -43,8 +43,11 @@ frame-ancestors 'none'; connect-src 'self'
 So: no CDN, no inline `<script>`, no `data:` font or stylesheet. `vite.config.js`
 turns off the module-preload polyfill (Vite injects it inline) and the asset
 inlining threshold (a small asset would become a `data:` URI), and sets
-`base: './'` because the page is also served from unknown routes the client
-routes itself.
+`base: '/'` so every asset URL is root-absolute. The server answers an unknown
+route with `index.html`, because the client routes `/files/lean` itself; a
+relative asset URL on such a page would resolve against the route, ask for
+`/files/assets/index-*.js`, be handed `index.html` as `text/html` by that same
+fallback, and render nothing.
 
 `index.html` must keep `<meta name="hardy-token" content="__HARDY_TOKEN__">`.
 The server replaces that placeholder on every serve with the token for this

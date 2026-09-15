@@ -8,10 +8,12 @@
 // own line, which is echoed locally the moment it is accepted: the stream
 // republishes the model's half of a turn and never the half the user typed.
 
-import {useCallback, useEffect, useMemo, useReducer} from 'react';
+import {useCallback, useEffect, useMemo, useReducer, useRef} from 'react';
 import {ApiError, events, get, post} from './api.js';
 import Chat from './Chat.jsx';
 import Composer from './Composer.jsx';
+import Panels from './Panels.jsx';
+import Sidebar from './Sidebar.jsx';
 
 let counter = 0;
 const nextId = () => `m${++counter}`;
@@ -104,9 +106,16 @@ function settle(state) {
  *  A handler writes a line at a time -- `/help` is forty of them -- and each
  *  arrives as its own event because that is how the terminal consumes them.
  *  Drawn as forty blocks they would read as forty unrelated remarks, so a line
- *  that follows another of the same style extends it instead. Anything else
- *  arriving between two writes ends the run, which is what keeps a command's
- *  output from swallowing the turn that interrupted it.
+ *  extends the message at the end of the list whenever that message is a
+ *  system line of the same style.
+ *
+ *  The test is the tail and nothing else, which cuts two ways. A message
+ *  *pushed* between two writes -- a notice, an error, the user's own echoed
+ *  line -- becomes the tail, so the next write starts a fresh run under it. A
+ *  turn streaming meanwhile does not: `withStream` edits the message
+ *  `streamId` names, wherever it sits in the list, so a command's run of lines
+ *  stays open above it and the turn's words never land inside the command's
+ *  output.
  */
 function write(state, style, text) {
   const last = state.messages[state.messages.length - 1];
@@ -232,6 +241,20 @@ function reducer(state, action) {
       };
     case 'projects':
       return {...state, projects: action.projects};
+    case 'switched':
+      // A different chat is a different conversation, so the list is replaced
+      // rather than added to. Nothing is carried across: `streamId` named a
+      // message that is no longer on screen, and `open_chat` cancels the
+      // prompts of the session it replaced, so a card left here would be a
+      // gate nothing is waiting behind.
+      return {
+        ...state,
+        messages: fromTranscript(action.transcript),
+        streamId: null,
+        prompts: [],
+        refusal: '',
+        runningTool: '',
+      };
     case 'event':
       return applyEvent(state, action.event);
     case 'draft':
@@ -267,6 +290,9 @@ function reducer(state, action) {
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initial);
   const revision = state.revision;
+  //: Which chat the messages on screen belong to. Empty until the first load
+  //: has said, so the load's own transcript is not immediately refetched.
+  const opened = useRef('');
   // `dispatch` is stable, so this is too and no effect below re-runs on it.
   const failed = useCallback((error) => dispatch({type: 'failed', text: String(error?.message ?? error)}), []);
 
@@ -287,8 +313,9 @@ export default function App() {
     };
   }, []);
 
-  // `changed` is the session saying an artifact moved. The project list is the
-  // only panel this task owns; Task 12's panels key their own fetches on it.
+  // `changed` is the session saying an artifact moved. The project list is
+  // App's own; every panel keys its fetch on the same number, through
+  // `usePanel`.
   useEffect(() => {
     if (!revision) return undefined;
     let live = true;
@@ -299,6 +326,40 @@ export default function App() {
       live = false;
     };
   }, [revision]);
+
+  // A chat switch replaces the conversation. `changed` alone cannot say so --
+  // it fires at the end of every turn as well -- so this keys on the pair the
+  // status reports, which only an open moves. Without it the rail would open a
+  // chat and leave the previous one's messages on screen under its name.
+  const where = `${state.status.slug}/${state.status.chat}`;
+  const loaded = state.loaded;
+  useEffect(() => {
+    if (!loaded) return undefined;
+    if (opened.current === '') {
+      // The first load already fetched this chat's transcript beside its state.
+      opened.current = where;
+      return undefined;
+    }
+    if (opened.current === where) return undefined;
+    opened.current = where;
+    let live = true;
+    get('/api/transcript')
+      .then((transcript) => live && dispatch({type: 'switched', transcript}))
+      .catch((error) => live && failed(error));
+    return () => {
+      live = false;
+    };
+  }, [where, loaded, failed]);
+
+  // What the sidebar calls after a chat was made or renamed. Neither writes
+  // through the session, so neither emits a `changed` the effect above would
+  // see, and a rail still showing the old title would be wrong about the one
+  // thing it exists to say.
+  const refreshProjects = useCallback(() => {
+    get('/api/projects')
+      .then((projects) => dispatch({type: 'projects', projects}))
+      .catch((error) => failed(error));
+  }, [failed]);
 
   const send = useCallback(async (text) => {
     const line = text.trim();
@@ -355,17 +416,13 @@ export default function App() {
 
   return (
     <div className="layout">
-      <aside className="rail rail--left">
-        <div className="rail__title">Projects</div>
-        <ul className="rail__list">
-          {state.projects.map((project) => (
-            <li key={project.slug} className={project.active ? 'rail__item rail__item--active' : 'rail__item'}>
-              {project.slug}
-            </li>
-          ))}
-        </ul>
-        <p className="rail__note">Switching, chats and uploads arrive with the panels.</p>
-      </aside>
+      <Sidebar
+        projects={state.projects}
+        slug={state.status.slug}
+        chat={state.status.chat}
+        onProjects={(projects) => dispatch({type: 'projects', projects})}
+        onRefresh={refreshProjects}
+      />
 
       <main className="main">
         <header className="header">
@@ -392,10 +449,12 @@ export default function App() {
         />
       </main>
 
-      <aside className="rail rail--right">
-        <div className="rail__title">Panels</div>
-        <p className="rail__note">Summary, files, the lean tree and the ledger graph arrive with the panels.</p>
-      </aside>
+      {/* `send` and not a private poster: an `/import` or a `/fork` submitted
+          from a panel is the same line the user could have typed, and it is
+          echoed, refused and reported through the one path every other line
+          takes. `setDraft` is the exception the graph needs -- "Delegate"
+          writes the line and leaves sending it to the user. */}
+      <Panels revision={state.revision} onSend={send} onDraft={setDraft} />
     </div>
   );
 }
