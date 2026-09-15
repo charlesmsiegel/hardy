@@ -17,9 +17,9 @@ function check(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function page() {
-  const response = await fetch(`${base}/`);
-  check(response.status === 200, `GET / answered ${response.status}`);
+async function page(path = '/') {
+  const response = await fetch(`${base}${path}`);
+  check(response.status === 200, `GET ${path} answered ${response.status}`);
   const html = await response.text();
   const meta = /<meta name="hardy-token" content="([^"]*)"/.exec(html);
   check(meta, 'the page carries no hardy-token meta');
@@ -36,6 +36,11 @@ async function assets(html) {
   ];
   check(urls.length > 0, 'the page references no assets at all');
   for (const url of urls) {
+    // Root-absolute, not relative. The server answers every unknown route
+    // with the page, so a page served at `/files/lean` would resolve a
+    // relative `./assets/x.js` to `/files/assets/x.js`, be handed index.html
+    // as `text/html`, and render nothing.
+    check(url.startsWith('/'), `${url} is not root-absolute`);
     const resolved = new URL(url, `${base}/`);
     const response = await fetch(resolved);
     check(response.status === 200, `${url} answered ${response.status}`);
@@ -48,9 +53,14 @@ async function assets(html) {
   return urls.length;
 }
 
-/** Read `/api/events` and resolve on the first event `wanted` accepts. */
+/** Read `/api/events`, collecting every event, and resolve on the first `wanted` accepts.
+ *
+ *  The collected list is handed back with the match, because a turn is judged
+ *  by the whole run of events it emitted and not only by its last one.
+ */
 function stream(wanted) {
   return new Promise((resolve, reject) => {
+    const seen = [];
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
@@ -59,7 +69,7 @@ function stream(wanted) {
     const done = (value) => {
       clearTimeout(timer);
       controller.abort();
-      resolve(value);
+      resolve({event: value, seen});
     };
     fetch(`${base}/api/events`, {signal: controller.signal})
       .then(async (response) => {
@@ -80,6 +90,7 @@ function stream(wanted) {
               .join('\n');
             if (!data) continue; // a keepalive or the connected comment
             const event = JSON.parse(data);
+            seen.push(event);
             if (wanted(event)) return done(event);
           }
         }
@@ -93,31 +104,66 @@ function stream(wanted) {
   });
 }
 
-async function main() {
-  const {html, token} = await page();
-  const count = await assets(html);
-
-  // Subscribed before the line is sent: the stream is live-only, so an event
-  // emitted before this connects is one nothing would ever see.
-  const reply = stream((event) => event.type === 'turn' && event.kind === 'reply');
-  await new Promise((resolve) => setTimeout(resolve, 200));
-
+async function send(token, text) {
   const sent = await fetch(`${base}/api/input`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json', 'X-Hardy-Token': token, Origin: base},
-    body: JSON.stringify({text: 'hello'}),
+    body: JSON.stringify({text}),
   });
   // Read once: the body is a stream, and reading it to build a message that
   // is only used on failure consumes it before the success path parses it.
   const body = await sent.text();
   check(sent.status === 200, `POST /api/input answered ${sent.status}: ${body}`);
   const outcome = JSON.parse(body);
-  check(outcome.kind === 'send', `the line was classified ${outcome.kind}, not send`);
+  check(outcome.kind === 'send', `${JSON.stringify(text)} was classified ${outcome.kind}, not send`);
+}
 
-  const event = await reply;
-  check(event.text === 'hello', `the reply said ${JSON.stringify(event.text)}`);
+/** One turn, driven end to end: subscribe, send, wait for `turn_end`. */
+async function turn(token, text) {
+  // Subscribed before the line is sent: the stream is live-only, so an event
+  // emitted before this connects is one nothing would ever see.
+  const running = stream((event) => event.type === 'turn_end');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await send(token, text);
+  return running;
+}
 
-  console.log(`smoke ok (${count} assets, reply ${JSON.stringify(event.text)} at seq ${event.seq})`);
+async function main() {
+  const {html, token} = await page();
+  const count = await assets(html);
+
+  // The same page from a nested client route, with the same assets: this is
+  // the path `base: './'` used to break.
+  const nested = await page('/files/lean');
+  check(nested.token === token, 'the nested route served a different token');
+  await assets(nested.html);
+
+  const plain = await turn(token, 'hello');
+  const replies = plain.seen.filter((event) => event.type === 'turn' && event.kind === 'reply');
+  check(replies.length === 1, `${replies.length} reply events for one turn`);
+  check(replies[0].text === 'hello', `the reply said ${JSON.stringify(replies[0].text)}`);
+
+  // A turn that interrupts itself with a session notice, which is what a
+  // delegation finishing mid-turn does. The client identifies the streaming
+  // message by an id held for the whole turn, so the interruption must not
+  // split it: one reply, carrying the turn's whole text, arriving after the
+  // notice it was interrupted by.
+  const split = await turn(token, 'interleave');
+  const notices = split.seen.filter((event) => event.type === 'notice');
+  const spoken = split.seen.filter((event) => event.type === 'turn' && event.kind === 'text');
+  const finals = split.seen.filter((event) => event.type === 'turn' && event.kind === 'reply');
+  check(notices.length === 1, `${notices.length} notices in the interrupted turn`);
+  check(spoken.length === 2, `${spoken.length} text events in the interrupted turn`);
+  check(finals.length === 1, `${finals.length} reply events in the interrupted turn`);
+  check(finals[0].text === 'one two', `the reply said ${JSON.stringify(finals[0].text)}`);
+  const order = split.seen.map((event) => (event.type === 'notice' ? 'notice' : `${event.type}:${event.kind ?? ''}`));
+  check(
+    order.indexOf('notice') > order.indexOf('turn:text') &&
+      order.indexOf('notice') < order.lastIndexOf('turn:text'),
+    `the notice did not land between the two text events: ${order.join(' ')}`,
+  );
+
+  console.log(`smoke ok (${count} assets, reply "hello", interrupted turn replies "one two" once)`);
 }
 
 main().catch((error) => {

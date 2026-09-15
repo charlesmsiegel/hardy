@@ -291,8 +291,14 @@ class WebHost:
             "prompts": self._prompts(),
         }
 
-    def _prompts(self) -> list[str]:
-        """The open prompt ids, read without the loop's permission.
+    def _prompts(self) -> list[dict[str, Any]]:
+        """Every open prompt in full, read without the loop's permission.
+
+        The payloads, not the ids: a tab that loads while a gate is already
+        open never received its `prompt` event, and a list of ids would tell
+        such a page that something is waiting without telling it what. With
+        the payloads the page draws the card, and answering it is the same
+        request it would have been had the event arrived.
 
         The loop owns that dictionary and can open or close a prompt while
         this reads it, which raises rather than returning a torn answer.
@@ -303,7 +309,7 @@ class WebHost:
             return []
         for _ in range(3):
             try:
-                return list(self.ui.pending)
+                return self.ui.open_prompts()
             except RuntimeError:
                 continue
         return []

@@ -18,12 +18,20 @@ const nextId = () => `m${++counter}`;
 
 const EMPTY_STATUS = {slug: '', chat: '', model: '', turn_running: false, command_running: false, prompts: []};
 
+//: What the composer says before the dispatcher has had a chance to say it
+//: itself. The host's own wording, so the first refusal a user sees and every
+//: one after it read the same.
+export const BUSY_REASON = 'A turn is still running. Wait for it to finish.';
+
 const initial = {
   status: EMPTY_STATUS,
   commands: [],
   projects: [],
   messages: [],
   prompts: [],
+  //: The assistant message this turn is streaming into, held for the life of
+  //: the turn. Null between turns.
+  streamId: null,
   draft: '',
   refusal: '',
   runningTool: '',
@@ -48,38 +56,47 @@ function fromTranscript(entries) {
   });
 }
 
-function blank() {
-  return {id: nextId(), kind: 'assistant', text: '', thought: '', thinking: false, done: false, tools: []};
+function blank(id) {
+  return {id, kind: 'assistant', text: '', thought: '', thinking: false, done: false, tools: []};
 }
 
-/** Apply `update` to the assistant message currently streaming, opening one if none is.
+/** Apply `update` to the message this turn is streaming into, opening one if none is.
  *
- *  "Currently streaming" is the last message and only the last: a `write` or a
- *  notice landing mid-turn ends the run of text, and appending to a message
- *  something else has already been drawn under would put the model's words
- *  above output that preceded them.
+ *  The turn's message is named by `streamId` and never inferred from the end
+ *  of the list. A `notice` from a delegation finishing, or a line written by a
+ *  safe-in-flight command, lands in the middle of a turn and becomes the last
+ *  message; inferring from the tail would then start a second assistant
+ *  message, and `reply` -- which carries the turn's whole final text -- would
+ *  replace only that one, leaving everything said before the interruption on
+ *  screen above a reply that repeats it. A `tool_result` would likewise find
+ *  no chip to resolve and open an empty bubble to hold it.
  */
 function withStream(state, update) {
   const messages = state.messages.slice();
-  const last = messages[messages.length - 1];
-  if (!last || last.kind !== 'assistant' || last.done) messages.push(blank());
-  const index = messages.length - 1;
+  let id = state.streamId;
+  let index = id === null ? -1 : messages.findLastIndex((message) => message.id === id);
+  if (index < 0) {
+    id = nextId();
+    messages.push(blank(id));
+    index = messages.length - 1;
+  }
   messages[index] = update(messages[index]);
-  return {...state, messages};
+  return {...state, streamId: id, messages};
 }
 
 function push(state, message) {
   return {...state, messages: [...state.messages, {id: nextId(), ...message}]};
 }
 
-/** Mark whatever is streaming as finished, so the next event opens a new message. */
+/** End the turn's message and forget it, so the next turn opens its own. */
 function settle(state) {
-  const messages = state.messages.slice();
-  const index = messages.length - 1;
-  if (index >= 0 && messages[index].kind === 'assistant' && !messages[index].done) {
-    messages[index] = {...messages[index], done: true, thinking: false};
-  }
-  return {...state, messages};
+  if (state.streamId === null) return {...state, streamId: null};
+  return {
+    ...state,
+    streamId: null,
+    messages: state.messages.map((message) =>
+      message.id === state.streamId ? {...message, done: true, thinking: false} : message),
+  };
 }
 
 /** Append one `write` line, joining the run of lines it belongs to.
@@ -101,6 +118,22 @@ function write(state, style, text) {
   return push(state, {kind: 'system', style, text});
 }
 
+/** Add prompts that are not open already, keeping the order they opened in.
+ *
+ *  Two sources say a gate is open and neither is complete on its own: the
+ *  `prompt` events, which a page that loaded after the gate opened never saw,
+ *  and `state.prompts`, which is a snapshot. Merging by id is what lets a
+ *  reload draw a card that has been waiting since before the page existed
+ *  without drawing the ones it did see twice. Nothing is removed here --
+ *  `prompt_closed` is the only thing that closes a card, so a snapshot taken
+ *  before a gate closed cannot reopen it.
+ */
+function mergePrompts(open, arriving) {
+  const known = new Set(open.map((prompt) => prompt.id));
+  const added = arriving.filter((prompt) => prompt?.id && !known.has(prompt.id));
+  return added.length ? [...open, ...added] : open;
+}
+
 function turnEvent(state, event) {
   switch (event.kind) {
     case 'text':
@@ -118,6 +151,9 @@ function turnEvent(state, event) {
         runningTool: event.name ?? '',
       };
     case 'tool_result':
+      // No open turn is nothing to resolve: opening a message to hold an
+      // orphan result would draw an empty bubble.
+      if (state.streamId === null) return state;
       return withStream(state, (message) => ({
         ...message,
         tools: message.tools.map((tool) =>
@@ -130,7 +166,9 @@ function turnEvent(state, event) {
         ...message, text: event.text ?? '', thinking: false, done: true,
       }));
     case 'notice':
-      return push(settle(state), {kind: 'notice', text: event.text ?? ''});
+      // Beside the turn, not instead of it: the turn keeps streaming into its
+      // own message, which `streamId` still names.
+      return push(state, {kind: 'notice', text: event.text ?? ''});
     default:
       return state;
   }
@@ -141,22 +179,34 @@ function applyEvent(state, event) {
     case 'turn':
       return turnEvent(state, event);
     case 'turn_end':
+      // The one place the turn's message is closed. Everything else that
+      // arrives mid-turn goes beside it and leaves `streamId` alone.
       return {...settle(state), runningTool: ''};
     case 'error':
-      return push(settle(state), {kind: 'system', style: 'error', text: event.text ?? ''});
+      return push(state, {kind: 'system', style: 'error', text: event.text ?? ''});
     case 'write':
-      return write(settle(state), event.style || 'system', event.text ?? '');
+      return write(state, event.style || 'system', event.text ?? '');
     case 'notice':
-      return push(settle(state), {kind: 'notice', text: event.text ?? ''});
+      // The session's own out-of-band note -- a delegation finishing, say.
+      // It arrives mid-turn and goes beside the turn, not through it.
+      return push(state, {kind: 'notice', text: event.text ?? ''});
     case 'prompt':
-      return {...state, prompts: [...state.prompts.filter((p) => p.id !== event.id), event]};
+      return {...state, prompts: mergePrompts(state.prompts, [event])};
     case 'prompt_closed':
       return {...state, prompts: state.prompts.filter((prompt) => prompt.id !== event.id)};
     case 'state': {
-      const {seq, type, ...status} = event;
+      const {seq, type, prompts, ...status} = event;
       // A turn that has ended cannot still be refusing the composer.
       const refusal = status.turn_running || status.command_running ? state.refusal : '';
-      return {...state, status: {...state.status, ...status}, refusal};
+      // Prompts only ever *arrive* from a snapshot. A gate this page has
+      // already been told closed must not be reopened by a status read taken
+      // before it closed, and `prompt_closed` is the only thing that removes.
+      return {
+        ...state,
+        status: {...state.status, ...status, prompts: prompts ?? []},
+        prompts: mergePrompts(state.prompts, prompts ?? []),
+        refusal,
+      };
     }
     case 'changed':
       return {...state, revision: state.revision + 1};
@@ -175,6 +225,10 @@ function reducer(state, action) {
       return {
         ...state, loaded: true, status: action.status, commands: action.commands,
         projects: action.projects, messages: [...fromTranscript(action.transcript), ...state.messages],
+        // A gate that was already open when this page loaded: its `prompt`
+        // event predates the subscription, so the snapshot is the only place
+        // the card can come from.
+        prompts: mergePrompts(state.prompts, action.status.prompts ?? []),
       };
     case 'projects':
       return {...state, projects: action.projects};
@@ -198,6 +252,11 @@ function reducer(state, action) {
       };
     case 'refused':
       return {...state, refusal: action.message};
+    case 'blocked':
+      // Enter on a line the session will not take. Nothing is posted; the
+      // reason is the dispatcher's own from the last refusal, or the host's
+      // wording until one has been seen.
+      return {...state, refusal: state.refusal || BUSY_REASON};
     case 'failed':
       return push(state, {kind: 'system', style: 'error', text: action.text});
     default:
@@ -265,16 +324,28 @@ export default function App() {
   }, [failed]);
 
   const answer = useCallback((promptId, value) => {
-    post('/api/answer', {prompt_id: promptId, value}).catch((error) => failed(error));
+    post('/api/answer', {prompt_id: promptId, value}).catch((error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        // Nothing is waiting for it: the gate closed between the snapshot
+        // this card came from and the answer. Take the card away rather than
+        // leave the user pressing a button that can no longer do anything.
+        dispatch({type: 'event', event: {type: 'prompt_closed', id: promptId}});
+        return;
+      }
+      failed(error);
+    });
   }, [failed]);
 
   const cancel = useCallback(() => {
     post('/api/cancel')
-      .then((result) => result?.note && dispatch({type: 'event', event: {type: 'write', text: result.note, style: 'system'}}))
+      // A notice, not a `write`: what cancelling did is the page's own remark
+      // and must not be absorbed into the run of lines a command was writing.
+      .then((result) => result?.note && dispatch({type: 'event', event: {type: 'notice', text: result.note}}))
       .catch((error) => failed(error));
   }, [failed]);
 
   const setDraft = useCallback((draft) => dispatch({type: 'draft', draft}), []);
+  const blocked = useCallback(() => dispatch({type: 'blocked'}), []);
 
   const busy = state.status.turn_running || state.status.command_running;
   const title = useMemo(
@@ -316,6 +387,7 @@ export default function App() {
           runningTool={state.runningTool}
           onDraft={setDraft}
           onSend={send}
+          onBlocked={blocked}
           onCancel={cancel}
         />
       </main>
