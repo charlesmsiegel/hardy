@@ -17,10 +17,9 @@ from hardy.app.tui.ports import BlockingUi, Choice
 
 
 class _Pending:
-    def __init__(self, kind: str, future: asyncio.Future, rows: Sequence[Choice]) -> None:
+    def __init__(self, kind: str, future: asyncio.Future) -> None:
         self.kind = kind
         self.future = future
-        self.rows = tuple(rows)
 
 
 class WebUi:
@@ -63,7 +62,7 @@ class WebUi:
     ) -> Any:
         prompt_id = uuid4().hex
         future: asyncio.Future = self._loop.create_future()
-        self._pending[prompt_id] = _Pending(kind, future, rows)
+        self._pending[prompt_id] = _Pending(kind, future)
         self._emit(
             {
                 "type": "prompt",
