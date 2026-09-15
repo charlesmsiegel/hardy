@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from hardy.foundation.files import WriteGuard
+from hardy.foundation.files import LayoutError, WriteGuard, read_text
 from hardy.workflows.layout import CHAT_META, CHATS_DIR, DEFAULT_CHAT, validate_chat
 
 SCHEMA = "hardy.chat/v1"
@@ -36,10 +36,20 @@ def chat_id_for(title: str, taken: Iterable[str]) -> str:
     return validate_chat(candidate)
 
 
-def _read(path: Path) -> dict | None:
+def _read(problem: Path, chat_id: str) -> dict | None:
+    """`chat_id`'s `chat.json`, proven to be that file and not a symlink out.
+
+    Goes through `hardy.foundation.files.read_text`, not `Path.read_text`, for
+    the same reason every project read does: `chats/escaped/chat.json ->
+    ~/notes/anything.json` in a cloned repository would otherwise have this
+    module report on a file outside the problem entirely. `guard_for` proves
+    every component on the way down -- `chats/`, `chats/<id>/`, and the leaf --
+    so a symlinked `chats/` directory or a symlinked chat directory is refused
+    here too, not only the leaf file.
+    """
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(read_text(problem, f"{CHATS_DIR}/{chat_id}/{CHAT_META}"))
+    except (LayoutError, OSError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         return None
@@ -49,15 +59,19 @@ def _read(path: Path) -> dict | None:
 def list_chats(problem: Path) -> list[Chat]:
     found = [Chat(DEFAULT_CHAT, DEFAULT_CHAT, 0.0)]
     root = problem / CHATS_DIR
-    if root.is_dir():
+    if root.is_dir() and not root.is_symlink():
         others = []
         for child in root.iterdir():
             if child.is_symlink() or not child.is_dir():
                 continue
-            meta = _read(child / CHAT_META)
+            meta = _read(problem, child.name)
             if meta is None:
                 continue
-            others.append(Chat(child.name, str(meta.get("title") or child.name), float(meta.get("created") or 0.0)))
+            try:
+                created = float(meta.get("created") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            others.append(Chat(child.name, str(meta.get("title") or child.name), created))
         found.extend(sorted(others, key=lambda chat: (chat.created, chat.id)))
     return found
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -61,3 +62,47 @@ def test_bad_ids_are_refused(tmp_path: Path) -> None:
         chats.rename_chat(tmp_path / "sylow", "../x", "t")
     with pytest.raises(ValueError):
         chats.create_chat(tmp_path / "sylow", "   ")
+
+
+def test_a_symlinked_chat_json_is_ignored(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    chat_dir = problem / "chats" / "escaped"
+    chat_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text(
+        json.dumps({"schema": "hardy.chat/v1", "title": "Escaped", "created": 1.0}), encoding="utf-8"
+    )
+    link = chat_dir / "chat.json"
+    try:
+        os.symlink(outside, link)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    assert [c.id for c in chats.list_chats(problem)] == ["main"]
+
+
+def test_a_symlinked_chats_directory_yields_only_main(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    outside = tmp_path / "outside-chats"
+    escaped = outside / "escaped"
+    escaped.mkdir(parents=True)
+    (escaped / "chat.json").write_text(
+        json.dumps({"schema": "hardy.chat/v1", "title": "Escaped", "created": 1.0}), encoding="utf-8"
+    )
+    link = problem / "chats"
+    try:
+        os.symlink(outside, link, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    assert [c.id for c in chats.list_chats(problem)] == ["main"]
+
+
+def test_a_malformed_created_value_is_ignored_not_fatal(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    good = chats.create_chat(problem, "Good")
+    bad_dir = problem / "chats" / "bad"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "chat.json").write_text(
+        json.dumps({"schema": "hardy.chat/v1", "title": "Bad", "created": "oops"}), encoding="utf-8"
+    )
+    assert [c.id for c in chats.list_chats(problem)] == ["main", good.id]
