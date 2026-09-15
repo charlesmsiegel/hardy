@@ -230,6 +230,28 @@ check, because it addresses the same failure without forbidding a good save.
 
 Cost: three refused saves on a path are still spent before it speaks.
 
+### Chats are separate transcripts; the browser runs the terminal's registry
+
+We chose to let a problem hold a list of chats, each its own `transcript.jsonl`
+and `.local/.../state.json` sharing one record, ledger, Lean, TeX and CAS, with
+the browser client implementing the `Ui` port over HTTP so every slash
+command, prompt and the assumption gate run unchanged and one live session per
+problem is reopened through the project opener when a chat is switched, over
+chats as named branches of the one conversation tree (branches exist to
+explore alternatives, and a title and listing bolted on would have made two
+features share one file), chats as separate problems (which rejects the
+premise that chats share a record), one live session per chat (which needs
+concurrent sessions over one record and one CAS kernel each, and nothing yet
+requires that), and a second command surface written for the browser (two
+registries drift), because a chat scoped to one aspect of a problem needs its
+own provider thread so the model's context is the aspect, not the whole
+history, while the mathematics stays one ledger, and because the `Ui` port was
+already the seam handlers and the axiom gate drew through, so a browser face
+of it is the shortest slice that cannot diverge from the terminal.
+
+Limit: switching chats reopens the one live session a problem has, so two
+chats cannot run concurrently yet.
+
 ## Computer algebra
 
 The mechanisms are on [the computer algebra page](computer-algebra.md).
