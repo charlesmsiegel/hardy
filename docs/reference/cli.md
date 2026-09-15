@@ -57,6 +57,20 @@ Opens the durable terminal session. `--root` and `--project` live here rather th
 
 `--register-lakefile` and `--no-register-lakefile` are mutually exclusive; passing both is refused by argparse.
 
+### hardy web
+
+Serves the browser client on `127.0.0.1` and prints the URL. The page runs the same session, record and slash-command registry as `hardy chat`, one live session per problem, and adds a list of chats per problem: `main` is the transcript beside the record, and every other chat is its own `chats/<id>/transcript.jsonl`. Opening a chat reopens the problem's session the way `/project switch` does, so it is refused while a turn or a command is running. Stop the server with Ctrl+C.
+
+| Option | Default | Env var | Meaning |
+| --- | --- | --- | --- |
+| `--root` | `root` in the config file, else the current directory | `HARDY_ROOT` | The directory holding one or more problems. |
+| `--project` | as for `hardy chat` | `HARDY_PROJECT` | Which problem to open first. |
+| `--chat` | `main` |  | Which chat of that problem to open first. |
+| `--port` | an ephemeral port |  | The loopback port to listen on. |
+| `--open` | off |  | Open the page in the default browser once the server is up. |
+
+Every mutation the page makes carries a per-process token embedded in the page, and the server refuses any request whose `Host` or `Origin` is not its own loopback address, so another site open in the same browser cannot drive the session. Uploads from the page land under the problem's `.local/uploads/` and are promoted only through `/import`, or admitted to the personal library and seeded, never copied into the audited trees directly.
+
 ### hardy doctor
 
 Checks the SDK, CLI and login for the configured backend, Lean, LaTeX, Tectonic, and the computer algebra kernel, and prints what each one reported. LaTeX is the `latex_command` the interactive session compiles cells with; Tectonic is the `tectonic` executable `prove`, a live `accept` and staged `evals` rows build their document with, and a machine without it fails their preflight rather than the document. The model check only checks that a model identity is *set*, not that it exists: any non-empty identity passes, so a typo in `model` is reported ready here and only fails on the first call. A named non-default CAS backend is treated as required; the built-in SymPy is advisory. Exits `1` when a required check failed.

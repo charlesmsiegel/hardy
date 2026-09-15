@@ -85,6 +85,10 @@ Everything one problem owns lives under its own directory, and all of it is mean
 ├── .gitignore                     # written by Hardy; see below
 ├── session.json                    # the record: naming registry, approved assumptions, audit verdicts
 ├── transcript.jsonl                 # the append-only conversation log
+├── chats/                           # every chat but `main`; see below
+│   └── <chat-id>/
+│       ├── chat.json                  # {"schema": "hardy.chat/v1", "title", "created"}
+│       └── transcript.jsonl            # that chat's append-only log
 ├── bibliography.json                # every reference cited into this problem
 ├── sources/                         # journal of library seeds: artifact digests and tree ids, never bytes
 ├── lean/                            # authored Lean; a file's path is its module name
@@ -126,12 +130,16 @@ Everything one problem owns lives under its own directory, and all of it is mean
 └── .local/                                     # machine-local state; not committed
     ├── state.json                                # provider session id, spend ledger, usage cursor
     ├── input-history                              # every line typed at the prompt, sent or not
-    └── bibliography.lock                          # the bibliography's OS-level lock file
+    ├── bibliography.lock                          # the bibliography's OS-level lock file
+    ├── chats/<chat-id>/state.json                  # provider session id and spend for every chat but `main`
+    └── uploads/                                    # files the browser staged; promoted through /import or the library
 ```
 
 **The slug** is a single path component, checked by the same rule a `--project` name or a committed `config.toml` value is held to: no separator, no `.` or `..`, no leading dot (so a slug can never alias `.hardy` or `.git`), no control character, no Windows-reserved name or character, and no trailing dot or space. It is refused rather than sanitized, because it arrives from a file a clone brings with it and is then used to build paths, print banners, and write a lakefile stanza; a name that could forge any of those is not a directory name.
 
 **`session.json`** is the record: the mapping from a Lean declaration to its writeup label, every assumption a human approved and why, and the verdict an independent audit gave each closed theorem. **`transcript.jsonl`** is the append-only trace of the conversation that produced it. Both are evidence, and both are committed.
+
+**`chats/`** holds every conversation but the first. A problem always has the chat `main`: its transcript is `transcript.jsonl` beside the record and its machine-local state is `.local/state.json`, exactly as before. The browser (`hardy web`) can add chats, each with its own `chats/<id>/transcript.jsonl`, committed like the first, and its own `.local/chats/<id>/state.json`, ignored like the first. They share everything else: the record, the ledger, `lean/`, `tex/`, `cas/` and `delegations/` are the problem's, not a chat's. A chat id follows the slug rule. `chat.json` carries the title and creation time and nothing mathematical.
 
 **`lean/`** and **`tex/`** are not paired by name; see the next section for why. **`cas/`** is committed as a whole except its two scratch subdirectories: `replay/` is a fresh kernel's working directory for replaying every accepted cell on export, and `script-run/` is where the rendered script is run to check it against that replay. Both are reset on every export and neither is meant to be read afterward, so neither is versioned.
 

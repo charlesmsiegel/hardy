@@ -49,3 +49,6 @@ hardy-output/
 # `evals/baseline.json` is ignored with the rest and never committed; it is
 # regenerable with `hardy evals baseline`.
 /evals/
+
+# The browser client is built from `web/`; its dependency tree is not committed.
+/web/node_modules/
