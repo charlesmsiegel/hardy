@@ -17,7 +17,7 @@ def test_the_registry_holds_the_specified_commands():
     names = [c.name for c in handlers.build_registry()]
     assert names == [
         "help", "model", "cas", "goal", "assume", "import", "project", "status", "prove",
-        "export", "doctor", "clear", "tree", "fork", "abandon", "delegate", "jobs", "cancel",
+        "export", "doctor", "checkpoint", "clear", "tree", "fork", "abandon", "delegate", "jobs", "cancel",
         "exit", "quit",
         "audit", "formalize", "publish", "restyle",
     ]
