@@ -16,7 +16,7 @@ from typing import Any
 
 from hardy.documents.export import _superseded
 from hardy.foundation.files import resolve_named_child
-from hardy.literature.bibliography import Bibliography
+from hardy.literature.bibliography import Bibliography, BibliographyError
 from hardy.literature.sources.seeds import SeedStore
 from hardy.workflows.ledger.contracts import Obligation, ProjectItem, Relation
 from hardy.workflows.ledger.store import LedgerStore
@@ -158,12 +158,16 @@ def files(problem: Path) -> dict[str, list[str]]:
                 if path.is_file() and not path.is_symlink() and ".build" not in path.parts
             )
     top = problem / "writeup.pdf"
-    if top.is_file():
+    if top.is_file() and not top.is_symlink():
         out["pdf"].append("writeup.pdf")
     publications = problem / "publications"
     if publications.is_dir():
         out["pdf"].extend(
-            sorted(path.relative_to(problem).as_posix() for path in publications.glob("*/writeup.pdf") if path.is_file())
+            sorted(
+                path.relative_to(problem).as_posix()
+                for path in publications.glob("*/writeup.pdf")
+                if path.is_file() and not path.is_symlink()
+            )
         )
     return out
 
@@ -193,8 +197,17 @@ def pdf_bytes(problem: Path, relative: str) -> bytes:
 
 
 def sources(problem: Path) -> dict[str, Any]:
-    """The problem's bibliography and library seeds, each already its own read model."""
-    bibliography = [entry.model_dump(mode="json") for entry in Bibliography(problem).entries()]
+    """The problem's bibliography and library seeds, each already its own read model.
+
+    A missing store is already an empty `Store`/`JournalSnapshot`, so only a
+    corrupt `bibliography.json` needs handling here: `Bibliography.read`
+    raises `BibliographyError` for that, and this degrades to an empty
+    bibliography rather than failing the whole panel.
+    """
+    try:
+        bibliography = [entry.model_dump(mode="json") for entry in Bibliography(problem).entries()]
+    except BibliographyError:
+        bibliography = []
     seeds = [
         {"id": seed.id, "artifact": seed.artifact_sha256, "priority": seed.priority, "intent": seed.intent or ""}
         for seed in SeedStore(problem).seeds()

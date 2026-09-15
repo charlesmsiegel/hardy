@@ -73,6 +73,55 @@ def test_files_and_confinement(tmp_path: Path) -> None:
         panels.pdf_bytes(problem, "lean/Sylow.lean")
 
 
+def test_files_excludes_symlinked_pdfs(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"%PDF-1.4 outside")
+    (problem / "publications" / "v1").mkdir(parents=True)
+    try:
+        (problem / "writeup.pdf").symlink_to(outside)
+        (problem / "publications" / "v1" / "writeup.pdf").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    out = panels.files(problem)
+    assert out["pdf"] == []
+
+
+def test_sources_reads_bibliography_and_seeds(tmp_path: Path) -> None:
+    from hashlib import sha256
+
+    from hardy.literature.arxiv import PaperRecord, digest
+    from hardy.literature.bibliography import Bibliography
+    from hardy.literature.sources.seeds import SeedStore, new_seed
+
+    problem = make_problem(tmp_path)
+    assert panels.sources(problem) == {"bibliography": [], "seeds": []}
+
+    record = PaperRecord(
+        arxiv_id="math.DG/0211159v1", title="The entropy formula for the Ricci flow",
+        authors=("Grigori Perelman",), abstract="A monotonic expression for the Ricci flow.",
+        published="2002-11-11T18:00:00Z", updated="2002-11-11T18:00:00Z", doi=None,
+        abs_url="https://arxiv.org/abs/math.DG/0211159v1",
+    )
+    record = record.model_copy(update={"content_sha256": digest(record.content())})
+    entry, _ = Bibliography(problem).cite(record)
+
+    seed_store = SeedStore(problem)
+    artifact_sha = sha256(b"seed-artifact").hexdigest()
+    seed = new_seed(artifact_sha, priority=2, intent="background reading")
+    seed_store.add(seed, expected_revision=seed_store.revision())
+
+    out = panels.sources(problem)
+    assert [item["key"] for item in out["bibliography"]] == [entry.key]
+    assert out["seeds"] == [{"id": seed.id, "artifact": artifact_sha, "priority": 2, "intent": "background reading"}]
+
+
+def test_sources_degrades_on_a_corrupt_bibliography(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    (problem / "bibliography.json").write_text("not json", encoding="utf-8")
+    assert panels.sources(problem) == {"bibliography": [], "seeds": []}
+
+
 def test_file_text_truncates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     problem = make_problem(tmp_path)
     monkeypatch.setattr(panels, "TEXT_LIMIT", 8)
