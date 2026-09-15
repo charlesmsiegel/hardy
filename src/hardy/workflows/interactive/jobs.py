@@ -66,6 +66,9 @@ class _Job:
     error: BaseException | None = None
     detached: bool = False
     cancelled: bool = False
+    #: Detached, but never attached under the hierarchy: the dispatcher keeps
+    #: the gate and reports the failure; the job finishes quietly.
+    orphaned: bool = False
     thread: int = 0
     id: str = ""
 
@@ -133,8 +136,17 @@ class ComputationJobs:
         try:
             delegation = self._delegations.attach_computation(objective=job.objective, handle=handle)
             job.id = delegation.id
-        finally:
+        except Exception:
+            # The controller would not take it (it is closing, say). The call
+            # fails in the turn, the gate stays the dispatcher's to release,
+            # and it is released only once the work has actually stopped, so
+            # nothing interleaves with a save still writing.
+            with job.lock:
+                job.orphaned = True
             job.attached.set()
+            job.done.wait()
+            raise
+        job.attached.set()
         with self._lock:
             self._running[job.id] = job
         self._notify(f"detached {job.objective} as background job {job.id}; its result arrives as a notice "
@@ -161,8 +173,14 @@ class ComputationJobs:
             job.done.set()
             return
         # Detached: the dispatcher has returned and this thread owns the gate.
+        job.attached.wait(5)
+        with job.lock:
+            orphaned = job.orphaned
+        if orphaned:
+            process.reattach_thread(threading.get_ident())
+            job.done.set()
+            return
         try:
-            job.attached.wait(5)
             if result is None:
                 result = ToolResult(False, f"{type(error).__name__}: {error}")
             seconds = time.monotonic() - job.started
@@ -182,6 +200,7 @@ class ComputationJobs:
                 self._running.pop(job.id, None)
             process.reattach_thread(threading.get_ident())
             self._gate.release()
+            job.done.set()
             if self.on_finished is not None:
                 self.on_finished()
 
