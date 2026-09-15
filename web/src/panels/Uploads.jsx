@@ -45,7 +45,13 @@ function Card({file, onSend, onReload}) {
   const [failure, setFailure] = useState('');
   const [working, setWorking] = useState(false);
 
-  const safe = quotable(file.path) && quotable(file.name);
+  // Two separate refusals, because they are two separate mistakes with two
+  // different remedies: the staged name is fixed by renaming and staging
+  // again, the destination by retyping the box. Both are about the same
+  // thing -- a double quote cannot be carried inside a quoted path, and a
+  // line built round one would mean something other than what it shows.
+  const named = quotable(file.path);
+  const addressed = quotable(dest);
 
   const promote = (verb) => {
     const tail = dest.trim() ? ` "${dest.trim()}"` : '';
@@ -77,64 +83,75 @@ function Card({file, onSend, onReload}) {
         {file.kind} · {size(file.size)}
       </div>
 
-      {!safe ? (
-        <p className="panel__note">
-          This name contains a double quote, which cannot be carried through a quoted path. Rename the file and upload
-          it again before promoting it.
-        </p>
-      ) : (
+      {KINDS[file.kind] ? (
         <>
-          {KINDS[file.kind] ? (
-            <>
-              <input
-                className="card__input"
-                placeholder="destination inside the project (optional)"
-                aria-label={`Destination for ${file.name}`}
-                value={dest}
-                onChange={(event) => setDest(event.target.value)}
-              />
-              <div className="card__actions">
-                {KINDS[file.kind].map(([label, verb]) => (
-                  <button key={verb} type="button" className="button" onClick={() => promote(verb)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
-
-          {isDocument ? (
-            <>
-              <input
-                className="card__input"
-                placeholder="title (optional)"
-                aria-label={`Title for ${file.name}`}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-              <input
-                className="card__input"
-                placeholder="author (optional)"
-                aria-label={`Author for ${file.name}`}
-                value={author}
-                onChange={(event) => setAuthor(event.target.value)}
-              />
-              <input
-                className="card__input"
-                placeholder="intent (optional)"
-                aria-label={`Intent for ${file.name}`}
-                value={intent}
-                onChange={(event) => setIntent(event.target.value)}
-              />
-              <div className="card__actions">
-                <button type="button" className="button" disabled={working} onClick={toLibrary}>
-                  {working ? 'Importing...' : 'Import to library and seed'}
-                </button>
-              </div>
-            </>
-          ) : null}
+          <input
+            className="card__input"
+            placeholder="destination inside the project (optional)"
+            aria-label={`Destination for ${file.name}`}
+            value={dest}
+            onChange={(event) => setDest(event.target.value)}
+          />
+          {named ? null : (
+            <p className="panel__note">
+              This name contains a double quote, which cannot be carried through a quoted path. Rename the file and
+              upload it again before promoting it.
+            </p>
+          )}
+          {addressed ? null : (
+            <p className="panel__note">
+              This destination contains a double quote, which cannot be carried through a quoted path. Give a
+              destination without one.
+            </p>
+          )}
+          <div className="card__actions">
+            {KINDS[file.kind].map(([label, verb]) => (
+              <button
+                key={verb}
+                type="button"
+                className="button"
+                disabled={!named || !addressed}
+                onClick={() => promote(verb)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </>
-      )}
+      ) : null}
+
+      {/* Offered whatever the name contains: this posts the name as JSON and
+          never builds a command line, so a double quote in it is ordinary. */}
+      {isDocument ? (
+        <>
+          <input
+            className="card__input"
+            placeholder="title (optional)"
+            aria-label={`Title for ${file.name}`}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+          <input
+            className="card__input"
+            placeholder="author (optional)"
+            aria-label={`Author for ${file.name}`}
+            value={author}
+            onChange={(event) => setAuthor(event.target.value)}
+          />
+          <input
+            className="card__input"
+            placeholder="intent (optional)"
+            aria-label={`Intent for ${file.name}`}
+            value={intent}
+            onChange={(event) => setIntent(event.target.value)}
+          />
+          <div className="card__actions">
+            <button type="button" className="button" disabled={working} onClick={toLibrary}>
+              {working ? 'Importing...' : 'Import to library and seed'}
+            </button>
+          </div>
+        </>
+      ) : null}
 
       <div className="card__actions">
         <button type="button" className="button" onClick={discard}>
