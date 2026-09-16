@@ -6,7 +6,11 @@
 // asks for is actually served, the event stream opens, a line posted to
 // `/api/input` comes back down that stream as a `reply`, every endpoint a
 // panel reads answers JSON, and a file dropped on the page is staged where the
-// uploads panel will find it.
+// uploads panel will find it. On top of that sweep, `/api/environment`,
+// `/api/record` and `/api/chats` -- the three endpoints this shipment added --
+// are checked against their documented shapes, and `/api/graph` is checked for
+// the classification tokens the drawing needs: `family` per node, `style` per
+// edge, and a `tones` map covering every `ObligationStatus`.
 //
 // Deliberately not a test runner. It exits 0 and prints `smoke ok`, or it
 // throws with the first thing that was wrong.
@@ -114,6 +118,7 @@ const PANEL_ENDPOINTS = [
   '/api/state', '/api/commands', '/api/transcript', '/api/projects',
   '/api/summary', '/api/files', '/api/uploads', '/api/jobs',
   '/api/tree', '/api/sources', '/api/graph', '/api/models', '/api/cas/cells',
+  '/api/environment', '/api/record', '/api/chats',
 ];
 
 async function panels() {
@@ -137,10 +142,17 @@ async function panels() {
  *  while the panel had never drawn a node, an edge family, or the one thing
  *  the graph says that nothing else does: a relation gone stale.
  */
+//: Every `ObligationStatus` value, exactly as `contracts.py` declares it.
+//: `/api/graph`'s `tones` map is total over the enum -- a status added there
+//: without a matching tone raises in `panels/record.py` rather than falling
+//: back to a default colour, so this list is what would catch the map going
+//: silently partial again.
+const OBLIGATION_STATUSES = ['open', 'investigating', 'blocked', 'resolved', 'dismissed', 'abandoned'];
+
 async function graph() {
   const response = await fetch(`${base}/api/graph`);
   check(response.status === 200, `GET /api/graph answered ${response.status}`);
-  const {nodes, edges} = JSON.parse(await response.text());
+  const {nodes, edges, tones} = JSON.parse(await response.text());
   check(nodes.length >= 4, `the ledger has ${nodes.length} nodes, fewer than four`);
   check(edges.length >= 3, `the ledger has ${edges.length} edges, fewer than three`);
   check(edges.some((edge) => edge.stale), 'no edge in the ledger is stale');
@@ -150,7 +162,123 @@ async function graph() {
     nodes.some((node) => node.evidence.includes('formal')),
     'no node carries formal evidence, so the "F" badge is never drawn',
   );
+
+  // The classification tokens the drawing itself reads, not the ledger data
+  // they are computed from -- a panel that stopped sending `family` or
+  // `style` would leave every node the same colour and every edge the same
+  // stroke, and nothing above this would notice.
+  check(
+    nodes.every((node) => typeof node.family === 'string' && node.family),
+    'a ledger node carries no family, so the graph panel cannot colour it',
+  );
+  const nodeFamilies = new Set(nodes.map((node) => node.family));
+  check(nodeFamilies.size >= 3, `the nodes carry ${nodeFamilies.size} families, fewer than the three the fixture seeds`);
+  check(
+    edges.every((edge) => edge.style === 'solid' || edge.style === 'dashed'),
+    `an edge carries a style other than "solid"/"dashed": ${JSON.stringify(edges.map((edge) => edge.style))}`,
+  );
+  const edgeStyles = new Set(edges.map((edge) => edge.style));
+  check(edgeStyles.size >= 2, `the edges carry ${edgeStyles.size} style(s), not both solid and dashed`);
+
+  check(tones && typeof tones === 'object' && !Array.isArray(tones), '/api/graph carries no tones map');
+  for (const status of OBLIGATION_STATUSES) {
+    check(
+      typeof tones[status] === 'string' && tones[status],
+      `/api/graph's tones map has no entry for obligation status ${JSON.stringify(status)}`,
+    );
+  }
+  check(
+    Object.keys(tones).length === OBLIGATION_STATUSES.length,
+    `/api/graph's tones map has ${Object.keys(tones).length} entries, not the ${OBLIGATION_STATUSES.length} ObligationStatus values`,
+  );
+
   return {nodes: nodes.length, edges: edges.length};
+}
+
+/** `/api/environment`'s own answer: every doctor check, and a failure count that agrees with it. */
+async function environment() {
+  const response = await fetch(`${base}/api/environment`);
+  check(response.status === 200, `GET /api/environment answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body.checks), '/api/environment did not answer a checks array');
+  check(body.checks.length > 0, '/api/environment reported no checks at all');
+  for (const item of body.checks) {
+    check(typeof item.name === 'string' && item.name, 'an /api/environment check has no name');
+    check(typeof item.ok === 'boolean', `${item.name}'s ok is ${JSON.stringify(item.ok)}, not a boolean`);
+    check(typeof item.detail === 'string', `${item.name}'s detail is ${JSON.stringify(item.detail)}, not a string`);
+    check(typeof item.required === 'boolean', `${item.name}'s required is ${JSON.stringify(item.required)}, not a boolean`);
+  }
+  // `failures` is a derived count, not an independent field -- checked against
+  // the list it is derived from rather than against a fixed number, since
+  // which checks pass depends on the machine the smoke runs on.
+  const required = body.checks.filter((item) => item.required && !item.ok).length;
+  check(
+    body.failures === required,
+    `/api/environment reports ${body.failures} failures, but ${required} required checks are not ok`,
+  );
+  return body.checks.length;
+}
+
+/** `/api/record`'s counts, cross-checked against each other and against the fixture's four items. */
+async function record() {
+  const response = await fetch(`${base}/api/record`);
+  check(response.status === 200, `GET /api/record answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Number.isInteger(body.items) && body.items >= 4, `/api/record reports ${body.items} items, fewer than the four the fixture seeds`);
+  for (const key of ['by_family', 'by_kind', 'evidence', 'obligations']) {
+    check(
+      body[key] !== null && typeof body[key] === 'object' && !Array.isArray(body[key]),
+      `/api/record's ${key} is ${JSON.stringify(body[key])}, not an object`,
+    );
+  }
+  const byFamilyTotal = Object.values(body.by_family).reduce((sum, count) => sum + count, 0);
+  check(
+    byFamilyTotal === body.items,
+    `/api/record's by_family sums to ${byFamilyTotal}, not the ${body.items} items it reports`,
+  );
+  const byKindTotal = Object.values(body.by_kind).reduce((sum, count) => sum + count, 0);
+  check(
+    byKindTotal === body.items,
+    `/api/record's by_kind sums to ${byKindTotal}, not the ${body.items} items it reports`,
+  );
+  check(
+    Object.keys(body.by_family).length >= 3,
+    `/api/record's by_family has ${Object.keys(body.by_family).length} families, fewer than the three the fixture seeds`,
+  );
+  check(
+    (body.evidence.formal ?? 0) >= 1,
+    '/api/record reports no formal evidence, though the fixture seeds one theorem with a formal artifact',
+  );
+  check(Number.isInteger(body.revision), `/api/record's revision is ${JSON.stringify(body.revision)}, not an integer`);
+  return body.items;
+}
+
+/** `/api/chats`'s rows, checked for shape rather than for turn counts the fake session never persists. */
+async function chats() {
+  const response = await fetch(`${base}/api/chats`);
+  check(response.status === 200, `GET /api/chats answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body), '/api/chats did not answer an array');
+  check(body.length >= 1, '/api/chats answered no chats at all');
+  const main = body.find((chat) => chat.id === 'main');
+  check(main, '/api/chats has no "main" chat, though every project starts with one');
+  for (const chat of body) {
+    check(typeof chat.id === 'string' && chat.id, 'a chat in /api/chats has no id');
+    check(typeof chat.title === 'string' && chat.title, `${chat.id}'s title is ${JSON.stringify(chat.title)}`);
+    check(typeof chat.created === 'number', `${chat.id}'s created is ${JSON.stringify(chat.created)}, not a number`);
+    // `turns`/`last_activity` are `null`, not `0`, when nothing could be read
+    // -- the fake session never writes a transcript file to disk, so `main`
+    // legitimately reports `null` here rather than a count.
+    check(
+      chat.turns === null || Number.isInteger(chat.turns),
+      `${chat.id}'s turns is ${JSON.stringify(chat.turns)}, neither null nor an integer`,
+    );
+    check(
+      chat.last_activity === null || typeof chat.last_activity === 'number',
+      `${chat.id}'s last_activity is ${JSON.stringify(chat.last_activity)}, neither null nor a number`,
+    );
+  }
+  return body.length;
 }
 
 /** Stage one `.lean` file the way the drop zone does, and see the panel list it. */
@@ -242,12 +370,16 @@ async function main() {
 
   const endpoints = await panels();
   const ledger = await graph();
+  const envChecks = await environment();
+  const items = await record();
+  const chatCount = await chats();
   const name = await staged(token);
 
   console.log(
     `smoke ok (${count} assets, ${endpoints} panel endpoints, ` +
-      `${ledger.nodes} ledger nodes and ${ledger.edges} edges with one stale, staged ${name}, ` +
-      'reply "hello", interrupted turn replies "one two" once)',
+      `${ledger.nodes} ledger nodes and ${ledger.edges} edges with one stale, ` +
+      `${envChecks} environment checks, ${items} record items, ${chatCount} chats, ` +
+      `staged ${name}, reply "hello", interrupted turn replies "one two" once)`,
   );
 }
 
