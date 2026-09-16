@@ -12,6 +12,12 @@
 // `/fork --name` flag do not exist in `src/hardy/app/tui/handlers.py`'s
 // command registry, and inventing a command string the server would refuse
 // is worse than saying plainly that no such action exists yet.
+//
+// Fork -- the one real command here -- is never sent from this click
+// handler. It fills the composer's draft (`useSession().setDraft`) and
+// leaves submitting it to the user, per the prototype's own line ("Resume
+// and fork raise a line card in the composer") and the design's rule that a
+// session-changing action is reviewed before it runs, not auto-submitted.
 
 import {useState} from 'react';
 import Absent, {orAbsent} from '../components/Absent.jsx';
@@ -48,7 +54,7 @@ function summaryFor(entry, messages) {
 }
 
 export default function Tree() {
-  const {status, runningTool, messages, refusal, revision, send} = useSession();
+  const {status, runningTool, messages, refusal, revision, setDraft} = useSession();
   const [route, go] = useHash();
 
   const summary = usePanel('/api/summary', revision);
@@ -177,7 +183,7 @@ export default function Tree() {
                 </span>
               );
             })}
-            <span className="wb-tree__legend-key">● entry · ⑂ fork · × abandoned · head is filled</span>
+            <span className="wb-tree__legend-key">● entry · ⑂ fork · × abandoned · ▶ head</span>
           </div>
           <div className="wb-tree__rows-wrap">
             <svg width={svgWidth} height={svgHeight} className="wb-tree__svg">
@@ -240,7 +246,23 @@ export default function Tree() {
                 <button
                   type="button"
                   className="button"
-                  onClick={() => send(`/fork ${selectedEntry.entry_id}`)}
+                  onClick={() => {
+                    // A line card, not an act: the prototype's own copy says
+                    // "fork raise a line card in the composer", and the
+                    // button's own label ends in an ellipsis, the design's
+                    // convention for "opens something" rather than "does it
+                    // now". Sending it here, unreviewed, would also make the
+                    // resulting `/fork e-...` transcript line indistinguishable
+                    // from one the user typed themselves -- exactly the
+                    // synthesized-command problem Task 11 ruled against for
+                    // `/project switch`. Navigating to Chat is not the
+                    // prototype's own move, but is the only way to make the
+                    // populated draft visible: the composer this line lands
+                    // in is the one mounted (hidden) inside Chat's dock,
+                    // never drawn on the Tree route itself.
+                    setDraft(`/fork ${selectedEntry.entry_id}`);
+                    go('chat');
+                  }}
                 >
                   Fork a line here…
                 </button>
@@ -259,10 +281,10 @@ export default function Tree() {
                 </a>
               </div>
               <div className="panel__note">
-                Fork raises <span style={{fontFamily: 'var(--mono)', color: 'var(--fg)'}}>/fork {selectedEntry.entry_id}</span> in
-                the composer, refused while a turn is running on that line. No <code>/resume</code> command or{' '}
-                <code>/fork --name</code> flag exists in the registry, so Resume and Compare are shown disabled
-                rather than raising a command that does not exist.
+                Fork puts <span style={{fontFamily: 'var(--mono)', color: 'var(--fg)'}}>/fork {selectedEntry.entry_id}</span> in
+                the composer for review; submitting it is refused while a turn is running on that line. No{' '}
+                <code>/resume</code> command or <code>/fork --name</code> flag exists in the registry, so Resume
+                and Compare are shown disabled rather than raising a command that does not exist.
               </div>
               {busy && refusal ? <div className="wb-tree__detail-refusal">{refusal}</div> : null}
               {isAbandon(selectedEntry) ? (
