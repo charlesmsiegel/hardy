@@ -17,14 +17,22 @@
 // unmounted dock is an unmounted Chat. Below 900px it is always suppressed
 // in favour of the footer strip, and the chat-page shape is immune to that
 // -- both rules live in `styles.css`.
+//
+// `hidden` is the third case Task 13a adds: the Tree route. Tree wants the
+// same full-width, no-aside layout as Chat (`Shell.jsx`'s `showAside`
+// already leaves it no grid column to sit in), but it is not itself the
+// chat-full shape -- Tree is its own page occupying that space, so the dock
+// is not drawn at all there rather than shown full-bleed over Tree's own
+// content. Chat still has to stay mounted underneath for when the toggle
+// flips back, which is exactly what `display:none` gives for free.
 
-export default function Dock({isChatPage, dock, chatLabel, running, queued, content, go}) {
+export default function Dock({isChatPage, hidden, dock, chatLabel, running, queued, content, go}) {
   const docked = !isChatPage;
 
   return (
     <aside
       className={isChatPage ? 'wb-dock wb-dock--chat-full' : 'wb-dock'}
-      style={isChatPage ? undefined : {display: dock === 'pinned' ? 'grid' : 'none'}}
+      style={isChatPage ? undefined : {display: !hidden && dock === 'pinned' ? 'grid' : 'none'}}
     >
       {docked ? (
         <div className="wb-dock__head">

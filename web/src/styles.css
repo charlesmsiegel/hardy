@@ -223,7 +223,13 @@ input {
 }
 
 .message {
-  border-left: 3px solid var(--border);
+  /* The prototype's own inline style says 3px, but its `<style>` block
+     overrides every `article[style*="border-left:3px"]` back down to 2px
+     (`.wb article[style*="border-left:3px"]{border-left-width:2px
+     !important}`) -- the design's real value is 2px, which `wb-msg` (Task
+     13a, `chat/Transcript.jsx`) uses directly. Kept at 2px here too so the
+     old client's rail reads the same width. */
+  border-left: 2px solid var(--border);
   padding: 2px 0 2px 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -410,8 +416,15 @@ input {
 
 .prompt {
   background: var(--panel);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
+  /* Task 13a: matched to the card-shell family's own border (`--accent` at
+     55%, `--r2` radius) so the Chat page's gate/confirm/line cards read as
+     the same design language `Cards.jsx` uses elsewhere -- `Prompt.jsx`
+     stays the renderer here because it is the one already wired to `WebUi`'s
+     real payload shape (`kind`/`title`/`subtitle`/`rows`/`preamble`), which
+     carries no `facts`/`statement`/`axiom`/`options-with-detail` for
+     `Cards.jsx`'s richer props to draw from. */
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--r2);
   padding: 12px 14px;
 }
 
@@ -1679,10 +1692,18 @@ input {
 /* Same specificity as `.wb-dock` alone is not enough to survive the 900px
    media query below, which hides `.wb-dock` with `!important` -- importance
    beats specificity, so the chat-page shape needs `!important` of its own,
-   and the compound selector's higher specificity is what then lets it win. */
+   and the compound selector's higher specificity is what then lets it win.
+   `display:flex` (Task 13a; was `block`) so `.wb-dock__body` -- a plain
+   block child otherwise, with nothing to stretch it -- gets a definite
+   height from `flex:1` and can scroll its own transcript instead of the
+   whole page growing to the transcript's length. This went uncovered until
+   Chat actually had content: `display:grid`'s `minmax(0,1fr)` row already
+   stretched `.wb-dock__body` correctly in the *docked* shape, so nothing
+   exercised the chat-full one until now. */
 .wb-dock.wb-dock--chat-full {
   border-left: none;
-  display: block !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
 
 .wb-dock__head {
@@ -1716,6 +1737,7 @@ input {
 }
 
 .wb-dock__body {
+  flex: 1;
   min-height: 0;
   overflow: auto;
 }
@@ -2141,4 +2163,439 @@ input {
   flex-wrap: wrap;
   font: 11px var(--mono);
   gap: 10px;
+}
+
+/* -- Chat and Tree (Task 13a) --------------------------------------------
+ * Chat's full-width shape is a 200px rail beside `.wb-chat-main` (header,
+ * transcript, composer); docked beside another page `pages/Chat.jsx` draws
+ * only `.wb-chat-main`, since a 200px rail would leave 180px of a 380px
+ * dock for the transcript. Tree reuses `.wb-chat-main`'s header
+ * (`chat/Header.jsx`) and its own two-pane `.wb-tree` body underneath it.
+ */
+
+.wb-chat-full {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .wb-chat-full {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-chat-rail {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.wb-chat-rail__section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wb-chat-rail__chats {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.wb-chat-rail__chat {
+  border-radius: var(--r);
+  color: var(--fg);
+  padding: 2px 6px;
+}
+
+.wb-chat-rail__chat--live {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.wb-chat-rail__error {
+  color: var(--error);
+  font-size: 11px;
+}
+
+.wb-chat-rail__waiting {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 2px;
+}
+
+.wb-chat-rail__link {
+  font-size: 12px;
+  margin-top: auto;
+}
+
+.wb-chat-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.wb-chat-header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 10px;
+  padding: 6px 20px;
+}
+
+.wb-chat-header strong {
+  color: var(--fg);
+}
+
+.wb-chat-header__toggle {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.wb-viewtoggle {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 12px var(--mono);
+  padding: 2px 8px;
+}
+
+.wb-viewtoggle--on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+/* -- the transcript -------------------------------------------------- */
+
+.wb-transcript {
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.wb-turn-sep {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font: 12px var(--mono);
+  gap: 10px;
+}
+
+.wb-turn-sep__line {
+  border-top: 1px solid var(--border);
+  flex: 1;
+}
+
+.wb-msg {
+  border-left: 2px solid var(--border);
+  overflow-wrap: anywhere;
+  padding: 2px 0 2px 12px;
+}
+
+.wb-msg--user {
+  border-left-color: var(--accent);
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.wb-msg--hardy {
+  border-left-color: var(--warning);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.wb-msg--refusal {
+  border-left-color: var(--error);
+  color: var(--error);
+}
+
+.wb-msg--warning {
+  border-left-color: var(--warning);
+  color: var(--warning);
+}
+
+.wb-msg--system {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wb-msg--tool {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wb-msg--partial {
+  opacity: 0.75;
+}
+
+.wb-msg__label {
+  color: var(--muted);
+}
+
+.wb-msg__thinking {
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+
+.wb-msg__thought {
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+
+.wb-msg__thought summary {
+  cursor: pointer;
+}
+
+.wb-msg__thought pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 12px var(--mono);
+  margin: 6px 0;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+.wb-msg__flag {
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wb-lean {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.wb-lean__note {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+/* -- the graph (Tree) -------------------------------------------------- */
+
+.wb-tree {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  min-height: 0;
+}
+
+@media (max-width: 1280px) {
+  .wb-tree {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .wb-tree__graph {
+    border-right: none !important;
+  }
+}
+
+.wb-tree__graph {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 12px;
+  min-width: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.wb-tree__title {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.wb-tree__back {
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.wb-tree__legend {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 14px;
+}
+
+.wb-tree__legend-item {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.wb-tree__legend-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.wb-tree__legend-key {
+  margin-left: auto;
+}
+
+.wb-tree__rows-wrap {
+  min-width: 0;
+  position: relative;
+}
+
+.wb-tree__svg {
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+}
+
+.wb-tree__rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-tree__row {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  font-size: 12px;
+  gap: 0 10px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  padding-right: 6px;
+}
+
+.wb-tree__row:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.wb-tree__row--selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
+}
+
+.wb-tree__row-id {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-tree__row-kind {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-tree__row-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-tree__row-when {
+  color: var(--muted);
+  font: 11px var(--mono);
+  white-space: nowrap;
+}
+
+.wb-tree__detail {
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 12px;
+  min-width: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.wb-tree__detail-path {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-tree__detail-id {
+  color: var(--fg);
+}
+
+.wb-tree__detail-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wb-tree__detail-kind {
+  color: var(--accent);
+  font: 11px var(--mono);
+}
+
+.wb-tree__detail-body {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 12px/1.5 var(--mono);
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+.wb-tree__detail-facts {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 8px 10px;
+}
+
+.wb-tree__detail-facts-head {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.wb-tree__detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-tree__detail-refusal {
+  color: var(--warning);
+  font: 12px var(--mono);
+}
+
+.wb-tree__detail-lesson {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.wb-tree__detail-lesson-text {
+  font-family: var(--math);
+  font-size: 13px;
 }

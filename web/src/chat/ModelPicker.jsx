@@ -14,7 +14,7 @@
 // catalog lacks.
 
 import {useEffect, useState} from 'react';
-import {get} from './api.js';
+import {get} from '../api.js';
 
 const OTHER = '__other__';
 
