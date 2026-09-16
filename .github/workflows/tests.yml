@@ -114,3 +114,52 @@ jobs:
           test -f "$HARDY_LEAN_PROJECT/lake-manifest.json"
       - name: The tests the fake cannot answer
         run: uv run --extra test pytest -q -m real_toolchain tests/integration/test_audit_real.py
+
+  # `web/smoke.mjs` is the only end-to-end check on the browser client, and
+  # until this job existed nothing ran it but a human remembering a two-shell
+  # ritual. It drives the real built bundle against the real server, over the
+  # scripted fake session `tests/unit/web_smoke_server.py` serves.
+  web-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+      - name: Build the bundle
+        run: npm run build
+        working-directory: web
+      # Started in the background rather than with a separate long-running job
+      # step, because `npm run smoke` needs it already listening. The wait
+      # loop is bounded and fails the step with its own message on timeout --
+      # the alternative, no wait at all, would have the smoke's own
+      # connection-refused error stand in for "the server never came up",
+      # which is a different failure than the ones the smoke actually checks.
+      - name: Start the fake-session server
+        run: |
+          set -euo pipefail
+          uv run python tests/unit/web_smoke_server.py --port 8765 &
+          echo $! > /tmp/web-smoke-server.pid
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8765/api/state > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the fake-session server never answered on :8765 within 30s" >&2
+          exit 1
+      - name: Smoke the built bundle against it
+        run: npm run smoke
+        working-directory: web
+      - name: Stop the fake-session server
+        if: always()
+        run: |
+          if [ -f /tmp/web-smoke-server.pid ]; then
+            kill "$(cat /tmp/web-smoke-server.pid)" 2>/dev/null || true
+          fi
