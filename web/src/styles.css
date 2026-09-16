@@ -2969,6 +2969,23 @@ input {
   gap: 6px;
 }
 
+.wb-files__import-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wb-files__import-cmd {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--muted);
+  font: 11px var(--mono);
+  overflow-wrap: anywhere;
+  padding: 2px 6px;
+}
+
 .wb-files__upload-result {
   color: var(--fg);
   font: 11px var(--mono);
