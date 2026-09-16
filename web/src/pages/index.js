@@ -6,4 +6,12 @@
 // not exist, which is a different thing from a page with nothing in it -- so
 // the fallback says so in words rather than rendering a blank panel.
 
-export const PAGES = {};
+import Environment from './Environment.jsx';
+import Help from './Help.jsx';
+import Home from './Home.jsx';
+
+export const PAGES = {
+  home: Home,
+  environment: Environment,
+  help: Help,
+};
