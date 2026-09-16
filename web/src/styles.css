@@ -1,36 +1,52 @@
-/* One theme, two palettes, three columns.
+/* One theme, two palettes, a pages-first workbench.
  *
  * Every colour below is a variable and every variable is defined twice: once
  * for light, once under `prefers-color-scheme: dark`. Nothing here loads a
  * font from anywhere -- the page runs under `font-src 'self'`, so the body
- * text is the system stack and the only bundled faces are KaTeX's own, which
- * Vite emits beside the CSS that asks for them.
+ * text is a serif system stack (no download) and the only bundled faces are
+ * KaTeX's own, which Vite emits beside the CSS that asks for them.
  */
 
 :root {
-  --bg: #fbfbfa;
-  --panel: #ffffff;
-  --fg: #1b1b1a;
-  --muted: #6b6b66;
-  --accent: #2f6f4f;
-  --error: #a32020;
-  --warning: #9a6400;
-  --border: #dcdcd6;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --bg: #e4e8de;
+  --panel: #eceee6;
+  --fg: #1e2a24;
+  --muted: #5f6b62;
+  --accent: #2e6a55;
+  --error: #9a3a34;
+  --warning: #86620a;
+  --border: #c6cdc0;
+  --result: #cfdfd2;
+  --research: #e2dbc2;
+  --concept: #d2d9e2;
+  --document: #dfd3d8;
+  --other: #d8dcd2;
+  --r: 3px;
+  --r2: 4px;
+  --sans: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --math: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Times New Roman", serif;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #17181a;
-    --panel: #1f2023;
-    --fg: #e6e6e3;
-    --muted: #9a9a94;
-    --accent: #6fbf94;
-    --error: #ef7676;
-    --warning: #d8a54a;
-    --border: #33353a;
+    --bg: #1b241f;
+    --panel: #1f2923;
+    --fg: #ece5d3;
+    --muted: #a49d8b;
+    --accent: #a8d3c2;
+    --error: #e8a19a;
+    --warning: #e2c778;
+    --border: #2e3a33;
+    --result: #2c4a3c;
+    --research: #4a4531;
+    --concept: #33415a;
+    --document: #4b3a48;
+    --other: #33403a;
+    --r: 3px;
+    --r2: 4px;
+    --math: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Times New Roman", serif;
     color-scheme: dark;
   }
 }
@@ -49,7 +65,39 @@ body,
 body {
   background: var(--bg);
   color: var(--fg);
-  font: 15px/1.55 var(--sans);
+  font: 13px/1.5 var(--sans);
+}
+
+/* -- workbench base type -------------------------------------------------- */
+
+.section-label {
+  color: var(--muted);
+  font: 600 10px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.page-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+th {
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 30%, transparent);
+  font: 600 10px var(--mono);
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+td {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+pre,
+textarea,
+input {
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 /* -- layout ------------------------------------------------------------- */
@@ -1093,23 +1141,8 @@ body {
 
 /* -- the ledger graph ---------------------------------------------------- */
 
-:root {
-  --result: #cfe6d8;
-  --research: #e6dcc4;
-  --concept: #d6dded;
-  --document: #e5d8e6;
-  --other: #e2e2dd;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --result: #24463a;
-    --research: #47401f;
-    --concept: #26334c;
-    --document: #3f2a41;
-    --other: #2c2e33;
-  }
-}
+/* The five family tints (--result/--research/--concept/--document/--other)
+   are defined once, in the token block at the top of this file. */
 
 .graph__bar {
   align-items: center;
