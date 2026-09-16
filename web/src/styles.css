@@ -1449,6 +1449,23 @@ input {
   text-underline-offset: 3px;
 }
 
+/* -- TeX: the one highlighter (Task 13c), sharing `.lean-block`'s box ----- */
+
+.tex-token--comment {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tex-token--command {
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.tex-token--math {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* -- Cards: gate, confirm, line -------------------------------------------- */
 
 .card-shell {
@@ -2833,4 +2850,212 @@ input {
   overflow: auto;
   padding: 8px 10px;
   white-space: pre-wrap;
+}
+
+/* -- Files, read-only (Task 13c) -------------------------------------------
+ * The trees + uploads on the left, the viewer on the right -- the same
+ * `minmax(0,1fr) minmax(0,1.4fr)` split the prototype's own Files section
+ * uses, collapsing to one column under `.wb-split2`'s own breakpoint is not
+ * reused here because this page needs its own narrower collapse (the
+ * four-column row grid below gets cramped well before 1280px). */
+
+.wb-files {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  min-height: 0;
+}
+
+@media (max-width: 1000px) {
+  .wb-files {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-files__left,
+.wb-files__right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.wb-files__tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wb-files__tree-head {
+  color: var(--muted);
+  font: 600 10px var(--mono);
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+
+.wb-files__rows {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.wb-files__row {
+  border-radius: 4px;
+  cursor: pointer;
+  display: grid;
+  gap: 1px 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  padding: 2px 6px;
+}
+
+.wb-files__row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.wb-files__row--on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.wb-files__row-name {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.wb-files__row--on .wb-files__row-name {
+  color: var(--accent);
+}
+
+.wb-files__row-meta {
+  color: var(--muted);
+}
+
+.wb-files__uploads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wb-files__dropzone {
+  border: 1px dashed var(--border);
+  border-radius: var(--r);
+  color: var(--muted);
+  padding: 8px;
+  text-align: center;
+}
+
+.wb-files__upload-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wb-files__upload-name {
+  font-family: var(--mono);
+}
+
+.wb-files__upload-meta,
+.wb-files__upload-scan {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-files__upload-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-files__upload-result {
+  color: var(--fg);
+  font: 11px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.wb-files__viewer-head {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-files__viewer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wb-files__pdf {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  height: 70vh;
+  width: 100%;
+}
+
+.wb-files__notebook-segment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wb-files__notebook-cells {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wb-files__cell {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+}
+
+.wb-files__cell-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 8px;
+}
+
+.wb-files__cell-seq {
+  color: var(--muted);
+}
+
+.wb-files__cell-path {
+  color: var(--accent);
+}
+
+.wb-files__cell-meta {
+  color: var(--muted);
+}
+
+.wb-files__cell-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wb-files__cell-text {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 11px var(--mono);
+  margin: 0;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.wb-files__refusal {
+  border: 1px solid var(--warning);
+  border-radius: var(--r);
+  color: var(--warning);
+  font: 12px var(--mono);
+  padding: 6px 10px;
 }

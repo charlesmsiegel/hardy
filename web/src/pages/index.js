@@ -12,10 +12,12 @@
 // reached only through the transcript/tree toggle in Chat's own header.
 //
 // `jobs`, `library` and `ledger` (its graph half; the list half is a later
-// shipment) are Task 13b.
+// shipment) are Task 13b. `files` (read-only; the editor is shipment 3) is
+// Task 13c.
 
 import Chat from './Chat.jsx';
 import Environment from './Environment.jsx';
+import Files from './Files.jsx';
 import Help from './Help.jsx';
 import Home from './Home.jsx';
 import Jobs from './Jobs.jsx';
@@ -30,6 +32,7 @@ export const PAGES = {
   jobs: Jobs,
   library: Library,
   ledger: Ledger,
+  files: Files,
   environment: Environment,
   help: Help,
 };

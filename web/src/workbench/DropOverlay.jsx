@@ -15,15 +15,17 @@
 //
 // On drop, each file's SHA-256 is computed and, for a `.lean` file, its
 // `theorem`/`lemma`/`def`/`axiom` names and any `sorry` are scanned, exactly
-// as the brief asks. Nothing here draws either answer: the Files/Uploads
-// page that would show a staged file's digest and scan is a later task's,
-// and this shipment has nowhere honest to put them. They are computed and
-// discarded rather than skipped, because the upload itself must not be
-// blocked by a scan that fails (a `.lean` file that is not valid UTF-8, say)
-// -- that failure is swallowed per file so the rest still stage.
+// as the brief asks. Both are handed to `uploadScans.record`, keyed by the
+// name `/api/upload` actually staged the file as (`stage`'s own collision
+// suffix, not the dropped name), so Files' Uploads cards -- the page this
+// shipment gives them a place on -- can read them back. The scan itself must
+// not block the upload: a `.lean` file that is not valid UTF-8, say, fails
+// `file.text()` per file, and that failure is swallowed so the rest still
+// stage; only the digest, computed first, is unconditional.
 
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {upload} from '../api.js';
+import {record} from './uploadScans.js';
 
 async function digestOf(file) {
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
@@ -41,9 +43,19 @@ function scanLean(text) {
 }
 
 async function stageOne(file) {
-  await digestOf(file);
-  if (file.name.toLowerCase().endsWith('.lean')) scanLean(await file.text());
-  await upload(file);
+  const sha256 = await digestOf(file);
+  let scan = null;
+  if (file.name.toLowerCase().endsWith('.lean')) {
+    try {
+      scan = scanLean(await file.text());
+    } catch {
+      // Not valid UTF-8, say -- the file still stages, it just carries no
+      // scan; `Files.jsx` renders that as `Absent kind="unreported"`.
+      scan = null;
+    }
+  }
+  const staged = await upload(file);
+  record(staged.name, {sha256, scan});
 }
 
 export default function DropOverlay({go}) {
