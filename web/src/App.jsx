@@ -5,9 +5,9 @@
 // over drawing in a later task.
 
 import {useMemo} from 'react';
-import Chat from './Chat.jsx';
-import Composer from './Composer.jsx';
-import ModelPicker from './ModelPicker.jsx';
+import Chat from './chat/Chat.jsx';
+import Composer from './chat/Composer.jsx';
+import ModelPicker from './chat/ModelPicker.jsx';
 import Panels from './Panels.jsx';
 import SessionProvider from './session/SessionProvider.jsx';
 import useSession from './session/useSession.js';

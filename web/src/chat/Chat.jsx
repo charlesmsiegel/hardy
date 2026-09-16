@@ -3,7 +3,7 @@
 // a dialog over the top of it.
 
 import {memo, useEffect, useRef} from 'react';
-import {render} from './markdown.js';
+import {render} from '../markdown.js';
 import Prompt from './Prompt.jsx';
 
 function Tools({tools}) {

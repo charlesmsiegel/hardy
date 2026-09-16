@@ -9,6 +9,10 @@
 // `known` and this dots the underline and wires the click only for those;
 // leave it out and the block still highlights correctly, just with nothing
 // clickable, which is the honest state before that lookup exists.
+//
+// `onName` receives the token and the click event: Chat is the first live
+// caller, and it needs the pointer position to place a `Peek` popover near
+// the name that was clicked, not just the name itself.
 
 const STRUCTURAL = 'theorem|lemma|def|example|import|namespace|end|variable|noncomputable|instance|structure|class|open|section|universe|abbrev|axiom|where|deriving';
 const TACTICS = "by|intro|intros|obtain|have|exact|rcases|rw|simp|omega|norm_num|apply|refine|constructor|cases|induction|calc|show|use|decide|ring|linarith|aesop|trivial|rfl|fun|match|with|let|at|do|then|else|if|exists";
@@ -48,7 +52,7 @@ export default function Lean({src, onName, known}) {
       <span
         key={key++}
         className={tokenClass(token, known)}
-        onClick={clickable ? () => onName?.(token) : undefined}
+        onClick={clickable ? (event) => onName?.(token, event) : undefined}
       >
         {token}
       </span>,

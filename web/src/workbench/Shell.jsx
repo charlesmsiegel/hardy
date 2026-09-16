@@ -59,6 +59,12 @@ export default function Shell() {
   const closePeek = useCallback(() => setPeek(null), []);
 
   const isChat = route.page === 'chat';
+  // Tree (Task 13a) is reached only through the toggle in Chat's own header
+  // and shares its full-width, no-dock-aside layout -- it is a view of the
+  // same chat, not a separate page the dock should sit beside. `isChat`
+  // alone still picks which mount holds `<ChatPage/>` (below): Tree is its
+  // own registered page, drawn through `pageContent`, not through the dock.
+  const isTree = route.page === 'tree';
   const ChatPage = PAGES.chat;
   const chatContent = ChatPage ? <ChatPage arg={route.arg} onPeek={openPeek} /> : notBuilt('chat');
 
@@ -67,7 +73,7 @@ export default function Shell() {
   // the branch when `isChat` is what keeps Chat from being asked for twice.
   const pageContent = isChat ? null : Page ? <Page arg={route.arg} onPeek={openPeek} /> : notBuilt(route.page);
 
-  const showAside = dock === 'pinned' && !isChat;
+  const showAside = dock === 'pinned' && !isChat && !isTree;
   const bodyCols = showAside ? 'minmax(0,1fr) 380px' : 'minmax(0,1fr)';
 
   const running = runningLabel(status, runningTool);
@@ -90,6 +96,7 @@ export default function Shell() {
         {pageContent !== null ? <div className="wb-page">{pageContent}</div> : null}
         <Dock
           isChatPage={isChat}
+          hidden={isTree}
           dock={dock}
           chatLabel={status.chat || 'chat'}
           running={running}
@@ -98,7 +105,7 @@ export default function Shell() {
           go={go}
         />
       </div>
-      {isChat ? null : (
+      {isChat || isTree ? null : (
         <Footer
           dock={dock}
           chatLabel={status.chat || 'chat'}
