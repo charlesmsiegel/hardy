@@ -1280,3 +1280,260 @@ input {
   padding: 8px;
   white-space: pre-wrap;
 }
+
+/* component vocabulary ---------------------------------------------------
+ * `web/src/components/` -- the strict set every workbench page (`pages/`,
+ * built from Task 10 on) assembles from. Nothing above this heading is
+ * theirs; nothing below styles the three-column client.
+ */
+
+/* -- Absent: the only place absence is rendered -------------------------- */
+
+.absent--unreported {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* -- Pill: one shape, four tones ------------------------------------------ */
+
+.pill {
+  border: 1px solid;
+  border-radius: 2px;
+  display: inline-block;
+  font: 11px var(--mono);
+  padding: 0 8px;
+}
+
+.pill--accent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pill--warning {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.pill--error {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.pill--muted {
+  border-color: var(--muted);
+  color: var(--muted);
+}
+
+/* -- Facts: the key/value grid -------------------------------------------- */
+
+.facts {
+  display: grid;
+  font-size: 12px;
+  gap: 3px 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.facts__label {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.facts--mono .facts__value {
+  font-family: var(--mono);
+}
+
+/* -- Table: one row-picking table ----------------------------------------- */
+
+.vtable {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+
+.vtable th,
+.vtable td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.vtable__row--pick {
+  cursor: pointer;
+}
+
+.vtable__row--selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* -- Empty: the ruled empty-state block ----------------------------------- */
+
+.empty {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 0;
+}
+
+.empty__title {
+  font-size: 15px;
+}
+
+.empty__line {
+  color: var(--muted);
+  max-width: 60ch;
+}
+
+/* -- Lean: the one highlighter --------------------------------------------- */
+
+.lean-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  font: 12px/1.55 var(--mono);
+  margin: 0;
+  max-height: 380px;
+  overflow: auto;
+  padding: 10px 12px;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.lean-token--comment {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.lean-token--string {
+  color: var(--warning);
+}
+
+.lean-token--sorry {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.lean-token--directive {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.lean-token--keyword {
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.lean-token--tactic {
+  color: var(--accent);
+}
+
+.lean-token--name {
+  color: var(--fg);
+  cursor: pointer;
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+}
+
+/* -- Cards: gate, confirm, line -------------------------------------------- */
+
+.card-shell {
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--r2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.card-shell__eyebrow {
+  color: var(--muted);
+  display: flex;
+  font: 11px var(--mono);
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.card-shell__esc {
+  white-space: nowrap;
+}
+
+.card-shell__probes {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 8px 10px;
+}
+
+.card-shell__title {
+  font-weight: 600;
+}
+
+.card-shell__statement {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.card-shell__pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 12px var(--mono);
+  margin: 0;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.card-shell__options {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.card-shell__option {
+  border-radius: var(--r);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  padding: 3px 6px;
+}
+
+.card-shell__option--default {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.card-shell__option-number {
+  color: var(--muted);
+  font-family: var(--mono);
+  width: 1.4em;
+}
+
+.card-shell__option-detail {
+  color: var(--muted);
+}
+
+.card-shell__footnote {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card-shell__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.card-shell__input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-sizing: border-box;
+  color: var(--fg);
+  font: 13px var(--mono);
+  padding: 6px 8px;
+  width: 100%;
+}
