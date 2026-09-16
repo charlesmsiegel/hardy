@@ -1809,6 +1809,116 @@ input {
   }
 }
 
+/* -- workbench pages: Home, Environment, Help (Task 12) -------------------
+ * One shared shape for every page's content: a header row (title + a muted
+ * mono subtitle, when the page has one to state), then whatever sections the
+ * page needs. `.wb-card` is the plain `--border` panel the design tokens
+ * call "cards" (radius `--r`); `.card-shell` (Task 9) is the separate,
+ * heavier "cards-with-emphasis" shape (`--r2`, accent border) for the
+ * composer's gate/confirm/line prompts, and is not reused here on purpose --
+ * these are informational, not something answering a question. */
+.wb-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1100px;
+  padding: 20px 24px;
+}
+
+.wb-page-head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.wb-page-subtitle {
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+
+.wb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wb-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wb-goal__text {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.wb-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.wb-card__link {
+  font-size: 12px;
+}
+
+.wb-cards-auto {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.wb-swatch {
+  border-radius: 2px;
+  display: inline-block;
+  height: 9px;
+  margin-right: 6px;
+  width: 9px;
+}
+
+.wb-swatch--result {
+  background: var(--result);
+}
+
+.wb-swatch--research {
+  background: var(--research);
+}
+
+.wb-swatch--concept {
+  background: var(--concept);
+}
+
+.wb-swatch--document {
+  background: var(--document);
+}
+
+.wb-swatch--other {
+  background: var(--other);
+}
+
+.wb-help-block {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: grid;
+  gap: 6px 14px;
+  grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+}
+
+.wb-help-block--tight {
+  font-size: 12px;
+  gap: 4px 14px;
+}
+
 /* workbench global behaviours -----------------------------------------
  * Task 11: the project switcher (behind `TopBar`'s project chip), the
  * drop-to-import overlay and the peek popover -- the three behaviours that
