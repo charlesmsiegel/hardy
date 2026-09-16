@@ -8,7 +8,7 @@
 // end the next session will walk into again.
 
 import {useState} from 'react';
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 /** Entries as `{entry, depth}`, depth-first from the roots, parents before children. */
 function laid(entries) {

@@ -12,7 +12,7 @@ import {useEffect, useState} from 'react';
 import {get} from '../api.js';
 import Cells from './Cells.jsx';
 import Uploads from './Uploads.jsx';
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 //: The journal is a file like any other in `cas/`, and the one that is drawn
 //: as cells rather than as text when it is picked.
