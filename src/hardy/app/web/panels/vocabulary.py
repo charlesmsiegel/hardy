@@ -37,11 +37,18 @@ _FAMILY: dict[ProjectItemKind, str] = {
 #: An edge is solid when the target's standing depends on the source, and
 #: dashed when the edge is commentary or reference. This is the design's
 #: "uses / informs" distinction, given a definition the ledger can answer.
-_SOLID: frozenset[RelationKind] = frozenset({
-    R.DEPENDS_ON, R.USES, R.FORMALIZES, R.CONTAINS, R.REFINES, R.SUPERSEDES,
-    R.SPECIALIZES, R.GENERALIZES, R.EQUIVALENT_TO, R.IDENTIFIED_WITH,
-    R.TRANSPORTED_FROM, R.TYPED_BY, R.JUSTIFIES, R.BLOCKED_BY, R.PRODUCES,
-})
+_STYLE: dict[RelationKind, str] = {
+    R.DEPENDS_ON: "solid", R.USES: "solid", R.FORMALIZES: "solid",
+    R.CONTAINS: "solid", R.REFINES: "solid", R.SUPERSEDES: "solid",
+    R.SPECIALIZES: "solid", R.GENERALIZES: "solid", R.EQUIVALENT_TO: "solid",
+    R.IDENTIFIED_WITH: "solid", R.TRANSPORTED_FROM: "solid", R.TYPED_BY: "solid",
+    R.JUSTIFIES: "solid", R.BLOCKED_BY: "solid", R.PRODUCES: "solid",
+
+    R.SUPPORTS: "dashed", R.DOCUMENTS: "dashed", R.ILLUSTRATES: "dashed",
+    R.CITES: "dashed", R.CONTRADICTS: "dashed", R.INTERPRETS: "dashed",
+    R.POSES: "dashed", R.TARGETS: "dashed", R.PURSUES: "dashed",
+    R.COUNTEREXAMPLE_TO: "dashed",
+}
 
 _TONE: dict[ObligationStatus, str] = {
     S.OPEN: "warning", S.INVESTIGATING: "warning", S.BLOCKED: "error",
@@ -56,7 +63,7 @@ def family(kind: ProjectItemKind) -> str:
 
 def edge_style(kind: RelationKind) -> str:
     """`solid` when the edge carries logical dependence, `dashed` when it does not."""
-    return "solid" if kind in _SOLID else "dashed"
+    return _STYLE[kind]
 
 
 def obligation_tone(status: ObligationStatus) -> str:
