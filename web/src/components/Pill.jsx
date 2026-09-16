@@ -78,6 +78,24 @@ export function toneForState(word) {
   return STATE_TONE[word] ?? 'muted';
 }
 
+/** An `/api/environment` probe's own word for its state, matching
+ * `doctor.Check.line`'s own marks (`ok  ` / `FAIL` / `warn`): a required
+ * check that failed is a failure, an optional one that failed is only a
+ * warning. This is neither vocabulary above -- the input is the check
+ * object, not a word the backend already chose -- so `/api/environment`'s
+ * two consumers (Home's compact grid, the Environment page) both call this
+ * pair rather than each deciding "ok" on its own. */
+export function wordForCheck(check) {
+  if (check.ok) return 'ok';
+  return check.required ? 'fail' : 'warn';
+}
+
+/** `check`'s tone, from the same fixed set `TONE_CLASS` answers for. */
+export function toneForCheck(check) {
+  if (check.ok) return 'accent';
+  return check.required ? 'error' : 'warning';
+}
+
 export default function Pill({tone, children}) {
   return <span className={`pill ${TONE_CLASS[tone] ?? TONE_CLASS.muted}`}>{children}</span>;
 }

@@ -1875,34 +1875,6 @@ input {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
-.wb-swatch {
-  border-radius: 2px;
-  display: inline-block;
-  height: 9px;
-  margin-right: 6px;
-  width: 9px;
-}
-
-.wb-swatch--result {
-  background: var(--result);
-}
-
-.wb-swatch--research {
-  background: var(--research);
-}
-
-.wb-swatch--concept {
-  background: var(--concept);
-}
-
-.wb-swatch--document {
-  background: var(--document);
-}
-
-.wb-swatch--other {
-  background: var(--other);
-}
-
 .wb-help-block {
   background: var(--panel);
   border: 1px solid var(--border);

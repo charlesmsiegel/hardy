@@ -11,21 +11,9 @@
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
 import Label from '../components/Label.jsx';
+import {toneForCheck, wordForCheck} from '../components/Pill.jsx';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
-
-/** `check`'s own word for its state, matching `doctor.Check.line`'s own
- *  `ok  ` / `FAIL` / `warn` marks: a required check that failed is a
- *  failure, an optional one that failed is only a warning. */
-function word(check) {
-  if (check.ok) return 'ok';
-  return check.required ? 'fail' : 'warn';
-}
-
-function tone(check) {
-  if (check.ok) return 'var(--accent)';
-  return check.required ? 'var(--error)' : 'var(--warning)';
-}
 
 export default function Environment() {
   const {revision} = useSession();
@@ -49,7 +37,10 @@ export default function Environment() {
                 <Label>{check.name}</Label>
                 <Facts
                   mono
-                  rows={[[<span key="word" style={{color: tone(check)}}>{word(check)}</span>, check.detail]]}
+                  rows={[[
+                    <span key="word" style={{color: `var(--${toneForCheck(check)})`}}>{wordForCheck(check)}</span>,
+                    check.detail,
+                  ]]}
                 />
               </div>
             ))}
