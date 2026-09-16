@@ -1,9 +1,10 @@
 // The workbench Chat page's transcript: turn separators, the four message
 // rail colours, collapsible thoughts, tool pills, Lean blocks and system
-// lines. A sibling of `chat/Chat.jsx` (the old three-column client's message
-// list), not a replacement for it -- `App.jsx` still renders that one
-// unchanged, so this file owns its own markup and its own `wb-msg*` classes
-// rather than reusing `.message`, even though the shapes are close cousins.
+// lines. Until Task 14 this had a sibling, `chat/Chat.jsx` (the old
+// three-column client's message list, which `App.jsx` rendered unchanged) --
+// this file owned its own markup and its own `wb-msg*` classes rather than
+// reusing `.message` even though the shapes were close cousins. Both `App.jsx`
+// and `chat/Chat.jsx` are gone now; this is the only transcript renderer left.
 //
 // Two things the old component didn't have to do, because the old client
 // drew every reply as one undifferentiated block: turn separators, and
