@@ -14,13 +14,15 @@
 // honest "not built yet" as one that legitimately has nothing to show,
 // never a blank panel that looks like a bug.
 
-import {useState} from 'react';
+import {useCallback, useState} from 'react';
 import Empty from '../components/Empty.jsx';
 import useHash from '../session/useHash.js';
 import useSession from '../session/useSession.js';
 import {PAGES} from '../pages/index.js';
 import Dock from './Dock.jsx';
+import DropOverlay from './DropOverlay.jsx';
 import Footer from './Footer.jsx';
+import Peek from './Peek.jsx';
 import TabBar from './TabBar.jsx';
 import TopBar from './TopBar.jsx';
 
@@ -39,21 +41,31 @@ function runningLabel(status, runningTool) {
 
 export default function Shell() {
   const [route, go] = useHash();
-  const {status, runningTool, prompts, refusal} = useSession();
+  const {
+    status, runningTool, prompts, refusal, projects, setProjects, refreshProjects, revision,
+  } = useSession();
   //: Chrome state, not session state -- what the user last did with the dock
   //: is not something a reload or another tab needs to agree with, so it
   //: lives here rather than in the hash or the server. `pinned` first, same
   //: as the prototype's own default.
   const [dock, setDock] = useState('pinned');
+  //: The peek popover, or `null` when none is open. Held here, not in a
+  //: page, because a page is unmounted the moment the route moves off it --
+  //: the prototype closes the popover on navigation for the same reason
+  //: `Shell` would lose it anyway, so nothing is lost by owning it at this
+  //: level instead.
+  const [peek, setPeek] = useState(null);
+  const openPeek = useCallback((info) => setPeek(info), []);
+  const closePeek = useCallback(() => setPeek(null), []);
 
   const isChat = route.page === 'chat';
   const ChatPage = PAGES.chat;
-  const chatContent = ChatPage ? <ChatPage arg={route.arg} /> : notBuilt('chat');
+  const chatContent = ChatPage ? <ChatPage arg={route.arg} onPeek={openPeek} /> : notBuilt('chat');
 
   const Page = isChat ? null : PAGES[route.page];
   // `null`, not omitted: the slot below tests this directly, and skipping
   // the branch when `isChat` is what keeps Chat from being asked for twice.
-  const pageContent = isChat ? null : Page ? <Page arg={route.arg} /> : notBuilt(route.page);
+  const pageContent = isChat ? null : Page ? <Page arg={route.arg} onPeek={openPeek} /> : notBuilt(route.page);
 
   const showAside = dock === 'pinned' && !isChat;
   const bodyCols = showAside ? 'minmax(0,1fr) 380px' : 'minmax(0,1fr)';
@@ -63,7 +75,16 @@ export default function Shell() {
 
   return (
     <div className="wb-shell">
-      <TopBar status={status} runningTool={runningTool} route={route} go={go} />
+      <TopBar
+        status={status}
+        runningTool={runningTool}
+        route={route}
+        go={go}
+        projects={projects}
+        setProjects={setProjects}
+        refreshProjects={refreshProjects}
+        revision={revision}
+      />
       <TabBar route={route} go={go} dock={dock} onToggleDock={setDock} />
       <div className="wb-split" style={{gridTemplateColumns: bodyCols}}>
         {pageContent !== null ? <div className="wb-page">{pageContent}</div> : null}
@@ -89,6 +110,8 @@ export default function Shell() {
           go={go}
         />
       )}
+      <DropOverlay go={go} />
+      {peek ? <Peek info={peek} onClose={closePeek} go={go} /> : null}
     </div>
   );
 }

@@ -1568,8 +1568,7 @@ input {
   font: 600 13px var(--mono);
 }
 
-.wb-root,
-.wb-project {
+.wb-root {
   color: var(--muted);
   font-family: var(--mono);
 }
@@ -1808,4 +1807,256 @@ input {
   .wb-cols3 {
     grid-template-columns: minmax(0, 1fr) !important;
   }
+}
+
+/* workbench global behaviours -----------------------------------------
+ * Task 11: the project switcher (behind `TopBar`'s project chip), the
+ * drop-to-import overlay and the peek popover -- the three behaviours that
+ * live above every page rather than inside one.
+ */
+
+.wb-switcher {
+  position: relative;
+}
+
+.wb-switcher__button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  cursor: pointer;
+  font: 12px var(--mono);
+  padding: 1px 8px;
+}
+
+.wb-switcher__panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  left: 0;
+  padding: 6px 0;
+  position: absolute;
+  top: calc(100% + 4px);
+  width: 520px;
+  z-index: 20;
+}
+
+.wb-switcher__header {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  display: grid;
+  font: 600 10px var(--mono);
+  gap: 0 16px;
+  grid-template-columns: 170px minmax(0, 1fr);
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+  padding: 4px 12px 6px;
+  text-transform: uppercase;
+}
+
+.wb-switcher__row {
+  align-items: start;
+  color: var(--fg);
+  display: grid;
+  gap: 0 16px;
+  grid-template-columns: 170px minmax(0, 1fr);
+  padding: 7px 12px;
+}
+
+.wb-switcher__row:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent) !important;
+  text-decoration: none;
+}
+
+.wb-switcher__col {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.wb-switcher__name {
+  font-family: var(--mono);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-switcher__state {
+  font: 11px var(--mono);
+}
+
+.wb-switcher__goal {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-switcher__facts {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-switcher__divider {
+  border-top: 1px solid var(--border);
+  margin: 6px 0 4px;
+}
+
+.wb-switcher__footer {
+  align-items: baseline;
+  display: flex;
+  font-size: 12px;
+  gap: 14px;
+  padding: 2px 12px 4px;
+}
+
+.wb-switcher__input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  font: 12px var(--mono);
+  padding: 1px 6px;
+}
+
+.wb-switcher__note {
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-left: auto;
+  min-width: 0;
+  text-align: right;
+}
+
+.wb-switcher__note--error {
+  color: var(--error);
+}
+
+/* -- DropOverlay: the fixed drag-and-drop hint ---------------------------- */
+
+.wb-drop {
+  align-items: center;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 20px;
+  pointer-events: none;
+  position: fixed;
+  z-index: 50;
+}
+
+.wb-drop__card {
+  align-items: center;
+  background: var(--panel);
+  border: 2px dashed var(--accent);
+  border-radius: var(--r2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+  padding: 28px 36px;
+  text-align: center;
+}
+
+.wb-drop__title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.wb-drop__routes {
+  color: var(--muted);
+  display: grid;
+  font: 12px var(--mono);
+  gap: 2px 14px;
+  grid-template-columns: auto auto;
+  text-align: left;
+}
+
+.wb-drop__note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* -- Peek: the fixed, flipping, clamped popover --------------------------- */
+
+.wb-peek {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 6px;
+  max-height: calc(100vh - 24px);
+  max-width: calc(100vw - 24px);
+  overflow: auto;
+  padding: 10px 12px;
+  position: fixed;
+  z-index: 60;
+}
+
+.wb-peek__head {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font: 12px var(--mono);
+  gap: 8px;
+}
+
+.wb-peek__name {
+  font-weight: 600;
+}
+
+.wb-peek__kind {
+  color: var(--muted);
+}
+
+.wb-peek__src {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.wb-peek__close {
+  font-size: 11px;
+}
+
+.wb-peek__grid {
+  display: grid;
+  gap: 3px 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.wb-peek__label {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-peek__informal {
+  font-family: var(--math);
+  font-size: 13px;
+}
+
+.wb-peek__sig {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 11px/1.5 var(--mono);
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.wb-peek__foot {
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 10px;
 }
