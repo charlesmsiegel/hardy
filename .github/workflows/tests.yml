@@ -132,6 +132,35 @@ jobs:
       - name: Install web dependencies
         run: npm ci
         working-directory: web
+      # `src/hardy/app/web/static/` is tracked in git and is what `hardy web`
+      # actually serves -- it is not produced by this job. Every step below
+      # rebuilds before smoking, which is structurally incapable of noticing
+      # a bundle that was committed stale (source changed, `npm run build`
+      # never run before the commit). This smokes the bundle exactly as
+      # checked out, before anything here touches it, so that gap is caught
+      # here instead of shipping.
+      - name: Start the fake-session server (committed bundle)
+        run: |
+          set -euo pipefail
+          uv run python tests/unit/web_smoke_server.py --port 8765 &
+          echo $! > /tmp/web-smoke-server-committed.pid
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8765/api/state > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the fake-session server never answered on :8765 within 30s" >&2
+          exit 1
+      - name: Smoke the committed bundle
+        run: npm run smoke
+        working-directory: web
+      - name: Stop the fake-session server (committed bundle)
+        if: always()
+        run: |
+          if [ -f /tmp/web-smoke-server-committed.pid ]; then
+            kill "$(cat /tmp/web-smoke-server-committed.pid)" 2>/dev/null || true
+          fi
       - name: Build the bundle
         run: npm run build
         working-directory: web
@@ -141,7 +170,7 @@ jobs:
       # the alternative, no wait at all, would have the smoke's own
       # connection-refused error stand in for "the server never came up",
       # which is a different failure than the ones the smoke actually checks.
-      - name: Start the fake-session server
+      - name: Start the fake-session server (rebuilt bundle)
         run: |
           set -euo pipefail
           uv run python tests/unit/web_smoke_server.py --port 8765 &
@@ -157,7 +186,7 @@ jobs:
       - name: Smoke the built bundle against it
         run: npm run smoke
         working-directory: web
-      - name: Stop the fake-session server
+      - name: Stop the fake-session server (rebuilt bundle)
         if: always()
         run: |
           if [ -f /tmp/web-smoke-server.pid ]; then

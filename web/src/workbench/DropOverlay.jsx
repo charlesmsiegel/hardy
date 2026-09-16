@@ -117,15 +117,19 @@ export default function DropOverlay({go}) {
         <div className="wb-drop__title">Drop to stage in this project</div>
         <div className="wb-drop__routes">
           <span>.lean</span>
-          <span>→ uploads/ · then lean/ on import · lean_check runs</span>
+          <span>→ uploads/ · import into lean/ is disabled: always refused this shipment</span>
           <span>.tex</span>
-          <span>→ uploads/ · then tex/ · compiled on import</span>
+          <span>→ uploads/ · import into tex/ is disabled: always refused this shipment</span>
           <span>.g</span>
-          <span>→ uploads/ · then cas/ as a cell</span>
+          <span>→ uploads/ · no promotion path this shipment</span>
           <span>.pdf</span>
-          <span>→ library/ by digest · edition asked</span>
+          <span>→ library/ by digest · title and author left blank, not asked</span>
         </div>
-        <div className="wb-drop__note">Nothing is admitted until you promote it. The transcript records the promotion.</div>
+        <div className="wb-drop__note">
+          Nothing is admitted until you promote it. Only library import can actually do that from here -- Lean and
+          TeX import refuse every file staged this way (see Files for why), and library import goes straight over
+          `POST /api/library`, not the transcript.
+        </div>
       </div>
     </div>
   );

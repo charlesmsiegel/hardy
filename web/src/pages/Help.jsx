@@ -1,7 +1,15 @@
 // Help: reading the marks, the live command list, and the keys -- the one
 // page that is almost entirely static copy, quoted verbatim from the
-// prototype (Reading the marks, Keys), with one live section (Commands)
-// drawn from the same registry `/help` in the composer prints.
+// prototype (Reading the marks), with one live section (Commands) drawn from
+// the same registry `/help` in the composer prints.
+//
+// The Keys block is NOT verbatim: the whole-branch review found the
+// prototype's copy described keyboard behaviour this shipment never wired --
+// a `⌘K` jump palette that has no handler anywhere in `web/src`, and "1 2 3
+// answers the focused card's options" when the numbers only move the
+// selection (`chat/Prompt.jsx`'s `Choose`; Enter is what answers). Every row
+// below is checked against the real handlers (`chat/Composer.jsx`,
+// `chat/Prompt.jsx`, `components/Cards.jsx`) rather than copied.
 //
 // The prototype's subtitle names a Hardy version ("hardy 0.9.3"); nothing
 // this shipment serves carries that figure anywhere a page can read it, so
@@ -82,11 +90,9 @@ export default function Help() {
           <span style={{fontFamily: 'var(--mono)'}}>Enter</span>
           <span>Send, or queue if a turn is running.</span>
           <span style={{fontFamily: 'var(--mono)'}}>Esc</span>
-          <span>Cancel the running turn; dismisses an open card first if one is focused.</span>
+          <span>Dismisses a focused card first; otherwise closes an open command list, or cancels the running turn.</span>
           <span style={{fontFamily: 'var(--mono)'}}>1 2 3</span>
-          <span>Answer the focused card's options.</span>
-          <span style={{fontFamily: 'var(--mono)'}}>⌘K</span>
-          <span>Jump to a page, theorem, ledger item, or file.</span>
+          <span>Move the focused card's selection to that option; Enter answers it.</span>
         </div>
       </div>
 
