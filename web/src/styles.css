@@ -2599,3 +2599,238 @@ input {
   font-family: var(--math);
   font-size: 13px;
 }
+
+/* -- Jobs (Task 13b) ------------------------------------------------------ */
+
+.wb-jobs {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .wb-jobs {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-jobs__left,
+.wb-jobs__right {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.wb-jobs__attention {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wb-jobs__attention-item {
+  align-items: start;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: grid;
+  gap: 2px 12px;
+  grid-template-columns: auto 1fr auto;
+  padding: 8px 10px;
+}
+
+.wb-jobs__attention-item--actionable {
+  border-color: var(--error);
+}
+
+.wb-jobs__attention-id {
+  font-family: var(--mono);
+}
+
+.wb-jobs__node {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.wb-jobs__node-id {
+  color: var(--fg);
+}
+
+.wb-jobs__node-objective {
+  color: var(--muted);
+}
+
+.wb-jobs__detail-path {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-jobs__detail-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.wb-jobs__detail-id {
+  font: 600 16px var(--mono);
+}
+
+.wb-jobs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-jobs__refusal {
+  border: 1px solid var(--warning);
+  border-radius: var(--r);
+  color: var(--warning);
+  font: 12px var(--mono);
+  padding: 6px 10px;
+}
+
+/* -- Library (Task 13b) ---------------------------------------------------- */
+
+.wb-library__bib {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wb-library__bib-meta {
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-top: 2px;
+}
+
+.wb-library__digest {
+  font-family: var(--mono);
+}
+
+/* -- Ledger graph (Task 13b) ------------------------------------------------
+ * `panels/Graph.jsx`, the old three-column client's graph, already has a
+ * `.graph`/`.node`/`.edge` family of classes above (the "old" section this
+ * file's own component-vocabulary heading warns off) -- new, so this page
+ * never inherits that panel's client-side `kind` -> family/style inference
+ * along with its look. */
+
+.wb-ledger__toggle {
+  align-items: center;
+  display: flex;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.wb-ledger__toggle-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 8px;
+}
+
+.wb-ledger__toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.wb-ledger__toggle-btn--on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-ledger__legend {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 12px;
+}
+
+.wb-ledger__legend-sep {
+  border-left: 1px solid var(--border);
+  height: 12px;
+}
+
+.wb-ledger__swatch {
+  background: var(--other);
+  border: 1px solid var(--border);
+  display: inline-block;
+  height: 10px;
+  vertical-align: -1px;
+  width: 10px;
+}
+
+.wb-ledger__f-badge {
+  background: var(--accent);
+  border-radius: 50%;
+  color: var(--panel);
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  height: 12px;
+  line-height: 12px;
+  text-align: center;
+  width: 12px;
+}
+
+.wb-ledger__svg {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.wb-ledger__node {
+  cursor: pointer;
+}
+
+.wb-ledger__stale {
+  border: 1px solid var(--error);
+  border-radius: var(--r);
+  color: var(--error);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.wb-ledger__stale-line {
+  color: var(--fg);
+}
+
+.wb-ledger__drawer {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--r2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.wb-ledger__drawer-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.wb-ledger__statement {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 12px var(--mono);
+  margin: 0;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}

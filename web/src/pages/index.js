@@ -10,17 +10,26 @@
 // surface (mounted once, shown full width, no dock aside) -- `tree` has no
 // tab of its own (`TabBar.jsx` lights the Chat tab for it too) and is
 // reached only through the transcript/tree toggle in Chat's own header.
+//
+// `jobs`, `library` and `ledger` (its graph half; the list half is a later
+// shipment) are Task 13b.
 
 import Chat from './Chat.jsx';
 import Environment from './Environment.jsx';
 import Help from './Help.jsx';
 import Home from './Home.jsx';
+import Jobs from './Jobs.jsx';
+import Ledger from './Ledger.jsx';
+import Library from './Library.jsx';
 import Tree from './Tree.jsx';
 
 export const PAGES = {
   home: Home,
   chat: Chat,
   tree: Tree,
+  jobs: Jobs,
+  library: Library,
+  ledger: Ledger,
   environment: Environment,
   help: Help,
 };
