@@ -17,6 +17,7 @@
 import {useCallback, useState} from 'react';
 import Empty from '../components/Empty.jsx';
 import useHash from '../session/useHash.js';
+import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
 import {PAGES} from '../pages/index.js';
 import Dock from './Dock.jsx';
@@ -49,6 +50,13 @@ export default function Shell() {
   //: lives here rather than in the hash or the server. `pinned` first, same
   //: as the prototype's own default.
   const [dock, setDock] = useState('pinned');
+  //: The tab bar's own red count pill (Task 13b's Jobs page is what gives it
+  //: a number to show): one small panel read here rather than inside
+  //: `TabBar.jsx`, which stays a plain, stateless row of buttons. Reading it
+  //: at the shell costs one request per `revision`, the same as any other
+  //: panel, and does not touch the Chat/Tree mounting rules above.
+  const jobsPanel = usePanel('/api/jobs', revision);
+  const jobsAttention = jobsPanel.data?.attention?.length || 0;
   //: The peek popover, or `null` when none is open. Held here, not in a
   //: page, because a page is unmounted the moment the route moves off it --
   //: the prototype closes the popover on navigation for the same reason
@@ -91,7 +99,7 @@ export default function Shell() {
         refreshProjects={refreshProjects}
         revision={revision}
       />
-      <TabBar route={route} go={go} dock={dock} onToggleDock={setDock} />
+      <TabBar route={route} go={go} dock={dock} onToggleDock={setDock} jobsAttention={jobsAttention} />
       <div className="wb-split" style={{gridTemplateColumns: bodyCols}}>
         {pageContent !== null ? <div className="wb-page">{pageContent}</div> : null}
         <Dock
