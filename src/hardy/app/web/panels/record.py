@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from hardy.app.web.panels import vocabulary
 from hardy.workflows.ledger.contracts import Obligation, ProjectItem, Relation
 from hardy.workflows.ledger.store import LedgerStore
 
@@ -26,20 +27,21 @@ def graph(problem: Path) -> dict[str, Any]:
     heads = {item.id: item for item in snapshot.current(ProjectItem)}
     counts: dict[str, Counter[str]] = {}
     for obligation in snapshot.current(Obligation):
-        bucket = counts.setdefault(obligation.item.id, Counter())
-        status = obligation.status.value
-        bucket["open" if status == "open" else "resolved" if status == "resolved" else "other"] += 1
+        # The exact status, not a bucket. Six values go in and six come out:
+        # `investigating` and `blocked` are not `other`, and a reader deciding
+        # whether to trust an item needs to know which one it is.
+        counts.setdefault(obligation.item.id, Counter())[obligation.status.value] += 1
     nodes = []
     for item in heads.values():
         statement = item.statement or ""
-        bucket = counts.get(item.id, Counter())
         nodes.append({
             "id": item.id, "digest": item.digest, "kind": item.kind.value, "name": item.name,
             "statement": statement[:STATEMENT_LIMIT], "origin": item.origin.value,
             "evidence": sorted({evidence.kind.value for evidence in item.evidence}),
             "artifacts": [artifact.uri for artifact in item.artifacts],
             "research": item.research.status if item.research else None,
-            "obligations": {"open": bucket["open"], "resolved": bucket["resolved"], "other": bucket["other"]},
+            "family": vocabulary.family(item.kind),
+            "obligations": dict(counts.get(item.id, Counter())),
         })
     edges = []
     for relation in snapshot.current(Relation):
@@ -51,5 +53,6 @@ def graph(problem: Path) -> dict[str, Any]:
             "id": relation.id, "kind": relation.kind.value, "source": relation.source.id,
             "target": relation.target.id, "evidence": sorted({evidence.kind.value for evidence in relation.evidence}),
             "stale": stale(relation.source) or stale(relation.target),
+            "style": vocabulary.edge_style(relation.kind),
         })
     return {"nodes": nodes, "edges": edges, "revision": snapshot.revision}

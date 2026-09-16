@@ -190,5 +190,36 @@ def test_graph_over_a_ledger_with_a_stale_relation(tmp_path: Path) -> None:
     assert set(nodes) == {"lemma-1", "thm-1"}
     assert nodes["lemma-1"]["statement"] == "revised" and nodes["lemma-1"]["kind"] == "lemma"
     assert len(nodes["lemma-1"]["statement"]) <= panels.STATEMENT_LIMIT
-    assert out["edges"] == [{"id": "rel-1", "kind": "depends_on", "source": "thm-1", "target": "lemma-1", "evidence": [], "stale": True}]
+    assert out["edges"] == [{"id": "rel-1", "kind": "depends_on", "source": "thm-1", "target": "lemma-1", "evidence": [], "stale": True, "style": "solid"}]
     assert out["revision"] == store.read().revision
+
+
+def test_graph_counts_obligations_by_their_exact_status(tmp_path: Path) -> None:
+    """Six statuses, six counts. `investigating` is not `other`."""
+    from hardy.workflows.ledger.contracts import (
+        Obligation,
+        ObligationKind,
+        ObligationStatus,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    thm = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm",
+                      origin=ProjectOrigin.GENERATED_LOCAL)
+    scope = Scope(id="scope")
+    blocked = Obligation(id="ob-1", kind=ObligationKind.PROVE, item=thm.ref,
+                         scope=scope, status=ObligationStatus.BLOCKED)
+    looking = Obligation(id="ob-2", kind=ObligationKind.FORMALIZE, item=thm.ref,
+                         scope=scope, status=ObligationStatus.INVESTIGATING)
+    store.append([thm, scope, blocked, looking], expected_revision=store.read().revision)
+
+    node = panels.graph(problem)["nodes"][0]
+    assert node["obligations"] == {"blocked": 1, "investigating": 1}
+    assert node["family"] == "result"
+    assert node["kind"] == "theorem"
+    assert node["origin"] == "generated_local"
