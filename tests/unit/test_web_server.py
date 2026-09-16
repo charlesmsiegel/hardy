@@ -250,13 +250,42 @@ def test_panels_and_files(server) -> None:
     problem = server.host.config.layout.problem
     (problem / "lean" / "A.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
     for path in ("/api/summary", "/api/jobs", "/api/tree", "/api/sources", "/api/graph",
-                 "/api/transcript", "/api/commands", "/api/files", "/api/uploads"):
+                 "/api/transcript", "/api/commands", "/api/files", "/api/uploads",
+                 "/api/record", "/api/chats"):
+        # `/api/environment` is deliberately not in this list: it is the one
+        # route that reaches `doctor.run_checks`, and this fixture's `server`
+        # runs a real, unmocked `WebHost` -- exercising it here would shell
+        # out to `lean --version`/`elan`/backend CLIs with real timeouts.
+        # `test_environment_route_is_wired_without_probing_the_host` below
+        # exercises that route's wiring with `doctor.run_checks` monkeypatched.
         status, ctype, _ = _call(server, "GET", path, token=False)
         assert status == 200 and "application/json" in ctype, path
     status, _, body = _call(server, "GET", "/api/file?path=lean/A.lean", token=False)
     assert json.loads(body)["text"].startswith("theorem")
     status, *_ = _call(server, "GET", "/api/file?path=../x", token=False)
     assert status == 400
+
+
+def test_environment_route_is_wired_without_probing_the_host(
+    server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/api/environment` reaches `panels.environment(host.config)` and back out as JSON.
+
+    `doctor.run_checks` is monkeypatched so this exercises the HTTP wiring --
+    the route string, the argument (`host.config`, not `problem`), and the
+    JSON shape -- without shelling out to probe the real host, which is what
+    `doctor.run_checks` does unmocked.
+    """
+    from hardy.app import doctor
+
+    monkeypatch.setattr(doctor, "run_checks",
+                        lambda config, **kwargs: [doctor.Check("python", True, "3.12.1", required=True)])
+    status, ctype, body = _call(server, "GET", "/api/environment", token=False)
+    assert status == 200 and "application/json" in ctype
+    assert json.loads(body) == {
+        "checks": [{"name": "python", "ok": True, "detail": "3.12.1", "required": True}],
+        "failures": 0,
+    }
 
 
 def test_upload_discard_and_bad_names(server) -> None:

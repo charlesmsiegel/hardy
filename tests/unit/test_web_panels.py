@@ -293,3 +293,45 @@ def test_record_counts_are_zero_not_absent_on_a_fresh_project(tmp_path: Path) ->
     """Zero is `0`. An empty project has an empty record, not an unknown one."""
     out = panels.record_counts(make_problem(tmp_path))
     assert out["items"] == 0 and out["by_family"] == {} and out["by_kind"] == {}
+
+
+def test_record_counts_report_evidence_kinds_and_obligation_statuses(tmp_path: Path) -> None:
+    """`evidence` and `obligations` are exercised too, not just `by_family`/`by_kind`."""
+    from hardy.workflows.ledger.contracts import (
+        ArtifactRef,
+        EvidenceRef,
+        Obligation,
+        ObligationKind,
+        ObligationStatus,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    # `evidence.subject` is an exact `VersionRef` that must resolve against
+    # the batch's own resulting snapshot (`validate_structure` in
+    # `ledger/validation.py`); a fabricated digest is refused. `target` is a
+    # second record in the same batch so its `.ref` -- computed purely from
+    # its own fields, no store round-trip needed -- resolves once appended.
+    target = ProjectItem(id="lemma-1", kind=ProjectItemKind.LEMMA, name="Lemma",
+                         origin=ProjectOrigin.GENERATED_LOCAL)
+    item = ProjectItem(
+        id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.GENERATED_LOCAL,
+        evidence=(EvidenceRef(kind="formal", subject=target.ref, producer="fixture-kernel",
+                              artifact=ArtifactRef(uri="proof.json", digest="b" * 64)),),
+    )
+    # A `Scope` has no default and must be appended in the same batch as any
+    # `Obligation` referencing it -- the precedent `test_ledger_store.py` and
+    # `test_graph_counts_obligations_by_their_exact_status` above both follow.
+    scope = Scope(id="scope")
+    obligation = Obligation(id="ob-1", kind=ObligationKind.PROVE, item=item.ref, scope=scope,
+                            status=ObligationStatus.OPEN)
+    store.append([item, target, scope, obligation], expected_revision=store.read().revision)
+
+    out = panels.record_counts(problem)
+    assert out["evidence"] == {"formal": 1}
+    assert out["obligations"] == {"open": 1}
