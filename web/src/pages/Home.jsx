@@ -11,9 +11,17 @@
 // in this shipment's `/api/summary` or `/api/record` (the goal is a plain
 // string with no author or date attached, and the ledger tracks families and
 // kinds, not axiom tiers over saved proofs). Rather than invent those facts,
-// this page draws only what was asked for and reads what the record actually
-// counts: `by_family`, the same five buckets (`result`/`research`/`concept`/
-// `document`/`other`) the ledger graph tints nodes by.
+// this page draws only what was asked for and reads what the record
+// actually counts: `by_kind`, the exact kinds `vocabulary.py` refuses to let
+// a family (`result`/`research`/`concept`/`document`/`other`) stand in for
+// -- "the family is for colour only... the exact kind travels beside the
+// family and is what the label prints." `by_family.result` sums six kinds
+// (theorem, lemma, proposition, corollary, claim, external_result), so it
+// cannot be what the headline's own word "theorems" counts without silently
+// calling a saved lemma a theorem; `by_kind.theorem` is the one number that
+// means exactly what the label says, and the breakdown beneath it prints
+// every kind `by_kind` names, lemmas and corollaries included, rather than
+// folding them into a family bucket.
 //
 // The one rule that must survive contact with real data, called out by name
 // in the brief: a chat's `turns` is `null` when its transcript could not be
@@ -26,13 +34,11 @@ import Absent, {orAbsent} from '../components/Absent.jsx';
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
 import Label from '../components/Label.jsx';
-import Pill, {toneForState} from '../components/Pill.jsx';
+import Pill, {toneForCheck, toneForState, wordForCheck} from '../components/Pill.jsx';
 import Table from '../components/Table.jsx';
 import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
-
-const FAMILIES = ['result', 'research', 'concept', 'document', 'other'];
 
 // `0.0` is `chats.py`'s own sentinel for "never tracked" (the legacy `main`
 // chat predates the field, and an unreadable `chat.json` falls back to it
@@ -101,8 +107,9 @@ export default function Home() {
     );
   }
 
-  const byFamily = record.data.by_family || {};
-  const theorems = byFamily.result || 0;
+  const byKind = record.data.by_kind || {};
+  const theorems = byKind.theorem || 0;
+  const kindRows = Object.entries(byKind).sort(([a], [b]) => a.localeCompare(b));
   const activeCount = jobs.data.counts?.active || 0;
   const attention = jobs.data.attention || [];
   const usage = jobs.data.usage || {};
@@ -118,13 +125,11 @@ export default function Home() {
       <div className="wb-cols3">
         <div className="wb-card">
           <Label>{`§ Record · ${theorems} theorems saved`}</Label>
-          <Facts
-            mono
-            rows={FAMILIES.map((fam) => [
-              <span key={fam}><span className={`wb-swatch wb-swatch--${fam}`} />{byFamily[fam] || 0}</span>,
-              fam,
-            ])}
-          />
+          {kindRows.length ? (
+            <Facts mono rows={kindRows.map(([kind, count]) => [count, kind])} />
+          ) : (
+            <div className="panel__note">nothing recorded</div>
+          )}
           <a href="#/results" className="wb-card__link" onClick={(event) => { event.preventDefault(); go('results'); }}>
             Results →
           </a>
@@ -137,7 +142,7 @@ export default function Home() {
               mono
               rows={jobs.data.delegations.slice(0, 4).map((job) => [
                 job.id,
-                <span key={job.id}>{job.objective || <Absent kind="unreported" />} <Pill tone={toneForState(job.state)}>{job.state}</Pill></span>,
+                <span key={job.id}>{orAbsent(job.objective)} <Pill tone={toneForState(job.state)}>{job.state}</Pill></span>,
               ])}
             />
           ) : (
@@ -212,12 +217,7 @@ export default function Home() {
           <Facts
             mono
             rows={environment.data.checks.map((check) => [
-              <span
-                key={check.name}
-                style={{color: check.ok ? 'var(--accent)' : check.required ? 'var(--error)' : 'var(--warning)'}}
-              >
-                {check.ok ? 'ok' : check.required ? 'fail' : 'warn'}
-              </span>,
+              <span key={check.name} style={{color: `var(--${toneForCheck(check)})`}}>{wordForCheck(check)}</span>,
               `${check.name}: ${check.detail}`,
             ])}
           />
