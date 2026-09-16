@@ -4,6 +4,12 @@ Split by what a view reads, not by which tab shows it: `session` reads the live
 session, `workspace` reads files under the problem directory, and `record` reads
 the project ledger. A view that needs two of those belongs to the one it reads
 first.
+
+Every function in every submodule is pure: given a session (for the
+conversational panels) or a problem directory (for the artifact panels), it
+returns a JSON-serializable value and nothing else -- no HTTP, no caching, no
+mutation. A later task wires each one behind a GET endpoint; this package owns
+only the shape of the answer.
 """
 
 from hardy.app.web.panels.record import STATEMENT_LIMIT, graph
