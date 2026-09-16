@@ -12,7 +12,8 @@ mutation. A later task wires each one behind a GET endpoint; this package owns
 only the shape of the answer.
 """
 
-from hardy.app.web.panels.record import STATEMENT_LIMIT, graph
+from hardy.app.web.panels.host_environment import environment
+from hardy.app.web.panels.record import STATEMENT_LIMIT, graph, record_counts
 from hardy.app.web.panels.session import jobs, summary, transcript, tree
 from hardy.app.web.panels.workspace import (
     CAS_SKIPPED,
@@ -29,6 +30,6 @@ from hardy.app.web.panels.workspace import (
 
 __all__ = [
     "CAS_SKIPPED", "CELLS_LIMIT", "CELL_TEXT_LIMIT", "STATEMENT_LIMIT", "TEXT_LIMIT",
-    "cas_cells", "confine", "file_text", "files", "graph", "jobs", "pdf_bytes",
-    "sources", "summary", "transcript", "tree",
+    "cas_cells", "confine", "environment", "file_text", "files", "graph", "jobs",
+    "pdf_bytes", "record_counts", "sources", "summary", "transcript", "tree",
 ]

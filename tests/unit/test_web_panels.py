@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from web_fakes import FakeSession, make_problem
+from web_fakes import FakeSession, make_config, make_problem
 
 from hardy.app.web import panels
 
@@ -223,3 +223,73 @@ def test_graph_counts_obligations_by_their_exact_status(tmp_path: Path) -> None:
     assert node["family"] == "result"
     assert node["kind"] == "theorem"
     assert node["origin"] == "generated_local"
+
+
+def test_graph_carries_a_tone_for_every_obligation_status(tmp_path: Path) -> None:
+    """The tone map is a constant over the enum, not a property of any node."""
+    from hardy.workflows.ledger.contracts import ObligationStatus
+
+    out = panels.graph(make_problem(tmp_path))
+    assert out["tones"] == {
+        "open": "warning", "investigating": "warning", "blocked": "error",
+        "resolved": "accent", "dismissed": "muted", "abandoned": "muted",
+    }
+    assert set(out["tones"]) == {status.value for status in ObligationStatus}
+
+
+def test_environment_reshapes_every_check_for_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The read model's job is the shape, not the probing; the doctor owns probing."""
+    from hardy.app import doctor
+
+    probes = [
+        doctor.Check("python", True, "3.12.1 at /usr/bin/python"),
+        doctor.Check("lean", False, "lean not found on PATH; install elan"),
+        doctor.Check("gap", False, "not found on PATH", required=False),
+    ]
+    monkeypatch.setattr(doctor, "run_checks", lambda config, **kwargs: probes)
+
+    out = panels.environment(make_config(tmp_path))
+    assert out["checks"] == [
+        {"name": "python", "ok": True, "detail": "3.12.1 at /usr/bin/python", "required": True},
+        {"name": "lean", "ok": False, "detail": "lean not found on PATH; install elan", "required": True},
+        {"name": "gap", "ok": False, "detail": "not found on PATH", "required": False},
+    ]
+    # `gap` failed but is not required, so it is not a failure.
+    assert out["failures"] == 1
+
+
+def test_environment_reports_a_missing_tool_rather_than_omitting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`not found on PATH` is a fact about the host. Filtering it would hide why a tool is unavailable."""
+    from hardy.app import doctor
+
+    monkeypatch.setattr(doctor, "run_checks",
+                        lambda config, **kwargs: [doctor.Check("lean", False, "not found on PATH")])
+    names = [check["name"] for check in panels.environment(make_config(tmp_path))["checks"]]
+    assert names == ["lean"]
+
+
+def test_record_counts_group_without_losing_the_exact_kind(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    store.append([
+        ProjectItem(id="t-1", kind=ProjectItemKind.THEOREM, name="A", origin=ProjectOrigin.GENERATED_LOCAL),
+        ProjectItem(id="t-2", kind=ProjectItemKind.COROLLARY, name="B", origin=ProjectOrigin.MATHLIB),
+        ProjectItem(id="n-1", kind=ProjectItemKind.RESEARCH_NOTE, name="C", origin=ProjectOrigin.HUMAN_AUTHORED),
+    ], expected_revision=store.read().revision)
+
+    out = panels.record_counts(problem)
+    assert out["items"] == 3
+    assert out["by_family"] == {"result": 2, "research": 1}
+    assert out["by_kind"] == {"theorem": 1, "corollary": 1, "research_note": 1}
+    assert out["revision"] == store.read().revision
+
+
+def test_record_counts_are_zero_not_absent_on_a_fresh_project(tmp_path: Path) -> None:
+    """Zero is `0`. An empty project has an empty record, not an unknown one."""
+    out = panels.record_counts(make_problem(tmp_path))
+    assert out["items"] == 0 and out["by_family"] == {} and out["by_kind"] == {}

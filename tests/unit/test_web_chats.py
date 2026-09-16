@@ -138,3 +138,67 @@ def test_a_malformed_created_value_is_ignored_not_fatal(tmp_path: Path) -> None:
         json.dumps({"schema": "hardy.chat/v1", "title": "Bad", "created": "oops"}), encoding="utf-8"
     )
     assert [c.id for c in chats.list_chats(problem)] == ["main", good.id]
+
+
+def test_overview_counts_turns_and_the_latest_timestamp(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    (problem / "transcript.jsonl").write_text(
+        "\n".join([
+            json.dumps({"type": "user", "timestamp": 100.0}),
+            json.dumps({"type": "turn", "timestamp": 101.0}),
+            json.dumps({"type": "assistant", "timestamp": 102.0}),
+            json.dumps({"type": "turn", "timestamp": 103.5}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    row = {r["id"]: r for r in chats.overview(problem)}["main"]
+    assert row["turns"] == 2
+    assert row["last_activity"] == 103.5
+
+
+def test_overview_distinguishes_no_transcript_from_an_empty_one(tmp_path: Path) -> None:
+    """`None` and `0` are different claims and the page prints them differently.
+
+    A chat with an empty transcript has zero turns -- a measurement. A chat
+    whose transcript cannot be read has no turn count to report at all, and
+    saying `0` would assert it is empty, which nothing has checked.
+    """
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    (problem / "transcript.jsonl").write_text("", encoding="utf-8")
+    rows = {r["id"]: r for r in chats.overview(problem)}
+    assert rows["main"]["turns"] == 0
+    assert rows["main"]["last_activity"] is None
+
+
+def test_overview_reports_none_when_there_is_no_transcript_at_all(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    row = {r["id"]: r for r in chats.overview(problem)}["main"]
+    assert row["turns"] is None
+    assert row["last_activity"] is None
+
+
+def test_overview_survives_a_damaged_line(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    (problem / "transcript.jsonl").write_text(
+        json.dumps({"type": "turn", "timestamp": 1.0}) + "\nnot json at all\n"
+        + json.dumps({"type": "turn", "timestamp": 2.0}) + "\n",
+        encoding="utf-8",
+    )
+    row = {r["id"]: r for r in chats.overview(problem)}["main"]
+    assert row["turns"] == 2 and row["last_activity"] == 2.0
+
+
+def test_overview_reads_a_named_chats_transcript_not_the_main_one(tmp_path: Path) -> None:
+    problem = tmp_path / "sylow"
+    chat = chats.create_chat(problem, "Write-up")
+    (problem / "chats" / chat.id / "transcript.jsonl").write_text(
+        json.dumps({"type": "turn", "timestamp": 5.0}) + "\n", encoding="utf-8"
+    )
+    rows = {r["id"]: r for r in chats.overview(problem)}
+    assert rows[chat.id]["turns"] == 1
+    assert rows[chat.id]["last_activity"] == 5.0
+    assert rows["main"]["turns"] is None

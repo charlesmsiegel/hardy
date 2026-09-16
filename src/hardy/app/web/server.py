@@ -250,6 +250,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, host.models())
         elif name == "cas/cells":
             self._json(200, panels.cas_cells(problem))
+        elif name == "environment":
+            self._json(200, panels.environment(host.config))
+        elif name == "record":
+            self._json(200, panels.record_counts(problem))
+        elif name == "chats":
+            self._json(200, chats.overview(problem))
         else:
             self._json(404, {"error": "unknown endpoint"})
 

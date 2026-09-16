@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hardy.foundation.files import LayoutError, guard_for, read_text
-from hardy.workflows.layout import CHAT_META, CHATS_DIR, DEFAULT_CHAT, validate_chat
+from hardy.workflows.layout import CHAT_META, CHATS_DIR, DEFAULT_CHAT, TRANSCRIPT, validate_chat
 
 SCHEMA = "hardy.chat/v1"
 
@@ -120,3 +120,50 @@ def rename_chat(problem: Path, chat_id: str, title: str) -> Chat:
     renamed = Chat(chat_id, title, existing.created)
     _write(problem, renamed)
     return renamed
+
+
+def overview(problem: Path) -> list[dict]:
+    """Every chat with what Home's table shows: turns and when it last moved.
+
+    `None` is not `0`. A chat whose history cannot be read has no turn count to
+    report, and reporting `0` would claim it is empty -- a claim nothing has
+    checked. The page prints *not reported* for `None` and `0` for zero.
+    """
+    rows = []
+    for chat in list_chats(problem):
+        turns, last = _activity(problem, chat.id)
+        rows.append({"id": chat.id, "title": chat.title, "created": chat.created,
+                     "turns": turns, "last_activity": last})
+    return rows
+
+
+def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
+    """`(turns, last timestamp)` from a chat's transcript, or `(None, None)`.
+
+    Read as lines rather than replayed through `History`: this counts turns and
+    nothing more, and replaying would validate a hash chain -- work the answer
+    does not need and a failure mode the answer should not inherit. A damaged
+    line is skipped; a transcript that cannot be opened at all reports `None`,
+    which is not the same claim as `0`.
+    """
+    relative = TRANSCRIPT if chat_id == DEFAULT_CHAT else f"{CHATS_DIR}/{chat_id}/{TRANSCRIPT}"
+    try:
+        text = read_text(problem, relative)
+    except (LayoutError, OSError):
+        return None, None
+    turns, stamp = 0, None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "turn":
+            turns += 1
+        at = event.get("timestamp")
+        if isinstance(at, (int, float)) and (stamp is None or at > stamp):
+            stamp = float(at)
+    return turns, stamp
