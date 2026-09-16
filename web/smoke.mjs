@@ -41,6 +41,22 @@ async function assets(html) {
     ...[...html.matchAll(/<link[^>]*\shref="([^"]+)"/g)].map((match) => match[1]),
   ];
   check(urls.length > 0, 'the page references no assets at all');
+  // Real routing is entirely client-side (`session/useHash.js`'s `#/page/arg`
+  // hash, never sent to the server) and so cannot be exercised from a
+  // fetch-only script with no JS engine -- but the router's own subscription,
+  // `window.addEventListener('hashchange', onChange)`, is a call site a
+  // minifier has no reason to rewrite (`addEventListener` names a browser
+  // API, not a local binding, and the event name is a string literal), so it
+  // survives bundling verbatim. Matched as a call site rather than a bare
+  // `hashchange` substring, because `react-dom` itself carries a `hashchange`
+  // in an unrelated internal event-priority table regardless of whether this
+  // app's own router ships -- a bare substring check passed even after the
+  // subscription below was deleted outright, which is exactly the kind of
+  // check that cannot fail this task exists to rule out. The call-site
+  // pattern does not appear anywhere in `react-dom`; it appeared only after
+  // rebuilding with the real subscription restored.
+  const HASH_SUBSCRIBE = /addEventListener\([`'"]hashchange[`'"]/;
+  let hashRouting = false;
   for (const url of urls) {
     // Root-absolute, not relative. The server answers every unknown route
     // with the page, so a page served at `/files/lean` would resolve a
@@ -54,8 +70,14 @@ async function assets(html) {
     // a 404, so a 200 alone does not prove the asset exists.
     const type = response.headers.get('content-type') ?? '';
     check(!type.startsWith('text/html'), `${url} fell back to the page; the asset is missing`);
-    await response.arrayBuffer();
+    if (url.endsWith('.js')) {
+      const body = await response.text();
+      if (HASH_SUBSCRIBE.test(body)) hashRouting = true;
+    } else {
+      await response.arrayBuffer();
+    }
   }
+  check(hashRouting, 'no shipped JS asset subscribes to "hashchange"; the hash router may not be bundled');
   return urls.length;
 }
 
