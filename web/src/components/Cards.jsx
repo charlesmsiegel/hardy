@@ -25,7 +25,7 @@ function Shell({eyebrow, escNote, children}) {
   );
 }
 
-export function GateCard({raisedBy, facts, title = 'Approve this assumption?', statement, axiom, options, onPick}) {
+export function GateCard({raisedBy, facts, title = 'Approve this assumption?', statement, axiom, options = [], onPick}) {
   return (
     <Shell eyebrow={`assumption gate · raised by ${raisedBy}`} escNote="Esc dismisses = decline">
       {facts ? (
@@ -56,7 +56,7 @@ export function GateCard({raisedBy, facts, title = 'Approve this assumption?', s
   );
 }
 
-export function ConfirmCard({command, title, facts, escNote, onYes, onNo}) {
+export function ConfirmCard({command, title, facts, escNote = '', onYes, onNo}) {
   return (
     <Shell eyebrow={`confirm · ${command}`}>
       <div className="card-shell__title">{title}</div>
@@ -70,7 +70,7 @@ export function ConfirmCard({command, title, facts, escNote, onYes, onNo}) {
   );
 }
 
-export function LineCard({command, title, placeholder, escNote, onSubmit}) {
+export function LineCard({command, title, placeholder, escNote = '', onSubmit}) {
   return (
     <Shell eyebrow={`line · ${command}`}>
       <div className="card-shell__title">{title}</div>

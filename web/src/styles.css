@@ -1537,3 +1537,275 @@ input {
   padding: 6px 8px;
   width: 100%;
 }
+
+/* workbench shell ---------------------------------------------------------
+ * `web/src/workbench/` -- the frame every page in `pages/` renders inside.
+ * Class names are prefixed `wb-` so nothing here can be reached by, or
+ * collide with, the three-column client's own rules above.
+ */
+
+.wb-shell {
+  background: var(--bg);
+  color: var(--fg);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.wb-topbar {
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 14px;
+  padding: 6px 16px;
+}
+
+.wb-wordmark {
+  font: 600 13px var(--mono);
+}
+
+.wb-root,
+.wb-project {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.wb-turn {
+  align-items: center;
+  color: var(--accent);
+  display: flex;
+  font-family: var(--mono);
+  gap: 6px;
+}
+
+.wb-turn__dot {
+  animation: pulse 1.1s ease-in-out infinite;
+  background: var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+  height: 6px;
+  width: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-turn__dot {
+    animation: none;
+  }
+}
+
+.wb-stats {
+  color: var(--muted);
+  display: flex;
+  font-family: var(--mono);
+  gap: 14px;
+  margin-left: auto;
+}
+
+.wb-toplinks {
+  display: flex;
+  gap: 2px;
+}
+
+.wb-toplink {
+  color: var(--muted);
+  padding: 2px 8px;
+}
+
+.wb-toplink--on {
+  color: var(--accent);
+}
+
+.wb-tabbar {
+  align-items: flex-end;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 2px;
+  padding: 4px 10px 0;
+}
+
+.wb-tab {
+  align-items: center;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 6px;
+  padding: 5px 10px;
+}
+
+.wb-tab--on {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-dock-toggle {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: 12px var(--mono);
+  margin-left: auto;
+  padding: 5px 10px;
+}
+
+.wb-split {
+  display: grid;
+  min-height: 0;
+}
+
+.wb-page {
+  min-width: 0;
+  overflow: auto;
+}
+
+.wb-dock {
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Same specificity as `.wb-dock` alone is not enough to survive the 900px
+   media query below, which hides `.wb-dock` with `!important` -- importance
+   beats specificity, so the chat-page shape needs `!important` of its own,
+   and the compound selector's higher specificity is what then lets it win. */
+.wb-dock.wb-dock--chat-full {
+  border-left: none;
+  display: block !important;
+}
+
+.wb-dock__head {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.wb-dock__running,
+.wb-dock__queued {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.wb-dock__running {
+  align-items: center;
+  color: var(--accent);
+  display: flex;
+  gap: 5px;
+}
+
+.wb-dock__open {
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.wb-dock__body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.wb-strip {
+  align-items: center;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  display: none;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 12px;
+  padding: 6px 16px;
+}
+
+.wb-strip__running {
+  align-items: center;
+  color: var(--accent);
+  display: flex;
+  font-family: var(--mono);
+  gap: 5px;
+}
+
+.wb-strip__waiting {
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  padding: 1px 8px;
+}
+
+.wb-strip__queued {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.wb-strip__refusal {
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.wb-strip__stats {
+  color: var(--muted);
+  font: 10.5px var(--mono);
+  margin-left: auto;
+}
+
+.wb-strip__open {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* `.wb-split2` and `.wb-cols3` are utilities for the pages built from
+   Task 12 on -- a two-column reading layout and a three-card row -- laid
+   down now because the breakpoint they collapse at is spec, not a per-page
+   choice. Neither is applied by anything in `workbench/` itself. */
+.wb-split2 {
+  display: grid;
+}
+
+.wb-cols3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 1280px) {
+  .wb-split2 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .wb-split2 > :last-child {
+    border-top: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 900px) {
+  .wb-split {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .wb-dock {
+    display: none !important;
+  }
+
+  .wb-strip {
+    display: flex !important;
+  }
+
+  .wb-cols3 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
