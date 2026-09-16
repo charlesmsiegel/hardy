@@ -18,9 +18,20 @@ const STRUCTURAL = 'theorem|lemma|def|example|import|namespace|end|variable|nonc
 const TACTICS = "by|intro|intros|obtain|have|exact|rcases|rw|simp|omega|norm_num|apply|refine|constructor|cases|induction|calc|show|use|decide|ring|linarith|aesop|trivial|rfl|fun|match|with|let|at|do|then|else|if|exists";
 const STRUCTURAL_RE = new RegExp(`^(?:${STRUCTURAL})$`);
 
+// `known` comes straight from ledger item names (`pages/Chat.jsx`'s
+// `graph.data.nodes.map(n => n.name)`), and a `Text` field is any
+// non-blank string -- not a restricted identifier alphabet. Escaping only
+// `.`, `'` and `\` let a name carrying any other regex metacharacter
+// (`)`, `|`, `+`, `*`, `?`, `^`, `$`, `{`, `}`, `(`, `[`, `]`, `/`) either
+// throw out of `new RegExp` (an unbalanced `)`) or silently tokenize as
+// something other than the literal name (`a|b` splitting into `a` and
+// `b`). Escaping the full metacharacter set makes every name match only
+// itself, however it is spelled.
+const RESERVED = /[.*+?^${}()|[\]\\/']/g;
+
 function tokenPattern(known) {
   const names = known && known.length
-    ? `(?:${[...known].sort((a, b) => b.length - a.length).map((k) => k.replace(/[.'\\]/g, '\\$&')).join('|')})(?![A-Za-z0-9_.'])|`
+    ? `(?:${[...known].sort((a, b) => b.length - a.length).map((k) => k.replace(RESERVED, '\\$&')).join('|')})(?![A-Za-z0-9_.'])|`
     : '';
   return new RegExp(
     `${names}\\/-[\\s\\S]*?-\\/|--[^\\n]*|"(?:[^"\\\\]|\\\\.)*"|\\bsorry\\b|#(?:print|check|eval|reduce)\\b|⊢|\\b(?:${STRUCTURAL})\\b|\\b(?:${TACTICS})\\b`,

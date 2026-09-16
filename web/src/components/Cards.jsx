@@ -15,11 +15,12 @@
 // prototype's mock rather than any payload this shipment serves. `ConfirmCard`
 // survives because `pages/Jobs.jsx` (Task 11) uses it for five real commands.
 
+import {useEffect, useRef} from 'react';
 import Facts from './Facts.jsx';
 
-function Shell({eyebrow, escNote, children}) {
+function Shell({eyebrow, escNote, onKeyDown, children}) {
   return (
-    <section className="card-shell">
+    <section className="card-shell" onKeyDown={onKeyDown}>
       <div className="card-shell__eyebrow">
         <span>{eyebrow}</span>
         {escNote ? <span className="card-shell__esc">{escNote}</span> : null}
@@ -30,12 +31,32 @@ function Shell({eyebrow, escNote, children}) {
 }
 
 export function ConfirmCard({command, title, facts, escNote = '', onYes, onNo}) {
+  // The footnote says "No is focused" and Help.jsx repeats the claim, so
+  // both have to be true here, not just written: focus No on mount --
+  // dismissing without answering is the safe default -- and treat Esc as No,
+  // the same "dismiss answers, it does not vanish silently" rule
+  // `chat/Prompt.jsx`'s own Confirm already applies. The handler lives on
+  // the section rather than the button: a keydown on the focused No or Yes
+  // button still bubbles up to it.
+  const no = useRef(null);
+
+  useEffect(() => {
+    no.current?.focus();
+  }, []);
+
+  const onKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onNo();
+    }
+  };
+
   return (
-    <Shell eyebrow={`confirm · ${command}`}>
+    <Shell eyebrow={`confirm · ${command}`} onKeyDown={onKeyDown}>
       <div className="card-shell__title">{title}</div>
       {facts ? <Facts rows={facts} mono /> : null}
       <div className="card-shell__actions">
-        <button type="button" className="button" onClick={onNo}>No</button>
+        <button ref={no} type="button" className="button" onClick={onNo}>No</button>
         <button type="button" className="button button--yes" onClick={onYes}>Yes</button>
       </div>
       <div className="card-shell__footnote">No is focused. {escNote}</div>

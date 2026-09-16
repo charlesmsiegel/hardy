@@ -25,13 +25,31 @@ import {get} from '../api.js';
 // routes fires two GETs for one answer, for no reason a page's own code would
 // ever show. Keyed on `path` alone; `revision` inside the cached entry is
 // what says whether it is still good for a caller arriving after it settled.
+//
+// Bounded the same way `workbench/uploadScans.js` bounds its own shared map:
+// a cap only so a tab left open a long time, browsing many distinct
+// `/api/file?path=...` panels (`pages/Files.jsx`), does not grow this
+// without bound -- each entry can hold up to `TEXT_LIMIT` (1 MB) of file
+// text for the tab's lifetime otherwise.
+const LIMIT = 200;
 const shared = new Map();
 
 function fetchShared(path, revision, force) {
   const cached = shared.get(path);
   if (!force && cached && cached.revision === revision) return cached.promise;
-  const promise = get(path);
+  const promise = get(path).catch((failure) => {
+    // A rejected entry must not stick. Without this, a transient failure on
+    // one request becomes sticky for every component that mounts at this
+    // path and revision afterwards, until a `changed` event or an explicit
+    // `reload()` -- previously (before this shared cache existed) each
+    // caller failed and retried independently. Only the entry this fetch
+    // itself installed is removed, so a `reload()` that has already
+    // replaced it in the meantime is left alone.
+    if (shared.get(path)?.promise === promise) shared.delete(path);
+    throw failure;
+  });
   shared.set(path, {revision, promise});
+  if (shared.size > LIMIT) shared.delete(shared.keys().next().value);
   return promise;
 }
 
