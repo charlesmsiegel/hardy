@@ -1,15 +1,12 @@
-// The frame's top row: the wordmark, the running-turn indicator, and the
-// three routes (`Status`, `Environment`, `Help`) that live beside the tab bar
-// rather than inside it because they describe the session, not a body of
-// work the way the other ten tabs do.
-//
-// The project switcher itself (the dropdown behind the slug button) is
-// Task 11's; this row prints the current slug as plain text so the layout is
-// final now and Task 11 only has to swap the plain text for the button.
+// The frame's top row: the wordmark, the project switcher, the running-turn
+// indicator, and the three routes (`Status`, `Environment`, `Help`) that live
+// beside the tab bar rather than inside it because they describe the
+// session, not a body of work the way the other ten tabs do.
 
 import Absent from '../components/Absent.jsx';
+import ProjectSwitcher from './ProjectSwitcher.jsx';
 
-export default function TopBar({status, runningTool, route, go}) {
+export default function TopBar({status, runningTool, route, go, projects, setProjects, refreshProjects, revision}) {
   const busy = status.turn_running || status.command_running;
 
   const link = (page, label) => (
@@ -29,7 +26,13 @@ export default function TopBar({status, runningTool, route, go}) {
     <div className="wb-topbar">
       <span className="wb-wordmark">Hardy</span>
       <span className="wb-root">~/math</span>
-      <span className="wb-project">{status.slug || <Absent kind="unreported" />}</span>
+      <ProjectSwitcher
+        status={status}
+        projects={projects}
+        setProjects={setProjects}
+        refreshProjects={refreshProjects}
+        revision={revision}
+      />
       {busy ? (
         <span className="wb-turn">
           <span className="wb-turn__dot" />
