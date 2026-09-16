@@ -52,3 +52,8 @@ hardy-output/
 
 # The browser client is built from `web/`; its dependency tree is not committed.
 /web/node_modules/
+
+# The default workspace: problems, papers, the shared Lean library and the
+# local config. A session's own working state, not source. Left bare rather
+# than rooted, because a workspace is created wherever a session is run.
+.hardy/
