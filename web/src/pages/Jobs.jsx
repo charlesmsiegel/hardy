@@ -13,14 +13,19 @@
 // `state` is a real `DelegationState` value (`queued|active|waiting|paused|
 // completed|partial|failed|cancelled|exhausted|unknown` --
 // `src/hardy/workflows/delegation/contracts.py:25-35`), routed through
-// `toneForState` per the brief rather than a bespoke mapping here: most of
-// those words are not in `Pill.jsx`'s fixed `STATE_TONE` table and print in
-// the neutral tone, which is `toneForState`'s own documented fallback for a
-// word it does not recognise -- not a bug in this page. The smoke fixture's
-// `FakeDelegations` (`tests/unit/web_fakes.py`) answers `"running"` for every
-// delegation, which is not a `DelegationState` value at all; this page prints
-// whatever string arrives and colours it through the same fallback, so it
-// does not care that the fixture is wrong.
+// `Pill.jsx`'s `toneForDelegation` -- its own vocabulary, not `toneForState`.
+// An earlier pass of this page used `toneForState`, which happens to answer
+// for two of these ten words (`partial`, `unknown`) and flattens the other
+// eight -- `active` included -- to one grey, exactly the "two vocabularies
+// share a word so the wrong one looks right" mistake `toneForVerdict` vs.
+// `toneForState` already exists to prevent, one level down. See
+// `Pill.jsx`'s `DELEGATION_TONE` for the prototype evidence (or its absence,
+// and the reasoning for each considered default) behind all ten. The smoke
+// fixture's `FakeDelegations` (`tests/unit/web_fakes.py`) answers `"running"`
+// for every delegation, which is not a `DelegationState` value at all; this
+// page prints whatever string arrives and colours it through
+// `toneForDelegation`'s own fallback to `muted`, so it does not care that
+// the fixture is wrong.
 //
 // Controls sit behind confirm cards, per the design line for this page.
 // `ConfirmCard` (`components/Cards.jsx`, Task 9, zero importers before this)
@@ -57,7 +62,7 @@ import {ConfirmCard} from '../components/Cards.jsx';
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
 import Label from '../components/Label.jsx';
-import Pill, {toneForState} from '../components/Pill.jsx';
+import Pill, {toneForDelegation} from '../components/Pill.jsx';
 import Table from '../components/Table.jsx';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
@@ -217,7 +222,7 @@ export default function Jobs() {
                     <span className="wb-jobs__node-id">{row.id}</span>{' '}
                     <span className="wb-jobs__node-objective">{orAbsent(row.objective)}</span>
                   </span>,
-                  <Pill key="state" tone={toneForState(row.state)}>
+                  <Pill key="state" tone={toneForDelegation(row.state)}>
                     {row.state}
                   </Pill>,
                 ],
@@ -234,7 +239,7 @@ export default function Jobs() {
               </div>
               <div className="wb-jobs__detail-head">
                 <span className="wb-jobs__detail-id">{selected.id}</span>
-                <Pill tone={toneForState(selected.state)}>{selected.state}</Pill>
+                <Pill tone={toneForDelegation(selected.state)}>{selected.state}</Pill>
               </div>
               <div style={{fontSize: 14}}>{orAbsent(selected.objective)}</div>
               <Facts

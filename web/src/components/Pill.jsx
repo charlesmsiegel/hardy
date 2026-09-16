@@ -63,6 +63,74 @@ const STATE_TONE = {
   'checking…': 'muted',
 };
 
+/** `DelegationState`'s tone (`src/hardy/workflows/delegation/contracts.py:
+ * 25-35` -- `queued|active|waiting|paused|completed|partial|failed|
+ * cancelled|exhausted|unknown`). A THIRD vocabulary, not `STATE_TONE`: the
+ * two share the words `partial` and `unknown`, which is exactly why routing
+ * a `DelegationState` through `toneForState` (as an earlier pass of this
+ * page did) read as correct while quietly flattening every other real value
+ * to the neutral default -- the same class of mistake `toneForVerdict` vs.
+ * `toneForState` already exists to prevent, one level down.
+ *
+ * Where the prototype (Hardy Workbench.dc.html) draws a delegation's own
+ * state, that colour is used directly:
+ *   - `active`: the Jobs tree's `d-08` row and its own detail pane both
+ *     draw `● running` in `color:var(--accent)` (lines ~483, ~491) -- the
+ *     one delegation state the prototype gives a colour of its own.
+ *   - `completed`: the Jobs tree's `d-04` row ("4/4 · 310 s", a clean full
+ *     finish) draws its state as plain `color:var(--muted)` text with no
+ *     border or accent (line ~480); `c-03`'s computation row draws
+ *     `done · exit 0` the same muted way (line ~484) -- a successful
+ *     terminal state reads as unremarkable, not celebratory.
+ *   - `partial`: the Jobs tree's `d-07` row draws `finished · partial` as a
+ *     `border:1px solid var(--border)` chip with no colour override, so it
+ *     inherits the row's `color:var(--muted)` (line ~482); the Chat
+ *     transcript's Hardy-initiated notice line draws the same word the same
+ *     way (line ~194). Kept from the existing `STATE_TONE` entry, which
+ *     this same evidence already grounded.
+ *   - `unknown`: the Jobs tree's `d-05` row draws `unknown` as the same
+ *     unadorned muted chip (line ~481). Also kept from `STATE_TONE`.
+ *
+ * The prototype never draws a delegation's own state pill for `queued`,
+ * `waiting`, `paused`, `failed`, `cancelled` or `exhausted` -- the only
+ * near-hits are a different vocabulary entirely (`1 queued` in the
+ * composer/dock strip counts queued *input lines*, not a delegation; a
+ * checkpoint-restore confirm card colours "delegation d-08 (running)" in
+ * `--warning`, line ~974, but that is the colour of *what restoring would
+ * lose*, the same idiom that colours the theorems it would lose too -- not
+ * the delegation's own state colour, which the Jobs page itself already
+ * gives as accent). For these six, rather than let them fall through to a
+ * silent default, each gets its own considered (not scavenged) choice,
+ * recorded here so a later page with real evidence can correct it:
+ *   - `queued`: muted -- nothing is happening yet, the same "neutral,
+ *     pre-work" reading `checking…` and `unknown` already have.
+ *   - `waiting`, `paused`: warning -- each is a delegation not making
+ *     progress on its own and pending something (a dependency, a human
+ *     resume), the same bucket `stale`/`interrupted` occupy in `STATE_TONE`
+ *     for the same reason: recorded, not resolved.
+ *   - `exhausted`: warning -- stopped by its own lease ceiling without a
+ *     verdict either way; worth a human's attention without asserting the
+ *     work failed.
+ *   - `failed`: error -- the one definitively bad terminal outcome, the
+ *     same bucket `VERDICT_TONE` reserves for `sorryAx`/`refused`/`not
+ *     accepted`; letting it default to muted would draw a failure exactly
+ *     like `completed`.
+ *   - `cancelled`: muted -- a deliberate stop, not a failure of the work;
+ *     the same reasoning `STATE_TONE`'s own `declined` entry already
+ *     documents for "a decision made the ordinary way". */
+const DELEGATION_TONE = {
+  queued: 'muted',
+  active: 'accent',
+  waiting: 'warning',
+  paused: 'warning',
+  completed: 'muted',
+  partial: 'muted',
+  failed: 'error',
+  cancelled: 'muted',
+  exhausted: 'warning',
+  unknown: 'muted',
+};
+
 /** `word`'s tone as a kernel/audit verdict. Anything not in the fixed table
  * falls back to `muted` -- a decision, not an oversight: an unrecognised
  * word should read as neutral rather than borrow a verdict colour (accent,
@@ -76,6 +144,16 @@ export function toneForVerdict(word) {
  * accent/warning/error. */
 export function toneForState(word) {
   return STATE_TONE[word] ?? 'muted';
+}
+
+/** A `DelegationState` value's tone -- see `DELEGATION_TONE` above for the
+ * evidence and reasoning behind each of the ten. The smoke server's
+ * `FakeDelegations` fixture (`tests/unit/web_fakes.py`) answers `"running"`,
+ * which is not a `DelegationState` value; it falls through to `muted` here
+ * like anything else this table does not name, which is correct -- the
+ * fixture is wrong, not this function. */
+export function toneForDelegation(word) {
+  return DELEGATION_TONE[word] ?? 'muted';
 }
 
 /** An `/api/environment` probe's own word for its state, matching
