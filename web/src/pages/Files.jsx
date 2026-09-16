@@ -13,10 +13,13 @@
 // row therefore shows `<Absent kind="unreported" />` in those three columns;
 // this is not a placeholder pending a later pass, it is what the backend
 // actually said. The tree *header* lines carry real data where it exists:
-// `/api/environment`'s `lean`/`mathlib`/`latex`/`cas` probes (`wordForCheck`/
-// `toneForCheck`, the same pair `Environment.jsx` and `Home.jsx` already use)
-// are a fact about this machine's toolchain, not a fabricated per-tree
-// build status, so they are shown; a `last build` time or an overall
+// `/api/environment`'s `lean`/`mathlib`/`latex`/`tectonic`/`cas` probes
+// (`wordForCheck`/`toneForCheck`, the same pair `Environment.jsx` and
+// `Home.jsx` already use) are a fact about this machine's toolchain, not a
+// fabricated per-tree build status, so they are shown -- `tex/`'s header
+// prefers `latex` but falls back to `tectonic` (`treeFacts`, below) so a
+// project on the alternate backend still gets a real fact instead of
+// silence; a `last build` time or an overall
 // pass/fail for the tree is not sourced by anything and is not shown at all
 // (not even as `Absent` -- there is no single cell for it the way there is
 // for a row's size/mtime/verdict).
@@ -34,26 +37,31 @@
 // `.local/uploads/` is not one of `SERVED_TREES`).
 //
 // Promotion is real commands and a real endpoint, checked against the
-// registry the way this task's brief requires -- but one of them is
+// registry the way this task's brief requires -- but three of them are
 // confirmed, not merely believed, to always refuse. See
 // `IMPORT_OWN_TREE_NOTE` below for the evidence; the short version is that
 // `/import lean|reference|tex` is genuine
-// (`src/hardy/app/tui/handlers.py:559-621`) and its syntax below is real,
-// but `session.py`'s `_read_import` refuses any source path already inside
-// the problem's own tree, and every file staged here lives under this
-// problem's own `.local/uploads/`. The button stays enabled rather than
-// disabled: this is a real command, not invented syntax, and the honest
-// thing to do with a real command whose outcome is known is to say so in
-// words and still let the session's own answer land in the transcript, the
-// same principle `Tree.jsx`'s Fork and `Jobs.jsx`'s confirm cards already
-// apply to actions that might be refused for reasons a click cannot always
-// predict. "Add to library..." (`POST /api/library`) is not affected -- it
-// reads the staged file directly (`uploads.library_import`), never through
-// `_read_import` -- and is offered without that caveat.
+// (`src/hardy/app/tui/handlers.py:559-621`) and the command text shown beside
+// each disabled button is exactly what it would send, but `session.py`'s
+// `_read_import` refuses any source path already inside the problem's own
+// tree, and every file staged here (by `uploads.stage`) lives under this
+// problem's own `.local/uploads/` -- unconditionally, in every session and
+// every project, not merely in some runtime states. That is the axis that
+// decides disabled vs. enabled here, not whether the command is registered:
+// `Tree.jsx`'s Fork and `Jobs.jsx`'s confirm-card actions stay enabled
+// because whether *they* are refused depends on session state a click cannot
+// predict in advance (a turn running, say), so clicking genuinely asks a
+// question. `/import` on a staged upload asks nothing -- the refusal is
+// structural and its exact text is already printed in `IMPORT_OWN_TREE_NOTE`
+// before anyone clicks -- so the three buttons are `disabled`, with the
+// command and the note both left visible rather than hidden behind a hover,
+// the same shape `Tree.jsx` gives Resume/Compare. "Add to library..."
+// (`POST /api/library`) is not affected -- it reads the staged file directly
+// (`uploads.library_import`), never through `_read_import`, and really can
+// succeed -- so it stays enabled and live.
 
 import {useEffect, useState} from 'react';
 import Absent from '../components/Absent.jsx';
-import {ConfirmCard} from '../components/Cards.jsx';
 import Empty from '../components/Empty.jsx';
 import Label from '../components/Label.jsx';
 import Lean from '../components/Lean.jsx';
@@ -66,24 +74,40 @@ import useSession from '../session/useSession.js';
 import {scanFor} from '../workbench/uploadScans.js';
 
 const TREES = [
-  {key: 'lean', label: 'lean/', checks: ['lean', 'mathlib']},
-  {key: 'tex', label: 'tex/', checks: ['latex']},
-  {key: 'cas', label: 'cas/', checks: ['cas']},
+  {key: 'lean', label: 'lean/', checks: ['lean', 'mathlib'], preferOne: false},
+  // TeX has two possible backends -- `doctor.py` probes both `latex`
+  // (pdflatex/latexmk, the default) and `tectonic` as separate Checks, and a
+  // project configured for the second has no `latex` Check to show. `latex`
+  // and `tectonic` are alternatives describing the same one toolchain, not
+  // two independent facts the way `lean`+`mathlib` are, so only the first
+  // one actually present is shown -- omitting `tectonic` entirely when
+  // `latex` is absent would silently drop a true fact this header could
+  // state, for a project where it is the one that ran.
+  {key: 'tex', label: 'tex/', checks: ['latex', 'tectonic'], preferOne: true},
+  {key: 'cas', label: 'cas/', checks: ['cas'], preferOne: false},
 ];
 
+/** The env-check facts a tree header actually shows: every named check that
+ *  is present, or (`preferOne`) only the first one found, in `treeDef.checks`
+ *  order. */
+function treeFacts(treeDef, envChecks) {
+  const found = treeDef.checks.map((name) => envChecks.find((c) => c.name === name)).filter(Boolean);
+  return treeDef.preferOne ? found.slice(0, 1) : found;
+}
+
 //: The one place this page states the own-tree finding, so every card's
-//: Import buttons can point at the same sentence rather than each writing
-//: their own paraphrase of it. Confirmed by running `import_lean` against a
-//: freshly staged upload: the refusal text quoted below is the session's
-//: own, not summarised.
+//: disabled Import buttons can point at the same sentence rather than each
+//: writing their own paraphrase of it. Confirmed by running `import_lean`
+//: against a freshly staged upload: the refusal text quoted below is the
+//: session's own, not summarised.
 const IMPORT_OWN_TREE_NOTE =
-  '/import lean|reference|tex is a real command (src/hardy/app/tui/handlers.py:559-621) and the line below ' +
-  'is exactly what it sends. But every file staged here lives under this problem’s own .local/uploads/, ' +
-  'and session.py’s _read_import refuses any source path already inside the problem’s own tree -- ' +
-  'empirically confirmed: it answers "...is inside this problem’s own tree; importing is for files that ' +
-  'arrived from outside." This looks like a gap between uploads.py’s own docstring, which says /import is ' +
-  'what admits a staged file, and session.py’s guard -- not something this read-only page can fix. Yes ' +
-  'sends the real command; the transcript shows whatever the session actually says, refusal included.';
+  '/import lean|reference|tex is a real command (src/hardy/app/tui/handlers.py:559-621) and the command shown ' +
+  'above is exactly what it would send. It is disabled because it always refuses a file staged here: every ' +
+  'upload lives under this problem’s own .local/uploads/, and session.py’s _read_import refuses any source ' +
+  'path already inside the problem’s own tree -- empirically confirmed: it answers "...is inside this ' +
+  'problem’s own tree; importing is for files that arrived from outside." This looks like a gap between ' +
+  'uploads.py’s own docstring, which says /import is what admits a staged file, and session.py’s guard -- not ' +
+  'something this read-only page can fix.';
 
 function bytes(n) {
   if (n < 1024) return `${n} B`;
@@ -118,16 +142,12 @@ function TreeSection({def: treeDef, count, paths, envChecks, selected, onPick}) 
     <div className="wb-files__tree">
       <div className="wb-files__tree-head">
         {treeDef.label}
-        {treeDef.checks.map((name) => {
-          const check = envChecks.find((c) => c.name === name);
-          if (!check) return null;
-          return (
-            <span key={name}>
-              {' · '}
-              <span style={{color: `var(--${toneForCheck(check)})`}}>{wordForCheck(check)}</span> {check.detail}
-            </span>
-          );
-        })}
+        {treeFacts(treeDef, envChecks).map((check) => (
+          <span key={check.name}>
+            {' · '}
+            <span style={{color: `var(--${toneForCheck(check)})`}}>{wordForCheck(check)}</span> {check.detail}
+          </span>
+        ))}
         {' · '}
         {count} file{count === 1 ? '' : 's'}
       </div>
@@ -304,8 +324,7 @@ function Viewer({path, kind, revision}) {
   );
 }
 
-function UploadCard({file, send, reload}) {
-  const [confirm, setConfirm] = useState(null);
+function UploadCard({file, reload}) {
   const [working, setWorking] = useState(false);
   const [result, setResult] = useState(null);
   const [failure, setFailure] = useState('');
@@ -334,11 +353,6 @@ function UploadCard({file, send, reload}) {
   const importCommand = (verb, dest) => {
     const destArg = dest ? ` "${dest}"` : '';
     return `/import ${verb} "${file.path}"${destArg}`;
-  };
-
-  const runImport = (command) => {
-    send(command);
-    setConfirm(null);
   };
 
   const runDiscard = () => {
@@ -383,48 +397,27 @@ function UploadCard({file, send, reload}) {
         <div className="wb-files__upload-actions">
           {file.kind === 'lean' ? (
             <>
-              <button
-                type="button"
-                className="button"
-                onClick={() =>
-                  setConfirm({
-                    command: importCommand('lean', `Imported/${file.name}`),
-                    title: `Import ${file.name} as authored Lean?`,
-                    note: IMPORT_OWN_TREE_NOTE,
-                  })
-                }
-              >
-                Import as authored Lean...
-              </button>
-              <button
-                type="button"
-                className="button"
-                onClick={() =>
-                  setConfirm({
-                    command: importCommand('reference', ''),
-                    title: `Import ${file.name} as reference Lean?`,
-                    note: IMPORT_OWN_TREE_NOTE,
-                  })
-                }
-              >
-                Import as reference...
-              </button>
+              <div className="wb-files__import-row">
+                <button type="button" className="button" disabled title="Always refused; see the note below.">
+                  Import as authored Lean...
+                </button>
+                <code className="wb-files__import-cmd">{importCommand('lean', `Imported/${file.name}`)}</code>
+              </div>
+              <div className="wb-files__import-row">
+                <button type="button" className="button" disabled title="Always refused; see the note below.">
+                  Import as reference...
+                </button>
+                <code className="wb-files__import-cmd">{importCommand('reference', '')}</code>
+              </div>
             </>
           ) : null}
           {file.kind === 'tex' ? (
-            <button
-              type="button"
-              className="button"
-              onClick={() =>
-                setConfirm({
-                  command: importCommand('tex', `imported/${file.name}`),
-                  title: `Import ${file.name} into tex/?`,
-                  note: IMPORT_OWN_TREE_NOTE,
-                })
-              }
-            >
-              Import into tex/...
-            </button>
+            <div className="wb-files__import-row">
+              <button type="button" className="button" disabled title="Always refused; see the note below.">
+                Import into tex/...
+              </button>
+              <code className="wb-files__import-cmd">{importCommand('tex', `imported/${file.name}`)}</code>
+            </div>
           ) : null}
           {file.kind === 'source' ? (
             <button type="button" className="button" disabled={working} onClick={runLibrary}>
@@ -443,6 +436,9 @@ function UploadCard({file, send, reload}) {
           </button>
         </div>
       )}
+      {named && (file.kind === 'lean' || file.kind === 'tex') ? (
+        <div className="panel__note">{IMPORT_OWN_TREE_NOTE}</div>
+      ) : null}
 
       {result ? (
         <div className="wb-files__upload-result">
@@ -451,22 +447,12 @@ function UploadCard({file, send, reload}) {
         </div>
       ) : null}
       {failure ? <p className="panel__error">{failure}</p> : null}
-
-      {confirm ? (
-        <ConfirmCard
-          command={confirm.command}
-          title={confirm.title}
-          onYes={() => runImport(confirm.command)}
-          onNo={() => setConfirm(null)}
-        />
-      ) : null}
-      {confirm ? <div className="panel__note">{confirm.note}</div> : null}
     </div>
   );
 }
 
 export default function Files({arg}) {
-  const {revision, send, refusal} = useSession();
+  const {revision, refusal} = useSession();
   const [, go] = useHash();
   const filesPanel = usePanel('/api/files', revision);
   const envPanel = usePanel('/api/environment', revision);
@@ -549,7 +535,7 @@ export default function Files({arg}) {
               Drop files anywhere in the workbench to stage them. Nothing is admitted until promoted.
             </div>
             {staged.map((file) => (
-              <UploadCard key={file.name} file={file} send={send} reload={uploadsPanel.reload} />
+              <UploadCard key={file.name} file={file} reload={uploadsPanel.reload} />
             ))}
             {staged.length === 0 ? <div className="panel__note">0 staged</div> : null}
           </div>
