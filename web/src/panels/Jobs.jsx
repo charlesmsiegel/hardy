@@ -6,7 +6,7 @@
 // that drew 0 tokens beside a running delegation would be reporting a
 // measurement that was never taken.
 
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 /** A value from the usage or lease summary, in words rather than as JSON where it can be. */
 function value(shown) {

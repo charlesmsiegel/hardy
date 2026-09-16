@@ -5,7 +5,7 @@
 // second opinion about what a section means would be a second answer to a
 // question the session has already answered.
 
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 export default function Summary({revision}) {
   const {data, error} = usePanel('/api/summary', revision);

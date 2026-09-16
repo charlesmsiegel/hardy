@@ -17,7 +17,7 @@
 
 import {useCallback, useState} from 'react';
 import {del, post, upload} from '../api.js';
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 const KINDS = {
   lean: [

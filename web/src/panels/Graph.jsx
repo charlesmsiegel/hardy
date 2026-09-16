@@ -26,7 +26,7 @@
 
 import dagre from 'dagre';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 //: Which of the four colours a node's kind belongs to. A kind nobody listed
 //: here falls through to `other`, which is drawn but not claimed to be one of

@@ -6,7 +6,7 @@
 // journal itself is still a file, served whole as text, and this view is a
 // reading of it, never a second record.
 
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 function Text({label, shown}) {
   if (!shown || !shown.text) return null;

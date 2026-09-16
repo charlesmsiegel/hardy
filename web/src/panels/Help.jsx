@@ -8,7 +8,7 @@
 // composer rather than sending it: a page that ran `/checkpoint restore`
 // on a click would be a page that acts on a misclick.
 
-import usePanel from './usePanel.js';
+import usePanel from '../session/usePanel.js';
 
 //: What the browser's own keys do, stated once. The terminal's are in the
 //: session-commands reference; they differ where a terminal has no mouse.
