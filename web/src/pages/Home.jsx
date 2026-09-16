@@ -29,12 +29,20 @@
 // and `orAbsent` is what keeps them apart -- `0` prints as `Absent
 // kind="zero"`, `null` prints as `Absent kind="unreported"`, and neither
 // path is reachable by writing the string directly.
+//
+// The Delegations card's `job.state` is a `DelegationState`
+// (`src/hardy/workflows/delegation/contracts.py:25-35`), coloured through
+// `Pill.jsx`'s `toneForDelegation` rather than `toneForState` -- the latter
+// answers a different vocabulary that happens to share two of its ten
+// words, which is exactly what let this card's earlier use of it look
+// right while flattening the other eight (`active` included) to grey. See
+// `Pill.jsx`'s `DELEGATION_TONE` for the evidence behind each of the ten.
 
 import Absent, {orAbsent} from '../components/Absent.jsx';
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
 import Label from '../components/Label.jsx';
-import Pill, {toneForCheck, toneForState, wordForCheck} from '../components/Pill.jsx';
+import Pill, {toneForCheck, toneForDelegation, wordForCheck} from '../components/Pill.jsx';
 import Table from '../components/Table.jsx';
 import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
@@ -142,7 +150,7 @@ export default function Home() {
               mono
               rows={jobs.data.delegations.slice(0, 4).map((job) => [
                 job.id,
-                <span key={job.id}>{orAbsent(job.objective)} <Pill tone={toneForState(job.state)}>{job.state}</Pill></span>,
+                <span key={job.id}>{orAbsent(job.objective)} <Pill tone={toneForDelegation(job.state)}>{job.state}</Pill></span>,
               ])}
             />
           ) : (
