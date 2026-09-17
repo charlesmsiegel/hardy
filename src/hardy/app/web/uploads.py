@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from hardy.foundation.files import WriteGuard
-from hardy.workflows.layout import LOCAL_DIR, RESERVED_CHARACTERS, RESERVED_NAMES
+from hardy.workflows import ingest
+from hardy.workflows.layout import (
+    RESERVED_CHARACTERS,
+    RESERVED_NAMES,
+    forget_staged_arrival,
+    record_staged_arrival,
+    uploads_dir,
+)
 
 #: A generous ceiling on one staged file, well under what a browser upload
 #: or the loopback server would hold in memory at once.
@@ -24,7 +31,6 @@ MAX_UPLOAD = 32 << 20
 #: Comfortably past any real file name; a browser drop that names a file
 #: longer than this is not a name Hardy needs to accommodate.
 MAX_NAME_LENGTH = 255
-UPLOADS_DIR = "uploads"
 SOURCE_SUFFIXES = {".pdf", ".epub", ".djvu", ".txt", ".md", ".html", ".htm", ".xml"}
 
 
@@ -65,7 +71,7 @@ def kind_of(name: str) -> str:
 
 
 def _dir(problem: Path) -> Path:
-    return problem / LOCAL_DIR / UPLOADS_DIR
+    return uploads_dir(problem)
 
 
 def _describe(path: Path) -> dict[str, Any]:
@@ -106,6 +112,12 @@ def stage(problem: Path, name: str, data: bytes) -> dict[str, Any]:
     except BaseException:
         path.unlink(missing_ok=True)
         raise
+    # The provenance claim `_read_import` will later consult (#165): these
+    # exact bytes, staged as `candidate`, arrived through a browser drop, not
+    # through authored work landing in the problem's own tree by coincidence
+    # of location. Recorded after the write succeeds and over the bytes as
+    # written, so the digest matches what a reader re-hashes from disk.
+    record_staged_arrival(problem, candidate, ingest.digest(data))
     return _describe(path)
 
 
@@ -114,7 +126,15 @@ def staged(problem: Path) -> list[dict[str, Any]]:
     root = _dir(problem)
     if not root.is_dir():
         return []
-    return [_describe(path) for path in sorted(root.iterdir()) if path.is_file() and not path.is_symlink()]
+    return [
+        _describe(path)
+        for path in sorted(root.iterdir())
+        # `record_staged_arrival`'s sidecars live beside the files they
+        # describe, not among them: `safe_name` refuses every dot-led name,
+        # so nothing a user staged can start with one and everything that
+        # does is this module's own bookkeeping.
+        if path.is_file() and not path.is_symlink() and not path.name.startswith(".")
+    ]
 
 
 def discard(problem: Path, name: str) -> None:
@@ -124,6 +144,7 @@ def discard(problem: Path, name: str) -> None:
     if not guard.path(name).is_file():
         raise ValueError(f"no staged file {name!r}")
     guard.unlink(name)
+    forget_staged_arrival(problem, name)
 
 
 def library_import(problem: Path, name: str, *, title: str = "", author: str = "", intent: str = "",

@@ -37,28 +37,27 @@
 // `.local/uploads/` is not one of `SERVED_TREES`).
 //
 // Promotion is real commands and a real endpoint, checked against the
-// registry the way this task's brief requires -- but three of them are
-// confirmed, not merely believed, to always refuse. See
-// `IMPORT_OWN_TREE_NOTE` below for the evidence; the short version is that
-// `/import lean|reference|tex` is genuine
-// (`src/hardy/app/tui/handlers.py:559-621`) and the command text shown beside
-// each disabled button is exactly what it would send, but `session.py`'s
-// `_read_import` refuses any source path already inside the problem's own
-// tree, and every file staged here (by `uploads.stage`) lives under this
-// problem's own `.local/uploads/` -- unconditionally, in every session and
-// every project, not merely in some runtime states. That is the axis that
-// decides disabled vs. enabled here, not whether the command is registered:
-// `Tree.jsx`'s Fork and `Jobs.jsx`'s confirm-card actions stay enabled
-// because whether *they* are refused depends on session state a click cannot
-// predict in advance (a turn running, say), so clicking genuinely asks a
-// question. `/import` on a staged upload asks nothing -- the refusal is
-// structural and its exact text is already printed in `IMPORT_OWN_TREE_NOTE`
-// before anyone clicks -- so the three buttons are `disabled`, with the
-// command and the note both left visible rather than hidden behind a hover,
-// the same shape `Tree.jsx` gives Resume/Compare. "Add to library..."
-// (`POST /api/library`) is not affected -- it reads the staged file directly
-// (`uploads.library_import`), never through `_read_import`, and really can
-// succeed -- so it stays enabled and live.
+// registry the way this task's brief requires. `/import lean|reference|tex`
+// is genuine (`src/hardy/app/tui/handlers.py:559-621`) and the command text
+// shown beside each button is exactly what it would send. Issue #165 was
+// that `session.py`'s `_read_import` refused *every* source path inside the
+// problem's own tree, unconditionally -- and every file staged here (by
+// `uploads.stage`) lives under this problem's own `.local/uploads/`, so the
+// three buttons could never once succeed. Fixed on the session side:
+// `uploads.stage` now leaves a sidecar recording the digest of what it
+// staged (`workflows/layout.py`'s `record_staged_arrival`), and
+// `_read_import` admits a file inside the tree only when that sidecar's
+// digest matches the bytes on disk -- a provenance record, not the
+// directory alone, so a copy of the project's own work dropped into
+// `uploads/` by hand still refuses. That makes the outcome of a click
+// genuinely unknown until it runs (the file could have been edited on disk
+// since it staged, say), which is `Tree.jsx`'s own rule for Fork: a
+// session-changing action is reviewed before it runs, not auto-submitted,
+// so each button here fills the composer's draft with the real command
+// (`useSession().setDraft`, then navigates to Chat, exactly as Fork does)
+// rather than sending it itself. "Add to library..." (`POST /api/library`)
+// was never affected -- it reads the staged file directly
+// (`uploads.library_import`), never through `_read_import`.
 
 import {useEffect, useState} from 'react';
 import Absent from '../components/Absent.jsx';
@@ -95,19 +94,15 @@ function treeFacts(treeDef, envChecks) {
   return treeDef.preferOne ? found.slice(0, 1) : found;
 }
 
-//: The one place this page states the own-tree finding, so every card's
-//: disabled Import buttons can point at the same sentence rather than each
-//: writing their own paraphrase of it. Confirmed by running `import_lean`
-//: against a freshly staged upload: the refusal text quoted below is the
-//: session's own, not summarised.
-const IMPORT_OWN_TREE_NOTE =
-  '/import lean|reference|tex is a real command (src/hardy/app/tui/handlers.py:559-621) and the command shown ' +
-  'above is exactly what it would send. It is disabled because it always refuses a file staged here: every ' +
-  'upload lives under this problem’s own .local/uploads/, and session.py’s _read_import refuses any source ' +
-  'path already inside the problem’s own tree -- empirically confirmed: it answers "...is inside this ' +
-  'problem’s own tree; importing is for files that arrived from outside." This looks like a gap between ' +
-  'uploads.py’s own docstring, which says /import is what admits a staged file, and session.py’s guard -- not ' +
-  'something this read-only page can fix.';
+//: What every card's Import row says under the buttons now that they run
+//: real commands (issue #165's fix): the outcome is genuinely unknown until
+//: `/import` runs -- this exact file, unedited since it staged, is what
+//: makes it succeed -- so the buttons stay enabled and this states the rule
+//: rather than a fixed verdict.
+const IMPORT_NOTE =
+  'Puts the real /import command in the composer for review; nothing is sent from this click. It succeeds for ' +
+  'a file exactly as staged, and is refused -- same as any other import -- if the file on disk no longer ' +
+  'matches what was staged, or the destination already exists.';
 
 function bytes(n) {
   if (n < 1024) return `${n} B`;
@@ -325,6 +320,8 @@ function Viewer({path, kind, revision}) {
 }
 
 function UploadCard({file, reload}) {
+  const {setDraft} = useSession();
+  const [, go] = useHash();
   const [working, setWorking] = useState(false);
   const [result, setResult] = useState(null);
   const [failure, setFailure] = useState('');
@@ -353,6 +350,14 @@ function UploadCard({file, reload}) {
   const importCommand = (verb, dest) => {
     const destArg = dest ? ` "${dest}"` : '';
     return `/import ${verb} "${file.path}"${destArg}`;
+  };
+
+  // Not sent from here -- the same rule `Tree.jsx`'s Fork follows: a
+  // session-changing action is reviewed before it runs. This raises the
+  // real command in the composer and lets the user submit (or edit) it.
+  const runImport = (verb, dest) => {
+    setDraft(importCommand(verb, dest));
+    go('chat');
   };
 
   const runDiscard = () => {
@@ -398,13 +403,17 @@ function UploadCard({file, reload}) {
           {file.kind === 'lean' ? (
             <>
               <div className="wb-files__import-row">
-                <button type="button" className="button" disabled title="Always refused; see the note below.">
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => runImport('lean', `Imported/${file.name}`)}
+                >
                   Import as authored Lean...
                 </button>
                 <code className="wb-files__import-cmd">{importCommand('lean', `Imported/${file.name}`)}</code>
               </div>
               <div className="wb-files__import-row">
-                <button type="button" className="button" disabled title="Always refused; see the note below.">
+                <button type="button" className="button" onClick={() => runImport('reference', '')}>
                   Import as reference...
                 </button>
                 <code className="wb-files__import-cmd">{importCommand('reference', '')}</code>
@@ -413,7 +422,7 @@ function UploadCard({file, reload}) {
           ) : null}
           {file.kind === 'tex' ? (
             <div className="wb-files__import-row">
-              <button type="button" className="button" disabled title="Always refused; see the note below.">
+              <button type="button" className="button" onClick={() => runImport('tex', `imported/${file.name}`)}>
                 Import into tex/...
               </button>
               <code className="wb-files__import-cmd">{importCommand('tex', `imported/${file.name}`)}</code>
@@ -437,7 +446,7 @@ function UploadCard({file, reload}) {
         </div>
       )}
       {named && (file.kind === 'lean' || file.kind === 'tex') ? (
-        <div className="panel__note">{IMPORT_OWN_TREE_NOTE}</div>
+        <div className="panel__note">{IMPORT_NOTE}</div>
       ) : null}
 
       {result ? (

@@ -138,7 +138,7 @@ from hardy.workflows.interactive.record import SchemaError as SchemaError
 from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
 from hardy.workflows.interactive.turns import _digest as _digest
-from hardy.workflows.layout import DEFAULT_CHAT, RECORD, Layout
+from hardy.workflows.layout import DEFAULT_CHAT, RECORD, Layout, staged_arrival_digest
 from hardy.workflows.ledger.contracts import ProjectItem, Scope, VersionRef
 from hardy.workflows.ledger.store import LedgerStore
 
@@ -3434,8 +3434,23 @@ class MathematicsSession:
         # false; the reference variant would go further and reclassify
         # authored work as assumed background. Another project's tree is
         # still a legitimate origin: outside means outside this problem.
+        #
+        # One exception, and it is deliberately not "the path is under
+        # .local/uploads/" -- that would just move the location-as-proxy bug
+        # issue #165 is about, one directory over, and a copy of the
+        # project's own work dropped into that directory would sail through
+        # unexamined. `uploads.stage()` (the browser drop -> stage -> /import
+        # flow this problem's own workbench offers) instead records, at
+        # staging time, the digest of the bytes it wrote at this exact path
+        # (`layout.record_staged_arrival`). What is checked here is that
+        # record, not the directory: a file this problem authored and never
+        # staged has no entry, whatever directory a user copies it into, and
+        # a staged file that was edited since -- so what is on disk no longer
+        # matches what arrived -- no longer matches its own recorded digest
+        # either. Only a file both staged *and* unmodified since passes.
         problem = self.workspace.resolve()
-        if origin == problem or problem in origin.parents:
+        inside = origin == problem or problem in origin.parents
+        if inside and staged_arrival_digest(problem, origin) != ingest.digest(content):
             return ToolResult(
                 False,
                 f"{source_path} is inside this problem's own tree; importing is for files "

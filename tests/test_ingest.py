@@ -19,6 +19,7 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 from workspace_helpers import events
 
+from hardy.app.web import uploads
 from hardy.foundation import process
 from hardy.workflows import ingest
 from hardy.workflows.interactive.session import MathematicsSession
@@ -449,6 +450,52 @@ def test_importing_the_problems_own_work_is_refused(tmp_path: Path):
     assert "own tree" in result.output
     reference = chat.import_reference(problem / "lean" / "Imported.lean")
     assert not reference.ok
+
+
+def test_a_staged_upload_can_be_imported_despite_living_in_the_problems_own_tree(tmp_path: Path):
+    """`uploads.stage()` always writes under `.local/uploads/`, inside the
+    problem's own tree (#165). A file staged there genuinely arrived from
+    outside the project, so the provenance `stage()` records must let
+    `_read_import` admit it even though its path resolves inside the tree --
+    the deciding fact is the recorded arrival, not where the file sits."""
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    staged = uploads.stage(problem, "dropped.lean", CLEAN.encode("utf-8"))
+    result = chat.import_lean(Path(staged["path"]), "Imported.lean")
+    assert result.ok, result.output
+    assert (problem / "lean" / "Imported.lean").is_file()
+    entry = chat.state["imported"][0]
+    assert entry["origin"] == staged["path"]
+    assert entry["sha256"] == hashlib.sha256(CLEAN.encode("utf-8")).hexdigest()
+
+
+def test_a_file_merely_placed_in_the_uploads_directory_is_still_refused(tmp_path: Path):
+    """Provenance is a recorded fact, not an inference from location: a file
+    dropped straight into `.local/uploads/` -- never through `uploads.stage()`
+    -- has no recorded arrival, so it is refused exactly like any other
+    project-owned file. Otherwise the uploads directory would just be a new
+    location-based exemption in place of the old one."""
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    forged = problem / ".local" / "uploads" / "forged.lean"
+    forged.parent.mkdir(parents=True, exist_ok=True)
+    forged.write_text(CLEAN, encoding="utf-8")
+    result = chat.import_lean(forged, "Imported.lean")
+    assert not result.ok
+    assert "own tree" in result.output
+
+
+def test_a_staged_upload_edited_after_staging_is_refused(tmp_path: Path):
+    """The recorded digest is over the bytes `stage()` actually wrote. If the
+    file at that path no longer matches -- edited, or replaced -- the record
+    no longer vouches for it and the refusal must hold."""
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    staged = uploads.stage(problem, "dropped.lean", CLEAN.encode("utf-8"))
+    Path(staged["path"]).write_text(THEOREM, encoding="utf-8")
+    result = chat.import_lean(Path(staged["path"]), "Imported.lean")
+    assert not result.ok
+    assert "own tree" in result.output
 
 
 def test_a_broken_saved_tree_does_not_stop_an_unrelated_triage(tmp_path: Path):
