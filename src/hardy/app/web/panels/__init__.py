@@ -13,9 +13,11 @@ only the shape of the answer.
 """
 
 from hardy.app.web.panels.checkpoints import checkpoints
+from hardy.app.web.panels.declarations import Declarations
 from hardy.app.web.panels.host_environment import environment
 from hardy.app.web.panels.record import (
     STATEMENT_LIMIT,
+    file_verdicts,
     graph,
     ledger_export,
     ledger_item,
@@ -41,7 +43,7 @@ from hardy.app.web.panels.workspace import (
 
 __all__ = [
     "CAS_SKIPPED", "CELLS_LIMIT", "CELL_TEXT_LIMIT", "STATEMENT_LIMIT", "TEXT_LIMIT",
-    "cas_cells", "checkpoints", "confine", "environment", "file_text", "files", "graph", "jobs",
+    "Declarations", "cas_cells", "checkpoints", "confine", "environment", "file_text", "file_verdicts", "files", "graph", "jobs",
     "ledger_export", "ledger_item", "ledger_list", "pdf_bytes", "publications", "record_counts", "results",
     "run_item", "runs", "sources", "summary", "transcript", "tree",
 ]

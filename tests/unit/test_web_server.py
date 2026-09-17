@@ -439,6 +439,93 @@ def test_a_stopped_host_answers_503(server) -> None:
     assert status == 503 and "shutting down" in json.loads(body)["error"]
 
 
+def test_put_file_saves_through_the_session(server) -> None:
+    """The bytes do not reach disk from the boundary.
+
+    `PUT /api/file` hands them to the session's own save, which is what
+    checks them, rebuilds their importers, gates them and audits them. The
+    fake records the call; what matters here is that the boundary routed it
+    there rather than writing the file itself.
+    """
+    status, _, body = _call(server, "PUT", "/api/file",
+                            {"path": "lean/Main.lean", "source": "import Mathlib\n"})
+    assert status == 200
+    answer = json.loads(body)
+    assert answer["ok"] is True and answer["path"] == "lean/Main.lean"
+    assert server.host.session.saved == [("lean/Main.lean", "import Mathlib\n")]
+
+
+def test_a_refused_save_comes_back_with_the_session_s_own_sentence(server) -> None:
+    """A save is refused for a dozen reasons, each with a sentence written
+    for a reader. The boundary must not replace one with a status code."""
+    refusal = "declaration uses 'sorry'; completed saved work must contain no holes"
+    server.host.session.refuse_saves = refusal
+    status, _, body = _call(server, "PUT", "/api/file",
+                            {"path": "lean/Main.lean", "source": "theorem t : True := by sorry\n"})
+    # 200, not 4xx: the request was well formed and the session answered it.
+    # The refusal is the answer, not an error about the request.
+    assert status == 200
+    answer = json.loads(body)
+    assert answer["ok"] is False
+    assert answer["output"] == refusal
+
+
+def test_put_file_refuses_a_path_outside_the_problem(server) -> None:
+    status, _, body = _call(server, "PUT", "/api/file",
+                            {"path": "../../etc/passwd", "source": "x"})
+    assert status == 400
+    assert server.host.session.saved == []
+
+
+def test_put_file_refuses_a_tree_it_does_not_serve(server) -> None:
+    """`.lean` and `.tex` only -- the session's own rule, reported as the
+    session words it."""
+    status, _, body = _call(server, "PUT", "/api/file",
+                            {"path": "notes.txt", "source": "x"})
+    assert status == 200 and json.loads(body)["ok"] is False
+
+
+def test_put_file_needs_the_token(server) -> None:
+    status, *_ = _call(server, "PUT", "/api/file",
+                       {"path": "lean/Main.lean", "source": "x"}, token=False)
+    assert status == 403
+
+
+def test_an_unknown_put_is_404(server) -> None:
+    status, *_ = _call(server, "PUT", "/api/nothing", {})
+    assert status == 404
+
+
+def test_post_check_runs_without_saving(server) -> None:
+    status, _, body = _call(server, "POST", "/api/check",
+                            {"path": "lean/Scratch.lean", "source": "#check Nat.succ\n"})
+    assert status == 200 and json.loads(body)["ok"] is True
+    assert server.host.session.checked == [("lean/Scratch.lean", "#check Nat.succ\n")]
+    # The whole contract of a check: nothing was saved.
+    assert server.host.session.saved == []
+
+
+def test_a_save_writes_one_transcript_line_attributed_to_hardy(server) -> None:
+    """The record should be able to say the file changed, without the line
+    reading as something the person typed into the composer."""
+    _call(server, "PUT", "/api/file", {"path": "lean/Main.lean", "source": "import Mathlib\n"})
+    status, _, body = _call(server, "GET", "/api/transcript", token=False)
+    assert status == 200
+    entries = json.loads(body)
+    note = [entry for entry in entries if "Edited lean/Main.lean" in json.dumps(entry)]
+    assert len(note) == 1
+
+
+def test_declarations_endpoints_answer_without_a_lean_project(server) -> None:
+    """`lean_project` is None in the web test config, which is a real
+    configuration -- a session with no Lean installed. The endpoints answer
+    rather than raising, and never claim an index they did not build."""
+    status, _, body = _call(server, "GET", "/api/declarations?q=Sylow", token=False)
+    assert status == 200 and json.loads(body)["results"] == []
+    status, _, body = _call(server, "GET", "/api/declaration?name=Sylow.card", token=False)
+    assert status == 200 and json.loads(body)["found"] is False
+
+
 def test_cli_parses_web() -> None:
     from hardy.app.cli import build_parser
 
