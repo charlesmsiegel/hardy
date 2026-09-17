@@ -398,6 +398,120 @@ def test_ledger_list_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) 
     assert out == {"items": [], "revision": 0}
 
 
+# -- ledger_item(): one item, its version history, relations and obligations --
+
+
+def test_ledger_item_keeps_every_earlier_version_addressable(tmp_path: Path) -> None:
+    """`state.py`'s own promise: advancing an item never changes what an earlier version referenced.
+
+    Append an item, revise it twice, and check all three versions -- not just
+    the head -- are still addressable through `ledger_item`, each under its
+    own digest, and that the head reported is the third.
+    """
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    v1 = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm",
+                     origin=ProjectOrigin.TARGET_PAPER, statement="first draft")
+    store.append([v1], expected_revision=store.read().revision)
+    v2 = v1.model_copy(update={"statement": "second draft"})
+    store.append([v2], expected_revision=store.read().revision)
+    v3 = v2.model_copy(update={"statement": "third draft"})
+    store.append([v3], expected_revision=store.read().revision)
+
+    out = panels.ledger_item(problem, "thm-1")
+
+    assert [entry["version"] for entry in out["versions"]] == [1, 2, 3]
+    assert [entry["statement"] for entry in out["versions"]] == ["first draft", "second draft", "third draft"]
+    assert [entry["digest"] for entry in out["versions"]] == [v1.digest, v2.digest, v3.digest]
+    assert len({entry["digest"] for entry in out["versions"]}) == 3
+    # The head is the third revision, not the first or an average of the three.
+    assert out["digest"] == v3.digest
+    assert out["statement"] == "third draft"
+    assert out["version"] == 3
+
+
+def test_ledger_item_unknown_id_is_a_clean_refusal(tmp_path: Path) -> None:
+    """`snapshot.head()`'s `ValueError` is what `server.py` maps to a 400 -- not a traceback."""
+    with pytest.raises(ValueError, match="unknown record identity: nope"):
+        panels.ledger_item(make_problem(tmp_path), "nope")
+
+
+def test_ledger_item_refuses_an_identity_that_is_not_a_project_item(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import Obligation as ObligationRecord
+    from hardy.workflows.ledger.contracts import (
+        ObligationKind,
+        ObligationStatus,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    scope = Scope(id="scope")
+    obligation = ObligationRecord(id="ob-1", kind=ObligationKind.PROVE, item=item.ref, scope=scope,
+                                  status=ObligationStatus.OPEN)
+    store.append([item, scope, obligation], expected_revision=store.read().revision)
+
+    with pytest.raises(ValueError, match="not a project item"):
+        panels.ledger_item(problem, "ob-1")
+
+
+def test_ledger_item_reports_exact_enums_and_relations_and_obligations_touching_it(tmp_path: Path) -> None:
+    """`kind`, `origin`, `evidence` and obligation `status` are exact enum values, not a rounded label."""
+    from hardy.workflows.ledger.contracts import (
+        ArtifactRef,
+        EvidenceRef,
+        Obligation,
+        ObligationKind,
+        ObligationStatus,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Relation,
+        RelationKind,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    target = ProjectItem(id="lemma-1", kind=ProjectItemKind.LEMMA, name="Lemma",
+                         origin=ProjectOrigin.GENERATED_LOCAL)
+    item = ProjectItem(
+        id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER,
+        statement="a theorem",
+        evidence=(EvidenceRef(kind="formal", subject=target.ref, producer="fixture-kernel",
+                              artifact=ArtifactRef(uri="proof.json", digest="b" * 64)),),
+    )
+    relation = Relation(id="rel-1", kind=RelationKind.DEPENDS_ON, source=item.ref, target=target.ref)
+    scope = Scope(id="scope")
+    blocked = Obligation(id="ob-1", kind=ObligationKind.PROVE, item=item.ref, scope=scope,
+                         status=ObligationStatus.BLOCKED)
+    store.append([target, item, relation, scope, blocked], expected_revision=store.read().revision)
+
+    out = panels.ledger_item(problem, "thm-1")
+
+    assert out["kind"] == "theorem"
+    assert out["family"] == "result"
+    assert out["origin"] == "target_paper"
+    assert out["evidence"] == ["formal"]
+    assert out["relations"] == [{
+        "id": "rel-1", "kind": "depends_on", "source": "thm-1", "target": "lemma-1",
+        "evidence": [], "style": "solid",
+    }]
+    assert out["obligations"] == [{
+        "id": "ob-1", "kind": "prove", "status": "blocked", "tone": "error", "reason": None,
+    }]
+    assert out["revision"] == store.read().revision
+
+
 # -- results(): the theorem table and its three independently-sourced lanes --
 
 

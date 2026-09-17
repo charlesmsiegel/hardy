@@ -173,6 +173,90 @@ def ledger_list(problem: Path) -> dict[str, Any]:
     return {"items": items, "revision": snapshot.revision}
 
 
+def _item_summary(item: ProjectItem) -> dict[str, Any]:
+    """Every field a reader needs to tell one version of an item from another.
+
+    Mirrors `graph()`'s node fields -- same names, same exact enum values --
+    except `statement` is reported in full rather than sliced to
+    `STATEMENT_LIMIT`: this is the one detail page for an item, not the map,
+    and there is no per-status obligation count, because `ledger_item` reports
+    every current obligation touching this id as its own list rather than
+    folding it into a node's counts. Shared between the head and each entry
+    in `versions` so the two are never a parallel, driftable spelling of the
+    same facts.
+    """
+    return {
+        "id": item.id,
+        "digest": item.digest,
+        "kind": item.kind.value,
+        "family": vocabulary.family(item.kind),
+        "name": item.name,
+        "statement": item.statement,
+        "origin": item.origin.value,
+        "evidence": sorted({evidence.kind.value for evidence in item.evidence}),
+        "artifacts": [artifact.uri for artifact in item.artifacts],
+        "research": item.research.status if item.research else None,
+    }
+
+
+def ledger_item(problem: Path, item_id: str) -> dict[str, Any]:
+    """One ledger item's head, plus every version history has ever held of it.
+
+    `LedgerSnapshot`'s own promise (`state.py:2-3`) is that advancing a
+    logical item never changes what an earlier theorem referenced, so every
+    prior revision -- not only the current head -- stays addressable here,
+    each carrying its own `digest` and its 1-based position in `versions`.
+    `snapshot.records` is the full history; `snapshot.head` is `_heads`'s
+    current entry (`state.py:31-44`).
+
+    `relations` and `obligations` are filtered from the *current* heads of
+    their own kinds -- matching `graph()` and `record_counts()` -- because a
+    relation or an obligation is itself a versioned record with its own head;
+    this page shows what currently touches this id, not a history of those
+    records too. An id that names something other than a `ProjectItem` (an
+    `Obligation`, a `Relation`, ...) is refused the same way an unknown id is:
+    `ledger/item` is a page for items, and `validation.py`'s own rule --
+    "record identity cannot change category" -- means every record sharing
+    this id, once the head is confirmed a `ProjectItem`, is one too.
+    """
+    snapshot = LedgerStore(problem).read()
+    head = snapshot.head(item_id)
+    if not isinstance(head, ProjectItem):
+        raise ValueError(f"{item_id!r} is not a project item")
+
+    history = [record for record in snapshot.records if record.id == item_id]
+    versions = [{**_item_summary(record), "version": index} for index, record in enumerate(history, start=1)]
+
+    relations = []
+    for relation in snapshot.current(Relation):
+        if item_id in (relation.source.id, relation.target.id):
+            relations.append({
+                "id": relation.id, "kind": relation.kind.value,
+                "source": relation.source.id, "target": relation.target.id,
+                "evidence": sorted({evidence.kind.value for evidence in relation.evidence}),
+                "style": vocabulary.edge_style(relation.kind),
+            })
+
+    obligations = []
+    for obligation in snapshot.current(Obligation):
+        if obligation.item.id == item_id:
+            obligations.append({
+                "id": obligation.id, "kind": obligation.kind.value,
+                "status": obligation.status.value,
+                "tone": vocabulary.obligation_tone(obligation.status),
+                "reason": obligation.reason,
+            })
+
+    return {
+        **_item_summary(head),
+        "version": len(history),
+        "versions": versions,
+        "relations": relations,
+        "obligations": obligations,
+        "revision": snapshot.revision,
+    }
+
+
 def _session_state(problem: Path) -> dict[str, Any]:
     """`session.json` as a plain dict, degrading rather than raising.
 
