@@ -335,3 +335,153 @@ def test_record_counts_report_evidence_kinds_and_obligation_statuses(tmp_path: P
     out = panels.record_counts(problem)
     assert out["evidence"] == {"formal": 1}
     assert out["obligations"] == {"open": 1}
+
+
+# -- results(): the theorem table and its three independently-sourced lanes --
+
+
+def _write_audit(problem: Path, audit_records: dict) -> None:
+    import json
+
+    problem.joinpath("session.json").write_text(
+        json.dumps({"schema_version": 2, "names": [], "assumptions": [], "audit": audit_records}),
+        encoding="utf-8",
+    )
+
+
+def _write_lean(problem: Path, relative: str, source: str) -> None:
+    path = problem / "lean" / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+
+
+def test_results_kernel_lane_never_echoes_what_the_record_lane_claims(tmp_path: Path) -> None:
+    """The failing test Step 2 of the brief asks for.
+
+    A ledger item claims `Foo.bar` was proved a certain way; the Lean tree
+    holds `Foo.bar` too, but nothing has ever audited it. The kernel lane must
+    say so -- `unaudited`, no axioms -- rather than borrowing the record's claim.
+    """
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "namespace Foo\ntheorem bar : True := trivial\nend Foo\n")
+    store = LedgerStore(problem)
+    store.append(
+        [ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Foo.bar",
+                     origin=ProjectOrigin.HUMAN_AUTHORED, statement="Foo.bar holds, kernel-verified")],
+        expected_revision=store.read().revision,
+    )
+
+    out = panels.results(problem)
+    row = next(row for row in out["theorems"] if row["name"] == "Foo.bar")
+    assert row["kernel"]["verdict"] == "unaudited"
+    assert row["kernel"]["axioms"] is None
+    assert row["kernel"]["sorry"] is None
+    # The record lane is untouched by this: it still reports what the ledger
+    # claims, in its own structure, not folded into the kernel's.
+    assert row["record"]["statement"] == "Foo.bar holds, kernel-verified"
+    assert "statement" not in row["kernel"]
+
+
+def test_results_kernel_lane_reads_the_stored_audit_record(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    _write_audit(problem, {
+        "Foo": {
+            "status": "clean", "declarations": [{"name": "bar", "axioms": ["propext"]}],
+            "forbidden": [], "unapproved": [], "assumed": [], "signature": "sig-1",
+        },
+    })
+    out = panels.results(problem)
+    row = next(row for row in out["theorems"] if row["name"] == "bar")
+    assert row["verdict"] == "verified"
+    assert row["axioms"] == ["propext"]
+    assert row["sorry"] is False
+    assert row["kernel"]["signature"] == "sig-1"
+
+
+def test_results_kernel_lane_reports_a_hole_as_open_not_as_unaudited(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := by sorry\n")
+    _write_audit(problem, {
+        "Foo": {
+            "status": "open", "declarations": [{"name": "bar", "axioms": ["propext", "sorryAx"]}],
+            "forbidden": ["sorryAx"], "unapproved": [], "assumed": [], "signature": "sig-2",
+        },
+    })
+    row = next(row for row in panels.results(problem)["theorems"] if row["name"] == "bar")
+    assert row["verdict"] == "open"
+    assert row["sorry"] is True
+    assert "sorryAx" in row["axioms"]
+
+
+def test_results_record_lane_is_absent_with_no_matching_ledger_item(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    row = next(row for row in panels.results(problem)["theorems"] if row["name"] == "bar")
+    assert row["record"] is None
+
+
+def test_results_model_lane_quotes_the_report_verbatim_and_is_absent_otherwise(tmp_path: Path) -> None:
+    import json
+
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\ntheorem baz : True := trivial\n")
+    problem.joinpath("session.json").write_text(
+        json.dumps({
+            "schema_version": 2, "names": [], "assumptions": [],
+            "reports": [{"theorems": ["bar"], "summary": "bar establishes the goal", "status": "clean",
+                        "open": [], "assumptions": [], "statements": {"bar": "theorem bar : True"}}],
+        }),
+        encoding="utf-8",
+    )
+    rows = {row["name"]: row for row in panels.results(problem)["theorems"]}
+    assert rows["bar"]["model"][0]["summary"] == "bar establishes the goal"
+    assert rows["baz"]["model"] is None
+
+
+def test_results_verdict_absent_lanes_render_null_not_zero(tmp_path: Path) -> None:
+    """`Absent.jsx`'s contract: a figure never reported comes back `None`, not `0` or `[]` collapsed silently."""
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    row = next(row for row in panels.results(problem)["theorems"] if row["name"] == "bar")
+    assert row["axioms"] is None
+    assert row["sorry"] is None
+    assert row["record"] is None
+    assert row["model"] is None
+
+
+def test_results_revision_matches_the_ledger(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    out = panels.results(problem)
+    assert out["revision"] == LedgerStore(problem).read().revision
+
+
+def test_results_family_and_declared_kind_come_from_the_lean_keyword(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\nlemma baz : True := trivial\n")
+    rows = {row["name"]: row for row in panels.results(problem)["theorems"]}
+    assert rows["bar"]["declared_kind"] == "theorem" and rows["bar"]["family"] == "result"
+    assert rows["baz"]["declared_kind"] == "lemma" and rows["baz"]["family"] == "result"
+
+
+def test_results_a_name_two_modules_declare_is_ambiguous_not_a_coin_flip(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "A.lean", "theorem bar : True := trivial\n")
+    _write_lean(problem, "B.lean", "theorem bar : 1 = 1 := rfl\n")
+    _write_audit(problem, {
+        "A": {"status": "clean", "declarations": [{"name": "bar", "axioms": []}],
+              "forbidden": [], "unapproved": [], "assumed": [], "signature": "s"},
+        "B": {"status": "clean", "declarations": [{"name": "bar", "axioms": []}],
+              "forbidden": [], "unapproved": [], "assumed": [], "signature": "s"},
+    })
+    rows = [row for row in panels.results(problem)["theorems"] if row["name"] == "bar"]
+    assert len(rows) == 2
+    assert {row["module"] for row in rows} == {"A", "B"}
+    for row in rows:
+        assert row["verdict"] == "ambiguous"
+        assert row["axioms"] is None

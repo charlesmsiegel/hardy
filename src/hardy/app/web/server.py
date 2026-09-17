@@ -254,6 +254,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.environment(host.config))
         elif name == "record":
             self._json(200, panels.record_counts(problem))
+        elif name == "results":
+            self._json(200, panels.results(problem))
         elif name == "chats":
             self._json(200, chats.overview(problem))
         else:
