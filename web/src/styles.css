@@ -2183,3 +2183,98 @@ input {
   font: 12px var(--mono);
   padding: 6px 10px;
 }
+
+/* -- Results (Task 8) -------------------------------------------------------
+ * The theorem table and the standing-assumption/naming-registry/failed-
+ * attempts/open-obligations sections on the left, the selected theorem's
+ * Lean block and its three lanes on the right -- the same `minmax(0,1.1fr)
+ * minmax(0,1fr)` split `.wb-jobs` already uses, for the same reason: the
+ * left side carries a table and wants the extra room. */
+
+.wb-results {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .wb-results {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-results__left,
+.wb-results__right {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.wb-results__legend {
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-left: auto;
+}
+
+.wb-results__axioms {
+  color: var(--muted);
+  font: 11px var(--mono);
+  margin-top: 2px;
+}
+
+.wb-results__pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 11px var(--mono);
+  margin: 0;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.wb-results__pre + .wb-results__pre {
+  margin-top: 6px;
+}
+
+.wb-results__detail-path {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-results__name {
+  font: 600 16px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.wb-results__lean {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wb-results__lean-foot {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 10px;
+}
+
+.wb-results__model-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wb-results__quote {
+  color: var(--muted);
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+.wb-results__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

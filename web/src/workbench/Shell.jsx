@@ -28,13 +28,14 @@ import TabBar from './TabBar.jsx';
 import TopBar from './TopBar.jsx';
 
 // The tabs and top-bar links the app itself offers that have no page in
-// `PAGES` yet -- `TabBar.jsx`'s `results`/`runs`/`publications`/
-// `checkpoints` and `TopBar.jsx`'s `status`. A route the app asked for but
-// has not built is a different thing from a route nothing ever asked for
-// (a stray hash, a typo, a link that used to exist): the first is honestly
-// "not built yet", the second is honestly "not a route at all", and
-// `pageContent` below tells them apart rather than speaking for both.
-const PLANNED_NOT_BUILT = ['results', 'runs', 'publications', 'checkpoints', 'status'];
+// `PAGES` yet -- `TabBar.jsx`'s `runs`/`publications`/`checkpoints` and
+// `TopBar.jsx`'s `status`. A route the app asked for but has not built is a
+// different thing from a route nothing ever asked for (a stray hash, a
+// typo, a link that used to exist): the first is honestly "not built yet",
+// the second is honestly "not a route at all", and `pageContent` below
+// tells them apart rather than speaking for both. `results` (Task 8) has
+// landed and is no longer in this list.
+const PLANNED_NOT_BUILT = ['runs', 'publications', 'checkpoints', 'status'];
 
 function notBuilt(page) {
   return <Empty title="not built yet" line={`The ${page} page has not landed yet.`} />;
