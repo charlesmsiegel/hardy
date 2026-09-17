@@ -1052,6 +1052,31 @@ def test_run_item_refuses_when_the_manifest_cannot_be_read(tmp_path: Path) -> No
         panels.run_item(config, str(run_id))
 
 
+def test_run_item_refuses_when_the_manifests_own_run_id_disagrees_with_the_directory(tmp_path: Path) -> None:
+    """`_locate_run_dir` matches on the directory name's suffix alone -- the manifest inside must agree.
+
+    A hand-corrupted, half-migrated, or restored run directory could have a
+    name whose trailing 8 hex characters match the requested `run_id` while
+    its `manifest.json` names a different one entirely. A page whose whole
+    point is *which exact run* a verdict belongs to must refuse that, not
+    serve the mismatched manifest as if it were the one asked for.
+    """
+    config = make_config(tmp_path)
+    requested_id = uuid4()
+    actual_id = uuid4()
+    config.runs_root.mkdir(parents=True)
+    mismatched_dir = config.runs_root / f"20260101T000000+0000-order-1-{requested_id.hex[:8]}"
+    mismatched_dir.mkdir()
+    manifest = RunManifest(
+        run_id=actual_id, created_at=_NOW, phase=RunPhase.COMPLETED, model="claude-opus-4-1",
+        prompt_set_sha256="a" * 64,
+    )
+    (mismatched_dir / "manifest.json").write_text(manifest.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="names"):
+        panels.run_item(config, str(requested_id))
+
+
 def test_run_item_refuses_a_symlinked_run_directory(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     outside = tmp_path / "outside-runs"
