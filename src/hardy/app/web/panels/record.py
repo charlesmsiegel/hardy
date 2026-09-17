@@ -136,6 +136,43 @@ def record_counts(problem: Path) -> dict[str, Any]:
     }
 
 
+def ledger_list(problem: Path) -> dict[str, Any]:
+    """Every ledger head, one row each, for the browser's own filter pills.
+
+    The prototype's pills -- `kind`, `origin`, `evidence`, `open obligations`,
+    `stale only` -- all run against this one list in the browser: the list is
+    small and a round trip per pill would cost more than it saves. So every
+    head comes back unfiltered, with the exact enum values a pill needs to
+    group by and the label needs to print. `family` is the one exception,
+    carried alongside `kind` rather than derived from it client-side -- the
+    server classifies, the client only colours.
+    """
+    snapshot = LedgerStore(problem).read()
+    counts: dict[str, Counter[str]] = {}
+    for obligation in snapshot.current(Obligation):
+        # The exact status, matching `graph()` rather than reinventing it:
+        # six values go in, six come out.
+        counts.setdefault(obligation.item.id, Counter())[obligation.status.value] += 1
+    items = []
+    for item in snapshot.current(ProjectItem):
+        items.append({
+            "id": item.id,
+            "kind": item.kind.value,
+            "family": vocabulary.family(item.kind),
+            "name": item.name,
+            "origin": item.origin.value,
+            "evidence": sorted({evidence.kind.value for evidence in item.evidence}),
+            "obligations": dict(counts.get(item.id, Counter())),
+            # How many records in the full history -- not just the current
+            # heads `current()` returns -- share this id. `_heads` in
+            # `ledger/state.py` keeps only the latest per id; `records` keeps
+            # every revision, so this is the one place that still knows how
+            # many times an item has been revised.
+            "version": len([record for record in snapshot.records if record.id == item.id]),
+        })
+    return {"items": items, "revision": snapshot.revision}
+
+
 def _session_state(problem: Path) -> dict[str, Any]:
     """`session.json` as a plain dict, degrading rather than raising.
 

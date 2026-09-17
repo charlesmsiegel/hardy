@@ -337,6 +337,55 @@ def test_record_counts_report_evidence_kinds_and_obligation_statuses(tmp_path: P
     assert out["obligations"] == {"open": 1}
 
 
+def test_ledger_list_returns_every_head_with_its_exact_fields(tmp_path: Path) -> None:
+    """`kind`, `origin` and `evidence` are the exact enum values, not a grouped label."""
+    from hardy.workflows.ledger.contracts import (
+        ArtifactRef,
+        EvidenceRef,
+        Obligation,
+        ObligationKind,
+        ObligationStatus,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    target = ProjectItem(id="lemma-1", kind=ProjectItemKind.LEMMA, name="Lemma",
+                         origin=ProjectOrigin.GENERATED_LOCAL)
+    item = ProjectItem(
+        id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER,
+        evidence=(EvidenceRef(kind="formal", subject=target.ref, producer="fixture-kernel",
+                              artifact=ArtifactRef(uri="proof.json", digest="b" * 64)),),
+    )
+    scope = Scope(id="scope")
+    blocked = Obligation(id="ob-1", kind=ObligationKind.PROVE, item=item.ref, scope=scope,
+                         status=ObligationStatus.BLOCKED)
+    store.append([target, item, scope, blocked], expected_revision=store.read().revision)
+    # Revise the theorem once -- `version` counts every record sharing this
+    # id in the full history, not just the current head.
+    revised = item.model_copy(update={"statement": "revised"})
+    store.append([revised], expected_revision=store.read().revision)
+
+    out = panels.ledger_list(problem)
+    row = next(row for row in out["items"] if row["id"] == "thm-1")
+    assert row == {
+        "id": "thm-1", "kind": "theorem", "family": "result", "name": "Thm",
+        "origin": "target_paper", "evidence": ["formal"],
+        "obligations": {"blocked": 1}, "version": 2,
+    }
+    assert out["revision"] == store.read().revision
+
+
+def test_ledger_list_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) -> None:
+    """Issue #171: interactive saves write no ledger record, so this is a real case, not a hypothetical."""
+    out = panels.ledger_list(make_problem(tmp_path))
+    assert out == {"items": [], "revision": 0}
+
+
 # -- results(): the theorem table and its three independently-sourced lanes --
 
 
