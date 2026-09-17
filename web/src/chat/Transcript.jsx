@@ -189,18 +189,25 @@ const Message = memo(function Message({message, known, onLeanName}) {
 });
 
 /** Every turn separator this data can honestly draw: an ordinal count of the
- *  messages that opened a turn (`user` or Hardy-initiated), since nothing the
- *  browser reads carries a turn index or a timestamp -- `panels.session
- *  .transcript()` gives no `timestamp` field at all, on any role, and only
- *  `turn` (cancelled/abandoned) entries mark a boundary explicitly. Counting
- *  is not inventing: every `user`/`hardy` message really did start a turn,
- *  which is the actual rule `turns.py` runs on -- so "turn 3" here is exact,
- *  and the date beside it is `Absent` rather than a fabricated one. */
+ *  messages that opened a turn (`user`, always, and `hardy` when it did),
+ *  since nothing the browser reads carries a turn index or a timestamp --
+ *  `panels.session.transcript()` gives no `timestamp` field at all, on any
+ *  role, and only `turn` (cancelled/abandoned) entries mark a boundary
+ *  explicitly. Counting is not inventing: every `user` message starts a
+ *  turn, and so does a `hardy` one unless `startsTurn` says otherwise (issue
+ *  #172) -- `record_hardy_note`'s project-switch note is a `hardy`-kind
+ *  message that appends straight to the history without ever touching
+ *  `turn_running`, so it sets `starts_turn: False` on the wire
+ *  (`panels.session.transcript`), which `fromTranscript` carries onto
+ *  `message.startsTurn`. That is the actual rule `turns.py` runs on -- so
+ *  "turn 3" here is exact, and the date beside it is `Absent` rather than a
+ *  fabricated one. */
 function withSeparators(messages) {
   let turn = 0;
   const rows = [];
   for (const message of messages) {
-    if (message.kind === 'user' || message.kind === 'hardy') {
+    const startsTurn = message.kind === 'user' || (message.kind === 'hardy' && message.startsTurn !== false);
+    if (startsTurn) {
       turn += 1;
       rows.push({sep: true, key: `sep-${message.id}`, turn});
     }

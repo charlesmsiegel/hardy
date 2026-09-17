@@ -38,7 +38,17 @@ def transcript(session: Any) -> list[dict[str, Any]]:
         if kind == "user":
             # A line Hardy started a turn with is Hardy's, and drawn as such.
             role = "hardy" if event.get("author") == "hardy" else "user"
-            out.append({"role": role, "text": str(event.get("message", {}).get("content", "")), "entry_id": entry.entry_id})
+            row = {"role": role, "text": str(event.get("message", {}).get("content", "")), "entry_id": entry.entry_id}
+            if role == "hardy":
+                # Most Hardy-authored lines start a real turn (`turns.stream`'s
+                # own `author="hardy"` event, which never sets this key); a
+                # note `record_hardy_note` appends directly -- a browser
+                # project switch, so far -- sets `starts_turn: False` because
+                # nothing is sent to a model and no turn runs. The client's
+                # `withSeparators` reads this to avoid counting a boundary
+                # that never happened (issue #172).
+                row["starts_turn"] = bool(event.get("starts_turn", True))
+            out.append(row)
         elif kind == "assistant":
             out.append({
                 "role": "assistant", "text": str(event.get("message", {}).get("content", "")),

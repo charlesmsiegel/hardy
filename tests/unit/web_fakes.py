@@ -156,11 +156,14 @@ class FakeSession:
         """The real session's bookkeeping write, minus everything but the write.
 
         Mirrors `MathematicsSession.record_hardy_note`: a `user` event
-        authored by `"hardy"`, appended straight to the history, no turn.
+        authored by `"hardy"`, appended straight to the history, no turn --
+        `starts_turn: False` included, the same as the real method, so a test
+        against this fake exercises the same wire shape `panels.session
+        .transcript` reads (issue #172).
         """
         event: dict[str, Any] = {
             "type": "user", "message": {"role": "user", "content": text}, "author": "hardy",
-            "parent_id": self._history.active_leaf, "timestamp": time.time(),
+            "starts_turn": False, "parent_id": self._history.active_leaf, "timestamp": time.time(),
         }
         event["entry_id"] = identify(event)
         self._history.append(event)

@@ -42,6 +42,29 @@ def test_transcript_renders_user_and_assistant_and_drops_superseded_partials(tmp
     assert out[3]["text"] == "cancelled: user_pressed_escape"
 
 
+def test_transcript_marks_a_hardy_note_as_not_starting_a_turn(tmp_path: Path) -> None:
+    """Issue #172: `record_hardy_note`'s project-switch note is a `hardy`-kind
+    message that starts no turn, unlike an ordinary `author="hardy"` line a
+    real turn recorded. `starts_turn` is what the wire uses to tell them
+    apart, and the client's `withSeparators` reads it to avoid counting a
+    turn boundary that never happened.
+    """
+    session = FakeSession(make_problem(tmp_path))
+    from hardy.workflows.interactive.history import identify
+
+    def add(event):
+        event = {**event, "parent_id": session._history.active_leaf, "timestamp": 1.0}
+        event["entry_id"] = identify(event)
+        session._history.append(event)
+
+    add({"type": "user", "message": {"role": "user", "content": "background work finished"}, "author": "hardy"})
+    session.record_hardy_note("switched to project bar")
+    out = panels.transcript(session)
+    assert [m["role"] for m in out] == ["hardy", "hardy"]
+    assert out[0]["starts_turn"] is True
+    assert out[1]["starts_turn"] is False
+
+
 def test_tree_and_jobs(tmp_path: Path) -> None:
     session = FakeSession(make_problem(tmp_path))
     list(session.stream("hi"))

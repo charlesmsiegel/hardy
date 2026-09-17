@@ -4881,8 +4881,16 @@ class MathematicsSession:
         either as Hardy's line, never the person's), but starts no turn:
         nothing is sent to a model and no assistant reply follows. The record
         gains one entry and nothing else changes.
+
+        `starts_turn: False` is what tells this note apart, on the wire, from
+        a turn Hardy genuinely started (`turns.stream`'s own `author="hardy"`
+        event, which carries no such field and so defaults true) -- see
+        `panels.session.transcript` and the web client's `chat/Transcript.jsx`
+        `withSeparators`, which must not count this note as a turn boundary
+        (issue #172).
         """
-        self._record({"type": "user", "message": {"role": "user", "content": text}, "author": "hardy"})
+        self._record({"type": "user", "message": {"role": "user", "content": text},
+                       "author": "hardy", "starts_turn": False})
 
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         return self.turns._dispatch(name, arguments, tool=self._tool, persistence=self._turn_persistence(),
