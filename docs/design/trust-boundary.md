@@ -58,6 +58,25 @@ Controlled:
   archive can do to the filesystem. It is not a sandbox: nothing there is
   executed or compiled, and the code that unpacks a hostile archive carefully
   does not make the archive's contents trustworthy.
+- **Import provenance is a recorded fact, not a location.** `/import
+  lean|reference|tex` refuses a source path inside the problem's own tree,
+  because "imported" is a provenance claim the record makes -- this arrived
+  from outside -- and the problem's own authored work is not free to be
+  recorded under it. The one exception is a file the browser client staged:
+  `uploads.stage()` (`app/web/uploads.py`) always writes under the problem's
+  own `.local/uploads/`, and `_read_import`
+  (`workflows/interactive/session.py`) admits a file there only when a
+  sidecar `stage()` wrote beside it (`workflows/layout.py`'s
+  `record_staged_arrival`/`staged_arrival_digest`) carries the digest of the
+  bytes actually on disk -- the directory is where to look, not the reason to
+  admit. That sidecar is an ordinary file under `.local/`, readable and
+  hand-editable like `session.json` already is; a user who wants to falsify
+  their own project's provenance record can already do so by editing
+  `session.json`'s `imported` list directly, so this is the same honesty
+  boundary extended to one more file rather than a new one. Hardy is
+  single-user and local: the sidecar stops a copy of authored work from being
+  *mistaken* for an import, not a user from *deciding* to misrecord their own
+  project.
 - **Bounded child processes.** `foundation/process.py` validates a request
   before launching anything, holds a wall deadline, bounds captured stdout and
   stderr, and classifies termination so that an output overflow stays distinct

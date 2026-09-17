@@ -44,6 +44,19 @@ LOCAL_STATE = "state.json"
 INPUT_HISTORY = "input-history"
 
 
+#: Where the browser client's `/api/upload` stages a dropped file
+#: (`hardy.app.web.uploads.stage`) -- inside `.local/`, so it is never
+#: committed and never mistaken for `lean/` or `tex/` content. Staging also
+#: leaves a per-file sidecar recording the digest of the bytes it wrote --
+#: `record_staged_arrival`, `staged_arrival_digest` and `forget_staged_arrival`
+#: below -- read back by `MathematicsSession._read_import` in a different
+#: process, so issue #165's fix (a staged file must be admitted despite
+#: sitting inside the problem's own tree) is a recorded fact and not an
+#: exemption for the directory itself: living here is necessary but not
+#: sufficient, a sidecar with a matching digest is what a reader trusts.
+UPLOADS_DIR = "uploads"
+
+
 DEFAULT_SLUG = "main"
 
 
@@ -474,6 +487,85 @@ TOOLING_RULES = (
     "/transcript.jsonl",
     "/input-history",
 )
+
+
+def uploads_dir(problem: Path) -> Path:
+    """Where `hardy.app.web.uploads.stage` writes a dropped file for `problem`."""
+    return problem / LOCAL_DIR / UPLOADS_DIR
+
+
+def _provenance_name(name: str) -> str:
+    """The sidecar `name`'s arrival is recorded under: `A.lean` -> `.A.lean.provenance`.
+
+    One sidecar per staged file rather than one shared manifest for the whole
+    directory, so two tabs staging at once (`stage`'s own exclusive-create
+    loop already gives each a distinct `name` -- `A.lean` and `A-2.lean`, not
+    a collision) each write a distinct sidecar and never contend for the same
+    file. A shared `{name: digest}` manifest was tried first and lost the
+    web-uploads concurrency test to Windows sharing violations under
+    `test_stage_takes_a_name_exclusively_across_threads`'s eight-way stage:
+    every thread's read-modify-write of one file raced every other's.
+
+    Leading dot so `uploads.safe_name` (which refuses every dot-led name)
+    can never let a browser drop collide with or masquerade as one, and so
+    `uploads.staged()`'s listing -- which must not show this module's own
+    bookkeeping as something the user staged -- can filter every dot-led
+    name out by one rule instead of naming this file specifically.
+    """
+    return f".{name}.provenance"
+
+
+def record_staged_arrival(problem: Path, name: str, digest: str) -> None:
+    """Record that `name`, just staged under `problem`'s upload area, carries `digest`.
+
+    The provenance claim `_read_import` (`workflows/interactive/session.py`)
+    needs is not "this file sits under `.local/uploads/`" -- that is true of
+    anything anyone puts there, including a copy of the project's own work --
+    it is "these exact bytes are what `hardy.app.web.uploads.stage` wrote to
+    this name, and nothing has touched the file since".
+
+    This sidecar is itself just another file under `.local/`, readable and
+    editable like any other -- see `staged_arrival_digest` for why that is an
+    accepted, stated limit rather than an oversight.
+    """
+    guard = WriteGuard(uploads_dir(problem), create=True)
+    guard.write_bytes(_provenance_name(name), digest.encode("ascii"))
+
+
+def staged_arrival_digest(problem: Path, origin: Path) -> str | None:
+    """The digest recorded when `origin` was staged, or `None`.
+
+    `None` covers "never staged" and "the uploads area does not exist yet"
+    alike -- a project that has never received a drop has no
+    `.local/uploads/` at all, and asking this before one exists must answer,
+    not raise, the same way `uploads.staged()` answers `[]` rather than
+    refusing. `origin` must resolve to a direct child of the uploads
+    directory: this is not the proof that a file was staged (the sidecar
+    lookup is), only where to look for one.
+    """
+    if origin.parent != uploads_dir(problem):
+        return None
+    try:
+        guard = WriteGuard(uploads_dir(problem), create=False)
+        with guard.open(_provenance_name(origin.name), "r", encoding="ascii") as handle:
+            content = handle.read().strip()
+    except (FileNotFoundError, LayoutError, OSError):
+        return None
+    return content or None
+
+
+def forget_staged_arrival(problem: Path, name: str) -> None:
+    """Drop `name`'s provenance sidecar, e.g. when the staged file is discarded.
+
+    Not required for correctness -- a sidecar for a name nothing occupies any
+    more answers nobody's lookup -- but left around forever is one more file
+    per upload ever staged and discarded in a project's lifetime.
+    """
+    try:
+        guard = WriteGuard(uploads_dir(problem), create=False)
+    except LayoutError:
+        return
+    guard.unlink(_provenance_name(name), missing_ok=True)
 
 
 def _read_lines(path: Path) -> tuple[list[str], str]:
