@@ -9,7 +9,12 @@ import pytest
 from hardy.app.web.panels import vocabulary
 from hardy.formal import audit
 from hardy.workflows.contracts import DocumentStatus, FaithfulnessStatus, FormalStatus
-from hardy.workflows.ledger.contracts import ObligationStatus, ProjectItemKind, RelationKind
+from hardy.workflows.ledger.contracts import (
+    ObligationStatus,
+    ProjectItemKind,
+    PublicationVisibility,
+    RelationKind,
+)
 
 FAMILIES = {"result", "research", "concept", "document", "other"}
 
@@ -97,3 +102,39 @@ def test_faithfulness_tone_raises_on_an_unknown_value_rather_than_defaulting() -
 def test_document_tone_raises_on_an_unknown_value_rather_than_defaulting() -> None:
     with pytest.raises(KeyError):
         vocabulary.document_tone("not-a-real-status")
+
+
+# -- publication visibility and link-origin eligibility --
+
+
+@pytest.mark.parametrize("visibility", list(PublicationVisibility))
+def test_every_publication_visibility_has_a_tone(visibility: PublicationVisibility) -> None:
+    assert vocabulary.publication_visibility_tone(visibility) in {"accent", "warning", "error", "muted"}
+
+
+def test_publication_visibility_tone_raises_on_an_unknown_value_rather_than_defaulting() -> None:
+    with pytest.raises(KeyError):
+        vocabulary.publication_visibility_tone("not-a-real-visibility")
+
+
+def test_publication_visibility_tones_are_assigned_not_defaulted() -> None:
+    assert vocabulary.publication_visibility_tone(PublicationVisibility.PUBLIC) == "accent"
+    assert vocabulary.publication_visibility_tone(PublicationVisibility.INTERNAL) == "muted"
+    assert vocabulary.publication_visibility_tone(PublicationVisibility.OMITTED) == "warning"
+
+
+@pytest.mark.parametrize("kind", list(ProjectItemKind))
+def test_every_item_kind_has_link_source_kinds(kind: ProjectItemKind) -> None:
+    """Total by construction; most kinds may never open a publication link at all."""
+    assert set(vocabulary.link_source_kinds(kind)).issubset({"illustrates", "documents"})
+
+
+def test_link_source_kinds_match_project_operations_link_exactly() -> None:
+    """Mirrors `ProjectOperations.link`'s own `allowed` dict (`workflows/interactive/project.py:71-74`)."""
+    assert vocabulary.link_source_kinds(ProjectItemKind.EXAMPLE) == ("illustrates",)
+    assert vocabulary.link_source_kinds(ProjectItemKind.EXPOSITION) == ("documents",)
+    assert vocabulary.link_source_kinds(ProjectItemKind.DOCUMENT_FRAGMENT) == ("documents",)
+    assert vocabulary.link_source_kinds(ProjectItemKind.THEOREM) == ()
+    assert {k for k in ProjectItemKind if vocabulary.link_source_kinds(k)} == {
+        ProjectItemKind.EXAMPLE, ProjectItemKind.EXPOSITION, ProjectItemKind.DOCUMENT_FRAGMENT,
+    }

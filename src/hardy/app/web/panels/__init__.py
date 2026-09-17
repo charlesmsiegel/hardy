@@ -12,6 +12,7 @@ mutation. A later task wires each one behind a GET endpoint; this package owns
 only the shape of the answer.
 """
 
+from hardy.app.web.panels.checkpoints import checkpoints
 from hardy.app.web.panels.host_environment import environment
 from hardy.app.web.panels.record import (
     STATEMENT_LIMIT,
@@ -19,6 +20,7 @@ from hardy.app.web.panels.record import (
     ledger_export,
     ledger_item,
     ledger_list,
+    publications,
     record_counts,
     results,
 )
@@ -39,7 +41,7 @@ from hardy.app.web.panels.workspace import (
 
 __all__ = [
     "CAS_SKIPPED", "CELLS_LIMIT", "CELL_TEXT_LIMIT", "STATEMENT_LIMIT", "TEXT_LIMIT",
-    "cas_cells", "confine", "environment", "file_text", "files", "graph", "jobs",
-    "ledger_export", "ledger_item", "ledger_list", "pdf_bytes", "record_counts", "results",
+    "cas_cells", "checkpoints", "confine", "environment", "file_text", "files", "graph", "jobs",
+    "ledger_export", "ledger_item", "ledger_list", "pdf_bytes", "publications", "record_counts", "results",
     "run_item", "runs", "sources", "summary", "transcript", "tree",
 ]

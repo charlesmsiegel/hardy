@@ -254,7 +254,8 @@ def test_panels_and_files(server) -> None:
     (problem / "lean" / "A.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
     for path in ("/api/summary", "/api/jobs", "/api/tree", "/api/sources", "/api/graph",
                  "/api/transcript", "/api/commands", "/api/files", "/api/uploads",
-                 "/api/record", "/api/ledger", "/api/results", "/api/chats", "/api/runs"):
+                 "/api/record", "/api/ledger", "/api/results", "/api/chats", "/api/runs",
+                 "/api/publications", "/api/checkpoints"):
         # `/api/environment` is deliberately not in this list: it is the one
         # route that reaches `doctor.run_checks`, and this fixture's `server`
         # runs a real, unmocked `WebHost` -- exercising it here would shell
@@ -348,6 +349,35 @@ def test_runs_route_serves_a_real_run_and_refuses_an_unknown_id(server) -> None:
     # A malformed run_id (not even a UUID) refuses the same clean way.
     status, _, body = _call(server, "GET", "/api/runs/item?id=not-a-uuid", token=False)
     assert status == 400
+
+
+def test_publications_route_serves_a_real_candidate(server) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin, Scope
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = server.host.config.layout.problem
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    scope = Scope(id="scope-1", must_prove=(item.ref,))
+    store.append([item, scope], expected_revision=store.read().revision)
+
+    status, ctype, body = _call(server, "GET", "/api/publications", token=False)
+    assert status == 200 and "application/json" in ctype
+    payload = json.loads(body)
+    assert payload["items"][0]["id"] == "thm-1" and payload["items"][0]["visibility"] == "internal"
+    assert payload["candidates"][0]["item"] == "thm-1" and payload["candidates"][0]["ready"] is False
+
+
+def test_checkpoints_route_serves_a_real_checkpoint(server) -> None:
+    from hardy.workflows import checkpoints as checkpoint_module
+
+    paths = server.host.config.layout
+    saved = checkpoint_module.save(paths, name="before refactor")
+
+    status, ctype, body = _call(server, "GET", "/api/checkpoints", token=False)
+    assert status == 200 and "application/json" in ctype
+    rows = json.loads(body)["checkpoints"]
+    assert len(rows) == 1 and rows[0]["id"] == saved.id and rows[0]["name"] == "before refactor"
 
 
 def test_environment_route_is_wired_without_probing_the_host(

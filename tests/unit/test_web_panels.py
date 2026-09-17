@@ -1089,3 +1089,137 @@ def test_run_item_refuses_a_symlinked_run_directory(tmp_path: Path) -> None:
         pytest.skip("symlinks are not available here")
     with pytest.raises(ValueError, match="no run found"):
         panels.run_item(config, str(run_id))
+
+
+# -- checkpoints --
+
+
+def test_checkpoints_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) -> None:
+    from hardy.workflows.layout import Layout
+
+    make_problem(tmp_path)
+    assert panels.checkpoints(Layout(root=tmp_path, slug="sylow")) == {"checkpoints": []}
+
+
+def test_checkpoints_reshapes_list_checkpoints_oldest_first(tmp_path: Path) -> None:
+    """Mirrors `list_checkpoints`'s own order (`handle_checkpoint`, `tui/handlers.py`: "oldest first")."""
+    from hardy.workflows import checkpoints as checkpoint_module
+    from hardy.workflows.layout import Layout
+
+    make_problem(tmp_path)
+    paths = Layout(root=tmp_path, slug="sylow")
+    first = checkpoint_module.save(paths, name="before refactor", now=datetime(2026, 1, 1, tzinfo=UTC))
+    second = checkpoint_module.save(paths, now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    out = panels.checkpoints(paths)
+    assert [row["id"] for row in out["checkpoints"]] == [first.id, second.id]
+    assert out["checkpoints"][0] == {
+        "id": first.id, "slug": "sylow", "name": "before refactor", "created": first.created,
+        "chat": first.chat, "files": first.files, "bytes": first.bytes, "label": first.label,
+    }
+    # An unnamed checkpoint's own label omits the name entirely, not a blank one.
+    assert out["checkpoints"][1]["name"] == ""
+    assert out["checkpoints"][1]["label"] == second.label
+    assert "before refactor" not in second.label
+
+
+# -- publications --
+
+
+def test_publications_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) -> None:
+    problem = make_problem(tmp_path)
+    out = panels.publications(problem)
+    assert out["items"] == []
+    assert out["candidates"] == []
+    assert out["revision"] == 0
+
+
+def test_publications_items_carry_exact_visibility_role_and_link_source_kinds(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import (
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        PublicationRole,
+        PublicationVisibility,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    theorem = ProjectItem(
+        id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER,
+        publication_visibility=PublicationVisibility.PUBLIC, publication_role=PublicationRole.MAIN,
+    )
+    example = ProjectItem(id="ex-1", kind=ProjectItemKind.EXAMPLE, name="Ex", origin=ProjectOrigin.HUMAN_AUTHORED)
+    store.append([theorem, example], expected_revision=store.read().revision)
+
+    out = panels.publications(problem)
+    rows = {row["id"]: row for row in out["items"]}
+    assert rows["thm-1"] == {
+        "id": "thm-1", "name": "Thm", "kind": "theorem", "family": "result",
+        "visibility": "public", "visibility_tone": "accent", "role": "main", "link_source_kinds": [],
+    }
+    assert rows["ex-1"] == {
+        # `publication_visibility` defaults to `internal` (`ledger/contracts.py:180`); `role` is unset.
+        "id": "ex-1", "name": "Ex", "kind": "example", "family": "other",
+        "visibility": "internal", "visibility_tone": "muted", "role": None,
+        "link_source_kinds": ["illustrates"],
+    }
+
+
+def test_publications_candidates_preview_readiness_and_gaps_without_writing_or_compiling(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin, Scope
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    scope = Scope(id="scope-1", must_prove=(item.ref,))
+    store.append([item, scope], expected_revision=store.read().revision)
+
+    out = panels.publications(problem)
+    assert len(out["candidates"]) == 1
+    row = out["candidates"][0]
+    assert row["item"] == "thm-1"
+    assert row["name"] == "Thm"
+    assert row["kind"] == "theorem"
+    assert row["family"] == "result"
+    assert row["scope"] == "scope-1"
+    assert row["visibility"] == "internal"
+    assert row["visibility_tone"] == "muted"
+    assert row["role"] is None
+    # Nothing has established the theorem yet: not ready, and the gap says so.
+    assert row["ready"] is False
+    assert row["closure"] >= 1
+    assert any("Unestablished mathematics" in gap for gap in row["gaps"])
+    # A GET must never write or compile: `PublishWorkflow.publish` is the only
+    # thing that creates `publications/`, and this endpoint never calls it.
+    assert not (problem / "publications").exists()
+
+
+def test_publications_candidates_skip_a_scope_root_that_is_not_a_project_item(tmp_path: Path) -> None:
+    """A `Scope.must_prove` entry only has to resolve to *some* record (`validation.py`'s referential
+    check); `plan_publication` is what actually requires it be a `ProjectItem`. A stale or malformed
+    root must drop from the list, not take the whole page down."""
+    from hardy.workflows.ledger.contracts import Scope
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    other = Scope(id="scope-0")
+    scope = Scope(id="scope-1", must_prove=(other.ref,))
+    store.append([other, scope], expected_revision=store.read().revision)
+
+    assert panels.publications(problem)["candidates"] == []
+
+
+def test_publications_revision_matches_the_ledger(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    store.append([ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm",
+                              origin=ProjectOrigin.TARGET_PAPER)], expected_revision=store.read().revision)
+    out = panels.publications(problem)
+    assert out["revision"] == store.read().revision
