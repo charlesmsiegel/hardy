@@ -11,8 +11,8 @@
 // tab of its own (`TabBar.jsx` lights the Chat tab for it too) and is
 // reached only through the transcript/tree toggle in Chat's own header.
 //
-// `jobs`, `library` and `ledger` (its graph half; the list half is a later
-// shipment) are Task 13b. `files` (read-only; the editor is shipment 3) is
+// `jobs`, `library` and `ledger` (its graph half; the list half shipped in
+// `e074b9a`) are Task 13b. `files` (read-only; the editor is shipment 3) is
 // Task 13c. `results` (Task 8) is the three-lane theorem table and detail.
 
 import Chat from './Chat.jsx';
