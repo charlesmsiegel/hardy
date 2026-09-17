@@ -263,8 +263,15 @@ export default function Ledger() {
               ['id', open.id],
               ['kind', open.kind],
               ['origin', open.origin],
-              ['evidence', open.evidence.length ? open.evidence.join(', ') : <Absent kind="na" />],
-              ['artifacts', open.artifacts.length ? open.artifacts.join(', ') : <Absent kind="na" />],
+              // Evidence and artifacts are collections that apply to every
+              // ledger item; an empty one is a count of zero, the same claim
+              // `obligations` below makes when it has no entries -- not `na`,
+              // which would say the field does not apply to this item at all.
+              ['evidence', open.evidence.length ? open.evidence.join(', ') : <Absent kind="zero" />],
+              ['artifacts', open.artifacts.length ? open.artifacts.join(', ') : <Absent kind="zero" />],
+              // Research, unlike evidence/artifacts, is a single optional
+              // link: not every item has one, so a missing value here really
+              // is "does not apply", not a zero-length collection.
               ['research', open.research ?? <Absent kind="na" />],
               [
                 'obligations',

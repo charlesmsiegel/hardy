@@ -87,9 +87,14 @@ function describeNotice(raw) {
   }
 }
 
-function NoticeLine({text}) {
+/** The notice's own words, with no timestamp appended -- `NoticeLine` adds
+ *  that uniformly, because `panels/session.transcript()` gives no timestamp
+ *  field at all, on any role, the same gap the turn separator below draws
+ *  as `Absent`. Dropping it here silently, while the separator names it,
+ *  was issue #168: the identical missing data read two different ways. */
+function noticeBody(text) {
   const payload = describeNotice(text);
-  if (!payload) return <>{text}</>;
+  if (!payload) return text;
   if (payload.type === 'conversation_branch') {
     const from = payload.parent_id ?? payload.from_leaf ?? <Absent kind="unreported" />;
     if (payload.action === 'abandon') {
@@ -118,6 +123,14 @@ function NoticeLine({text}) {
       {rest.length
         ? ` · ${rest.map(([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : value}`).join(' · ')}`
         : ''}
+    </>
+  );
+}
+
+function NoticeLine({text}) {
+  return (
+    <>
+      {noticeBody(text)} · <Absent kind="unreported" />
     </>
   );
 }
