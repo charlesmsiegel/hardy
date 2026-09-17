@@ -85,6 +85,28 @@
 //     keys its rows by (that link only runs the other way, from a Results
 //     row's own `record.id`). Guessing one would be exactly the kind of
 //     invented command this task's brief rules out, so it is left undone.
+//
+// **The Export proof card (Task 10, `ExportCard`)** folds into this same
+// `ItemDetail`, rather than reviving the prototype's separate graph-only
+// `gsel`/`gx` selection state (`Hardy Workbench.dc.html:394-412`): this file
+// already unified "which item is open" into one `arg`-driven pane for both
+// the list and the graph (see above), and an export view of an item is a
+// view of that same item, not a second one. It reads
+// `/api/ledger/export?id=`, which computes a publication closure against a
+// throwaway sentinel `Scope` when no real scope names the item
+// (`panels/record.py`'s `_UNSCOPED`) -- so `ready` and each row's
+// `unestablished` come back `null`, not a computed `false`, and are rendered
+// as genuinely unasked rather than "not ready". `writeup.words` and
+// `writeup.reader_agreed` are always `null` too, for a different reason: no
+// such field exists anywhere in the ledger contracts, so they print as
+// `unreported`, never guessed from a verdict. Several scopes can name the
+// same item; the card says so rather than silently picking the first. The
+// design's generated `/export proof ...` command does not exist
+// (`handlers.py:1529` has no `proof` subcommand), so the control is
+// permanently disabled with the reason printed as visible text, not only a
+// tooltip -- see `ExportCard`'s own comment for which of this file's two
+// existing disabled-control patterns (`Tree.jsx`'s Resume/Compare vs.
+// `Files.jsx`'s Import) it follows and why.
 
 import {useMemo, useState} from 'react';
 import dagre from 'dagre';
@@ -108,6 +130,20 @@ const MAX_W = 180;
 //: What the "F" badge claims, quoted from the prototype's own legend
 //: (Hardy Workbench.dc.html:360) rather than paraphrased.
 const F_MEANING = 'formal evidence recorded — a claim in the ledger; the verdict is on Results';
+
+//: What the "open obligations" pill actually filters, for a reader who takes
+//: "open" colloquially. `filterItems` below matches the literal
+//: `ObligationStatus.OPEN` value only -- the design's own rule, never a
+//: broader "still outstanding" bucket that would also catch
+//: `investigating`/`blocked` -- so an item whose only obligation is
+//: `blocked` vanishes under this filter, which reads as "nothing
+//: outstanding here" if taken loosely. False. Task 9 review's carried fix:
+//: the label and the literal filter both stay exactly as the prototype has
+//: them; only this tooltip is new, the same `title={F_MEANING}` shape this
+//: file already gives its own F badge two lines up.
+const OPEN_OBLIGATIONS_MEANING =
+  'Matches the literal ObligationStatus.OPEN value only -- not investigating, blocked, or any other still-open ' +
+  'status. An item whose only obligation is blocked, say, will not appear here even though something is still owed.';
 
 const DEFAULT_FILTERS = {kind: 'all', origin: 'all', evidence: 'any', openObligations: false, staleOnly: false};
 
@@ -180,12 +216,13 @@ function FilterSelect({label, value, options, onChange, allLabel}) {
   );
 }
 
-function BoolPill({on, onClick, children}) {
+function BoolPill({on, onClick, title, children}) {
   return (
     <button
       type="button"
       className={on ? 'wb-ledger__bool-pill wb-ledger__bool-pill--on' : 'wb-ledger__bool-pill'}
       onClick={onClick}
+      title={title}
     >
       {children}
       {on ? ' ✓' : ''}
@@ -216,6 +253,194 @@ function obligationCounts(obligations, tones) {
         </Pill>
       ))}
     </span>
+  );
+}
+
+//: What a `null` `ready` or a `null` row `unestablished` actually claims --
+//: quoted (not paraphrased) from `panels/record.py: ledger_export`'s own
+//: `_UNSCOPED` docstring, because the exact distinction is the point: no
+//: `Scope.must_prove` names this item, so the question was never asked at
+//: all -- a stronger, different claim from a computed `false`. Rendering
+//: this as "not ready" would be exactly the substitution the Export card
+//: exists to prevent.
+const EXPORT_UNASKED_NOTE = 'no scope names this item to prove, so this was never asked';
+
+/** `ready`'s cell: `null` prints as `na` plus the unasked note (never a
+ *  guessed "not ready"); a real boolean prints as a pill, `not ready`
+ *  toned `warning` the same way `STATE_TONE`'s own `stale`/`interrupted`
+ *  entries read "recorded, not resolved" rather than an error. */
+function readyCell(ready) {
+  if (ready === null) {
+    return (
+      <span>
+        <Absent kind="na" /> <span className="panel__note" style={{margin: 0}}>({EXPORT_UNASKED_NOTE})</span>
+      </span>
+    );
+  }
+  return <Pill tone={ready ? 'accent' : 'warning'}>{ready ? 'ready' : 'not ready'}</Pill>;
+}
+
+/** A closure row's own `unestablished`: same `null`-means-unasked rule as
+ *  `readyCell`, since both come from the same scope-gated computation
+ *  (`ledger/views.py: publication`). */
+function unestablishedCell(value) {
+  if (value === null) return <Absent kind="na" />;
+  return value ? <Pill tone="warning">not established</Pill> : <span style={{color: 'var(--muted)'}}>established</span>;
+}
+
+function staleCell(stale) {
+  return stale ? <Pill tone="warning">stale</Pill> : <span style={{color: 'var(--muted)'}}>current</span>;
+}
+
+/** A closure row's writeup state. `documented` and `assumed` are real facts
+ *  (a current `DOCUMENTS` relation; scope membership) -- `assumed` still
+ *  reads `na` when `null`, the same unasked reason as `readyCell`. `words`
+ *  and `reader_agreed` are always `null`: no such field exists anywhere in
+ *  the ledger contracts (`ledger_export`'s own docstring), so neither is
+ *  ever synthesised from `verdict` or from `documented` -- both print as
+ *  `unreported`, unconditionally. */
+function writeupCell(writeup) {
+  return (
+    <span style={{display: 'flex', flexDirection: 'column', gap: 2}}>
+      <span>{writeup.documented ? 'documented' : 'not documented'}</span>
+      <span className="panel__note" style={{margin: 0}}>
+        words <Absent kind="unreported" /> · reader agreed <Absent kind="unreported" /> · assumed{' '}
+        {writeup.assumed === null ? <Absent kind="na" /> : writeup.assumed ? 'yes' : 'no'}
+      </span>
+    </span>
+  );
+}
+
+/** The Export proof card (Task 10): `/api/ledger/export?id=`'s dependency
+ *  closure for whichever item `ItemDetail` has open, plus the control the
+ *  prototype shows generating `/export proof X --deps --writeups --lean
+ *  --verdicts --format pdf` (`Hardy Workbench.dc.html:396-411`).
+ *
+ *  That command does not exist. `handlers.py:1529` registers `/export` with
+ *  no `proof` subcommand and none of those flags -- it writes one shareable
+ *  HTML account of the whole session, not a per-theorem PDF -- and
+ *  `ledger_export`'s own `export_command` field already reports why in place
+ *  of the invented syntax. This project's rule (this task's own brief):
+ *  offer an action when its outcome is genuinely unknown, state the outcome
+ *  when it is not. This one is not, so the button below is permanently
+ *  disabled with the reason printed as ordinary text beside it, not only in
+ *  a tooltip -- `Tree.jsx`'s Resume/Compare pattern (`disabled` +
+ *  `title` + a visible `panel__note` repeating the same sentence), chosen
+ *  over `Files.jsx`'s Import buttons because the two are answering
+ *  different questions: Files' `/import` is a real command whose *outcome*
+ *  is unknown until it runs (issue #165), so it stays enabled and sends
+ *  nothing until reviewed; here there is no real command at all, the same
+ *  shape `/resume` and `/fork --name` are missing for Tree.
+ *
+ *  The design's include-toggles (writeups/Lean/verdicts/Mathlib) and format
+ *  tabs (pdf/tex/md) exist only to build that same fabricated command --
+ *  with the command gone, so is anything those controls would do. Drawing
+ *  interactive-looking checkboxes with nothing behind them would misstate
+ *  the control exactly as the invented command text would, so they are not
+ *  drawn; the closure they would have configured is shown in full below
+ *  instead, which is the one part of the card backed by real data. */
+function ExportCard({id, revision}) {
+  const exportPanel = usePanel(`/api/ledger/export?id=${encodeURIComponent(id)}`, revision);
+
+  if (exportPanel.error) {
+    return (
+      <div className="wb-card">
+        <Label>Export proof</Label>
+        <div className="panel__error">{exportPanel.error}</div>
+      </div>
+    );
+  }
+  if (!exportPanel.data) {
+    return (
+      <div className="wb-card">
+        <Label>Export proof</Label>
+        <p className="panel__note">Reading the dependency closure...</p>
+      </div>
+    );
+  }
+
+  const data = exportPanel.data;
+  const candidateCount = data.scope_candidates.length;
+
+  return (
+    <div className="wb-card">
+      <Label>{`Export proof · dependency closure · ${data.rows.length} in this project`}</Label>
+
+      {candidateCount === 0 ? (
+        <div className="panel__note">
+          No scope names {data.name} in its must_prove, so readiness below, and each row's "unestablished" column,
+          were never asked -- not computed and false, genuinely unasked.
+        </div>
+      ) : null}
+      {candidateCount > 1 ? (
+        <div className="panel__note">
+          {candidateCount} scopes claim {data.name} as something to prove ({data.scope_candidates.join(', ')}).
+          Nothing in the schema picks one over another; the closure below is computed against {data.scope}, the
+          first by id -- said here rather than picked silently.
+        </div>
+      ) : null}
+
+      <Facts rows={[['ready', readyCell(data.ready)]]} />
+
+      <Table
+        head={['item', '⊢ verdict', 'writeup', 'unestablished', 'stale']}
+        rows={data.rows.map((row) => ({
+          key: row.id,
+          cells: [
+            <div key="item">
+              {kindBadge(row.kind, row.family, 'kind')}{' '}
+              <span style={{fontFamily: 'var(--mono)'}}>{row.name}</span>{' '}
+              <span className="panel__note" style={{margin: 0}}>
+                {row.id}
+              </span>
+            </div>,
+            <Pill key="verdict" tone={row.tone}>
+              {row.verdict}
+            </Pill>,
+            writeupCell(row.writeup),
+            unestablishedCell(row.unestablished),
+            staleCell(row.stale),
+          ],
+        }))}
+      />
+
+      <div className="panel__note">
+        declarations required ·{' '}
+        {data.required_declarations.length ? data.required_declarations.join(', ') : <Absent kind="zero" />}
+        {' · '}bindings required ·{' '}
+        {data.required_bindings.length ? data.required_bindings.join(', ') : <Absent kind="zero" />}
+      </div>
+
+      {data.obligations.length ? (
+        <div style={{display: 'flex', flexDirection: 'column', gap: 4}}>
+          <span className="section-label">obligations blocking readiness · {data.obligations.length}</span>
+          {data.obligations.map((obligation) => (
+            <div key={obligation.id} style={{display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 12px'}}>
+              <Pill tone={obligation.tone}>{obligation.status}</Pill>
+              <span>{obligation.reason ?? <Absent kind="na" />}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {data.citations_open.length ? (
+        <div style={{display: 'flex', flexDirection: 'column', gap: 4}}>
+          <span className="section-label">citations open · {data.citations_open.length}</span>
+          {data.citations_open.map((citation) => (
+            <div key={citation.id} className="panel__note" style={{margin: 0}}>
+              {citation.paper_id} v{citation.paper_version} · {citation.status}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap'}}>
+        <button type="button" className="button" disabled title={data.export_command.reason}>
+          Export proof…
+        </button>
+      </div>
+      <div className="panel__note">{data.export_command.reason}</div>
+    </div>
   );
 }
 
@@ -411,6 +636,8 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph}) {
           ))}
         </div>
       </div>
+
+      <ExportCard id={id} revision={revision} />
 
       <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
         <button type="button" className="button" onClick={onShowInGraph}>
@@ -688,7 +915,11 @@ export default function Ledger({arg}) {
                   allLabel="any"
                   onChange={(evidence) => setFilters((f) => ({...f, evidence}))}
                 />
-                <BoolPill on={filters.openObligations} onClick={() => setFilters((f) => ({...f, openObligations: !f.openObligations}))}>
+                <BoolPill
+                  on={filters.openObligations}
+                  onClick={() => setFilters((f) => ({...f, openObligations: !f.openObligations}))}
+                  title={OPEN_OBLIGATIONS_MEANING}
+                >
                   open obligations
                 </BoolPill>
                 <BoolPill on={filters.staleOnly} onClick={() => setFilters((f) => ({...f, staleOnly: !f.staleOnly}))}>
