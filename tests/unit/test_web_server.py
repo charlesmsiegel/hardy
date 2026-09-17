@@ -251,7 +251,7 @@ def test_panels_and_files(server) -> None:
     (problem / "lean" / "A.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
     for path in ("/api/summary", "/api/jobs", "/api/tree", "/api/sources", "/api/graph",
                  "/api/transcript", "/api/commands", "/api/files", "/api/uploads",
-                 "/api/record", "/api/results", "/api/chats"):
+                 "/api/record", "/api/ledger", "/api/results", "/api/chats"):
         # `/api/environment` is deliberately not in this list: it is the one
         # route that reaches `doctor.run_checks`, and this fixture's `server`
         # runs a real, unmocked `WebHost` -- exercising it here would shell
