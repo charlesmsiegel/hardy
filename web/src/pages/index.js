@@ -24,6 +24,7 @@ import Jobs from './Jobs.jsx';
 import Ledger from './Ledger.jsx';
 import Library from './Library.jsx';
 import Results from './Results.jsx';
+import Runs from './Runs.jsx';
 import Tree from './Tree.jsx';
 
 export const PAGES = {
@@ -34,6 +35,7 @@ export const PAGES = {
   library: Library,
   ledger: Ledger,
   results: Results,
+  runs: Runs,
   files: Files,
   environment: Environment,
   help: Help,
