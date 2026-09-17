@@ -117,6 +117,14 @@ export default function Chat({onPeek}) {
   const currentChat = chats.data.find((chat) => chat.id === status.chat);
   const attention = jobs.data?.attention ?? [];
   const backend = models.data?.backend;
+  // Chat does not block its whole render on `/api/jobs` the way Home does --
+  // the transcript is the point of this page, and jobs/models/graph are
+  // supplementary rail content -- but "nothing waiting" is itself a claim,
+  // and `attention` defaulting to `[]` while the panel is still loading or
+  // failed would make that claim before the backend answered. This is
+  // exactly `Home.jsx`'s `turns: null` vs `0` distinction, scoped to one
+  // section instead of the whole page.
+  const jobsUnready = !jobs.data && !jobs.error;
 
   const main = (
     <div className="wb-chat-main">
@@ -191,7 +199,11 @@ export default function Chat({onPeek}) {
 
         <div className="wb-chat-rail__section">
           <Label>Waiting on</Label>
-          {attention.length ? (
+          {jobs.error ? (
+            <div className="panel__note">{jobs.error}</div>
+          ) : jobsUnready ? (
+            <div className="panel__note">Reading jobs...</div>
+          ) : attention.length ? (
             <div className="wb-chat-rail__waiting">
               {attention.map((item) => (
                 <div key={item.id}>

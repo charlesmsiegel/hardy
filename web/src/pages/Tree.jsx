@@ -145,7 +145,6 @@ export default function Tree() {
   const selectedLane = selectedEntry ? built.laneOf.get(selectedEntry.entry_id) : null;
   const selectedSummary = selectedEntry ? summaryFor(selectedEntry, messages) : null;
   const children = selectedEntry ? childCount(tree.data.entries, selectedEntry.entry_id) : 0;
-  const busy = status.turn_running || status.command_running;
 
   return (
     <div className="wb-chat-main">
@@ -200,7 +199,12 @@ export default function Tree() {
                 >
                   <span className="wb-tree__row-id">{entry.entry_id}</span>
                   <span className="wb-tree__row-kind">{entry.type}</span>
-                  <span className="wb-tree__row-text">{summaryFor(entry, messages) ?? <Absent kind="unreported" />}</span>
+                  {/* `||`, not `??`: an entry whose message text is the empty
+                      string must read the same "not reported" as one with no
+                      message at all, matching the detail pane below -- see
+                      `summaryFor`, which already folds a present-but-empty
+                      `message.text` into `''`. */}
+                  <span className="wb-tree__row-text">{summaryFor(entry, messages) || <Absent kind="unreported" />}</span>
                   <span className="wb-tree__row-when">
                     <Absent kind="unreported" />
                   </span>
@@ -286,7 +290,13 @@ export default function Tree() {
                 <code>/resume</code> command or <code>/fork --name</code> flag exists in the registry, so Resume
                 and Compare are shown disabled rather than raising a command that does not exist.
               </div>
-              {busy && refusal ? <div className="wb-tree__detail-refusal">{refusal}</div> : null}
+              {/* Unconditional on `refusal` alone, the same as `Jobs.jsx` and
+                  `Files.jsx`: the reducer already clears `refusal` once
+                  nothing is running (`session/reducer.js`'s `state` case), so
+                  gating this on `busy` too was a redundant second check that
+                  could show a stale answer for one render rather than the
+                  one every other page trusts. */}
+              {refusal ? <div className="wb-tree__detail-refusal">{refusal}</div> : null}
               {isAbandon(selectedEntry) ? (
                 <div className="wb-tree__detail-lesson">
                   <span className="section-label">what this line taught · recorded at /abandon</span>
