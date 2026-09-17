@@ -62,7 +62,10 @@ import Label from '../components/Label.jsx';
 import Lean from '../components/Lean.jsx';
 import Pill, {toneForCheck, wordForCheck} from '../components/Pill.jsx';
 import Tex from '../components/Tex.jsx';
-import {del, post} from '../api.js';
+import {del, get, post} from '../api.js';
+import {AtCursor, RecordLane, Scratch} from '../files/AtCursor.jsx';
+import Editor from '../files/Editor.jsx';
+import Trace from '../files/Trace.jsx';
 import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
@@ -229,23 +232,73 @@ function PdfSection({count, rows, selected, onPick}) {
   );
 }
 
-function LeanTexViewer({path, kind, revision}) {
+function LeanTexEditor({path, kind, revision, row}) {
   const filePanel = usePanel(`/api/file?path=${encodeURIComponent(path)}`, revision);
+  const resultsPanel = usePanel('/api/results', revision);
+
+  const [caretName, setCaretName] = useState('');
+  const [trail, setTrail] = useState([]);
+
+  // Following a name out of the trace view is the same lookup the rail does,
+  // so it goes through the same endpoint rather than a second code path. A
+  // name the index does not hold leaves the trail where it was: pushing a
+  // `found: false` step would make the breadcrumb a list of dead ends.
+  const follow = (name) =>
+    get(`/api/declaration?name=${encodeURIComponent(name)}`)
+      .then((answer) => answer.found && setTrail((previous) => [...previous, answer]))
+      .catch(() => undefined);
+
   if (filePanel.error) return <p className="panel__error">{filePanel.error}</p>;
   if (!filePanel.data) return <p className="panel__note">Reading {path}...</p>;
+
+  const text = filePanel.data.text;
+  // What `#check` runs against. The panel's caption claims "this file's
+  // import set", so that has to be what is sent: the typed line alone would
+  // elaborate under no imports and answer `unknown identifier` for most of
+  // Mathlib.
+  const imports = text.split('\n').filter((line) => /^\s*import\s/.test(line)).join('\n');
+  const theorems = resultsPanel.data?.theorems || null;
+  // The recorded Lean-to-LaTeX correspondences, served beside the theorem
+  // table by `panels/record.py`'s `_recorded_names`. They are the only source
+  // for "where is this theorem stated in tex/": a ledger item carries no
+  // label, and deriving one from a file or theorem name would be the page
+  // asserting a correspondence nobody recorded.
+  const texNames = resultsPanel.data?.names || null;
+
+  if (trail.length) {
+    return (
+      <Trace
+        trail={trail}
+        revision={null}
+        onFollow={follow}
+        onBack={(index) => setTrail((previous) => previous.slice(0, index + 1))}
+        onClose={() => setTrail([])}
+      />
+    );
+  }
+
   return (
-    <>
-      {filePanel.data.truncated ? (
-        <div className="panel__note">
-          Truncated: only the first megabyte is shown. Open the file on disk to read the rest.
-        </div>
-      ) : null}
-      {kind === 'lean' ? <Lean src={filePanel.data.text} /> : <Tex src={filePanel.data.text} />}
-      <div className="panel__note">
-        Read-only in this shipment: editing, Save &amp; check, diagnostics, goals at cursor, declaration lookup and
-        the Mathlib trace are a later shipment's.
+    <div className="wb-files__editor-split">
+      <div className="wb-files__editor-main">
+        <Editor
+          path={path}
+          kind={kind}
+          text={text}
+          truncated={filePanel.data.truncated}
+          verdict={row ? row.verdict : null}
+          onName={setCaretName}
+          onSaved={() => {
+            filePanel.reload();
+            resultsPanel.reload();
+          }}
+        />
       </div>
-    </>
+      <div className="wb-files__editor-rail">
+        {kind === 'lean' ? <AtCursor name={caretName} onTrace={(answer) => setTrail([answer])} /> : null}
+        <RecordLane declares={row ? row.declares : []} results={theorems} texNames={texNames} />
+        {kind === 'lean' ? <Scratch path={path} imports={imports} /> : null}
+      </div>
+    </div>
   );
 }
 
@@ -331,7 +384,7 @@ function PdfViewer({path}) {
   );
 }
 
-function Viewer({path, kind, revision}) {
+function Viewer({path, kind, revision, row}) {
   if (!path) return <div className="panel__note">Select a file to open it.</div>;
   if (!kind) {
     return (
@@ -343,7 +396,9 @@ function Viewer({path, kind, revision}) {
   }
   return (
     <div className="wb-files__viewer-body">
-      {kind === 'lean' || kind === 'tex' ? <LeanTexViewer path={path} kind={kind} revision={revision} /> : null}
+      {kind === 'lean' || kind === 'tex'
+        ? <LeanTexEditor path={path} kind={kind} revision={revision} row={row} />
+        : null}
       {kind === 'cas' ? <CasViewer path={path} revision={revision} /> : null}
       {kind === 'pdf' ? <PdfViewer path={path} /> : null}
     </div>
@@ -545,6 +600,12 @@ export default function Files({arg}) {
   const selectedPath = arg || '';
   const selectedKind = selectedPath ? kindOf(selectedPath, data) : null;
   const pick = (path) => go({page: 'files', arg: path});
+  // One lookup, shared by the head line and the editor: two would be two
+  // chances for the header's facts and the editor's verdict to describe
+  // different rows.
+  const selectedRow = selectedKind
+    ? (data[selectedKind] || []).find((row) => row.path === selectedPath) || null
+    : null;
 
   return (
     <div className="wb-page-body">
@@ -584,14 +645,19 @@ export default function Files({arg}) {
         <div className="wb-files__right">
           <div className="wb-files__viewer-head">
             Files {'›'} <span style={{color: 'var(--fg)'}}>{selectedPath || <Absent kind="na" />}</span>
-            {selectedPath ? (
+            {selectedRow ? (
               <>
                 {' '}
-                <Absent kind="unreported" /> {'·'} <Absent kind="unreported" />
+                {selectedRow.bytes === null ? <Absent kind="unreported" /> : bytes(selectedRow.bytes)} {'·'}{' '}
+                {selectedRow.modified === null ? (
+                  <Absent kind="unreported" />
+                ) : (
+                  new Date(selectedRow.modified * 1000).toLocaleString()
+                )}
               </>
             ) : null}
           </div>
-          <Viewer path={selectedPath} kind={selectedKind} revision={revision} />
+          <Viewer path={selectedPath} kind={selectedKind} revision={revision} row={selectedRow} />
         </div>
       </div>
     </div>

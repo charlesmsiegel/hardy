@@ -2606,3 +2606,296 @@ input {
   font: 12px var(--mono);
   padding: 6px 10px;
 }
+
+
+/* -- the editor, its rail, and the Mathlib trace view ------------------- */
+
+/* The editor and its rail. At 1000px the whole Files grid already collapses
+   to one column (`.wb-files` above), and this collapses with it rather than
+   holding a 300px rail beside a 200px editor. */
+.wb-files__editor-split {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
+  min-width: 0;
+}
+
+@media (max-width: 1280px) {
+  .wb-files__editor-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.wb-files__editor-main,
+.wb-files__editor-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wb-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wb-editor__bar {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font: 11px var(--mono);
+}
+
+.wb-editor__path {
+  color: var(--fg);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wb-editor__verdict {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-editor__spacer {
+  flex: 1 1 auto;
+}
+
+.wb-editor__button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 10px;
+}
+
+.wb-editor__button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.wb-editor__button--go {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-editor__area {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  font: 12px/1.55 var(--mono);
+  min-height: 380px;
+  padding: 10px 12px;
+  resize: vertical;
+  tab-size: 2;
+  white-space: pre;
+  width: 100%;
+}
+
+.wb-editor__highlight > summary {
+  color: var(--muted);
+  cursor: pointer;
+  font: 11px var(--mono);
+}
+
+.wb-editor__result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wb-editor__output {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 11px/1.5 var(--mono);
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+.wb-rail__panel {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.wb-rail__name {
+  font: 12px var(--mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wb-rail__sig {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 11px/1.5 var(--mono);
+  margin: 0;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
+.wb-rail__grid {
+  display: grid;
+  font: 11px var(--mono);
+  gap: 3px 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.wb-rail__key {
+  color: var(--muted);
+}
+
+.wb-rail__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wb-rail__decl + .wb-rail__decl {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.wb-rail__link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.wb-rail__scratch {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-rail__input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  flex: 1 1 auto;
+  font: 11px var(--mono);
+  min-width: 0;
+  padding: 3px 8px;
+}
+
+.wb-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.wb-trace__bar {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 8px;
+}
+
+.wb-trace__crumbs {
+  align-items: baseline;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wb-trace__crumb {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 2px;
+}
+
+.wb-trace__crumb--on {
+  color: var(--accent);
+}
+
+.wb-trace__sep {
+  color: var(--muted);
+}
+
+.wb-trace__where {
+  display: grid;
+  font: 11px var(--mono);
+  gap: 3px 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.wb-trace__source {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font: 12px/1.5 var(--mono);
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.wb-trace__line {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 0 12px;
+}
+
+/* The declaration's own line, marked so a reader can find it without
+   counting. The line numbers are the file's, not the excerpt's. */
+.wb-trace__line--on {
+  background: var(--panel);
+}
+
+.wb-trace__no {
+  color: var(--muted);
+  white-space: pre;
+}
+
+.wb-trace__code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.wb-trace__follow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.wb-trace__name {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  cursor: pointer;
+  font: 11px var(--mono);
+  padding: 1px 6px;
+}

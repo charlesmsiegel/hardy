@@ -10,8 +10,8 @@ from typing import Any
 
 from hardy.agents.contracts import TurnEvent
 from hardy.agents.usage import Usage
-from hardy.foundation.values import ToolResult
 from hardy.app import config as configuration
+from hardy.foundation.values import ToolResult
 from hardy.workflows import layout
 from hardy.workflows.delegation.contracts import DelegationState
 from hardy.workflows.interactive.history import History, identify

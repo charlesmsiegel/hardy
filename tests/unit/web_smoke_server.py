@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import sys
 import tempfile
 import time
@@ -102,6 +103,51 @@ class ScriptedSession(FakeSession):
                     self.on_notice(NOTICE)
 
         return interleaved()
+
+
+def seed_workspace(problem: Path) -> None:
+    """One Lean file, one TeX file, and one recorded correspondence.
+
+    Without these the Files page can only be seen in its empty state, and the
+    editor -- which is the whole of Shipment 3 -- has nothing to open. The
+    Lean file deliberately declares two theorems with different fates: one
+    that a stored audit grades, and one that nothing has ever audited, so the
+    file's own verdict is the worse of the two rather than the better. That is
+    the case the header is easy to get wrong.
+
+    The recorded name is what `§ this declaration ↔ informal` reads for "where
+    is this stated in tex/". It names `order_30_not_simple` only, so the other
+    declaration shows the unmatched case beside it.
+    """
+    lean = problem / "lean"
+    lean.mkdir(parents=True, exist_ok=True)
+    (lean / "Sylow.lean").write_text(
+        "import Mathlib\n"
+        "\n"
+        "/-- No group of order 30 is simple. -/\n"
+        "theorem order_30_not_simple (G : Type) : True := trivial\n"
+        "\n"
+        "theorem order_56_not_simple (G : Type) : True := trivial\n",
+        encoding="utf-8",
+    )
+    tex = problem / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\begin{theorem}\\label{thm:order30}No group of order 30 is simple.\\end{theorem}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    record = problem / "session.json"
+    if record.is_file():
+        state = json.loads(record.read_text(encoding="utf-8"))
+        state.setdefault("names", []).append({
+            "formal_name": "order_30_not_simple",
+            "latex_name": "thm:order30",
+            "description": "No group of order 30 is simple.",
+        })
+        record.write_text(json.dumps(state), encoding="utf-8")
 
 
 def seed_ledger(problem: Path) -> None:
@@ -235,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(directory)
         problem = make_problem(root, SLUG)
         seed_ledger(problem)
+        seed_workspace(problem)
         config = make_config(root, SLUG)
         host = WebHost(config, FakeOpener(root), lambda confirm, cfg: ScriptedSession(cfg.layout.problem))
         host.start()
