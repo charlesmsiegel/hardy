@@ -21,7 +21,9 @@ from hardy.workflows.ledger.contracts import (
     Relation,
     RelationKind,
     Scope,
+    VersionRef,
 )
+from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.ledger.views import LedgerViews
 from hardy.workflows.publication import PublicationRequest, plan_publication
@@ -59,15 +61,39 @@ RESULT_KINDS = frozenset({
 })
 
 
+def _version_number(snapshot: LedgerSnapshot, ref: VersionRef) -> int | None:
+    """`ref`'s 1-based position among the recorded revisions of its id, matching `ledger_item`'s own numbering.
+
+    `None` when no revision of this id carries this exact digest -- a digest
+    that has since been pruned, or a bug elsewhere -- so a caller can print
+    "not reported" rather than a fabricated position.
+    """
+    for index, record in enumerate((r for r in snapshot.records if r.id == ref.id), start=1):
+        if record.digest == ref.digest:
+            return index
+    return None
+
+
 def graph(problem: Path) -> dict[str, Any]:
     """The project ledger's current heads and relations, with staleness against them.
 
     An edge is stale when either endpoint's pinned digest no longer matches
     that item's current head -- the relation was recorded against a version of
     the item that has since been revised, and nothing has re-checked it.
+
+    `expected_version`/`current_version` name that revision precisely, when
+    they can be: `LedgerViews.stale_artifacts()` (`ledger/views.py:158-166`)
+    only reports on `documents`/`formalizes` relations whose *target* has
+    moved past the pinned digest, each as a `StaleArtifact(record, relation,
+    expected, current)` (`ledger/views.py:58-63`). An edge this task's own
+    `stale` flag above marks stale for any other reason -- a `depends_on`
+    relation, or one stale because its *source* moved rather than its target
+    -- has no entry there, and both fields stay `None` rather than naming a
+    version nobody measured.
     """
     snapshot = LedgerStore(problem).read()
     heads = {item.id: item for item in snapshot.current(ProjectItem)}
+    stale_by_relation = {artifact.relation.id: artifact for artifact in LedgerViews(snapshot).stale_artifacts()}
     counts: dict[str, Counter[str]] = {}
     for obligation in snapshot.current(Obligation):
         # The exact status, not a bucket. Six values go in and six come out:
@@ -92,11 +118,14 @@ def graph(problem: Path) -> dict[str, Any]:
             head = heads.get(ref.id)
             return head is None or head.digest != ref.digest
 
+        artifact = stale_by_relation.get(relation.id)
         edges.append({
             "id": relation.id, "kind": relation.kind.value, "source": relation.source.id,
             "target": relation.target.id, "evidence": sorted({evidence.kind.value for evidence in relation.evidence}),
             "stale": stale(relation.source) or stale(relation.target),
             "style": vocabulary.edge_style(relation.kind),
+            "expected_version": _version_number(snapshot, artifact.expected) if artifact else None,
+            "current_version": _version_number(snapshot, artifact.current) if artifact else None,
         })
     return {
         "nodes": nodes, "edges": edges, "revision": snapshot.revision,

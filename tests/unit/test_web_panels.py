@@ -240,8 +240,51 @@ def test_graph_over_a_ledger_with_a_stale_relation(tmp_path: Path) -> None:
     assert set(nodes) == {"lemma-1", "thm-1"}
     assert nodes["lemma-1"]["statement"] == "revised" and nodes["lemma-1"]["kind"] == "lemma"
     assert len(nodes["lemma-1"]["statement"]) <= panels.STATEMENT_LIMIT
-    assert out["edges"] == [{"id": "rel-1", "kind": "depends_on", "source": "thm-1", "target": "lemma-1", "evidence": [], "stale": True, "style": "solid"}]
+    assert out["edges"] == [{"id": "rel-1", "kind": "depends_on", "source": "thm-1", "target": "lemma-1", "evidence": [],
+                             "stale": True, "style": "solid", "expected_version": None, "current_version": None}]
     assert out["revision"] == store.read().revision
+
+
+def test_graph_names_real_versions_for_a_relation_stale_artifacts_can_explain(tmp_path: Path) -> None:
+    """The designed sentence needs real versions; `stale_artifacts()` is where they come from.
+
+    `LedgerViews.stale_artifacts()` (`ledger/views.py:158-166`) only reports on
+    `documents`/`formalizes` relations whose *target* has moved past the
+    pinned digest, matching them to a `StaleArtifact(record, relation,
+    expected, current)` (`ledger/views.py:58-63`). `expected` and `current`
+    are the same id at two different digests; this test asserts the version
+    numbers the graph derives from them are not just present but differ --
+    an implementation that stamped the same version in both would pass a
+    weaker test and still print a false sentence.
+    """
+    from hardy.workflows.ledger.contracts import (
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Relation,
+        RelationKind,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    def _append(store: LedgerStore, records):
+        return store.append(records, expected_revision=store.read().revision)
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    order = ProjectItem(id="order_40", kind=ProjectItemKind.LEMMA, name="order_40", origin=ProjectOrigin.TARGET_PAPER)
+    doc = ProjectItem(id="doc-1", kind=ProjectItemKind.EXPOSITION, name="Write-up", origin=ProjectOrigin.GENERATED_LOCAL)
+    relation = Relation(id="rel-formalizes", kind=RelationKind.FORMALIZES, source=doc.ref, target=order.ref)
+    _append(store, [order, doc, relation])
+    revised_once = order.model_copy(update={"statement": "revised once"})
+    _append(store, [revised_once])
+    revised_twice = revised_once.model_copy(update={"statement": "revised twice"})
+    _append(store, [revised_twice])
+
+    edge = next(e for e in panels.graph(problem)["edges"] if e["id"] == "rel-formalizes")
+    assert edge["stale"] is True
+    assert edge["expected_version"] == 1
+    assert edge["current_version"] == 3
+    assert edge["expected_version"] != edge["current_version"]
 
 
 def test_graph_counts_obligations_by_their_exact_status(tmp_path: Path) -> None:
