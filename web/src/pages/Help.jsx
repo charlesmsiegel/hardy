@@ -91,6 +91,10 @@ export default function Help() {
           <span>Send, or queue if a turn is running.</span>
           <span style={{fontFamily: 'var(--mono)'}}>Esc</span>
           <span>Dismisses a focused card first; otherwise closes an open command list, or cancels the running turn.</span>
+          <span style={{fontFamily: 'var(--mono)'}}>Tab</span>
+          <span>Completes the command being typed, or opens the command list on an empty line.</span>
+          <span style={{fontFamily: 'var(--mono)'}}>Up Down</span>
+          <span>Moves through the open command list, or through a focused card's options.</span>
           <span style={{fontFamily: 'var(--mono)'}}>1 2 3</span>
           <span>Move the focused card's selection to that option; Enter answers it.</span>
         </div>
