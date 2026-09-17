@@ -137,7 +137,7 @@ export default function Prompt({prompt, onAnswer}) {
   const dismiss = () => onAnswer(prompt.id, null);
 
   return (
-    <section className={`prompt prompt--${prompt.kind}`}>
+    <section className="prompt">
       <Preamble lines={prompt.preamble} />
       <header className="prompt__head">
         <div className="prompt__title">{prompt.title}</div>

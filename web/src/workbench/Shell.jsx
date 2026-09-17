@@ -27,8 +27,21 @@ import Peek from './Peek.jsx';
 import TabBar from './TabBar.jsx';
 import TopBar from './TopBar.jsx';
 
+// The tabs and top-bar links the app itself offers that have no page in
+// `PAGES` yet -- `TabBar.jsx`'s `results`/`runs`/`publications`/
+// `checkpoints` and `TopBar.jsx`'s `status`. A route the app asked for but
+// has not built is a different thing from a route nothing ever asked for
+// (a stray hash, a typo, a link that used to exist): the first is honestly
+// "not built yet", the second is honestly "not a route at all", and
+// `pageContent` below tells them apart rather than speaking for both.
+const PLANNED_NOT_BUILT = ['results', 'runs', 'publications', 'checkpoints', 'status'];
+
 function notBuilt(page) {
   return <Empty title="not built yet" line={`The ${page} page has not landed yet.`} />;
+}
+
+function unknownRoute(page) {
+  return <Empty title="unknown route" line={`#/${page} is not a route Hardy has.`} />;
 }
 
 /** `true`/`command_running` reduced to the one phrase every dock/strip/top-bar
@@ -79,7 +92,13 @@ export default function Shell() {
   const Page = isChat ? null : PAGES[route.page];
   // `null`, not omitted: the slot below tests this directly, and skipping
   // the branch when `isChat` is what keeps Chat from being asked for twice.
-  const pageContent = isChat ? null : Page ? <Page arg={route.arg} onPeek={openPeek} /> : notBuilt(route.page);
+  const pageContent = isChat
+    ? null
+    : Page
+      ? <Page arg={route.arg} onPeek={openPeek} />
+      : PLANNED_NOT_BUILT.includes(route.page)
+        ? notBuilt(route.page)
+        : unknownRoute(route.page);
 
   const showAside = dock === 'pinned' && !isChat && !isTree;
   const bodyCols = showAside ? 'minmax(0,1fr) 380px' : 'minmax(0,1fr)';
