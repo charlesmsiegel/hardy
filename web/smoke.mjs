@@ -7,10 +7,14 @@
 // `/api/input` comes back down that stream as a `reply`, every endpoint a
 // panel reads answers JSON, and a file dropped on the page is staged where the
 // uploads panel will find it. On top of that sweep, `/api/environment`,
-// `/api/record` and `/api/chats` -- the three endpoints this shipment added --
-// are checked against their documented shapes, and `/api/graph` is checked for
-// the classification tokens the drawing needs: `family` per node, `style` per
-// edge, and a `tones` map covering every `ObligationStatus`.
+// `/api/record` and `/api/chats` are checked against their documented shapes,
+// and `/api/graph` is checked for the classification tokens the drawing
+// needs: `family` per node, `style` per edge, and a `tones` map covering
+// every `ObligationStatus`. Task 13 adds the eight endpoints Shipment 2's
+// remaining pages read: `/api/results`, `/api/ledger`, `/api/ledger/item`,
+// `/api/ledger/export`, `/api/runs`, `/api/runs/item`, `/api/publications`
+// and `/api/checkpoints`, each checked against the read model it comes from
+// in `src/hardy/app/web/panels/`.
 //
 // Deliberately not a test runner. It exits 0 and prints `smoke ok`, or it
 // throws with the first thing that was wrong.
@@ -141,6 +145,7 @@ const PANEL_ENDPOINTS = [
   '/api/summary', '/api/files', '/api/uploads', '/api/jobs',
   '/api/tree', '/api/sources', '/api/graph', '/api/models', '/api/cas/cells',
   '/api/environment', '/api/record', '/api/chats',
+  '/api/results', '/api/ledger', '/api/runs', '/api/publications', '/api/checkpoints',
 ];
 
 async function panels() {
@@ -214,7 +219,7 @@ async function graph() {
     `/api/graph's tones map has ${Object.keys(tones).length} entries, not the ${OBLIGATION_STATUSES.length} ObligationStatus values`,
   );
 
-  return {nodes: nodes.length, edges: edges.length};
+  return {nodes: nodes.length, edges: edges.length, stale: edges.filter((edge) => edge.stale).length};
 }
 
 /** `/api/environment`'s own answer: every doctor check, and a failure count that agrees with it. */
@@ -301,6 +306,178 @@ async function chats() {
     );
   }
   return body.length;
+}
+
+/** `/api/results`'s theorem table on a fixture that records a ledger claim but never writes `lean/`.
+ *
+ *  `panels/record.py`'s `results()` builds one row per Lean `theorem`/`lemma`
+ *  the tree on disk currently declares (`_lean_declarations`, which scans
+ *  `problem/lean` for `.lean` files) -- `web_smoke_server.py`'s `seed_ledger`
+ *  records a `FORMAL` evidence ref naming `lean/Sylow.lean`, but never writes
+ *  that file, so the honest answer here is no rows at all, not a row guessed
+ *  from the ledger claim. `revision` is checked against `/api/ledger`'s own
+ *  answer for the same snapshot rather than against a literal number, the
+ *  same reason `record()` above checks `failures` against the list it is
+ *  derived from: both read `LedgerStore(problem).read().revision` off the
+ *  same store (`panels/record.py:150,184,508`).
+ */
+async function results(ledgerRevision) {
+  const response = await fetch(`${base}/api/results`);
+  check(response.status === 200, `GET /api/results answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body.theorems), '/api/results did not answer a theorems array');
+  check(
+    body.theorems.length === 0,
+    `/api/results reports ${body.theorems.length} theorems, though the fixture writes no lean/ tree`,
+  );
+  check(Number.isInteger(body.revision), `/api/results's revision is ${JSON.stringify(body.revision)}, not an integer`);
+  check(
+    body.revision === ledgerRevision,
+    `/api/results reports revision ${body.revision}, but /api/ledger reported ${ledgerRevision} for the same snapshot`,
+  );
+  return body.theorems.length;
+}
+
+/** `/api/ledger`'s rows, checked against the fixture's four items and the one it revises twice.
+ *
+ *  Named `ledgerList`, not `ledger`, because `main()` already binds a local
+ *  `ledger` to `graph()`'s return value -- the project ledger's graph view,
+ *  not this endpoint's list view. Two things sharing the word "ledger" is the
+ *  domain, not a naming accident to paper over.
+ */
+async function ledgerList() {
+  const response = await fetch(`${base}/api/ledger`);
+  check(response.status === 200, `GET /api/ledger answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body.items), '/api/ledger did not answer an items array');
+  check(body.items.length >= 4, `/api/ledger reports ${body.items.length} items, fewer than the four the fixture seeds`);
+  for (const item of body.items) {
+    check(typeof item.id === 'string' && item.id, 'a /api/ledger item has no id');
+    check(typeof item.family === 'string' && item.family, `${item.id}'s family is ${JSON.stringify(item.family)}`);
+    check(Array.isArray(item.evidence), `${item.id}'s evidence is not an array`);
+    check(
+      item.obligations !== null && typeof item.obligations === 'object' && !Array.isArray(item.obligations),
+      `${item.id}'s obligations is ${JSON.stringify(item.obligations)}, not an object`,
+    );
+    check(Number.isInteger(item.version) && item.version >= 1, `${item.id}'s version is ${JSON.stringify(item.version)}`);
+  }
+  const lemma = body.items.find((item) => item.id === 'lemma-conjugacy');
+  check(lemma, '/api/ledger has no "lemma-conjugacy" row, though the fixture seeds one');
+  check(
+    lemma.version >= 2,
+    `"lemma-conjugacy" carries version ${lemma.version}, fewer than the two revisions the fixture writes`,
+  );
+  return {count: body.items.length, ids: body.items.map((item) => item.id), revision: body.revision};
+}
+
+/** `/api/ledger/item`'s full history and relations for the one item the fixture revises. */
+async function ledgerItem() {
+  const response = await fetch(`${base}/api/ledger/item?id=lemma-conjugacy`);
+  check(response.status === 200, `GET /api/ledger/item answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(body.id === 'lemma-conjugacy', `/api/ledger/item answered about ${JSON.stringify(body.id)}`);
+  check(
+    Array.isArray(body.versions) && body.versions.length === 2,
+    `/api/ledger/item reports ${JSON.stringify(body.versions)} versions, not the fixture's two`,
+  );
+  check(
+    body.versions[0].version === 1 && body.versions[1].version === 2,
+    `/api/ledger/item's versions are numbered ${JSON.stringify(body.versions.map((v) => v.version))}, not 1, 2`,
+  );
+  // Both relations the fixture pins to this exact lemma revision: `rel-depends`
+  // (`depends_on`, the generic stale path) and `rel-formalizes` (`formalizes`,
+  // the real-versions path) -- see `seed_ledger`'s own docstring in
+  // `tests/unit/web_smoke_server.py`.
+  const kinds = body.relations.map((relation) => relation.kind);
+  check(kinds.includes('depends_on'), '/api/ledger/item has no "depends_on" relation touching lemma-conjugacy');
+  check(kinds.includes('formalizes'), '/api/ledger/item has no "formalizes" relation touching lemma-conjugacy');
+  return body.versions.length;
+}
+
+/** `/api/ledger/export`'s closure for the theorem, checked against both the stale rows and the documented one. */
+async function ledgerExport() {
+  const response = await fetch(`${base}/api/ledger/export?id=thm-sylow-three`);
+  check(response.status === 200, `GET /api/ledger/export answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(body.root === 'thm-sylow-three', `/api/ledger/export answered about ${JSON.stringify(body.root)}`);
+  check(
+    Array.isArray(body.rows) && body.rows.length >= 3,
+    `/api/ledger/export reports ${JSON.stringify(body.rows)} rows, fewer than the closure's three`,
+  );
+  const byId = Object.fromEntries(body.rows.map((row) => [row.id, row]));
+  check(
+    byId['lemma-conjugacy']?.stale === true,
+    'the closure row for lemma-conjugacy is not stale, though its formalizes relation was pinned to a superseded version',
+  );
+  check(byId['thm-sylow-three']?.stale === true, 'the closure row for thm-sylow-three is not stale');
+  check(
+    byId['sec-counting']?.stale === false,
+    'the closure row for sec-counting is stale, though nothing pinned it to a moved version',
+  );
+  check(
+    byId['thm-sylow-three']?.writeup?.documented === true,
+    "thm-sylow-three's writeup is not documented, though sec-counting documents it",
+  );
+  check(
+    body.export_command && body.export_command.available === false,
+    '/api/ledger/export reports export_command.available as true, though no /export proof subcommand exists',
+  );
+  return body.rows.length;
+}
+
+/** `/api/runs` for a project that has never run `/prove` -- an honest empty list, not an error. */
+async function runs() {
+  const response = await fetch(`${base}/api/runs`);
+  check(response.status === 200, `GET /api/runs answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body.runs), '/api/runs did not answer a runs array');
+  check(body.runs.length === 0, `/api/runs reports ${body.runs.length} runs, though the smoke server sets no runs_root`);
+  return body.runs.length;
+}
+
+/** `/api/runs/item` for a run that does not exist -- the same clean 400 an unknown ledger id already gets. */
+async function runItem() {
+  const response = await fetch(`${base}/api/runs/item?id=12345678-1234-5678-1234-567812345678`);
+  check(response.status === 400, `GET /api/runs/item for an unknown run answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(typeof body.error === 'string' && body.error.includes('runs'), `/api/runs/item's error is ${JSON.stringify(body.error)}`);
+}
+
+/** `/api/publications`'s item list, cross-checked against `/api/ledger`'s -- the same ledger, read two ways. */
+async function publications(ledgerIds) {
+  const response = await fetch(`${base}/api/publications`);
+  check(response.status === 200, `GET /api/publications answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body.items), '/api/publications did not answer an items array');
+  check(Array.isArray(body.candidates), '/api/publications did not answer a candidates array');
+  for (const item of body.items) {
+    check(typeof item.visibility === 'string' && item.visibility, `${item.id}'s visibility is ${JSON.stringify(item.visibility)}`);
+    check(
+      typeof item.visibility_tone === 'string' && item.visibility_tone,
+      `${item.id}'s visibility_tone is ${JSON.stringify(item.visibility_tone)}`,
+    );
+    check(Array.isArray(item.link_source_kinds), `${item.id}'s link_source_kinds is not an array`);
+  }
+  const ids = body.items.map((item) => item.id).sort();
+  const expected = [...ledgerIds].sort();
+  check(
+    JSON.stringify(ids) === JSON.stringify(expected),
+    `/api/publications names ${JSON.stringify(ids)}, not the same items /api/ledger reported (${JSON.stringify(expected)})`,
+  );
+  return body.items.length;
+}
+
+/** `/api/checkpoints` for a project nothing has ever checkpointed -- an honest empty list. */
+async function checkpoints() {
+  const response = await fetch(`${base}/api/checkpoints`);
+  check(response.status === 200, `GET /api/checkpoints answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  check(Array.isArray(body.checkpoints), '/api/checkpoints did not answer a checkpoints array');
+  check(
+    body.checkpoints.length === 0,
+    `/api/checkpoints reports ${body.checkpoints.length} checkpoints, though nothing checkpointed this fixture`,
+  );
+  return body.checkpoints.length;
 }
 
 /** Stage one `.lean` file the way the drop zone does, and see the panel list it. */
@@ -395,12 +572,28 @@ async function main() {
   const envChecks = await environment();
   const items = await record();
   const chatCount = await chats();
+
+  // The eight endpoints Task 13 adds. `ledgerList` runs first because
+  // `results` cross-checks its `revision` against the same snapshot, and
+  // `publications` cross-checks its item ids against the same list.
+  const ledgerRows = await ledgerList();
+  const resultRows = await results(ledgerRows.revision);
+  const itemVersions = await ledgerItem();
+  const exportRows = await ledgerExport();
+  const runCount = await runs();
+  await runItem();
+  const pubItems = await publications(ledgerRows.ids);
+  const checkpointCount = await checkpoints();
+
   const name = await staged(token);
 
   console.log(
     `smoke ok (${count} assets, ${endpoints} panel endpoints, ` +
-      `${ledger.nodes} ledger nodes and ${ledger.edges} edges with one stale, ` +
+      `${ledger.nodes} ledger nodes and ${ledger.edges} edges with ${ledger.stale} stale, ` +
       `${envChecks} environment checks, ${items} record items, ${chatCount} chats, ` +
+      `${ledgerRows.count} ledger rows, ${resultRows} result theorems, ` +
+      `${itemVersions} versions on lemma-conjugacy, ${exportRows} export rows, ` +
+      `${runCount} runs, ${pubItems} publication items, ${checkpointCount} checkpoints, ` +
       `staged ${name}, reply "hello", interrupted turn replies "one two" once)`,
   );
 }
