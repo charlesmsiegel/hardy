@@ -494,6 +494,16 @@ class WebHost:
                     self.ui.write(f"Could not close the previous session cleanly: {error}", style="error")
         self._attach(config, session)
         self.opener.session = self.session
+        if current.project != slug:
+            # The switch itself is the record, on the project just opened --
+            # a reader of *this* transcript should be able to tell it was
+            # reached by a switch rather than always having been the live
+            # project. Not for a chat change within the same project: that
+            # replaces no project, and `record_hardy_note` would say so about
+            # nothing that happened.
+            note = getattr(session, "record_hardy_note", None)
+            if note is not None:
+                note(f"Switched here from {current.project}.")
         self.emit({"type": "changed"})
 
     def run_exclusive(self, fn: Callable[[], T]) -> T:
