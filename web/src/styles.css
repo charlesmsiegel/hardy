@@ -2452,6 +2452,12 @@ input {
   justify-content: space-between;
 }
 
+.wb-runs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* -- Publications (Task 12) ------------------------------------------------ */
 
 .wb-publications {

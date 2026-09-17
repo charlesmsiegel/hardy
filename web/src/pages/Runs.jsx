@@ -322,7 +322,7 @@ function RunDetail({runId, revision, go}) {
         <Label>usage · timings</Label>
         <Facts
           rows={[
-            ['exchanges', usage.exchanges ?? <Absent kind="zero" />],
+            ['exchanges', orAbsent(usage.exchanges)],
             ['cost', usage.cost_usd === null || usage.cost_usd === undefined ? <Absent kind="unreported" /> : money(usage.cost_usd)],
             ['input tok', orAbsent(usage.input_tokens)],
             ['output tok', orAbsent(usage.output_tokens)],
@@ -377,7 +377,7 @@ function RunDetail({runId, revision, go}) {
         )}
       </div>
 
-      <div className="wb-results__actions">
+      <div className="wb-runs__actions">
         <button
           type="button"
           className="button"
@@ -404,9 +404,9 @@ function RunDetail({runId, revision, go}) {
   );
 }
 
-export default function Runs() {
+export default function Runs({arg}) {
   const {revision} = useSession();
-  const [{arg}, go] = useHash();
+  const [, go] = useHash();
   const runsPanel = usePanel('/api/runs', revision);
 
   if (runsPanel.error) return <p className="panel__error">{runsPanel.error}</p>;
