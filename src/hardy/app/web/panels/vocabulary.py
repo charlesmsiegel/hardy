@@ -13,11 +13,17 @@ to `contracts.py` fails a test rather than falling through to `other`.
 from __future__ import annotations
 
 from hardy.workflows.contracts import DocumentStatus, FaithfulnessStatus, FormalStatus
-from hardy.workflows.ledger.contracts import ObligationStatus, ProjectItemKind, RelationKind
+from hardy.workflows.ledger.contracts import (
+    ObligationStatus,
+    ProjectItemKind,
+    PublicationVisibility,
+    RelationKind,
+)
 
 K = ProjectItemKind
 R = RelationKind
 S = ObligationStatus
+V = PublicationVisibility
 
 _FAMILY: dict[ProjectItemKind, str] = {
     K.THEOREM: "result", K.LEMMA: "result", K.PROPOSITION: "result",
@@ -112,6 +118,36 @@ _DOCUMENT_TONE: dict[DocumentStatus, str] = {
     DocumentStatus.NOT_ATTEMPTED: "muted",
 }
 
+#: `PublicationVisibility` (`ledger/contracts.py:93-96`): `public` is the one
+#: outward-facing value and reads `accent`; `omitted` is a decision to
+#: actively exclude the item from any draft, not merely leave it back, so it
+#: reads `warning` rather than `muted`; `internal` -- the schema's own
+#: default (`ProjectItem.publication_visibility`, `ledger/contracts.py:180`)
+#: -- is `muted`: nothing has been decided about presentation yet.
+_PUBLICATION_VISIBILITY_TONE: dict[PublicationVisibility, str] = {
+    V.PUBLIC: "accent", V.INTERNAL: "muted", V.OMITTED: "warning",
+}
+
+#: `/project link SOURCE illustrates|documents TARGET` relation kind(s) a
+#: `SOURCE` of this `ProjectItemKind` may originate, mirroring
+#: `ProjectOperations.link`'s own `allowed` dict verbatim
+#: (`workflows/interactive/project.py:71-74`) rather than restating a
+#: separate rule that could drift from it. `TARGET` carries no such
+#: restriction -- `link()` only requires `origin.ref != subject.ref` -- so
+#: there is no matching map for it.
+_LINK_ORIGINS: dict[str, frozenset[ProjectItemKind]] = {
+    "illustrates": frozenset({K.EXAMPLE}),
+    "documents": frozenset({K.EXPOSITION, K.DOCUMENT_FRAGMENT}),
+}
+#: Total over `ProjectItemKind` by construction -- built from the enum
+#: itself, not `.get(..., default)` -- so a kind `link()` is taught to
+#: originate a new relation kind under is a decision made once, here, rather
+#: than a silent `()` nobody chose.
+_LINK_SOURCE_KINDS: dict[ProjectItemKind, tuple[str, ...]] = {
+    kind: tuple(sorted(name for name, allowed in _LINK_ORIGINS.items() if kind in allowed))
+    for kind in ProjectItemKind
+}
+
 
 def family(kind: ProjectItemKind) -> str:
     """Which of the five tints `kind` is drawn in. Colour only; the label prints `kind`."""
@@ -151,3 +187,18 @@ def faithfulness_tone(status: FaithfulnessStatus) -> str:
 def document_tone(status: DocumentStatus) -> str:
     """Which colour a run's `Grades.document` verdict is drawn in. Raises on a value the enum does not have."""
     return _DOCUMENT_TONE[status]
+
+
+def publication_visibility_tone(visibility: PublicationVisibility) -> str:
+    """Which colour a ledger item's publication visibility is drawn in. Raises on a value the enum does not have."""
+    return _PUBLICATION_VISIBILITY_TONE[visibility]
+
+
+def link_source_kinds(kind: ProjectItemKind) -> tuple[str, ...]:
+    """Which `/project link SOURCE <kind> TARGET` relation kinds `kind` may originate as `SOURCE`.
+
+    Empty for a kind that can never open a publication link -- most kinds,
+    since only an `example` (`illustrates`) or an `exposition`/
+    `document_fragment` (`documents`) may.
+    """
+    return _LINK_SOURCE_KINDS[kind]

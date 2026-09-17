@@ -266,6 +266,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.runs(host.config))
         elif name == "runs/item":
             self._json(200, panels.run_item(host.config, query.get("id", [""])[0]))
+        elif name == "publications":
+            self._json(200, panels.publications(problem))
+        elif name == "checkpoints":
+            self._json(200, panels.checkpoints(host.config.layout))
         elif name == "chats":
             self._json(200, chats.overview(problem))
         else:

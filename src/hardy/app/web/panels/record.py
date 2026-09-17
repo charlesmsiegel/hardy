@@ -24,6 +24,8 @@ from hardy.workflows.ledger.contracts import (
 )
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.ledger.views import LedgerViews
+from hardy.workflows.publication import PublicationRequest, plan_publication
+from hardy.workflows.publish import assemble_publication
 
 #: How much of a ledger item's statement the graph panel carries per node. The
 #: graph is a map of the project, not a reader for full statements -- `tex/`
@@ -654,3 +656,81 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
         },
         "revision": snapshot.revision,
     }
+
+
+def publications(problem: Path) -> dict[str, Any]:
+    """Every ledger item's publication presentation, plus a draft preview for each scope claiming it as a root.
+
+    Two halves, matching the design's two builders. `items` is every current
+    `ProjectItem`'s exact publication state -- `publication_visibility` and
+    `publication_role` (`ledger/contracts.py:93,99`), the same fields
+    `/project mark ITEM internal|public|omitted` reads and writes
+    (`ProjectOperations.mark`, `workflows/interactive/project.py:54-68`) --
+    plus `link_source_kinds`, which `/project link SOURCE
+    illustrates|documents TARGET` relation kind(s) this item's own kind may
+    originate as `SOURCE` (`vocabulary.link_source_kinds`, itself mirroring
+    `ProjectOperations.link`'s own `allowed` dict, `project.py:71-74`). Any
+    *other* current item is always a legal `TARGET` -- `link()` only requires
+    `origin.ref != subject.ref` -- so nothing here narrows that side.
+
+    `candidates` is one row per `(scope, root)` pair a `Scope.must_prove`
+    already commits to -- exactly what `ProjectOperations.publish`'s own
+    bare-id lookup treats as *the* publishable root for that scope
+    (`project.py:99-106`) -- previewing what `/project publish ITEM --scope
+    SCOPE --output BUNDLE` would report without running it. `plan_publication`
+    is the free function `PublicationPlanner.plan` itself delegates to
+    (`workflows/publication.py:191`, `snapshot=self.store.read()`); calling it
+    directly against the one snapshot already read above -- rather than
+    constructing a `PublicationPlanner` that would reread the store once per
+    candidate -- keeps every row answering about the same instant, the same
+    reason `results()` and `ledger_export()` read their `LedgerStore` once
+    and reuse it. `assemble_publication` (pure text escaping and digesting,
+    no LaTeX, no filesystem write) then turns the plan into the same
+    `ready`/`gaps` the terminal prints (`handle_publication`,
+    `tui/project.py:62-69`) -- the actual compile step, `PublishWorkflow.publish`
+    (`workflows/publish.py:167-189`), is genuinely mutating (it creates
+    `publications/<name>/` on disk) and is not reachable from this GET.
+
+    A root that no longer resolves to a `ProjectItem` -- `Scope.must_prove`'s
+    own schema only requires each entry resolve to *some* record
+    (`ledger/validation.py`'s referential check), not a `ProjectItem`
+    specifically -- or a blank name `assemble_publication` refuses as a title,
+    is dropped from `candidates` rather than failing the whole list: one
+    stale scope must not take the page listing every other candidate down
+    with it, the same defence `runs()` applies per run directory.
+    """
+    snapshot = LedgerStore(problem).read()
+
+    items = [
+        {
+            "id": item.id, "name": item.name, "kind": item.kind.value, "family": vocabulary.family(item.kind),
+            "visibility": item.publication_visibility.value,
+            "visibility_tone": vocabulary.publication_visibility_tone(item.publication_visibility),
+            "role": item.publication_role.value if item.publication_role is not None else None,
+            "link_source_kinds": list(vocabulary.link_source_kinds(item.kind)),
+        }
+        for item in snapshot.current(ProjectItem)
+    ]
+
+    candidates: list[dict[str, Any]] = []
+    for scope in snapshot.current(Scope):
+        for ref in scope.must_prove:
+            try:
+                plan = plan_publication(snapshot, PublicationRequest(roots=(ref,), scope=scope.ref))
+                record = snapshot.get(ref)
+                draft = assemble_publication(plan, title=record.name)
+            except ValueError:
+                continue
+            candidates.append({
+                "item": record.id, "name": record.name, "kind": record.kind.value,
+                "family": vocabulary.family(record.kind), "scope": scope.id,
+                "visibility": record.publication_visibility.value,
+                "visibility_tone": vocabulary.publication_visibility_tone(record.publication_visibility),
+                "role": record.publication_role.value if record.publication_role is not None else None,
+                "ready": draft.ready,
+                "closure": len(plan.closure),
+                "gaps": list(draft.gaps),
+            })
+    candidates.sort(key=lambda row: (row["name"], row["scope"]))
+
+    return {"items": items, "candidates": candidates, "revision": snapshot.revision}
