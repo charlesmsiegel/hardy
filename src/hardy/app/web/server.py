@@ -262,6 +262,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.ledger_export(problem, query.get("id", [""])[0]))
         elif name == "results":
             self._json(200, panels.results(problem))
+        elif name == "runs":
+            self._json(200, panels.runs(host.config))
+        elif name == "runs/item":
+            self._json(200, panels.run_item(host.config, query.get("id", [""])[0]))
         elif name == "chats":
             self._json(200, chats.overview(problem))
         else:

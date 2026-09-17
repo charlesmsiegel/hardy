@@ -12,6 +12,7 @@ to `contracts.py` fails a test rather than falling through to `other`.
 
 from __future__ import annotations
 
+from hardy.workflows.contracts import DocumentStatus, FaithfulnessStatus, FormalStatus
 from hardy.workflows.ledger.contracts import ObligationStatus, ProjectItemKind, RelationKind
 
 K = ProjectItemKind
@@ -75,6 +76,42 @@ _VERDICT_TONE: dict[str, str] = {
 #: gets; nothing else may declare an audited result.
 _DECLARED_FAMILY: dict[str, str] = {"theorem": "result", "lemma": "result"}
 
+#: `Grades.formal` (`workflows/contracts.py:344`, sourced from
+#: `formal/contracts.py:144`), a *different* value space from `audit.GRADES`
+#: above -- that one is `formal.audit.classify`'s per-declaration string, this
+#: one is the run-level grade a `/prove` run's manifest carries. Distinct maps
+#: because a run and a declaration are graded by different code and can
+#: disagree; folding them into one dict would make one silently win.
+#: `kernel_verified` is the positive result, `verified_modulo` names a
+#: declared assumption rather than an unfinished or missing one (`warning`),
+#: `partial` is a run that did not reach a verified grade (`error`), and
+#: `not_formalized` is a run that never got there at all (`muted`, matching
+#: `document`'s and `faithfulness`'s own "nothing attempted" tone below).
+_FORMAL_TONE: dict[FormalStatus, str] = {
+    FormalStatus.KERNEL_VERIFIED: "accent", FormalStatus.VERIFIED_MODULO: "warning",
+    FormalStatus.PARTIAL: "error", FormalStatus.NOT_FORMALIZED: "muted",
+}
+
+#: `Grades.faithfulness`: only two values exist, so this is a switch rather
+#: than a spectrum. `user_approved` names an independent reader's agreement
+#: (`Grades.approval_requires_an_independent_reader`, `contracts.py:307-341`)
+#: and is the one positive value; `not_approved` is silent about why -- no
+#: review ran, a review disputed it, or the run never reached this phase --
+#: so it reads as `muted`, not `error`: a run that has not been checked is a
+#: different fact from a run that was checked and refused.
+_FAITHFULNESS_TONE: dict[FaithfulnessStatus, str] = {
+    FaithfulnessStatus.USER_APPROVED: "accent", FaithfulnessStatus.NOT_APPROVED: "muted",
+}
+
+#: `Grades.document`: a compile either succeeded, failed, or was never
+#: attempted. `tex_failed` is `error` rather than `muted` because it is a
+#: distinct, informative outcome from never trying -- the same distinction
+#: `formal_tone` draws between `partial` and `not_formalized`.
+_DOCUMENT_TONE: dict[DocumentStatus, str] = {
+    DocumentStatus.TEX_COMPILED: "accent", DocumentStatus.TEX_FAILED: "error",
+    DocumentStatus.NOT_ATTEMPTED: "muted",
+}
+
 
 def family(kind: ProjectItemKind) -> str:
     """Which of the five tints `kind` is drawn in. Colour only; the label prints `kind`."""
@@ -99,3 +136,18 @@ def verdict_tone(kind: str) -> str:
 def declared_family(kind: str) -> str:
     """Which family a Lean `theorem`/`lemma` keyword colours as. Raises on anything else."""
     return _DECLARED_FAMILY[kind]
+
+
+def formal_tone(status: FormalStatus) -> str:
+    """Which colour a run's `Grades.formal` verdict is drawn in. Raises on a value the enum does not have."""
+    return _FORMAL_TONE[status]
+
+
+def faithfulness_tone(status: FaithfulnessStatus) -> str:
+    """Which colour a run's `Grades.faithfulness` verdict is drawn in. Raises on a value the enum does not have."""
+    return _FAITHFULNESS_TONE[status]
+
+
+def document_tone(status: DocumentStatus) -> str:
+    """Which colour a run's `Grades.document` verdict is drawn in. Raises on a value the enum does not have."""
+    return _DOCUMENT_TONE[status]

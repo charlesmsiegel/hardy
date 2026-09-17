@@ -6,6 +6,7 @@ import http.client
 import json
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from web_fakes import FakeSession, make_config, make_problem
 
 from hardy.app.web.host import WebHost
 from hardy.app.web.server import serve
+
+NOW = datetime(2026, 9, 15, 14, 10, tzinfo=UTC)
 
 
 class FakeOpener:
@@ -251,7 +254,7 @@ def test_panels_and_files(server) -> None:
     (problem / "lean" / "A.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
     for path in ("/api/summary", "/api/jobs", "/api/tree", "/api/sources", "/api/graph",
                  "/api/transcript", "/api/commands", "/api/files", "/api/uploads",
-                 "/api/record", "/api/ledger", "/api/results", "/api/chats"):
+                 "/api/record", "/api/ledger", "/api/results", "/api/chats", "/api/runs"):
         # `/api/environment` is deliberately not in this list: it is the one
         # route that reaches `doctor.run_checks`, and this fixture's `server`
         # runs a real, unmocked `WebHost` -- exercising it here would shell
@@ -304,6 +307,47 @@ def test_ledger_export_route_serves_a_real_item_and_refuses_an_unknown_id(server
 
     status, _, body = _call(server, "GET", "/api/ledger/export?id=nope", token=False)
     assert status == 400 and "unknown record identity: nope" in json.loads(body)["error"]
+
+
+def test_runs_route_serves_a_real_run_and_refuses_an_unknown_id(server) -> None:
+    """`/api/runs` and `/api/runs/item` reach `panels.runs`/`panels.run_item(host.config, ...)`.
+
+    `host.config`, not `problem`: runs live under `config.runs_root`, outside
+    the problem tree `self._problem()` names -- the one thing that makes this
+    endpoint different from every other panel wired above.
+    """
+    from uuid import uuid4
+
+    from hardy.workflows.contracts import RunManifest, RunPhase
+    from hardy.workflows.storage import RunStore
+
+    run_id = uuid4()
+    store = RunStore.create(server.host.config.runs_root, "order-30", now=NOW, run_id=run_id)
+    store.finalize(RunManifest(
+        run_id=run_id, created_at=NOW, phase=RunPhase.COMPLETED, model="claude-opus-4-1",
+        prompt_set_sha256="a" * 64, claim_sha256="b" * 64,
+    ))
+
+    status, ctype, body = _call(server, "GET", "/api/runs", token=False)
+    assert status == 200 and "application/json" in ctype
+    rows = json.loads(body)["runs"]
+    assert len(rows) == 1 and rows[0]["run_id"] == str(run_id) and rows[0]["readable"] is True
+
+    status, ctype, body = _call(server, "GET", f"/api/runs/item?id={run_id}", token=False)
+    assert status == 200 and "application/json" in ctype
+    payload = json.loads(body)
+    assert payload["run_id"] == str(run_id) and payload["claim_sha256"] == "b" * 64
+    assert payload["trajectory"] == []
+
+    # An unknown run_id is `run_item`'s own `ValueError`, mapped to a clean
+    # 400 by `do_GET` -- the same refusal path `ledger_item`/`ledger_export`
+    # already exercise for an unknown ledger id.
+    status, _, body = _call(server, "GET", f"/api/runs/item?id={uuid4()}", token=False)
+    assert status == 400 and "no run found" in json.loads(body)["error"]
+
+    # A malformed run_id (not even a UUID) refuses the same clean way.
+    status, _, body = _call(server, "GET", "/api/runs/item?id=not-a-uuid", token=False)
+    assert status == 400
 
 
 def test_environment_route_is_wired_without_probing_the_host(
