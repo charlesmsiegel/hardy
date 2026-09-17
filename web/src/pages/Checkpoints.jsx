@@ -13,7 +13,7 @@
 // a new one.
 //
 // **The restore command is `/checkpoint restore <id>`** -- verified against
-// `handlers.py:1139` (`CHECKPOINT_USAGE`) and `handle_checkpoint`'s own
+// `handlers.py:1136` (`CHECKPOINT_USAGE`) and `handle_checkpoint`'s own
 // dispatch (`verb == "restore"`, `handlers.py:1168`) -- which the design
 // also names correctly. Two things beside it are not, though:
 //
@@ -33,7 +33,7 @@
 //    auto-checkpoint name, a "loses from view" list of specific theorems and
 //    reports, and a "cancels: delegation d-08 (running)" line. No field
 //    anywhere in `/api/checkpoints` or `_restore_checkpoint`
-//    (`handlers.py:1180-1221`) carries any of that -- the real confirmation
+//    (`handlers.py:1180-1223`) carries any of that -- the real confirmation
 //    the TUI itself asks is one plain sentence: `"Replace {slug} as it
 //    stands with checkpoint {id}? (What is replaced is checkpointed
 //    first.)"` (`handlers.py:1189-1190`), which is what this page's
