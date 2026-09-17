@@ -266,6 +266,27 @@ def test_panels_and_files(server) -> None:
     assert status == 400
 
 
+def test_ledger_item_route_serves_a_real_item_and_refuses_an_unknown_id(server) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = server.host.config.layout.problem
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    store.append([item], expected_revision=store.read().revision)
+
+    status, ctype, body = _call(server, "GET", "/api/ledger/item?id=thm-1", token=False)
+    assert status == 200 and "application/json" in ctype
+    payload = json.loads(body)
+    assert payload["id"] == "thm-1" and payload["kind"] == "theorem" and payload["version"] == 1
+    assert [v["version"] for v in payload["versions"]] == [1]
+
+    # An unknown id is `snapshot.head`'s own `ValueError`, mapped to a clean
+    # 400 by `do_GET` -- not a 500 and not a traceback.
+    status, _, body = _call(server, "GET", "/api/ledger/item?id=nope", token=False)
+    assert status == 400 and "unknown record identity: nope" in json.loads(body)["error"]
+
+
 def test_environment_route_is_wired_without_probing_the_host(
     server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
