@@ -13,7 +13,7 @@
 //
 // `jobs`, `library` and `ledger` (its graph half; the list half is a later
 // shipment) are Task 13b. `files` (read-only; the editor is shipment 3) is
-// Task 13c.
+// Task 13c. `results` (Task 8) is the three-lane theorem table and detail.
 
 import Chat from './Chat.jsx';
 import Environment from './Environment.jsx';
@@ -23,6 +23,7 @@ import Home from './Home.jsx';
 import Jobs from './Jobs.jsx';
 import Ledger from './Ledger.jsx';
 import Library from './Library.jsx';
+import Results from './Results.jsx';
 import Tree from './Tree.jsx';
 
 export const PAGES = {
@@ -32,6 +33,7 @@ export const PAGES = {
   jobs: Jobs,
   library: Library,
   ledger: Ledger,
+  results: Results,
   files: Files,
   environment: Environment,
   help: Help,
