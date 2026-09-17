@@ -51,7 +51,14 @@ export function fromTranscript(entries) {
       return {id, kind: 'tool', name: entry.name ?? '', ok: entry.ok ?? null, text: entry.text ?? ''};
     }
     if (entry.role === 'user') return {id, kind: 'user', text: entry.text ?? ''};
-    if (entry.role === 'hardy') return {id, kind: 'hardy', text: entry.text ?? ''};
+    if (entry.role === 'hardy') {
+      // `starts_turn` is `panels.session.transcript`'s own field (issue
+      // #172): every Hardy-authored line starts a real turn except a
+      // project-switch note, which sets it false because nothing was sent to
+      // a model. Missing defaults true, matching the server's own default
+      // for the ordinary case.
+      return {id, kind: 'hardy', text: entry.text ?? '', startsTurn: entry.starts_turn !== false};
+    }
     if (entry.role === 'turn') return {id, kind: 'turn', text: entry.text ?? ''};
     return {id, kind: 'notice', text: entry.text ?? ''};
   });
