@@ -16,12 +16,18 @@
 // back to solid, the same "print the word, never guess a family" shape
 // `Pill.jsx`'s own fallback uses.
 //
-// A stale edge is drawn in `--error`, per node and edge staying exactly what
-// `panels/record.py:graph` computed: "the relation was recorded against a
-// version of the item that has since been revised... not known to be false,
-// and not known to still hold." That sentence, not a fabricated "recorded
-// against v3" -- the edge payload carries no version numbers to be specific
-// with, only `stale: true`.
+// A stale edge is drawn in `--error`. The stale line below names real
+// versions -- "recorded against v3; order_40 is now v5", the design's own
+// copy (`Hardy Workbench.dc.html:393`) -- exactly when `panels/record.py:
+// graph` had them to give: `expected_version`/`current_version` come from
+// `LedgerViews.stale_artifacts()` (`ledger/views.py:158`), which only knows
+// about a `documents`/`formalizes` relation whose *target* moved. An edge
+// stale for any other reason -- a `depends_on` relation, or one stale
+// because its *source* moved rather than its target -- has no entry there,
+// so both fields come back `null` and the line stays the generic one this
+// page always printed: "recorded against a version of one of these items
+// that has since been revised... not known to be false, and not known to
+// still hold." Never a fabricated version number in that case.
 //
 // Layout is dagre (already a dependency; `panels/Graph.jsx`, the old
 // three-column client's graph, uses it too -- though that component infers
@@ -135,6 +141,11 @@ export default function Ledger() {
 
   const staleEdges = laid.routed.filter((edge) => edge.stale);
   const open = laid.placed.find((node) => node.id === openId) || null;
+  // Current-head name for a node id, for the stale sentence's "order_40" --
+  // never the id itself when a name is on record. Built off `nodes`, not
+  // `laid.placed`, so it works the same whether or not the id survived
+  // layout's `known` filter.
+  const nodeName = (id) => nodes.find((node) => node.id === id)?.name || id;
 
   return (
     <div className="wb-page-body">
@@ -238,15 +249,35 @@ export default function Ledger() {
       {staleEdges.length ? (
         <div className="wb-ledger__stale">
           <span className="section-label">stale relations · {staleEdges.length}</span>
-          {staleEdges.map((edge) => (
-            <div key={edge.id} className="wb-ledger__stale-line">
-              <span style={{fontFamily: 'var(--mono)'}}>
-                {edge.source} —{edge.kind}→ {edge.target}
-              </span>
-              {' — recorded against a version of one of these items that has since been revised; nothing has re-checked it. '}
-              Not known to be false, and not known to still hold.
-            </div>
-          ))}
+          {staleEdges.map((edge) => {
+            // `null` when `stale_artifacts()` had no entry for this edge
+            // (panels/record.py:graph) -- generic sentence, never a guessed
+            // version. `!= null` catches both undefined and null in one go.
+            const named = edge.expected_version != null && edge.current_version != null;
+            return (
+              <div key={edge.id} className="wb-ledger__stale-line">
+                <span style={{fontFamily: 'var(--mono)'}}>
+                  {edge.source} —{edge.kind}→ {edge.target}
+                </span>
+                {named ? (
+                  <>
+                    {' — recorded against v'}
+                    {edge.expected_version}
+                    {'; '}
+                    {nodeName(edge.target)}
+                    {' is now v'}
+                    {edge.current_version}
+                    {'.'}
+                  </>
+                ) : (
+                  <>
+                    {' — recorded against a version of one of these items that has since been revised; nothing has re-checked it. '}
+                    Not known to be false, and not known to still hold.
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
