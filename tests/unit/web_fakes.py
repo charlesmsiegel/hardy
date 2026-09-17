@@ -17,10 +17,18 @@ from hardy.workflows.interactive.history import History, identify
 from hardy.workflows.interactive.summary import Section, Summary
 
 
-def make_config(tmp_path: Path, slug: str = "sylow", chat: str = layout.DEFAULT_CHAT) -> configuration.Config:
+def make_config(
+    tmp_path: Path, slug: str = "sylow", chat: str = layout.DEFAULT_CHAT, runs_root: Path | None = None,
+) -> configuration.Config:
+    # `runs_root` defaults to an absolute path under `tmp_path` rather than
+    # the real `Config` default (`Path("runs")`, relative to the process's
+    # cwd) -- a web test that never sets it still gets a real, isolated
+    # directory to assert "no runs root" against, instead of silently reading
+    # whatever `runs/` happens to sit under wherever pytest was invoked.
     return configuration.Config(
         model="fake-model", lean_command=("lean",), lean_project=None, lean_timeout=1.0,
         latex_command=("pdflatex",), root=tmp_path, project=slug, chat=chat,
+        runs_root=runs_root if runs_root is not None else tmp_path / "runs",
     )
 
 

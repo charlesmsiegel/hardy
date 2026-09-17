@@ -8,6 +8,7 @@ import pytest
 
 from hardy.app.web.panels import vocabulary
 from hardy.formal import audit
+from hardy.workflows.contracts import DocumentStatus, FaithfulnessStatus, FormalStatus
 from hardy.workflows.ledger.contracts import ObligationStatus, ProjectItemKind, RelationKind
 
 FAMILIES = {"result", "research", "concept", "document", "other"}
@@ -63,3 +64,36 @@ def test_every_declared_kind_has_a_family(kind: str) -> None:
 def test_declared_family_raises_on_an_unknown_keyword_rather_than_defaulting() -> None:
     with pytest.raises(KeyError):
         vocabulary.declared_family("def")
+
+
+# -- run grades (`RunManifest.grades`, a different value space from `audit.GRADES`) --
+
+
+@pytest.mark.parametrize("status", list(FormalStatus))
+def test_every_formal_status_has_a_tone(status: FormalStatus) -> None:
+    assert vocabulary.formal_tone(status) in {"accent", "warning", "error", "muted"}
+
+
+@pytest.mark.parametrize("status", list(FaithfulnessStatus))
+def test_every_faithfulness_status_has_a_tone(status: FaithfulnessStatus) -> None:
+    assert vocabulary.faithfulness_tone(status) in {"accent", "warning", "error", "muted"}
+
+
+@pytest.mark.parametrize("status", list(DocumentStatus))
+def test_every_document_status_has_a_tone(status: DocumentStatus) -> None:
+    assert vocabulary.document_tone(status) in {"accent", "warning", "error", "muted"}
+
+
+def test_formal_tone_raises_on_an_unknown_value_rather_than_defaulting() -> None:
+    with pytest.raises(KeyError):
+        vocabulary.formal_tone("not-a-real-status")
+
+
+def test_faithfulness_tone_raises_on_an_unknown_value_rather_than_defaulting() -> None:
+    with pytest.raises(KeyError):
+        vocabulary.faithfulness_tone("not-a-real-status")
+
+
+def test_document_tone_raises_on_an_unknown_value_rather_than_defaulting() -> None:
+    with pytest.raises(KeyError):
+        vocabulary.document_tone("not-a-real-status")

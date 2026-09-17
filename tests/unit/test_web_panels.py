@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
 from web_fakes import FakeSession, make_config, make_problem
 
 from hardy.app.web import panels
+from hardy.formal.contracts import EnvironmentIdentity, FormalStatus, VerificationEvidence
+from hardy.workflows.contracts import (
+    DocumentStatus,
+    FaithfulnessOutcome,
+    FaithfulnessReview,
+    FaithfulnessStatus,
+    FaithfulnessVerdict,
+    Grades,
+    RunManifest,
+    RunPhase,
+    TerminalReason,
+)
 
 
 def test_summary_serializes_sections(tmp_path: Path) -> None:
@@ -827,3 +842,225 @@ def test_results_a_name_two_modules_declare_is_ambiguous_not_a_coin_flip(tmp_pat
     for row in rows:
         assert row["verdict"] == "ambiguous"
         assert row["axioms"] is None
+
+
+# -- runs()/run_item(): `/prove` runs under `config.runs_root`, outside the problem tree --
+
+_NOW = datetime(2026, 9, 15, 14, 10, tzinfo=UTC)
+
+
+def _make_run(runs_root: Path, slug: str, run_id: UUID, *, now: datetime = _NOW, **manifest_kwargs) -> Path:
+    """A real `RunStore`-shaped run directory, with a manifest and no trajectory yet."""
+    from hardy.workflows.storage import RunStore
+
+    store = RunStore.create(runs_root, slug, now=now, run_id=run_id)
+    manifest = RunManifest(
+        run_id=run_id, created_at=now,
+        phase=manifest_kwargs.pop("phase", RunPhase.COMPLETED),
+        model=manifest_kwargs.pop("model", "claude-opus-4-1"),
+        prompt_set_sha256=manifest_kwargs.pop("prompt_set_sha256", "a" * 64),
+        **manifest_kwargs,
+    )
+    store.finalize(manifest)
+    return store.path
+
+
+def test_runs_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) -> None:
+    """No `HARDY_RUNS_ROOT` yet is a real case (issue #171's sibling for runs), not a hypothetical."""
+    config = make_config(tmp_path, runs_root=tmp_path / "does-not-exist")
+    assert panels.runs(config) == {"runs": []}
+
+
+def test_runs_lists_every_manifest_with_exact_enum_values_and_the_frozen_hash(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    _make_run(
+        config.runs_root, "order-30", run_id,
+        claim_sha256="c3d0a917" + "0" * 56,
+        terminal_reason=TerminalReason.PROOF_INCOMPLETE,
+    )
+    out = panels.runs(config)
+    assert len(out["runs"]) == 1
+    row = out["runs"][0]
+    assert row["readable"] is True and row["error"] is None
+    assert row["run_id"] == str(run_id)
+    assert row["created_at"] == _NOW.isoformat()
+    assert row["phase"] == "completed"                              # RunPhase.COMPLETED.value, not the member
+    assert row["model"] == "claude-opus-4-1"
+    assert row["claim_sha256"] == "c3d0a917" + "0" * 56
+    assert row["terminal_reason"] == "proof_incomplete"              # exact enum value, not a rounded label
+    assert row["grades"] == {
+        "formal": "not_formalized", "faithfulness": "not_approved", "informal": "not_independently_assessed",
+        "document": "not_attempted", "known_gaps": [], "assumed": [],
+        "verification_sha256": None, "verification_evidence": None, "faithfulness_review": None,
+    }
+    assert row["tones"] == {"formal": "muted", "faithfulness": "muted", "document": "muted"}
+
+
+def test_runs_a_verified_run_carries_accent_tones_for_every_grade(tmp_path: Path) -> None:
+    """The one positive corner of each of the three grades, read back as `accent`."""
+    config = make_config(tmp_path)
+    toolchain = EnvironmentIdentity(
+        lean_version="4.32.0", lean_commit="abc123", mathlib_revision="def456", lake_manifest_sha256="e" * 64,
+    )
+    evidence = VerificationEvidence(claim_sha256="c" * 64, source_sha256="d" * 64, axioms=(), toolchain=toolchain)
+    review = FaithfulnessVerdict(
+        claim_sha256="c" * 64, reviewer_model="claude-opus-4-1", prompt_sha256="f" * 64,
+        outcome=FaithfulnessOutcome.AGREED,
+        review=FaithfulnessReview(formalization_entails_claim=True, claim_entails_formalization=True),
+    )
+    grades = Grades(
+        formal=FormalStatus.KERNEL_VERIFIED, faithfulness=FaithfulnessStatus.USER_APPROVED,
+        document=DocumentStatus.TEX_COMPILED,
+        verification_sha256=evidence.digest, verification_evidence=evidence, faithfulness_review=review,
+    )
+    run_id = uuid4()
+    _make_run(config.runs_root, "order-30", run_id, claim_sha256="c" * 64, grades=grades)
+    row = panels.runs(config)["runs"][0]
+    assert row["grades"]["formal"] == "kernel_verified"
+    assert row["grades"]["faithfulness_review"]["outcome"] == "agreed"
+    assert row["tones"] == {"formal": "accent", "faithfulness": "accent", "document": "accent"}
+
+
+def test_runs_reports_an_unreadable_manifest_rather_than_omitting_it(tmp_path: Path) -> None:
+    """A run this Hardy cannot parse (e.g. an older `schema_version`) is not the same fact as no run."""
+    config = make_config(tmp_path)
+    good_id = uuid4()
+    _make_run(config.runs_root, "order-30", good_id)
+    stale_dir = config.runs_root / "20260101T000000+0000-order-1-deadbeef"
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "manifest.json").write_text(
+        json.dumps({"schema_version": 2, "run_id": "not-even-a-uuid"}), encoding="utf-8",
+    )
+
+    out = panels.runs(config)
+    assert len(out["runs"]) == 2
+    stale = next(row for row in out["runs"] if row["dir"] == stale_dir.name)
+    assert stale["readable"] is False
+    assert stale["error"]      # says *why*, not just that it failed
+    assert stale["run_id"] is None and stale["phase"] is None and stale["grades"] is None
+    assert stale["tones"] is None and stale["claim_sha256"] is None and stale["terminal_reason"] is None
+    readable = next(row for row in out["runs"] if row["dir"] != stale_dir.name)
+    assert readable["readable"] is True and readable["run_id"] == str(good_id)
+
+
+def test_runs_a_directory_that_is_not_a_run_at_all_reports_no_manifest(tmp_path: Path) -> None:
+    """A stray, empty directory under `runs_root` -- e.g. a crashed `RunStore.create` -- is still a row."""
+    config = make_config(tmp_path)
+    (config.runs_root / "20260101T000000+0000-empty-cafefeed").mkdir(parents=True)
+    out = panels.runs(config)
+    assert len(out["runs"]) == 1
+    assert out["runs"][0]["readable"] is False
+
+
+def test_runs_a_symlinked_run_directory_is_skipped_not_followed(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    outside = tmp_path / "outside-runs"
+    real = _make_run(outside, "order-30", uuid4())
+    config.runs_root.mkdir(parents=True)
+    try:
+        (config.runs_root / real.name).symlink_to(real, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    assert panels.runs(config) == {"runs": []}
+
+
+def test_runs_are_sorted_newest_first(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    older = datetime(2026, 1, 1, tzinfo=UTC)
+    newer = datetime(2026, 9, 15, tzinfo=UTC)
+    _make_run(config.runs_root, "order-1", uuid4(), now=older)
+    _make_run(config.runs_root, "order-2", uuid4(), now=newer)
+    dirs = [row["dir"] for row in panels.runs(config)["runs"]]
+    assert dirs == sorted(dirs, reverse=True)
+    assert "order-2" in dirs[0]
+
+
+def test_run_item_returns_the_manifest_and_trajectory_in_order(tmp_path: Path) -> None:
+    from hardy.workflows.storage import RunStore
+
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    store = RunStore.create(config.runs_root, "order-30", now=_NOW, run_id=run_id)
+    store.append("phase", {"to": "proving"}, phase=RunPhase.PROVING)
+    store.append("lean_check", {"ok": True}, phase=RunPhase.FINAL_VERIFICATION)
+    manifest = RunManifest(
+        run_id=run_id, created_at=_NOW, phase=RunPhase.COMPLETED, model="claude-opus-4-1",
+        prompt_set_sha256="a" * 64, claim_sha256="b" * 64,
+    )
+    store.finalize(manifest)
+
+    out = panels.run_item(config, str(run_id))
+    assert out["run_id"] == str(run_id)
+    assert out["claim_sha256"] == "b" * 64
+    assert out["prompt_set_sha256"] == "a" * 64
+    assert out["grades"]["formal"] == "not_formalized"
+    assert out["tones"] == {"formal": "muted", "faithfulness": "muted", "document": "muted"}
+    assert out["usage"] == {}
+    assert [event["kind"] for event in out["trajectory"]] == ["phase", "lean_check"]
+    assert [event["sequence"] for event in out["trajectory"]] == [0, 1]
+    assert out["trajectory"][0]["phase"] == "proving"
+    assert out["trajectory"][1]["payload"] == {"ok": True}
+
+
+def test_run_item_with_no_trajectory_yet_is_an_empty_list_not_absent(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    _make_run(config.runs_root, "order-30", run_id)
+    assert panels.run_item(config, str(run_id))["trajectory"] == []
+
+
+def test_run_item_bails_out_on_a_corrupt_trajectory_line_rather_than_a_partial_one(tmp_path: Path) -> None:
+    from hardy.workflows.storage import RunStore
+
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    store = RunStore.create(config.runs_root, "order-30", now=_NOW, run_id=run_id)
+    store.append("phase", {"to": "proving"}, phase=RunPhase.PROVING)
+    with store.trajectory_path.open("a", encoding="utf-8") as handle:
+        handle.write("not even json\n")
+    manifest = RunManifest(
+        run_id=run_id, created_at=_NOW, phase=RunPhase.COMPLETED, model="claude-opus-4-1",
+        prompt_set_sha256="a" * 64,
+    )
+    store.finalize(manifest)
+
+    assert panels.run_item(config, str(run_id))["trajectory"] is None
+
+
+def test_run_item_unknown_run_id_refuses_cleanly(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    _make_run(config.runs_root, "order-30", uuid4())
+    with pytest.raises(ValueError, match="no run found"):
+        panels.run_item(config, str(uuid4()))
+
+
+def test_run_item_malformed_run_id_refuses_cleanly(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    with pytest.raises(ValueError):
+        panels.run_item(config, "not-a-uuid")
+
+
+def test_run_item_refuses_when_the_manifest_cannot_be_read(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    config.runs_root.mkdir(parents=True)
+    stale_dir = config.runs_root / f"20260101T000000+0000-order-1-{run_id.hex[:8]}"
+    stale_dir.mkdir()
+    (stale_dir / "manifest.json").write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+    with pytest.raises(ValueError, match="could not be read"):
+        panels.run_item(config, str(run_id))
+
+
+def test_run_item_refuses_a_symlinked_run_directory(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    outside = tmp_path / "outside-runs"
+    run_id = uuid4()
+    real = _make_run(outside, "order-30", run_id)
+    config.runs_root.mkdir(parents=True)
+    try:
+        (config.runs_root / real.name).symlink_to(real, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    with pytest.raises(ValueError, match="no run found"):
+        panels.run_item(config, str(run_id))
