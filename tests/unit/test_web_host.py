@@ -208,6 +208,36 @@ def test_open_chat_reopens_through_the_opener_and_refuses_mid_turn(tmp_path: Pat
         host.stop()
 
 
+def test_open_chat_on_a_different_chat_leaves_no_switch_note(tmp_path: Path) -> None:
+    """Issue #167's note is for a project change; a chat change within the
+    same project replaces no project, so it must stay silent about one."""
+    host = _host(tmp_path)
+    try:
+        from hardy.app.web import chats
+        made = chats.create_chat(tmp_path / "sylow", "Lean proof")
+        host.open_chat("sylow", made.id)
+        events = [entry.event() for entry in host.session.conversation_tree().path()]
+        assert not any(event.get("author") == "hardy" for event in events)
+    finally:
+        host.stop()
+
+
+def test_open_chat_switching_project_leaves_a_transcript_note(tmp_path: Path) -> None:
+    """Issue #167: switching project from the browser must leave a transcript
+    entry, attributed to Hardy rather than echoed as something typed."""
+    host = _host(tmp_path)
+    try:
+        from hardy.app.web import panels
+
+        make_problem(tmp_path, "frobenius")
+        host.open_chat("frobenius", "main")
+        transcript = panels.transcript(host.session)
+        assert transcript[-1]["role"] == "hardy"
+        assert transcript[-1]["text"] == "Switched here from sylow."
+    finally:
+        host.stop()
+
+
 def test_open_chat_on_the_open_chat_is_a_no_op(tmp_path: Path) -> None:
     """A click on the highlighted row must not rebuild the session: a reopen
     cancels the problem's background workers, and nothing was asked for."""

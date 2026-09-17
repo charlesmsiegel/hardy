@@ -152,5 +152,18 @@ class FakeSession:
     def conversation_tree(self):
         return self._history.snapshot()
 
+    def record_hardy_note(self, text: str) -> None:
+        """The real session's bookkeeping write, minus everything but the write.
+
+        Mirrors `MathematicsSession.record_hardy_note`: a `user` event
+        authored by `"hardy"`, appended straight to the history, no turn.
+        """
+        event: dict[str, Any] = {
+            "type": "user", "message": {"role": "user", "content": text}, "author": "hardy",
+            "parent_id": self._history.active_leaf, "timestamp": time.time(),
+        }
+        event["entry_id"] = identify(event)
+        self._history.append(event)
+
     def close(self) -> None:
         self.closed = True
