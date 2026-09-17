@@ -2452,3 +2452,151 @@ input {
   justify-content: space-between;
 }
 
+/* -- Publications (Task 12) ------------------------------------------------ */
+
+.wb-publications {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .wb-publications {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-publications__left,
+.wb-publications__right {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.wb-publications__builders {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 800px) {
+  .wb-publications__builders {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-publications__family-badge {
+  border-radius: 4px;
+  display: inline-block;
+  font: 11px var(--mono);
+  padding: 0 6px;
+}
+
+.wb-publications__family-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-publications__chip {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  font: 11px var(--mono);
+  padding: 1px 8px;
+}
+
+.wb-publications__chip--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-publications__pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-publications__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font: 11px var(--mono);
+}
+
+.wb-publications__field select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  font: inherit;
+  padding: 3px 6px;
+}
+
+.wb-publications__input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  font: 12px var(--mono);
+  padding: 3px 8px;
+}
+
+.wb-publications__composed {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wb-publications__command {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--muted);
+  flex: 1;
+  font: 12px var(--mono);
+  padding: 3px 8px;
+}
+
+.wb-publications__refusal {
+  border: 1px solid var(--warning);
+  border-radius: var(--r);
+  color: var(--warning);
+  font: 12px var(--mono);
+  padding: 6px 10px;
+}
+
+/* -- Checkpoints (Task 12) --------------------------------------------------- */
+
+.wb-checkpoints__save {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wb-checkpoints__input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--fg);
+  font: 12px var(--mono);
+  min-width: 200px;
+  padding: 3px 8px;
+}
+
+.wb-checkpoints__command {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+.wb-checkpoints__refusal {
+  border: 1px solid var(--warning);
+  border-radius: var(--r);
+  color: var(--warning);
+  font: 12px var(--mono);
+  padding: 6px 10px;
+}

@@ -16,6 +16,7 @@
 // Task 13c. `results` (Task 8) is the three-lane theorem table and detail.
 
 import Chat from './Chat.jsx';
+import Checkpoints from './Checkpoints.jsx';
 import Environment from './Environment.jsx';
 import Files from './Files.jsx';
 import Help from './Help.jsx';
@@ -23,6 +24,7 @@ import Home from './Home.jsx';
 import Jobs from './Jobs.jsx';
 import Ledger from './Ledger.jsx';
 import Library from './Library.jsx';
+import Publications from './Publications.jsx';
 import Results from './Results.jsx';
 import Runs from './Runs.jsx';
 import Tree from './Tree.jsx';
@@ -36,6 +38,8 @@ export const PAGES = {
   ledger: Ledger,
   results: Results,
   runs: Runs,
+  publications: Publications,
+  checkpoints: Checkpoints,
   files: Files,
   environment: Environment,
   help: Help,
