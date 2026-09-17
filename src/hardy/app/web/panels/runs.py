@@ -2,7 +2,7 @@
 
 Every other panel in this package reads under the problem directory and is
 confined by `workspace.confine()`: a relative path proven to resolve to its
-own parent's immediate child, all the way down (`workspace.py:33-46`). Runs
+own parent's immediate child, all the way down (`workspace.py:33-47`). Runs
 are not there -- `config.runs_root` (`app/config.py:274`, env
 `HARDY_RUNS_ROOT`) names a directory the *problem* does not own, so
 `confine()` does not apply, and this module is the one place that reads
@@ -246,12 +246,30 @@ def run_item(config: Config, run_id: str) -> dict[str, Any]:
     detail page *for* one run: there is nothing to detail if the one artifact
     naming what happened cannot be parsed, so this refuses outright rather
     than returning a page with every field `None`.
+
+    `_locate_run_dir` matches purely on the trailing 8 hex characters of the
+    directory name (mirroring `cli.py`), so once a manifest is actually
+    parsed this checks it names the exact `run_id` that was asked for, not
+    only a directory whose name suggests it does. Normal operation can never
+    diverge -- `RunStore.create` names a directory from its own `run_id`
+    (`workflows/storage.py:66-67`), and a genuine suffix collision between two
+    still-present directories is already refused by `_locate_run_dir`'s own
+    `len(candidates) != 1` check -- but a directory hand-corrupted, half
+    migrated, or restored from elsewhere could have a name and a manifest
+    that disagree, and a page whose whole point is *which exact run* a
+    verdict belongs to must not serve that silently. The same defence
+    `_trajectory` already applies per event (`event.run_id != run_id`) one
+    level down.
     """
     parsed = UUID(str(run_id))
     run_dir = _locate_run_dir(config.runs_root, parsed)
     manifest, error = _read_manifest(run_dir)
     if manifest is None:
         raise ValueError(f"the manifest for run {run_id} could not be read: {error}")
+    if manifest.run_id != parsed:
+        raise ValueError(
+            f"run directory {run_dir.name!r} names {parsed} but its manifest names {manifest.run_id}"
+        )
     return {
         "run_id": str(manifest.run_id),
         "dir": run_dir.name,
