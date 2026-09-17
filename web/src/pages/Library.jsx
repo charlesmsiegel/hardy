@@ -72,7 +72,33 @@ export default function Library() {
   if (sources.error) return <p className="panel__error">{sources.error}</p>;
   if (!sources.data) return <p className="panel__note">Reading the library...</p>;
 
-  const {bibliography, seeds} = sources.data;
+  const {bibliography, seeds, bibliography_readable: bibliographyReadable} = sources.data;
+
+  // A corrupt `bibliography.json` (`panels/workspace.py:sources`) comes back
+  // as `bibliography: []` too, the same shape a fresh project's honest zero
+  // has -- so `bibliography_readable` is what tells them apart, and it has
+  // to be checked before the empty-state branch below, which would
+  // otherwise print "Library is empty · 0 sources" for a library that was
+  // never read at all (issue #169).
+  if (!bibliographyReadable) {
+    return (
+      <div className="wb-page-body">
+        <div className="wb-page-head">
+          <span className="page-title">Library</span>
+          <span className="wb-page-subtitle">bibliography.json could not be read</span>
+        </div>
+        <Empty
+          title="Bibliography unreadable"
+          line="bibliography.json exists but did not parse. What it holds is not reported, not empty -- this is not a fresh project's zero."
+        />
+        <Label>seeds</Label>
+        <div className="panel__note">
+          Seeds read independently of the bibliography: this project seeds {orAbsent(seeds.length)}.
+        </div>
+      </div>
+    );
+  }
+
   const empty = bibliography.length === 0 && seeds.length === 0;
 
   if (empty) {

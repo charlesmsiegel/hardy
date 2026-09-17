@@ -149,17 +149,27 @@ def pdf_bytes(problem: Path, relative: str) -> bytes:
 def sources(problem: Path) -> dict[str, Any]:
     """The problem's bibliography and library seeds, each already its own read model.
 
-    A missing store is already an empty `Store`/`JournalSnapshot`, so only a
-    corrupt `bibliography.json` needs handling here: `Bibliography.read`
-    raises `BibliographyError` for that, and this degrades to an empty
-    bibliography rather than failing the whole panel.
+    A missing store is already an empty `Store`/`JournalSnapshot`, so `seeds`
+    never needs a readable flag of its own. The bibliography is different: a
+    missing `bibliography.json` is `Bibliography.entries()`'s own honest `()`
+    -- a fresh project that has cited nothing -- but a file that exists and
+    will not parse raises `BibliographyError`, and collapsing that to the
+    same empty list was issue #169: the Library page printed "Library is
+    empty * 0 sources" for a library it could not read at all, telling a
+    user their citations were gone when they were merely unreachable.
+    `bibliography` therefore stays `[]` either way, so every consumer's
+    `.length`/`.map` over it stays safe, and `bibliography_readable` is the
+    separate field that actually carries the claim -- the same
+    absence-is-not-zero rule `_activity` in `chats.py` keeps for turn counts,
+    applied here because the value in question is a list rather than a count.
     """
     try:
         bibliography = [entry.model_dump(mode="json") for entry in Bibliography(problem).entries()]
+        bibliography_readable = True
     except BibliographyError:
-        bibliography = []
+        bibliography, bibliography_readable = [], False
     seeds = [
         {"id": seed.id, "artifact": seed.artifact_sha256, "priority": seed.priority, "intent": seed.intent or ""}
         for seed in SeedStore(problem).seeds()
     ]
-    return {"bibliography": bibliography, "seeds": seeds}
+    return {"bibliography": bibliography, "bibliography_readable": bibliography_readable, "seeds": seeds}

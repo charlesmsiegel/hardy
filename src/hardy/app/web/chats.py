@@ -142,9 +142,18 @@ def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
 
     Read as lines rather than replayed through `History`: this counts turns and
     nothing more, and replaying would validate a hash chain -- work the answer
-    does not need and a failure mode the answer should not inherit. A damaged
-    line is skipped; a transcript that cannot be opened at all reports `None`,
-    which is not the same claim as `0`.
+    does not need and a failure mode the answer should not inherit.
+
+    A transcript that cannot be opened at all reports `(None, None)`, which is
+    not the same claim as `(0, None)`. A transcript that opens but has a line
+    that will not parse must report the same `(None, None)`, not the count of
+    whatever did parse (issue #169): a chat interrupted mid-write, or with one
+    damaged line anywhere in it, would otherwise undercount by exactly the
+    turns on and after the bad line, and that undercount is indistinguishable
+    on the page from a genuine count -- the one thing this function exists to
+    never hand back. Bailing out at the first bad line, rather than skipping it
+    and continuing, also means a `timestamp` never gets to look complete when
+    a later, larger one was on a line this function could not read.
     """
     relative = TRANSCRIPT if chat_id == DEFAULT_CHAT else f"{CHATS_DIR}/{chat_id}/{TRANSCRIPT}"
     try:
@@ -158,9 +167,9 @@ def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
         try:
             event = json.loads(line)
         except ValueError:
-            continue
+            return None, None
         if not isinstance(event, dict):
-            continue
+            return None, None
         if event.get("type") == "turn":
             turns += 1
         at = event.get("timestamp")

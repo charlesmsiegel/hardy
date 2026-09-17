@@ -181,9 +181,12 @@ def _session_state(problem: Path) -> dict[str, Any]:
     or -- because `session.json` is versioned and gets merge-conflicted or
     hand-edited -- it may hold something that is not the schema-2 object this
     panel expects. Every one of those is "nothing has been recorded yet" for
-    this panel's purposes, the same degrade `sources()` gives a corrupt
-    `bibliography.json`, not a 500 for a problem the API otherwise renders
-    fine. `SessionRecord._read_state` is deliberately not reused: it raises
+    this panel's purposes, not a 500 for a problem the API otherwise renders
+    fine. Unlike `sources()`'s corrupt-`bibliography.json` case (issue #169),
+    nothing here reports a count a reader could mistake for a measurement --
+    `{}` degrades every field downstream to `None`/absent through the same
+    machinery a genuinely fresh project uses, so there is no exact-looking
+    figure to get wrong. `SessionRecord._read_state` is deliberately not reused: it raises
     `SchemaError` on all of this, which is the right contract for the one
     writer of the file and the wrong one for a reader that must never take a
     problem page down over it.

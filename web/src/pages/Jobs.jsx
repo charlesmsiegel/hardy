@@ -21,11 +21,14 @@
 // `toneForState` already exists to prevent, one level down. See
 // `Pill.jsx`'s `DELEGATION_TONE` for the prototype evidence (or its absence,
 // and the reasoning for each considered default) behind all ten. The smoke
-// fixture's `FakeDelegations` (`tests/unit/web_fakes.py`) answers `"running"`
-// for every delegation, which is not a `DelegationState` value at all; this
-// page prints whatever string arrives and colours it through
-// `toneForDelegation`'s own fallback to `muted`, so it does not care that
-// the fixture is wrong.
+// fixture's `FakeDelegations` (`tests/unit/web_fakes.py`) briefly answered
+// `"running"` for every delegation, which is not a `DelegationState` value
+// at all; this page prints whatever string arrives, so it did not itself
+// break, but the fixture's wrong word was mistaken for the real vocabulary
+// while this page was being built and the colour map above had to be
+// corrected once that was traced back to the fixture (issue #166). The
+// fixture now builds its state from `DelegationState.ACTIVE`, so what this
+// page renders for it is `active`, coloured `accent`.
 //
 // Controls sit behind confirm cards, per the design line for this page.
 // `ConfirmCard` (`components/Cards.jsx`, Task 9, zero importers before this)

@@ -12,6 +12,7 @@ from hardy.agents.contracts import TurnEvent
 from hardy.agents.usage import Usage
 from hardy.app import config as configuration
 from hardy.workflows import layout
+from hardy.workflows.delegation.contracts import DelegationState
 from hardy.workflows.interactive.history import History, identify
 from hardy.workflows.interactive.summary import Section, Summary
 
@@ -31,13 +32,29 @@ def make_problem(tmp_path: Path, slug: str = "sylow") -> Path:
 
 
 class FakeDelegations:
+    #: `DelegationState.ACTIVE`, not the string `"active"`: issue #166 was
+    #: this fixture answering `"running"`, a word the enum
+    #: (`hardy.workflows.delegation.contracts.DelegationState`) does not
+    #: have. Going through the enum member -- here and in `tree()` below --
+    #: means a typo would be an `AttributeError` at import time rather than
+    #: a fixture that quietly teaches its readers a vocabulary production
+    #: can never emit.
+    _STATE = DelegationState.ACTIVE
+
     def status(self) -> dict:
-        return {"counts": {"running": 1}, "root": {"lease": "l", "usage": "u", "allocatable": "a", "slots_in_use": 1, "slots": 4}}
+        return {"counts": {self._STATE.value: 1}, "root": {"lease": "l", "usage": "u", "allocatable": "a", "slots_in_use": 1, "slots": 4}}
 
     def tree(self):
+        state = self._STATE
+
         class _Node:
             def __init__(self, id, objective):
-                self.id, self.spec, self.state = id, type("S", (), {"objective": objective})(), type("St", (), {"value": "running"})()
+                # `state` is the real `DelegationState` member, not a stand-in
+                # object with a `.value` attribute -- `panels/session.py`'s
+                # `jobs()` calls `.value` on it exactly as it would on a live
+                # delegation's own state, so this fixture cannot answer a word
+                # the enum does not have.
+                self.id, self.spec, self.state = id, type("S", (), {"objective": objective})(), state
 
         class _Tree:
             delegations = {"root": _Node("root", ""), "d1": _Node("d1", "prove lemma")}
