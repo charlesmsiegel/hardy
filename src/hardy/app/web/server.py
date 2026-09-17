@@ -258,6 +258,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.ledger_list(problem))
         elif name == "ledger/item":
             self._json(200, panels.ledger_item(problem, query.get("id", [""])[0]))
+        elif name == "ledger/export":
+            self._json(200, panels.ledger_export(problem, query.get("id", [""])[0]))
         elif name == "results":
             self._json(200, panels.results(problem))
         elif name == "chats":

@@ -644,6 +644,150 @@ def test_results_family_and_declared_kind_come_from_the_lean_keyword(tmp_path: P
     assert rows["baz"]["declared_kind"] == "lemma" and rows["baz"]["family"] == "result"
 
 
+# -- ledger_export(): the Export proof card's dependency closure --
+
+
+def test_ledger_export_unknown_id_is_a_clean_refusal(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown record identity: nope"):
+        panels.ledger_export(make_problem(tmp_path), "nope")
+
+
+def test_ledger_export_refuses_an_identity_that_is_not_a_project_item(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import (
+        Obligation,
+        ObligationKind,
+        ObligationStatus,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    scope = Scope(id="scope")
+    obligation = Obligation(id="ob-1", kind=ObligationKind.PROVE, item=item.ref, scope=scope,
+                            status=ObligationStatus.OPEN)
+    store.append([item, scope, obligation], expected_revision=store.read().revision)
+
+    with pytest.raises(ValueError, match="not a project item"):
+        panels.ledger_export(problem, "ob-1")
+
+
+def test_ledger_export_on_a_fresh_project_id_refuses_cleanly(tmp_path: Path) -> None:
+    """Issue #171: an interactive save writes no ledger record, so an unknown id is the normal case."""
+    with pytest.raises(ValueError, match="unknown record identity: thm-1"):
+        panels.ledger_export(make_problem(tmp_path), "thm-1")
+
+
+def test_ledger_export_reports_which_scope_named_this_item_and_when_none_does(tmp_path: Path) -> None:
+    """No single Scope is canonical for an item; the one whose `must_prove` names it is used, if any."""
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin, Scope
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    store.append([item], expected_revision=store.read().revision)
+
+    # No scope at all: `ready` and every row's `unestablished` are `None` --
+    # unknown, not a computed `False` from a scope that does not exist.
+    out = panels.ledger_export(problem, "thm-1")
+    assert out["scope"] is None
+    assert out["scope_candidates"] == []
+    assert out["ready"] is None
+
+    scope = Scope(id="scope-1", must_prove=(item.ref,))
+    store.append([scope], expected_revision=store.read().revision)
+    out = panels.ledger_export(problem, "thm-1")
+    assert out["scope"] == "scope-1"
+    assert out["scope_candidates"] == ["scope-1"]
+    assert out["ready"] is False  # nothing has proved it yet
+
+
+def test_ledger_export_rows_carry_the_record_and_kernel_lanes_with_absent_writeup_fields(tmp_path: Path) -> None:
+    """`writeup.words` and `writeup.reader_agreed` are never derivable: always `None`, never synthesised."""
+    from hardy.workflows.ledger.contracts import (
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Relation,
+        RelationKind,
+        Scope,
+    )
+    from hardy.workflows.ledger.policy import LedgerPolicy, ScopeChangeDecision
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    _write_audit(problem, {
+        "Foo": {"status": "clean", "declarations": [{"name": "bar", "axioms": []}],
+                "forbidden": [], "unapproved": [], "assumed": [], "signature": "sig-1"},
+    })
+    store = LedgerStore(problem)
+    lemma = ProjectItem(id="lemma-1", kind=ProjectItemKind.LEMMA, name="Lemma",
+                        origin=ProjectOrigin.GENERATED_LOCAL)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="bar", origin=ProjectOrigin.TARGET_PAPER)
+    depends = Relation(id="rel-1", kind=RelationKind.DEPENDS_ON, source=item.ref, target=lemma.ref)
+    exposition = ProjectItem(id="exp-1", kind=ProjectItemKind.EXPOSITION, name="Write-up",
+                             origin=ProjectOrigin.HUMAN_AUTHORED)
+    documents = Relation(id="rel-2", kind=RelationKind.DOCUMENTS, source=exposition.ref, target=item.ref)
+    scope = Scope(id="scope-1", must_prove=(item.ref,), allowed_background=(lemma.ref,))
+    # `allowed_background` is an admitted assumption and needs a real policy
+    # authorization reader, matching `test_ledger_policy.py`'s own precedent
+    # (`test_scope_admission_requires_explicit_auth_...`) -- a bare
+    # `LedgerStore.append` refuses an unauthenticated scope change.
+    policy = LedgerPolicy(read_scope_change=lambda old, new: ScopeChangeDecision(
+        before=old.ref if old else None, after=new.ref, policy_digest=policy.digest))
+    store.append([lemma, item, depends, exposition, documents, scope],
+                 expected_revision=store.read().revision, validate=policy.validate)
+
+    out = panels.ledger_export(problem, "thm-1")
+    rows = {row["id"]: row for row in out["rows"]}
+    # `publication_closure` follows `DOCUMENTS` relations too
+    # (`ledger/graph.py:400-401`), so the exposition that documents `thm-1`
+    # is itself a closure row.
+    assert set(rows) == {"thm-1", "lemma-1", "exp-1"}
+
+    top = rows["thm-1"]
+    assert top["name"] == "bar" and top["family"] == "result" and top["kind"] == "theorem"
+    assert top["verdict"] == "verified" and top["tone"] == "accent"
+    assert top["record"]["id"] == "thm-1"
+    assert top["writeup"] == {"documented": True, "words": None, "reader_agreed": None, "assumed": False}
+
+    dep = rows["lemma-1"]
+    assert dep["verdict"] == "unaudited"  # no Lean declaration named `Lemma`
+    assert dep["writeup"] == {"documented": False, "words": None, "reader_agreed": None, "assumed": True}
+
+
+def test_ledger_export_export_command_is_reported_unavailable(tmp_path: Path) -> None:
+    """`/export proof ... --deps --writeups --lean --verdicts --format pdf` does not exist (handlers.py:1529)."""
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    store.append([ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm",
+                              origin=ProjectOrigin.TARGET_PAPER)], expected_revision=store.read().revision)
+    out = panels.ledger_export(problem, "thm-1")
+    assert out["export_command"]["available"] is False
+    assert "proof" in out["export_command"]["reason"]
+
+
+def test_ledger_export_revision_matches_the_ledger(tmp_path: Path) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    store = LedgerStore(problem)
+    store.append([ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm",
+                              origin=ProjectOrigin.TARGET_PAPER)], expected_revision=store.read().revision)
+    out = panels.ledger_export(problem, "thm-1")
+    assert out["revision"] == store.read().revision
+
+
 def test_results_a_name_two_modules_declare_is_ambiguous_not_a_coin_flip(tmp_path: Path) -> None:
     problem = make_problem(tmp_path)
     _write_lean(problem, "A.lean", "theorem bar : True := trivial\n")

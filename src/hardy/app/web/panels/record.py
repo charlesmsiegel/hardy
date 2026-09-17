@@ -13,14 +13,17 @@ from hardy.formal import audit as audit_module
 from hardy.formal.syntax import declarations, module_name
 from hardy.foundation.files import files_under, read_text
 from hardy.workflows.ledger.contracts import (
+    CitationContract,
     Obligation,
     ObligationStatus,
     ProjectItem,
     ProjectItemKind,
     Relation,
+    RelationKind,
     Scope,
 )
 from hardy.workflows.ledger.store import LedgerStore
+from hardy.workflows.ledger.views import LedgerViews
 
 #: How much of a ledger item's statement the graph panel carries per node. The
 #: graph is a map of the project, not a reader for full statements -- `tex/`
@@ -512,3 +515,141 @@ def results(problem: Path) -> dict[str, Any]:
                 })
     theorems.sort(key=lambda row: (row["module"], row["name"]))
     return {"theorems": theorems, "revision": snapshot.revision}
+
+
+#: `LedgerViews.publication` requires a `Scope`, but nothing in the schema
+#: names *the* scope for a bare item id -- a `Scope` is a recorded
+#: project/trust policy (`ledger/contracts.py:247-261`) that several claims
+#: can share and a claim can appear in none, one, or several of. The one
+#: unambiguous link from an item to a scope is `Scope.must_prove`, the set of
+#: roots that scope commits to proving (`ledger/policy.py:257`,
+#: `interactive/project_summary.py:75-76` use the same membership test). When
+#: none names this item, this sentinel stands in only for the scope-blind
+#: half of `publication()` -- `closure`, `obligations`, `stale`,
+#: `required_declarations`, `required_bindings` and `citations_open`, none of
+#: which read `scope` (`ledger/views.py:185-206`) -- so `ledger_export` can
+#: still show a dependency closure. It is never persisted and its
+#: `unestablished`/`ready` are always discarded: `LedgerPolicy._current_scope`
+#: (`ledger/policy.py:304-306`) raises "stale or unrecorded scope" for any
+#: item it is asked about, which `premise_allowed` swallows into an
+#: unconditional `False` (`ledger/policy.py:226-231`) -- a blanket "not
+#: established" that is an artifact of the sentinel, not a finding, and must
+#: never be reported as one.
+_UNSCOPED = Scope(id="unscoped")
+
+
+def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
+    """The Export proof card's dependency closure: one row per closure member.
+
+    Each row reads `name . record . verdict . writeup`, mirroring the design:
+    `record` and `verdict` are `_record_lane`/`_kernel_lane`, the same two
+    lanes `results()` already builds, so a claim reads the same way on both
+    pages. `writeup` is new here and deliberately thin -- of the design's
+    three writeup states (`writeup: N words . reader_agreed`, *not written --
+    statement only*, `approved assumption . no proof`), only two facts are
+    actually recorded anywhere: `documented` (a current `RelationKind.DOCUMENTS`
+    relation targets this item -- `ledger/contracts.py:347`, the same relation
+    `project.py:link()`'s `"documents"` operation writes and
+    `LedgerGraph.publication_closure` already follows, `ledger/graph.py:400-401`)
+    and `assumed` (this item is in the selected scope's `allowed_background`
+    or `allowed_interfaces` -- the same membership test
+    `LedgerPolicy.trust_boundary` uses at `ledger/policy.py:257`). Nothing in
+    the schema records a writeup's word count or whether a reader agreed with
+    it -- `ProjectItem`, `Relation`, `CitationContract` and `EvidenceKind` all
+    lack such a field (`ledger/contracts.py`), and `EvidenceKind.FAITHFULNESS`
+    /`FormalizationGrade.AGREED` (`workflows/contracts.py:122,210`) grade a
+    Lean translation against a statement, not a reader's agreement with prose.
+    So `words` and `reader_agreed` are always `None` here -- reported as
+    genuinely absent, never guessed from `verdict` or from `record`.
+    """
+    snapshot = LedgerStore(problem).read()
+    head = snapshot.head(item_id)
+    if not isinstance(head, ProjectItem):
+        raise ValueError(f"{item_id!r} is not a project item")
+
+    views = LedgerViews(snapshot)
+    scopes = snapshot.current(Scope)
+    candidates = tuple(sorted((s for s in scopes if head.ref in s.must_prove), key=lambda s: s.id))
+    scope = candidates[0] if candidates else None
+    publication = views.publication(head.ref, scope if scope is not None else _UNSCOPED)
+
+    documented = {relation.target.id for relation in views.graph.relations
+                 if relation.kind == RelationKind.DOCUMENTS}
+    assumed = set(scope.allowed_background + scope.allowed_interfaces) if scope is not None else set()
+    unestablished = {ref.id for ref in publication.unestablished} if scope is not None else None
+    stale_ids = {ref.id for artifact in publication.stale for ref in (artifact.record, artifact.expected)}
+
+    state = _session_state(problem)
+    audit_records = state.get("audit")
+    audit_records = audit_records if isinstance(audit_records, dict) else {}
+    modules = _lean_declarations(problem)
+    shared = _shared_names(modules)
+
+    rows = []
+    for ref in publication.closure:
+        record = snapshot.get(ref)
+        if not isinstance(record, ProjectItem):
+            continue
+        kernel = _kernel_lane(record.name, audit_records, shared)
+        rows.append({
+            "id": record.id,
+            "name": record.name,
+            "family": vocabulary.family(record.kind),
+            "kind": record.kind.value,
+            "record": _record_lane(record, scopes),
+            "verdict": kernel["verdict"],
+            "tone": vocabulary.verdict_tone(kernel["verdict"]),
+            "writeup": {
+                "documented": record.id in documented,
+                "words": None,
+                "reader_agreed": None,
+                "assumed": (ref in assumed) if scope is not None else None,
+            },
+            "unestablished": (record.id in unestablished) if scope is not None else None,
+            "stale": record.id in stale_ids,
+        })
+    rows.sort(key=lambda row: row["name"])
+
+    citations = [{
+        "id": citation.id, "use_site": citation.use_site.id, "required_claim": citation.required_claim.id,
+        "paper_id": citation.paper_id, "paper_version": citation.paper_version,
+        "conclusion": citation.conclusion, "status": citation.status.value,
+    } for citation in snapshot.current(CitationContract) if citation.ref in publication.citations_open]
+
+    obligations = [{
+        "id": obligation.id, "kind": obligation.kind.value, "status": obligation.status.value,
+        "tone": vocabulary.obligation_tone(obligation.status), "item": obligation.item.id,
+        "reason": obligation.reason,
+    } for obligation in publication.obligations]
+
+    return {
+        "root": head.id,
+        "name": head.name,
+        "scope": scope.id if scope is not None else None,
+        # More than one scope can commit to proving the same root; nothing in
+        # the schema picks one over another, so every candidate is reported --
+        # not only the one whose closure was actually computed above.
+        "scope_candidates": [s.id for s in candidates],
+        "ready": publication.ready if scope is not None else None,
+        "rows": rows,
+        "obligations": obligations,
+        "citations_open": citations,
+        "required_declarations": [d.id for d in publication.required_declarations],
+        "required_bindings": [b.id for b in publication.required_bindings],
+        # The design's card shows `/export proof X --deps --writeups --lean
+        # --verdicts --format pdf` as a generated command. It does not exist:
+        # `handlers.py:1529` registers `/export` with no `proof` subcommand
+        # and none of those flags -- it writes one HTML account of the whole
+        # session (`handle_export`, `handlers.py:864-894`), not a per-theorem
+        # PDF. A control that cannot work is not offered: this reports why,
+        # in place of the syntax the design invented, so the client renders
+        # the button disabled with the reason visible rather than a command
+        # that would fail the moment someone typed it.
+        "export_command": {
+            "available": False,
+            "reason": ("hardy has no `/export proof` subcommand and no --deps/--writeups/--lean/--verdicts "
+                      "flags (handlers.py:1529); the existing `/export` writes one shareable HTML account "
+                      "of the whole session, not a per-theorem PDF."),
+        },
+        "revision": snapshot.revision,
+    }
