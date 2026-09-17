@@ -55,6 +55,26 @@ _TONE: dict[ObligationStatus, str] = {
     S.RESOLVED: "accent", S.DISMISSED: "muted", S.ABANDONED: "muted",
 }
 
+#: What `⊢ kernel says` verdicts (`hardy.formal.audit.declaration_status`'s
+#: `.kind`, one of `audit.GRADES`) are drawn in. `ambiguous` and `unapproved`
+#: read as `error` -- one names a declaration no verdict can be attributed to,
+#: the other a hole no human sanctioned -- `stale` and `unaudited` are `muted`
+#: because neither is a verdict about anything today, `open` is `warning` for
+#: a proof that is unfinished rather than wrong, and `assumed`/`verified` are
+#: `accent`: both are an established result, one resting on more than the
+#: other. A grade added to `audit.GRADES` without an entry here fails the
+#: total test below rather than falling through to some default tone.
+_VERDICT_TONE: dict[str, str] = {
+    "ambiguous": "error", "unaudited": "muted", "stale": "muted",
+    "unapproved": "error", "open": "warning", "assumed": "accent", "verified": "accent",
+}
+
+#: The two Lean keywords `hardy.formal.syntax.declarations` reports on --
+#: `private` is a modifier of one of these, not a third kind. Both are a
+#: `result` for colouring, the same family a ledger `THEOREM`/`LEMMA` item
+#: gets; nothing else may declare an audited result.
+_DECLARED_FAMILY: dict[str, str] = {"theorem": "result", "lemma": "result"}
+
 
 def family(kind: ProjectItemKind) -> str:
     """Which of the five tints `kind` is drawn in. Colour only; the label prints `kind`."""
@@ -69,3 +89,13 @@ def edge_style(kind: RelationKind) -> str:
 def obligation_tone(status: ObligationStatus) -> str:
     """Which state colour `status` is printed in. The word itself is never changed."""
     return _TONE[status]
+
+
+def verdict_tone(kind: str) -> str:
+    """Which colour a `⊢ kernel says` verdict word is drawn in. Raises on a word `audit.GRADES` does not name."""
+    return _VERDICT_TONE[kind]
+
+
+def declared_family(kind: str) -> str:
+    """Which family a Lean `theorem`/`lemma` keyword colours as. Raises on anything else."""
+    return _DECLARED_FAMILY[kind]

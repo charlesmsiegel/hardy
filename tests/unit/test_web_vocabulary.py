@@ -7,6 +7,7 @@ and nobody would notice. These tests are the noticing.
 import pytest
 
 from hardy.app.web.panels import vocabulary
+from hardy.formal import audit
 from hardy.workflows.ledger.contracts import ObligationStatus, ProjectItemKind, RelationKind
 
 FAMILIES = {"result", "research", "concept", "document", "other"}
@@ -42,3 +43,23 @@ def test_edge_styles_split_dependence_from_commentary() -> None:
     assert vocabulary.edge_style(RelationKind.USES) == "solid"
     assert vocabulary.edge_style(RelationKind.CITES) == "dashed"
     assert vocabulary.edge_style(RelationKind.DOCUMENTS) == "dashed"
+
+
+@pytest.mark.parametrize("kind", list(audit.GRADES))
+def test_every_audit_grade_has_a_verdict_tone(kind: str) -> None:
+    assert vocabulary.verdict_tone(kind) in {"accent", "warning", "error", "muted"}
+
+
+def test_verdict_tone_raises_on_an_unknown_word_rather_than_defaulting() -> None:
+    with pytest.raises(KeyError):
+        vocabulary.verdict_tone("not-a-real-grade")
+
+
+@pytest.mark.parametrize("kind", ["theorem", "lemma"])
+def test_every_declared_kind_has_a_family(kind: str) -> None:
+    assert vocabulary.declared_family(kind) == "result"
+
+
+def test_declared_family_raises_on_an_unknown_keyword_rather_than_defaulting() -> None:
+    with pytest.raises(KeyError):
+        vocabulary.declared_family("def")
