@@ -280,6 +280,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.publications(problem))
         elif name == "checkpoints":
             self._json(200, panels.checkpoints(host.config.layout))
+        elif name == "spend":
+            self._json(200, panels.spend(session))
         elif name == "declarations":
             self._json(200, self.server.declarations.search(
                 query.get("q", [""])[0], int(query.get("limit", ["20"])[0] or 20)))

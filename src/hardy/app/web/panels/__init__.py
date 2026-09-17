@@ -28,6 +28,7 @@ from hardy.app.web.panels.record import (
 )
 from hardy.app.web.panels.runs import run_item, runs
 from hardy.app.web.panels.session import jobs, summary, transcript, tree
+from hardy.app.web.panels.spend import spend
 from hardy.app.web.panels.workspace import (
     CAS_SKIPPED,
     CELL_TEXT_LIMIT,
@@ -45,5 +46,5 @@ __all__ = [
     "CAS_SKIPPED", "CELLS_LIMIT", "CELL_TEXT_LIMIT", "STATEMENT_LIMIT", "TEXT_LIMIT",
     "Declarations", "cas_cells", "checkpoints", "confine", "environment", "file_text", "file_verdicts", "files", "graph", "jobs",
     "ledger_export", "ledger_item", "ledger_list", "pdf_bytes", "publications", "record_counts", "results",
-    "run_item", "runs", "sources", "summary", "transcript", "tree",
+    "run_item", "runs", "sources", "spend", "summary", "transcript", "tree",
 ]
