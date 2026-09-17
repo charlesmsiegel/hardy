@@ -41,6 +41,7 @@ async function call(method, path, body, headers = {}) {
 
 export const get = (path) => call('GET', path);
 export const post = (path, body) => call('POST', path, body ?? {});
+export const put = (path, body) => call('PUT', path, body);
 export const patch = (path, body) => call('PATCH', path, body);
 export const del = (path) => call('DELETE', path);
 export const upload = (file) =>

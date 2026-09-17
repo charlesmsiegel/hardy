@@ -540,6 +540,35 @@ def _model_lane(name: str, reports: Sequence[Any]) -> list[dict[str, Any]] | Non
     ]
 
 
+def _recorded_names(state: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The durable Lean-to-LaTeX correspondences this session has recorded.
+
+    Written by the session's own `record_name` tool, whose description says
+    what it is for: "the durable correspondence between a Lean declaration and
+    its LaTeX label/name". It is the ONLY source for "where is this theorem
+    stated in tex/" -- a `ProjectItem` carries no label, and deriving one from
+    a file name or a theorem name would be the UI asserting a correspondence
+    nobody recorded.
+
+    Served beside the theorem table rather than folded into each row: a
+    correspondence can name a declaration the Lean tree no longer declares,
+    and a row-only view would silently drop it. A reader looking at a writeup
+    label that maps to nothing is looking at exactly the case worth seeing.
+    """
+    recorded = state.get("names")
+    if not isinstance(recorded, list):
+        return []
+    return [
+        {
+            "formal_name": str(entry.get("formal_name", "")),
+            "latex_name": str(entry.get("latex_name", "")),
+            "description": str(entry.get("description", "")),
+        }
+        for entry in recorded
+        if isinstance(entry, dict)
+    ]
+
+
 def results(problem: Path) -> dict[str, Any]:
     """The theorem table: one row per saved Lean declaration, three lanes each.
 
@@ -592,7 +621,7 @@ def results(problem: Path) -> dict[str, Any]:
                     "model": model,
                 })
     theorems.sort(key=lambda row: (row["module"], row["name"]))
-    return {"theorems": theorems, "revision": snapshot.revision}
+    return {"theorems": theorems, "names": _recorded_names(state), "revision": snapshot.revision}
 
 
 #: `LedgerViews.publication` requires a `Scope`, but nothing in the schema
