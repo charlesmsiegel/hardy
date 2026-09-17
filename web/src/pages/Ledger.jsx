@@ -364,7 +364,10 @@ function ExportCard({id, revision}) {
 
   return (
     <div className="wb-card">
-      <Label>{`Export proof · dependency closure · ${data.rows.length} in this project`}</Label>
+      <Label>
+        {`Export proof · dependency closure · ${data.rows.length} in this project · `}
+        read from the ⊢ axioms and § uses relations, not inferred
+      </Label>
 
       {candidateCount === 0 ? (
         <div className="panel__note">
