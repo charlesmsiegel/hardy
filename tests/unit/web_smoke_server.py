@@ -122,13 +122,24 @@ def seed_ledger(problem: Path) -> None:
       `validate_structure` refuses a reference to a version the snapshot does
       not hold. So the bare theorem is committed first and the evidenced
       revision pins that committed version;
-    * three relations of three different stroke families: `depends_on` solid,
-      `poses` dashed, `documents` thin, the last because it is deliberately not
-      in the panel's list;
-    * one stale edge. The lemma is revised in a second transaction, after
-      `depends_on` pinned the version it had, which is exactly the state the
-      panel draws in the error colour: the relation was recorded against a
-      lemma that has since changed and nothing has re-checked it.
+    * four relations, `depends_on` and `formalizes` solid, `poses` and
+      `documents` dashed (`panels/vocabulary.py`'s `_STYLE`,
+      `panels/vocabulary.py:47-58`);
+    * two stale edges, one on each of the two paths `graph()`'s own docstring
+      distinguishes (`panels/record.py:84-92`). `rel-depends` (`depends_on`,
+      theorem to lemma) is stale the *generic* way: `stale_artifacts()`
+      (`ledger/views.py:158-166`) only reports on `documents`/`formalizes`
+      relations, so a `depends_on` edge's `expected_version`/`current_version`
+      are both `None` and the browser falls back to its generic sentence.
+      `rel-formalizes` (`formalizes`, the same theorem to the same lemma) is
+      stale the *real-versions* way: `formalizes` is one of the two kinds
+      `stale_artifacts()` does track, so this edge carries the lemma's exact
+      pinned and current version numbers and the browser names them. Both
+      point at the one lemma revision below -- the lemma is revised once, in a
+      second transaction, after both relations pinned the version it had --
+      so one edit exercises both of the stale-sentence paths a browser-level
+      check can reach; the previous, `depends_on`-only fixture left the
+      real-versions path with no coverage above the Python unit tests.
 
     Imported inside the function, like `library_import` does, so a smoke server
     that is only serving the page does not pull the ledger package in.
@@ -175,12 +186,18 @@ def seed_ledger(problem: Path) -> None:
                     artifact=ArtifactRef(uri="lean/Sylow.lean", digest="0" * 64)),
     )})
     append([theorem])
-    # Pinned after the theorem gained its evidence, so all three start fresh
-    # and exactly one of them is made stale below.
+    # Pinned after the theorem gained its evidence, so all four start fresh
+    # and exactly two of them are made stale below.
     append([
         Relation(id="rel-depends", kind=RelationKind.DEPENDS_ON, source=theorem.ref, target=lemma.ref),
         Relation(id="rel-poses", kind=RelationKind.POSES, source=question.ref, target=theorem.ref),
         Relation(id="rel-documents", kind=RelationKind.DOCUMENTS, source=section.ref, target=theorem.ref),
+        # Same endpoints as `rel-depends`, a different kind: `stale_artifacts()`
+        # tracks `formalizes` but not `depends_on`, so revising the lemma below
+        # makes this edge stale with real version numbers while `rel-depends`
+        # stays on the generic, `expected_version: null` path -- see the
+        # docstring above.
+        Relation(id="rel-formalizes", kind=RelationKind.FORMALIZES, source=theorem.ref, target=lemma.ref),
     ])
     append([lemma.model_copy(update={"statement": "Any two Sylow p-subgroups are conjugate; see Lemma 2."})])
 
