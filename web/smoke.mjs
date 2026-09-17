@@ -480,6 +480,32 @@ async function checkpoints() {
   return body.checkpoints.length;
 }
 
+/** `/api/files`'s four trees (Task 1: `panels.files` -> `{lean, tex, cas, pdf}`
+ *  of `Row`s, not bare path strings).
+ *
+ *  The fixture writes no `lean/`, `tex/` or `cas/` file to disk and no
+ *  `writeup.pdf` -- the same reason `results()` above expects zero theorem
+ *  rows -- so every tree here is an honest empty list too, and there is no
+ *  row to inspect `bytes`/`modified`/`verdict` on (`test_web_panels.py`
+ *  covers those against a real file). What this does check end to end: the
+ *  documented `{lean, tex, cas, pdf}` shape still answers, and computing
+ *  Lean verdicts (`record.file_verdicts`) over a problem with no `lean/`
+ *  directory at all does not throw.
+ */
+async function filesTree() {
+  const response = await fetch(`${base}/api/files`);
+  check(response.status === 200, `GET /api/files answered ${response.status}`);
+  const body = JSON.parse(await response.text());
+  for (const tree of ['lean', 'tex', 'cas', 'pdf']) {
+    check(Array.isArray(body[tree]), `/api/files's ${tree} is ${JSON.stringify(body[tree])}, not an array`);
+    check(
+      body[tree].length === 0,
+      `/api/files reports ${body[tree].length} ${tree} rows, though the fixture writes none to disk`,
+    );
+  }
+  return Object.values(body).reduce((sum, rows) => sum + rows.length, 0);
+}
+
 /** Stage one `.lean` file the way the drop zone does, and see the panel list it. */
 async function staged(token) {
   const name = `smoke-${Date.now()}.lean`;
@@ -584,6 +610,7 @@ async function main() {
   await runItem();
   const pubItems = await publications(ledgerRows.ids);
   const checkpointCount = await checkpoints();
+  const fileRows = await filesTree();
 
   const name = await staged(token);
 
@@ -594,6 +621,7 @@ async function main() {
       `${ledgerRows.count} ledger rows, ${resultRows} result theorems, ` +
       `${itemVersions} versions on lemma-conjugacy, ${exportRows} export rows, ` +
       `${runCount} runs, ${pubItems} publication items, ${checkpointCount} checkpoints, ` +
+      `${fileRows} file rows, ` +
       `staged ${name}, reply "hello", interrupted turn replies "one two" once)`,
   );
 }
