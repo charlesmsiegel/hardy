@@ -313,7 +313,7 @@ function CellText({label, shown}) {
   );
 }
 
-function Cell({cell}) {
+function Cell({cell, onRaise}) {
   return (
     <div className="wb-files__cell" style={cell.live ? undefined : {opacity: 0.6}}>
       <div className="wb-files__cell-head">
@@ -326,6 +326,16 @@ function Cell({cell}) {
         <span className="wb-files__cell-meta">
           {cell.author} {'·'} {cell.duration_ms} ms
         </span>
+        {cell.path && quotable(cell.path) ? (
+          <button
+            type="button"
+            className="wb-editor__button"
+            onClick={() => onRaise(`/cas run "${cell.path}"`)}
+            title="Fills the composer with the command. A cell run is a session-changing action, so it is reviewed before it runs."
+          >
+            Re-run
+          </button>
+        ) : null}
       </div>
       {cell.restart_note ? <div className="panel__note">{cell.restart_note}</div> : null}
       <CellText label="source" shown={cell.source} />
@@ -337,6 +347,19 @@ function Cell({cell}) {
 }
 
 function CasViewer({path, revision}) {
+  const {setDraft} = useSession();
+  const [, goTo] = useHash();
+  const [composed, setComposed] = useState('');
+  // The same route the Import buttons take, and for the same reason: a cell
+  // run is a session-changing action whose outcome is genuinely unknown until
+  // it runs, so it is raised into the composer for review rather than sent.
+  // `/cas run <path>` and `/cas <expr>` are both real
+  // (`app/tui/handlers.py`'s `handle_cas` and its argument parser); neither
+  // is safe in flight, and the composer is where a refusal would be shown.
+  const raise = (command) => {
+    setDraft(command);
+    goTo({page: 'chat'});
+  };
   const cellsPanel = usePanel('/api/cas/cells', revision);
   if (cellsPanel.error) return <p className="panel__error">{cellsPanel.error}</p>;
   if (!cellsPanel.data) return <p className="panel__note">Reading the journal...</p>;
@@ -362,12 +385,40 @@ function CasViewer({path, revision}) {
         </div>
       ) : null}
       {cells.length === 0 ? <div className="panel__note">no cells have run yet</div> : null}
+      <div className="wb-rail__panel">
+        <Label>new cell</Label>
+        <div className="wb-rail__scratch">
+          <input
+            className="wb-rail__input"
+            placeholder="Order(SymmetricGroup(4));"
+            spellCheck={false}
+            value={composed}
+            onChange={(event) => setComposed(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && composed.trim()) raise(`/cas ${composed.trim()}`);
+            }}
+          />
+          <button
+            type="button"
+            className="wb-editor__button"
+            disabled={!composed.trim()}
+            onClick={() => raise(`/cas ${composed.trim()}`)}
+          >
+            Compose
+          </button>
+        </div>
+        <div className="panel__note">
+          Fills the composer with <span style={{color: 'var(--fg)'}}>/cas {'‹expr›'}</span> and opens Chat.
+          The kernel is the one the model is also using, so a cell is refused while a turn is running --
+          the composer is where that refusal appears.
+        </div>
+      </div>
       {segments.map((seg) => (
         <div key={seg} className="wb-files__notebook-segment">
           <Label>{seg === segment ? `live · segment ${seg}` : `history · segment ${seg} · not live state`}</Label>
           <div className="wb-files__notebook-cells">
             {bySegment.get(seg).map((cell) => (
-              <Cell key={`${cell.segment}-${cell.seq}`} cell={cell} />
+              <Cell key={`${cell.segment}-${cell.seq}`} cell={cell} onRaise={raise} />
             ))}
           </div>
         </div>

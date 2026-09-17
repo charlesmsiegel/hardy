@@ -27,6 +27,7 @@ import Library from './Library.jsx';
 import Publications from './Publications.jsx';
 import Results from './Results.jsx';
 import Runs from './Runs.jsx';
+import Status from './Status.jsx';
 import Tree from './Tree.jsx';
 
 export const PAGES = {
@@ -41,6 +42,7 @@ export const PAGES = {
   publications: Publications,
   checkpoints: Checkpoints,
   files: Files,
+  status: Status,
   environment: Environment,
   help: Help,
 };

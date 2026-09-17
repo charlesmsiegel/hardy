@@ -27,19 +27,16 @@ import Peek from './Peek.jsx';
 import TabBar from './TabBar.jsx';
 import TopBar from './TopBar.jsx';
 
-// The tabs and top-bar links the app itself offers that have no page in
-// `PAGES` yet -- `TopBar.jsx`'s `status`. A route the app asked for but has
-// not built is a different thing from a route nothing ever asked for (a
-// stray hash, a typo, a link that used to exist): the first is honestly
-// "not built yet", the second is honestly "not a route at all", and
-// `pageContent` below tells them apart rather than speaking for both.
-// `results` (Task 8), `runs` (Task 11) and `publications`/`checkpoints`
-// (Task 12) have landed and are no longer in this list.
-const PLANNED_NOT_BUILT = ['status'];
-
-function notBuilt(page) {
-  return <Empty title="not built yet" line={`The ${page} page has not landed yet.`} />;
-}
+// Every tab and top-bar link the app offers now has a page in `PAGES`, so the
+// only route that can miss is one nothing ever asked for -- a stray hash, a
+// typo, a link that used to exist. That is honestly "not a route at all", and
+// `unknownRoute` says exactly that.
+//
+// There used to be a `PLANNED_NOT_BUILT` list beside this and a `notBuilt`
+// fallback that said "the <name> page has not landed yet". It emptied when
+// Status landed, and it is gone rather than left empty: a fallback that can
+// no longer fire is a claim waiting to be made about the wrong input, and
+// `#/xyzzy` asserting that a page was planned was issue #170's third item.
 
 function unknownRoute(page) {
   return <Empty title="unknown route" line={`#/${page} is not a route Hardy has.`} />;
@@ -97,9 +94,7 @@ export default function Shell() {
     ? null
     : Page
       ? <Page arg={route.arg} onPeek={openPeek} />
-      : PLANNED_NOT_BUILT.includes(route.page)
-        ? notBuilt(route.page)
-        : unknownRoute(route.page);
+      : unknownRoute(route.page);
 
   const showAside = dock === 'pinned' && !isChat && !isTree;
   const bodyCols = showAside ? 'minmax(0,1fr) 380px' : 'minmax(0,1fr)';
