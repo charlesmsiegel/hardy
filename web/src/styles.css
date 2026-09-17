@@ -1856,11 +1856,6 @@ input {
   padding: 2px 8px;
 }
 
-.wb-ledger__toggle-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
 .wb-ledger__toggle-btn--on {
   border-bottom-color: var(--accent);
   color: var(--accent);
@@ -1930,33 +1925,110 @@ input {
   color: var(--fg);
 }
 
-.wb-ledger__drawer {
+/* -- Ledger list + item (Task 9) --------------------------------------------
+ * The `minmax(0,1.1fr) minmax(0,1fr)` split `.wb-jobs`/`.wb-results` already
+ * use, for the same reason: the left side (the list table, or the graph)
+ * wants the extra room, the right (the item page) is prose and grids. A
+ * click on a list row, a graph node, or an incoming `§ record says` link all
+ * land on the same right-hand pane -- there is no separate drawer any more. */
+
+.wb-ledger__split {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 1100px) {
+  .wb-ledger__split {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+.wb-ledger__left,
+.wb-ledger__right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wb-ledger__filters {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  font: 11px var(--mono);
+  gap: 8px;
+}
+
+.wb-ledger__filter {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 4px;
+}
+
+.wb-ledger__filter select {
   background: var(--panel);
-  border: 1px solid var(--accent);
-  border-radius: var(--r2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  font: inherit;
+  padding: 1px 6px;
+}
+
+.wb-ledger__bool-pill {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 1px 8px;
+}
+
+.wb-ledger__bool-pill--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-ledger__kind-badge {
+  border-radius: 4px;
+  display: inline-block;
+  font: 11px var(--mono);
+  padding: 0 6px;
+}
+
+.wb-ledger__item {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 12px;
 }
 
-.wb-ledger__drawer-head {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
+.wb-ledger__version-link {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: 11px var(--mono);
+  padding: 0 2px;
+  text-decoration: underline;
 }
 
-.wb-ledger__statement {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  font: 12px var(--mono);
-  margin: 0;
-  max-height: 30vh;
-  overflow: auto;
-  padding: 8px 10px;
-  white-space: pre-wrap;
+.wb-ledger__version-link--on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.wb-ledger__version-row {
+  align-items: baseline;
+  cursor: pointer;
+  display: grid;
+  gap: 2px 10px;
+  grid-template-columns: 32px auto 1fr auto;
+}
+
+.wb-ledger__version-row:hover {
+  color: var(--fg) !important;
 }
 
 /* -- Files, read-only (Task 13c) -------------------------------------------
