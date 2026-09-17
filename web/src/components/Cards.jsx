@@ -18,12 +18,15 @@
 import {useEffect, useRef} from 'react';
 import Facts from './Facts.jsx';
 
-function Shell({eyebrow, escNote, onKeyDown, children}) {
+// `Shell` took an `escNote` and rendered it in the eyebrow. `ConfirmCard` is
+// its only caller and has never passed one -- it puts the note in its own
+// footnote instead -- so the branch could not fire and `.card-shell__esc` had
+// no rule left in `styles.css` to style it with. Issue #170's first item.
+function Shell({eyebrow, onKeyDown, children}) {
   return (
     <section className="card-shell" onKeyDown={onKeyDown}>
       <div className="card-shell__eyebrow">
         <span>{eyebrow}</span>
-        {escNote ? <span className="card-shell__esc">{escNote}</span> : null}
       </div>
       {children}
     </section>

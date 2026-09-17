@@ -31,6 +31,25 @@
 //   or a control that is disabled because the action it would take does
 //   not exist in this shipment.
 //
+// The shape issue #173 was filed about, because the three above do not
+// settle it on their own: a *settled lookup that found nothing*. The backend
+// performed a real, complete lookup -- `results()` matching a Lean
+// declaration against the ledger, `Editor`'s buffer against the verdict of
+// the file on disk -- and the answer is that there is no such thing to
+// report. That is `na`, not `zero` and not `unreported`:
+//
+// - `zero` renders the glyph `0`, which is a count, and the missing thing
+//   here is a statement, a reference or a verdict -- not a quantity. `0`
+//   beside "§ says" would be mechanically wrong.
+// - `unreported` says the backend was asked and gave no figure, which
+//   implies the answer is indeterminate and might arrive later. It will not:
+//   the lookup ran to completion and the answer is that nothing matches.
+//
+// So: no ledger entry for a theorem, no recorded LaTeX correspondence for a
+// declaration, a saved verdict that does not describe the text now in the
+// editor. All `na`, all with the reason in words beside them -- the glyph
+// alone says "does not apply" without saying why, and why is the useful half.
+//
 // Two more rules that keep pages consistent with each other, not just with
 // themselves:
 //

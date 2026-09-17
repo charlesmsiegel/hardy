@@ -146,7 +146,18 @@ const PANEL_ENDPOINTS = [
   '/api/tree', '/api/sources', '/api/graph', '/api/models', '/api/cas/cells',
   '/api/environment', '/api/record', '/api/chats',
   '/api/results', '/api/ledger', '/api/runs', '/api/publications', '/api/checkpoints',
+  '/api/spend', '/api/declarations', '/api/declaration',
 ];
+
+/** One GET, checked for JSON rather than for the SPA fallback the static
+ *  handler answers an unknown route with. */
+async function json(path) {
+  const response = await fetch(`${base}${path}`);
+  check(response.status === 200, `GET ${path} answered ${response.status}`);
+  const type = response.headers.get('content-type') ?? '';
+  check(type.startsWith('application/json'), `GET ${path} answered ${type}, not JSON`);
+  return JSON.parse(await response.text());
+}
 
 async function panels() {
   for (const path of PANEL_ENDPOINTS) {
@@ -326,9 +337,41 @@ async function results(ledgerRevision) {
   check(response.status === 200, `GET /api/results answered ${response.status}`);
   const body = JSON.parse(await response.text());
   check(Array.isArray(body.theorems), '/api/results did not answer a theorems array');
+  // The fixture writes a lean/ tree declaring two theorems (Shipment 3 needed
+  // one for the editor to open). A row exists per declaration the tree makes,
+  // whether or not anything has audited it -- the tree is the one artifact
+  // that cannot lie about what is saved.
   check(
-    body.theorems.length === 0,
-    `/api/results reports ${body.theorems.length} theorems, though the fixture writes no lean/ tree`,
+    body.theorems.length === 2,
+    `/api/results reports ${body.theorems.length} theorems; the fixture's lean/ tree declares two`,
+  );
+  for (const theorem of body.theorems) {
+    // The three lanes must stay three. A theorem nothing has audited and
+    // nothing has claimed carries a kernel lane that says so and a record
+    // lane that is absent -- never the kernel's answer wearing the record's
+    // label.
+    check(theorem.kernel && typeof theorem.kernel === 'object', `${theorem.name} has no kernel lane`);
+    check(
+      theorem.record === null,
+      `${theorem.name} reports a § record lane, though no ledger item names it`,
+    );
+    check(
+      theorem.model === null,
+      `${theorem.name} reports a model lane, though nothing reported on it`,
+    );
+  }
+  // The Lean-to-LaTeX correspondences the session recorded. They are the only
+  // source for "where is this stated in tex/", and the editor's rail reads
+  // them; a row for a label nobody recorded would be the UI inventing one.
+  check(Array.isArray(body.names), '/api/results did not answer a names array');
+  check(
+    body.names.some((entry) => entry.formal_name === 'order_30_not_simple'
+      && entry.latex_name === 'thm:order30'),
+    'the recorded Lean-to-LaTeX correspondence the fixture writes is missing from /api/results',
+  );
+  check(
+    !body.names.some((entry) => entry.formal_name === 'order_56_not_simple'),
+    'a correspondence appeared for a theorem the fixture never recorded one for',
   );
   check(Number.isInteger(body.revision), `/api/results's revision is ${JSON.stringify(body.revision)}, not an integer`);
   check(
@@ -498,11 +541,35 @@ async function filesTree() {
   const body = JSON.parse(await response.text());
   for (const tree of ['lean', 'tex', 'cas', 'pdf']) {
     check(Array.isArray(body[tree]), `/api/files's ${tree} is ${JSON.stringify(body[tree])}, not an array`);
-    check(
-      body[tree].length === 0,
-      `/api/files reports ${body[tree].length} ${tree} rows, though the fixture writes none to disk`,
-    );
   }
+  // The fixture writes one Lean file and one TeX file, and nothing under
+  // cas/ or build/. Both halves matter: a tree with contents proves the row
+  // shape, and an empty one proves an absence is still an empty list rather
+  // than a missing key.
+  check(body.lean.length === 1, `/api/files reports ${body.lean.length} lean rows; the fixture writes one`);
+  check(body.tex.length === 1, `/api/files reports ${body.tex.length} tex rows; the fixture writes one`);
+  check(body.cas.length === 0 && body.pdf.length === 0,
+    'the fixture writes nothing under cas/ or build/, so those trees must be empty');
+
+  const [lean] = body.lean;
+  check(typeof lean.path === 'string', 'a file row has no path');
+  check(Number.isInteger(lean.bytes) && lean.bytes > 0,
+    `the lean row's size is ${JSON.stringify(lean.bytes)}; the file is not empty`);
+  check(typeof lean.modified === 'number', "the lean row carries no mtime");
+  // The verdict is the file's own, read from the stored audit -- never
+  // inferred from the fact that the file parsed. Nothing has audited this
+  // fixture, so `unaudited` is the only correct answer, and `verified` here
+  // would mean the page grades a file by its existence.
+  check(lean.verdict && lean.verdict.kind === 'unaudited',
+    `the lean row's verdict is ${JSON.stringify(lean.verdict)}; nothing has audited it, so it is unaudited`);
+  check(Array.isArray(lean.declares) && lean.declares.length === 2,
+    `the lean row declares ${JSON.stringify(lean.declares)}; the fixture's file declares two theorems`);
+
+  // A TeX file has no kernel verdict at all -- not `unaudited`, which is a
+  // statement about a declaration nothing graded. `null` is the field not
+  // applying.
+  check(body.tex[0].verdict === null, 'a tex row carries a kernel verdict, which cannot apply to it');
+
   return Object.values(body).reduce((sum, rows) => sum + rows.length, 0);
 }
 
@@ -556,6 +623,129 @@ async function turn(token, text) {
   await new Promise((resolve) => setTimeout(resolve, 200));
   await send(token, text);
   return running;
+}
+
+/**
+ * The write path, end to end: save an edited Lean file through the session,
+ * confirm the bytes landed, and confirm the save left a transcript line
+ * nobody typed.
+ *
+ * This is the one endpoint in the client that changes the workspace, so it is
+ * checked against what it actually did rather than against its own 200.
+ */
+async function editorSave(token) {
+  const path = 'lean/Sylow.lean';
+  const marked = `import Mathlib\n\ntheorem smoked_by_the_editor : True := trivial\n`;
+  // The only assertion in this file that changes the workspace, so it puts
+  // back what it found. Without that, a second run against the same server
+  // sees a tree the first run rewrote -- and the `/api/results` check above,
+  // which counts the fixture's two theorems, fails on a file that now
+  // declares one. A smoke that only passes once is not a smoke.
+  const original = (await json(`/api/file?path=${encodeURIComponent(path)}`)).text;
+  const before = await json('/api/transcript');
+  const saved = await fetch(`${base}/api/file`, {
+    method: 'PUT',
+    headers: {'X-Hardy-Token': token, 'Content-Type': 'application/json',
+              Origin: base, Host: `127.0.0.1:${port}`},
+    body: JSON.stringify({path, source: marked}),
+  });
+  check(saved.status === 200, `PUT /api/file answered ${saved.status}`);
+  const answer = await saved.json();
+  check(answer.ok === true, `the save was refused: ${answer.output}`);
+  check(typeof answer.output === 'string' && answer.output.length > 0,
+    'the save answered no sentence at all; a refusal would have nothing to print');
+
+  const read = await json(`/api/file?path=${encodeURIComponent(path)}`);
+  check(read.text.includes('smoked_by_the_editor'),
+    'the file on disk does not carry what the editor saved');
+
+  const after = await json('/api/transcript');
+  check(after.length === before.length + 1,
+    `a save must leave exactly one transcript line; ${after.length - before.length} appeared`);
+  const note = after[after.length - 1];
+  // `panels.session.transcript` renders the record's `author` field as
+  // `role`, so this is the wire shape the page actually reads rather than the
+  // one the session writes.
+  check(note.role === 'hardy',
+    'the save\'s transcript line is not attributed to hardy, so it reads as something the user typed');
+  check(note.starts_turn === false,
+    'the save\'s line claims to start a turn, which would make every later turn number wrong');
+
+  const restored = await fetch(`${base}/api/file`, {
+    method: 'PUT',
+    headers: {'X-Hardy-Token': token, 'Content-Type': 'application/json',
+              Origin: base, Host: `127.0.0.1:${port}`},
+    body: JSON.stringify({path, source: original}),
+  });
+  check(restored.status === 200, `restoring ${path} answered ${restored.status}`);
+  return path;
+}
+
+/** A check writes nothing. That is its entire contract. */
+async function editorCheck(token) {
+  const path = 'lean/Sylow.lean';
+  const before = await json(`/api/file?path=${encodeURIComponent(path)}`);
+  const response = await fetch(`${base}/api/check`, {
+    method: 'POST',
+    headers: {'X-Hardy-Token': token, 'Content-Type': 'application/json',
+              Origin: base, Host: `127.0.0.1:${port}`},
+    body: JSON.stringify({path, source: '#check Nat.succ\n'}),
+  });
+  check(response.status === 200, `POST /api/check answered ${response.status}`);
+  const after = await json(`/api/file?path=${encodeURIComponent(path)}`);
+  check(after.text === before.text, 'a check changed the file on disk; it must write nothing');
+}
+
+/** A path outside the problem is refused before it reaches the session. */
+async function editorConfinement(token) {
+  const response = await fetch(`${base}/api/file`, {
+    method: 'PUT',
+    headers: {'X-Hardy-Token': token, 'Content-Type': 'application/json',
+              Origin: base, Host: `127.0.0.1:${port}`},
+    body: JSON.stringify({path: '../../escaped.lean', source: 'x'}),
+  });
+  check(response.status === 400, `a traversal was answered ${response.status}, not 400`);
+}
+
+/**
+ * The declaration index. The smoke fixture configures no Lean project, so the
+ * honest answer is an empty result and `found: false` -- never a claim that
+ * the index was read and holds nothing, and never a guessed source path.
+ */
+async function declarations() {
+  const search = await json('/api/declarations?q=Sylow');
+  check(Array.isArray(search.results), '/api/declarations answered no results array');
+  check(search.results.length === 0,
+    'the fixture configures no lean project, so a search cannot have found anything');
+  const one = await json('/api/declaration?name=Sylow.card_modEq_one');
+  check(one.found === false, 'a declaration was found in a project that has no Lean');
+  check(one.source_path == null || one.excerpt == null,
+    'a not-found declaration carries a source path, which would be a guess');
+}
+
+/**
+ * Spend. The two things that matter: a figure nobody reported is null and not
+ * 0, and the scopes nothing measures say so rather than being left out.
+ */
+async function spend() {
+  const data = await json('/api/spend');
+  check(Array.isArray(data.scopes) && data.scopes.length >= 2, '/api/spend answered no scopes');
+  const session = data.scopes.find((scope) => scope.id === 'session');
+  check(session, '/api/spend has no session scope');
+  check(session.figures.cost_usd === null,
+    'the fake backend reports no cost, so cost_usd must be null -- 0 would be a measurement');
+  const unmeasured = data.scopes.filter((scope) => scope.measured === false);
+  check(unmeasured.length >= 2,
+    'the unmeasured scopes are missing; the page would show two cards where five were drawn');
+  for (const scope of unmeasured) {
+    check(Object.values(scope.figures).every((value) => value === null),
+      `${scope.id} claims a figure while saying it is not measured`);
+    check(typeof scope.note === 'string' && scope.note.length > 0,
+      `${scope.id} says it is not measured and does not say why`);
+  }
+  check(Array.isArray(data.unmeasured) && data.unmeasured.length >= 2,
+    '/api/spend does not name what it cannot measure');
+  return data.scopes.length;
 }
 
 async function main() {
@@ -612,6 +802,15 @@ async function main() {
   const checkpointCount = await checkpoints();
   const fileRows = await filesTree();
 
+  const fileFacts = fileRows;
+
+  // Shipment 3 and 4: the write path, the declaration index and spend.
+  await editorCheck(token);
+  await editorConfinement(token);
+  await editorSave(token);
+  await declarations();
+  const spendScopes = await spend();
+
   const name = await staged(token);
 
   console.log(
@@ -621,7 +820,8 @@ async function main() {
       `${ledgerRows.count} ledger rows, ${resultRows} result theorems, ` +
       `${itemVersions} versions on lemma-conjugacy, ${exportRows} export rows, ` +
       `${runCount} runs, ${pubItems} publication items, ${checkpointCount} checkpoints, ` +
-      `${fileRows} file rows, ` +
+      `${fileFacts} file rows, ${spendScopes} spend scopes, ` +
+      `editor saved and checked through the session, ` +
       `staged ${name}, reply "hello", interrupted turn replies "one two" once)`,
   );
 }
