@@ -660,65 +660,8 @@ input {
   justify-content: space-between;
 }
 
-.card-shell__esc {
-  white-space: nowrap;
-}
-
-.card-shell__probes {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 8px 10px;
-}
-
 .card-shell__title {
   font-weight: 600;
-}
-
-.card-shell__statement {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.card-shell__pre {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  font: 12px var(--mono);
-  margin: 0;
-  padding: 6px 8px;
-  white-space: pre-wrap;
-}
-
-.card-shell__options {
-  display: flex;
-  flex-direction: column;
-  font-size: 13px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.card-shell__option {
-  border-radius: var(--r);
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  padding: 3px 6px;
-}
-
-.card-shell__option--default {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.card-shell__option-number {
-  color: var(--muted);
-  font-family: var(--mono);
-  width: 1.4em;
-}
-
-.card-shell__option-detail {
-  color: var(--muted);
 }
 
 .card-shell__footnote {
@@ -729,17 +672,6 @@ input {
 .card-shell__actions {
   display: flex;
   gap: 8px;
-}
-
-.card-shell__input {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  box-sizing: border-box;
-  color: var(--fg);
-  font: 13px var(--mono);
-  padding: 6px 8px;
-  width: 100%;
 }
 
 /* workbench shell ---------------------------------------------------------

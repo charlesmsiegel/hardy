@@ -15,3 +15,17 @@ evals/** -text
 # file's raw bytes and the changelog head binds that digest, so a CRLF
 # checkout would make a published version verify clean nowhere.
 corpus/** -text
+# `npm run build` (Vite) reads `web/index.html` as its template and emits
+# `src/hardy/app/web/static/index.html`. On Windows, with the ordinary
+# `core.autocrlf=true` and no rule here, the *source* template checks out
+# CRLF; Vite's HTML transform then re-serialises most lines with its own
+# line ending while leaving a `\r` from the source embedded ahead of it, so
+# the built file comes out with a mix of LF, CRLF and, on at least one line,
+# `\r\r\n` -- a sequence git's own CRLF normalisation cannot fully collapse,
+# so the output stayed dirty even once forced to `eol=lf` on its own. CI
+# (`ubuntu-latest`) never saw any of this. Forcing the *source* template to
+# LF removes the stray `\r` at the root, and forcing the built file to LF
+# too is the belt the issue asked for -- together a rebuild reproduces
+# exactly what is committed, on every platform.
+web/index.html text eol=lf
+src/hardy/app/web/static/index.html text eol=lf
