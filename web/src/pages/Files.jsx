@@ -8,11 +8,7 @@
 // drawn disabled") -- so the viewer below is a highlighted `<pre>`/notebook/
 // `<object>`, never a `<textarea>`.
 //
-// `/api/files` answers `{lean, tex, cas, pdf}` as paths only
-// (`panels/workspace.py:files`) -- no size, no mtime, no verdict word. Every
-// row therefore shows `<Absent kind="unreported" />` in those three columns;
-// this is not a placeholder pending a later pass, it is what the backend
-// actually said. The tree *header* lines carry real data where it exists:
+// The tree *header* lines carry real data where it exists:
 // `/api/environment`'s `lean`/`mathlib`/`latex`/`tectonic`/`cas` probes
 // (`wordForCheck`/`toneForCheck`, the same pair `Environment.jsx` and
 // `Home.jsx` already use) are a fact about this machine's toolchain, not a
@@ -110,6 +106,45 @@ function bytes(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** A row's `modified` POSIX timestamp, formatted -- the same idiom
+ *  `pages/Home.jsx`'s own `when()` uses for a chat's `created`/
+ *  `last_activity`. `row.modified` is `null` only when `_row`'s `stat()`
+ *  itself failed (`panels/workspace.py:_row`), which this never reaches:
+ *  callers check that first and render `Absent kind="unreported"` instead. */
+function when(ts) {
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** A row's three meta columns: size, mtime, kernel verdict. Shared by
+ *  `TreeSection` and `PdfSection` so the two trees stay pixel-for-pixel
+ *  consistent. `bytes`/`modified` are `Absent kind="unreported"` only when
+ *  the backend's own `stat()` failed (`_row`) -- the file still exists, the
+ *  figure just could not be read. `verdict` is `Absent kind="na"` for every
+ *  row `panels.files` does not attach one to: every non-`lean` tree, and a
+ *  `lean` file that declares nothing (`record.file_verdicts`'s own
+ *  docstring -- a file with no names has nothing for a verdict to be
+ *  about). `row.verdict.tone` is used directly on the pill, never through
+ *  `Pill.jsx`'s `toneForVerdict`: that helper answers a different,
+ *  file-level word list (`kernel_verified`/`accepted`/...) that shares no
+ *  members with `declaration_status`'s per-declaration grades this value
+ *  actually is (`ambiguous`/`unaudited`/`stale`/`unapproved`/`open`/
+ *  `assumed`/`verified`) -- `Results.jsx` documents the same trap. */
+function RowMeta({row}) {
+  return (
+    <>
+      <span className="wb-files__row-meta">{row.bytes == null ? <Absent kind="unreported" /> : bytes(row.bytes)}</span>
+      <span className="wb-files__row-meta">
+        {row.modified == null ? <Absent kind="unreported" /> : when(row.modified)}
+      </span>
+      <span className="wb-files__row-meta">
+        {row.verdict ? <Pill tone={row.verdict.tone}>{row.verdict.kind}</Pill> : <Absent kind="na" />}
+      </span>
+    </>
+  );
+}
+
 /** `lean/Sylow/Basic.lean` -> `Sylow/Basic.lean`, indented by depth -- the
  *  same convention the old three-column client's `panels/Files.jsx` used. */
 function tail(path, treeKey) {
@@ -125,14 +160,14 @@ function tail(path, treeKey) {
 const quotable = (value) => !value.includes('"');
 
 function kindOf(path, data) {
-  if (data.lean.includes(path)) return 'lean';
-  if (data.tex.includes(path)) return 'tex';
-  if (data.cas.includes(path)) return 'cas';
-  if (data.pdf.includes(path)) return 'pdf';
+  if (data.lean.some((row) => row.path === path)) return 'lean';
+  if (data.tex.some((row) => row.path === path)) return 'tex';
+  if (data.cas.some((row) => row.path === path)) return 'cas';
+  if (data.pdf.some((row) => row.path === path)) return 'pdf';
   return null;
 }
 
-function TreeSection({def: treeDef, count, paths, envChecks, selected, onPick}) {
+function TreeSection({def: treeDef, count, rows, envChecks, selected, onPick}) {
   return (
     <div className="wb-files__tree">
       <div className="wb-files__tree-head">
@@ -146,21 +181,19 @@ function TreeSection({def: treeDef, count, paths, envChecks, selected, onPick}) 
         {' · '}
         {count} file{count === 1 ? '' : 's'}
       </div>
-      {paths.length ? (
+      {rows.length ? (
         <div className="wb-files__rows">
-          {paths.map((path) => {
-            const {stripped, depth} = tail(path, treeDef.key);
+          {rows.map((row) => {
+            const {stripped, depth} = tail(row.path, treeDef.key);
             return (
               <div
-                key={path}
-                className={path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
+                key={row.path}
+                className={row.path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
                 style={{paddingLeft: depth * 12}}
-                onClick={() => onPick(path)}
+                onClick={() => onPick(row.path)}
               >
                 <span className="wb-files__row-name">{stripped}</span>
-                <span className="wb-files__row-meta"><Absent kind="unreported" /></span>
-                <span className="wb-files__row-meta"><Absent kind="unreported" /></span>
-                <span className="wb-files__row-meta"><Absent kind="unreported" /></span>
+                <RowMeta row={row} />
               </div>
             );
           })}
@@ -172,22 +205,20 @@ function TreeSection({def: treeDef, count, paths, envChecks, selected, onPick}) 
   );
 }
 
-function PdfSection({count, paths, selected, onPick}) {
+function PdfSection({count, rows, selected, onPick}) {
   return (
     <div className="wb-files__tree">
       <div className="wb-files__tree-head">build/ {'·'} pdf {'·'} {count} file{count === 1 ? '' : 's'}</div>
-      {paths.length ? (
+      {rows.length ? (
         <div className="wb-files__rows">
-          {paths.map((path) => (
+          {rows.map((row) => (
             <div
-              key={path}
-              className={path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
-              onClick={() => onPick(path)}
+              key={row.path}
+              className={row.path === selected ? 'wb-files__row wb-files__row--on' : 'wb-files__row'}
+              onClick={() => onPick(row.path)}
             >
-              <span className="wb-files__row-name">{path}</span>
-              <span className="wb-files__row-meta"><Absent kind="unreported" /></span>
-              <span className="wb-files__row-meta"><Absent kind="unreported" /></span>
-              <span className="wb-files__row-meta"><Absent kind="unreported" /></span>
+              <span className="wb-files__row-name">{row.path}</span>
+              <RowMeta row={row} />
             </div>
           ))}
         </div>
@@ -530,13 +561,13 @@ export default function Files({arg}) {
               key={treeDef.key}
               def={treeDef}
               count={data[treeDef.key].length}
-              paths={data[treeDef.key]}
+              rows={data[treeDef.key]}
               envChecks={checks}
               selected={selectedPath}
               onPick={pick}
             />
           ))}
-          <PdfSection count={data.pdf.length} paths={data.pdf} selected={selectedPath} onPick={pick} />
+          <PdfSection count={data.pdf.length} rows={data.pdf} selected={selectedPath} onPick={pick} />
 
           <div className="wb-files__uploads">
             <Label>{`Uploads · staged ${staged.length}`}</Label>
