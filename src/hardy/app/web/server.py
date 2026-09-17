@@ -33,8 +33,11 @@ from hardy.app.web.host import Busy, WebHost
 from hardy.foundation.files import LayoutError
 from hardy.workflows.layout import validate_slug
 
-#: A JSON request body past this is refused; the page sends lines of text and
-#: chat titles, never documents. Files arrive at `/api/upload` instead, under
+#: A JSON request body past this is refused; the page sends lines of text,
+#: chat titles, and one edited Lean or TeX source at a time, never documents.
+#: A source this large would not be readable in the editor either --
+#: `workspace.TEXT_LIMIT`, which decides what `/api/file` will serve back, is
+#: the same figure. Uploads arrive at `/api/upload` instead, under
 #: `uploads.MAX_UPLOAD`.
 MAX_BODY = 1 << 20
 #: An oversized body is still read and discarded up to this much before the
@@ -71,6 +74,13 @@ class WebServer(ThreadingHTTPServer):
         self.host = host
         self.static = static
         self.token = secrets.token_urlsafe(32)
+        # One declaration index for the server's life, over the project the
+        # host was configured with. Constructed, not read: the scan it will
+        # eventually do walks every source file the installed packages ship,
+        # and it is started by the first request that needs it rather than by
+        # startup, so opening the browser stays instant for a session that
+        # never asks about a Mathlib name.
+        self.declarations = panels.Declarations(getattr(host.config, "lean_project", None))
         super().__init__(("127.0.0.1", port), Handler)
 
 
@@ -270,6 +280,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.publications(problem))
         elif name == "checkpoints":
             self._json(200, panels.checkpoints(host.config.layout))
+        elif name == "declarations":
+            self._json(200, self.server.declarations.search(
+                query.get("q", [""])[0], int(query.get("limit", ["20"])[0] or 20)))
+        elif name == "declaration":
+            self._json(200, self.server.declarations.lookup(query.get("name", [""])[0]))
         elif name == "chats":
             self._json(200, chats.overview(problem))
         else:
@@ -380,12 +395,58 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/projects/") and path.endswith("/chats"):
                 slug = path[len("/api/projects/"):-len("/chats")]
                 self._json(200, chats.create_chat(self._project(slug), str(data.get("title", ""))).as_dict())
+            elif path == "/api/check":
+                # Checks nothing into the tree: `check_authored` runs Lean or
+                # LaTeX over a candidate source and throws the elaboration
+                # away. Still held exclusive by the host, because it
+                # elaborates against the same workspace a turn may be saving
+                # into.
+                relative = str(data.get("path", ""))
+                panels.confine(self._problem(), relative)
+                self._json(200, host.check_file(relative, str(data.get("source", ""))))
             elif path == "/api/library":
                 problem = self._problem()
                 result = host.run_exclusive(lambda: uploads.library_import(
                     problem, str(data.get("name", "")), title=str(data.get("title", "")),
                     author=str(data.get("author", "")), intent=str(data.get("intent", ""))))
                 self._json(200, result)
+            else:
+                self._json(404, {"error": "unknown action"})
+        except Busy as error:
+            self._json(409, {"error": str(error)})
+        except RuntimeError:
+            self._json(503, {"error": GONE})
+        except (ValueError, LayoutError, KeyError, TypeError) as error:
+            self._json(400, {"error": str(error) or "bad request"})
+        except OSError as error:
+            self._json(500, {"error": str(error)})
+
+    def do_PUT(self) -> None:
+        """The one write into `lean/` and `tex/` a browser may make.
+
+        The trust boundary this crosses is described in
+        `docs/design/trust-boundary.md`: the bytes do not go to disk from
+        here. They go to the session's own save, which checks them with Lean
+        or LaTeX, rebuilds every file that imports the one saved, runs the
+        result and documentation gates, audits the axioms and publishes the
+        verdict -- so a file that arrives through the editor has been through
+        exactly what a file the model saved went through.
+
+        The path is confined here as well as in the workspace. `safe_relative`
+        would refuse a traversal too, but this is where a path stops being
+        arbitrary text from a browser, and a second gate costs one call.
+        """
+        if not self._allowed(mutation=True):
+            return
+        path = unquote(urlsplit(self.path).path)
+        data = self._json_body()
+        if data is None:
+            return
+        try:
+            if path == "/api/file":
+                relative = str(data.get("path", ""))
+                panels.confine(self._problem(), relative)
+                self._json(200, self.server.host.save_file(relative, str(data.get("source", ""))))
             else:
                 self._json(404, {"error": "unknown action"})
         except Busy as error:

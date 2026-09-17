@@ -77,6 +77,40 @@ Controlled:
   single-user and local: the sidecar stops a copy of authored work from being
   *mistaken* for an import, not a user from *deciding* to misrecord their own
   project.
+- **The browser editor writes through the session's save, never to disk.**
+  The workbench client can edit a file under `lean/` or `tex/` and save it.
+  `PUT /api/file` (`app/web/server.py`) does not write the bytes: it confines
+  the path, then hands them to `MathematicsSession.save_authored`
+  (`workflows/interactive/session.py`), which is the same save the model's
+  `save_lean`/`save_latex` tools reach. So an edited file is checked by Lean
+  or compiled by LaTeX, every file that imports it is rebuilt and the save is
+  refused whole if any of them breaks, the result and documentation gates
+  run, the axioms are audited and the verdict is published -- a file that
+  arrives through the editor has been through exactly the kernel work a file
+  the model saved went through, and the record cannot tell them apart because
+  there is nothing to tell apart.
+
+  Three differences from a model's save, all deliberate. The path is confined
+  twice, at the boundary (`panels.workspace.confine`, which refuses `..`, an
+  absolute path, and a symlink at any component) and again in the workspace
+  (`safe_relative`), because the boundary is where a path stops being
+  arbitrary text from a browser. The save is refused while a turn is in
+  flight -- `WebHost.run_exclusive` raises `Busy`, answered as 409 -- so an
+  edit cannot interleave with a turn's own writes. And the model's
+  save-streak brake does not apply: that brake refuses a fourth consecutive
+  failed save of a path until `check_lean` passes, and its sentence is
+  addressed to a caller in a loop, cleared at the start of each model turn. A
+  person's saves belong to no turn, so counted there they would accumulate
+  for the session and lock a file until a model happened to take one. The
+  editor therefore calls the unbraked save, which skips the loop-breaker and
+  nothing else.
+
+  Every save writes one transcript line, `author="hardy"` and
+  `starts_turn: False`, naming the file and whether the save went through.
+  `POST /api/check` runs the same check and saves nothing, so it writes no
+  line: a check that leaves nothing behind is not an event the record has to
+  hold.
+
 - **Bounded child processes.** `foundation/process.py` validates a request
   before launching anything, holds a wall deadline, bounds captured stdout and
   stderr, and classifies termination so that an output overflow stays distinct

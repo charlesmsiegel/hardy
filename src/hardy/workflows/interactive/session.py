@@ -4886,6 +4886,57 @@ class MathematicsSession:
     def record_abandonment(self, reason: str) -> None:
         return self.turns.record_abandonment(reason, self._turn_persistence())
 
+    def save_authored(self, path: str, source: str) -> ToolResult:
+        """Save one workspace file a person wrote, on the model's own terms.
+
+        Same check, same shadow build of every file that imports it, same
+        result and documentation gates, same axiom audit, same
+        `publish_audit`: the work is judged by what it is, not by who typed
+        it. A file that reaches disk through the browser's editor has been
+        through exactly the kernel work a file the model saved went through.
+
+        The one difference is the save-streak brake. `_save_lean` refuses a
+        fourth consecutive failed save of a path until `check_lean` passes on
+        the exact source, and that sentence is addressed to a caller in a loop
+        -- "Hardy will not elaborate another until...". `begin_turn` clears the
+        streak at the start of each model turn; a person's saves belong to no
+        turn, so counted there they would accumulate for the whole session and
+        lock a file until a model happened to take one. So this calls the
+        unbraked save directly. It deliberately does NOT call `begin_turn` to
+        sidestep the brake: that would clear the model's own streak mid-turn,
+        weakening a loop-breaker for the caller it is actually about.
+
+        One transcript line, `author="hardy"` and `starts_turn=False`, so the
+        record can say the file changed and how it went without the line
+        reading as something the person typed into the composer.
+        """
+        suffix = Path(path).suffix.lower()
+        if suffix == ".lean":
+            result = self._save_lean_unbraked(path, source)
+        elif suffix == ".tex":
+            result = self._save_latex(path, source)
+        else:
+            return ToolResult(False, f"only .lean and .tex files are saved through the editor: {path!r}")
+        self.record_hardy_note(
+            f"Edited {path} in the browser and saved it: {'saved' if result.ok else 'refused'}."
+        )
+        return result
+
+    def check_authored(self, path: str, source: str) -> ToolResult:
+        """Check one candidate file a person wrote, saving nothing.
+
+        No transcript line, unlike `save_authored`: a check writes nothing,
+        changes nothing and leaves nothing behind, so there is no event for
+        the record to hold. The scratch `#check` box and a compile-without-
+        saving both come through here.
+        """
+        suffix = Path(path).suffix.lower()
+        if suffix == ".lean":
+            return self._check_lean(path, source)
+        if suffix == ".tex":
+            return self._check_latex(path, source)
+        return ToolResult(False, f"only .lean and .tex files are checked through the editor: {path!r}")
+
     def record_hardy_note(self, text: str) -> None:
         """Write one transcript line for something that happened to this
         session without anyone typing it -- a browser project switch is the

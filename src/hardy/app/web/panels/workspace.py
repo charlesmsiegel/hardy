@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from hardy.app.web.panels.record import file_verdicts
 from hardy.foundation.files import resolve_named_child
 from hardy.literature.bibliography import Bibliography, BibliographyError
 from hardy.literature.sources.seeds import SeedStore
@@ -47,30 +48,69 @@ def confine(problem: Path, relative: str) -> Path:
     return current
 
 
-def files(problem: Path) -> dict[str, list[str]]:
-    """Every lean/tex source and every compiled PDF this problem currently has."""
-    out: dict[str, list[str]] = {"lean": [], "tex": [], "cas": [], "pdf": []}
+def _row(problem: Path, path: Path) -> dict[str, Any]:
+    """One file's name, size and mtime. The verdict is added by `files`.
+
+    `stat()` can raise between the walk and the read -- a save landing in
+    another thread, a checkpoint restore -- and a row that cannot be measured
+    reports `None`, which the client renders *not reported*. It is never
+    dropped: the file exists, and a list that silently omits it would be the
+    UI claiming an absence it did not observe.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return {"path": path.relative_to(problem).as_posix(), "bytes": None,
+                "modified": None, "verdict": None, "declares": []}
+    return {"path": path.relative_to(problem).as_posix(), "bytes": info.st_size,
+            "modified": info.st_mtime, "verdict": None, "declares": []}
+
+
+def files(problem: Path) -> dict[str, list[dict[str, Any]]]:
+    """Every lean/tex source and every compiled PDF this problem currently has, one row each.
+
+    Every tree answers `bytes`/`modified` off the file itself (`_row`).
+    `verdict`/`declares` stay at `_row`'s defaults (`None`/`[]`) for every
+    tree but `lean`, where `record.file_verdicts` is merged in below -- a tex
+    source, a cas cell file or a compiled PDF has no kernel to hold a verdict
+    about it, so `verdict` there is `None` because the question does not
+    apply, not because nobody answered it.
+    """
+    out: dict[str, list[dict[str, Any]]] = {"lean": [], "tex": [], "cas": [], "pdf": []}
     for tree_name in SERVED_TREES:
         root = problem / tree_name
         if root.is_dir():
             out[tree_name] = sorted(
-                path.relative_to(problem).as_posix()
-                for path in root.rglob("*")
-                if path.is_file() and not path.is_symlink() and ".build" not in path.parts
-                and not (tree_name == "cas" and (path.relative_to(root).parts[0] in CAS_SKIPPED))
+                (
+                    _row(problem, path)
+                    for path in root.rglob("*")
+                    if path.is_file() and not path.is_symlink() and ".build" not in path.parts
+                    and not (tree_name == "cas" and (path.relative_to(root).parts[0] in CAS_SKIPPED))
+                ),
+                key=lambda row: row["path"],
             )
     top = problem / "writeup.pdf"
     if top.is_file() and not top.is_symlink():
-        out["pdf"].append("writeup.pdf")
+        out["pdf"].append(_row(problem, top))
     publications = problem / "publications"
     if publications.is_dir():
         out["pdf"].extend(
             sorted(
-                path.relative_to(problem).as_posix()
-                for path in publications.glob("*/writeup.pdf")
-                if path.is_file() and not path.is_symlink()
+                (
+                    _row(problem, path)
+                    for path in publications.glob("*/writeup.pdf")
+                    if path.is_file() and not path.is_symlink()
+                ),
+                key=lambda row: row["path"],
             )
         )
+    if out["lean"]:
+        verdicts = file_verdicts(problem)
+        for row in out["lean"]:
+            found = verdicts.get(row["path"])
+            if found is not None:
+                row["verdict"] = found["verdict"]
+                row["declares"] = found["declares"]
     return out
 
 
@@ -138,7 +178,7 @@ def cas_cells(problem: Path) -> dict[str, Any]:
 
 def pdf_bytes(problem: Path, relative: str) -> bytes:
     """One compiled PDF's bytes, refusing anything `files` did not list as one."""
-    if relative not in files(problem)["pdf"]:
+    if relative not in {row["path"] for row in files(problem)["pdf"]}:
         raise ValueError("not a compiled PDF of this problem")
     path = confine(problem, relative)
     if path.stat().st_size > PDF_LIMIT:

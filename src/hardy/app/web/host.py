@@ -532,6 +532,43 @@ class WebHost:
         finally:
             self._call(end)
 
+    def save_file(self, path: str, source: str) -> dict[str, Any]:
+        """One editor save, held exclusive, reported as the session reported it.
+
+        `run_exclusive` raises `Busy` while a turn is in flight, which the
+        boundary turns into 409 -- the same answer `/api/open` and
+        `/api/library` give, so a browser that tried to save mid-turn learns
+        what it would have learned from any other mutation.
+
+        The session's own sentence comes back verbatim in `output`. A save can
+        be refused for a dozen reasons, each with a sentence written for a
+        reader; a generic "save failed" would throw all of them away.
+        """
+        def go() -> dict[str, Any]:
+            save = getattr(self.session, "save_authored", None)
+            if save is None:
+                raise RuntimeError("this session cannot save files")
+            result = save(path, source)
+            return {"ok": result.ok, "output": result.output, "path": path}
+
+        return self.run_exclusive(go)
+
+    def check_file(self, path: str, source: str) -> dict[str, Any]:
+        """One check that saves nothing, held exclusive for the same reason.
+
+        Exclusive even though it writes nothing to the workspace: a check
+        elaborates Lean against the tree the turn in flight may be saving
+        into, and two of them racing is the same hazard a save is.
+        """
+        def go() -> dict[str, Any]:
+            check = getattr(self.session, "check_authored", None)
+            if check is None:
+                raise RuntimeError("this session cannot check files")
+            result = check(path, source)
+            return {"ok": result.ok, "output": result.output, "path": path}
+
+        return self.run_exclusive(go)
+
     # -- input -----------------------------------------------------------
 
     def submit(self, text: str) -> dict[str, Any]:

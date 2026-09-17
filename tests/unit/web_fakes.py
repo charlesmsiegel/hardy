@@ -10,6 +10,7 @@ from typing import Any
 
 from hardy.agents.contracts import TurnEvent
 from hardy.agents.usage import Usage
+from hardy.foundation.values import ToolResult
 from hardy.app import config as configuration
 from hardy.workflows import layout
 from hardy.workflows.delegation.contracts import DelegationState
@@ -109,6 +110,11 @@ class FakeSession:
         #: Seconds to sleep before each scripted event, so a test can hold a
         #: turn open long enough to submit a second line against it.
         self.delay = 0.0
+        #: Every `save_authored` / `check_authored` call, for assertions.
+        self.saved: list[tuple[str, str]] = []
+        self.checked: list[tuple[str, str]] = []
+        #: A refusal sentence to answer every save with, or None to save.
+        self.refuse_saves: str | None = None
 
     def job_results_owed(self) -> bool:
         return self.owed
@@ -175,6 +181,41 @@ class FakeSession:
         }
         event["entry_id"] = identify(event)
         self._history.append(event)
+
+    def save_authored(self, path: str, source: str) -> ToolResult:
+        """The editor's save, minus Lean.
+
+        Mirrors `MathematicsSession.save_authored`'s contract rather than its
+        work: it refuses anything that is not `.lean` or `.tex`, it writes one
+        transcript note whichever way the save went, and it answers a
+        `ToolResult` whose `output` is the sentence a caller must print
+        verbatim. `refuse_saves` lets a test drive the refusal path, because
+        the refusal is the half of this the client is most likely to get
+        wrong.
+        """
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".lean", ".tex"}:
+            return ToolResult(False, f"only .lean and .tex files are saved through the editor: {path!r}")
+        if self.refuse_saves is not None:
+            result = ToolResult(False, self.refuse_saves)
+        else:
+            target = self.workspace / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source.rstrip() + "\n", encoding="utf-8")
+            result = ToolResult(True, f"saved {path}")
+        self.saved.append((path, source))
+        self.record_hardy_note(
+            f"Edited {path} in the browser and saved it: {'saved' if result.ok else 'refused'}."
+        )
+        return result
+
+    def check_authored(self, path: str, source: str) -> ToolResult:
+        """The editor's check. Writes nothing -- not the file, not a note."""
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".lean", ".tex"}:
+            return ToolResult(False, f"only .lean and .tex files are checked through the editor: {path!r}")
+        self.checked.append((path, source))
+        return ToolResult(True, f"checked {path}: no errors")
 
     def close(self) -> None:
         self.closed = True

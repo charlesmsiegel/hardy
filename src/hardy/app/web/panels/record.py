@@ -319,7 +319,7 @@ def _session_state(problem: Path) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _lean_declarations(problem: Path) -> dict[str, dict[str, tuple[str, ...]]]:
+def _lean_declarations(problem: Path) -> dict[str, dict[str, Any]]:
     """Every module's `declarations()` scan, straight off the files on disk.
 
     This is what `save_lean` itself scans before ever asking Lean anything,
@@ -327,17 +327,25 @@ def _lean_declarations(problem: Path) -> dict[str, dict[str, tuple[str, ...]]]:
     every declaration a save could have registered, whether or not an audit
     of it has ever landed in `session.json`. Nothing here runs Lean or reads
     a build cache; a module the tree does not have is simply absent.
+
+    Each entry also carries `"path"`, the file's location relative to
+    `problem` (`"lean/Sylow.lean"`) -- the same string `workspace.files()`
+    puts in a row's own `path`, so `file_verdicts` below can key its answer
+    by it without either side recomputing the other's join of `LEAN_DIR` and
+    the module's relative path. `results()` and `ledger_export()`, the two
+    pre-existing callers, read only `found["theorem"]`/`"lemma"`/`"private"`
+    and are unaffected by the extra key.
     """
     root = problem / LEAN_DIR
     if not root.is_dir():
         return {}
     return {
-        module_name(relative): declarations(read_text(root, relative))
+        module_name(relative): {**declarations(read_text(root, relative)), "path": f"{LEAN_DIR}/{relative}"}
         for relative in files_under(root, ".lean")
     }
 
 
-def _shared_names(modules: Mapping[str, dict[str, tuple[str, ...]]]) -> dict[str, tuple[str, ...]]:
+def _shared_names(modules: Mapping[str, dict[str, Any]]) -> dict[str, tuple[str, ...]]:
     """Names more than one module declares -- the one thing `declaration_status` cannot grade."""
     occurrences: dict[str, list[str]] = {}
     for module, found in modules.items():
@@ -346,6 +354,45 @@ def _shared_names(modules: Mapping[str, dict[str, tuple[str, ...]]]) -> dict[str
                 continue
             occurrences.setdefault(name, []).append(module)
     return {name: tuple(mods) for name, mods in occurrences.items() if len(mods) > 1}
+
+
+def file_verdicts(problem: Path) -> dict[str, dict[str, Any]]:
+    """The worst grade among each lean/ file's own declarations, by path.
+
+    Worst, not best: a file holding one verified theorem and one resting on a
+    hole is not a verified file, and a header that said so would be the page
+    making a claim the audit does not support. `GRADES` is ordered worst
+    first, so the minimum index is the answer.
+
+    A file that declares nothing has no verdict at all -- `None`, not
+    `unaudited`. `unaudited` says "no stored verdict names it", which is a
+    statement about a name; a file with no names has nothing for a verdict to
+    be about.
+    """
+    modules = _lean_declarations(problem)
+    shared = _shared_names(modules)
+    state = _session_state(problem)
+    audit_records = state.get("audit")
+    audit_records = audit_records if isinstance(audit_records, dict) else {}
+    out: dict[str, dict[str, Any]] = {}
+    for info in modules.values():
+        names: list[str] = []
+        for declared_kind in ("theorem", "lemma"):
+            for name in info[declared_kind]:
+                if name in info["private"]:
+                    continue
+                names.append(name)
+        if not names:
+            out[info["path"]] = {"verdict": None, "declares": []}
+            continue
+        statuses = [audit_module.declaration_status(name, audit_records, shared=shared) for name in names]
+        worst = min(statuses, key=lambda status: audit_module.GRADES.index(status.kind))
+        out[info["path"]] = {
+            "verdict": {"kind": worst.kind, "tone": vocabulary.verdict_tone(worst.kind),
+                        "detail": str(worst)},
+            "declares": names,
+        }
+    return out
 
 
 def _kernel_lane(

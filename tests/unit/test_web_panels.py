@@ -11,6 +11,7 @@ import pytest
 from web_fakes import FakeSession, make_config, make_problem
 
 from hardy.app.web import panels
+from hardy.app.web.panels import vocabulary
 from hardy.formal.contracts import EnvironmentIdentity, FormalStatus, VerificationEvidence
 from hardy.workflows.contracts import (
     DocumentStatus,
@@ -103,15 +104,32 @@ def test_files_and_confinement(tmp_path: Path) -> None:
     (problem / "publications" / "v1").mkdir(parents=True)
     (problem / "publications" / "v1" / "writeup.pdf").write_bytes(b"%PDF-1.4 fake2")
     (problem / "cas" / "examples").mkdir(parents=True)
-    (problem / "cas" / "examples" / "first.py").write_text("1 + 1\n", encoding="utf-8")
+    # `newline=""`: a plain `write_text` translates `\n` to the platform
+    # newline on write (`\r\n` on Windows), and this test reads the file back
+    # through `file_text` and compares it byte-for-byte -- a pre-existing
+    # failure on Windows this task's touch of this test also fixes.
+    (problem / "cas" / "examples" / "first.py").write_text("1 + 1\n", encoding="utf-8", newline="")
     (problem / "cas" / "cells.jsonl").write_text("{}\n", encoding="utf-8")
     (problem / "cas" / "cells.jsonl.lock").write_text("", encoding="utf-8")
     (problem / "cas" / "replay").mkdir()
     (problem / "cas" / "replay" / "scratch.py").write_text("x\n", encoding="utf-8")
     out = panels.files(problem)
-    assert out == {"lean": ["lean/Sylow.lean"], "tex": ["tex/writeup.tex"],
-                   "cas": ["cas/cells.jsonl", "cas/examples/first.py"],
-                   "pdf": ["writeup.pdf", "publications/v1/writeup.pdf"]}
+    assert {tree: [row["path"] for row in rows] for tree, rows in out.items()} == {
+        "lean": ["lean/Sylow.lean"], "tex": ["tex/writeup.tex"],
+        "cas": ["cas/cells.jsonl", "cas/examples/first.py"],
+        "pdf": ["writeup.pdf", "publications/v1/writeup.pdf"],
+    }
+    lean_row = out["lean"][0]
+    assert lean_row["bytes"] == (problem / "lean" / "Sylow.lean").stat().st_size
+    assert lean_row["modified"] is not None
+    assert lean_row["declares"] == ["t"]
+    assert lean_row["verdict"] == {
+        "kind": "unaudited", "tone": vocabulary.verdict_tone("unaudited"),
+        "detail": "not audited -- no stored verdict names it",
+    }
+    assert out["tex"][0]["verdict"] is None
+    assert out["cas"][0]["verdict"] is None
+    assert out["pdf"][0]["verdict"] is None
     assert panels.file_text(problem, "lean/Sylow.lean")["text"].startswith("theorem")
     assert panels.file_text(problem, "cas/examples/first.py")["text"] == "1 + 1\n"
     with pytest.raises(ValueError):
@@ -123,6 +141,44 @@ def test_files_and_confinement(tmp_path: Path) -> None:
         panels.file_text(problem, "session.json")     # only lean/, tex/ and PDFs are served
     with pytest.raises(ValueError):
         panels.pdf_bytes(problem, "lean/Sylow.lean")
+
+
+def test_file_rows_carry_size_and_mtime(tmp_path: Path) -> None:
+    problem = tmp_path / "p"
+    (problem / "lean").mkdir(parents=True)
+    (problem / "lean" / "Main.lean").write_text("import Mathlib\n", encoding="utf-8")
+    rows = panels.files(problem)["lean"]
+    assert [row["path"] for row in rows] == ["lean/Main.lean"]
+    # Not `len("import Mathlib\n")`: `Path.write_text` translates `\n` to the
+    # platform's own newline on write (`\r\n` on Windows), so the byte count
+    # on disk is a platform fact, not the length of the Python string that
+    # produced it. Checked against `stat()` on the same file `_row` reads.
+    assert rows[0]["bytes"] == (problem / "lean" / "Main.lean").stat().st_size
+    assert rows[0]["modified"] is not None
+
+
+def test_a_lean_file_with_no_stored_audit_is_unaudited_not_verified(tmp_path: Path) -> None:
+    """The verdict comes from `session.json`'s audit map, never from the file.
+
+    A file that exists and declares a theorem, with nothing having audited it,
+    is `unaudited` -- which `audit.UNESTABLISHED` says is not a verdict about
+    anything. It must not read as verified merely because the file parsed.
+    """
+    problem = tmp_path / "p"
+    (problem / "lean").mkdir(parents=True)
+    (problem / "lean" / "Main.lean").write_text(
+        "import Mathlib\n\ntheorem foo : True := trivial\n", encoding="utf-8"
+    )
+    row = panels.files(problem)["lean"][0]
+    assert row["declares"] == ["foo"]
+    assert row["verdict"]["kind"] == "unaudited"
+
+
+def test_a_tex_file_has_no_verdict_field_rather_than_an_empty_one(tmp_path: Path) -> None:
+    problem = tmp_path / "p"
+    (problem / "tex").mkdir(parents=True)
+    (problem / "tex" / "writeup.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+    assert panels.files(problem)["tex"][0]["verdict"] is None
 
 
 def test_cas_cells_reads_the_journal_as_cells(tmp_path: Path) -> None:
