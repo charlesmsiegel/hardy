@@ -287,6 +287,25 @@ def test_ledger_item_route_serves_a_real_item_and_refuses_an_unknown_id(server) 
     assert status == 400 and "unknown record identity: nope" in json.loads(body)["error"]
 
 
+def test_ledger_export_route_serves_a_real_item_and_refuses_an_unknown_id(server) -> None:
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = server.host.config.layout.problem
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="Thm", origin=ProjectOrigin.TARGET_PAPER)
+    store.append([item], expected_revision=store.read().revision)
+
+    status, ctype, body = _call(server, "GET", "/api/ledger/export?id=thm-1", token=False)
+    assert status == 200 and "application/json" in ctype
+    payload = json.loads(body)
+    assert payload["root"] == "thm-1" and payload["scope"] is None and payload["ready"] is None
+    assert payload["export_command"]["available"] is False
+
+    status, _, body = _call(server, "GET", "/api/ledger/export?id=nope", token=False)
+    assert status == 400 and "unknown record identity: nope" in json.loads(body)["error"]
+
+
 def test_environment_route_is_wired_without_probing_the_host(
     server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
