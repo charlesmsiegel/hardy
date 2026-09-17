@@ -180,7 +180,17 @@ def test_overview_reports_none_when_there_is_no_transcript_at_all(tmp_path: Path
     assert row["last_activity"] is None
 
 
-def test_overview_survives_a_damaged_line(tmp_path: Path) -> None:
+def test_overview_does_not_report_an_exact_count_for_a_damaged_transcript(tmp_path: Path) -> None:
+    """A damaged line makes the count unreliable, not merely smaller.
+
+    Skipping the bad line and returning the count of what did parse would
+    print an undercount that looks exactly like a genuine turn count --
+    issue #169. Nothing distinguishes "2 turns, and a line we could not
+    read" from "2 turns, full stop" once the number is on the page, so a
+    transcript that is not fully readable reports `None` (not reported),
+    the same as one that cannot be opened at all, rather than a number a
+    reader would take as exact.
+    """
     problem = tmp_path / "sylow"
     problem.mkdir(parents=True)
     (problem / "transcript.jsonl").write_text(
@@ -189,7 +199,7 @@ def test_overview_survives_a_damaged_line(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     row = {r["id"]: r for r in chats.overview(problem)}["main"]
-    assert row["turns"] == 2 and row["last_activity"] == 2.0
+    assert row["turns"] is None and row["last_activity"] is None
 
 
 def test_overview_reads_a_named_chats_transcript_not_the_main_one(tmp_path: Path) -> None:

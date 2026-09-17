@@ -148,10 +148,13 @@ export function toneForState(word) {
 
 /** A `DelegationState` value's tone -- see `DELEGATION_TONE` above for the
  * evidence and reasoning behind each of the ten. The smoke server's
- * `FakeDelegations` fixture (`tests/unit/web_fakes.py`) answers `"running"`,
- * which is not a `DelegationState` value; it falls through to `muted` here
- * like anything else this table does not name, which is correct -- the
- * fixture is wrong, not this function. */
+ * `FakeDelegations` fixture (`tests/unit/web_fakes.py`) briefly answered
+ * `"running"`, which is not a `DelegationState` value -- it fell through to
+ * `muted` here like anything else this table does not name, which was
+ * correct (the fixture was wrong, not this function) but was mistaken for
+ * evidence of the real vocabulary while this page was built (issue #166).
+ * The fixture now constructs its state from `DelegationState.ACTIVE`
+ * itself, so `active`'s real `accent` tone is what a reader now sees. */
 export function toneForDelegation(word) {
   return DELEGATION_TONE[word] ?? 'muted';
 }

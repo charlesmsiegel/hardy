@@ -48,8 +48,11 @@ def test_tree_and_jobs(tmp_path: Path) -> None:
     tree = panels.tree(session)
     assert tree["active_leaf"] == tree["entries"][-1]["entry_id"]
     jobs = panels.jobs(session)
-    assert jobs["counts"] == {"running": 1}
-    assert jobs["delegations"] == [{"id": "d1", "state": "running", "objective": "prove lemma", "parent": "root"}]
+    # "active", not "running" -- `DelegationState` (contracts.py:25-35) has no
+    # `running` state; `FakeDelegations` (issue #166) now answers the real
+    # enum member instead of a string literal that could drift from it.
+    assert jobs["counts"] == {"active": 1}
+    assert jobs["delegations"] == [{"id": "d1", "state": "active", "objective": "prove lemma", "parent": "root"}]
     assert jobs["attention"] == [{"id": "att-1", "summary": "needs a decision", "actionable": True}]
     assert "cost_usd" in jobs["usage"]
 
@@ -129,7 +132,7 @@ def test_sources_reads_bibliography_and_seeds(tmp_path: Path) -> None:
     from hardy.literature.sources.seeds import SeedStore, new_seed
 
     problem = make_problem(tmp_path)
-    assert panels.sources(problem) == {"bibliography": [], "seeds": []}
+    assert panels.sources(problem) == {"bibliography": [], "bibliography_readable": True, "seeds": []}
 
     record = PaperRecord(
         arxiv_id="math.DG/0211159v1", title="The entropy formula for the Ricci flow",
@@ -150,10 +153,19 @@ def test_sources_reads_bibliography_and_seeds(tmp_path: Path) -> None:
     assert out["seeds"] == [{"id": seed.id, "artifact": artifact_sha, "priority": 2, "intent": "background reading"}]
 
 
-def test_sources_degrades_on_a_corrupt_bibliography(tmp_path: Path) -> None:
+def test_sources_marks_a_corrupt_bibliography_unreadable_not_empty(tmp_path: Path) -> None:
+    """Issue #169: a corrupt `bibliography.json` must not read as an empty one.
+
+    A missing file and a genuinely empty bibliography both come back as
+    `[]`, `bibliography_readable=True` -- a fresh project has honestly cited
+    nothing. A file that exists but will not parse is a different claim: the
+    library may hold anything, and `bibliography_readable=False` is what
+    lets the client print "not reported" instead of "Library is empty ·
+    0 sources", a count nothing actually measured.
+    """
     problem = make_problem(tmp_path)
     (problem / "bibliography.json").write_text("not json", encoding="utf-8")
-    assert panels.sources(problem) == {"bibliography": [], "seeds": []}
+    assert panels.sources(problem) == {"bibliography": [], "bibliography_readable": False, "seeds": []}
 
 
 def test_file_text_truncates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
