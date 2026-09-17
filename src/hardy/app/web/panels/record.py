@@ -523,11 +523,11 @@ def results(problem: Path) -> dict[str, Any]:
 #: can share and a claim can appear in none, one, or several of. The one
 #: unambiguous link from an item to a scope is `Scope.must_prove`, the set of
 #: roots that scope commits to proving (`ledger/policy.py:257`,
-#: `interactive/project_summary.py:75-76` use the same membership test). When
+#: `interactive/project_summary.py:66,71` use the same membership test). When
 #: none names this item, this sentinel stands in only for the scope-blind
 #: half of `publication()` -- `closure`, `obligations`, `stale`,
 #: `required_declarations`, `required_bindings` and `citations_open`, none of
-#: which read `scope` (`ledger/views.py:185-206`) -- so `ledger_export` can
+#: which read `scope` (`ledger/views.py:185-204`) -- so `ledger_export` can
 #: still show a dependency closure. It is never persisted and its
 #: `unestablished`/`ready` are always discarded: `LedgerPolicy._current_scope`
 #: (`ledger/policy.py:304-306`) raises "stale or unrecorded scope" for any
@@ -557,8 +557,9 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
     the schema records a writeup's word count or whether a reader agreed with
     it -- `ProjectItem`, `Relation`, `CitationContract` and `EvidenceKind` all
     lack such a field (`ledger/contracts.py`), and `EvidenceKind.FAITHFULNESS`
-    /`FormalizationGrade.AGREED` (`workflows/contracts.py:122,210`) grade a
-    Lean translation against a statement, not a reader's agreement with prose.
+    /`FaithfulnessOutcome.AGREED`/`FaithfulnessVerdict.agreed`
+    (`workflows/contracts.py:122,210`) grade a Lean translation against a
+    statement, not a reader's agreement with prose.
     So `words` and `reader_agreed` are always `None` here -- reported as
     genuinely absent, never guessed from `verdict` or from `record`.
     """
