@@ -157,6 +157,8 @@ def link_claims(problem: Path, owners: ev.ProjectOwners, table: dict, records: d
             semantics += [("lean_declaration", entry["declaration"]), ("lean_file", entry["file"])]
             if entry.get("field"):
                 semantics.append(("lean_field", entry["field"]))
+            if entry.get("note"):
+                semantics.append(("formalization", entry["note"]))
         else:
             semantics.append(("formalization", entry["note"]))
         revised = item.model_copy(update={"semantics": tuple(semantics)})
