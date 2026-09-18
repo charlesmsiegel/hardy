@@ -715,3 +715,15 @@ def test_a_typed_project_command_registers_where_it_landed(tmp_path: Path) -> No
     finally:
         host.stop()
 
+
+
+def test_create_refuses_a_forgotten_project_rather_than_calling_it_foreign(tmp_path: Path) -> None:
+    """A recorded problem that is not registered is added back, never created over."""
+    host = _host(tmp_path)
+    try:
+        make_problem(tmp_path / "projects", "frobenius")
+        with pytest.raises(ValueError, match="already a Hardy project"):
+            host.create_project("frobenius")
+        assert host.opener.calls == []
+    finally:
+        host.stop()

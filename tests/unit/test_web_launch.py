@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from web_fakes import FakeSession, make_problem
 
-from hardy.app import cli
+from hardy.app import cli, project_registry
 from hardy.app.project_registry import ProjectRegistry
 from hardy.foundation import paths
 
@@ -64,8 +64,11 @@ def test_web_ignores_the_current_directory_and_scaffolds_nothing(home, served, t
     assert _run(monkeypatch, "web", "--port", "0") == 0
     assert served["state"]["open"] is False and served["state"]["slug"] is None
     assert sorted(child.name for child in cwd.iterdir()) == []
-    assert not (home / ".hardy" / "projects").exists()
-    assert not (home / ".hardy" / "projects.json").exists()
+    # The registry every default `ProjectRegistry()` in this process reaches
+    # (the suite's autouse fixture points it at tmp_path), not a path the
+    # test guessed: an assertion on the wrong file passes for the wrong reason.
+    assert not project_registry.default_registry_path().exists()
+    assert not project_registry.default_projects_root().exists()
 
 
 def test_web_opens_the_last_opened_project_by_default(home, served, tmp_path, monkeypatch) -> None:

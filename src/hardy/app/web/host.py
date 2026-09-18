@@ -60,7 +60,7 @@ from hardy.app.tui.ports import State
 from hardy.app.web import chats
 from hardy.app.web.ui import WebUi
 from hardy.workflows.interactive.jobs import CONTINUATION_TEXT
-from hardy.workflows.layout import DEFAULT_CHAT, Layout, validate_chat, validate_slug
+from hardy.workflows.layout import DEFAULT_CHAT, RECORD, Layout, validate_chat, validate_slug
 
 T = TypeVar("T")
 
@@ -529,6 +529,11 @@ class WebHost:
         slug = target.name
         if any(entry.path == target for entry in self.projects_registry.entries()):
             raise ValueError(f"{slug} is already a project at {target}. Open it from the list.")
+        if (target / RECORD).is_file():
+            # A Hardy project that was forgotten, or never registered: making
+            # a new one over it would reopen its record as though it were
+            # fresh. It is added back, not created.
+            raise ValueError(f"{target} is already a Hardy project. Add it from the project menu instead.")
         intended = Layout(root=target.parent, slug=slug)
         if target.exists() and not intended.is_bare_scaffold():
             raise ValueError(
