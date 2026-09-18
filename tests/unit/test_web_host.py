@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
-from web_fakes import FakeSession, make_config, make_problem
+from web_fakes import FakeSession, make_config, make_problem, make_registry
 
 from hardy.agents.contracts import TurnEvent
 from hardy.app.tui.commands import Command
@@ -24,13 +24,21 @@ class FakeOpener:
         #: The configuration each open was handed, so a test can say which one
         #: the host believes is current.
         self.configs = []
+        #: The root each open was asked for, or None when the current one.
+        self.roots = []
+        #: Set to raise from the next open, as a failed reopen would.
+        self.fail_with: Exception | None = None
 
-    def __call__(self, slug, confirm, current, *, chat="main"):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None):
         import dataclasses
         self.calls.append((slug, chat))
         self.configs.append(current)
-        config = dataclasses.replace(current, project=slug, chat=chat)
-        self.session = FakeSession(self.tmp_path / slug, chat)
+        self.roots.append(root)
+        if self.fail_with is not None:
+            raise self.fail_with
+        moved = {"root": root} if root is not None else {}
+        config = dataclasses.replace(current, project=slug, chat=chat, **moved)
+        self.session = FakeSession(config.layout.problem, chat)
         return config, self.session
 
     def cancel(self) -> bool:
@@ -41,9 +49,15 @@ def _host(tmp_path: Path) -> WebHost:
     make_problem(tmp_path, "sylow")
     config = make_config(tmp_path)
     opener = FakeOpener(tmp_path)
-    host = WebHost(config, opener, lambda confirm, cfg: FakeSession(cfg.layout.problem))
+    registry = make_registry(tmp_path)
+    registry.add(tmp_path / "sylow")
+    host = WebHost(config, opener, lambda confirm, cfg: FakeSession(cfg.layout.problem), projects=registry)
     host.start()
     return host
+
+
+def _sylow(tmp_path: Path) -> str:
+    return str(tmp_path / "sylow")
 
 
 def _drain(sub, kinds, timeout=10.0):
@@ -185,13 +199,13 @@ def test_cancel_with_nothing_running_says_so(tmp_path: Path) -> None:
         host.stop()
 
 
-def test_open_chat_reopens_through_the_opener_and_refuses_mid_turn(tmp_path: Path) -> None:
+def test_open_project_reopens_through_the_opener_and_refuses_mid_turn(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
         from hardy.app.web import chats
         made = chats.create_chat(tmp_path / "sylow", "Lean proof")
         previous = host.session
-        state = host.open_chat("sylow", made.id)
+        state = host.open_project(_sylow(tmp_path), made.id)
         assert state["chat"] == made.id and host.session.chat == made.id
         assert host.opener.calls == [("sylow", made.id)]
         # The problem being left takes its background work with it, exactly as
@@ -202,27 +216,27 @@ def test_open_chat_reopens_through_the_opener_and_refuses_mid_turn(tmp_path: Pat
         host.session.delay = 0.02
         host.submit("hello")
         with pytest.raises(Busy):
-            host.open_chat("sylow", "main")
+            host.open_project(_sylow(tmp_path), "main")
         _drain(host.subscribe(), {"turn_end"})
     finally:
         host.stop()
 
 
-def test_open_chat_on_a_different_chat_leaves_no_switch_note(tmp_path: Path) -> None:
+def test_open_project_on_a_different_chat_leaves_no_switch_note(tmp_path: Path) -> None:
     """Issue #167's note is for a project change; a chat change within the
     same project replaces no project, so it must stay silent about one."""
     host = _host(tmp_path)
     try:
         from hardy.app.web import chats
         made = chats.create_chat(tmp_path / "sylow", "Lean proof")
-        host.open_chat("sylow", made.id)
+        host.open_project(_sylow(tmp_path), made.id)
         events = [entry.event() for entry in host.session.conversation_tree().path()]
         assert not any(event.get("author") == "hardy" for event in events)
     finally:
         host.stop()
 
 
-def test_open_chat_switching_project_leaves_a_transcript_note(tmp_path: Path) -> None:
+def test_open_project_switching_project_leaves_a_transcript_note(tmp_path: Path) -> None:
     """Issue #167: switching project from the browser must leave a transcript
     entry, attributed to Hardy rather than echoed as something typed."""
     host = _host(tmp_path)
@@ -230,7 +244,8 @@ def test_open_chat_switching_project_leaves_a_transcript_note(tmp_path: Path) ->
         from hardy.app.web import panels
 
         make_problem(tmp_path, "frobenius")
-        host.open_chat("frobenius", "main")
+        host.projects_registry.add(tmp_path / "frobenius")
+        host.open_project(str(tmp_path / "frobenius"), "main")
         transcript = panels.transcript(host.session)
         assert transcript[-1]["role"] == "hardy"
         assert transcript[-1]["text"] == "Switched here from sylow."
@@ -238,13 +253,13 @@ def test_open_chat_switching_project_leaves_a_transcript_note(tmp_path: Path) ->
         host.stop()
 
 
-def test_open_chat_on_the_open_chat_is_a_no_op(tmp_path: Path) -> None:
+def test_open_project_on_the_open_chat_is_a_no_op(tmp_path: Path) -> None:
     """A click on the highlighted row must not rebuild the session: a reopen
     cancels the problem's background workers, and nothing was asked for."""
     host = _host(tmp_path)
     try:
         session = host.session
-        state = host.open_chat("sylow", "main")
+        state = host.open_project(_sylow(tmp_path), "main")
         assert state["slug"] == "sylow" and state["chat"] == "main"
         assert host.opener.calls == [] and host.session is session and session.closed is False
     finally:
@@ -297,9 +312,13 @@ def test_create_project_opens_the_new_slug(tmp_path: Path) -> None:
     try:
         listed = host.create_project("frobenius")
         assert host.opener.calls == [("frobenius", "main")]
+        # Under the registry's default root, and registered there.
+        assert host.opener.roots == [tmp_path / "projects"]
         assert host.state()["slug"] == "frobenius"
+        assert host.state()["path"] == str(tmp_path / "projects" / "frobenius")
         assert {entry["slug"] for entry in listed} >= {"sylow", "frobenius"}
         assert [entry["active"] for entry in listed if entry["slug"] == "frobenius"] == [True]
+        assert host.projects_registry.find(str(tmp_path / "projects" / "frobenius")) is not None
     finally:
         host.stop()
 
@@ -307,26 +326,27 @@ def test_create_project_opens_the_new_slug(tmp_path: Path) -> None:
 def test_create_project_refuses_a_name_that_is_not_hardys_to_take(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
-        stray = tmp_path / "somebody-elses"
-        stray.mkdir()
+        stray = tmp_path / "projects" / "somebody-elses"
+        stray.mkdir(parents=True)
         (stray / "notes.txt").write_text("mine", encoding="utf-8")
         with pytest.raises(ValueError):
             host.create_project("somebody-elses")
+        # A registered project's own path is taken; the same name elsewhere is not.
         with pytest.raises(ValueError):
-            host.create_project("sylow")
+            host.create_project("sylow", str(tmp_path))
         assert host.opener.calls == []
         assert (stray / "notes.txt").read_text(encoding="utf-8") == "mine"
     finally:
         host.stop()
 
 
-def test_open_chat_refuses_a_slug_or_chat_nothing_made(tmp_path: Path) -> None:
+def test_open_project_refuses_a_slug_or_chat_nothing_made(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
         with pytest.raises(ValueError):
-            host.open_chat("nowhere", "main")
+            host.open_project(str(tmp_path / "nowhere"), "main")
         with pytest.raises(ValueError):
-            host.open_chat("sylow", "never-made")
+            host.open_project(_sylow(tmp_path), "never-made")
         assert host.opener.calls == []
         assert not (tmp_path / "nowhere").exists()
         assert not (tmp_path / "sylow" / "chats" / "never-made").exists()
@@ -357,7 +377,7 @@ def test_a_command_that_replaces_the_config_is_what_the_next_open_uses(tmp_path:
         _drain(sub, {"changed"})
         assert host.state()["model"] == "other"
         from hardy.app.web import chats
-        host.open_chat("sylow", chats.create_chat(tmp_path / "sylow", "Lean proof").id)
+        host.open_project(_sylow(tmp_path), chats.create_chat(tmp_path / "sylow", "Lean proof").id)
         assert opener.configs[-1].model == "other"
     finally:
         host.stop()
@@ -420,10 +440,10 @@ class BlockingOpener(FakeOpener):
         self.armed = 0
         self.cancels = 0
 
-    def __call__(self, slug, confirm, current, *, chat="main"):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None):
         self.entered.set()
         self.release.wait(5)
-        return super().__call__(slug, confirm, current, chat=chat)
+        return super().__call__(slug, confirm, current, chat=chat, root=root)
 
     def arm(self) -> None:
         self.armed += 1
@@ -441,7 +461,7 @@ def test_an_open_runs_off_the_loop_and_can_be_cancelled(tmp_path: Path) -> None:
     host.start()
     from hardy.app.web import chats
     made = chats.create_chat(tmp_path / "sylow", "Lean proof")
-    opening = threading.Thread(target=host.open_chat, args=("sylow", made.id))
+    opening = threading.Thread(target=host.open_project, args=(_sylow(tmp_path), made.id))
     try:
         opening.start()
         assert opener.entered.wait(5)
@@ -510,6 +530,7 @@ def test_projects_lists_chats(tmp_path: Path) -> None:
     try:
         listed = host.projects()
         assert listed[0]["slug"] == "sylow" and listed[0]["active"] is True
+        assert listed[0]["path"] == str(tmp_path / "sylow") and listed[0]["registered"] is True
         assert [c["id"] for c in listed[0]["chats"]] == ["main"]
     finally:
         host.stop()
@@ -570,3 +591,127 @@ def test_stop_is_safe_before_start_and_twice(tmp_path: Path) -> None:
     # The loop thread is the host's alone, and a server that restarts one has
     # to be able to trust that the last one is gone.
     assert not [thread for thread in threading.enumerate() if thread.name == "hardy-web"]
+
+
+# -- the registry ---------------------------------------------------------
+
+
+def test_a_host_with_nothing_to_open_starts_empty(tmp_path: Path) -> None:
+    registry = make_registry(tmp_path)
+    host = WebHost(make_config(tmp_path), FakeOpener(tmp_path), None, projects=registry)
+    host.start()
+    try:
+        state = host.state()
+        assert state["open"] is False
+        assert state["slug"] is None and state["chat"] is None and state["path"] is None and state["root"] is None
+        assert state["default_root"] == str(registry.default_root)
+        assert host.projects() == []
+        refused = host.submit("hello")
+        assert refused["kind"] == "refused" and "No project is open" in refused["message"]
+        assert host.cancel()["stopped"] == 0
+        assert host.models()["current"] == "fake-model"
+    finally:
+        host.stop()
+
+
+def test_open_by_path_across_roots_moves_the_root_and_the_registry(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        other = make_problem(tmp_path / "other", "main")
+        host.projects_registry.add(other)
+        state = host.open_project(str(other))
+        assert state["open"] is True and state["slug"] == "main"
+        assert state["path"] == str(other) and state["root"] == str(tmp_path / "other")
+        assert host.opener.roots == [tmp_path / "other"]
+        assert host.projects_registry.last_opened().path == other.resolve()
+        rows = {row["slug"]: row for row in host.projects()}
+        assert rows["main"]["active"] is True and rows["sylow"]["active"] is False
+    finally:
+        host.stop()
+
+
+def test_open_refuses_an_unregistered_path(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        stranger = make_problem(tmp_path / "elsewhere", "main")
+        with pytest.raises(ValueError, match="not a registered project"):
+            host.open_project(str(stranger))
+        assert host.opener.calls == []
+    finally:
+        host.stop()
+
+
+def test_close_returns_to_empty_and_is_refused_while_busy(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        session = host.session
+        host.session.script = [TurnEvent("text", "a")] * 100
+        host.session.delay = 0.02
+        host.submit("hello")
+        with pytest.raises(Busy):
+            host.close_project()
+        _drain(host.subscribe(), {"turn_end"})
+        sub = host.subscribe()
+        state = host.close_project()
+        assert state["open"] is False and host.session is None
+        assert session.closed is True
+        seen = _drain(sub, {"changed"})
+        assert any(event["type"] == "state" and event["open"] is False for event in seen)
+        # Closing is not forgetting: the registry still names it as last opened.
+        assert host.projects_registry.find(_sylow(tmp_path)) is not None
+        # And it can be opened again from nothing.
+        host.open_project(_sylow(tmp_path))
+        assert host.state()["open"] is True
+        assert host.close_project()["open"] is False
+    finally:
+        host.stop()
+
+
+def test_create_project_registers_only_after_a_successful_open(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        host.opener.fail_with = RuntimeError("the kernel never came up")
+        with pytest.raises(RuntimeError):
+            host.create_project("frobenius")
+        assert host.projects_registry.find(str(tmp_path / "projects" / "frobenius")) is None
+        assert host.state()["slug"] == "sylow"
+        host.opener.fail_with = None
+        host.create_project("frobenius", str(tmp_path / "mine"))
+        found = host.projects_registry.find(str(tmp_path / "mine" / "frobenius"))
+        # Registered and stamped as opened. (`last_opened()` itself stays None
+        # here only because the fake opener writes no record for it to find.)
+        assert found is not None and found.last_opened is not None
+    finally:
+        host.stop()
+
+
+def test_forget_refuses_the_open_project_and_forgets_another(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    try:
+        other = make_problem(tmp_path / "other", "main")
+        rows = host.add_project(str(other))
+        assert {row["slug"] for row in rows} == {"sylow", "main"}
+        with pytest.raises(ValueError, match="Close it first"):
+            host.forget_project(_sylow(tmp_path))
+        rows = host.forget_project(str(other))
+        assert [row["slug"] for row in rows] == ["sylow"]
+        assert other.is_dir()
+    finally:
+        host.stop()
+
+
+def test_a_typed_project_command_registers_where_it_landed(tmp_path: Path) -> None:
+    """`/project new` in the composer goes through the terminal handler, not
+    `create_project`; the registry must still learn where the user went."""
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        assert host.submit("/project new burnside")["kind"] == "command"
+        _drain(sub, {"changed"})
+        assert host.state()["slug"] == "burnside"
+        assert host.projects_registry.find(str(tmp_path / "burnside")) is not None
+        rows = {row["slug"]: row for row in host.projects()}
+        assert rows["burnside"]["active"] is True and rows["burnside"]["registered"] is True
+    finally:
+        host.stop()
+
