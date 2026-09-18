@@ -1,4 +1,3 @@
-import hashlib
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,7 +5,8 @@ from uuid import UUID
 
 import pytest
 
-from hardy.formal.contracts import EnvironmentIdentity, FormalizationProposal, freeze_claim
+from hardy.formal.contracts import FormalizationProposal, freeze_claim
+from hardy.formal.lean import environment_identity
 from hardy.formal.verifier import FinalVerifier
 from hardy.workflows.storage import RunStore
 
@@ -30,20 +30,7 @@ def _hardy_config(**overrides):
     return Config(**values)
 
 
-ROOT = Path(__file__).parents[2]
-LEAN_PROJECT = ROOT / 'lean_project'
 NOW = datetime(2026, 7, 24, tzinfo=UTC)
-
-
-def _environment() -> EnvironmentIdentity:
-    manifest = LEAN_PROJECT / 'lake-manifest.json'
-    return EnvironmentIdentity(
-        lean_version='4.32.0',
-        lean_commit='8c9756b28d64dab099da31a4c09229a9e6a2ef35',
-        mathlib_revision='81a5d257c8e410db227a6665ed08f64fea08e997',
-        lake_manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
-        imports=('Mathlib',),
-    )
 
 
 def _claim(environment, name, binders, proposition):
@@ -61,16 +48,16 @@ def _claim(environment, name, binders, proposition):
 
 
 @pytest.mark.real_toolchain
-def test_real_final_verifier_reports_no_axioms_and_classical_choice(tmp_path) -> None:
+def test_real_final_verifier_reports_no_axioms_and_classical_choice(tmp_path, lean_project: Path) -> None:
     lake = shutil.which('lake')
     if lake is None:
         pytest.skip('lake is not installed')
-    if not (LEAN_PROJECT / 'lake-manifest.json').exists():
-        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
-    environment = _environment()
+    # Read from the configured project rather than pinned here: a hard-coded
+    # identity would describe some other machine's environment.
+    environment = environment_identity(lean_project, lean_command=(lake, 'env', 'lean'))
     verifier = FinalVerifier(
         lake=Path(lake),
-        lean_project=LEAN_PROJECT,
+        lean_project=lean_project,
         environment=environment,
         limits=_hardy_config().limits,
     )

@@ -60,7 +60,9 @@ also checks any corpus release against the merge base.
 
 **Real toolchain** tests invoke a real installed binary: Lean, Tectonic,
 Singular, or Macaulay2. They carry the `real_toolchain` marker and skip
-themselves when the binary or project they need is not there. CI's `Tests`
+themselves when the binary or project they need is not there. The Lean ones
+run in the Lake project Hardy itself would use, `HARDY_LEAN_PROJECT` or the
+config file's `lean_project`, never a directory inside the checkout. CI's `Tests`
 workflow installs Lean at the `stable` release (deliberately unpinned, so a
 change in Lean's own wording is caught rather than hidden) and runs the Lean
 real-toolchain tests; `CAS backends` installs pinned Singular and Macaulay2

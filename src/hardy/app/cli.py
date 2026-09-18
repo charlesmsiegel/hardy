@@ -582,8 +582,15 @@ def _confirm(prompt: str) -> bool:
 
 def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _confirm) -> int:
     """Discover the pinned toolchain, offer to install what is missing, record it."""
-    from hardy.app.installers import download_file, install_elan, install_tectonic, prepare_mathlib
+    from hardy.app.installers import (
+        create_lean_project,
+        download_file,
+        install_elan,
+        install_tectonic,
+        prepare_mathlib,
+    )
     from hardy.app.setup import backend_probe, discover_environment
+    from hardy.foundation.paths import shared_lean_project
     from hardy.foundation.process import run_process
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
@@ -631,6 +638,16 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
         found = tools[setting].path
         if found is not None:
             configuration.write_setting(config_path, setting, str(found))
+    if tools["lake"].path is not None and config.lean_project is None:
+        # The installers' location, never the working directory: run from a
+        # source checkout, "here" is how a multi-gigabyte Mathlib tree ended
+        # up inside the repository.
+        created = create_lean_project(lean_project=shared_lean_project(), confirmer=confirmer)
+        print(created.manual_instructions)
+        if created.installed_path is not None:
+            configuration.write_setting(config_path, "lean_project", str(created.installed_path))
+            config = configuration.load(config_path)
+            rediscovered = discover_environment(config, backend_probe=probe, common_locations=_common_locations())
     if tools["lake"].path is not None and config.lean_project and not rediscovered.mathlib_ready:
         print(
             prepare_mathlib(

@@ -78,7 +78,7 @@ def live_config() -> configuration.Config:
 
     config = configuration.load()
     if config.lean_project is None:
-        config = configuration.load(lean_project=ROOT / "lean_project")
+        pytest.skip("no Lean project is configured; run `hardy setup` or set HARDY_LEAN_PROJECT")
 
     # The configured executable, not `lake`. `lean_command` is a setting, and a
     # working direct `lean` or a wrapper around one is a supported way to spell

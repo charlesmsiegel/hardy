@@ -30,6 +30,7 @@ ELAN_VERSION = "4.2.1"
 # what it is rather than as this. (Issue #81.)
 LEAN_TOOLCHAIN = "leanprover/lean4:v4.33.1"
 MATHLIB_REVISION = "v4.33.1"
+LEAN_PACKAGE = "hardymath"
 TECTONIC_VERSION = "0.16.9"
 TECTONIC_URL = (
     "https://github.com/tectonic-typesetting/tectonic/releases/download/"
@@ -50,6 +51,58 @@ def download_file(url: str, target: Path) -> None:
         shutil.copyfileobj(response, output)
 
 
+def create_lean_project(
+    *,
+    lean_project: Path,
+    confirmer: Callable[[str], bool],
+) -> InstallOutcome:
+    """The shared Lake project, pinned the way the installers pin it.
+
+    Reuses a directory that is already a Lake project, whatever it pins, the
+    way the installers do: a result records the environment it actually ran
+    against, so a repinned project is reported as what it is. Refuses a
+    directory holding anything else rather than writing a lakefile into it.
+    """
+    if (lean_project / "lakefile.toml").exists() or (lean_project / "lakefile.lean").exists():
+        return InstallOutcome(
+            status="present",
+            manual_instructions=f"Using the existing Lake project at {lean_project}.",
+            installed_path=lean_project,
+        )
+    if lean_project.exists() and any(lean_project.iterdir()):
+        return InstallOutcome(
+            status="failed",
+            manual_instructions=f"{lean_project} exists and is not a Lake project; move it aside and rerun `hardy setup`.",
+        )
+    prompt = f"Create a Lake project pinned to {LEAN_TOOLCHAIN} and Mathlib {MATHLIB_REVISION} at {lean_project}?"
+    if not confirmer(prompt):
+        return InstallOutcome(
+            status="declined",
+            manual_instructions="Set `lean_project` in the config file, or run `hardy setup` again when ready.",
+        )
+    lean_project.mkdir(parents=True, exist_ok=True)
+    (lean_project / "lean-toolchain").write_text(LEAN_TOOLCHAIN + "\n", encoding="utf-8")
+    (lean_project / "lakefile.toml").write_text(
+        f'name = "{LEAN_PACKAGE}"\n'
+        'defaultTargets = ["HardyMath"]\n'
+        "\n"
+        "[[require]]\n"
+        'name = "mathlib"\n'
+        'scope = "leanprover-community"\n'
+        f'rev = "{MATHLIB_REVISION}"\n'
+        "\n"
+        "[[lean_lib]]\n"
+        'name = "HardyMath"\n',
+        encoding="utf-8",
+    )
+    (lean_project / "HardyMath.lean").write_text("import Mathlib\n", encoding="utf-8")
+    return InstallOutcome(
+        status="installed",
+        manual_instructions=f"Created the pinned Lake project at {lean_project}.",
+        installed_path=lean_project,
+    )
+
+
 def prepare_mathlib(
     *,
     lake: Path,
@@ -63,9 +116,12 @@ def prepare_mathlib(
             status="declined",
             manual_instructions="Run `hardy setup` again when ready to prepare Mathlib.",
         )
+    # An hour each: `lake update` on a new project clones Mathlib and its
+    # dependencies, and the cache is several gigabytes. The installers set no
+    # limit at all; two minutes is not enough for a first clone.
     for argv, timeout in (
-        ((str(lake), "update"), 120),
-        ((str(lake), "exe", "cache", "get"), 600),
+        ((str(lake), "update"), 3600),
+        ((str(lake), "exe", "cache", "get"), 3600),
     ):
         result = runner(
             ProcessSpec(

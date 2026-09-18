@@ -152,3 +152,51 @@ def test_downloader_streams_to_the_requested_staging_path(tmp_path) -> None:
     )
 
     assert target.read_bytes() == b'pinned'
+
+
+def test_a_new_lean_project_is_pinned_the_way_the_installers_pin_it(tmp_path) -> None:
+    installers = importlib.import_module('hardy.app.installers')
+    project = tmp_path / 'data' / 'hardy' / 'lean'
+
+    outcome = installers.create_lean_project(lean_project=project, confirmer=lambda _: True)
+
+    assert outcome.status == 'installed'
+    assert outcome.installed_path == project
+    assert (project / 'lean-toolchain').read_text(encoding='utf-8') == installers.LEAN_TOOLCHAIN + '\n'
+    lakefile = (project / 'lakefile.toml').read_text(encoding='utf-8')
+    assert f'rev = "{installers.MATHLIB_REVISION}"' in lakefile
+    assert f'name = "{installers.LEAN_PACKAGE}"' in lakefile
+    assert (project / 'HardyMath.lean').read_text(encoding='utf-8') == 'import Mathlib\n'
+
+
+def test_an_existing_lake_project_is_reused_untouched(tmp_path) -> None:
+    installers = importlib.import_module('hardy.app.installers')
+    (tmp_path / 'lakefile.toml').write_text('name = "mine"\n', encoding='utf-8')
+
+    outcome = installers.create_lean_project(lean_project=tmp_path, confirmer=lambda _: False)
+
+    assert outcome.status == 'present'
+    assert outcome.installed_path == tmp_path
+    assert (tmp_path / 'lakefile.toml').read_text(encoding='utf-8') == 'name = "mine"\n'
+
+
+def test_a_directory_that_is_not_a_lake_project_is_refused_not_written_into(tmp_path) -> None:
+    installers = importlib.import_module('hardy.app.installers')
+    (tmp_path / 'notes.txt').write_text('mine', encoding='utf-8')
+
+    outcome = installers.create_lean_project(lean_project=tmp_path, confirmer=lambda _: True)
+
+    assert outcome.status == 'failed'
+    assert outcome.installed_path is None
+    assert sorted(item.name for item in tmp_path.iterdir()) == ['notes.txt']
+
+
+def test_a_declined_lean_project_writes_nothing(tmp_path) -> None:
+    installers = importlib.import_module('hardy.app.installers')
+    project = tmp_path / 'lean'
+
+    outcome = installers.create_lean_project(lean_project=project, confirmer=lambda _: False)
+
+    assert outcome.status == 'declined'
+    assert outcome.installed_path is None
+    assert not project.exists()

@@ -339,8 +339,13 @@ hardy setup
 `hardy setup` discovers the pinned toolchain, records the paths it found
 in the config file, and prints what is still missing. What it installs
 for you depends on the platform: the shared Mathlib project wherever
-`lake` is present, elan and Tectonic on Windows only, elan through
-`winget` by pinned version and Tectonic downloaded and verified against
+`lake` is present, elan and Tectonic on Windows only. With no
+`lean_project` configured, it creates the shared project where the
+installers put it, in the per-user data directory
+(`%LOCALAPPDATA%\hardy\lean` on Windows,
+`${XDG_DATA_HOME:-~/.local/share}/hardy/lean` elsewhere) and never in the
+directory it was run from, and records it as `lean_project`. Elan comes
+through `winget` by pinned version and Tectonic is downloaded and verified against
 its recorded digest; on Linux and macOS a missing elan or Tectonic is
 reported with instructions instead, and `scripts/install.sh` is the one to
 run for those.
