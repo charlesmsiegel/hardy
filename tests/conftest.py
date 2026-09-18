@@ -15,6 +15,24 @@ def _temporary_paper_throttle(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _temporary_project_registry(tmp_path, monkeypatch):
+    """A `WebHost` or a `hardy web` built without a registry must not reach the user's.
+
+    Found the hard way: four host tests built a host with the default
+    registry, and every open they made wrote a pytest temp path into
+    `~/.hardy/projects.json` on the machine running the suite.
+    """
+    monkeypatch.setattr(
+        "hardy.app.project_registry.default_registry_path",
+        lambda: tmp_path / "global-hardy" / "projects.json",
+    )
+    monkeypatch.setattr(
+        "hardy.app.project_registry.default_projects_root",
+        lambda: tmp_path / "global-hardy" / "projects",
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_stop_carried_between_tests():
     """Lift any in-force stop before each test.
 
