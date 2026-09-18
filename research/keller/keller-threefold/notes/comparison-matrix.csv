@@ -1,0 +1,5 @@
+example,R_rational,A_LND_rigid,T_simply_connected_noncontractible,factorial,constant_units,chi,H2,H3,status
+Keller filling X,yes,yes,yes,yes,yes,1,Z,Z,current claims
+SL2(C),yes,no,yes,yes,yes,0,0,Z,literature comparison
+P3 minus smooth degree d>=5 hypersurface,yes,yes,no,no_or_torsion_pic,expected yes,needs computation,needs computation,needs computation,literature comparison
+smooth quartic threefold minus hyperplane K3,no,expected yes,expected yes,expected yes,expected yes,-80,to compute,to compute,audit candidate

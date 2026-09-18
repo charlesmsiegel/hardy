@@ -1,0 +1,5 @@
+# The harness repository ignores every `.hardy/` directory; this root's
+# tooling directory holds committed content (its config and the shared
+# Lean library), so it is re-included here. Its own .gitignore, written
+# by Hardy, keeps the build tree and machine-local state out.
+!/.hardy/
