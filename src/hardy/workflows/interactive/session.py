@@ -131,6 +131,7 @@ from hardy.workflows.interactive.documents import (
     FormalDocumentFacts,
 )
 from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
+from hardy.workflows.interactive.evidence import ProjectOwners
 from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
 from hardy.workflows.interactive.history import HistorySnapshot
 from hardy.workflows.interactive.jobs import ComputationJobs
@@ -541,6 +542,12 @@ class MathematicsSession:
         # This session's own tool use, in memory only: it describes behaviour,
         # not the workspace, so it belongs in neither manifest.
         self.formal = FormalWorkspaceService(self.lean, self.lean_workspace)
+        # The capability owners the ledger policy reads through: the formal
+        # owner's durable evidence, and the acceptance decisions, both journaled
+        # beside the ledger. Built here because verification is this session's
+        # audit, with its approved assumptions; see `evidence.py` for why the
+        # ledger cannot accept anything without them.
+        self.owners = ProjectOwners(workspace, audit=self._audit_tree)
         self._save_streak = self.formal._save_streak
         # Streak key -> sha256 hex digests of sources that passed `check_lean`
         # on that path this turn. A green check on a path lifts the brake only
@@ -611,9 +618,9 @@ class MathematicsSession:
         #: What the human asked for in the turn now in flight, if any; an
         #: interrupt records it as the continuation's resume text.
         self._in_flight_text: str | None = None
-        #: Capability owners for authoritative admission. None means none are
-        #: installed, and `admit` says so rather than minting evidence itself.
-        self.admission_owners = admission
+        #: Capability owners for authoritative admission: the session's own
+        #: unless a caller installs others (the acceptance suites script them).
+        self.admission_owners = admission if admission is not None else self.owners.admission()
         self.delegations = DelegationController(
             DelegationStore(workspace), LedgerStore(workspace),
             executor=LocalExecutor(delegation_slots), open_worker=self._open_worker,
@@ -637,14 +644,13 @@ class MathematicsSession:
         # Work that was active when the last process died is unknown, not done.
         self.delegations.recover()
         # And an admission the last process left mid-mutation is a sticky notice, never a success.
-        if admission is not None:
-            AuthoritativeAdmission(LedgerStore(workspace), self.lean_workspace, self.delegations.store,
-                                   verify=admission.verify, policy=admission.policy,
-                                   decide=admission.decide).recover()
-            for item in self.delegations.attention().pending("human"):
-                if item.category == "admission" and not self.delegations.attention().receipts(item.id):
-                    self._notify(item.summary)
-                    self.delegations.attention().receipt(item.id, "human", "notify")
+        owners = self.admission_owners
+        AuthoritativeAdmission(LedgerStore(workspace), self.lean_workspace, self.delegations.store,
+                               verify=owners.verify, policy=owners.policy, decide=owners.decide).recover()
+        for item in self.delegations.attention().pending("human"):
+            if item.category == "admission" and not self.delegations.attention().receipts(item.id):
+                self._notify(item.summary)
+                self.delegations.attention().receipt(item.id, "human", "notify")
         self._closed = False
         #: Model receipts owed for the attention block of the turn being started; committed
         #: only once the runtime has accepted the request.
@@ -814,13 +820,10 @@ class MathematicsSession:
 
         Every candidate is reconciled onto the current head and re-verified
         there; an exact duplicate is reused, a conflict keeps both sides, and
-        nothing counts as success until the ledger commit. Without owners
-        there is nothing to verify with, so the request is refused outright.
+        nothing counts as success until the ledger commit. The owners are the
+        session's own unless a caller installed others.
         """
         owners = self.admission_owners
-        if owners is None:
-            raise ValueError("authoritative admission needs capability owners (evidence and decision readers); "
-                             "none are installed in this session")
         admission = AuthoritativeAdmission(LedgerStore(self.workspace), self.lean_workspace, self.delegations.store,
                                            verify=owners.verify, policy=owners.policy, decide=owners.decide)
         return admit_delegation(admission, delegation_id)
@@ -1756,6 +1759,7 @@ class MathematicsSession:
             audit_tree=self._audit_tree,
             closes_and_adds=self._closes_and_adds,
             publish_audit=self.record.publish_audit,
+            record_results=self._record_saved_results,
             refresh_automation=self._refresh_automation,
             persist=self._save_state,
             owed_note=self._owed_note,
@@ -1768,6 +1772,16 @@ class MathematicsSession:
         self, path: str, source: str, *, ratchet: bool = True, generated: bool = False
     ) -> ToolResult:
         return self.formal._save_lean_unbraked(path, source, policy=self._formal_save_policy(), ratchet=ratchet, generated=generated)
+
+    def _record_saved_results(self, records: dict[str, Any], signatures: dict[str, str]) -> str:
+        """The save's ledger half: what the audit graded, recorded; what it verified, resolved.
+
+        After the commit and after the audit publishes, over the committed
+        tree; a refusal from the ledger is a note on the save, never a refusal
+        of it. `evidence.py` says what is written and why.
+        """
+        sources = self.lean_workspace.sources()
+        return self.owners.record_saved(sources, records, signatures, shared=self._shared_names(sources))
 
     def _owed_note(self) -> str:
         """The outstanding obligations, appended to a tool result.
@@ -2276,7 +2290,7 @@ class MathematicsSession:
             # theorem the sections beside it do not have.
             automation=self._automation_closed(sources),
         )
-        return with_project(assembled, LedgerStore(self.workspace).read())
+        return with_project(assembled, LedgerStore(self.workspace).read(), policy=self.owners.policy)
 
     def export_material(self) -> dict[str, Any]:
         """Everything one exportable account of this session needs (#105).

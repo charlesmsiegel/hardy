@@ -164,22 +164,35 @@ def test_one_worker_job_from_the_session_to_an_admitted_proof(tmp_path):
         reopened.delegations.shutdown()
 
 
-def test_admission_without_capability_owners_is_refused_not_faked(tmp_path):
+def test_admission_through_a_session_with_no_scripted_owners_uses_its_own(tmp_path):
+    """The shipped application installs owners; nothing is minted or refused by default (#171)."""
     seed_project(tmp_path)
+    (tmp_path / "lean").mkdir()
+    (tmp_path / "lean" / "Main.lean").write_text(MAIN, encoding="utf-8")
     chat = _session(tmp_path, WORKER_A)
     try:
         delegation = chat.delegate("L17", objective="prove a helper lemma", checks=2)
         chat.delegations.wait(delegation.id, timeout=15)
-        before = LedgerStore(tmp_path).read().revision
-        try:
-            chat.admit(delegation.id)
-        except ValueError as error:
-            assert "owners" in str(error)
-        else:
-            raise AssertionError("admission without owners must be refused")
-        assert LedgerStore(tmp_path).read().revision == before
+        outcomes = chat.admit(delegation.id)
+        assert [o.action for o in outcomes] == ["created"], [o.reasons for o in outcomes]
+        snapshot = LedgerStore(tmp_path).read()
+        lemma = snapshot.head(outcomes[0].authoritative_refs[0].id)
+        prove = next(o for o in snapshot.current(c.Obligation)
+                     if o.item == lemma.ref and o.kind is c.ObligationKind.PROVE)
+        assert prove.status is c.ObligationStatus.RESOLVED
+        # The session's own readers authenticate what its own verifier minted, from disk.
+        assert chat.owners.policy.is_accepted(snapshot, prove.resolution)
+        evidence = chat.owners.read_evidence(prove.resolution.evidence[0])
+        assert evidence is not None and evidence.outcome == "kernel_proof"
+        assert (tmp_path / "lean" / "Worker.lean").read_text(encoding="utf-8") == HELPER
     finally:
         chat.delegations.shutdown()
+    # And after a restart, over nothing but the bytes on disk.
+    reopened = _session(tmp_path, WORKER_A)
+    try:
+        assert reopened.owners.policy.is_accepted(LedgerStore(tmp_path).read(), prove.resolution)
+    finally:
+        reopened.delegations.shutdown()
 
 
 # -- (b) an eight-worker tree ---------------------------------------------------------------

@@ -14,6 +14,7 @@ from hardy.formal.syntax import declarations, module_name
 from hardy.foundation.files import files_under, read_text
 from hardy.workflows.ledger.contracts import (
     CitationContract,
+    EvidenceRef,
     Obligation,
     ObligationStatus,
     ProjectItem,
@@ -538,14 +539,14 @@ def _match_claim(
 ) -> ProjectItem | None:
     """The ledger item this Lean declaration corresponds to, if any names it.
 
-    `ProjectItem` carries no field that pins it to a Lean declaration -- no
-    interactive workflow writes one when a theorem is saved (`AdmissionOwners`,
-    the one bridge the schema offers, is never constructed by the running
-    app today). `name` is the only correlation the schema offers at all, so it
-    is matched exactly, against the qualified name Lean reports and against its
-    bare leaf -- the same two spellings `report_result` itself accepts. A
-    project that names its ledger items to match is found; one that does not
-    renders `Absent` rather than guessing.
+    `ProjectItem` carries no field that pins it to a Lean declaration. The
+    interactive save path records each public theorem and lemma under its
+    qualified Lean name (`workflows/interactive/evidence.py`), and `name` is
+    the only correlation the schema offers at all, so it is matched exactly,
+    against the qualified name Lean reports and against its bare leaf -- the
+    same two spellings `report_result` itself accepts. A project that names
+    its ledger items to match is found; one that does not renders `Absent`
+    rather than guessing.
 
     The leaf match is admitted only when it is unambiguous. With `A.foo` and
     `B.foo` both declared and one ledger item named bare `foo`, matching on
@@ -566,15 +567,22 @@ def _match_claim(
     return claims_by_name.get(leaf)
 
 
-def _record_lane(item: ProjectItem, scopes: Sequence[Scope]) -> dict[str, Any]:
-    """`§ record says`: this ledger item and its own evidence claims, verbatim.
+def _record_lane(item: ProjectItem, scopes: Sequence[Scope],
+                 obligations: Sequence[Obligation] = ()) -> dict[str, Any]:
+    """`§ record says`: this ledger item, its obligations and its evidence claims, verbatim.
 
-    `evidence` here is what the `ProjectItem` itself carries -- `EvidenceRef`s
-    nobody has re-authenticated for this read. `LedgerPolicy` is what checks an
-    `EvidenceRef` against its owning capability's durable record before trusting
-    it for anything load-bearing; this panel does none of that; it reports the
-    claim, not a re-verified one, which is exactly why it is drawn in its own
-    lane rather than folded into `⊢`.
+    `evidence` here is what the `ProjectItem` itself carries, and each entry
+    of `obligations` quotes its resolution's evidence the same way --
+    `EvidenceRef`s nobody has re-authenticated for this read. `LedgerPolicy`
+    is what checks an `EvidenceRef` against its owning capability's durable
+    record before trusting it for anything load-bearing; this panel does none
+    of that; it reports the claim, not a re-verified one, which is exactly why
+    it is drawn in its own lane rather than folded into `⊢`.
+
+    `obligations` are the current heads on this exact item revision: an
+    interactive save opens a `prove` obligation per recorded result and closes
+    it only through the policy, so a `resolved` here is the record saying the
+    proof was accepted on the evidence quoted, and an `open` one names why not.
 
     `claimed_in` and `assumptions` come from `Scope`, not from the kernel's own
     axiom audit: a `Scope` states what the *project* has permitted a claim to
@@ -595,18 +603,29 @@ def _record_lane(item: ProjectItem, scopes: Sequence[Scope]) -> dict[str, Any]:
     return {
         "id": item.id, "name": item.name, "kind": item.kind.value, "origin": item.origin.value,
         "statement": item.statement,
-        "evidence": [
-            {
-                "kind": reference.kind.value, "producer": reference.producer,
-                "artifact": {
-                    "uri": reference.artifact.uri, "digest": reference.artifact.digest,
-                    "locator": reference.artifact.locator,
-                },
-            }
-            for reference in item.evidence
-        ],
+        "evidence": [_evidence_claim(reference) for reference in item.evidence],
         "claimed_in": claimed_in,
         "assumptions": sorted(assumptions),
+        "obligations": [
+            {
+                "id": obligation.id, "kind": obligation.kind.value, "status": obligation.status.value,
+                "reason": obligation.reason,
+                "evidence": [_evidence_claim(reference)
+                             for reference in (obligation.resolution.evidence if obligation.resolution else ())],
+            }
+            for obligation in obligations if obligation.item == item.ref
+        ],
+    }
+
+
+def _evidence_claim(reference: EvidenceRef) -> dict[str, Any]:
+    """One `EvidenceRef` as the record states it; nothing here has read the artifact."""
+    return {
+        "kind": reference.kind.value, "producer": reference.producer,
+        "artifact": {
+            "uri": reference.artifact.uri, "digest": reference.artifact.digest,
+            "locator": reference.artifact.locator,
+        },
     }
 
 
@@ -686,6 +705,7 @@ def results(problem: Path) -> dict[str, Any]:
         if item.kind in RESULT_KINDS:
             claims_by_name.setdefault(item.name, item)
     scopes = snapshot.current(Scope)
+    obligations = snapshot.current(Obligation)
 
     state = _session_state(problem)
     reports = state.get("reports")
@@ -717,7 +737,7 @@ def results(problem: Path) -> dict[str, Any]:
                     continue
                 kernel = _kernel_lane(name, audit_records, shared)
                 claim = _match_claim(name, claims_by_name, leaves=leaf_counts)
-                record = _record_lane(claim, scopes) if claim is not None else None
+                record = _record_lane(claim, scopes, obligations) if claim is not None else None
                 model = _model_lane(name, reports)
                 theorems.append({
                     "id": f"{module}:{name}", "name": name, "module": module,

@@ -60,6 +60,7 @@ class SavePolicy:
     audit_tree: Callable[[LeanWorkspace, Sequence[str]], Any]
     closes_and_adds: Callable[[str, Sequence[str], dict[str, Any]], str | None]
     publish_audit: Callable[[dict[str, Any], dict[str, str]], None]
+    record_results: Callable[[dict[str, Any], dict[str, str]], str]
     refresh_automation: Callable[[], str]
     persist: Callable[[], None]
     owed_note: Callable[[], str]
@@ -274,6 +275,13 @@ class FormalWorkspaceService:
         # them.
         signatures = self.lean_workspace.current_signatures()
         policy.publish_audit(records, signatures)
+        # The project ledger's half of the same save: every result the audit
+        # graded is recorded, and a verified one closes its proof obligation.
+        # After the audit publishes, so the ledger never claims a verdict the
+        # record does not hold; and a note on the save rather than a gate on
+        # it -- the files are committed and the verdict is the kernel's
+        # whatever the ledger makes of them.
+        ledger = policy.record_results(records, signatures)
         # After the commit -- the answer is a disclosure about a saved theorem,
         # never a gate on saving one -- and before `_save_state`, so the
         # verdicts persist in the same write the audit records do.
@@ -284,7 +292,7 @@ class FormalWorkspaceService:
         result = seen.get(module, ToolResult(True, "unchanged; already built", source))
         return ToolResult(
             result.ok,
-            f"{result.output}\n\naxiom audit: {note}{automation}{policy.owed_note()}",
+            f"{result.output}\n\naxiom audit: {note}{automation}{ledger}{policy.owed_note()}",
             result.source,
         )
 

@@ -93,6 +93,7 @@ def save_tree(tmp_path, monkeypatch):
         audit_tree=audit_tree,
         closes_and_adds=lambda *_: event("closes"),
         publish_audit=publish,
+        record_results=lambda *_: event("ledger", "\nledger note"),
         refresh_automation=lambda: event("automation", "\nautomation note"),
         persist=lambda: event("persist"),
         owed_note=lambda: event("owed", "\nowed note"),
@@ -118,8 +119,8 @@ def test_success_builds_dependents_then_commits_discards_and_publishes(save_tree
     result = save(tree, NEW + "\n  ")
     assert tree.events == ["generated", "result", "documentation", "final", "shared", "stage",
                            "compile:Main", "compile:Use", "names", "audit", "closes", "commit",
-                           "discard", "publish", "automation", "persist", "owed"]
-    assert result == ToolResult(True, "compiled Main\n\naxiom audit: checked\nautomation note\nowed note", NEW)
+                           "discard", "publish", "ledger", "automation", "persist", "owed"]
+    assert result == ToolResult(True, "compiled Main\n\naxiom audit: checked\nautomation note\nledger note\nowed note", NEW)
     assert (tree.workspace.root / "Main.lean").read_text() == NEW
     assert tree.workspace._index() == tree.workspace.current_signatures()
     assert len(tree.published) == 1
@@ -131,7 +132,7 @@ def test_cached_save_keeps_audit_and_publication_without_recompiling(save_tree):
     result = save(tree, OLD)
     assert result.ok and result.output.startswith("unchanged; already built\n\naxiom audit: checked")
     assert not any(e.startswith("compile:") for e in tree.events)
-    assert tree.events[-7:] == ["closes", "commit", "discard", "publish", "automation", "persist", "owed"]
+    assert tree.events[-8:] == ["closes", "commit", "discard", "publish", "ledger", "automation", "persist", "owed"]
 
 
 @pytest.mark.parametrize(("gate", "refusal", "output"), [
@@ -183,7 +184,7 @@ def test_import_skips_authorship_only_and_generated_save_skips_ownership_only(sa
 
 
 @pytest.mark.parametrize("failure", ["shared", "stage", "compile:Main", "audit", "commit",
-                                     "publish", "automation", "persist"])
+                                     "publish", "ledger", "automation", "persist"])
 def test_failures_discard_staged_tree_and_publish_only_after_commit(save_tree, failure):
     tree = save_tree
     before = tree_bytes(tree.workspace)

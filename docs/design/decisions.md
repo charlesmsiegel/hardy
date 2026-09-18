@@ -617,9 +617,29 @@ Cost: replay costs the length of the history; path enumeration can explode.
 We chose to show recorded ledger evidence as unauthenticated, over reading an
 acceptance field as proof, because such a field records an acceptance.
 
-Cost: those surfaces show less than the records appear to offer.
+Cost: those surfaces show less than the records appear to offer. A surface
+inside a session reads through the session's own owners (next entry); one
+rendered over a bare problem directory has no reader and says so.
 
-Revisit when: a capability reader can supply authenticated policy.
+### The session installs its own capability owners
+
+We chose to have the interactive session install the ledger's evidence and
+decision readers itself, journaling the formal owner's records beside the
+ledger, over leaving the readers to a later integration, because a ledger no
+application can write is a record of nothing: a theorem saved in a session had
+a kernel verdict and no ledger item, and the admission bridge for a worker's
+proof was reachable only from tests.
+
+The save path records every public theorem and lemma under its qualified Lean
+name with a proof obligation, and closes the obligation only through the
+policy, on evidence the formal owner minted and its readers re-read; the
+kernel verdict in the record and the claim in the ledger stay two statements
+about one declaration, written by one save, so a reader can see them disagree.
+
+Cost: every save writes the ledger and the journal, and the journal is
+committed with them. A result the kernel verified under an approved assumption
+stays an open obligation, because the ledger scope admits no assumption and
+widening it is a reader-authorized act the save path never performs.
 
 ### A callback result must be a boolean
 

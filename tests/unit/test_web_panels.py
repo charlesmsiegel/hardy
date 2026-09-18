@@ -729,6 +729,49 @@ def test_results_kernel_lane_reports_a_hole_as_open_not_as_unaudited(tmp_path: P
     assert "sorryAx" in row["axioms"]
 
 
+def test_results_record_lane_reports_the_items_obligations_and_their_evidence(tmp_path: Path) -> None:
+    """The lane carries every current obligation on the item, with the resolution's
+    evidence quoted verbatim -- the record's own claim, never re-authenticated here."""
+    from hardy.workflows.ledger.contracts import (
+        ArtifactRef,
+        EvidenceRef,
+        Obligation,
+        ObligationKind,
+        ProjectItem,
+        ProjectItemKind,
+        ProjectOrigin,
+        Resolution,
+        Scope,
+    )
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    store = LedgerStore(problem)
+    item = ProjectItem(id="thm-1", kind=ProjectItemKind.THEOREM, name="bar", origin=ProjectOrigin.GENERATED_LOCAL)
+    scope = Scope(id="scope")
+    opened = Obligation(id="ob-1", kind=ObligationKind.PROVE, item=item.ref, scope=scope)
+    store.append([item, scope, opened], expected_revision=store.read().revision)
+    evidence = EvidenceRef(kind="formal", subject=item.ref, producer="fixture-kernel",
+                           artifact=ArtifactRef(uri="proof.json", digest="b" * 64, locator="bar"))
+    # Accepted on paper only: the lane must quote it as the record's claim
+    # without asking a reader, so the policy validator is bypassed here.
+    resolution = Resolution(id="ob-1:resolution", obligation=opened.ref, item=item.ref, evidence=(evidence,),
+                            accepted_by=ArtifactRef(uri="decision.json", digest="c" * 64), policy_digest="d" * 64)
+    closed = Obligation.model_validate({**opened.model_dump(), "previous": opened.ref, "status": "resolved",
+                                        "resolution": resolution})
+    store.append([closed], expected_revision=store.read().revision, validate=lambda before, after: None)
+
+    row = next(row for row in panels.results(problem)["theorems"] if row["name"] == "bar")
+    assert row["record"]["obligations"] == [{
+        "id": "ob-1", "kind": "prove", "status": "resolved", "reason": None,
+        "evidence": [{"kind": "formal", "producer": "fixture-kernel",
+                      "artifact": {"uri": "proof.json", "digest": "b" * 64, "locator": "bar"}}],
+    }]
+    # An obligation on another revision of the item is that revision's, not this one's.
+    assert row["record"]["evidence"] == []
+
+
 def test_results_record_lane_is_absent_with_no_matching_ledger_item(tmp_path: Path) -> None:
     problem = make_problem(tmp_path)
     _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")

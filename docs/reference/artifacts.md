@@ -158,6 +158,17 @@ A project's `ledger/` is an append-only, hash-chained sequence of transactions, 
 
 Every committed version of the project remains addressable; there is no separate mutable database to repair, only replay of this chain. `writer.lock` is the OS-level lock's rendezvous file, created once and left in place; an empty file at a known path makes no claim on anything by itself, so it is harmless committed alongside the transactions it once serialized.
 
+## `evidence/`
+
+A problem's `evidence/` is the formal owner's durable record and the decision owner's, kept apart from the ledger that points at them: the ledger stores what the work amounts to, and a reader must be able to check what a resolution rests on against bytes the ledger did not write. It is a journal in the same form as `sources/`: one file per write, named by a 20-digit sequence number, under schema `hardy.journal/v1`, each file carrying `sequence`, `previous` (the digest of the file before it), `records` and its own `digest`. Each record carries its `type`, its `value` and its own content `digest`; a resolution's `EvidenceRef` or `accepted_by` names a record by `hardy-evidence:<id>` or `hardy-decision:<id>` and pins that digest.
+
+| Record | Fields | Meaning |
+| --- | --- | --- |
+| `FormalEvidence` | `subject`, `scope`, `context`, `outcome`, `module`, `declaration`, `statement`, `axioms`, `signature`, `source_sha256`, `recorded_at` | What the axiom audit established about one declaration, bound to the exact ledger item, scope and context it was minted for. `outcome` is `kernel_proof`; `axioms` is the complete set Lean reported; `signature` is the module's build signature at the time (the same digest the stored audit verdict carries), and `source_sha256` the module source. Written by `workflows/interactive/evidence.py` when a save is recorded or a change set is admitted, and only for a declaration graded `verified`: a hole or an approved assumption mints nothing. |
+| `Decision` | `proposal`, `obligation`, `item`, `scope`, `context`, `policy_digest`, `recorded_at` | One acceptance of an unaccepted resolution proposal, bound to the proposal's content digest and to the policy source that will read it back. The reader answers `LedgerPolicy` with exactly these fields; a policy whose own digest moved rejects every earlier decision. |
+
+The readers fail closed: a record that is missing, whose digest does not match the reference, whose subject is not the reference's, or whose axioms include a forbidden one authenticates nothing, and the ledger resolution that named it reads as unaccepted.
+
 ## `delegations/`
 
 A problem's `delegations/journal.jsonl` is the append-only record of background work started from the session: one JSON object per line, `{"event": {...}, "digest": ...}`, where the event carries `sequence` (0-based, must equal its line), `previous` (the prior event's digest, or `null`), `delegation_id`, `kind`, `timestamp` and a `payload`, and `digest` is the event's own content digest under schema `hardy.delegation/event/v1`. A line whose digest or chain does not match is refused on read. The tree of delegations, their leases, their usage and their attention state are all replayed from this file; nothing else is consulted.

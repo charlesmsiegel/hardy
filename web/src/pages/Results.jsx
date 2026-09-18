@@ -9,16 +9,20 @@
 // that way in the browser: three separate bordered `.wb-card`s in the
 // detail pane, never a merged grid.
 //
-// **The `§` lane is `null` for nearly every theorem, and that is the
-// truth.** Issue #171: `workflows/interactive/formal.py` writes no ledger
-// record when a theorem is saved interactively, so `row.record` comes back
-// `null` for essentially everything the Lean tree declares. This page
-// renders that as `Absent kind="na"` -- the same "a single optional link
-// most items simply don't have" reading `Ledger.jsx` already gives its own
-// `research` field -- and never falls back to the kernel's verdict or the
-// model's summary to fill the gap. Borrowing another lane's answer there
-// would assert something no one recorded, which is the one failure this
-// design exists to prevent.
+// **The `§` lane is `null` whenever no ledger item names the declaration,
+// and that is the truth.** An interactive save records each public theorem
+// and lemma under its qualified Lean name and opens a `prove` obligation on
+// it (`workflows/interactive/evidence.py`, #171), so a theorem saved in a
+// session ordinarily has a record; one saved before that existed, or written
+// outside a session, has none. This page renders that as `Absent kind="na"`
+// -- the same "a single optional link most items simply don't have" reading
+// `Ledger.jsx` already gives its own `research` field -- and never falls
+// back to the kernel's verdict or the model's summary to fill the gap.
+// Borrowing another lane's answer there would assert something no one
+// recorded, which is the one failure this design exists to prevent. The
+// record's obligations are quoted the same way: `resolved` is the ledger
+// saying the proof was accepted on the evidence named, not this page
+// re-checking it.
 //
 // `row.tone` is computed server-side (`vocabulary.py`'s `_VERDICT_TONE`,
 // total over `audit.GRADES`) and used directly on every verdict pill here --
@@ -107,6 +111,27 @@ function claimedText(record) {
   if (!record) return <Absent kind="na" />;
   if (!record.claimed_in.length) return <Absent kind="zero" />;
   return record.claimed_in.map((c) => `${c.scope} (${c.role})`).join(', ');
+}
+
+/** The record's obligations on this exact item revision, each with the
+ *  evidence its resolution names and the reason it is still open -- the
+ *  ledger's own claim, drawn without reading any artifact behind it. */
+function obligationsText(record) {
+  const obligations = record.obligations || [];
+  if (!obligations.length) return <Absent kind="zero" />;
+  return (
+    <div style={{display: 'flex', flexDirection: 'column', gap: 4}}>
+      {obligations.map((o) => (
+        <div key={o.id}>
+          <span style={{fontFamily: 'var(--mono)'}}>{o.kind}</span> · {o.status}
+          {o.evidence.length
+            ? ` · evidence: ${o.evidence.map((e) => `${e.kind} by ${e.producer}`).join(', ')}`
+            : ''}
+          {o.reason ? <div className="panel__note">{o.reason}</div> : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** Plain-text lines from a `Section` (already reduced through `.shown`),
@@ -355,11 +380,13 @@ export default function Results({arg, onPeek}) {
                 {selected.record ? (
                   <Facts
                     rows={[
+                      ['kind', selected.record.kind],
                       ['claimed in', claimedText(selected.record)],
                       [
                         'assumptions',
                         selected.record.assumptions.length ? selected.record.assumptions.join(', ') : <Absent kind="zero" />,
                       ],
+                      ['obligations', obligationsText(selected.record)],
                       [
                         'ledger',
                         <a
@@ -377,9 +404,9 @@ export default function Results({arg, onPeek}) {
                   />
                 ) : (
                   <div className="panel__note">
-                    <Absent kind="na" /> — no ledger item names this Lean declaration. Issue #171: an interactive
-                    save writes no ledger record, so this is the ordinary case for nearly every theorem here, not a
-                    lookup failure.
+                    <Absent kind="na" /> — no ledger item names this Lean declaration. A save made in a session
+                    records one under the qualified Lean name; a declaration saved before that existed, or written
+                    outside a session, has none, and nothing here borrows the kernel's verdict to fill the gap.
                   </div>
                 )}
               </div>
