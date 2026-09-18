@@ -11,8 +11,11 @@ declaring these as global constants (which the packet did with the Lean 3
 keyword `constant`, and which would hide assumptions from an axiom audit)
 they are bundled here as *data a theorem takes*: a `PlaneGeometry F` is a
 record of the geometric notions attached to a plane Keller map `F`, with no
-axioms relating its fields to `F`. Two fields relate other fields to each
-other and record what the fields mean rather than any fact about `F`:
+axioms relating its fields to `F`. The sheets of the normalisation that lie
+in the affine source are primitive (`sheetInSource`), so the generic fiber
+count `m_C`, the deleted-sheet count `t_C` and the fiber deficit are
+definitions rather than independent data. Two fields relate other fields to
+each other and record what the fields mean rather than any fact about `F`:
 `pencilOf_disjoint` (distinct members of one pencil share no point) and
 `branchCount_pos` (every listed point of `S_F` lies on some component).
 Each is named in the docstring of every theorem that uses it.
@@ -53,10 +56,15 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   image : Boundary → Curve
   /-- The generic inertia permutation `σ_C` along a component, on the `d` sheets. -/
   inertia : Curve → Perm (Fin degree)
-  /-- The generic affine fiber cardinality `m_C` along a component. -/
-  affineFiberCard : Curve → ℕ
-  /-- The number `t_C` of generically unramified normalisation sheets omitted from the source. -/
-  deletedSheets : Curve → ℕ
+  /-- The normalisation sheets over a generic point of `C` that lie in the affine source `A²`.
+  Its size is the generic affine fiber cardinality `m_C`; the unramified sheets outside it are
+  the `t_C` deleted ones. -/
+  sheetInSource : Curve → Finset (Fin degree)
+  /-- Coherence of `sheetInSource` with `inertia`, forced by the Keller condition: `F` is étale
+  on `A²`, because its Jacobian determinant is a nonzero constant, so a point where the finite
+  normalisation ramifies cannot lie in the source, and no sheet the inertia moves lies in
+  `sheetInSource`. This is what the fields mean, not a theorem about `F`. -/
+  sheetInSource_disjoint_support : ∀ C, Disjoint (sheetInSource C) (inertia C).support
   /-- The finite points of `S_F` where normalisation branches are identified: every finite
   singular point of a component and every point where two components cross. -/
   Point : Type
@@ -67,6 +75,9 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   point `p`; zero when `p` is not on `C`. This is the incidence data the Euler-characteristic
   count of `S_F` reads. -/
   branchCount : Curve → Point → ℕ
+  /-- The local inertia of each of the two branches of `C` at a node, on the `d` sheets. Only the
+  values at a point with two branches are used. -/
+  branchInertia : Curve → Point → Fin 2 → Perm (Fin degree)
   /-- Coherence: every listed point lies on `S_F`, so some component has a branch over it. This
   is what the fields mean, not a theorem about `F`. -/
   branchCount_pos : ∀ p, ∃ C, 1 ≤ branchCount C p
@@ -116,12 +127,11 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   exactlyTwoNodalFibers : Prop
   /-- The sheet-monodromy group over the proper locus, as a subgroup of `S_d`. -/
   monodromy : Subgroup (Perm (Fin degree))
+  /-- Coherence: a generic inertia permutation is by construction an element of the
+  sheet-monodromy group. This is what the fields mean, not a theorem about `F`. -/
+  inertia_mem_monodromy : ∀ C, inertia C ∈ monodromy
   /-- `F` is a counterexample to the Jacobian conjecture (a Keller map that is not an automorphism). -/
   isCounterexample : Prop
-  /-- The forced degree-six `A₆` boundary packet `(3,1),(1,1),(1,1)` with zero excess. -/
-  a6BoundaryPacket : Prop
-  /-- At every node of the ramified fiber the two branch inertia permutations are disjoint 3-cycles. -/
-  a6NodeInertia : Prop
 
 attribute [instance] PlaneGeometry.fintypeCurve PlaneGeometry.fintypePoint
   PlaneGeometry.finiteBoundary
@@ -129,6 +139,13 @@ attribute [instance] PlaneGeometry.fintypeCurve PlaneGeometry.fintypePoint
 namespace PlaneGeometry
 
 variable {F : PlaneKellerMap} (G : PlaneGeometry F)
+
+/-- The generic affine fiber cardinality `m_C` along a component. -/
+def affineFiberCard (C : G.Curve) : ℕ := (G.sheetInSource C).card
+
+/-- The number `t_C` of generically unramified normalisation sheets omitted from the source: the
+sheets the inertia fixes that do not lie in the affine source. -/
+def deletedSheets (C : G.Curve) : ℕ := ((G.inertia C).supportᶜ \ G.sheetInSource C).card
 
 /-- The fiber deficit `d - m_C` along a component. -/
 def deficit (C : G.Curve) : ℕ := G.degree - G.affineFiberCard C
@@ -180,6 +197,22 @@ def pencilIsCoordinate : Prop := ∃ C, G.isCoordinate (G.pencilOf C)
 /-- The number `q` of selected fibers of the pencil: in the common-pencil case every component
 of `S_F` is one fiber `V(h - aᵢ)`. -/
 noncomputable def selectedFibers : ℕ := Nat.card G.Curve
+
+/-- The forced degree-six `A₆` boundary packet `(3,1),(1,1),(1,1)` with zero excess: of the two
+components of `S_F`, one is ramified, with generic inertia of support three (a single 3-cycle in
+the natural six-point action) and no deleted sheet, and the other is unramified with two deleted
+sheets. -/
+def a6BoundaryPacket : Prop :=
+  ∃ C₀ C₁ : G.Curve, C₀ ≠ C₁ ∧ (∀ C, C = C₀ ∨ C = C₁) ∧
+    permSupportSize (G.inertia C₀) = 3 ∧ G.deletedSheets C₀ = 0 ∧
+    G.inertia C₁ = 1 ∧ G.deletedSheets C₁ = 2
+
+/-- At every node of a ramified component the two branch inertia permutations are disjoint
+3-cycles, so the local inertia group is `C₃ × C₃`. -/
+def a6NodeInertia : Prop :=
+  ∀ (C : G.Curve) (p : G.Point), G.inertia C ≠ 1 → 2 ≤ G.branchCount C p →
+    permSupportSize (G.branchInertia C p 0) = 3 ∧ permSupportSize (G.branchInertia C p 1) = 3 ∧
+      Perm.Disjoint (G.branchInertia C p 0) (G.branchInertia C p 1)
 
 /-- Two distinct members of one pencil are disjoint, from the coherence field
 `pencilOf_disjoint`. -/
