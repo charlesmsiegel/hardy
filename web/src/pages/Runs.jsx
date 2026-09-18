@@ -4,21 +4,23 @@
 // module's own docstring first; this page exists to render exactly the
 // asymmetry it documents, not to paper over it.
 //
-// **`claim_sha256` is the page's whole point.** Every check a run made --
-// the faithfulness read, the kernel's final verification, the writeup --
-// was against one frozen Lean statement, and this hash is what ties them
-// together (`Grades.faithfulness_review.claim_sha256` and
+// **`claim_sha256` is the page's whole point, and the statement is shown
+// beside it.** Every check a run made -- the faithfulness read, the kernel's
+// final verification, the writeup -- was against one frozen Lean statement,
+// and this hash is what ties them together
+// (`Grades.faithfulness_review.claim_sha256` and
 // `Grades.verification_evidence.claim_sha256` both name the same value when
-// a run reaches them). The design's own prototype prints the frozen
-// statement's *text* beside the hash, but nothing in this shipment's API
-// carries that text: `RunManifest` never stores it, `manifest.artifacts` is
-// a `{relative_path: sha256}` inventory (`prove.py:_artifact_hashes`), not
-// file contents, and `/api/runs/item` (`panels/runs.py:run_item`) does not
-// read `formalization.json` off disk to hand it back. So the "frozen
-// formalization" card below shows the hash -- the one fact this shipment
-// actually carries -- and says in words, not silence, that the statement
-// text itself is not being fabricated. Same treatment `pages/Results.jsx`
-// gives the four sections Task 1 found no endpoint for at all.
+// a run reaches them). `RunManifest` never stores the text, but the run
+// directory does (`formalization.json`, the `FrozenClaim` `prove.py` writes
+// at approval), and `/api/runs/item` reads it back as `claim` (issue #174)
+// -- only after proving it is the statement this hash is the hash *of*:
+// `panels/runs.py`'s `_frozen_claim` refuses a file whose hash is not the
+// manifest's, and one whose text does not re-freeze to the hash it carries.
+// So `claim` is either the statement, proven, or `null` with `claim_error`
+// saying why *this run* cannot show it -- a run whose manifest names a hash
+// but whose directory lost the file says so, rather than the page implying
+// the text is never served anywhere. Both are `null` exactly when
+// `claim_sha256` is: nothing was ever frozen, which is `na`, not a failure.
 //
 // **An unreadable run stays a row, never a blank or an omission.** `_row`
 // emits `{dir, readable:false, error, run_id:null, ...}` for a directory
@@ -198,10 +200,10 @@ function RunDetail({runId, revision, go}) {
           ]}
         />
         <div className="panel__note">
-          The claim's own English text (<code>request.md</code>) and the run's chosen strategy
-          (<code>strategy.json</code>) are both written into the run directory (<code>prove.py</code>), but no
-          endpoint in this shipment reads either back out -- <code>/api/runs/item</code> answers the manifest and
-          the trajectory only. <Absent kind="unreported" /> rather than a guess at either.
+          The claim's own English text is the frozen formalization's <code>original_text</code>, shown in the
+          next card when this run froze one. The run's chosen strategy (<code>strategy.json</code>) is written
+          into the run directory (<code>prove.py</code>) but no endpoint reads it back out --{' '}
+          <Absent kind="unreported" /> rather than a guess at it.
         </div>
       </div>
 
@@ -212,13 +214,35 @@ function RunDetail({runId, revision, go}) {
             <div className="wb-runs__hash-line">
               hash <span className="wb-runs__hash">{run.claim_sha256}</span>
             </div>
-            <div className="panel__note">
-              The statement's own Lean text lives in the run directory (<code>formalization.json</code>, listed
-              below under artifacts with its own file hash) but is not served by any endpoint this shipment
-              ships -- only this hash, which is what the faithfulness read and the kernel verification below are
-              each independently keyed to. <Absent kind="unreported" /> rather than a re-typed guess at the
-              statement itself.
-            </div>
+            {run.claim ? (
+              <>
+                <pre className="wb-runs__pre">{run.claim.statement}</pre>
+                <Facts
+                  rows={[
+                    ['claim', <q key="text" className="wb-runs__quote">{run.claim.original_text}</q>],
+                    [
+                      'restated',
+                      run.claim.restatement && run.claim.restatement !== run.claim.original_text
+                        ? <q key="restated" className="wb-runs__quote">{run.claim.restatement}</q>
+                        : <Absent kind="na" />,
+                    ],
+                    ['imports', run.claim.imports.join(', ')],
+                    ['approved', when(run.claim.approved_at)],
+                  ]}
+                />
+                <div className="panel__note">
+                  Read from this run's own <code>formalization.json</code> and shown only because it hashes to the
+                  number above (<code>panels/runs.py</code>'s <code>_frozen_claim</code> re-freezes the text and
+                  compares) -- the faithfulness read and the kernel verification below are each independently
+                  keyed to that same hash.
+                </div>
+              </>
+            ) : (
+              <div className="panel__note">
+                <Absent kind="unreported" /> -- this run's manifest names the hash above, but the statement it is
+                the hash of could not be shown for this run: {run.claim_error}
+              </div>
+            )}
           </>
         ) : (
           <div className="panel__note">

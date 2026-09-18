@@ -1109,6 +1109,139 @@ def test_run_item_with_no_trajectory_yet_is_an_empty_list_not_absent(tmp_path: P
     assert panels.run_item(config, str(run_id))["trajectory"] == []
 
 
+# -- run_item(): the frozen statement beside its hash (issue #174) --
+
+_TOOLCHAIN = EnvironmentIdentity(
+    lean_version="4.32.0", lean_commit="8c9756b", mathlib_revision="81a5d257", lake_manifest_sha256="b" * 64,
+)
+
+
+def _freeze(text: str = "Two equals two.", *, name: str = "two_eq_two", binders: str = "", proposition: str = "2 = 2"):
+    from hardy.formal.contracts import FormalizationProposal, freeze_claim
+
+    proposal = FormalizationProposal(
+        restatement=text, domains=(), quantifiers=(), assumptions=(), interpretation_choices=(),
+        theorem_name=name, binders=binders, proposition=proposition,
+    )
+    return freeze_claim(text, proposal, _TOOLCHAIN, _NOW)
+
+
+def _make_frozen_run(runs_root: Path, run_id: UUID, claim, *, manifest_hash: str | None = "same") -> Path:
+    """A run whose `formalization.json` is `claim`, hashed into the manifest the way `prove.py` does."""
+    from pathlib import PurePosixPath
+
+    from hardy.workflows.storage import RunStore
+
+    store = RunStore.create(runs_root, "order-30", now=_NOW, run_id=run_id)
+    if claim is not None:
+        store.write_json(PurePosixPath("formalization.json"), claim)
+    sha = claim.content_hash if manifest_hash == "same" else manifest_hash
+    store.finalize(RunManifest(
+        run_id=run_id, created_at=_NOW, phase=RunPhase.COMPLETED, model="claude-opus-4-1",
+        prompt_set_sha256="a" * 64, claim_sha256=sha, environment=_TOOLCHAIN,
+    ))
+    return store.path
+
+
+def test_run_item_serves_the_frozen_statement_beside_the_hash_it_is_the_hash_of(tmp_path: Path) -> None:
+    """The page's central pairing: the statement text, not only `claim_sha256` (issue #174)."""
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    claim = _freeze("Every natural number is at most its successor.", name="le_succ", binders="(n : ℕ)", proposition="n ≤ n + 1")
+    _make_frozen_run(config.runs_root, run_id, claim)
+
+    out = panels.run_item(config, str(run_id))
+    assert out["claim_sha256"] == claim.content_hash
+    assert out["claim_error"] is None
+    assert out["claim"] == {
+        "content_hash": claim.content_hash,
+        "original_text": "Every natural number is at most its successor.",
+        "theorem_name": "le_succ",
+        "binders": "(n : ℕ)",
+        "proposition": "n ≤ n + 1",
+        "statement": "theorem le_succ (n : ℕ) : n ≤ n + 1",
+        "restatement": "Every natural number is at most its successor.",
+        "imports": ["Mathlib"],
+        "approved_at": _NOW.isoformat(),
+    }
+
+
+def test_run_item_a_binderless_statement_has_no_stray_space(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    _make_frozen_run(config.runs_root, run_id, _freeze())
+    assert panels.run_item(config, str(run_id))["claim"]["statement"] == "theorem two_eq_two : 2 = 2"
+
+
+def test_run_item_a_run_that_never_froze_a_claim_has_no_claim_and_no_complaint(tmp_path: Path) -> None:
+    """`claim_sha256: null` is the manifest saying no statement was ever approved -- `na`, not a failure."""
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    _make_run(config.runs_root, "order-30", run_id)
+    out = panels.run_item(config, str(run_id))
+    assert out["claim_sha256"] is None
+    assert out["claim"] is None and out["claim_error"] is None
+
+
+def test_run_item_says_when_a_hashed_claim_has_no_formalization_on_disk(tmp_path: Path) -> None:
+    """The manifest names a frozen claim but the run directory does not carry it: that run says so."""
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    _make_run(config.runs_root, "order-30", run_id, claim_sha256="c" * 64)
+    out = panels.run_item(config, str(run_id))
+    assert out["claim_sha256"] == "c" * 64
+    assert out["claim"] is None
+    assert "formalization.json" in out["claim_error"]
+
+
+def test_run_item_refuses_a_formalization_that_is_not_the_one_the_manifest_hashed(tmp_path: Path) -> None:
+    """A statement beside a hash it is not the hash of would be exactly the fabrication the page refuses."""
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    _make_frozen_run(config.runs_root, run_id, _freeze(), manifest_hash="d" * 64)
+    out = panels.run_item(config, str(run_id))
+    assert out["claim"] is None
+    assert "differs" in out["claim_error"]
+
+
+def test_run_item_refuses_a_formalization_whose_hash_field_does_not_match_its_own_text(tmp_path: Path) -> None:
+    """Agreeing with the manifest is not enough: the text must actually hash to the number it carries."""
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    claim = _freeze()
+    run_dir = _make_frozen_run(config.runs_root, run_id, claim)
+    tampered = json.loads((run_dir / "formalization.json").read_text(encoding="utf-8"))
+    tampered["proposal"]["proposition"] = "1 = 2"
+    (run_dir / "formalization.json").write_text(json.dumps(tampered), encoding="utf-8")
+    out = panels.run_item(config, str(run_id))
+    assert out["claim"] is None
+    assert "hash" in out["claim_error"]
+
+
+def test_run_item_reports_an_unparseable_formalization_rather_than_guessing(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    run_dir = _make_run(config.runs_root, "order-30", run_id, claim_sha256="c" * 64)
+    (run_dir / "formalization.json").write_text("{not json", encoding="utf-8")
+    out = panels.run_item(config, str(run_id))
+    assert out["claim"] is None and out["claim_error"]
+
+
+def test_run_item_refuses_a_symlinked_formalization(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    claim = _freeze()
+    outside = tmp_path / "outside.json"
+    outside.write_text(claim.model_dump_json(), encoding="utf-8")
+    run_dir = _make_run(config.runs_root, "order-30", run_id, claim_sha256=claim.content_hash)
+    try:
+        (run_dir / "formalization.json").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    out = panels.run_item(config, str(run_id))
+    assert out["claim"] is None and out["claim_error"]
+
+
 def test_run_item_bails_out_on_a_corrupt_trajectory_line_rather_than_a_partial_one(tmp_path: Path) -> None:
     from hardy.workflows.storage import RunStore
 
