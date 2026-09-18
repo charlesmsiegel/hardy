@@ -196,18 +196,18 @@
           "name": "KellerGroupoids.ProjectStatements.connectedNonproper_implies_etaleMaximal",
           "axioms": [
             "propext",
-            "sorryAx",
             "Classical.choice",
-            "Quot.sound"
+            "Quot.sound",
+            "KellerGroupoids.Published.jelonekConnectedNonproperEulerPositive"
           ]
         },
         {
           "name": "KellerGroupoids.ProjectStatements.nonmaximal_implies_nonproperDisconnected",
           "axioms": [
             "propext",
-            "sorryAx",
             "Classical.choice",
-            "Quot.sound"
+            "Quot.sound",
+            "KellerGroupoids.Published.jelonekConnectedNonproperEulerPositive"
           ]
         },
         {
@@ -258,13 +258,13 @@
           "name": "KellerGroupoids.ProjectStatements.nonmaximal_implies_exactlyTwoNodalFibers",
           "axioms": [
             "propext",
-            "sorryAx",
             "Classical.choice",
             "Quot.sound",
             "KellerGroupoids.Published.assiDisjointParametricCurvesTrichotomy",
             "KellerGroupoids.Published.assiExceptionalTwoFibersEquinodal",
             "KellerGroupoids.Published.assiRationalOnePlacePencilDichotomy",
             "KellerGroupoids.Published.counterexampleMeetsEverySubmersionFiber",
+            "KellerGroupoids.Published.jelonekConnectedNonproperEulerPositive",
             "KellerGroupoids.Published.jelonekNonproperComponentsParametric"
           ]
         },
@@ -352,6 +352,7 @@
         "sorryAx"
       ],
       "unapproved": [
+        "KellerGroupoids.Published.jelonekConnectedNonproperEulerPositive",
         "KellerGroupoids.Published.assiDisjointParametricCurvesTrichotomy",
         "KellerGroupoids.Published.jelonekNonproperComponentsParametric",
         "KellerGroupoids.Published.assiRationalOnePlacePencilDichotomy",
@@ -362,7 +363,88 @@
         "KellerGroupoids.ExternalResearch.refinedDegreeSixBoundaryBudget"
       ],
       "assumed": [],
-      "signature": "e70733577977c00b2e9cc0fc774c36223c73e9ac1eb6cc62bc682fc7cb5ae26a"
+      "signature": "9a6f59dc48cf4e5369a67653ced18404c2c5bffe4545e18b4bfe1e0f7876fa72"
+    },
+    "KellerPlanar.BranchCount": {
+      "status": "clean",
+      "declarations": [
+        {
+          "name": "KellerGroupoids.ProjectStatements.incidenceGraph_adj_inl_inr",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.reachable_of_eqvGen",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.exists_one_le_of_one_le_sum",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.incidenceGraph_connected",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.exists_pair_of_mem_edgeSet",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.card_edgeSet_le_card_pairs",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.card_pairs_add_one_le",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.card_add_card_le_sum_branches",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.euler_le_zero",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        }
+      ],
+      "forbidden": [],
+      "unapproved": [],
+      "assumed": [],
+      "signature": "a967fedc6b08802093e4d47e291fb959bcf61ba94371f8ec8f314e66de0ff367"
     }
   }
 }

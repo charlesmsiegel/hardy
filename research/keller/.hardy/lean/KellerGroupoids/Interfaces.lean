@@ -11,13 +11,17 @@ declaring these as global constants (which the packet did with the Lean 3
 keyword `constant`, and which would hide assumptions from an axiom audit)
 they are bundled here as *data a theorem takes*: a `PlaneGeometry F` is a
 record of the geometric notions attached to a plane Keller map `F`, with no
-axioms relating its fields to `F`. The one field that relates fields to
-each other, `disjoint_of_pencilOf_eq`, records what the fields mean (two
-distinct members of one pencil are disjoint) and is named in the docstring
-of every theorem that uses it. Connectedness of `S_F` and membership of a
-common pencil are not fields but definitions below, in terms of which
-components meet and which pencil each belongs to, so a theorem about them
-unfolds to those notions.
+axioms relating its fields to `F`. Two fields relate other fields to each
+other and record what the fields mean rather than any fact about `F`:
+`pencilOf_disjoint` (distinct members of one pencil share no point) and
+`branchCount_pos` (every listed point of `S_F` lies on some component).
+Each is named in the docstring of every theorem that uses it.
+
+The incidence of components and points is primitive: `branchCount C p` is
+the number of normalisation branches of the component `C` over the point
+`p`. Meeting, connectedness, membership of a common pencil, unibranch and
+multibranch singularities are then definitions below rather than fields,
+so a theorem about them unfolds to the branch counts.
 
 A theorem stated over `G : PlaneGeometry F` is therefore a faithful
 transcription of the claim's *shape*: which hypotheses it takes and what it
@@ -41,7 +45,7 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   degree : ℕ
   /-- The irreducible components `C` of the nonproperness curve `S_F`. -/
   Curve : Type
-  [finiteCurve : Finite Curve]
+  [fintypeCurve : Fintype Curve]
   /-- The boundary prime divisors `E` of the finite (Zariski Main) normalisation of `F`. -/
   Boundary : Type
   [finiteBoundary : Finite Boundary]
@@ -53,20 +57,29 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   affineFiberCard : Curve → ℕ
   /-- The number `t_C` of generically unramified normalisation sheets omitted from the source. -/
   deletedSheets : Curve → ℕ
-  /-- The finite singular points of a component, where they sit, and their branch counts. -/
-  SingularPoint : Curve → Type
-  location : (C : Curve) → SingularPoint C → AffinePoint 2
-  branches : (C : Curve) → SingularPoint C → ℕ
-  /-- Two components are disjoint in the affine plane. -/
-  disjoint : Curve → Curve → Prop
+  /-- The finite points of `S_F` where normalisation branches are identified: every finite
+  singular point of a component and every point where two components cross. -/
+  Point : Type
+  [fintypePoint : Fintype Point]
+  /-- Where a listed point sits in the plane. -/
+  location : Point → AffinePoint 2
+  /-- The number of branches of the normalisation `C̃ ≅ A¹` of the component `C` lying over the
+  point `p`; zero when `p` is not on `C`. This is the incidence data the Euler-characteristic
+  count of `S_F` reads. -/
+  branchCount : Curve → Point → ℕ
+  /-- Coherence: every listed point lies on `S_F`, so some component has a branch over it. This
+  is what the fields mean, not a theorem about `F`. -/
+  branchCount_pos : ∀ p, ∃ C, 1 ≤ branchCount C p
   /-- The pencils an irreducible plane curve can belong to, a pencil being the affine
   equivalence class `{λh + μ}` of a reduced polynomial `h`; a curve `V(h - a)` lies in exactly
   one, `pencilOf`. -/
   Pencil : Type
   pencilOf : Curve → Pencil
-  /-- Coherence of `disjoint` with `pencilOf`: two distinct members `V(h - a)`, `V(h - a')` of one
-  pencil are disjoint. This is what the fields mean, not a theorem about `F`. -/
-  disjoint_of_pencilOf_eq : ∀ C C', pencilOf C = pencilOf C' → C ≠ C' → disjoint C C'
+  /-- Coherence of `pencilOf` with the branch counts: two distinct members `V(h - a)`,
+  `V(h - a')` of one pencil are disjoint, so no point carries a branch of both. This is what the
+  fields mean, not a theorem about `F`. -/
+  pencilOf_disjoint : ∀ C C' p, pencilOf C = pencilOf C' → C ≠ C' →
+    ¬ (1 ≤ branchCount C p ∧ 1 ≤ branchCount C' p)
   /-- The pencil is a rational one-place pencil: `h` has one place at infinity and the members in
   question are rational (Assi's setting; a coordinate pencil is one). -/
   rationalOnePlace : Pencil → Prop
@@ -88,10 +101,6 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   onePlaceAtInfinity : Curve → Prop
   /-- `C` is the image of a polynomial parametrisation of `A¹`. -/
   polynomiallyParametric : Curve → Prop
-  /-- Every finite singularity of `C` is unibranch. -/
-  unibranchEverywhere : Curve → Prop
-  /-- `C` has a multibranch finite singularity. -/
-  hasMultibranchSingularity : Curve → Prop
   /-- Every finite singularity of `C` is an ordinary node. -/
   isNodal : Curve → Prop
   /-- `C` is rational. -/
@@ -114,7 +123,8 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   /-- At every node of the ramified fiber the two branch inertia permutations are disjoint 3-cycles. -/
   a6NodeInertia : Prop
 
-attribute [instance] PlaneGeometry.finiteCurve PlaneGeometry.finiteBoundary
+attribute [instance] PlaneGeometry.fintypeCurve PlaneGeometry.fintypePoint
+  PlaneGeometry.finiteBoundary
 
 namespace PlaneGeometry
 
@@ -123,8 +133,28 @@ variable {F : PlaneKellerMap} (G : PlaneGeometry F)
 /-- The fiber deficit `d - m_C` along a component. -/
 def deficit (C : G.Curve) : ℕ := G.degree - G.affineFiberCard C
 
-/-- Two components meet in the affine plane. -/
-def meets (C C' : G.Curve) : Prop := ¬ G.disjoint C C'
+/-- The total number `r_p` of normalisation branches of `S_F` over a point. -/
+def totalBranches (p : G.Point) : ℕ := ∑ C, G.branchCount C p
+
+/-- Two components meet in the affine plane: some listed point carries a branch of each. -/
+def meets (C C' : G.Curve) : Prop := ∃ p, 1 ≤ G.branchCount C p ∧ 1 ≤ G.branchCount C' p
+
+/-- Two components are disjoint in the affine plane. -/
+def disjoint (C C' : G.Curve) : Prop := ¬ G.meets C C'
+
+/-- The finite singular points of a component: the listed points over which its normalisation
+has more than one branch. -/
+def SingularPoint (C : G.Curve) : Type := {p : G.Point // 2 ≤ G.branchCount C p}
+
+/-- The number of branches of `C` at one of its singular points. -/
+def branches {C : G.Curve} (p : G.SingularPoint C) : ℕ := G.branchCount C p.1
+
+/-- Every finite singularity of `C` is unibranch: no listed point carries two branches of `C`. -/
+def unibranchEverywhere (C : G.Curve) : Prop := ∀ p, G.branchCount C p ≤ 1
+
+/-- `C` has a multibranch finite singularity: some listed point carries two branches of `C`,
+a self-identification of its normalisation. -/
+def hasMultibranchSingularity (C : G.Curve) : Prop := ∃ p, 2 ≤ G.branchCount C p
 
 /-- Two components lie in the same connected component of `S_F`. The irreducible components are
 closed and connected and finitely many, so the connected components of `S_F` are the classes of
@@ -150,6 +180,18 @@ def pencilIsCoordinate : Prop := ∃ C, G.isCoordinate (G.pencilOf C)
 /-- The number `q` of selected fibers of the pencil: in the common-pencil case every component
 of `S_F` is one fiber `V(h - aᵢ)`. -/
 noncomputable def selectedFibers : ℕ := Nat.card G.Curve
+
+/-- Two distinct members of one pencil are disjoint, from the coherence field
+`pencilOf_disjoint`. -/
+theorem disjoint_of_pencilOf_eq {C C' : G.Curve} (h : G.pencilOf C = G.pencilOf C')
+    (hne : C ≠ C') : G.disjoint C C' :=
+  fun ⟨p, hp⟩ => G.pencilOf_disjoint C C' p h hne hp
+
+/-- Every listed point lies on `S_F`, so the total branch count over it is positive. -/
+theorem one_le_totalBranches (p : G.Point) : 1 ≤ G.totalBranches p := by
+  obtain ⟨C, hC⟩ := G.branchCount_pos p
+  exact hC.trans (Finset.single_le_sum (f := fun C => G.branchCount C p)
+    (fun _ _ => Nat.zero_le _) (Finset.mem_univ C))
 
 end PlaneGeometry
 

@@ -391,15 +391,60 @@
      "faithfulness": "statement",
      "note": "the conductor-point fiber bound"
     },
+    "KellerGroupoids.ProjectStatements.incidenceGraph_adj_inl_inr": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "a component is adjacent to a point it has a branch over"
+    },
+    "KellerGroupoids.ProjectStatements.reachable_of_eqvGen": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "components linked through the points are linked in the incidence graph"
+    },
+    "KellerGroupoids.ProjectStatements.exists_one_le_of_one_le_sum": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "a listed point lying on the curve lies on some component"
+    },
+    "KellerGroupoids.ProjectStatements.incidenceGraph_connected": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "a connected curve has a connected incidence graph"
+    },
+    "KellerGroupoids.ProjectStatements.exists_pair_of_mem_edgeSet": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "every incidence edge is a component–point pair with a branch"
+    },
+    "KellerGroupoids.ProjectStatements.card_edgeSet_le_card_pairs": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "the incidence edges inject into the pairs with a branch"
+    },
+    "KellerGroupoids.ProjectStatements.card_pairs_add_one_le": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "with a double branch somewhere, the pairs with a branch number at most Σb − 1"
+    },
+    "KellerGroupoids.ProjectStatements.card_add_card_le_sum_branches": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "a connected curve with a self-identification has c + |points| ≤ Σ_p r_p"
+    },
+    "KellerGroupoids.ProjectStatements.euler_le_zero": {
+     "item": "KG-EM07",
+     "faithfulness": "core",
+     "note": "the Euler bound χ = c − Σ_p (r_p − 1) ≤ 0 for a connected curve with a self-identification"
+    },
     "KellerGroupoids.ProjectStatements.connectedNonproper_implies_etaleMaximal": {
      "item": "KG-EM07",
-     "faithfulness": "statement",
-     "note": "connected nonproperness implies étale-maximality"
+     "faithfulness": "full",
+     "note": "connected nonproperness implies étale-maximality, with the audit's two prerequisites as explicit hypotheses: the Euler count χ(S_F) = c − Σ_p (r_p − 1) read off the A¹ normalisations (KG-P12 with additivity of the topological Euler characteristic) and the multibranch consequence of non-maximality (KG-EM02 with KG-EM03); from Jelonek's positivity as a Published axiom, verified once that input is admitted"
     },
     "KellerGroupoids.ProjectStatements.nonmaximal_implies_nonproperDisconnected": {
      "item": "KG-EM07",
-     "faithfulness": "statement",
-     "note": "the contrapositive, derived"
+     "faithfulness": "core",
+     "note": "the contrapositive, derived, carrying the same two hypotheses"
     },
     "KellerGroupoids.ProjectStatements.disjoint_of_not_sameComponent": {
      "item": "KG-EM08",
@@ -428,8 +473,8 @@
     },
     "KellerGroupoids.ProjectStatements.nonmaximal_implies_exactlyTwoNodalFibers": {
      "item": "KG-EM10",
-     "faithfulness": "statement",
-     "note": "derived from KG-EM07, KG-EM08, KG-EM09 and Assi's equinodal theorem exactly as the audit derives it; open through the KG-EM07 hole"
+     "faithfulness": "full",
+     "note": "derived from KG-EM07, KG-EM08, KG-EM09 and Assi's equinodal theorem exactly as the audit derives it, carrying KG-EM07's two hypotheses; rests on five Published axioms and no hole; verified once those inputs are admitted"
     },
     "KellerGroupoids.ProjectStatements.onePlace_irreducibleComponents": {
      "item": "KG-P12",
