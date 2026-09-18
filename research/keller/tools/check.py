@@ -14,8 +14,10 @@ What it enforces, per problem:
 - every `lean_declaration` semantic names a declaration present in the problem's
   own `lean/` or the root's shared `.hardy/lean/`;
 - every artifact reference still matches the bytes on disk;
-- nothing is `lean verified` or `human verified`, since no evidence for either
-  exists here yet; the day one is promoted, this line is the one to relax.
+- a `lean verified` item has a resolved `prove` obligation bound to its current
+  revision whose acceptance Hardy's own evidence readers authenticate from the
+  problem's `evidence/` journal (a missing, moved or edited record fails it);
+  `human verified` has no evidence mechanism yet and is refused.
 
 It reads the ledgers through Hardy's own store, so a damaged chain fails here
 before it fails in a session. It never writes a ledger.
@@ -29,7 +31,16 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, Relation, RelationKind
+from hardy.workflows.interactive import evidence as evidence_owner
+from hardy.workflows.ledger.contracts import (
+    Obligation,
+    ObligationKind,
+    ObligationStatus,
+    ProjectItem,
+    ProjectItemKind,
+    Relation,
+    RelationKind,
+)
 from hardy.workflows.ledger.store import LedgerStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,6 +65,13 @@ def lean_declarations(problem: Path) -> set[str]:
 
 def status_of(item: ProjectItem) -> str | None:
     return item.research.status if item.research else None
+
+
+def owners_of(problem: Path) -> evidence_owner.ProjectOwners:
+    """Hardy's evidence readers for this problem; nothing else authenticates a resolution."""
+    gates = evidence_owner.SaveGates(final_gates=lambda _s: None, missing_names=lambda _a, _b: [],
+                                     head_sources=dict)
+    return evidence_owner.ProjectOwners(problem, audit=lambda *_a, **_k: None, gates=gates)
 
 
 def mermaid(problem: Path, items: dict[str, ProjectItem], relations: list[Relation]) -> str:
@@ -97,6 +115,8 @@ def check(problem: Path, heads: dict[str, dict[str, ProjectItem]], write_graphs:
     relations = [r for r in snapshot.current(Relation) if r.kind in {RelationKind.DEPENDS_ON, RelationKind.USES}]
     heads[problem.name] = items
     declared = lean_declarations(problem)
+    policy = owners_of(problem).policy
+    obligations = snapshot.current(Obligation)
 
     # Statuses and evidence.
     for id_, item in items.items():
@@ -105,8 +125,16 @@ def check(problem: Path, heads: dict[str, dict[str, ProjectItem]], write_graphs:
             continue
         if status not in STATUSES | INPUT_STATUSES:
             errors.append(f"{id_}: status {status!r} is not in the vocabulary")
-        if status in {"lean verified", "human verified"}:
-            errors.append(f"{id_}: {status} without a recorded evidence reference")
+        if status == "human verified":
+            errors.append(f"{id_}: human verified has no evidence mechanism here yet")
+        if status == "lean verified":
+            proof = next((o for o in obligations if o.item == item.ref and o.kind is ObligationKind.PROVE), None)
+            if proof is None:
+                errors.append(f"{id_}: lean verified without a prove obligation on its current revision")
+            elif proof.status is not ObligationStatus.RESOLVED or proof.resolution is None:
+                errors.append(f"{id_}: lean verified but its prove obligation is {proof.status.value}")
+            elif not policy.is_accepted(snapshot, proof.resolution):
+                errors.append(f"{id_}: lean verified but its evidence does not authenticate")
         for key, value in item.semantics:
             if key == "lean_declaration" and value.split(".")[-1] not in declared:
                 errors.append(f"{id_}: lean_declaration {value} is not declared under lean/ or .hardy/lean/")

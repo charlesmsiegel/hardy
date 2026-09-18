@@ -27,17 +27,17 @@ The digest column is the first twelve hex digits of the SHA-256 the packet's own
 | `data/claims.csv` | `b4d1fb291bde` | dropped | superseded by the ledgers; the migration table tools/packet-claims.json records the mapping |
 | `data/comparison_matrix.csv` | `b139df923d82` | `keller-threefold/notes/comparison-matrix.csv` |  |
 | `data/coverage_check.txt` | `808ea251083b` | dropped | output of the packet's coverage checker; tools/check.py replaces it |
-| `lean/KellerGroupoids/Core.lean` | `fe327329520d` | `.hardy/lean/KellerGroupoids/Core.lean` | shared by every problem |
-| `lean/KellerGroupoids/ExternalResearchAxioms.lean` | `7932cc898f4f` | `.hardy/lean/KellerGroupoids/ExternalResearchAxioms.lean` | shared; unadmitted |
-| `lean/KellerGroupoids/Interfaces.lean` | `54bfd65e6844` | `.hardy/lean/KellerGroupoids/Interfaces.lean` | shared by every problem |
-| `lean/KellerGroupoids/ProjectStatements/Boundary.lean` | `596bb894f4ea` | `keller-groupoids-rank-two/lean/KellerGroupoids/ProjectStatements/Boundary.lean` | imports re-pointed |
-| `lean/KellerGroupoids/ProjectStatements/DegreeSix.lean` | `5ae7eab09208` | `keller-groupoids-rank-two/lean/KellerGroupoids/ProjectStatements/DegreeSix.lean` | imports re-pointed |
-| `lean/KellerGroupoids/ProjectStatements/EtaleMaximality.lean` | `d1768266fd29` | `keller-groupoids-rank-two/lean/KellerGroupoids/ProjectStatements/EtaleMaximality.lean` | imports re-pointed |
-| `lean/KellerGroupoids/ProjectStatements/ExplicitExample.lean` | `7d1a257465ee` | `keller-threefold/lean/KellerGroupoids/ProjectStatements/ExplicitExample.lean` | imports re-pointed |
-| `lean/KellerGroupoids/ProjectStatements/General.lean` | `9876cccfca86` | `keller-groupoids/lean/KellerGroupoids/ProjectStatements/General.lean` | imports re-pointed at the shared interfaces |
-| `lean/KellerGroupoids/ProjectStatements/PerfectMonodromy.lean` | `4597a6c81400` | `keller-groupoids-rank-two/lean/KellerGroupoids/ProjectStatements/PerfectMonodromy.lean` | imports re-pointed |
-| `lean/KellerGroupoids/ProjectStatements/Plane.lean` | `4bfa6f7c3ce2` | `keller-groupoids-rank-two/lean/KellerGroupoids/ProjectStatements/Plane.lean` | imports re-pointed |
-| `lean/KellerGroupoids/PublishedAxioms.lean` | `0f80164b35a8` | `.hardy/lean/KellerGroupoids/PublishedAxioms.lean` | shared; unadmitted statement interfaces, not approved assumptions |
+| `lean/KellerGroupoids/Core.lean` | `fe327329520d` | `.hardy/lean/KellerGroupoids/Core.lean` | rewritten over Mathlib: `KellerMap` now carries a real Jacobian condition; the set-level definitions keep their names |
+| `lean/KellerGroupoids/ExternalResearchAxioms.lean` | `7932cc898f4f` | `.hardy/lean/KellerGroupoids/ExternalResearchAxioms.lean` | rewritten as typed axioms over the record |
+| `lean/KellerGroupoids/Interfaces.lean` | `54bfd65e6844` | `.hardy/lean/KellerGroupoids/Interfaces.lean` | rewritten: the `constant` stubs became the `PlaneGeometry` and `Geometry` records; no declaration name survives |
+| `lean/KellerGroupoids/ProjectStatements/Boundary.lean` | `596bb894f4ea` | dropped | the boundary-graph criteria are not expressible over Mathlib v4.33.1; ledger notes say what is missing |
+| `lean/KellerGroupoids/ProjectStatements/DegreeSix.lean` | `5ae7eab09208` | `keller-groupoids-rank-two/lean/KellerPlanar/Planar.lean` | replaced by typed statements over the record; the quotient target is a ledger note |
+| `lean/KellerGroupoids/ProjectStatements/EtaleMaximality.lean` | `d1768266fd29` | `keller-groupoids-rank-two/lean/KellerPlanar/Planar.lean` | replaced by typed statements over the record |
+| `lean/KellerGroupoids/ProjectStatements/ExplicitExample.lean` | `7d1a257465ee` | `keller-threefold/lean/KellerThreefold/ExplicitMap.lean` | replaced by the explicit map with kernel-checked identities; the nerve-level stubs are ledger notes |
+| `lean/KellerGroupoids/ProjectStatements/General.lean` | `9876cccfca86` | `keller-groupoids/lean/KellerGeneral/General.lean` | replaced: the stubs became proved theorems where the content is set-theoretic; the rest are ledger notes |
+| `lean/KellerGroupoids/ProjectStatements/PerfectMonodromy.lean` | `4597a6c81400` | `keller-groupoids-rank-two/lean/KellerPlanar/{Planar,Permutations}.lean` | replaced; `s6_notPerfect` and the parity statement are now proved |
+| `lean/KellerGroupoids/ProjectStatements/Plane.lean` | `4bfa6f7c3ce2` | `keller-groupoids-rank-two/lean/KellerPlanar/Planar.lean` | replaced by typed statements over the record |
+| `lean/KellerGroupoids/PublishedAxioms.lean` | `0f80164b35a8` | `.hardy/lean/KellerGroupoids/PublishedAxioms.lean` | rewritten as typed axioms over the record; eight inputs kept, the untypeable ones dropped (the ledger says which) |
 | `lean/KellerGroupoids.lean` | `e16bca61e33d` | `.hardy/lean/KellerGroupoids.lean` | shared root module; now imports only the shared interface files |
 | `lean/README.md` | `a9c12b4695c3` | dropped | its conventions are restated in README.md and HARDY.md at this root |
 | `lean/lakefile.toml` | `180b520ba93b` | dropped | no Lake package at this root: Hardy resolves each problem's lean/ against the shared .hardy/lean/ and its own pinned Mathlib |
@@ -87,6 +87,14 @@ The digest column is the first twelve hex digits of the SHA-256 the packet's own
 rendered graphs (`.svg`, `.graphml`, `.mmd`). None of these were in the upload. The
 `lean_source_mapping` semantic on each `K*` item preserves which lost file the
 packet said held its statement.
+
+## The Lean tree after the formalization pass
+
+The packet's Lean was a statement scaffold that had never been typechecked. It
+was replaced rather than repaired: see the rows above and the Lean section of
+[README.md](README.md). Every file now elaborates against Lean 4.33.1 and
+Mathlib v4.33.1, and `tools/record_lean.py` records what the kernel accepted
+through Hardy's own audit.
 
 ## What was renamed
 

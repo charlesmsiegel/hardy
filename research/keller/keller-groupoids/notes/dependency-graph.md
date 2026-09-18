@@ -44,7 +44,7 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   KG_13["KG-13<br/>The diagonal is a connected component"]
   class KG_13 llm;
   KG_14["KG-14<br/>Automorphisms are exactly the collision-free case"]
-  class KG_14 llm;
+  class KG_14 lean;
   KG_15["KG-15<br/>The nerve is 2-coskeletal"]
   class KG_15 llm;
   KG_16["KG-16<br/>Forgetful configuration fiber count"]

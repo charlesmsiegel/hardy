@@ -1,70 +1,131 @@
 import KellerGroupoids.Core
 
+/-!
+# The geometric interface
+
+The planar chain talks about objects Mathlib does not have for varieties over
+`ℂ`: the finite normalisation of a plane Keller map, the irreducible
+components of its nonproperness curve, generic inertia along a component,
+étale-maximality, the monodromy group of the proper locus. Rather than
+declaring these as global constants (which the packet did with the Lean 3
+keyword `constant`, and which would hide assumptions from an axiom audit)
+they are bundled here as *data a theorem takes*: a `PlaneGeometry F` is a
+record of the geometric notions attached to a plane Keller map `F`, with no
+axioms relating its fields to `F`.
+
+A theorem stated over `G : PlaneGeometry F` is therefore a faithful
+transcription of the claim's *shape*: which hypotheses it takes and what it
+concludes, in terms of the same named notions the prose uses. It is not a
+theorem about varieties until the fields are given their geometric meaning
+and the literature inputs relating them are supplied; `PublishedAxioms`
+states those inputs over the same record, so an axiom audit shows exactly
+which ones a proof rests on.
+-/
+
 set_option autoImplicit false
+
+open Equiv
 
 namespace KellerGroupoids
 
-constant genericDegree {n : Nat} (F : KellerMap n) : Nat
-constant IsAutomorphism {n : Nat} (F : KellerMap n) : Prop
-constant IsEtaleMap {n : Nat} (F : KellerMap n) : Prop
-constant IsEtaleMaximal (F : PlaneKellerMap) : Prop
-constant IsCounterexample {n : Nat} (F : KellerMap n) : Prop
-constant IsPlaneCounterexample (F : PlaneKellerMap) : Prop
+/-- The geometric notions attached to a plane Keller map, as the planar chain names them.
+Nothing here is derived from `F`; every field is uninterpreted data. -/
+structure PlaneGeometry (F : PlaneKellerMap) where
+  /-- The generic degree `d` of `F`. -/
+  degree : ℕ
+  /-- The irreducible components `C` of the nonproperness curve `S_F`. -/
+  Curve : Type
+  [finiteCurve : Finite Curve]
+  /-- The boundary prime divisors `E` of the finite (Zariski Main) normalisation of `F`. -/
+  Boundary : Type
+  [finiteBoundary : Finite Boundary]
+  /-- The component `π(E)` a boundary divisor lies over. -/
+  image : Boundary → Curve
+  /-- The generic inertia permutation `σ_C` along a component, on the `d` sheets. -/
+  inertia : Curve → Perm (Fin degree)
+  /-- The generic affine fiber cardinality `m_C` along a component. -/
+  affineFiberCard : Curve → ℕ
+  /-- The number `t_C` of generically unramified normalisation sheets omitted from the source. -/
+  deletedSheets : Curve → ℕ
+  /-- The finite singular points of a component, where they sit, and their branch counts. -/
+  SingularPoint : Curve → Type
+  location : (C : Curve) → SingularPoint C → AffinePoint 2
+  branches : (C : Curve) → SingularPoint C → ℕ
+  /-- Two components are disjoint in the affine plane. -/
+  disjoint : Curve → Curve → Prop
+  /-- Two components are fibers `V(h - a)`, `V(h - a')` of one polynomial `h`. -/
+  samePencil : Curve → Curve → Prop
+  /-- The number of affine nodes of a component. -/
+  nodeCount : Curve → ℕ
+  /-- `E` is generically unramified over the target. -/
+  genericallyUnramified : Boundary → Prop
+  /-- `π` is étale at every point of `E`. -/
+  everywhereEtale : Boundary → Prop
+  /-- `E ≅ A¹`. -/
+  boundaryIsAffineLine : Boundary → Prop
+  /-- `E → π(E)` is the normalisation morphism. -/
+  mapsAsNormalization : Boundary → Prop
+  /-- The normalisation of `C` is `A¹`. -/
+  normalizationIsAffineLine : Curve → Prop
+  /-- `C` has exactly one place at infinity. -/
+  onePlaceAtInfinity : Curve → Prop
+  /-- `C` is the image of a polynomial parametrisation of `A¹`. -/
+  polynomiallyParametric : Curve → Prop
+  /-- Every finite singularity of `C` is unibranch. -/
+  unibranchEverywhere : Curve → Prop
+  /-- `C` has a multibranch finite singularity. -/
+  hasMultibranchSingularity : Curve → Prop
+  /-- Every finite singularity of `C` is an ordinary node. -/
+  isNodal : Curve → Prop
+  /-- `C` is rational. -/
+  isRational : Curve → Prop
+  /-- The boundary `D = X̄ ∖ U` of the finite normalisation is pure divisorial (no isolated points). -/
+  boundaryPureDivisorial : Prop
+  /-- `F` is étale-maximal: the source exhausts the étale locus of its finite normalisation. -/
+  etaleMaximal : Prop
+  /-- The nonproperness curve `S_F` is connected. -/
+  connected : Prop
+  /-- The Euler characteristic `χ(S_F)`. -/
+  eulerCharNonproper : ℤ
+  /-- All components of `S_F` are fibers `V(h - aᵢ)` of one polynomial `h` with a rational one-place
+  pencil, and every connected component of `S_F` is irreducible. -/
+  commonPencil : Prop
+  /-- `h` is equivalent to a coordinate. -/
+  pencilIsCoordinate : Prop
+  /-- The number `q` of selected fibers of the pencil. -/
+  selectedFibers : ℕ
+  /-- `S_F = C₀ ⊔ C₁` is the two exceptional rational nodal members of a noncoordinate one-place
+  pencil, with the same positive number of nodes. -/
+  exactlyTwoNodalFibers : Prop
+  /-- The sheet-monodromy group over the proper locus, as a subgroup of `S_d`. -/
+  monodromy : Subgroup (Perm (Fin degree))
+  /-- `F` is a counterexample to the Jacobian conjecture (a Keller map that is not an automorphism). -/
+  isCounterexample : Prop
+  /-- The forced degree-six `A₆` boundary packet `(3,1),(1,1),(1,1)` with zero excess. -/
+  a6BoundaryPacket : Prop
+  /-- At every node of the ramified fiber the two branch inertia permutations are disjoint 3-cycles. -/
+  a6NodeInertia : Prop
 
-constant CurveComponent (F : PlaneKellerMap) : Type
-constant BoundaryComponent (F : PlaneKellerMap) : Type
-constant nonproperConnected (F : PlaneKellerMap) : Prop
-constant nonproperDisconnected (F : PlaneKellerMap) : Prop
-constant nonproperComponentCount (F : PlaneKellerMap) : Nat
-constant nonproperIrreducible (F : PlaneKellerMap) : Prop
+attribute [instance] PlaneGeometry.finiteCurve PlaneGeometry.finiteBoundary
 
-constant curvePolynomiallyParametric (F : PlaneKellerMap) (C : CurveComponent F) : Prop
-constant curveNormalizationIsA1 (F : PlaneKellerMap) (C : CurveComponent F) : Prop
-constant curveOnePlaceAtInfinity (F : PlaneKellerMap) (C : CurveComponent F) : Prop
-constant curveOnlyUnibranchFiniteSingularities (F : PlaneKellerMap) (C : CurveComponent F) : Prop
-constant curveHasMultibranchFiniteSingularity (F : PlaneKellerMap) (C : CurveComponent F) : Prop
-constant curveIsNodal (F : PlaneKellerMap) (C : CurveComponent F) : Prop
-constant curveNodeCount (F : PlaneKellerMap) (C : CurveComponent F) : Nat
+/-- The fiber deficit `d - m_C` along a component. -/
+def PlaneGeometry.deficit {F : PlaneKellerMap} (G : PlaneGeometry F) (C : G.Curve) : ℕ :=
+  G.degree - G.affineFiberCard C
 
-constant boundaryPureDivisorial (F : PlaneKellerMap) : Prop
-constant boundaryGenericallyUnramified (F : PlaneKellerMap) (E : BoundaryComponent F) : Prop
-constant boundaryEverywhereEtale (F : PlaneKellerMap) (E : BoundaryComponent F) : Prop
-constant boundaryIsA1 (F : PlaneKellerMap) (E : BoundaryComponent F) : Prop
-constant boundaryImageCurve (F : PlaneKellerMap) (E : BoundaryComponent F) : CurveComponent F
-constant boundaryMapsAsNormalization (F : PlaneKellerMap) (E : BoundaryComponent F) : Prop
-
-constant inertiaPerm (F : PlaneKellerMap) (C : CurveComponent F) :
-  Equiv.Perm (Fin (genericDegree F))
-constant genericFiberCardOnCurve (F : PlaneKellerMap) (C : CurveComponent F) : Nat
-constant deletedUnramifiedSheets (F : PlaneKellerMap) (C : CurveComponent F) : Nat
-
-constant SmoothAffineParallelizableLevels {n : Nat} (F : KellerMap n) : Prop
-constant NerveTwoCoskeletal {n : Nat} (F : KellerMap n) : Prop
-constant PartitionDecomposition {n : Nat} (F : KellerMap n) : Prop
-constant FiniteConfigurationPalette {n : Nat} (F : KellerMap n) : Prop
-constant geometricGenerationDepth {n : Nat} (F : KellerMap n) : Nat
-constant FiberCardinalityFiltration {n : Nat} (F : KellerMap n) : Prop
-constant ProperLocusIsFullFiberLocus {n : Nat} (F : KellerMap n) : Prop
-constant TopForgetfulOpenImmersion {n : Nat} (F : KellerMap n) : Prop
-constant MonodromyOrbitDescription {n : Nat} (F : KellerMap n) : Prop
-constant TopConfigurationGaloisClosure {n : Nat} (F : KellerMap n) : Prop
-constant StirlingInvariantCalculus {n : Nat} (F : KellerMap n) : Prop
-constant CechRealizationRecoversImage {n : Nat} (F : KellerMap n) : Prop
-constant VerticalHomologyBound {n : Nat} (F : KellerMap n) : Prop
-constant CanonicalVectorFieldFrame {n : Nat} (F : KellerMap n) : Prop
-
-constant NonproperIsCommonPencil (F : PlaneKellerMap) : Prop
-constant NonproperIsExactlyTwoNodalFibers (F : PlaneKellerMap) : Prop
-constant IsPerfectMonodromy (F : PlaneKellerMap) : Prop
-constant MonodromyIsA6 (F : PlaneKellerMap) : Prop
-constant MonodromyIsS6 (F : PlaneKellerMap) : Prop
-constant DegreeSixBoundaryPacketA6 (F : PlaneKellerMap) : Prop
-constant DegreeSixA6NodeInertia (F : PlaneKellerMap) : Prop
-constant NoAssiNodalA6Quotient : Prop
-
-constant A2BoundaryRecognized (X : Type*) : Prop
-constant DeltaSequenceDeterminesResolution (C : Type*) : Prop
-
-constant EulerChar {α : Type*} (S : Set α) : Int
+/-- Geometric notions attached to a Keller map in any dimension, used by the general theory
+where it goes beyond sets of points. -/
+structure Geometry {n : ℕ} (F : KellerMap n) where
+  /-- The generic degree `d`. -/
+  degree : ℕ
+  /-- Every fiber has at most `d` points. -/
+  fiberCard_le : ∀ y, fiberCard F y ≤ degree
+  /-- Every fiber is finite. -/
+  finiteFiber : ∀ y, Finite (Fiber F y)
+  /-- The monodromy group of the finite étale cover over the proper locus, on the `d` sheets. -/
+  monodromy : Subgroup (Perm (Fin degree))
+  /-- `F` is an automorphism of affine space. -/
+  isAutomorphism : Prop
+  /-- The function-field extension of `F` is Galois. -/
+  extensionIsGalois : Prop
 
 end KellerGroupoids
