@@ -20,6 +20,7 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {get, post} from '../api.js';
 import Absent from '../components/Absent.jsx';
+import useHash from '../session/useHash.js';
 
 //: How long a refusal or an "unavailable" note stays in the footer before
 //: the switching-note reclaims the line, matching `Sidebar`'s own timing.
@@ -45,6 +46,11 @@ function when(ts) {
 }
 
 export default function ProjectSwitcher({status, projects, setProjects, refreshProjects, revision}) {
+  // Read here rather than threaded down from `TopBar`: the route is only
+  // needed to undo a stale chat id after a switch, and passing it through a
+  // component that has no other use for it would make TopBar re-render on
+  // every navigation.
+  const [route, go] = useHash();
   const [open, setOpen] = useState(false);
   const [overview, setOverview] = useState(null);
   const [notice, setNotice] = useState('');
@@ -103,10 +109,18 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
           setNotice('');
           setOpen(false);
           refreshProjects();
+          // The switch opens `main`, so the route has to say `main`. While
+          // the hash still read `#/chat/<some-other-id>`, the Chat page's
+          // route effect saw that id differ from the new `status.chat` and
+          // called `/api/open` again for it in the project just opened --
+          // landing on an unintended same-named chat, or erroring if that
+          // project has no such chat. Naming the chat that was actually
+          // opened is what stops the page arguing with the switch.
+          if (route.page === 'chat' && route.arg) go({page: 'chat', arg: ''});
         })
         .catch((error) => say(String(error?.message ?? error)));
     },
-    [status.slug, refreshProjects, say],
+    [status.slug, refreshProjects, say, route.page, route.arg, go],
   );
 
   const createProject = useCallback(() => {

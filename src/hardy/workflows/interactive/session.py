@@ -148,6 +148,40 @@ LEAN_DIR = "lean"
 BUILD_DIR = ".build/lean"
 BUILD_DIR_TEX = ".build/tex"
 TEX_DIR = "tex"
+def _workspace_relative(path: str) -> tuple[str, str] | None:
+    """`lean/Main.lean` -> `("lean", "Main.lean")`, or None if it is neither tree's.
+
+    The browser gets its paths from `/api/files`, which answers them relative
+    to the PROBLEM directory. The session's save and check take a path relative
+    to the TREE: their `LeanWorkspace` is already rooted at `<problem>/lean`,
+    and `DEFAULT_LEAN_PATH` is `"Main.lean"` rather than `"lean/Main.lean"`.
+    Handing one to the other unchanged writes `<problem>/lean/lean/Main.lean`
+    -- a save that reports success, leaves the file the user edited untouched,
+    and records a transcript line naming a path it did not save.
+
+    Only the LEADING component is removed, and only once: a project may legally
+    hold `lean/lean/Helper.lean`, and stripping every occurrence would save it
+    over `lean/Helper.lean`. A path that is already tree-relative
+    (`Main.lean`) is classified by its suffix and passed through untouched,
+    because a caller that already speaks the workspace's language must not be
+    second-guessed.
+
+    The suffix decides which tree, not the prefix, so `lean/notes.txt` is
+    refused rather than saved as Lean.
+    """
+    text = path.strip()
+    if not text:
+        return None
+    parts = PurePosixPath(text.replace("\\", "/")).parts
+    suffix = PurePosixPath(text).suffix.lower()
+    tree = LEAN_DIR if suffix == ".lean" else TEX_DIR if suffix == ".tex" else None
+    if tree is None:
+        return None
+    if len(parts) > 1 and parts[0] == tree:
+        return tree, "/".join(parts[1:])
+    return tree, "/".join(parts)
+
+
 DEFAULT_LEAN_PATH = "Main.lean"
 DEFAULT_TEX_PATH = ROOT_DOCUMENT
 
@@ -4910,13 +4944,16 @@ class MathematicsSession:
         record can say the file changed and how it went without the line
         reading as something the person typed into the composer.
         """
-        suffix = Path(path).suffix.lower()
-        if suffix == ".lean":
-            result = self._save_lean_unbraked(path, source)
-        elif suffix == ".tex":
-            result = self._save_latex(path, source)
-        else:
+        inner = _workspace_relative(path)
+        if inner is None:
             return ToolResult(False, f"only .lean and .tex files are saved through the editor: {path!r}")
+        tree, relative = inner
+        result = (self._save_lean_unbraked(relative, source) if tree == LEAN_DIR
+                  else self._save_latex(relative, source))
+        # The note names `path`, the tree-qualified name the Files page shows,
+        # not the tree-relative one the workspace took. A reader picked the
+        # file off that page; naming `relative` would describe a file the page
+        # never showed.
         self.record_hardy_note(
             f"Edited {path} in the browser and saved it: {'saved' if result.ok else 'refused'}."
         )
@@ -4930,12 +4967,12 @@ class MathematicsSession:
         the record to hold. The scratch `#check` box and a compile-without-
         saving both come through here.
         """
-        suffix = Path(path).suffix.lower()
-        if suffix == ".lean":
-            return self._check_lean(path, source)
-        if suffix == ".tex":
-            return self._check_latex(path, source)
-        return ToolResult(False, f"only .lean and .tex files are checked through the editor: {path!r}")
+        inner = _workspace_relative(path)
+        if inner is None:
+            return ToolResult(False, f"only .lean and .tex files are checked through the editor: {path!r}")
+        tree, relative = inner
+        return (self._check_lean(relative, source) if tree == LEAN_DIR
+                else self._check_latex(relative, source))
 
     def record_hardy_note(self, text: str) -> None:
         """Write one transcript line for something that happened to this

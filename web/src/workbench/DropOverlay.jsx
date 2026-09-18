@@ -56,24 +56,40 @@ async function stageOne(file) {
   }
   const staged = await upload(file);
   record(staged.name, {sha256, scan});
+  // Announced per file, after the upload has landed. `pages/Files.jsx`
+  // listens for this to refetch `/api/uploads`: staging writes a file without
+  // touching the session, so no `changed` event follows it, and there is
+  // otherwise no signal that the staged list moved.
+  window.dispatchEvent(new CustomEvent('hardy:staged', {detail: {name: staged.name}}));
 }
 
 export default function DropOverlay({go}) {
   const depth = useRef(0);
   const [dragging, setDragging] = useState(false);
+  //: One line per file that did not stage, shown until the next drop.
+  const [failed, setFailed] = useState([]);
 
   const stage = useCallback(
     async (files) => {
+      setFailed([]);
+      const failures = [];
       for (const file of files) {
         try {
           await stageOne(file);
-        } catch {
-          // One bad file (a name the server refuses, a read that fails) does
-          // not stop the rest from staging; Files (which this still opens)
-          // is where the user finds out which ones landed.
+        } catch (error) {
+          // One bad file does not stop the rest, but it must not vanish
+          // either. Files can list what landed; it has nothing to say about a
+          // file that never arrived, so dropping a single rejected file used
+          // to look exactly like dropping nothing. The server's own sentence
+          // is what gets shown -- it is the only thing that explains an
+          // oversized file, a refused name, or a read that failed.
+          failures.push(`${file.name}: ${error?.message ?? error}`);
         }
       }
-      go('files');
+      setFailed(failures);
+      // Navigate only when something landed. Going to Files on a total
+      // failure would replace the one surface carrying the explanation.
+      if (failures.length < files.length) go('files');
     },
     [go],
   );
@@ -109,7 +125,33 @@ export default function DropOverlay({go}) {
     };
   }, [stage]);
 
-  if (!dragging) return null;
+  // The failure card outlives the drag on purpose. `dragging` is false by the
+  // time a staging error is known -- the drop already happened -- so returning
+  // null on `!dragging` alone would collect the failures and never show them.
+  if (!dragging) {
+    if (!failed.length) return null;
+    return (
+      <div className="wb-drop wb-drop--report">
+        <div className="wb-drop__card">
+          <div className="wb-drop__title">
+            {failed.length} file{failed.length === 1 ? '' : 's'} did not stage
+          </div>
+          <div className="wb-drop__failures">
+            {failed.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+          <div className="wb-drop__note">
+            Each line is the server's own sentence. Nothing was admitted for these; the files that did stage are
+            on Files.
+          </div>
+          <button type="button" className="button" onClick={() => setFailed([])}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="wb-drop">
@@ -117,18 +159,19 @@ export default function DropOverlay({go}) {
         <div className="wb-drop__title">Drop to stage in this project</div>
         <div className="wb-drop__routes">
           <span>.lean</span>
-          <span>→ uploads/ · import into lean/ is disabled: always refused this shipment</span>
+          <span>→ uploads/ · promote into lean/ from Files</span>
           <span>.tex</span>
-          <span>→ uploads/ · import into tex/ is disabled: always refused this shipment</span>
+          <span>→ uploads/ · promote into tex/ from Files</span>
           <span>.g</span>
           <span>→ uploads/ · no promotion path this shipment</span>
           <span>.pdf</span>
           <span>→ library/ by digest · title and author left blank, not asked</span>
         </div>
         <div className="wb-drop__note">
-          Nothing is admitted until you promote it. Only library import can actually do that from here -- Lean and
-          TeX import refuse every file staged this way (see Files for why), and library import goes straight over
-          `POST /api/library`, not the transcript.
+          Nothing is admitted until you promote it. Lean and TeX promotion runs the real `/import` command,
+          which Files raises into the composer for review rather than sending -- a staged file is admitted only
+          while the digest recorded when it arrived still matches the bytes on disk, so the outcome is not known
+          until it runs. Library import goes straight over `POST /api/library`, not the transcript.
         </div>
       </div>
     </div>

@@ -88,27 +88,14 @@ export default function Chat({onPeek}) {
   if (errors.length) return <p className="panel__error">{errors[0]}</p>;
   if (!summary.data || !chats.data || !tree.data) return <p className="panel__note">Reading the chat…</p>;
 
-  const goal = (summary.data.goal || '').trim();
-  if (!goal) {
-    return (
-      <div className="wb-page-body">
-        <div className="wb-page-head">
-          <span className="page-title">Chat</span>
-          <span className="wb-page-subtitle">fresh project · nothing recorded</span>
-        </div>
-        <Empty
-          title="No chats yet"
-          line="The first message creates the chat named main. Slash commands work before any turn has run: /goal, /env, /help."
-        />
-        <Label>what will appear here</Label>
-        <div className="panel__note">
-          The same layout as a running project, with real counts. Zero is shown as <Absent kind="zero" />; a
-          figure the backend has not supplied is shown as <Absent kind="unreported" />.
-        </div>
-      </div>
-    );
-  }
-
+  // A goal is optional, and this page is the only way to set one. There used
+  // to be an early return here when `summary.data.goal` was empty, which
+  // removed the transcript and the composer together -- so a freshly created
+  // project had no way to send its first message or run `/goal`, `/env` or
+  // `/help`, while the empty-state copy it rendered instead said those very
+  // commands were available. The absence of a goal is a fact about the
+  // project, not a reason to withhold the controls; it is stated below the
+  // header and nothing else changes.
   const {running, entries, lines} = headerStats({messages, status, runningTool, treeData: tree.data});
   const forkCount = tree.data.entries.filter(isFork).length;
   const abandonCount = tree.data.entries.filter(isAbandon).length;
@@ -129,6 +116,11 @@ export default function Chat({onPeek}) {
   const main = (
     <div className="wb-chat-main">
       <Header chatLabel={status.chat || 'main'} running={running} entries={entries} lines={lines} active={route.page} go={go} />
+      {(summary.data.goal || '').trim() ? null : (
+        <div className="panel__note">
+          No goal is set for this project. Describe it here, or run /goal. Nothing below is blocked on it.
+        </div>
+      )}
       <Transcript
         messages={messages}
         prompts={prompts}

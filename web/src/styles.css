@@ -2969,3 +2969,19 @@ input {
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
+
+/* The staging-failure report. Same card as the drop overlay, but it outlives
+   the drag -- a failure is only known after the drop, so it cannot live in a
+   surface that disappears when the drag ends. */
+.wb-drop--report {
+  pointer-events: auto;
+}
+
+.wb-drop__failures {
+  display: flex;
+  flex-direction: column;
+  font: 11px var(--mono);
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

@@ -611,9 +611,16 @@ export default function Files({arg}) {
   // handles; this listens for it too, purely to know "something may have
   // changed, ask again" -- it never reads `event.dataTransfer` itself.
   useEffect(() => {
-    const onDrop = () => setTimeout(uploadsPanel.reload, 200);
-    window.addEventListener('drop', onDrop);
-    return () => window.removeEventListener('drop', onDrop);
+    // `hardy:staged` is dispatched by `stageOne` once an upload has actually
+    // landed, one event per file. The old version guessed with a 200ms timer
+    // after `drop`, which refetched before a large file's digest, read and
+    // upload had finished -- and since staging emits no `changed` event and
+    // `DropOverlay` navigates to a hash that is already current, nothing
+    // fetched again afterwards. The file stayed invisible until some
+    // unrelated refresh.
+    const onStaged = () => uploadsPanel.reload();
+    window.addEventListener('hardy:staged', onStaged);
+    return () => window.removeEventListener('hardy:staged', onStaged);
   }, [uploadsPanel.reload]);
 
   const errors = [filesPanel, envPanel, uploadsPanel].map((panel) => panel.error).filter(Boolean);

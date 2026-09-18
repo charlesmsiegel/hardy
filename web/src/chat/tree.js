@@ -97,7 +97,15 @@ export function layout(entries) {
  * how many of them are leaves (a line's open tip).
  */
 export function headerStats({messages, status, runningTool, treeData}) {
-  const turnOrdinal = messages.filter((message) => message.kind === 'user' || message.kind === 'hardy').length;
+  // `startsTurn !== false` is the same predicate `withSeparators` uses, and it
+  // has to be: a Hardy note (a project switch, an editor save) arrives as a
+  // `hardy` message that starts no turn, so counting it unconditionally made
+  // the header read `turn 2 running` over a transcript labelling the same
+  // turn 1.
+  const turnOrdinal = messages.filter(
+    (message) =>
+      (message.kind === 'user' || message.kind === 'hardy') && message.startsTurn !== false,
+  ).length;
   const running = status.turn_running
     ? `turn ${turnOrdinal} running`
     : status.command_running

@@ -373,7 +373,9 @@ def file_verdicts(problem: Path) -> dict[str, dict[str, Any]]:
     shared = _shared_names(modules)
     state = _session_state(problem)
     audit_records = state.get("audit")
-    audit_records = audit_records if isinstance(audit_records, dict) else {}
+    audit_records = _expired_records(
+        audit_records if isinstance(audit_records, dict) else {}, modules
+    )
     out: dict[str, dict[str, Any]] = {}
     for info in modules.values():
         names: list[str] = []
@@ -395,6 +397,64 @@ def file_verdicts(problem: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _expired_records(
+    audit_records: Mapping[str, Mapping[str, Any]],
+    modules: Mapping[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Stored audits, with the ones the tree has outgrown marked stale.
+
+    The one part of `_still_current`'s job this panel can do honestly. A
+    stored record grades declarations in a module; if that module is no longer
+    in the tree, or no longer declares the name the record graded, then the
+    record demonstrably does not describe what is on disk. `git checkout`, a
+    rename, a deleted file and a hand-edit that removed a theorem all land
+    here.
+
+    What it cannot catch is a body edited in place under the same name: the
+    name is still declared, and deciding whether the proof beneath it changed
+    needs the build signature this panel cannot compute. `_kernel_lane`
+    reports `revalidated: False` for that remainder rather than passing it off
+    as checked.
+
+    `stale` is set with a reason rather than the record being dropped:
+    `declaration_status` reads the flag and answers `stale` with the reason
+    attached, which is a different and more useful claim than `unaudited`
+    ("no stored verdict names it"). Something did grade this name; it has
+    since expired.
+    """
+    # Every name the module declares, whatever kind. `declarations()` groups
+    # them per keyword (`theorem`, `lemma`, `def`, `private`, ...), and an
+    # audit record can name any of them, so the union is what an expiry check
+    # has to compare against -- reading only `theorem`/`lemma` would expire a
+    # graded `def` on every read.
+    declared: dict[str, set[str]] = {
+        module: {
+            str(name)
+            for key, value in info.items()
+            if key != "path" and isinstance(value, (list, tuple))
+            for name in value
+        }
+        for module, info in modules.items()
+    }
+    out: dict[str, dict[str, Any]] = {}
+    for module, record in audit_records.items():
+        names = [str(entry.get("name")) for entry in record.get("declarations", ())]
+        present = declared.get(module)
+        if present is None:
+            out[module] = {**record, "stale": True,
+                           "reason": f"{module} is no longer in the Lean tree"}
+            continue
+        gone = [name for name in names if name not in present]
+        if gone:
+            out[module] = {
+                **record, "stale": True,
+                "reason": f"{module} no longer declares {', '.join(sorted(gone))}",
+            }
+            continue
+        out[module] = dict(record)
+    return out
+
+
 def _kernel_lane(
     name: str, audit_records: Mapping[str, Mapping[str, Any]], shared: Mapping[str, Sequence[str]],
 ) -> dict[str, Any]:
@@ -406,14 +466,29 @@ def _kernel_lane(
     (`/status`, `/export`) reads a per-declaration verdict through, so this
     page cannot grade a theorem differently than the terminal does.
 
-    What this panel does NOT do: ask whether that stored record is still
-    current against the tree on disk. `_still_current` answers that by
-    rebuilding `current_signatures()` against a live `LeanWorkspace` and its
-    build cache -- machinery this read-only panel, which runs no Lean and
-    opens no build tree, does not have. So a verdict here is the one last
-    established, not necessarily the one a fresh save would report; a stale
-    verdict from a moved toolchain reads as whatever it last said rather than
-    as `stale`. Documented here rather than silently assumed current.
+    Revalidation is the hard part, and this panel can do only part of it.
+    `_still_current` decides whether a stored record still describes the tree
+    by recomputing `current_signatures()` -- a digest over the toolchain
+    identity, the module source, its workspace dependencies and the olean
+    stamps of everything it imports from outside. The hashing itself is pure,
+    but the environment string and the external stamps come from a live
+    `LeanWorkspace` over the configured Lake project, which this read-only
+    panel has no access to.
+
+    So two things happen instead of quietly assuming the record is current.
+
+    First, the half that IS decidable from the problem directory alone:
+    `_expired_records` marks a record stale when the tree no longer declares
+    the name it graded -- a file deleted, a theorem renamed, a module gone
+    after a `git checkout`. `declaration_status` already refuses to grade from
+    a stale record, so such a name reads as expired rather than as verified.
+
+    Second, for everything left -- a body edited in place under the same
+    name, a rebuilt Lake project, a different Lean -- the verdict is reported
+    with `revalidated: False`. The page prints the qualifier beside it. The
+    verdict is still worth showing: it is the last thing the kernel actually
+    established about that name. What it is not is a statement about the bytes
+    now on disk, and the lane must not imply otherwise.
     """
     status = audit_module.declaration_status(name, audit_records, shared=shared)
     axioms: list[str] | None = None
@@ -428,6 +503,10 @@ def _kernel_lane(
                 signature = record.get("signature") or None
                 break
     return {
+        # Never True from this panel: see the docstring. Carried as a field
+        # rather than left to the client to remember, so a second surface
+        # reading this lane cannot forget to say it.
+        "revalidated": False,
         "verdict": status.kind,
         "detail": str(status),
         "axioms": axioms,
@@ -589,13 +668,15 @@ def results(problem: Path) -> dict[str, Any]:
     scopes = snapshot.current(Scope)
 
     state = _session_state(problem)
-    audit_records = state.get("audit")
-    audit_records = audit_records if isinstance(audit_records, dict) else {}
     reports = state.get("reports")
     reports = reports if isinstance(reports, list) else []
 
     modules = _lean_declarations(problem)
     shared = _shared_names(modules)
+    audit_records = state.get("audit")
+    audit_records = _expired_records(
+        audit_records if isinstance(audit_records, dict) else {}, modules
+    )
 
     theorems: list[dict[str, Any]] = []
     for module in sorted(modules):
@@ -688,10 +769,12 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
     stale_ids = {ref.id for artifact in publication.stale for ref in (artifact.record, artifact.expected)}
 
     state = _session_state(problem)
-    audit_records = state.get("audit")
-    audit_records = audit_records if isinstance(audit_records, dict) else {}
     modules = _lean_declarations(problem)
     shared = _shared_names(modules)
+    audit_records = state.get("audit")
+    audit_records = _expired_records(
+        audit_records if isinstance(audit_records, dict) else {}, modules
+    )
 
     rows = []
     for ref in publication.closure:

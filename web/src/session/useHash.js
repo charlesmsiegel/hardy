@@ -11,13 +11,34 @@ import {useCallback, useEffect, useState} from 'react';
 
 export const HOME = {page: 'home', arg: ''};
 
+/**
+ * A percent-escape that cannot be decoded, left as it was written.
+ *
+ * `decodeURIComponent('%')` throws `URIError`. That happens while this hook
+ * computes its initial state and inside its `hashchange` handler, so a URL
+ * like `#/%` or `#/files/tex/a%` -- typed, pasted, or arrived at from a
+ * mangled link -- threw past the unknown-route page and blanked the whole
+ * workbench. There is no error boundary above the shell, so nothing caught it.
+ *
+ * Returning the raw text instead routes it the way any other unknown page is
+ * routed: `Shell.jsx` has no entry for it and says the route is unknown, which
+ * is true and is a page.
+ */
+function decode(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
 /** `#/files/lean/A.lean` -> `{page: 'files', arg: 'lean/A.lean'}`. */
 export function parse(hash) {
   const raw = (hash || '').replace(/^#\/?/, '');
   if (!raw) return HOME;
   const cut = raw.indexOf('/');
-  if (cut === -1) return {page: decodeURIComponent(raw), arg: ''};
-  return {page: decodeURIComponent(raw.slice(0, cut)), arg: decodeURIComponent(raw.slice(cut + 1))};
+  if (cut === -1) return {page: decode(raw), arg: ''};
+  return {page: decode(raw.slice(0, cut)), arg: decode(raw.slice(cut + 1))};
 }
 
 /** `{page: 'files', arg: 'lean/A.lean'}` -> `#/files/lean/A.lean`. */

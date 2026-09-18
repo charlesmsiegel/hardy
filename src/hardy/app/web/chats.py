@@ -170,7 +170,18 @@ def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
             return None, None
         if not isinstance(event, dict):
             return None, None
-        if event.get("type") == "turn":
+        # A turn STARTS as a `user` event -- that is what `stream` records.
+        # `type: "turn"` is written only for the terminal markers,
+        # cancellation and abandonment (`turns.record_abandonment`), so
+        # counting those reported 0 turns for a chat with several successful
+        # exchanges and incremented the count when one was cancelled.
+        #
+        # `starts_turn: False` excludes a Hardy note -- a browser project
+        # switch, an editor save -- which is recorded as a `user` event by the
+        # same convention but starts no turn. `panels.session.transcript` and
+        # `chat/tree.js` apply the same predicate, so all three agree on what
+        # a turn is.
+        if event.get("type") == "user" and event.get("starts_turn") is not False:
             turns += 1
         at = event.get("timestamp")
         if isinstance(at, (int, float)) and (stamp is None or at > stamp):
