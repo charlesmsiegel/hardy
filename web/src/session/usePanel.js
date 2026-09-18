@@ -71,6 +71,10 @@ export default function usePanel(path, revision) {
   const fetchedNonce = useRef(-1);
 
   useEffect(() => {
+    // A null path is a panel that has nothing to ask for right now -- the
+    // shell passes one while no project is open, since every project-scoped
+    // endpoint answers 409 then. Nothing is fetched and nothing is claimed.
+    if (!path) return undefined;
     let live = true;
     const isReload = fetchedNonce.current !== -1 && fetchedNonce.current !== nonce;
     fetchedNonce.current = nonce;

@@ -126,11 +126,17 @@ def test_web_refuses_the_same_chat_through_the_parser(tmp_path: Path, capsys, mo
     def reached(_config):
         raise RuntimeError("reached prepare_layout")
 
+    from hardy.app.project_registry import Entry, ProjectRegistry
+
     monkeypatch.setattr(cli, "prepare_layout", reached)
     parser = cli.build_parser()
+    config = _cli_config(tmp_path)
+    registry = ProjectRegistry(tmp_path / "registry.json", default_root=tmp_path / "projects")
+    entry = Entry(path=config.layout.problem, added=0.0, last_opened=None)
     with pytest.raises(SystemExit) as excinfo:
-        cli._web(_cli_config(tmp_path), parser=parser,
-                 args=SimpleNamespace(chat="missing", port=0, open=False))
+        cli._web(config, parser=parser,
+                 args=SimpleNamespace(chat="missing", port=0, open=False),
+                 registry=registry, entry=entry)
     assert excinfo.value.code == 2
     assert "hardy web" in capsys.readouterr().err
     assert not (tmp_path / "sylow" / "chats" / "missing").exists()

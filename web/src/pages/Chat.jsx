@@ -53,13 +53,13 @@ export default function Chat({onPeek}) {
   useEffect(() => {
     if (route.page !== 'chat' || !route.arg || route.arg === status.chat) return undefined;
     let live = true;
-    post('/api/open', {slug: status.slug, chat: route.arg})
+    post('/api/open', {path: status.path, chat: route.arg})
       .then(() => live && setOpenError(''))
       .catch((error) => live && setOpenError(String(error?.message ?? error)));
     return () => {
       live = false;
     };
-  }, [route.page, route.arg, status.slug, status.chat]);
+  }, [route.page, route.arg, status.path, status.chat]);
 
   // The Lean names a `<Lean/>` block can dot and click: real ledger item
   // names from `/api/graph`, the one endpoint that carries them. A name not

@@ -25,7 +25,9 @@ export default function TopBar({status, runningTool, route, go, projects, setPro
   return (
     <div className="wb-topbar">
       <span className="wb-wordmark">Hardy</span>
-      <span className="wb-root">~/math</span>
+      {/* The open project's root, which is a real fact about where its
+          files are; nothing while nothing is open. */}
+      {status.open ? <span className="wb-root" title={status.path}>{status.root}</span> : null}
       <ProjectSwitcher
         status={status}
         projects={projects}

@@ -452,8 +452,14 @@ def test_web_reports_a_schema_refusal_through_the_parser(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli, "MathematicsSession", explode)
     parser = cli.build_parser()
 
+    from hardy.app.project_registry import Entry, ProjectRegistry
+
+    config = settings(tmp_path)
+    registry = ProjectRegistry(tmp_path / "registry.json", default_root=tmp_path / "projects")
+    entry = Entry(path=config.layout.problem, added=0.0, last_opened=None)
     with pytest.raises(SystemExit) as excinfo:
-        cli._web(settings(tmp_path), parser=parser, args=SimpleNamespace(chat=None, port=0, open=False))
+        cli._web(config, parser=parser, args=SimpleNamespace(chat=None, port=0, open=False),
+                 registry=registry, entry=entry)
 
     assert excinfo.value.code == 2
     err = capsys.readouterr().err
