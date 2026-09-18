@@ -1780,15 +1780,17 @@ class MathematicsSession:
     ) -> ToolResult:
         return self.formal._save_lean_unbraked(path, source, policy=self._formal_save_policy(), ratchet=ratchet, generated=generated)
 
-    def _record_saved_results(self, records: dict[str, Any], signatures: dict[str, str]) -> str:
+    def _record_saved_results(self, audited: dict[str, str], records: dict[str, Any]) -> str:
         """The save's ledger half: what the audit graded, recorded; what it verified, resolved.
 
-        After the commit and after the audit publishes, over the committed
-        tree; a refusal from the ledger is a note on the save, never a refusal
-        of it. `evidence.py` says what is written and why.
+        After the commit and after the audit publishes, over the tree the
+        audit graded rather than a fresh read of the live one, with signatures
+        computed over those same bytes; a refusal from the ledger is a note on
+        the save, never a refusal of it. `evidence.py` says what is written
+        and why.
         """
-        sources = self.lean_workspace.sources()
-        return self.owners.record_saved(sources, records, signatures, shared=self._shared_names(sources))
+        signatures = self.lean_workspace.current_signatures(audited)
+        return self.owners.record_saved(audited, records, signatures, shared=self._shared_names(audited))
 
     def _owed_note(self) -> str:
         """The outstanding obligations, appended to a tool result.

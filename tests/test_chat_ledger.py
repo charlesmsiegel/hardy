@@ -189,3 +189,76 @@ def test_a_ledger_that_refuses_the_write_does_not_refuse_the_save(tmp_path: Path
     assert outcome["ok"] and (tmp_path / "lean" / "Main.lean").exists()
     assert "project ledger: not recorded" in outcome["output"] and "read-only" in outcome["output"]
     assert LedgerStore(tmp_path).read().records == ()
+
+
+HELPER = "import Mathlib\n\nlemma HardyHelper : True := by exact True.intro\n"
+
+
+def test_a_recorded_result_the_tree_stops_declaring_has_its_obligation_reopened(tmp_path: Path):
+    """Removed, renamed or made private: the audit has no entry for the old name, so the
+    ledger must go looking for it rather than leave a resolution standing over nothing.
+    A lemma, because renaming a registered theorem is refused by the save itself."""
+    renamed = HELPER.replace("HardyHelper", "HardyOther")
+    chat = session(tmp_path, FakeChatRuntime([
+        call("save_lean", {"source": HELPER}, "lean"),
+        call("save_lean", {"source": renamed}, "lean"),
+        call("save_lean", {"source": HELPER}, "lean"),
+    ]))
+    chat.send("Prove it, rename it, and put it back.")
+    first, second, third = results(tmp_path, "save_lean")[-3:]
+    assert "HardyHelper recorded; proof obligation resolved" in first["output"], first["output"]
+    assert "HardyHelper proof obligation reopened" in second["output"], second["output"]
+    assert "HardyOther recorded; proof obligation resolved" in second["output"]
+    # Back under its old name: resolved again on fresh evidence, and the
+    # renamed one is now the vanished one.
+    assert "HardyHelper proof obligation resolved" in third["output"], third["output"]
+    assert "HardyOther proof obligation reopened" in third["output"]
+    snapshot = LedgerStore(tmp_path).read()
+    helper = _prove(snapshot, snapshot.head("lean:HardyHelper"))
+    assert helper.status is c.ObligationStatus.RESOLVED and chat.owners.policy.is_accepted(snapshot, helper.resolution)
+    other = _prove(snapshot, snapshot.head("lean:HardyOther"))
+    assert other.status is c.ObligationStatus.OPEN and "no longer declares HardyOther" in (other.reason or "")
+
+
+def test_a_recorded_result_made_private_is_reopened(tmp_path: Path):
+    hidden = HELPER.replace("lemma HardyHelper", "private lemma HardyHelper")
+    chat = session(tmp_path, FakeChatRuntime([
+        call("save_lean", {"source": HELPER}, "lean"),
+        call("save_lean", {"source": hidden}, "lean"),
+    ]))
+    chat.send("Prove it, then hide it.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+    snapshot = LedgerStore(tmp_path).read()
+    assert _prove(snapshot, snapshot.head("lean:HardyHelper")).status is c.ObligationStatus.OPEN
+
+
+def test_an_identity_the_ledger_already_uses_for_something_else_is_not_repurposed(tmp_path: Path):
+    store = LedgerStore(tmp_path)
+    other = c.ProjectItem(id="lean:HardyTarget", kind=c.ProjectItemKind.THEOREM, name="Somebody's theorem",
+                          origin=c.ProjectOrigin.HUMAN_AUTHORED, statement="Something else entirely")
+    store.append([other], expected_revision=0)
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    outcome = results(tmp_path, "save_lean")[-1]
+    assert outcome["ok"] and "not recorded: the ledger already holds lean:HardyTarget" in outcome["output"]
+    snapshot = LedgerStore(tmp_path).read()
+    assert snapshot.head("lean:HardyTarget") == other and snapshot.current(c.Obligation) == ()
+
+
+def test_results_are_recorded_under_the_bare_project_scope_whatever_else_the_ledger_holds(tmp_path: Path):
+    """A scope that admits background needs a scope-change reader to be read under; nothing
+    in the application widens one yet, so saved results pin the bare scope instead."""
+    store = LedgerStore(tmp_path)
+    background = c.ProjectItem(id="bg", kind=c.ProjectItemKind.LEMMA, name="Background",
+                               origin=c.ProjectOrigin.MATHLIB, statement="A background fact")
+    admitting = c.Scope(id="admitting", allowed_background=(background.ref,))
+    # Recorded past the policy on purpose: this is the shape a project reaches
+    # through a reader-authorized widening, seeded here without one.
+    store.append([background, admitting], expected_revision=0, validate=lambda before, after: None)
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    snapshot = LedgerStore(tmp_path).read()
+    prove = _prove(snapshot, snapshot.head("lean:HardyTarget"))
+    assert prove.scope.id == "project" and prove.scope.allowed_background == ()
+    assert prove.status is c.ObligationStatus.RESOLVED
+    assert chat.owners.policy.is_accepted(snapshot, prove.resolution)

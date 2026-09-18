@@ -60,7 +60,7 @@ class SavePolicy:
     audit_tree: Callable[[LeanWorkspace, Sequence[str]], Any]
     closes_and_adds: Callable[[str, Sequence[str], dict[str, Any]], str | None]
     publish_audit: Callable[[dict[str, Any], dict[str, str]], None]
-    record_results: Callable[[dict[str, Any], dict[str, str]], str]
+    record_results: Callable[[dict[str, str], dict[str, Any]], str]
     refresh_automation: Callable[[], str]
     persist: Callable[[], None]
     owed_note: Callable[[], str]
@@ -191,10 +191,14 @@ class FormalWorkspaceService:
             if isinstance(checked, ToolResult):
                 return checked
             records, note = checked
+            # The tree the audit graded, read before the shadow goes: the
+            # ledger records these bytes, not whatever the live tree holds by
+            # the time it is asked.
+            audited = shadow.sources()
             commit()
         finally:
             LeanWorkspace.discard(shadow)
-        return self._publish_saved_audit(module, source, records, note, seen, policy=policy)
+        return self._publish_saved_audit(module, source, records, note, seen, policy=policy, audited=audited)
 
     def _save_preflight(
         self, path: str, source: str, *, policy: SavePolicy, ratchet: bool, generated: bool
@@ -262,7 +266,7 @@ class FormalWorkspaceService:
 
     def _publish_saved_audit(
         self, module: str, source: str, records: dict[str, Any], note: str,
-        seen: dict[str, ToolResult], *, policy: SavePolicy
+        seen: dict[str, ToolResult], *, policy: SavePolicy, audited: dict[str, str]
     ) -> ToolResult:
         """Publish against committed signatures, disclose automation, and persist."""
         # Published after the write, and not before: a verdict stored first
@@ -278,10 +282,12 @@ class FormalWorkspaceService:
         # The project ledger's half of the same save: every result the audit
         # graded is recorded, and a verified one closes its proof obligation.
         # After the audit publishes, so the ledger never claims a verdict the
-        # record does not hold; and a note on the save rather than a gate on
-        # it -- the files are committed and the verdict is the kernel's
+        # record does not hold; over the audited sources, not a fresh read of
+        # the tree, so an edit landing between the audit and this line cannot
+        # be recorded as verified; and a note on the save rather than a gate
+        # on it -- the files are committed and the verdict is the kernel's
         # whatever the ledger makes of them.
-        ledger = policy.record_results(records, signatures)
+        ledger = policy.record_results(audited, records)
         # After the commit -- the answer is a disclosure about a saved theorem,
         # never a gate on saving one -- and before `_save_state`, so the
         # verdicts persist in the same write the audit records do.
