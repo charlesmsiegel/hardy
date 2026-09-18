@@ -1218,6 +1218,26 @@ def test_run_item_refuses_a_formalization_whose_hash_field_does_not_match_its_ow
     assert "hash" in out["claim_error"]
 
 
+def test_run_item_refuses_a_formalization_whose_imports_were_edited_under_its_hash(tmp_path: Path) -> None:
+    """`FrozenClaim.imports` is outside the hash: `freeze_claim` rebuilds it from the environment.
+
+    So a file whose top-level `imports` were edited still re-freezes to the
+    hash it carries, and the page would serve the edited execution context
+    beside a hash it claims to have verified (Codex, PR #179). The re-frozen
+    claim must equal the file's claim field for field, not only hash for hash.
+    """
+    config = make_config(tmp_path)
+    run_id = uuid4()
+    claim = _freeze()
+    run_dir = _make_frozen_run(config.runs_root, run_id, claim)
+    tampered = json.loads((run_dir / "formalization.json").read_text(encoding="utf-8"))
+    tampered["imports"] = ["Mathlib", "Evil"]
+    (run_dir / "formalization.json").write_text(json.dumps(tampered), encoding="utf-8")
+    out = panels.run_item(config, str(run_id))
+    assert out["claim"] is None
+    assert "hash" in out["claim_error"]
+
+
 def test_run_item_reports_an_unparseable_formalization_rather_than_guessing(tmp_path: Path) -> None:
     config = make_config(tmp_path)
     run_id = uuid4()
