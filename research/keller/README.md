@@ -159,6 +159,12 @@ The packet's scaffold was replaced, not repaired:
   computation only, so the multivariate one is proved here. This is the
   literature input `PUB-AG-01`, now a theorem rather than an assumption; the
   file is kept separate so later work can import it without carrying its proof.
+- `KellerScheme.lean` joins the two: a Keller map is a morphism of schemes
+  `A^n → A^n`, it is étale, hence quasi-finite, and being affine it is
+  separated and quasi-compact, so Zariski's Main Theorem applies to it. The
+  factorisation `A^n = U ↪ X̄ →^π A^n` that the étale-maximality reduction is
+  set up along is therefore a theorem about the actual map, resting on nothing
+  but the Keller condition.
 - `ZariskiMain.lean` re-states Mathlib's Zariski's Main Theorem in the shape the
   étale-maximality reduction consumes: a quasi-finite, separated, quasi-compact
   morphism of finite type factors as an open immersion into an integral
