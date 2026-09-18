@@ -88,7 +88,7 @@ def test_help_describes_the_installer_without_touching_the_system(script: str):
     result = subprocess.run([str(SCRIPTS / script), "--help"], capture_output=True, text=True)
     assert result.returncode == 0, f"{script} exited {result.returncode}: {result.stdout}{result.stderr}"
     assert result.stdout.strip(), f"{script} --help printed nothing"
-    for flag in ("--yes", "--skip-mathlib", "--skip-latex", "--full-latex", "--no-config", "--prefix"):
+    for flag in ("--yes", "--skip-mathlib", "--skip-latex", "--full-latex", "--no-config", "--no-launcher", "--prefix"):
         assert flag in result.stdout
 
 
@@ -169,9 +169,15 @@ def fake_installation(root: Path) -> dict[str, Path]:
         "config": root / "config/hardy/config.toml",
         "elan": root / ".elan",
         "profile": root / ".profile",
+        "menu_launcher": root / ".local/share/applications/hardy.desktop",
+        "desktop_launcher": root / "Desktop/hardy.desktop",
+        "command_launcher": root / "Desktop/Hardy.command",
     }
     for key in ("venv", "lean", "src", "bin", "elan"):
         places[key].mkdir(parents=True, exist_ok=True)
+    for key in ("menu_launcher", "desktop_launcher", "command_launcher"):
+        places[key].parent.mkdir(parents=True, exist_ok=True)
+        places[key].write_text("launcher\n", encoding="utf-8")
     (places["venv"] / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
     (places["lean"] / "lakefile.toml").write_text("name = \"hardymath\"\n", encoding="utf-8")
     (places["bin"] / "hardy").write_text("#!/bin/sh\n", encoding="utf-8")
@@ -209,6 +215,52 @@ def test_uninstall_takes_the_command_and_environment(tmp_path: Path):
     assert not places["venv"].exists()
     assert not places["src"].exists()
     assert not (places["bin"] / "hardy").exists()
+    for key in ("menu_launcher", "desktop_launcher", "command_launcher"):
+        assert not places[key].exists(), f"{key} survived the uninstall"
+
+
+def run_launcher(root: Path, kind: str) -> subprocess.CompletedProcess:
+    """`install_launcher` from lib/common.sh, against a HOME of the test's own."""
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not available")
+    script = (
+        f"HOME={root!s}; export HOME; HARDY_BIN_DIR=/x/bin; export HARDY_BIN_DIR; "
+        f". '{SCRIPTS / 'lib' / 'common.sh'}'; install_launcher {kind}"
+    )
+    return subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True,
+        env={**os.environ, "HOME": str(root), "HARDY_BIN_DIR": "/x/bin", "PATH": os.environ.get("PATH", "")},
+    )
+
+
+@posix_only
+def test_the_linux_launcher_is_a_desktop_entry_that_runs_hardy_web(tmp_path: Path):
+    (tmp_path / "Desktop").mkdir()
+    result = run_launcher(tmp_path, "linux")
+    assert result.returncode == 0, result.stdout + result.stderr
+    entry = (tmp_path / ".local/share/applications/hardy.desktop").read_text(encoding="utf-8")
+    assert entry.startswith("[Desktop Entry]\n")
+    assert "Exec=/x/bin/hardy web --open\n" in entry and "Terminal=true\n" in entry
+    copy = tmp_path / "Desktop" / "hardy.desktop"
+    assert copy.read_text(encoding="utf-8") == entry
+    assert os.access(copy, os.X_OK)
+
+
+@posix_only
+def test_the_macos_launcher_is_a_command_file_that_runs_hardy_web(tmp_path: Path):
+    result = run_launcher(tmp_path, "darwin")
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = tmp_path / "Desktop" / "Hardy.command"
+    assert command.read_text(encoding="utf-8") == '#!/bin/sh\nexec "/x/bin/hardy" web --open\n'
+    assert os.access(command, os.X_OK)
+
+
+@posix_only
+def test_no_launcher_writes_nothing(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HARDY_NO_LAUNCHER", "1")
+    result = run_launcher(tmp_path, "linux")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (tmp_path / ".local").exists() and not (tmp_path / "Desktop").exists()
 
 
 @posix_only

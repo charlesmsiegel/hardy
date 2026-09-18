@@ -54,7 +54,7 @@ Usage: $0 [options]
 
 Removes Hardy: the virtual environment, whatever the installer fetched (a
 source tree, or the installer scripts of a release install), the \`hardy\`
-command, and the PATH lines the installer added.
+command, the Desktop launcher, and the PATH lines the installer added.
 
 Asks before removing anything expensive to rebuild or personal. With --yes and
 no other flag the answer to each of those questions is no.
@@ -166,6 +166,9 @@ hardy_uninstall_main() {
 	say "prefix: $HARDY_HOME"
 
 	drop "the hardy command" "$HARDY_BIN_DIR/hardy"
+	drop "the application launcher" "$HOME/.local/share/applications/hardy.desktop"
+	drop "the Desktop launcher" "$(desktop_dir)/hardy.desktop"
+	drop "the Desktop launcher" "$(desktop_dir)/Hardy.command"
 	drop "the virtual environment" "$VENV"
 	drop "the fetched source tree" "$HARDY_HOME/src"
 	# What a release install leaves behind instead of a source tree: the
