@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -49,13 +50,59 @@ def test_a_cold_index_says_it_has_not_read_rather_than_blocking(tmp_path: Path):
     Answering `indexed: false` lets the page say *not reported*, which is
     true. Blocking the request would hang a browser tab on a cost that has
     nothing to do with what it asked for.
+
+    The scan is held open for the duration rather than being left to finish on
+    its own schedule. The first version of this test pointed the panel at a
+    directory that does not exist, where `_scan` returns instantly -- so
+    whether the answer came back cold depended on which of the two threads got
+    there first. It passed locally, where starting a thread is slow relative
+    to the check, and failed on CI, where the scan won. A test whose subject
+    is "answers without waiting" cannot be allowed to race the thing it is
+    waiting on.
+    """
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_count() -> int:
+        started.set()
+        # Held until the assertions are done, so `index.read` is guaranteed
+        # false while `search` and `lookup` are asked.
+        release.wait(timeout=10)
+        return 0
+
+    panel = Declarations(tmp_path / "nothing-here")
+    panel.index.count = blocking_count  # type: ignore[method-assign]
+    try:
+        answer = panel.search("Sylow")
+        assert started.wait(timeout=5), "the scan thread never started"
+        assert answer["indexed"] is False
+        assert answer["results"] == []
+        assert answer["count"] is None
+        assert "not been read yet" in answer["reason"]
+
+        # The same disclosure on the exact-lookup path, which is a different
+        # code path with the same obligation.
+        one = panel.lookup("Sylow.card_modEq_one")
+        assert one["indexed"] is False
+        assert one["found"] is False
+    finally:
+        release.set()
+
+
+def test_a_scan_that_finishes_immediately_is_reported_as_read(tmp_path: Path):
+    """The other side of the same coin.
+
+    A project with no `.lake/packages` at all scans in no time, and once it
+    has, the panel must say so rather than keeping a "not read yet" that is no
+    longer true. `wait_for_index` is how a caller makes that deterministic;
+    the panel itself never blocks.
     """
     panel = Declarations(tmp_path / "nothing-here")
+    assert panel.wait_for_index(timeout=10) is True
     answer = panel.search("Sylow")
-    assert answer["indexed"] is False
+    assert answer["indexed"] is True
+    assert answer["count"] == 0
     assert answer["results"] == []
-    assert answer["count"] is None
-    assert "not been read yet" in answer["reason"]
 
 
 def test_an_exact_lookup_returns_the_source_at_the_line_the_index_recorded(lean_project: Path):
