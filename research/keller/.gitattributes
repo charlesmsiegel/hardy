@@ -1,0 +1,4 @@
+# The ledgers bind notes and TeX to records by SHA-256 over their bytes, and
+# each downstream ledger pins the digest of the upstream ledger file it
+# mirrors, so no line-ending conversion may touch anything here.
+* -text

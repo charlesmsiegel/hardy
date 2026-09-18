@@ -44,10 +44,10 @@ and digest, and `tools/check.py` refuses a stale mirror.
 ## What is where
 
 ```
-research/keller/
+keller/
 ├── HARDY.md                    # read by every session opened here
 ├── README.md, PROVENANCE.md, citation-hygiene.md
-├── .gitignore                  # re-includes .hardy/ under the harness repo's blanket rule
+├── .gitignore, .gitattributes  # keep .hardy/ tracked and every byte unconverted (the ledgers hash them)
 ├── .hardy/
 │   ├── config.toml             # the project layer; sets nothing yet
 │   └── lean/KellerGroupoids/   # shared Lean: Core, Interfaces, PublishedAxioms, ExternalResearchAxioms
@@ -73,10 +73,10 @@ items it covers, and a few `illustrates`, `refines` and `supports` edges.
 
 ## Opening a problem
 
-From the harness checkout:
+With Hardy installed:
 
 ```sh
-uv run hardy chat --root research/keller --project keller-groupoids-rank-two
+hardy chat --root /path/to/keller --project keller-groupoids-rank-two
 ```
 
 With no `--project`, the launch asks which of the three to open. `hardy web`
@@ -86,9 +86,12 @@ says what is missing.
 
 ## Checking the root
 
+The tools import Hardy's own ledger code, so run them in the environment Hardy
+is installed in; from a Hardy checkout that is
+
 ```sh
-uv run python research/keller/tools/check.py                 # verify; print the board
-uv run python research/keller/tools/check.py --write-graphs  # also refresh notes/dependency-graph.md
+uv run --project /path/to/hardy python tools/check.py                 # verify; print the board
+uv run --project /path/to/hardy python tools/check.py --write-graphs  # also refresh notes/dependency-graph.md
 ```
 
 The checker reads every ledger through Hardy's own store and verifies, per
