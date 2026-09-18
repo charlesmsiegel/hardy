@@ -109,6 +109,17 @@ installer is cheap and safe.
    command linked into your `PATH`. Run from a checkout it is an editable
    install of that tree instead, so keep the clone where it is (`git pull`
    then updates `hardy` too) and re-run the installer after moving it.
+   Beside the command, a **launcher** for one-click access to the browser
+   client: on Windows a `Hardy.lnk` on the Desktop and in the Start Menu
+   (right-click the Start Menu entry to pin it to the taskbar; Windows lets
+   no script do that for you), on Linux a `hardy.desktop` entry in the
+   applications menu with a copy on the Desktop, on macOS a `Hardy.command`
+   on the Desktop. Each runs `hardy web --open` in a console window: the
+   window prints the URL and is the server, so closing it or pressing Ctrl+C
+   there stops it. The page opens projects from its own registry, never from
+   the directory the launcher happens to start in; see
+   [the command reference](reference/cli.md#hardy-web). `--no-launcher`
+   (`-NoLauncher`) skips this step.
 3. **`lake`**, installed through [elan](https://github.com/leanprover/elan),
    the Lean toolchain manager, which supplies `lake`, `lean`, and `elan`.
 4. **A shared Mathlib project**, a Lake project pinned to one Lean release
@@ -143,6 +154,7 @@ installer is cheap and safe.
 | Recorded release origin | `~/.local/share/hardy/release-origin` | `%LOCALAPPDATA%\hardy\release-origin` |
 | Lean project | `~/.local/share/hardy/lean` | `%LOCALAPPDATA%\hardy\lean` |
 | `hardy` command | `~/.local/bin/hardy` | `%LOCALAPPDATA%\hardy\bin\hardy.cmd` |
+| Launcher | `~/.local/share/applications/hardy.desktop` and `~/Desktop/hardy.desktop` (Linux); `~/Desktop/Hardy.command` (macOS) | `Hardy.lnk` on the Desktop and in the Start Menu's Programs folder |
 | Config file | `~/.hardy/config.toml` | `%USERPROFILE%\.hardy\config.toml` |
 | Lean toolchain | `~/.elan` | `%USERPROFILE%\.elan` |
 
@@ -158,6 +170,7 @@ curl, TeX), which are the only steps that use `sudo`.
 | `--skip-latex` | `-SkipLatex` | Do not install TeX |
 | `--full-latex` | `-FullLatex` | Full TeX Live / MacTeX / TeX Live instead of the subset |
 | `--no-config` | `-NoConfig` | Do not write a config file |
+| `--no-launcher` | `-NoLauncher` | Do not put a launcher for `hardy web --open` on the Desktop (or in the Start Menu) |
 | `--from-release` | `-FromRelease` | Install the published wheel even from a checkout |
 | `--from-source` | `-FromSource` | Install this source tree, editable |
 | `--prefix DIR` | `-Prefix DIR` | Where the virtual environment and Lean project live |
@@ -299,8 +312,10 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1
 
 Removes the virtual environment, whatever the installer fetched (the
 installer bundle of a release install, or a source tree), the `hardy`
-command, and the PATH lines the installer added. Before touching anything
-expensive to rebuild or personal, it asks:
+command, the launcher (Desktop and Start Menu on Windows; the applications
+entry and the Desktop copy on Linux; the `.command` on macOS), and the PATH
+lines the installer added. Before touching anything expensive to rebuild or
+personal, it asks:
 
 | Asked about | Kept unless you say otherwise |
 | --- | --- |
