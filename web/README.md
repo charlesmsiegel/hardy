@@ -68,7 +68,10 @@ cd web && npm run smoke
 ```
 
 The server builds a `WebHost` over the same fake session the unit tests use
-and serves the real `static/` directory. The smoke fetches the page, checks
-the token meta is there and that every script and stylesheet it references
-loads, opens the event stream, sends `hello`, and waits for the reply event.
-It prints `smoke ok`.
+and serves the real `static/` directory, with a project registry of its own
+holding two problems in two temporary roots. The smoke fetches the page,
+checks the token meta is there and that every script and stylesheet it
+references loads, opens the event stream, sends `hello`, waits for the reply
+event, and then drives the registry routes: opens the second project by
+path, closes, checks the one-sentence `409` with nothing open, and reopens
+the first. It prints `smoke ok`.

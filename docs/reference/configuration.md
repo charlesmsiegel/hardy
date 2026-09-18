@@ -50,7 +50,7 @@ nothing.
 | `lean_project` | `HARDY_LEAN_PROJECT` | unset | The Lake project whose imports Lean should resolve. Staged work (`prove`, a live `accept`, `evals baseline`/`run`) refuses to start without it. |
 | `lean_timeout` | `HARDY_LEAN_TIMEOUT` | `180` (seconds) | How long a single Lean call may run before it is treated as failed. |
 | `latex_command` | `HARDY_LATEX_COMMAND` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. |
-| `root` | `HARDY_ROOT` | the current directory | The directory holding one or more problems. |
+| `root` | `HARDY_ROOT` | the current directory | The directory holding one or more problems, for `hardy chat` and the batch commands. `hardy web` does not read it: the browser opens projects from its own registry, each in the root its directory sits in. |
 | `project` | `HARDY_PROJECT` | the sole recorded problem if there is exactly one, else `main` | Which problem this session or run opens. This is the only key the project layer (`<root>/.hardy/config.toml`) may set. |
 | `runs_root` | `HARDY_RUNS_ROOT` | `runs` | Where staged `prove` runs are kept. |
 | `lake` | `HARDY_LAKE` | `lake` | The `lake` executable Hardy invokes. |

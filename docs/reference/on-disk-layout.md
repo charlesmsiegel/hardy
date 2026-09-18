@@ -9,6 +9,8 @@ One directory per machine, independent of any project root:
 ```
 ~/.hardy/
 ├── config.toml        # the global config layer
+├── projects.json      # the browser's project registry: which problems `hardy web` lists
+├── projects/          # where the browser creates a project when no other location is given
 ├── lean/                # a personal Lean library, reserved for Lean the user brings
 ├── .build/
 │   └── lean/             # oleans for ~/.hardy/lean/
@@ -19,6 +21,8 @@ One directory per machine, independent of any project root:
 ```
 
 `config.toml` is the global config layer; see [Configuration](configuration.md#where-settings-come-from) for how it combines with a project's own config and the environment.
+
+`projects.json` is the browser's project registry: the problems `hardy web` lists and opens, and which one it opened last. One entry per problem directory, never per root -- `{"path": ..., "added": <epoch seconds>, "last_opened": <epoch seconds or null>}` under `"projects"`, with `"schema": "hardy.projects/v1"` and a top-level `"last_opened"` path. The slug is the directory's name and the root is its parent; neither is stored, so an entry cannot disagree with the directory it names. Only the page writes it (creating, adding, forgetting, opening), through the same guarded atomic write as everything else under `~/.hardy/`, and forgetting an entry never touches the directory. A file that does not parse refuses the launch with its path named rather than being silently treated as empty. `projects/` is the root the browser creates a project under when the form names no other location; it is a root like any other, with its own `.hardy/` once a problem is opened there, and a project made in the browser is opened at the terminal with `hardy chat --root ~/.hardy/projects --project <name>`.
 
 `lean/` and its `.build/lean/` are a personal library: Lean the user brings that is not any one problem's own sources. A project may hold the same pair at `<root>/.hardy/lean/`; when both exist, imports resolve against the problem's own `.build/lean/` first, then the root's shared `.build/lean/`, then this one, then Mathlib. Nothing writes to `~/.hardy/lean/` automatically; a file that lands there is something the user placed by hand.
 
