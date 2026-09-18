@@ -530,7 +530,12 @@ def _carries_a_hole(axioms: Sequence[str]) -> bool:
     return any(axiom in audit_module.FORBIDDEN for axiom in axioms)
 
 
-def _match_claim(name: str, claims_by_name: Mapping[str, ProjectItem]) -> ProjectItem | None:
+def _match_claim(
+    name: str,
+    claims_by_name: Mapping[str, ProjectItem],
+    *,
+    leaves: Mapping[str, int] | None = None,
+) -> ProjectItem | None:
     """The ledger item this Lean declaration corresponds to, if any names it.
 
     `ProjectItem` carries no field that pins it to a Lean declaration -- no
@@ -541,9 +546,24 @@ def _match_claim(name: str, claims_by_name: Mapping[str, ProjectItem]) -> Projec
     bare leaf -- the same two spellings `report_result` itself accepts. A
     project that names its ledger items to match is found; one that does not
     renders `Absent` rather than guessing.
+
+    The leaf match is admitted only when it is unambiguous. With `A.foo` and
+    `B.foo` both declared and one ledger item named bare `foo`, matching on
+    the leaf alone returned that same item for both -- so the Results table
+    asserted a recorded correspondence for two different theorems, from a
+    schema that carries no binding between either of them and it.
+    `report_result` already holds a bare name to resolving uniquely, and this
+    is the same rule on the reading side. `leaves` counts how many of the
+    tree's declarations share each leaf; a leaf more than one declaration
+    shares is not a correspondence anybody recorded.
     """
+    exact = claims_by_name.get(name)
+    if exact is not None:
+        return exact
     leaf = name.rsplit(".", 1)[-1]
-    return claims_by_name.get(name) or claims_by_name.get(leaf)
+    if leaves is not None and leaves.get(leaf, 0) > 1:
+        return None
+    return claims_by_name.get(leaf)
 
 
 def _record_lane(item: ProjectItem, scopes: Sequence[Scope]) -> dict[str, Any]:
@@ -677,6 +697,16 @@ def results(problem: Path) -> dict[str, Any]:
     audit_records = _expired_records(
         audit_records if isinstance(audit_records, dict) else {}, modules
     )
+    # How many of the tree's declarations share each bare leaf, so a ledger
+    # item named without its namespace is only matched when exactly one
+    # declaration could have meant it.
+    leaf_counts: Counter[str] = Counter()
+    for info in modules.values():
+        for key, value in info.items():
+            if key == "path" or not isinstance(value, (list, tuple)):
+                continue
+            for declared in value:
+                leaf_counts[str(declared).rsplit(".", 1)[-1]] += 1
 
     theorems: list[dict[str, Any]] = []
     for module in sorted(modules):
@@ -686,7 +716,7 @@ def results(problem: Path) -> dict[str, Any]:
                 if name in found["private"]:
                     continue
                 kernel = _kernel_lane(name, audit_records, shared)
-                claim = _match_claim(name, claims_by_name)
+                claim = _match_claim(name, claims_by_name, leaves=leaf_counts)
                 record = _record_lane(claim, scopes) if claim is not None else None
                 model = _model_lane(name, reports)
                 theorems.append({
