@@ -305,6 +305,48 @@ def test_a_press_that_lands_before_the_cell_still_stops_it(cas_session, patient_
         session.close()
 
 
+def test_a_press_remembered_before_the_cell_is_applied_by_the_frame_alone(
+    cas_session, monkeypatch
+) -> None:
+    """The frame carries the stop; the signal is not what applies it.
+
+    A press that lands with nothing in flight is remembered and written into
+    the next cell's frame as `stopping`, and Hardy used to signal the kernel
+    the instant the frame was out as well. The driver only stopped the cell
+    when *both* arrived -- the flag and the signal -- so a signal lost or late
+    on the way (a shared CI runner dropped one 2 runs in 3) let the cell run
+    to its deadline and took the kernel with it, exactly the loss the
+    remembered press exists to prevent. The frame is Hardy's own word that a
+    stop is in force, and it is enough on its own: this test never lets a
+    signal be sent at all, and the cell must still be answered before it
+    runs, with the kernel alive.
+    """
+    from hardy.algebra import kernel as kernel_module
+
+    sent: list[int] = []
+
+    def never(self):
+        sent.append(self.process.pid)
+        return False
+
+    monkeypatch.setattr(kernel_module._Kernel, "interrupt", never)
+    session = cas_session(cas_cell_seconds=3, cas_session_seconds=600)
+    try:
+        session.execute("a")
+        assert session.interrupt() is False  # nothing running yet: remembered
+        started = time.monotonic()
+        record = session.execute("hang")
+        assert record.status == "interrupted", record.stderr
+        assert session.state != "dead", record.stderr
+        assert time.monotonic() - started < 2
+        # Nothing was signalled: the driver stopped on the frame's own flag.
+        assert sent == []
+        session.resume()
+        assert session.execute("c").value_repr == "2"
+    finally:
+        session.close()
+
+
 def test_resuming_lets_the_next_turn_run(cas_session) -> None:
     """The other half: a stop that outlived the turn it belonged to would
     interrupt the next turn's first cell on sight."""

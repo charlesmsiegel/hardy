@@ -63,14 +63,17 @@ SETTLE_SECONDS = 5.0
 
 # Set when an interrupt arrives with no cell to abandon: between cells, or
 # while the frame for the next one is still being read. It cannot simply be
-# ignored. Hardy signals the moment it has written a frame, and the child may
-# not have picked it up yet -- swallowing the signal there would leave the cell
-# to run on with the only press already spent, until Hardy gave up waiting and
-# killed the kernel, which is the loss interrupting exists to avoid. Remembered
-# instead, and answered by the cell it arrived alongside.
+# ignored. A press that lands while Hardy is writing a frame is signalled the
+# moment the frame is out, and the child may not have picked the frame up yet
+# -- swallowing the signal there would leave the cell to run on with the only
+# press already spent, until Hardy gave up waiting and killed the kernel,
+# which is the loss interrupting exists to avoid. Remembered instead, and
+# answered by the cell it arrived alongside.
 #
-# It cannot poison an unrelated later cell either: Hardy only ever signals a
-# kernel it has just given work to.
+# It is a fallback, not the record: a frame that carries `stopping` is Hardy's
+# own word on whether a stop is in force, and it decides on its own (see
+# `main`). The flag settles the frames it is on; this remembers a signal only
+# for a frame that says nothing.
 PENDING_INTERRUPT = False
 
 
@@ -1082,19 +1085,30 @@ def main() -> None:
             _handle_stops_by(signal.default_int_handler)
             held = PENDING_INTERRUPT
             PENDING_INTERRUPT = False
-            if held and request.get("stopping", True):
+            # `stopping` is Hardy's own word that a press is in force as this
+            # cell goes out, written into the frame under the same lock that
+            # orders presses against sends -- and it decides on its own. It
+            # used to be honoured only together with a remembered signal, and
+            # the signal is the half that can be late or lost: a shared runner
+            # dropped it two runs in three, the cell ran to its deadline, and
+            # the kernel was taken with it -- the exact loss a remembered press
+            # exists to prevent. Hardy sends no signal for a frame that says
+            # `stopping`, so nothing can land in the handler switch below.
+            #
+            # `held` without `stopping` is a signal that arrived in the moment
+            # after the last reply was flushed and before Hardy had read it. It
+            # was aimed at a cell that was already over, and Hardy -- which
+            # knows whether it still wants a stop -- says it does not.
+            # Rejecting this cell for it would stop something nobody asked to
+            # stop. A frame with no flag at all is an older parent's, and
+            # there the remembered signal is all there is to go on.
+            if request.get("stopping", held):
                 # The stop reached this kernel before the cell did. Answering
                 # without running it is what the parent is waiting for: it gets
                 # a framed reply straight away, the namespace is untouched, and
                 # the kernel is still here for the next cell.
                 reply = _interrupted_reply()
             else:
-                # `held` without `stopping` is a signal that arrived in the
-                # moment after the last reply was flushed and before Hardy had
-                # read it. It was aimed at a cell that was already over, and
-                # Hardy -- which knows whether it still wants a stop -- says it
-                # does not. Rejecting this cell for it would stop something
-                # nobody asked to stop.
                 reply = run_cell(str(request.get("source", "")), namespace, limit, capture)
         except KeyboardInterrupt:
             reply = _interrupted_reply()

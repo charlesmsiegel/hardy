@@ -232,10 +232,13 @@ def main() -> None:
             _handle_stops_by(signal.default_int_handler)
             held = PENDING_INTERRUPT
             PENDING_INTERRUPT = False
-            # `held` without `stopping` is a stop that arrived after the last
-            # reply was flushed, aimed at a cell already over. Hardy says it no
-            # longer wants one, so this cell runs.
-            stop_this = held and request.get("stopping", True)
+            # As `cas_driver.main`: the frame's `stopping` is Hardy's own word
+            # and decides on its own; the remembered signal only speaks for a
+            # frame that carries no flag. `held` without `stopping` is a stop
+            # that arrived after the last reply was flushed, aimed at a cell
+            # already over -- Hardy says it no longer wants one, so this cell
+            # runs.
+            stop_this = request.get("stopping", held)
             reply = _interrupted() if stop_this else answer(source)
         except KeyboardInterrupt:
             # As `cas_driver.run_cell` does: the cell is abandoned and *the
