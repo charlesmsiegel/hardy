@@ -1419,3 +1419,49 @@ def test_file_verdicts_expire_on_the_same_rule(tmp_path: Path) -> None:
     _write_audit(problem, _clean_audit("Foo", "bar"))
     row = panels.files(problem)["lean"][0]
     assert row["verdict"]["kind"] == "unaudited"
+
+
+def test_a_bare_ledger_name_two_declarations_share_matches_neither(tmp_path: Path) -> None:
+    """A bare ledger name is a correspondence only when it resolves uniquely.
+
+    With `A.foo` and `B.foo` both declared and one ledger item named bare
+    `foo`, matching on the leaf returned that same item for both -- so the
+    table asserted a recorded correspondence for two different theorems, out
+    of a schema that carries no binding between either of them and it.
+    `report_result` already holds a bare name to resolving uniquely; this is
+    the same rule on the reading side.
+    """
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "A.lean", "namespace A\ntheorem foo : True := trivial\nend A\n")
+    _write_lean(problem, "B.lean", "namespace B\ntheorem foo : True := trivial\nend B\n")
+    store = LedgerStore(problem)
+    store.append(
+        [ProjectItem(id="L-1", kind=ProjectItemKind.THEOREM, name="foo",
+                     origin=ProjectOrigin.HUMAN_AUTHORED, statement="Something about foo.")],
+        expected_revision=store.read().revision,
+    )
+    rows = {row["name"]: row for row in panels.results(problem)["theorems"]}
+    assert set(rows) == {"A.foo", "B.foo"}
+    for row in rows.values():
+        assert row["record"] is None
+
+
+def test_a_bare_ledger_name_one_declaration_owns_still_matches(tmp_path: Path) -> None:
+    """The uniqueness rule must not cost the ordinary case."""
+    from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, ProjectOrigin
+    from hardy.workflows.ledger.store import LedgerStore
+
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "A.lean", "namespace A\ntheorem solo : True := trivial\nend A\n")
+    store = LedgerStore(problem)
+    store.append(
+        [ProjectItem(id="L-2", kind=ProjectItemKind.THEOREM, name="solo",
+                     origin=ProjectOrigin.HUMAN_AUTHORED, statement="Something about solo.")],
+        expected_revision=store.read().revision,
+    )
+    row = next(r for r in panels.results(problem)["theorems"] if r["name"] == "A.solo")
+    assert row["record"] is not None
+    assert row["record"]["statement"] == "Something about solo."
