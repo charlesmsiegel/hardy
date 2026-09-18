@@ -112,21 +112,27 @@ class Declarations:
     def lookup(self, name: str) -> dict[str, Any]:
         """One exact declaration, with its source at the line the index recorded.
 
-        Exact, not nearest. `DeclarationIndex.search` matches any word of the
-        query as a substring, so asking it for `Sylow.card` and taking the
+        Exact, and exact by construction rather than by filtering.
+        `DeclarationIndex.search` matches any word of the query as a substring
+        and caps its results, so asking it for `Sylow.card` and taking the
         first row back would answer with `Sylow.card_modEq_one` -- a real
         declaration, a real signature, a real line, and not the thing that was
         asked about. A near miss reads as correct until somebody checks it,
         which is the worst kind of wrong for a panel whose whole purpose is to
-        show a reader the actual source.
+        show a reader the actual source. Filtering `search`'s answer fixes the
+        near miss and keeps the cap: a name outside the window reads as absent
+        from an index that holds it. `exact` has no window.
         """
         self._begin()
         wanted = name.strip()
         if not self.index.read:
             return {**self._cold(), "found": False, "name": wanted}
-        record = next(
-            (row for row in self.index.search(wanted, MAX_RESULTS) if row.name == wanted), None
-        )
+        # `exact`, not a filter over `search`. `search` is a ranked substring
+        # match with a result cap, so a qualified name with more than
+        # `MAX_RESULTS` lexicographically earlier names containing the same
+        # text fell outside the window and answered `found: false` while the
+        # index held it.
+        record = self.index.exact(wanted)
         if record is None:
             return {"indexed": True, "found": False, "name": wanted,
                     "signature": None, "module": None, "line": None,

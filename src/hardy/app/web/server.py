@@ -33,13 +33,22 @@ from hardy.app.web.host import Busy, WebHost
 from hardy.foundation.files import LayoutError
 from hardy.workflows.layout import validate_slug
 
-#: A JSON request body past this is refused; the page sends lines of text,
-#: chat titles, and one edited Lean or TeX source at a time, never documents.
-#: A source this large would not be readable in the editor either --
-#: `workspace.TEXT_LIMIT`, which decides what `/api/file` will serve back, is
-#: the same figure. Uploads arrive at `/api/upload` instead, under
-#: `uploads.MAX_UPLOAD`.
+#: A JSON request body past this is refused; the page sends lines of text and
+#: chat titles, never documents. Uploads arrive at `/api/upload` instead,
+#: under `uploads.MAX_UPLOAD`.
 MAX_BODY = 1 << 20
+#: What an editor save or check may send, which cannot be `MAX_BODY`.
+#: `workspace.TEXT_LIMIT` is 1 MiB and decides what `/api/file` serves back as
+#: a COMPLETE file -- so the viewer presents a 1 MiB source as fully editable.
+#: That source then travels as JSON: `JSON.stringify` wraps it in a path and
+#: an envelope and escapes every newline, quote and backslash, and a
+#: newline-dense TeX file inflates by more than half. Equal limits therefore
+#: refused a save of a file the page had just called complete, with a 413 and
+#: no way to check or save it. Four times the read limit clears the worst
+#: realistic expansion with room over; the editor also refuses locally, naming
+#: this figure, so the refusal arrives as a sentence rather than as a status
+#: code (`web/src/files/Editor.jsx`).
+MAX_EDIT_BODY = 4 << 20
 #: An oversized body is still read and discarded up to this much before the
 #: refusal is sent. Closing the connection on a client still writing resets it
 #: on Windows, and the browser would then report a dropped connection rather
@@ -177,8 +186,8 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return self.rfile.read(length)
 
-    def _json_body(self) -> dict | None:
-        raw = self._body(MAX_BODY)
+    def _json_body(self, limit: int = MAX_BODY) -> dict | None:
+        raw = self._body(limit)
         if raw is None:
             return None
         try:
@@ -371,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(200, uploads.stage(self._problem(), self.headers.get("X-Hardy-Filename", ""), raw))
                 return
-            data = self._json_body()
+            data = self._json_body(MAX_EDIT_BODY if path == "/api/check" else MAX_BODY)
             if data is None:
                 return
             if path == "/api/input":
@@ -441,7 +450,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._allowed(mutation=True):
             return
         path = unquote(urlsplit(self.path).path)
-        data = self._json_body()
+        data = self._json_body(MAX_EDIT_BODY if path == "/api/file" else MAX_BODY)
         if data is None:
             return
         try:

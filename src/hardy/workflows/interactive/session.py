@@ -161,25 +161,32 @@ def _workspace_relative(path: str) -> tuple[str, str] | None:
 
     Only the LEADING component is removed, and only once: a project may legally
     hold `lean/lean/Helper.lean`, and stripping every occurrence would save it
-    over `lean/Helper.lean`. A path that is already tree-relative
-    (`Main.lean`) is classified by its suffix and passed through untouched,
-    because a caller that already speaks the workspace's language must not be
-    second-guessed.
+    over `lean/Helper.lean`.
 
-    The suffix decides which tree, not the prefix, so `lean/notes.txt` is
-    refused rather than saved as Lean.
+    The LEADING COMPONENT decides which tree, and the suffix has to agree with
+    it. Deciding by suffix alone was wrong for a path whose two halves
+    disagree: `tex/Appendix.lean` picked the Lean workspace, found no `lean/`
+    prefix to strip, and saved to `lean/tex/Appendix.lean` -- reporting success
+    while the file the Files page had opened, under `tex/`, went unchanged.
+    Files classifies a file by the tree it sits in, so this must too, and a
+    mismatch is refused rather than resolved in favour of either half.
+
+    A path with no tree prefix at all (`Main.lean`, the session's own default)
+    is classified by its suffix and passed through untouched: a caller already
+    speaking the workspace's language must not be second-guessed.
     """
     text = path.strip()
     if not text:
         return None
     parts = PurePosixPath(text.replace("\\", "/")).parts
     suffix = PurePosixPath(text).suffix.lower()
-    tree = LEAN_DIR if suffix == ".lean" else TEX_DIR if suffix == ".tex" else None
-    if tree is None:
+    by_suffix = LEAN_DIR if suffix == ".lean" else TEX_DIR if suffix == ".tex" else None
+    if by_suffix is None:
         return None
-    if len(parts) > 1 and parts[0] == tree:
-        return tree, "/".join(parts[1:])
-    return tree, "/".join(parts)
+    if len(parts) > 1 and parts[0] in {LEAN_DIR, TEX_DIR}:
+        # The tree it lives in wins, and the suffix must belong there.
+        return (parts[0], "/".join(parts[1:])) if parts[0] == by_suffix else None
+    return by_suffix, "/".join(parts)
 
 
 DEFAULT_LEAN_PATH = "Main.lean"

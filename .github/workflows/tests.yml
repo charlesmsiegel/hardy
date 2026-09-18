@@ -164,6 +164,25 @@ jobs:
       - name: Build the bundle
         run: npm run build
         working-directory: web
+      # The gate the two smokes cannot provide between them. The committed
+      # bundle is smoked above and the rebuilt one below, so a bundle
+      # committed stale passes both whenever the source change falls outside
+      # what the smoke asserts -- which is most source changes. This compares
+      # what the build just produced against what was committed, and fails if
+      # they differ, which is the only step here that can actually say the
+      # tracked assets match the source they claim to be built from.
+      #
+      # `--stat` first so the log names the offending files before the exit
+      # code ends the job; `--exit-code` is what fails it.
+      - name: The committed bundle must match the source
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- src/hardy/app/web/static; then
+            echo "::error::src/hardy/app/web/static/ is stale: rebuilding changed it." >&2
+            echo "Run 'npm run build' in web/ and commit the result." >&2
+            git diff --stat -- src/hardy/app/web/static >&2
+            exit 1
+          fi
       # Started in the background rather than with a separate long-running job
       # step, because `npm run smoke` needs it already listening. The wait
       # loop is bounded and fails the step with its own message on timeout --

@@ -90,10 +90,23 @@ export default function Shell() {
   const Page = isChat ? null : PAGES[route.page];
   // `null`, not omitted: the slot below tests this directly, and skipping
   // the branch when `isChat` is what keeps Chat from being asked for twice.
+  //
+  // `key` carries the project. Without it React reuses the mounted page
+  // across a project switch, and page-local state goes with it -- including
+  // a pending confirmation card, which holds the COMPLETE command string it
+  // would submit. A confirm opened in Jobs, Publications or Checkpoints and
+  // answered after switching would send that old command to the new
+  // session, and ids recur across projects (`d-01`, `Main`, `scope`), so the
+  // result is not a harmless refusal but the right command against the wrong
+  // project's object.
+  //
+  // Deliberately not applied to Chat: the dock is mounted once and kept
+  // across route changes on purpose, and `useSession` already reloads the
+  // transcript on the `changed` event a switch emits.
   const pageContent = isChat
     ? null
     : Page
-      ? <Page arg={route.arg} onPeek={openPeek} />
+      ? <Page key={`${status.slug}/${route.page}`} arg={route.arg} onPeek={openPeek} />
       : unknownRoute(route.page);
 
   const showAside = dock === 'pinned' && !isChat && !isTree;

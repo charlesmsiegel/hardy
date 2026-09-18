@@ -531,3 +531,32 @@ def test_cli_parses_web() -> None:
 
     args = build_parser().parse_args(["web", "--port", "8123", "--open", "--project", "sylow", "--chat", "x"])
     assert args.command == "web" and args.port == 8123 and args.open is True and args.chat == "x"
+
+
+def test_an_editor_save_may_exceed_the_ordinary_body_limit(server) -> None:
+    """`/api/file` serves a file up to `TEXT_LIMIT` (1 MiB) and the editor
+    presents it as complete, so the save of that same text -- larger once
+    JSON-escaped -- must not be refused by a body limit equal to the read
+    limit. It was: a near-limit TeX file got a 413 and could be neither
+    checked nor saved."""
+    source = "\n".join([r"\section{x}"] * 60000)   # ~1 MiB, newline-dense
+    assert len(source) > (1 << 20) * 0.6
+    status, _, body = _call(server, "PUT", "/api/file",
+                            {"path": "tex/big.tex", "source": source})
+    assert status == 200, f"a near-limit editor save was refused with {status}"
+    assert json.loads(body)["ok"] is True
+
+
+def test_an_ordinary_mutation_keeps_the_smaller_body_limit(server) -> None:
+    """The larger allowance is for the two editor routes only. `/api/input`
+    sends lines of text; a megabyte of it is still not a line."""
+    status, *_ = _call(server, "POST", "/api/input", raw=b"x" * ((1 << 20) + 1),
+                       headers={"Content-Type": "application/json"})
+    assert status == 413
+
+
+def test_an_editor_body_past_the_editor_limit_is_still_refused(server) -> None:
+    """The larger limit is a limit, not its absence."""
+    status, *_ = _call(server, "PUT", "/api/file", raw=b"x" * ((4 << 20) + 1),
+                       headers={"Content-Type": "application/json"})
+    assert status == 413

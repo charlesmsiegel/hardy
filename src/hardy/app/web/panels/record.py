@@ -792,8 +792,15 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
     scope = candidates[0] if candidates else None
     publication = views.publication(head.ref, scope if scope is not None else _UNSCOPED)
 
-    documented = {relation.target.id for relation in views.graph.relations
-                 if relation.kind == RelationKind.DOCUMENTS}
+    # The pinned digest is kept, not discarded. A `DOCUMENTS` relation points
+    # at the exact revision the prose was written against; reducing it to the
+    # stable id meant that revising a theorem under the same id left the new
+    # revision still reading `documented`, on the strength of prose that
+    # describes the old statement. Matching `(id, digest)` makes the claim
+    # what the relation actually recorded.
+    documented = {(relation.target.id, relation.target.digest)
+                  for relation in views.graph.relations
+                  if relation.kind == RelationKind.DOCUMENTS}
     assumed = set(scope.allowed_background + scope.allowed_interfaces) if scope is not None else set()
     unestablished = {ref.id for ref in publication.unestablished} if scope is not None else None
     stale_ids = {ref.id for artifact in publication.stale for ref in (artifact.record, artifact.expected)}
@@ -821,7 +828,7 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
             "verdict": kernel["verdict"],
             "tone": vocabulary.verdict_tone(kernel["verdict"]),
             "writeup": {
-                "documented": record.id in documented,
+                "documented": (record.id, record.digest) in documented,
                 "words": None,
                 "reader_agreed": None,
                 "assumed": (ref in assumed) if scope is not None else None,
