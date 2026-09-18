@@ -38,6 +38,8 @@ HARDY_VERSION="${HARDY_VERSION:-}"
 # editable, which is what a developer running it from a clone wants. Empty means
 # "decide from what is actually here" — see resolve_install_source.
 INSTALL_FROM="${HARDY_INSTALL_FROM:-}"
+# Whether to leave a launcher on the Desktop that runs `hardy web --open`.
+NO_LAUNCHER="${HARDY_NO_LAUNCHER:-0}"
 
 ASSUME_YES=0
 SKIP_MATHLIB=0
@@ -94,6 +96,7 @@ Options:
   --skip-latex      do not install a TeX distribution
   --full-latex      install the full TeX distribution instead of a LaTeX subset
   --no-config       do not write $HARDY_CONFIG
+  --no-launcher     do not put a Hardy launcher on the Desktop (it runs \`hardy web --open\`)
   --from-release    install the published wheel even when run from a clone
   --from-source     install this source tree, editable (the default from a clone)
   --prefix DIR      where Hardy keeps its venv and Lean project (default $HARDY_HOME)
@@ -114,6 +117,7 @@ parse_arguments() {
 		--skip-latex) SKIP_LATEX=1 ;;
 		--full-latex) FULL_LATEX=1 ;;
 		--no-config) WRITE_CONFIG=0 ;;
+		--no-launcher) NO_LAUNCHER=1 ;;
 		--from-release) INSTALL_FROM=release ;;
 		--from-source) INSTALL_FROM=source ;;
 		--prefix)
@@ -522,6 +526,62 @@ link_command() {
 	ensure_path_entry "$HARDY_BIN_DIR"
 }
 
+# --- launcher ---------------------------------------------------------------
+
+# The user's Desktop directory: what xdg-user-dir says where it exists (a
+# localized or relocated Desktop), else ~/Desktop. Shared with uninstall.sh so
+# what one puts down the other picks up.
+desktop_dir() {
+	local dir=""
+	if have xdg-user-dir; then
+		dir="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+	fi
+	[ -n "$dir" ] || dir="$HOME/Desktop"
+	printf '%s' "$dir"
+}
+
+# One-click access to the browser client: something to double-click that runs
+# `hardy web --open` in a terminal, where the URL is printed and Ctrl+C stops
+# the server. Linux gets a .desktop entry in the applications menu and a copy
+# on the Desktop (executable, which is what GNOME requires before it trusts
+# one); macOS gets a .command on the Desktop, which Terminal opens. The kind
+# is the platform's, or whatever the caller names, so a test can exercise
+# either shape on any host.
+install_launcher() {
+	[ "$NO_LAUNCHER" = 1 ] && return 0
+	local kind="${1:-$(uname -s | tr '[:upper:]' '[:lower:]')}" desktop entry
+	desktop="$(desktop_dir)"
+	step "Adding the Hardy launcher"
+	case "$kind" in
+	darwin)
+		mkdir -p "$desktop"
+		printf '#!/bin/sh\nexec "%s/hardy" web --open\n' "$HARDY_BIN_DIR" >"$desktop/Hardy.command"
+		chmod +x "$desktop/Hardy.command"
+		say "wrote $desktop/Hardy.command"
+		;;
+	*)
+		entry="$HOME/.local/share/applications/hardy.desktop"
+		mkdir -p "$(dirname "$entry")"
+		cat >"$entry" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Hardy
+Comment=Serve the Hardy browser client and open it
+Exec=$HARDY_BIN_DIR/hardy web --open
+Terminal=true
+Categories=Science;Math;
+EOF
+		say "wrote $entry"
+		if [ -d "$desktop" ]; then
+			cp "$entry" "$desktop/hardy.desktop"
+			chmod +x "$desktop/hardy.desktop"
+			say "wrote $desktop/hardy.desktop"
+		fi
+		;;
+	esac
+	say "the launcher runs 'hardy web --open' in a terminal; Ctrl+C there stops the server"
+}
+
 # --- lean -------------------------------------------------------------------
 
 ensure_elan() {
@@ -738,6 +798,7 @@ $(printf '\033[1mHardy is installed.\033[0m')
   installed    $([ "$INSTALL_FROM" = source ] && printf 'editable, from %s' "$REPO_ROOT" || printf 'from the published release')
   lean project ${LEAN_PROJECT}${skipped_suffix}
   config       $HARDY_CONFIG
+  launcher     $(if [ "$NO_LAUNCHER" = 1 ]; then printf 'none (--no-launcher)'; else printf 'on the Desktop (hardy web --open)'; fi)
 
 Start doing mathematics with an agent:
 
@@ -774,6 +835,7 @@ hardy_install_main() {
 	ensure_tools
 	create_environment
 	link_command
+	install_launcher
 	ensure_elan
 	ensure_lean_project
 	ensure_latex
