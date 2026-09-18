@@ -211,10 +211,35 @@
           ]
         },
         {
+          "name": "KellerGroupoids.ProjectStatements.disjoint_of_not_sameComponent",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.exists_not_sameComponent_of_not_connected",
+          "axioms": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ]
+        },
+        {
           "name": "KellerGroupoids.ProjectStatements.disconnectedNonproper_commonPencil",
           "axioms": [
             "propext",
-            "sorryAx",
+            "Classical.choice",
+            "Quot.sound",
+            "KellerGroupoids.Published.assiDisjointParametricCurvesTrichotomy",
+            "KellerGroupoids.Published.jelonekNonproperComponentsParametric"
+          ]
+        },
+        {
+          "name": "KellerGroupoids.ProjectStatements.two_le_selectedFibers_of_not_connected",
+          "axioms": [
+            "propext",
             "Classical.choice",
             "Quot.sound"
           ]
@@ -236,9 +261,11 @@
             "sorryAx",
             "Classical.choice",
             "Quot.sound",
+            "KellerGroupoids.Published.assiDisjointParametricCurvesTrichotomy",
             "KellerGroupoids.Published.assiExceptionalTwoFibersEquinodal",
             "KellerGroupoids.Published.assiRationalOnePlacePencilDichotomy",
-            "KellerGroupoids.Published.counterexampleMeetsEverySubmersionFiber"
+            "KellerGroupoids.Published.counterexampleMeetsEverySubmersionFiber",
+            "KellerGroupoids.Published.jelonekNonproperComponentsParametric"
           ]
         },
         {
@@ -325,16 +352,17 @@
         "sorryAx"
       ],
       "unapproved": [
+        "KellerGroupoids.Published.assiDisjointParametricCurvesTrichotomy",
+        "KellerGroupoids.Published.jelonekNonproperComponentsParametric",
         "KellerGroupoids.Published.assiRationalOnePlacePencilDichotomy",
         "KellerGroupoids.Published.counterexampleMeetsEverySubmersionFiber",
         "KellerGroupoids.Published.assiExceptionalTwoFibersEquinodal",
         "KellerGroupoids.Published.chauOnePointAtInfinity",
-        "KellerGroupoids.Published.jelonekNonproperComponentsParametric",
         "KellerGroupoids.ExternalResearch.degreeSixMonodromyFrontier",
         "KellerGroupoids.ExternalResearch.refinedDegreeSixBoundaryBudget"
       ],
       "assumed": [],
-      "signature": "c6a2edbf7a84df430250620903562782a4eea1d16f9e171ba23ed87bfcb0d5ec"
+      "signature": "e70733577977c00b2e9cc0fc774c36223c73e9ac1eb6cc62bc682fc7cb5ae26a"
     }
   }
 }

@@ -42,15 +42,19 @@ axiom jelonekConnectedNonproperEulerPositive (G : PlaneGeometry F) (h : G.connec
     0 < G.eulerCharNonproper
 
 /-- **Assi 2012, Theorem 3.1.** For a rational one-place pencil, either the polynomial is
-equivalent to a coordinate or the pencil has at most two rational members. -/
+equivalent to a coordinate or the pencil has at most two rational members; the selected fibers,
+being polynomially parametric, are rational members, so there are at most two of them. -/
 axiom assiRationalOnePlacePencilDichotomy (G : PlaneGeometry F) (h : G.commonPencil) :
     G.pencilIsCoordinate ∨ G.selectedFibers ≤ 2
 
-/-- **Assi 2012, Proposition 3.5.** Two disjoint polynomially parametric plane curves lie in one
-pencil. -/
+/-- **Assi 2012, Proposition 3.5.** Two distinct polynomially parametric plane curves are
+translates in a coordinate pencil, or the two exceptional rational members of a noncoordinate
+one-place pencil, or they meet in the affine plane. So two disjoint ones lie in one pencil, and
+that pencil is a rational one-place pencil. -/
 axiom assiDisjointParametricCurvesTrichotomy (G : PlaneGeometry F) (C C' : G.Curve)
     (hdisjoint : G.disjoint C C') (hC : G.polynomiallyParametric C)
-    (hC' : G.polynomiallyParametric C') : G.samePencil C C'
+    (hC' : G.polynomiallyParametric C') :
+    G.samePencil C C' ∧ G.rationalOnePlace (G.pencilOf C)
 
 /-- **Assi 2012, Proposition 3.3 with Lemma 3.2.** The two exceptional rational members of a
 noncoordinate one-place pencil have the same positive number of singular points, each an
