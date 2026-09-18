@@ -228,12 +228,13 @@ def _frozen_claim(run_dir: Path, manifest: RunManifest) -> tuple[dict[str, Any] 
       as a `FrozenClaim`: `(None, reason)`. The manifest promised a claim
       this run directory does not carry, and *this run* says so, rather than
       the page implying the text is never served.
-    - The file parses but its `content_hash` is not the manifest's, or its
-      own text does not hash to its `content_hash` when re-frozen through
-      `freeze_claim` exactly as `prove.py` re-checks it on write (`prove.py`,
-      "persisted Frozen Claim hash mismatch"): `(None, reason)`. The first
-      catches a file from another run; the second catches a statement edited
-      under a hash it no longer earns. `validate_run_consistency`
+    - The file parses but its `content_hash` is not the manifest's, or the
+      claim re-frozen from its own fields through `freeze_claim` (as
+      `prove.py` re-checks it on write, "persisted Frozen Claim hash
+      mismatch") is not equal to it, field for field: `(None, reason)`. The
+      first catches a file from another run; the second catches a statement
+      edited under a hash it no longer earns, including a field the hash
+      never covered. `validate_run_consistency`
       (`workflows/recorded.py`) makes the first check for `hardy accept
       --recorded`; the second is the one a browser-facing read owes on top.
     """
@@ -257,10 +258,15 @@ def _frozen_claim(run_dir: Path, manifest: RunManifest) -> tuple[dict[str, Any] 
         claim.original_text, claim.proposal, claim.environment, claim.approved_at,
         semantic_context=claim.semantic_context,
     )
-    if refrozen.content_hash != claim.content_hash:
+    # Compared whole, not hash to hash: `freeze_claim` rebuilds `imports`
+    # from `environment.imports` and hashes those, so a file whose top-level
+    # `imports` were edited still re-freezes to the hash it carries -- and
+    # `imports` is exactly what the page serves beside it. Model equality
+    # covers every field, hashed or not (Codex, PR #179).
+    if refrozen != claim:
         return None, (
-            f"{FORMALIZATION} does not hash to the {claim.content_hash} it carries; "
-            "its text is not the one that hash was taken over"
+            f"{FORMALIZATION} does not re-freeze to the claim it carries under hash "
+            f"{claim.content_hash}; its text is not the one that hash was taken over"
         )
     return {
         "content_hash": claim.content_hash,
