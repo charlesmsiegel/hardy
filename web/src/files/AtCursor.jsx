@@ -149,7 +149,7 @@ export function RecordLane({declares, results, texNames}) {
           <div className="wb-rail__grid">
             <Row label="§ says">
               {row && row.record ? (
-                row.record.statement || <Absent kind="unreported" />
+                row.record.statement || <span className="panel__note">No statement recorded.</span>
               ) : (
                 <>
                   <Absent kind="na" />{' '}

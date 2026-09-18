@@ -184,7 +184,7 @@ export default function Results({arg, onPeek}) {
       name: token,
       kind: node ? node.kind : <Absent kind="unreported" />,
       source: node ? node.artifacts[0] || <Absent kind="unreported" /> : <Absent kind="unreported" />,
-      informal: node ? node.statement || <Absent kind="unreported" /> : <Absent kind="unreported" />,
+      informal: node ? node.statement || <span className="panel__note">No statement recorded.</span> : <Absent kind="unreported" />,
       x: event.clientX,
       y: event.clientY,
     });
@@ -315,7 +315,18 @@ export default function Results({arg, onPeek}) {
                 Results › <span style={{color: 'var(--fg)'}}>{selected.name}</span>
               </div>
               <div className="wb-results__name">{selected.name}</div>
-              <div style={{fontSize: 14}}>{selected.record?.statement ?? <Absent kind="na" />}</div>
+              {/* Two different absences, per `Absent.jsx`'s note. No record at
+                  all is the settled lookup: `na`, with the reason spelled
+                  out in the `§ record says` card below. A record whose
+                  `statement` is null is an absence with no recorded cause:
+                  prose, not an `Absent` kind. */}
+              <div style={{fontSize: 14}}>
+                {selected.record ? (
+                  selected.record.statement || <span className="panel__note">No statement recorded.</span>
+                ) : (
+                  <Absent kind="na" />
+                )}
+              </div>
 
               <TheoremLean module={selected.module} known={known} onName={onLeanName} revision={revision} go={go} />
 

@@ -526,13 +526,8 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph}) {
         </div>
       ) : null}
 
-      {/* `statement` is an ordinary optional field on every kind, not a kind-
-          conditioned one -- nothing in the schema says whether a null one
-          here means "not written yet" or "this kind does not carry one",
-          so neither `Absent`'s `na` nor its `zero` cleanly fits (it is not
-          a collection, and "does not apply" is a stronger claim than the
-          schema supports). Prose, not an `Absent` kind -- the same call the
-          drawer this page replaces already made. */}
+      {/* A missing `statement` is an absence with no recorded cause, and
+          `Absent.jsx`'s note rules that prose, not an `Absent` kind. */}
       <div style={{fontSize: 14}}>{shown.statement || <span className="panel__note">No statement recorded.</span>}</div>
 
       <div className="wb-card">

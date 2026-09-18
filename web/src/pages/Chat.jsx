@@ -78,7 +78,7 @@ export default function Chat({onPeek}) {
       name: token,
       kind: node ? node.kind : <Absent kind="unreported" />,
       source: node ? node.artifacts[0] || <Absent kind="unreported" /> : <Absent kind="unreported" />,
-      informal: node ? node.statement || <Absent kind="unreported" /> : <Absent kind="unreported" />,
+      informal: node ? node.statement || <span className="panel__note">No statement recorded.</span> : <Absent kind="unreported" />,
       x: event.clientX,
       y: event.clientY,
     });
