@@ -50,6 +50,24 @@
 // editor. All `na`, all with the reason in words beside them -- the glyph
 // alone says "does not apply" without saying why, and why is the useful half.
 //
+// The second shape #173 recorded, found on the Ledger item page the day
+// after the first: an absence with *no recorded cause*. A ledger item's
+// `statement` is `Text | None` on every kind
+// (`workflows/ledger/contracts.py`), and nothing in the schema says whether
+// a null one means "not written yet" or "this kind does not carry one". So
+// no kind fits: `na` claims the field does not apply, which the data does
+// not support; `unreported` claims the backend was asked and gave no figure,
+// when it answered and the answer was null; `zero` is a count. The ruling is
+// prose, not an `Absent` kind -- a short note in the page's own voice ("No
+// statement recorded.") that says what is known and no more. This is the
+// note's answer, not each page's: Ledger, Results, Chat and the editor rail
+// all render a missing `statement` this one way, and
+// `tests/unit/test_web_absent.py` fails a page that renders it any other
+// way. What separates this from the settled-lookup shape above is whether
+// the *reason* for the absence is on record: there it is (the lookup ran;
+// nothing matched), so `na` with the reason beside it is honest; here it is
+// not, so no glyph is.
+//
 // Two more rules that keep pages consistent with each other, not just with
 // themselves:
 //
