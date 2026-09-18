@@ -111,6 +111,9 @@ Everything one problem owns lives under its own directory, and all of it is mean
 │   ├── 00000000000000000001.json              # one committed transaction per file
 │   ├── 00000000000000000002.json
 │   └── writer.lock                              # the ledger's OS-level lock file, left in place after use
+├── evidence/
+│   ├── 00000000000000000001.json              # one journal transaction per write: formal evidence records and acceptance decisions
+│   └── writer.lock                              # the journal's OS-level lock file, left in place after use
 ├── delegations/
 │   ├── journal.jsonl                              # append-only, hash-chained delegation events
 │   ├── journal.lock                               # the journal's OS-level lock file, left in place
@@ -152,6 +155,8 @@ Everything one problem owns lives under its own directory, and all of it is mean
 **`bibliography.json`** is the one file that names every citation, keyed so that the same paper or edition gets the same cite key wherever it is cited; an entry made from the personal library names the work and edition it cites and every artifact digest that edition was read through, so a PDF and an EPUB of one confirmed edition share an entry while two editions never do; `tex/references.tex` is rendered whole from it on every write and would be overwritten by the next citation if hand-edited, so it carries no information `bibliography.json` does not already have.
 
 **`ledger/`** holds one append-only transaction file per write, named by a 20-digit sequence number, each carrying its own content digest and a reference to the previous file's digest, under schema `hardy.ledger/transaction/v1`. `writer.lock` is the OS-level lock's rendezvous file: it is created once and never unlinked, since an empty file at a known path makes no claim on anything by itself, so it is harmless to commit alongside the transactions it once serialized.
+
+**`evidence/`** is the formal capability's own durable record, and the decision owner's: a journal in the same numbered, hash-chained form as `sources/`, under schema `hardy.journal/v1`. One `FormalEvidence` record is written per declaration the axiom audit established when a save is recorded in the ledger or a worker's change set is admitted, and one `Decision` per acceptance the ledger policy recorded. A ledger resolution names a record here by id and pins its digest; the policy's readers replay this journal and accept only when the bytes on disk still say what the reference claims, so editing or deleting a record makes the resolution unauthenticated rather than differently authenticated. Committed with the ledger it stands behind, since a clone whose ledger says "resolved" needs the record that resolution rests on. See [Artifacts](artifacts.md#evidence).
 
 **`delegations/`** is execution state, not mathematics: `journal.jsonl` is the append-only, hash-chained record of every background delegation (creation, lease reservation, start, usage, terminal state, attention and its deliveries), and each `<delegation-id>/` directory holds that worker's own launch package, trajectory, findings and result. A worker never writes anywhere else in the problem. The mathematical objects it works on stay in `ledger/`; nothing here is evidence. Committed, like the transcript, because what was tried is part of the record; `journal.lock` is a rendezvous file on the same terms as `ledger/writer.lock`, and `owners/<token>.lock` files are the same kind of rendezvous for the processes running workers: a process holds its token's lock while it lives, and recovery retires only work whose owner's lock can be taken.
 

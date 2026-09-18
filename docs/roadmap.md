@@ -274,7 +274,9 @@ share the policy for caller-preauthorized `--assume` input without new gates or
 prompts. Paper approvals carry an exact inventoried-excerpt artifact identity.
 Direct policy and existing admission regressions cover these boundaries; B2's
 authenticated scope/evidence enforcement is now implemented for ledger callers;
-production admission-reader adapters remain part of later workflow integration.
+the interactive session installs the production evidence and decision readers
+(`workflows/interactive/evidence.py`), so a theorem saved in a session is
+recorded in the ledger and a worker's proof is admitted through them (#171).
 
 Extract policy from interactive admission. Generic policy owns search-first evidence, elaboration/shape checks, cheap proof/refutation/vacuity probes, source/faithfulness checks, and scope legality. Interactive code remains the human-confirmation/transcript adapter.
 

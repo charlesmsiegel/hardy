@@ -44,6 +44,22 @@ all through a rename, and is deliberately not flushed to the platter per write:
 it is derived from the transcript beside it, and the rename is atomic whether or
 not the bytes have landed.
 
+A save writes a fourth and a fifth file, and they say different things about
+the same declaration on purpose. `session.json` keeps the kernel's verdict; the
+project ledger under `ledger/` keeps the record's claim: every public theorem
+and lemma the audit graded becomes a project item named by its qualified Lean
+name, with a `prove` obligation that only the ledger policy closes. The policy
+closes it through readers the session installs (`evidence.py`), which re-read
+the formal owner's journal under `evidence/`, so a resolved obligation is one
+whose evidence was checked against bytes on disk, not a field somebody set. A
+declaration resting on a hole, or on an approved assumption the ledger scope
+does not admit, keeps its obligation open with the reason named; a proof that
+was accepted and later broken reopens it. The ledger is a record of the save
+and never a gate on it: a write the ledger refuses is a note on the save, and
+the files and the verdict stand. The browser's results page draws the two
+beside each other and never derives one from the other
+([the trust boundary](trust-boundary.md#recorded-acceptance-is-not-proof)).
+
 One file of project instructions is read: `HARDY.md` if it is there, `AGENTS.md`
 otherwise, at the project root and nowhere else. Ancestors are never walked, and
 the whole text, not a digest of it, is appended to the transcript on first use

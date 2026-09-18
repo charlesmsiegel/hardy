@@ -412,11 +412,15 @@ and run evidence. It does not copy that evidence and it cannot manufacture it.
 
 So a stored status never authenticates itself. Acceptance is denied unless an
 injected capability reader authenticates the exact evidence and the exact
-decision, on every use, including after a restart. The terminal has no
-configured reader today and says so in its own summary rather than implying
-otherwise: the project section prints that evidence authentication is
-unavailable and that recorded acceptance is not proof. Rendering cannot grant
-authority; a view that reads the ledger is a view.
+decision, on every use, including after a restart. An interactive session
+installs its own readers (`workflows/interactive/evidence.py`): the formal
+owner journals what the axiom audit established, beside the ledger, and the
+readers replay those bytes on every use, so a record that was edited or lost
+makes its resolution unaccepted rather than differently accepted. A surface
+with no session behind it, such as the browser's record lane over a bare
+problem directory, has no reader and says so: it quotes the record's claim as
+a claim. Rendering cannot grant authority; a view that reads the ledger is a
+view.
 
 Three consequences follow, and each has bitten:
 

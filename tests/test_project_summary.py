@@ -58,7 +58,9 @@ def test_summary_reads_project_context_and_keeps_trust_and_research_distinct(tmp
     assert "WLOG mapping is missing" in text
     assert "Allowed background (permission only)" in text
     assert "External@" in text
-    assert "Evidence authentication unavailable" in text
+    # The session reads through its own owners, so the summary says so rather
+    # than disclaiming a reader it has (#171).
+    assert "Evidence authenticated only through the configured ledger policy" in text
     assert "Publication readiness" in text and "blocked" in text
     assert any("transport" in line for line in summary.obligations)
     assert store.read() == before
