@@ -76,9 +76,12 @@ EVIDENCE_DIR = "evidence"
 PRODUCER = "hardy.workflows.interactive.evidence"
 EVIDENCE_URI = "hardy-evidence:"
 DECISION_URI = "hardy-decision:"
-#: The scope minted when a problem's ledger has none. It permits nothing: a
-#: bare scope neither admits assumptions nor grants trust, and widening it is
-#: a distinct, reader-authorized act this module never performs.
+#: The scope saved results are recorded under, minted when the ledger lacks
+#: it. It permits nothing: a bare scope neither admits assumptions nor grants
+#: trust, and the policy authorizes one without a scope-change reader. A scope
+#: that admits background is a different thing, authorized by a reader over
+#: recorded decisions; no path in the application widens one yet, so no such
+#: reader is installed, and results are not recorded under one either.
 DEFAULT_SCOPE = "project"
 
 _STABLE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
@@ -353,6 +356,10 @@ class ProjectOwners:
         """
         store = LedgerStore(self.problem)
         notes: list[str] = []
+        try:
+            notes.extend(self._reopen_vanished(store, sources))
+        except (ValueError, OSError, LockTimeout) as error:
+            return f"\n\nproject ledger: not recorded: {error}"
         for module in sorted(records):
             source = sources.get(module)
             if source is None:
@@ -383,17 +390,57 @@ class ProjectOwners:
             return "\n\nproject ledger: unchanged"
         return "\n\nproject ledger: " + "; ".join(notes)
 
+    def _reopen_vanished(self, store: LedgerStore, sources: Mapping[str, str]) -> list[str]:
+        """Reopen the proof obligation of every recorded result the tree no longer declares publicly.
+
+        A result recorded from a save is a claim about a declaration; when a
+        later save removes it, renames it or makes it private, the audit has
+        no entry for the old name and would leave its resolution standing over
+        a tree that cannot rebuild it. Reopened with the reason, never
+        deleted: the history stays, and a declaration that returns resolves
+        again on its own evidence.
+        """
+        declared: set[str] = set()
+        for source in sources.values():
+            found = declarations(source)
+            declared.update(set(found["theorem"]) | set(found["lemma"]))
+            declared.difference_update(found["private"])
+        snapshot = store.read()
+        notes: list[str] = []
+        for item in snapshot.current(ProjectItem):
+            if item.id != item_id(item.name) or item.name in declared:
+                continue
+            for current in snapshot.current(Obligation):
+                if current.item != item.ref or current.kind is not ObligationKind.PROVE:
+                    continue
+                if current.status is not ObligationStatus.RESOLVED:
+                    continue
+                reason = f"the Lean tree no longer declares {item.name} publicly"
+                reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
+                                                      "status": "open", "resolution": None, "reason": reason})
+                snapshot = store.append((reopened,), expected_revision=snapshot.revision,
+                                        validate=self.policy.validate)
+                notes.append(f"{item.name} proof obligation reopened ({reason})")
+        return notes
+
     def _record_declaration(self, store: LedgerStore, *, name: str, kind: ProjectItemKind, statement: str,
                             module: str, source: str, axioms: Sequence[str], signature: str,
                             status: audit.DeclarationStatus) -> str:
         snapshot = store.read()
         identity = item_id(name)
         batch: list = []
-        scopes = snapshot.current(Scope)
-        scope = scopes[0] if scopes else Scope(id=DEFAULT_SCOPE)
-        if not scopes:
+        # The bare scope, whichever others the project holds: an obligation
+        # pins the scope it was opened under, and this one needs no reader.
+        scope = next((s for s in snapshot.current(Scope) if s.id == DEFAULT_SCOPE), None)
+        if scope is None:
+            scope = Scope(id=DEFAULT_SCOPE)
             batch.append(scope)
         existing = next((r for r in snapshot.current(ProjectItem) if r.id == identity), None)
+        if existing is not None and existing.name != name:
+            # The identity is derived from the name, but nothing stops a
+            # project from minting it by hand for something else; that item
+            # is not this declaration and is not repurposed.
+            return f"not recorded: the ledger already holds {identity} as {existing.name!r}"
         said: list[str] = []
         if existing is None:
             item = ProjectItem(id=identity, kind=kind, name=name, statement=statement,

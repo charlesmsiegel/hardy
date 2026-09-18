@@ -13,7 +13,7 @@ NEW = "lemma original : True := by exact True.intro\n"
 
 @pytest.fixture
 def save_tree(tmp_path, monkeypatch):
-    events, shadows, published = [], [], []
+    events, shadows, published, audited_trees = [], [], [], []
     controls = {}
 
     def event(name, value=None):
@@ -93,14 +93,14 @@ def save_tree(tmp_path, monkeypatch):
         audit_tree=audit_tree,
         closes_and_adds=lambda *_: event("closes"),
         publish_audit=publish,
-        record_results=lambda *_: event("ledger", "\nledger note"),
+        record_results=lambda audited, records: (audited_trees.append(audited), event("ledger", "\nledger note"))[1],
         refresh_automation=lambda: event("automation", "\nautomation note"),
         persist=lambda: event("persist"),
         owed_note=lambda: event("owed", "\nowed note"),
     )
     service = FormalWorkspaceService(SimpleNamespace(compile_module=compile_module), workspace)
     return SimpleNamespace(service=service, policy=policy, workspace=workspace, events=events,
-                           controls=controls, shadows=shadows, published=published)
+                           controls=controls, shadows=shadows, published=published, audited=audited_trees)
 
 
 def tree_bytes(workspace):
@@ -122,6 +122,9 @@ def test_success_builds_dependents_then_commits_discards_and_publishes(save_tree
                            "discard", "publish", "ledger", "automation", "persist", "owed"]
     assert result == ToolResult(True, "compiled Main\n\naxiom audit: checked\nautomation note\nledger note\nowed note", NEW)
     assert (tree.workspace.root / "Main.lean").read_text() == NEW
+    # The ledger is handed the tree the audit graded, read from the shadow
+    # before it was discarded, not a later read of the live tree.
+    assert tree.audited == [{"Main": NEW, "Use": "import Main\nlemma use : True := original\n"}]
     assert tree.workspace._index() == tree.workspace.current_signatures()
     assert len(tree.published) == 1
     assert not tree.shadows[0].root.parent.exists()
