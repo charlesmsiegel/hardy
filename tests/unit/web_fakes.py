@@ -11,6 +11,7 @@ from typing import Any
 from hardy.agents.contracts import TurnEvent
 from hardy.agents.usage import Usage
 from hardy.app import config as configuration
+from hardy.app.project_registry import ProjectRegistry
 from hardy.foundation.values import ToolResult
 from hardy.workflows import layout
 from hardy.workflows.delegation.contracts import DelegationState
@@ -32,6 +33,11 @@ def make_config(
         latex_command=("pdflatex",), root=tmp_path, project=slug, chat=chat,
         runs_root=runs_root if runs_root is not None else tmp_path / "runs",
     )
+
+
+def make_registry(tmp_path: Path) -> ProjectRegistry:
+    """A project registry of its own under `tmp_path`, never the user's."""
+    return ProjectRegistry(tmp_path / "registry" / "projects.json", default_root=tmp_path / "projects")
 
 
 def make_problem(tmp_path: Path, slug: str = "sylow") -> Path:

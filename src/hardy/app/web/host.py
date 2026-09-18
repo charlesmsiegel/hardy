@@ -12,6 +12,15 @@ browser gets instead is a *view* -- every subscriber receives the same
 numbered events, so two tabs watching one session agree by construction
 rather than by polling.
 
+There may also be NO session. The browser opens only projects recorded in
+the user's registry (`hardy.app.project_registry`), and a launch with
+nothing registered, or a `close`, leaves the host holding a Ui, a loop and
+an event stream but no problem. `state()` says so with `open: false`, and
+every project-scoped request is refused with one sentence until something
+is opened. That state is real rather than papered over with a scratch
+problem, because a scratch problem would answer real questions with facts
+about a workspace nobody asked for.
+
 Thread ownership, since three threads meet here:
 
 * The loop thread owns `_state`, `_commands_running`, `_pending_future` and
@@ -39,9 +48,11 @@ import queue
 import threading
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TypeVar
 
-from hardy.app.config import DEFAULT_BACKEND, authentication, existing_projects
+from hardy.app.config import DEFAULT_BACKEND, authentication
+from hardy.app.project_registry import NO_PROJECT_OPEN, ProjectRegistry
 from hardy.app.terminal import confirm_assumption
 from hardy.app.tui import dispatch
 from hardy.app.tui.handlers import OTHER, build_registry, load_templates, model_rows
@@ -69,6 +80,17 @@ class Busy(Exception):
     """
 
 
+class NoProject(Exception):
+    """Nothing is open, so there is no problem for this request to be about.
+
+    The message is `NO_PROJECT_OPEN`, the one sentence the page prints for
+    every such refusal.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(NO_PROJECT_OPEN)
+
+
 class Subscription:
     """One reader's view of the stream: a queue and the right to stop reading."""
 
@@ -83,23 +105,28 @@ class Subscription:
 class WebHost:
     """The one live session, the loop that drives it, and the event stream.
 
-    `session_factory(confirm, config) -> session` builds the launch session;
-    every later open goes through `opener`, which is the same `ProjectOpener`
-    the terminal uses and which owns the parts that survive a switch.
+    `session_factory(confirm, config) -> session` builds the launch session,
+    or is None for a launch that opens nothing; every later open goes through
+    `opener`, which is the same `ProjectOpener` the terminal uses and which
+    owns the parts that survive a switch. `projects` is the user's registry
+    of problem directories: what the page lists, and the only thing an open
+    by path is checked against.
     """
 
     def __init__(
         self,
         config: Any,
         opener: Any,
-        session_factory: Callable[[Callable[[dict], bool], Any], Any],
+        session_factory: Callable[[Callable[[dict], bool], Any], Any] | None,
         *,
         registry: list | None = None,
         notices: tuple[str, ...] = (),
+        projects: ProjectRegistry | None = None,
     ) -> None:
         self.config = config
         self.opener = opener
         self._session_factory = session_factory
+        self.projects_registry = projects if projects is not None else ProjectRegistry()
         if registry is None:
             templates, refused = load_templates(config)
             registry, notices = build_registry(templates), (*notices, *refused)
@@ -134,6 +161,14 @@ class WebHost:
         # prompts park belong to this loop, and `WebUi` decides how to reach
         # them by asking which thread it is on.
         self.ui = WebUi(self._loop, self.emit)
+        if self._session_factory is None:
+            # Nothing to open: the page lands on the project menu. The state
+            # is published so a tab that loads now learns `open: false` from
+            # the stream as well as from `/api/state`.
+            self.emit({"type": "state", **self.state()})
+            for notice in self._notices:
+                self.ui.write(notice, style="error")
+            return
         self.session = self._session_factory(confirm_assumption(self.ui), self.config)
         self.opener.session = self.session
         self._attach(self.config, self.session)
@@ -302,9 +337,17 @@ class WebHost:
         # it for one always fell through to a config `/model` never touches --
         # and the header went on naming the model the user had moved off.
         config = state.config if state is not None else self.config
+        # `open` is whether there is a session, and the four fields that name
+        # a problem are null together when there is not: a page must never be
+        # handed the launch config's slug as though something were open.
+        opened = self.session is not None
         return {
-            "slug": config.project,
-            "chat": config.chat,
+            "open": opened,
+            "slug": config.project if opened else None,
+            "chat": config.chat if opened else None,
+            "path": str(config.layout.problem) if opened else None,
+            "root": str(config.root) if opened else None,
+            "default_root": str(self.projects_registry.default_root),
             "model": str(config.model),
             "turn_running": bool(state and state.turn_running),
             "command_running": self._commands_running > 0,
@@ -354,20 +397,40 @@ class WebHost:
         return {"current": str(config.model), "backend": backend, "authentication": authentication(backend),
                 "rows": rows}
 
+    def _open_path(self) -> Path | None:
+        """The open problem's resolved path, or None. Readable from any thread."""
+        if self.session is None:
+            return None
+        config = self._state.config if self._state is not None else self.config
+        return ProjectRegistry.resolve(config.layout.problem)
+
     def projects(self) -> list[dict[str, Any]]:
-        """Every problem in the root with its chats, the live one marked."""
-        slugs = existing_projects(self.config.root)
-        if self.config.project not in slugs:
-            # A project opened but not yet recorded is still where the user is.
-            slugs.append(self.config.project)
-        return [
-            {
-                "slug": slug,
-                "active": slug == self.config.project,
-                "chats": [chat.as_dict() for chat in chats.list_chats(self.config.root / slug)],
-            }
-            for slug in slugs
-        ]
+        """Every registered problem with its chats, the open one marked.
+
+        Plus the open problem when it is not registered. That case is brief
+        but real: a `/project switch` typed into the composer lands in a
+        sibling before the post-command `_remember` runs, and the list must
+        never omit the project the user is in.
+        """
+        opened = self._open_path()
+        rows = []
+        listed = False
+        for entry in self.projects_registry.entries():
+            active = opened is not None and entry.path == opened
+            listed = listed or active
+            rows.append({
+                **entry.as_dict(),
+                "active": active,
+                "registered": True,
+                "chats": [chat.as_dict() for chat in chats.list_chats(entry.path)],
+            })
+        if opened is not None and not listed:
+            rows.append({
+                "path": str(opened), "slug": opened.name, "root": str(opened.parent),
+                "added": None, "last_opened": None, "active": True, "registered": False,
+                "chats": [chat.as_dict() for chat in chats.list_chats(opened)],
+            })
+        return rows
 
     def _busy(self) -> str | None:
         """The refusal text for whatever owns the session, or None. Loop thread only."""
@@ -379,63 +442,133 @@ class WebHost:
 
     # -- opening ---------------------------------------------------------
 
-    def open_chat(self, slug: str, chat: str) -> dict[str, Any]:
-        """Reopen `slug` on `chat` through the opener, replacing the live session.
+    def open_project(self, path: str, chat: str = DEFAULT_CHAT) -> dict[str, Any]:
+        """Open a registered problem on `chat`, replacing the live session.
 
-        Both names are held to what already exists. The opener PREPARES a
-        layout, so an unknown slug did not fail -- it scaffolded a whole
-        problem out of a typo in a request body, and an unlisted chat id left
-        a `chats/<id>/` with a transcript in it and no `chat.json` beside it,
-        which `list_chats` then ignores forever. `/project switch` refuses the
-        first for the same reason; the second has no terminal equivalent
-        because only the browser makes chats.
+        Both names are held to what already exists. `path` must be registered
+        -- or be the open problem, for a chat change within it -- because the
+        opener PREPARES a layout: an unknown path did not fail, it scaffolded
+        a whole problem wherever the request body pointed. An unlisted chat id
+        likewise left a `chats/<id>/` with a transcript in it and no
+        `chat.json` beside it, which `list_chats` then ignores forever.
         """
-        slug = validate_slug(slug)
+        target = ProjectRegistry.resolve(path)
+        slug = validate_slug(target.name)
         chat = validate_chat(chat)
-        root = self.config.root
-        if slug != self.config.project and slug not in existing_projects(root):
-            raise ValueError(
-                f"No project named {slug} here. Create it first; /project list shows what is."
-            )
-        if chat != DEFAULT_CHAT and chat not in {known.id for known in chats.list_chats(root / slug)}:
+        registered = {entry.path for entry in self.projects_registry.entries()}
+        if target not in registered and target != self._open_path():
+            raise ValueError(f"{target} is not a registered project. Add it first, from the project menu.")
+        if chat != DEFAULT_CHAT and chat not in {known.id for known in chats.list_chats(target)}:
             raise ValueError(f"no chat {chat!r} in {slug}")
         reason = self._busy()
         if reason:
             raise Busy(reason)
         current = self.state()
-        if slug == current["slug"] and chat == current["chat"]:
+        if current["open"] and target == self._open_path() and chat == current["chat"]:
             # Already open. A reopen would rebuild the session and cancel its
             # background workers over a click on the row that is highlighted.
             return current
-        self._await(self._reopen(slug, chat=chat))
+        self._await(self._reopen(slug, chat=chat, root=target.parent))
+        self._remember(target)
         return self.state()
 
-    def create_project(self, name: str) -> list[dict[str, Any]]:
-        """Make a problem and open it; answers with the list the browser redraws.
+    def close_project(self) -> dict[str, Any]:
+        """Close the live session and hold nothing; the page lands on the project menu.
 
-        `/project new`'s guards, and they are not decoration: the opener's
+        Refused while a turn or a command owns the session, like an open. The
+        kernel goes with the session, since it was the problem's. What was
+        last opened is left recorded, so the next launch reopens it: closing
+        is not forgetting.
+        """
+        def go() -> dict[str, Any]:
+            if self.session is None:
+                return self.state()
+            reason = self._busy()
+            if reason:
+                raise Busy(reason)
+            if self.ui is not None:
+                self.ui.cancel_prompts()
+            session = self.session
+            close = getattr(session, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
+                    self.ui.write(f"Could not close the session cleanly: {error}", style="error")
+            kernel = getattr(self.opener, "cas", None)
+            if kernel is not None:
+                with contextlib.suppress(Exception):
+                    kernel.session.close()
+                self.opener.cas = None
+            self.session = None
+            self._state = None
+            self.opener.session = None
+            self._queued = []
+            self.emit({"type": "state", **self.state()})
+            self.emit({"type": "changed"})
+            return self.state()
+
+        return self._call(go)
+
+    def create_project(self, name: str, location: str | None = None) -> list[dict[str, Any]]:
+        """Make a problem, register it and open it; answers with the list the page redraws.
+
+        Where: `location` if given, else the registry's default root. The
+        guards are `/project new`'s, and they are not decoration: the opener's
         `prepare_layout` is `Layout.ensure`, which writes `lean/`, `tex/`,
         `cas/`, `.local/`, `.build/` and a `.gitignore` into the directory it
         is given and then a record beside them. Pointed at somebody else's
         `src/` or `docs/` it scatters a problem through a tree Hardy did not
         make. Hardy's own abandoned scaffold is the one exception, for the
         reason `is_bare_scaffold` gives.
+
+        Registered only once the open has returned: a cancelled or failed
+        open leaves no entry pointing at a directory that was never made.
         """
-        slug = validate_slug(name)
-        root = self.config.root
-        if slug in existing_projects(root):
-            raise ValueError(f"{slug} is already a project here. /project switch {slug} opens it.")
-        intended = Layout(root=root, slug=slug)
-        if (root / slug).exists() and not intended.is_bare_scaffold():
+        target = self.projects_registry.create_path(name, location or None)
+        slug = target.name
+        if any(entry.path == target for entry in self.projects_registry.entries()):
+            raise ValueError(f"{slug} is already a project at {target}. Open it from the list.")
+        intended = Layout(root=target.parent, slug=slug)
+        if target.exists() and not intended.is_bare_scaffold():
             raise ValueError(
-                f"{slug} already exists here and is not a Hardy project. "
-                f"Remove {root / slug} or choose another name."
+                f"{target} already exists and is not a Hardy project. "
+                f"Remove it or choose another name or location."
             )
-        self._await(self._reopen(slug))
+        self._await(self._reopen(slug, root=target.parent))
+        self._remember(target)
         return self.projects()
 
-    async def _reopen(self, slug: str, chat: str | None = None) -> None:
+    def add_project(self, path: str) -> list[dict[str, Any]]:
+        """Register an existing problem, or every recorded problem under a root."""
+        self.projects_registry.add(path)
+        return self.projects()
+
+    def forget_project(self, path: str) -> list[dict[str, Any]]:
+        """Drop a registry entry; the directory is never touched."""
+        target = ProjectRegistry.resolve(path)
+        if target == self._open_path():
+            raise ValueError("Close it first: that project is the one that is open.")
+        self.projects_registry.forget(target)
+        return self.projects()
+
+    def _remember(self, problem: Path) -> None:
+        """Mark `problem` as last opened, registering it if it is not; never a refusal.
+
+        The open has already happened. An unwritable registry costs the
+        entry, and the next launch's default, not the session the user is in.
+        """
+        try:
+            self.projects_registry.touch(problem)
+        except (OSError, ValueError) as error:
+            if self.ui is not None:
+                self.ui.write(f"Could not record {problem} in the project registry: {error}", style="error")
+
+    async def _reopen(self, slug: str, chat: str | None = None, root: Path | None = None) -> None:
         """Open `slug` on a worker and adopt what comes back. Loop thread only.
+
+        `root` is where `slug` lives when it is not the current root: the
+        browser opens registered problems from any number of them.
 
         The opener is not quick and it is not interruptible from where it runs:
         it prepares the layout, probes a computer algebra kernel -- tens of
@@ -469,12 +602,15 @@ class WebHost:
         # `/model` replaces the configuration on the state and nowhere else, so
         # the launch config would reopen on a model the user has moved off.
         current = self._state.config if self._state is not None else self.config
-        call = (
-            functools.partial(self.opener, slug, confirm, current, chat=chat)
-            if chat is not None
-            else functools.partial(self.opener, slug, confirm, current)
-        )
+        options: dict[str, Any] = {}
+        if chat is not None:
+            options["chat"] = chat
+        if root is not None:
+            options["root"] = root
+        call = functools.partial(self.opener, slug, confirm, current, **options)
         previous = self.session
+        # Where the user was, for the note below: nowhere when nothing was open.
+        came_from = current.layout.problem if previous is not None else None
         try:
             config, session = await self._loop.run_in_executor(None, call)
         finally:
@@ -494,16 +630,17 @@ class WebHost:
                     self.ui.write(f"Could not close the previous session cleanly: {error}", style="error")
         self._attach(config, session)
         self.opener.session = self.session
-        if current.project != slug:
+        if came_from is not None and came_from != config.layout.problem:
             # The switch itself is the record, on the project just opened --
             # a reader of *this* transcript should be able to tell it was
             # reached by a switch rather than always having been the live
             # project. Not for a chat change within the same project: that
             # replaces no project, and `record_hardy_note` would say so about
-            # nothing that happened.
+            # nothing that happened. Nor for an open from nothing: there was
+            # no project to have switched from.
             note = getattr(session, "record_hardy_note", None)
             if note is not None:
-                note(f"Switched here from {current.project}.")
+                note(f"Switched here from {came_from.name}.")
         self.emit({"type": "changed"})
 
     def run_exclusive(self, fn: Callable[[], T]) -> T:
@@ -580,6 +717,8 @@ class WebHost:
         stream will not, which is why their message travels back here.
         """
         def go() -> dict[str, Any]:
+            if self.session is None:
+                return {"kind": "refused", "message": NO_PROJECT_OPEN}
             outcome = dispatch.classify(
                 text,
                 self.registry,
@@ -739,6 +878,7 @@ class WebHost:
         """Run one slash command on the loop, against `WebUi`. Mirrors `Shell._run_command`."""
         try:
             before = self._state.config.layout.local
+            before_problem = self._state.config.layout.problem
             started = self._state
             result = await outcome.command.handler(self.ui, outcome.argument, started)
             if self._state is started:
@@ -763,6 +903,11 @@ class WebHost:
             # holding the launch configuration, which is the one `_reopen`
             # hands the opener and the one every `config.` read here sees.
             self.config = self._state.config
+            if self._state.config.layout.problem != before_problem:
+                # A `/project new` or `/project switch` typed into the
+                # composer landed somewhere; the registry is what the page
+                # lists, so where the user now is has to be in it.
+                self._remember(self._state.config.layout.problem)
             queued = self._state.queued_text
             if queued is not None:
                 self._state = dataclasses.replace(self._state, queued_text=None)
