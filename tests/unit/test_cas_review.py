@@ -186,6 +186,45 @@ def test_a_cell_printing_far_past_the_cap_does_not_hold_it_all(tmp_path) -> None
     assert len(reply["stdout"].encode("utf-8")) <= 4096
 
 
+def test_the_driver_stops_a_cell_whose_frame_says_stopping_without_any_signal(tmp_path) -> None:
+    """`stopping: true` in the frame is Hardy saying a press is in force.
+
+    The driver used to require the matching signal to have arrived as well
+    before it would answer the cell unrun; a late or lost signal let the cell
+    run on. Sent here with no signal at all: the reply must come back at once
+    as `interrupted`, and the kernel must still be there for the next cell.
+    """
+    import threading
+
+    child = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import hardy.algebra.driver as d; d.main()", "4096"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(tmp_path),
+    )
+    # A cell that would otherwise sit for minutes; the watchdog turns a driver
+    # that ran it into a failed read rather than a hung test.
+    watchdog = threading.Timer(20, child.kill)
+    watchdog.start()
+
+    def exchange(source: str, stopping: bool) -> dict:
+        payload = json.dumps({"source": source, "stopping": stopping}).encode("utf-8")
+        child.stdin.write(f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload)
+        child.stdin.flush()
+        header = child.stdout.read(HEADER_BYTES)
+        assert header, "the driver ran the cell it was told to stop, or died"
+        return json.loads(child.stdout.read(int(header)).decode("utf-8"))
+
+    try:
+        stopped = exchange("import time\ntime.sleep(300)\n", stopping=True)
+        assert stopped["status"] == "interrupted", stopped
+        alive = exchange("1 + 1", stopping=False)
+        assert alive["status"] == "ok" and alive["value_repr"] == "2", alive
+    finally:
+        watchdog.cancel()
+        child.stdin.close()
+        child.kill()
+        child.wait(timeout=30)
+
+
 @pytest.mark.parametrize(
     ("value", "limit"),
     [("'x' * 10**7", 4096), ("list(range(10**6))", 4096), ("{i: i for i in range(10**6)}", 4096)],

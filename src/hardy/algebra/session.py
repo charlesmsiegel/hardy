@@ -620,7 +620,8 @@ class CasSession:
             # interrupt asked for while nothing was running would otherwise
             # stop the *next* cell, which nobody asked to stop.
             self._interrupted.clear()
-            frame = self.backend.frame(source, nonce, self._stop_level > 0)
+            stopping = self._stop_level > 0
+            frame = self.backend.frame(source, nonce, stopping)
             self._sending.set()
         # Outside the lock. `write` to a full pipe blocks until the kernel
         # reads, and `interrupt` and `escalate` are called from the terminal's
@@ -638,11 +639,22 @@ class CasSession:
             # goes out here, under the lock, at the level it was asked at --
             # a second press that landed before the cell did still means kill
             # rather than ask.
+            #
+            # For the driver protocol the frame itself carried the stop
+            # (`stopping`), and the driver answers the cell unrun on that word
+            # alone, so no signal follows it: one sent as well would be the
+            # race this exists to close -- a signal that is late or lost lets
+            # the cell run to its deadline, and one that lands after the
+            # driver has already answered arrives with no cell to abandon.
+            # The signal still goes out when the press landed while the frame
+            # was being written (the frame then says no stop was in force,
+            # and the signal is the only carrier left), and for a sentinel
+            # backend, whose frame carries nothing.
             if self._stop_level and sent:
                 self._interrupted.set()
                 if self._stop_level >= _INSISTED:
                     kernel.kill(immediate=True)
-                else:
+                elif not (stopping and self.backend.framing == "length"):
                     kernel.interrupt()
         try:
             if not sent:
