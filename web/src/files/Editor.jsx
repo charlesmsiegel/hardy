@@ -28,6 +28,11 @@
 
 import {useEffect, useRef, useState} from 'react';
 
+//: What `server.py`'s `MAX_EDIT_BODY` allows for `/api/file` and `/api/check`.
+//: Stated here so the editor can refuse with a sentence rather than provoke a
+//: 413; the server remains the authority, and this must not exceed it.
+const EDIT_BODY_LIMIT = 4 * 1024 * 1024;
+
 import {ApiError, post, put} from '../api.js';
 import Absent from '../components/Absent.jsx';
 import Label from '../components/Label.jsx';
@@ -109,6 +114,26 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
   }, [buffer, caret, onName]);
 
   const run = async (what) => {
+    // Measured on the ENCODED body, not on the buffer. `/api/file` serves a
+    // file up to 1 MiB and the viewer presents it as complete and editable;
+    // the same text as JSON is larger, because the envelope and the escaping
+    // of every newline, quote and backslash come with it. The server allows
+    // `MAX_EDIT_BODY` (4 MiB) for these two routes; refusing here as well
+    // means a reader gets a sentence naming the figure instead of a bare 413
+    // from a request that never had a chance.
+    const encoded = new TextEncoder().encode(JSON.stringify({path, source: buffer})).length;
+    if (encoded > EDIT_BODY_LIMIT) {
+      setResult({
+        ok: false,
+        what,
+        transport: true,
+        output:
+          `This buffer encodes to ${encoded.toLocaleString()} bytes, past the `
+          + `${EDIT_BODY_LIMIT.toLocaleString()} the editor may send. `
+          + 'Split the file, or edit it on disk.',
+      });
+      return;
+    }
     setBusy(what);
     setResult(null);
     try {

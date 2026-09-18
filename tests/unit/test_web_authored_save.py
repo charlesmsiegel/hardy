@@ -129,3 +129,25 @@ def test_a_refused_save_still_says_which_path_it_refused(recorder):
     on its own."""
     result = recorder.save_authored("notes.txt", "x")
     assert "notes.txt" in result.output
+
+
+@pytest.mark.parametrize("sent", ["tex/Appendix.lean", "lean/notes.tex"])
+def test_a_path_whose_tree_and_suffix_disagree_is_refused(recorder, sent):
+    """Files classifies a file by the tree it sits in; this must agree.
+
+    Deciding by suffix alone sent `tex/Appendix.lean` to the Lean workspace,
+    where there was no `lean/` prefix to strip, so it saved to
+    `lean/tex/Appendix.lean` -- success reported, and the file the page had
+    opened under `tex/` left untouched. A mismatch is refused rather than
+    resolved in favour of either half.
+    """
+    result = recorder.save_authored(sent, "x")
+    assert not result.ok
+    assert recorder.saved == []
+    assert recorder.notes == []
+
+
+def test_a_nested_path_under_its_own_tree_still_saves(recorder):
+    """The refusal must not catch the ordinary nested case."""
+    recorder.save_authored("tex/sections/sylow.tex", "x")
+    assert recorder.saved[-1] == ("tex", "sections/sylow.tex")

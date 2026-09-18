@@ -222,6 +222,16 @@ def _trajectory(run_dir: Path, run_id: UUID) -> list[dict[str, Any]] | None:
             return None
         if event.run_id != run_id:
             return None
+        # `RunStore.open()` requires an event's sequence to be its position:
+        # 0, 1, 2, ... A line deleted, duplicated or reordered leaves every
+        # surviving event valid on its own, so without this the page would
+        # present an incomplete or shuffled experimental history as intact.
+        # The whole trajectory is refused rather than the offending line
+        # skipped -- a run's trajectory is one account, and an account with a
+        # hole in it is not a shorter account, it is an unreliable one. The
+        # caller renders *not reported*, which is the honest answer.
+        if event.sequence != len(events):
+            return None
         events.append(event)
     return [
         {

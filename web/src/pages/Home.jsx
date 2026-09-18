@@ -99,9 +99,17 @@ export default function Home() {
   //
   // Every panel read here is one the guard above already waited for, so these
   // counts are real numbers rather than maybes.
+  // `chats.data.length === 0` could never hold: `list_chats` seeds the
+  // implicit `main` row unconditionally, whether or not a transcript exists,
+  // so every fresh project skipped this onboarding state and claimed one chat
+  // with unreported activity. Emptiness is a question about ACTIVITY, and a
+  // chat is untouched when its transcript reports no turns -- `null` (no
+  // transcript at all) and `0` (a transcript with nothing in it) both count,
+  // because neither is work anybody did.
+  const untouched = (chat) => !chat.turns;
   const nothingRecorded =
     (record.data.items || 0) === 0
-    && chats.data.length === 0
+    && chats.data.every(untouched)
     && Object.keys(record.data.by_kind || {}).length === 0
     && (jobs.data.counts ? Object.keys(jobs.data.counts).length === 0 : true);
 

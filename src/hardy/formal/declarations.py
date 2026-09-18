@@ -137,6 +137,10 @@ class DeclarationIndex:
         # Plain tuples rather than models: Mathlib ships hundreds of thousands
         # of declarations, and a `DeclarationRecord` is built per *result*.
         self._records: list[tuple[str, str, str, str, int]] | None = None
+        # name -> (name, signature, module, line), for `exact`. Built on the
+        # first exact question rather than beside `_records`, so a session that
+        # only ever searches never pays for it.
+        self._by_name: dict[str, tuple[str, str, str, int]] | None = None
         # One scan, even under concurrency. The index is shared between the
         # plain search and the ranking's source, and the MCP server can field
         # both at once; the retriever's admission lock serializes rankings
@@ -158,6 +162,36 @@ class DeclarationIndex:
         in memory. Which bound applies is a fact the index holds.
         """
         return self._records is not None
+
+    def exact(self, name: str) -> DeclarationRecord | None:
+        """The declaration with exactly this name, or None.
+
+        Not expressible through `search`. That is a ranked substring match with
+        a result cap, so asking it for `Sylow.card_modEq_one` and filtering its
+        answer finds the declaration only if it lands inside the window --
+        and a qualified name with more than `limit` lexicographically earlier
+        names containing the same text falls outside it. The index holds the
+        name; the endpoint answered `found: false`. A cap is the right shape
+        for "what looks like this" and the wrong shape for "is this here".
+
+        The map is built on the first exact question and held, like the records
+        themselves. Where one name is declared by several modules the first in
+        scan order wins, which is `search`'s own tie-break (the records are
+        walked in sorted package and path order): callers that care about the
+        ambiguity ask `search`, which returns every one of them.
+        """
+        records = self._read()
+        with self._guard:
+            if self._by_name is None:
+                by_name: dict[str, tuple[str, str, str, int]] = {}
+                for entry_name, _lowered, signature, module, line in records:
+                    by_name.setdefault(entry_name, (entry_name, signature, module, line))
+                self._by_name = by_name
+        found = self._by_name.get(name.strip())
+        if found is None:
+            return None
+        entry_name, signature, module, line = found
+        return DeclarationRecord(name=entry_name, signature=signature, source_file=module, line=line)
 
     def search(self, query: str, limit: int = 20) -> tuple[DeclarationRecord, ...]:
         """Declarations whose name contains the query's words, best match first.
