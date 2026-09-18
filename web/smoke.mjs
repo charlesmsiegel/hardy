@@ -574,6 +574,62 @@ async function filesTree() {
 }
 
 /** Stage one `.lean` file the way the drop zone does, and see the panel list it. */
+/** The registry routes: two registered projects in two roots, an open by
+ *  path that moves the root, a close that leaves nothing open and turns
+ *  every project-scoped read into one 409 sentence, and the reopen. */
+async function registry(token) {
+  const post = (path, body) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Hardy-Token': token, Origin: base},
+      body: JSON.stringify(body ?? {}),
+    });
+  const before = await json('/api/state');
+  check(before.open === true && before.slug === 'sylow', `the launch opened ${JSON.stringify(before.slug)}`);
+  check(typeof before.path === 'string' && typeof before.root === 'string', 'state names the open path and root');
+  check(typeof before.default_root === 'string' && before.default_root, 'state names the default root');
+  const rows = await json('/api/projects');
+  const slugs = rows.map((row) => row.slug).sort();
+  check(slugs.join(',') === 'burnside,sylow', `/api/projects lists ${slugs.join(',')}`);
+  for (const row of rows) {
+    check(typeof row.path === 'string' && typeof row.root === 'string', `${row.slug} carries no path/root`);
+    check(row.registered === true, `${row.slug} is not marked registered`);
+    check(Array.isArray(row.chats), `${row.slug} carries no chats`);
+  }
+  const active = rows.filter((row) => row.active).map((row) => row.slug);
+  check(active.join(',') === 'sylow', `active rows: ${active.join(',')}`);
+  const burnside = rows.find((row) => row.slug === 'burnside');
+
+  const opened = await post('/api/open', {path: burnside.path, chat: 'main'});
+  const openedBody = await opened.text();
+  check(opened.status === 200, `POST /api/open answered ${opened.status}: ${openedBody}`);
+  const after = await json('/api/state');
+  check(after.slug === 'burnside' && after.root === burnside.root, `open by path landed on ${after.slug} in ${after.root}`);
+
+  const closed = await post('/api/close');
+  await closed.text();
+  check(closed.status === 200, `POST /api/close answered ${closed.status}`);
+  const empty = await json('/api/state');
+  check(empty.open === false && empty.slug === null && empty.path === null, 'close did not leave nothing open');
+  const refused = await fetch(`${base}/api/summary`);
+  check(refused.status === 409, `GET /api/summary with nothing open answered ${refused.status}`);
+  const sentence = JSON.parse(await refused.text()).error;
+  check(sentence === 'No project is open. Open one from the project menu.', `the refusal read ${JSON.stringify(sentence)}`);
+  const menu = await json('/api/projects');
+  check(menu.every((row) => row.active === false), 'a row is active with nothing open');
+  const typed = await post('/api/input', {text: 'hello'});
+  await typed.text();
+  check(typed.status === 409, `POST /api/input with nothing open answered ${typed.status}`);
+
+  const sylow = rows.find((row) => row.slug === 'sylow');
+  const reopened = await post('/api/open', {path: sylow.path, chat: 'main'});
+  await reopened.text();
+  check(reopened.status === 200, `reopening sylow answered ${reopened.status}`);
+  const back = await json('/api/state');
+  check(back.open === true && back.slug === 'sylow', `the reopen landed on ${back.slug}`);
+  return rows.length;
+}
+
 async function staged(token) {
   const name = `smoke-${Date.now()}.lean`;
   const put = await fetch(`${base}/api/upload`, {
@@ -812,6 +868,7 @@ async function main() {
   const spendScopes = await spend();
 
   const name = await staged(token);
+  const registered = await registry(token);
 
   console.log(
     `smoke ok (${count} assets, ${endpoints} panel endpoints, ` +
@@ -822,7 +879,8 @@ async function main() {
       `${runCount} runs, ${pubItems} publication items, ${checkpointCount} checkpoints, ` +
       `${fileFacts} file rows, ${spendScopes} spend scopes, ` +
       `editor saved and checked through the session, ` +
-      `staged ${name}, reply "hello", interrupted turn replies "one two" once)`,
+      `staged ${name}, ${registered} registered projects opened, closed and reopened by path, ` +
+      `reply "hello", interrupted turn replies "one two" once)`,
   );
 }
 
