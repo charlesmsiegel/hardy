@@ -41,12 +41,32 @@ export function AtCursor({name, onTrace}) {
       return undefined;
     }
     let live = true;
+    let timer = null;
     setFailed('');
-    get(`/api/declaration?name=${encodeURIComponent(name)}`)
-      .then((data) => live && setAnswer(data))
-      .catch((error) => live && setFailed(error.message));
+
+    // The first lookup starts the background scan and comes back
+    // `indexed: false`. Nothing announces its completion -- no `changed`
+    // event, no dependency of this effect moves -- so without this the panel
+    // sat on "will answer once it finishes" forever unless the caret moved to
+    // another name and back. Asking again is the only signal available.
+    //
+    // Every two seconds, and only while the answer is still uncounted: once
+    // the index reports itself read, this stops. A cold Mathlib scan is
+    // seconds to minutes, so a handful of cheap requests is the cost.
+    const ask = () => {
+      get(`/api/declaration?name=${encodeURIComponent(name)}`)
+        .then((data) => {
+          if (!live) return;
+          setAnswer(data);
+          if (data.indexed === false) timer = setTimeout(ask, 2000);
+        })
+        .catch((error) => live && setFailed(error.message));
+    };
+    ask();
+
     return () => {
       live = false;
+      if (timer) clearTimeout(timer);
     };
   }, [name]);
 

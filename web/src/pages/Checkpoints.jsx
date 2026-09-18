@@ -71,6 +71,49 @@ function bytesText(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * `save now as`, the only way to make a checkpoint from the browser.
+ *
+ * Rendered in the empty state as well as the populated one. It used to sit
+ * below the zero-checkpoint early return, so a project with no checkpoints
+ * could not create its first from this page -- the control only appeared once
+ * a checkpoint existed, which is the one situation where it was not needed.
+ *
+ * One component rather than two copies of the markup, because the two states
+ * must not drift apart on what the command is or on what it warns about.
+ */
+function SaveControl({name, onName, send, populated}) {
+  const command = name.trim() ? `/checkpoint ${name.trim()}` : null;
+  return (
+    <div className="wb-section">
+      <div className="wb-checkpoints__save">
+        <span className="panel__note">save now as</span>
+        <input
+          type="text"
+          className="wb-checkpoints__input"
+          value={name}
+          placeholder="before-assembling-cases"
+          onChange={(event) => onName(event.target.value)}
+        />
+        <button
+          type="button"
+          className="button"
+          disabled={!command}
+          onClick={() => command && send(command)}
+        >
+          Save…
+        </button>
+        <span className="wb-checkpoints__command">{command || '/checkpoint ...'}</span>
+      </div>
+      <div className="panel__note">
+        Not gated behind a confirm card: saving creates a new checkpoint and replaces nothing
+        {populated ? ', unlike restore below' : ''}.
+      </div>
+    </div>
+  );
+}
+
+
 export default function Checkpoints() {
   const {revision, send, refusal} = useSession();
   const panel = usePanel('/api/checkpoints', revision);
@@ -92,7 +135,11 @@ export default function Checkpoints() {
           <span className="page-title">Checkpoints</span>
           <span className="wb-page-subtitle">fresh project · nothing recorded</span>
         </div>
-        <Empty title="No checkpoints" line="Nothing to restore. /checkpoint saves the project state once there is any." />
+        <Empty
+          title="No checkpoints"
+          line="Nothing to restore yet. Save one below, or run /checkpoint in chat."
+        />
+        <SaveControl name={saveName} onName={setSaveName} send={send} />
         <Label>what will appear here</Label>
         <div className="panel__note">
           The same layout as a running project, with real counts. Zero is shown as <Absent kind="zero" />; a
@@ -109,7 +156,6 @@ export default function Checkpoints() {
     setConfirm(null);
   };
 
-  const saveCommand = saveName.trim() ? `/checkpoint ${saveName.trim()}` : null;
 
   return (
     <div className="wb-page-body">
@@ -131,31 +177,7 @@ export default function Checkpoints() {
       ) : null}
       {refusal ? <div className="wb-checkpoints__refusal">{refusal}</div> : null}
 
-      <div className="wb-section">
-        <div className="wb-checkpoints__save">
-          <span className="panel__note">save now as</span>
-          <input
-            type="text"
-            className="wb-checkpoints__input"
-            value={saveName}
-            placeholder="before-assembling-cases"
-            onChange={(event) => setSaveName(event.target.value)}
-          />
-          <button
-            type="button"
-            className="button"
-            disabled={!saveCommand}
-            onClick={() => saveCommand && send(saveCommand)}
-          >
-            Save…
-          </button>
-          <span className="wb-checkpoints__command">{saveCommand || '/checkpoint ...'}</span>
-        </div>
-        <div className="panel__note">
-          Not gated behind a confirm card: saving creates a new checkpoint and replaces nothing, unlike restore
-          below.
-        </div>
-      </div>
+      <SaveControl name={saveName} onName={setSaveName} send={send} populated />
 
       <div className="wb-section">
         <Table

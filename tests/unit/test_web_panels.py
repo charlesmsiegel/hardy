@@ -1322,3 +1322,100 @@ def test_publications_revision_matches_the_ledger(tmp_path: Path) -> None:
                               origin=ProjectOrigin.TARGET_PAPER)], expected_revision=store.read().revision)
     out = panels.publications(problem)
     assert out["revision"] == store.read().revision
+
+# -- the kernel lane is not revalidated, and says so ------------------------
+
+
+def _clean_audit(module: str, name: str) -> dict:
+    """A stored record that graded `name` in `module` as kernel-clean."""
+    return {
+        module: {
+            "status": "clean",
+            "signature": "a" * 64,
+            "declarations": [{"name": name, "axioms": ["propext"]}],
+        }
+    }
+
+
+def test_the_kernel_lane_never_claims_to_have_been_revalidated(tmp_path: Path) -> None:
+    """A stored verdict describes the tree it was computed over.
+
+    This panel cannot recompute a build signature -- the environment string
+    and the olean stamps come from a live workspace over the Lake project it
+    has no access to -- so it must not present a stored verdict as a statement
+    about the bytes now on disk. The disclosure is a field on the lane rather
+    than a convention the client is trusted to remember.
+    """
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    _write_audit(problem, _clean_audit("Foo", "bar"))
+    row = next(r for r in panels.results(problem)["theorems"] if r["name"] == "bar")
+    assert row["kernel"]["revalidated"] is False
+    # The verdict itself is still reported -- it is the last thing the kernel
+    # actually established about that name, and withholding it would be its
+    # own dishonesty.
+    assert row["kernel"]["verdict"] == "verified"
+
+
+def test_a_stored_audit_for_a_module_the_tree_lost_reads_stale(tmp_path: Path) -> None:
+    """The half that IS decidable here. After a `git checkout` removes the
+    file, the record demonstrably does not describe what is on disk."""
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem bar : True := trivial\n")
+    _write_audit(problem, {**_clean_audit("Foo", "bar"), **_clean_audit("Gone", "vanished")})
+    rows = {r["name"]: r for r in panels.results(problem)["theorems"]}
+    # `vanished` has no row at all -- the tree is what says which theorems
+    # exist -- and `bar`'s own verdict is untouched by its neighbour expiring.
+    assert "vanished" not in rows
+    assert rows["bar"]["kernel"]["verdict"] == "verified"
+
+
+def test_a_renamed_theorem_expires_its_own_stored_verdict(tmp_path: Path) -> None:
+    """The case the disclosure alone would not cover.
+
+    The module is still there and still audited, but the name the record
+    graded is gone. `declaration_status` refuses to grade from a stale record,
+    so the theorem now in the file reads as unaudited rather than inheriting
+    the verdict of the one it replaced.
+    """
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem renamed : True := trivial\n")
+    _write_audit(problem, _clean_audit("Foo", "bar"))
+    rows = {r["name"]: r for r in panels.results(problem)["theorems"]}
+    assert "bar" not in rows
+    assert rows["renamed"]["kernel"]["verdict"] == "unaudited"
+
+
+def test_an_expired_record_does_not_grade_a_name_it_still_declares(tmp_path: Path) -> None:
+    """A record grading two names, one of which the tree lost, is stale WHOLE.
+
+    A stored record's verdict is one judgement over the module it graded. If
+    part of what it graded is gone, the module it describes is not the module
+    on disk, and the surviving name cannot keep the verdict: the axioms the
+    record reports are the union over a tree that no longer exists.
+    """
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem kept : True := trivial\n")
+    _write_audit(problem, {
+        "Foo": {
+            "status": "clean",
+            "signature": "a" * 64,
+            "declarations": [
+                {"name": "kept", "axioms": ["propext"]},
+                {"name": "deleted", "axioms": ["propext"]},
+            ],
+        }
+    })
+    rows = {r["name"]: r for r in panels.results(problem)["theorems"]}
+    assert rows["kept"]["kernel"]["verdict"] == "stale"
+    assert "no longer declares deleted" in rows["kept"]["kernel"]["detail"]
+
+
+def test_file_verdicts_expire_on_the_same_rule(tmp_path: Path) -> None:
+    """The Files page reads the same records, so it must not disagree with
+    Results about the same file."""
+    problem = make_problem(tmp_path)
+    _write_lean(problem, "Foo.lean", "theorem renamed : True := trivial\n")
+    _write_audit(problem, _clean_audit("Foo", "bar"))
+    row = panels.files(problem)["lean"][0]
+    assert row["verdict"]["kind"] == "unaudited"

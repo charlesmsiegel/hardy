@@ -141,20 +141,65 @@ def test_a_malformed_created_value_is_ignored_not_fatal(tmp_path: Path) -> None:
 
 
 def test_overview_counts_turns_and_the_latest_timestamp(tmp_path: Path) -> None:
+    """A turn is counted where it STARTS, which is a `user` event.
+
+    This test used to build its fixture out of `type: "turn"` events and
+    assert those were the turns -- encoding the very bug it was meant to
+    guard. `turns.py` writes `type: "turn"` only for the terminal markers
+    (cancelled, abandoned), so a chat with two successful exchanges reported
+    0 and cancelling one pushed it to 1.
+    """
     problem = tmp_path / "sylow"
     problem.mkdir(parents=True)
     (problem / "transcript.jsonl").write_text(
         "\n".join([
             json.dumps({"type": "user", "timestamp": 100.0}),
-            json.dumps({"type": "turn", "timestamp": 101.0}),
-            json.dumps({"type": "assistant", "timestamp": 102.0}),
-            json.dumps({"type": "turn", "timestamp": 103.5}),
+            json.dumps({"type": "assistant", "timestamp": 101.0}),
+            json.dumps({"type": "user", "timestamp": 102.0}),
+            json.dumps({"type": "assistant", "timestamp": 103.5}),
         ]) + "\n",
         encoding="utf-8",
     )
     row = {r["id"]: r for r in chats.overview(problem)}["main"]
     assert row["turns"] == 2
     assert row["last_activity"] == 103.5
+
+
+def test_overview_does_not_count_a_cancellation_marker_as_a_turn(tmp_path: Path) -> None:
+    """`type: "turn"` is written when a turn is walked away from.
+
+    Counting it inverted the meaning of the number: a cancelled turn made the
+    count go UP while the exchange it belonged to was never counted at all.
+    """
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    (problem / "transcript.jsonl").write_text(
+        "\n".join([
+            json.dumps({"type": "user", "timestamp": 100.0}),
+            json.dumps({"type": "turn", "status": "abandoned", "timestamp": 101.0}),
+            json.dumps({"type": "turn", "status": "cancelled", "timestamp": 102.0}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    assert {r["id"]: r for r in chats.overview(problem)}["main"]["turns"] == 1
+
+
+def test_overview_does_not_count_a_hardy_note_as_a_turn(tmp_path: Path) -> None:
+    """A browser project switch and an editor save are recorded as `user`
+    events by the same convention a turn is, and start no turn.
+    `starts_turn: False` is what tells them apart -- the same predicate
+    `panels.session.transcript` and `chat/tree.js` apply, so all three agree
+    on what a turn is."""
+    problem = tmp_path / "sylow"
+    problem.mkdir(parents=True)
+    (problem / "transcript.jsonl").write_text(
+        "\n".join([
+            json.dumps({"type": "user", "timestamp": 100.0}),
+            json.dumps({"type": "user", "starts_turn": False, "timestamp": 101.0}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    assert {r["id"]: r for r in chats.overview(problem)}["main"]["turns"] == 1
 
 
 def test_overview_distinguishes_no_transcript_from_an_empty_one(tmp_path: Path) -> None:
@@ -194,8 +239,8 @@ def test_overview_does_not_report_an_exact_count_for_a_damaged_transcript(tmp_pa
     problem = tmp_path / "sylow"
     problem.mkdir(parents=True)
     (problem / "transcript.jsonl").write_text(
-        json.dumps({"type": "turn", "timestamp": 1.0}) + "\nnot json at all\n"
-        + json.dumps({"type": "turn", "timestamp": 2.0}) + "\n",
+        json.dumps({"type": "user", "timestamp": 1.0}) + "\nnot json at all\n"
+        + json.dumps({"type": "user", "timestamp": 2.0}) + "\n",
         encoding="utf-8",
     )
     row = {r["id"]: r for r in chats.overview(problem)}["main"]
@@ -206,7 +251,7 @@ def test_overview_reads_a_named_chats_transcript_not_the_main_one(tmp_path: Path
     problem = tmp_path / "sylow"
     chat = chats.create_chat(problem, "Write-up")
     (problem / "chats" / chat.id / "transcript.jsonl").write_text(
-        json.dumps({"type": "turn", "timestamp": 5.0}) + "\n", encoding="utf-8"
+        json.dumps({"type": "user", "timestamp": 5.0}) + "\n", encoding="utf-8"
     )
     rows = {r["id"]: r for r in chats.overview(problem)}
     assert rows[chat.id]["turns"] == 1

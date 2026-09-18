@@ -89,7 +89,23 @@ export default function Home() {
 
   const goal = (summary.data.goal || '').trim();
 
-  if (!goal) {
+  // Keyed on what this project actually HAS, not on whether anyone named a
+  // goal for it. A goal is optional, and an older or CLI-driven project can
+  // carry a transcript, saved theorems, delegations and spend without one --
+  // gating the empty state on `goal` made Home report all of that as nothing
+  // while the data sat in panels it had already fetched and blocked on.
+  // Worse, it rendered those absences with `Absent kind="zero"`, the glyph
+  // for a measurement: the page asserted it had counted, having not looked.
+  //
+  // Every panel read here is one the guard above already waited for, so these
+  // counts are real numbers rather than maybes.
+  const nothingRecorded =
+    (record.data.items || 0) === 0
+    && chats.data.length === 0
+    && Object.keys(record.data.by_kind || {}).length === 0
+    && (jobs.data.counts ? Object.keys(jobs.data.counts).length === 0 : true);
+
+  if (nothingRecorded) {
     return (
       <div className="wb-page-body">
         <div className="wb-page-head">
@@ -100,9 +116,9 @@ export default function Home() {
           title="Project hasn't started"
           line={
             <>
-              No goal is set. Describe it in chat, or run /goal. Until then there is nothing to
-              count: <Absent kind="zero" /> theorems, <Absent kind="zero" /> chats,{' '}
-              <Absent kind="zero" /> delegations, <Absent kind="zero" /> tokens.
+              Nothing is recorded yet: <Absent kind="zero" /> ledger items, <Absent kind="zero" /> chats,{' '}
+              <Absent kind="zero" /> delegations. These are counts the backend answered, not
+              placeholders.{goal ? '' : ' No goal is set either; describe it in chat, or run /goal.'}
             </>
           }
         />

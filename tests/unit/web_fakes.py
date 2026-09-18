@@ -15,6 +15,7 @@ from hardy.foundation.values import ToolResult
 from hardy.workflows import layout
 from hardy.workflows.delegation.contracts import DelegationState
 from hardy.workflows.interactive.history import History, identify
+from hardy.workflows.interactive.session import _workspace_relative
 from hardy.workflows.interactive.summary import Section, Summary
 
 
@@ -193,16 +194,25 @@ class FakeSession:
         the refusal is the half of this the client is most likely to get
         wrong.
         """
-        suffix = Path(path).suffix.lower()
-        if suffix not in {".lean", ".tex"}:
+        inner = _workspace_relative(path)
+        if inner is None:
             return ToolResult(False, f"only .lean and .tex files are saved through the editor: {path!r}")
+        tree, relative = inner
         if self.refuse_saves is not None:
             result = ToolResult(False, self.refuse_saves)
         else:
-            target = self.workspace / path
+            # Rooted at `<problem>/<tree>` and joined with the TREE-RELATIVE
+            # path, which is what the real `LeanWorkspace` does. The first
+            # version of this fake wrote `self.workspace / path` with the
+            # tree-qualified path instead -- which happened to land in the
+            # right place and so masked the real save writing
+            # `<problem>/lean/lean/Main.lean`. A double that mirrors a
+            # contract's shape but not its coordinates proves nothing about
+            # the thing it stands in for.
+            target = self.workspace / tree / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source.rstrip() + "\n", encoding="utf-8")
-            result = ToolResult(True, f"saved {path}")
+            result = ToolResult(True, f"saved {relative}")
         self.saved.append((path, source))
         self.record_hardy_note(
             f"Edited {path} in the browser and saved it: {'saved' if result.ok else 'refused'}."
@@ -211,8 +221,7 @@ class FakeSession:
 
     def check_authored(self, path: str, source: str) -> ToolResult:
         """The editor's check. Writes nothing -- not the file, not a note."""
-        suffix = Path(path).suffix.lower()
-        if suffix not in {".lean", ".tex"}:
+        if _workspace_relative(path) is None:
             return ToolResult(False, f"only .lean and .tex files are checked through the editor: {path!r}")
         self.checked.append((path, source))
         return ToolResult(True, f"checked {path}: no errors")

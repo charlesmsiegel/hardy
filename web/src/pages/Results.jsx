@@ -330,6 +330,13 @@ export default function Results({arg, onPeek}) {
                     ['signature', orAbsent(selected.kernel.signature)],
                   ]}
                 />
+                {selected.kernel.revalidated ? null : (
+                  <div className="panel__note">
+                    As last established, not revalidated against the tree now on disk. This page runs no Lean and
+                    cannot recompute a build signature, so a file edited outside the session keeps the verdict its
+                    last audit gave it. A theorem the tree no longer declares does read as expired.
+                  </div>
+                )}
               </div>
 
               <div className="wb-card">
