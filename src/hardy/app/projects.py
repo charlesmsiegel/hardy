@@ -204,7 +204,7 @@ class ProjectOpener:
 
     def __init__(
         self,
-        launched: str,
+        launched: Path | None,
         cas: Any,
         *,
         search: Any,
@@ -235,8 +235,12 @@ class ProjectOpener:
         # over a trajectory that had already spent it. Returning to a problem
         # resumes its record and its provider thread; its meter belongs with
         # them. Seeded with the launch problem's own runtime, which is the one
-        # `_chat` has already given the first session.
-        self._search_for: dict[str, Any] = {launched: search}
+        # `_chat` has already given the first session. Keyed by the PROBLEM
+        # PATH, not the slug: the browser opens problems from any number of
+        # roots, and two roots may both hold a `main` whose meters must not be
+        # one. `launched` is None for a browser that started with nothing
+        # open, and then there is no first session to seed from.
+        self._search_for: dict[str, Any] = {} if launched is None else {str(launched): search}
 
     def cancel(self) -> bool:
         """Stop a reopen that is already running on a worker thread.
@@ -271,7 +275,9 @@ class ProjectOpener:
             return False
         return opening.cancel()
 
-    def _configure(self, slug: str, current: configuration.Config, chat: str) -> configuration.Config:
+    def _configure(
+        self, slug: str, current: configuration.Config, chat: str, root: Path | None = None,
+    ) -> configuration.Config:
         """The configuration the session is running, pointed at another problem.
 
         Derived from `current`, not re-resolved from the layers. Re-reading was
@@ -298,8 +304,17 @@ class ProjectOpener:
         never passes one: it calls `__call__` with the default, so a switch
         always lands the problem's `main` chat rather than whichever chat a
         browser session had left the previous problem in.
+
+        `root` is the browser's: it opens registered problems that live in
+        any number of roots, so a switch may move the root as well as the
+        slug. The terminal never passes one and stays in the root it launched
+        in. Everything else -- the model, the toolchain, the limits -- still
+        carries over from `current`, for the reasons above.
         """
-        return dataclasses.replace(current, project=layout.validate_slug(slug), chat=layout.validate_chat(chat))
+        moved = {"root": Path(root)} if root is not None else {}
+        return dataclasses.replace(
+            current, project=layout.validate_slug(slug), chat=layout.validate_chat(chat), **moved,
+        )
 
     def __call__(
         self,
@@ -308,6 +323,7 @@ class ProjectOpener:
         current: configuration.Config,
         *,
         chat: str = layout.DEFAULT_CHAT,
+        root: Path | None = None,
     ) -> tuple[configuration.Config, Any]:
         # Whatever `arm` published, or a fresh one for a caller that did not
         # arm. The worker's first statement is still too late for a terminal:
@@ -319,7 +335,7 @@ class ProjectOpener:
         # synchronously.
         opening = self._opening or self.arm()
         try:
-            return self._open(slug, confirm, current, opening, chat)
+            return self._open(slug, confirm, current, opening, chat, root)
         finally:
             # Every exit, not just the successful one. Left set, a failed or
             # cancelled attempt makes `cancel` answer True for the rest of the
@@ -348,6 +364,7 @@ class ProjectOpener:
         current: configuration.Config,
         opening: _Reopen,
         chat: str,
+        root: Path | None = None,
     ) -> tuple[configuration.Config, Any]:
         # Before the filesystem is touched at all. `arm` publishes the guard
         # on the event loop, so a cancel can already be marked by the time this
@@ -357,7 +374,7 @@ class ProjectOpener:
         # anyway. `_configure` is pure, so this is the first statement that
         # could leave anything behind.
         opening.refuse_if_cancelled(None)
-        config = self._configure(slug, current, chat)
+        config = self._configure(slug, current, chat, root)
         prepare_layout(config)
         # Again, because `prepare_layout` is not atomic: a cancel arriving
         # while it runs leaves whatever it had made by then. That is bounded
@@ -371,10 +388,11 @@ class ProjectOpener:
         # sharing one would rank against a spend that appears nowhere in its
         # own record. One meter per problem, kept, so returning to a problem
         # resumes its spend rather than refilling it.
-        search = self._search_for.get(slug)
+        meter = str(config.layout.problem)
+        search = self._search_for.get(meter)
         if search is None and self._search is not None:
             search = search_tools.renew(self._search, config.limits)
-            self._search_for[slug] = search
+            self._search_for[meter] = search
         # A kernel per problem, logging into that problem's `cas/`. Sharing one
         # would put two problems' cells in one `cells.jsonl` and one export.
         cas, cas_detail = cas_tools.build_runtime(

@@ -98,7 +98,7 @@ def opener(monkeypatch, args, live):
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
     monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: object())
     made = cli.ProjectOpener(
-        live.project,
+        live.layout.problem,
         FakeCas(live.layout.cas),
         search=search_tools.SearchToolRuntime(
             _FakeLeanService(),
@@ -606,10 +606,10 @@ def test_cancel_says_whether_there_was_anything_to_stop(opener):
 def test_the_launch_registration_policy_is_carried(args, live):
     """`--no-register-lakefile` is about this process, not about one problem."""
     made = cli.ProjectOpener(
-        live.project, None, search=None, search_detail="", register_lakefile=False
+        live.layout.problem, None, search=None, search_detail="", register_lakefile=False
     )
     assert made.register_lakefile is False
-    assert cli.ProjectOpener(live.project, None, search=None, search_detail="").register_lakefile is None
+    assert cli.ProjectOpener(live.layout.problem, None, search=None, search_detail="").register_lakefile is None
 
 
 def test_arming_publishes_the_guard_before_the_worker_runs(opener):
@@ -772,7 +772,7 @@ def test_a_switched_session_keeps_the_worker_pool_and_a_per_worker_cas_factory(m
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
     monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: kwargs_seen.append(k) or object())
-    opener = cli.ProjectOpener(live.project, FakeCas(live.layout.cas), search=None, search_detail="")
+    opener = cli.ProjectOpener(live.layout.problem, FakeCas(live.layout.cas), search=None, search_detail="")
     wide = dataclasses.replace(live, delegation_workers=9)
     opener("burnside", _decline, wide)
     assert kwargs_seen[-1]["delegation_slots"] == 9
@@ -790,3 +790,28 @@ def test_opener_opens_the_requested_chat(opener, live, root, monkeypatch):
     assert config.chat == "lean-proof"
     assert session.chat == "lean-proof"
     assert (root / "sylow" / "chats" / "lean-proof").is_dir()
+
+
+# -- the browser's root change --------------------------------------------
+
+
+def test_a_reopen_with_a_root_lands_in_that_root(opener, live, tmp_path):
+    """The browser opens registered problems from any root; the terminal never passes one."""
+    elsewhere = tmp_path / "elsewhere"
+    config, session = opener("sylow", _decline, live, root=elsewhere)
+    assert config.root == elsewhere and config.project == "sylow"
+    assert config.layout.problem == elsewhere / "sylow"
+    assert (elsewhere / "sylow" / "lean").is_dir()
+    assert session is not None
+    # Everything but the root and the slug still comes from the live config.
+    assert config.model == live.model and config.limits == live.limits
+
+
+def test_retrieval_meters_are_per_problem_path_not_per_slug(opener, live, tmp_path, root):
+    """Two roots may both hold `main`; their budgets must not be one budget."""
+    opener("main", _decline, live)
+    opener("main", _decline, live, root=tmp_path / "other")
+    keys = set(opener._search_for)
+    assert str(root / "main") in keys and str(tmp_path / "other" / "main") in keys
+    assert opener._search_for[str(root / "main")] is not opener._search_for[str(tmp_path / "other" / "main")]
+

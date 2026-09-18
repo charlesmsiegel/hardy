@@ -147,7 +147,7 @@ def _launch(
     # It owns the live CAS runtime from here on, because a switch replaces it
     # and `close` below has to put down whichever one is current.
     opener = ProjectOpener(
-        config.project,
+        config.layout.problem,
         cas,
         search=search,
         search_detail=search_detail,
