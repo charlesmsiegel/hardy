@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Check the three ledgers against each other, the files, and the status rules.
 
-    uv run python research/keller/tools/check.py                # check, print the board
-    uv run python research/keller/tools/check.py --write-graphs # also refresh notes/dependency-graph.md
+    uv run --project /path/to/hardy python tools/check.py                # check, print the board
+    uv run --project /path/to/hardy python tools/check.py --write-graphs # also refresh notes/dependency-graph.md
 
 What it enforces, per problem:
 

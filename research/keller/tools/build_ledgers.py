@@ -6,9 +6,10 @@ the derivation can be read and rerun on a fresh checkout of the same inputs. It
 refuses to run against a problem that already has a ledger: after the first
 run the ledgers are the source of truth and the table is history.
 
-Run from the repository checkout, which puts Hardy's own ledger code on the path:
+Run in the environment Hardy is installed in, which puts its ledger code on the
+path; from a Hardy checkout:
 
-    uv run python research/keller/tools/build_ledgers.py
+    uv run --project /path/to/hardy python tools/build_ledgers.py
 
 Every record is written through `hardy.workflows.ledger.store.LedgerStore`, so
 the files are exactly what a session would have written: content-addressed,

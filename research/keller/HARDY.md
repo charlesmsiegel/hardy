@@ -40,8 +40,8 @@ assumption until a session admits it through Hardy's own approval.
 each other. A dependency on another problem's item is recorded as a mirror in
 the dependent ledger (status `imported`, semantics naming the upstream problem,
 item and digest). Do not prove an upstream item inside a downstream problem;
-prove it upstream, then refresh the mirror. `uv run python
-research/keller/tools/check.py` from the harness checkout verifies the
+prove it upstream, then refresh the mirror. `tools/check.py`, run in the
+environment Hardy is installed in, verifies the
 mirrors, the acyclicity of every dependency graph, and that nothing assessed
 above `open` rests on something `open`.
 

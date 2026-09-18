@@ -1,5 +1,6 @@
-# The harness repository ignores every `.hardy/` directory; this root's
-# tooling directory holds committed content (its config and the shared
-# Lean library), so it is re-included here. Its own .gitignore, written
-# by Hardy, keeps the build tree and machine-local state out.
+# A Hardy root committed on its own. If this directory is ever placed inside a
+# repository whose .gitignore excludes every `.hardy/`, this line re-includes
+# this root's tooling directory, which holds committed content (the config and
+# the shared Lean library); Hardy's own .gitignore inside it keeps the build
+# tree and machine-local state out.
 !/.hardy/
