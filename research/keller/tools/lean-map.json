@@ -319,7 +319,7 @@
     "KellerGroupoids.ProjectStatements.deficitOne_forces_oneDeletedUnramifiedSheet": {
      "item": "KG-PC02",
      "faithfulness": "full",
-     "note": "deficit one forces trivial inertia and one deleted sheet, given the deficit decomposition KG-PC01 as a hypothesis"
+     "note": "deficit one forces trivial inertia and one deleted sheet, now from KG-PC01 as a proved theorem rather than a hypothesis"
     },
     "KellerGroupoids.ProjectStatements.deficits_three_two": {
      "item": "KG-A601",
@@ -338,8 +338,8 @@
     },
     "KellerGroupoids.ProjectStatements.degreeSix_nonmaximal_A6_forces_boundaryPacket": {
      "item": "KG-A601",
-     "faithfulness": "statement",
-     "note": "the forced packet (3,1),(1,1),(1,1)"
+     "faithfulness": "core",
+     "note": "the deficit and support case analysis forcing the packet (3,1),(1,1),(1,1), from the external budget axiom and KG-PC01; it assumes KG-EM10 (exactly two components) and that the normalisation ramifies somewhere, so the claim is not verified by this"
     },
     "KellerGroupoids.ProjectStatements.euler_deficit_identity": {
      "item": "KG-E02",
@@ -353,8 +353,8 @@
     },
     "KellerGroupoids.ProjectStatements.fiberDeficit_eq_inertiaSupport_add_deleted": {
      "item": "KG-PC01",
-     "faithfulness": "statement",
-     "note": "d - m_C = |supp σ_C| + t_C over the geometric record"
+     "faithfulness": "full",
+     "note": "d - m_C = |supp σ_C| + t_C, by counting the d sheets over a generic point of C; m_C and t_C are read off the record's sheetInSource and the coherence field sheetInSource_disjoint_support (the Keller map is étale on its source, so a sheet the inertia moves is not in it); no other hypothesis"
     },
     "KellerGroupoids.ProjectStatements.etaleMaximal_topConfigurationStabilizes": {
      "item": "KG-PC03",
@@ -383,8 +383,8 @@
     },
     "KellerGroupoids.ProjectStatements.allComponentsUnibranch_implies_etaleMaximal": {
      "item": "KG-EM04",
-     "faithfulness": "statement",
-     "note": "the unibranch criterion"
+     "faithfulness": "core",
+     "note": "the derivation of the unibranch criterion from KG-EM03, which is assumed as the hypothesis hmb and is itself still an open hole; the claim is not verified by this"
     },
     "KellerGroupoids.ProjectStatements.conductorPointFiberBound": {
      "item": "KG-EM05",
@@ -438,13 +438,13 @@
     },
     "KellerGroupoids.ProjectStatements.connectedNonproper_implies_etaleMaximal": {
      "item": "KG-EM07",
-     "faithfulness": "full",
-     "note": "connected nonproperness implies étale-maximality, with the audit's two prerequisites as explicit hypotheses: the Euler count χ(S_F) = c − Σ_p (r_p − 1) read off the A¹ normalisations (KG-P12 with additivity of the topological Euler characteristic) and the multibranch consequence of non-maximality (KG-EM02 with KG-EM03); from Jelonek's positivity as a Published axiom, verified once that input is admitted"
+     "faithfulness": "core",
+     "note": "the derivation of EM-7 from Jelonek's Euler positivity: connectedness plus a self-identification forces χ(S_F) ≤ 0. It assumes the Euler count off the A¹ normalisations and the multibranch consequence of non-maximality (KG-EM02 with KG-EM03), both unproved here, so the claim is not verified by this"
     },
     "KellerGroupoids.ProjectStatements.nonmaximal_implies_nonproperDisconnected": {
      "item": "KG-EM07",
      "faithfulness": "core",
-     "note": "the contrapositive, derived, carrying the same two hypotheses"
+     "note": "the contrapositive, derived, carrying the same two assumed prerequisites"
     },
     "KellerGroupoids.ProjectStatements.disjoint_of_not_sameComponent": {
      "item": "KG-EM08",
@@ -473,8 +473,8 @@
     },
     "KellerGroupoids.ProjectStatements.nonmaximal_implies_exactlyTwoNodalFibers": {
      "item": "KG-EM10",
-     "faithfulness": "full",
-     "note": "derived from KG-EM07, KG-EM08, KG-EM09 and Assi's equinodal theorem exactly as the audit derives it, carrying KG-EM07's two hypotheses; rests on five Published axioms and no hole; verified once those inputs are admitted"
+     "faithfulness": "core",
+     "note": "the two-nodal-fiber derivation from KG-EM07, KG-EM08, KG-EM09 and Assi's equinodal theorem, free of any Lean hole; it carries KG-EM07's two assumed prerequisites, so the claim is not verified by this"
     },
     "KellerGroupoids.ProjectStatements.onePlace_irreducibleComponents": {
      "item": "KG-P12",
@@ -483,8 +483,8 @@
     },
     "KellerGroupoids.ProjectStatements.nonmaximal_implies_perfectMonodromy": {
      "item": "KG-PM01",
-     "faithfulness": "statement",
-     "note": "perfect monodromy in the two-nodal-fiber case"
+     "faithfulness": "core",
+     "note": "the group-theoretic step of PM-1: perfectness follows once the nodal vanishing cycles are assumed to generate the sheet monodromy with each generator a ratio of conjugate branch inertias. Those are the audit's own two load-bearing points and both are assumed here, so the claim is not verified by this"
     },
     "KellerGroupoids.ProjectStatements.degreeSix_nonmaximal_frontier_forces_A6": {
      "item": "KG-A600",
@@ -493,8 +493,38 @@
     },
     "KellerGroupoids.ProjectStatements.degreeSix_A6_nodeInertia": {
      "item": "KG-A603",
-     "faithfulness": "statement",
-     "note": "disjoint 3-cycles at every node"
+     "faithfulness": "core",
+     "note": "the disjointness of the two branch inertias at a node, derived from the packet; it assumes that the branch meridians are conjugate to the generic meridian and that their supports exhaust the sheets (the zero-excess census KG-A602), so the claim is not verified by this"
+    },
+    "KellerGroupoids.ProjectStatements.conjugateRatio_eq_commutatorElement": {
+     "item": "KG-PM01",
+     "faithfulness": "core",
+     "note": "a ratio of conjugate elements is a commutator"
+    },
+    "KellerGroupoids.ProjectStatements.perfect_of_conjugateRatio_generators": {
+     "item": "KG-PM01",
+     "faithfulness": "core",
+     "note": "a group generated by ratios of conjugate elements is perfect"
+    },
+    "KellerGroupoids.ProjectStatements.permSupportSize_eq_zero_iff": {
+     "item": "KG-A601",
+     "faithfulness": "core",
+     "note": "trivial support means the trivial permutation"
+    },
+    "KellerGroupoids.ProjectStatements.permSupportSize_of_isConj": {
+     "item": "KG-A603",
+     "faithfulness": "core",
+     "note": "conjugate permutations move the same number of letters"
+    },
+    "KellerGroupoids.ProjectStatements.disjoint_support_of_cover": {
+     "item": "KG-A603",
+     "faithfulness": "core",
+     "note": "two permutations whose supports cover every letter, with sizes summing to at most the number of letters, have disjoint supports"
+    },
+    "KellerGroupoids.ProjectStatements.perm_disjoint_of_cover": {
+     "item": "KG-A603",
+     "faithfulness": "core",
+     "note": "the same, as Mathlib's Equiv.Perm.Disjoint"
     }
    },
    "not_expressible": {

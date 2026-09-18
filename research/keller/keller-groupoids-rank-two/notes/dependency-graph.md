@@ -118,7 +118,7 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   KG_P15["KG-P15<br/>Minimal decorated search datum"]
   class KG_P15 open;
   KG_PC01["KG-PC01<br/>Fiber deficit decomposes into inertia support plus deletion"]
-  class KG_PC01 llm;
+  class KG_PC01 lean;
   KG_PC02["KG-PC02<br/>Deficit-one detects unramified deletion"]
   class KG_PC02 lean;
   KG_PC03["KG-PC03<br/>Étale-maximal top configuration stabilization"]

@@ -33,19 +33,40 @@ variable {F : PlaneKellerMap}
 /-! ### Configuration criteria -/
 
 /-- **KG-PC01.** Fiber deficit decomposes into inertia support plus deletion:
-`d - m_C = |supp σ_C| + t_C`. -/
+`d - m_C = |supp σ_C| + t_C`. Proved by counting the `d` sheets over a generic point of `C`:
+the inertia moves `|supp σ_C|` of them, and the rest split into the `m_C` sheets that lie in
+the affine source and the `t_C` unramified sheets deleted from it.
+
+That no sheet the inertia moves lies in the affine source is the record's coherence field
+`sheetInSource_disjoint_support`, which is the Keller condition doing its work: `F` is étale on
+`A²` because its Jacobian determinant is a nonzero constant, so a point where the finite
+normalisation ramifies cannot lie in the source. -/
 theorem fiberDeficit_eq_inertiaSupport_add_deleted (G : PlaneGeometry F) (C : G.Curve) :
     G.deficit C = permSupportSize (G.inertia C) + G.deletedSheets C := by
-  sorry
+  classical
+  have hsub : G.sheetInSource C ⊆ ((G.inertia C).support)ᶜ := fun x hx =>
+    Finset.mem_compl.2 (Finset.disjoint_left.1 (G.sheetInSource_disjoint_support C) hx)
+  have hcompl : (((G.inertia C).support)ᶜ).card = G.degree - (G.inertia C).support.card := by
+    rw [Finset.card_compl, Fintype.card_fin]
+  have hsupp_le : (G.inertia C).support.card ≤ G.degree := by
+    simpa using Finset.card_le_univ (G.inertia C).support
+  have hm_le : (G.sheetInSource C).card ≤ (((G.inertia C).support)ᶜ).card :=
+    Finset.card_le_card hsub
+  have ht : ((((G.inertia C).support)ᶜ) \ G.sheetInSource C).card
+      = (((G.inertia C).support)ᶜ).card - (G.sheetInSource C).card := by
+    rw [Finset.card_sdiff, Finset.inter_eq_left.2 hsub]
+  simp only [PlaneGeometry.deficit, PlaneGeometry.deletedSheets, PlaneGeometry.affineFiberCard,
+    permSupportSize]
+  omega
 
 /-- **KG-PC02.** Deficit one detects one deleted unramified sheet. Proved from the deficit
-decomposition (`KG-PC01`, taken as a hypothesis) and the fact that no permutation moves exactly
+decomposition (`KG-PC01`, now itself proved) and the fact that no permutation moves exactly
 one point. -/
 theorem deficitOne_forces_oneDeletedUnramifiedSheet (G : PlaneGeometry F) (C : G.Curve)
-    (hdec : G.deficit C = permSupportSize (G.inertia C) + G.deletedSheets C)
     (h : G.deficit C = 1) :
     permSupportSize (G.inertia C) = 0 ∧ G.deletedSheets C = 1 :=
-  deficitOne_forces_deletion (G.inertia C) (G.deletedSheets C) (hdec ▸ h)
+  deficitOne_forces_deletion (G.inertia C) (G.deletedSheets C)
+    ((fiberDeficit_eq_inertiaSupport_add_deleted G C).symm.trans h)
 
 /-- **KG-PC03.** An étale-maximal map has no `(d-1)`-point fiber (so `Conf_d ≃ Conf_{d-1}`). -/
 theorem etaleMaximal_topConfigurationStabilizes (G : PlaneGeometry F) (h : G.etaleMaximal)
@@ -78,10 +99,17 @@ theorem deletedUnramifiedSheet_forces_multibranch (G : PlaneGeometry F) (E : G.B
     (h : G.genericallyUnramified E) : G.hasMultibranchSingularity (G.image E) := by
   sorry
 
-/-- **KG-EM04.** If every component is unibranch at every finite singularity, `F` is étale-maximal. -/
+/-- **KG-EM04.** If every component is unibranch at every finite singularity, `F` is
+étale-maximal. Proved as the audit derives it from `KG-EM03`, which is the hypothesis `hmb`
+here: a non-maximal map omits an unramified normalisation sheet, and that sheet lies over a
+component with a multibranch singularity, which unibranchness excludes. -/
 theorem allComponentsUnibranch_implies_etaleMaximal (G : PlaneGeometry F)
+    (hmb : ¬ G.etaleMaximal → ∃ C, G.hasMultibranchSingularity C)
     (h : ∀ C, G.unibranchEverywhere C) : G.etaleMaximal := by
-  sorry
+  by_contra hmax
+  obtain ⟨C, p, hp⟩ := hmb hmax
+  have := h C p
+  omega
 
 /-- **KG-EM05.** Over a singular point with `r` branches under an omitted unramified sheet, the
 affine fiber has at most `d - r` points. -/
@@ -223,10 +251,18 @@ theorem onePlace_irreducibleComponents (G : PlaneGeometry F) (C : G.Curve) :
 
 /-! ### Perfect monodromy and degree six -/
 
-/-- **KG-PM01.** In the two-nodal-fiber case the sheet-monodromy group is perfect. -/
-theorem nonmaximal_implies_perfectMonodromy (G : PlaneGeometry F) (h : G.exactlyTwoNodalFibers) :
+/-- **KG-PM01.** In the two-nodal-fiber case the sheet-monodromy group is perfect. Proved from
+the audit's own two load-bearing points, which are the hypothesis `hvc` here: the nodal
+vanishing cycles generate the sheet monodromy, and the monodromy around each of them is
+`σ₊σ₋⁻¹` for the two conjugate local branch inertias at that node. Such a ratio is a
+commutator, so a generating set of them lies in the commutator subgroup and the group is
+perfect (`perfect_of_conjugateRatio_generators`). -/
+theorem nonmaximal_implies_perfectMonodromy (G : PlaneGeometry F) (h : G.exactlyTwoNodalFibers)
+    (hvc : ∃ S : Set ↥G.monodromy, Subgroup.closure S = ⊤ ∧
+      ∀ s ∈ S, ∃ a b : ↥G.monodromy, IsConj a b ∧ s = a * b⁻¹) :
     IsPerfectGroup G.monodromy := by
-  sorry
+  obtain ⟨S, hgen, hS⟩ := hvc
+  exact perfect_of_conjugateRatio_generators S hgen hS
 
 /-- **KG-PM02.** A perfect monodromy group is not the full symmetric group; in particular `S₆`
 is excluded in the residual non-maximal degree-six case. Proved. -/
@@ -250,11 +286,67 @@ theorem degreeSix_nonmaximal_frontier_forces_A6 (G : PlaneGeometry F) (hdeg : G.
   · exact h
   · exact absurd h (nonmaximal_not_S6 G hperf (by omega))
 
-/-- **KG-A601.** In the residual degree-six `A₆` case the boundary packet is `(3,1),(1,1),(1,1)`. -/
+/-- **KG-A601.** In the residual degree-six `A₆` case the boundary packet is `(3,1),(1,1),(1,1)`.
+Proved as the audit argues it. The external refined budget gives the two deficits `{3, 2}`; no
+element of `A₆` has support one or two, so the deficit-two component is unramified with two
+deleted sheets, and the deficit-three component has support zero or three; support zero on both
+would leave the normalisation unramified, which `hram` excludes, so the deficit-three component
+carries a single 3-cycle and no deleted sheet.
+
+Two prerequisites are explicit hypotheses: `htwo`, that `S_F` is exactly two components
+(`KG-EM10`), and `hram`, that the finite normalisation ramifies somewhere, which holds for a
+counterexample because an everywhere-étale cover of the simply connected plane would be
+trivial. The deficit decomposition (`KG-PC01`) and the membership of each inertia in the
+monodromy group are taken from the proof and the record, not assumed here. -/
 theorem degreeSix_nonmaximal_A6_forces_boundaryPacket (G : PlaneGeometry F) (hdeg : G.degree = 6)
     (hce : G.isCounterexample) (hnm : ¬ G.etaleMaximal)
-    (hA6 : G.monodromy = alternatingGroup (Fin G.degree)) : G.a6BoundaryPacket := by
-  sorry
+    (hA6 : G.monodromy = alternatingGroup (Fin G.degree))
+    (htwo : ∃ C₀ C₁ : G.Curve, C₀ ≠ C₁ ∧ ∀ C, C = C₀ ∨ C = C₁)
+    (hram : ∃ C, G.inertia C ≠ 1) :
+    G.a6BoundaryPacket := by
+  obtain ⟨C₀, C₁, hne, hall⟩ := htwo
+  obtain ⟨hsum, hb0, hb1⟩ :=
+    ExternalResearch.refinedDegreeSixBoundaryBudget G hdeg hce hnm C₀ C₁ hne
+  have hne1 : ∀ C, permSupportSize (G.inertia C) ≠ 1 := fun C => permSupportSize_ne_one _
+  have hne2 : ∀ C, permSupportSize (G.inertia C) ≠ 2 := fun C =>
+    alternating_support_ne_two _ (hA6 ▸ G.inertia_mem_monodromy C)
+  have hdec : ∀ C, G.deficit C = permSupportSize (G.inertia C) + G.deletedSheets C :=
+    fun C => fiberDeficit_eq_inertiaSupport_add_deleted G C
+  -- Deficit two: support zero, so trivial inertia and two deleted sheets.
+  have key2 : ∀ C, G.deficit C = 2 → G.inertia C = 1 ∧ G.deletedSheets C = 2 := by
+    intro C h2
+    have h := hdec C
+    have h1 := hne1 C
+    have h2' := hne2 C
+    have hz : permSupportSize (G.inertia C) = 0 := by omega
+    exact ⟨(permSupportSize_eq_zero_iff _).1 hz, by omega⟩
+  -- Deficit three: support zero with three deleted sheets, or a single 3-cycle with none.
+  have key3 : ∀ C, G.deficit C = 3 →
+      (G.inertia C = 1 ∧ G.deletedSheets C = 3) ∨
+        (permSupportSize (G.inertia C) = 3 ∧ G.deletedSheets C = 0) := by
+    intro C h3
+    have h := hdec C
+    have h1 := hne1 C
+    have h2' := hne2 C
+    rcases Nat.lt_or_ge (permSupportSize (G.inertia C)) 3 with hlt | hge
+    · have hz : permSupportSize (G.inertia C) = 0 := by omega
+      exact Or.inl ⟨(permSupportSize_eq_zero_iff _).1 hz, by omega⟩
+    · exact Or.inr (by omega)
+  rcases deficits_three_two _ _ hsum hb0 hb1 with ⟨h0, h1⟩ | ⟨h0, h1⟩
+  · obtain ⟨hi1, ht1⟩ := key2 C₁ h1
+    rcases key3 C₀ h0 with ⟨hi0, -⟩ | ⟨hs0, ht0⟩
+    · obtain ⟨C, hC⟩ := hram
+      rcases hall C with h | h
+      · rw [h] at hC; exact absurd hi0 hC
+      · rw [h] at hC; exact absurd hi1 hC
+    · exact ⟨C₀, C₁, hne, hall, hs0, ht0, hi1, ht1⟩
+  · obtain ⟨hi0, ht0⟩ := key2 C₀ h0
+    rcases key3 C₁ h1 with ⟨hi1, -⟩ | ⟨hs1, ht1⟩
+    · obtain ⟨C, hC⟩ := hram
+      rcases hall C with h | h
+      · rw [h] at hC; exact absurd hi0 hC
+      · rw [h] at hC; exact absurd hi1 hC
+    · exact ⟨C₁, C₀, hne.symm, fun C => (hall C).symm, hs1, ht1, hi0, ht0⟩
 
 /-- The deficit arithmetic inside `KG-A601`: from the refined budget the two fibers have deficits
 `{3, 2}`. Proved from the external budget input. -/
@@ -265,10 +357,35 @@ theorem degreeSix_deficits_three_two (G : PlaneGeometry F) (hdeg : G.degree = 6)
   exact deficits_three_two _ _ hsum h₀ h₁
 
 /-- **KG-A603.** At every node of the ramified fiber the branch inertia permutations are disjoint
-3-cycles. -/
-theorem degreeSix_A6_nodeInertia (G : PlaneGeometry F) (hpacket : G.a6BoundaryPacket) :
+3-cycles. Proved as the audit argues it: the ramified component is the packet's `C₀`, whose
+generic inertia has support three, and each branch meridian at a node is conjugate to it, so
+each branch inertia also moves three of the six sheets; the node's two branch supports leave no
+sheet in the affine fiber, so together they cover all six, and three plus three with nothing to
+spare forces them disjoint.
+
+Two prerequisites are explicit hypotheses: `hconj`, that the branch meridians at a node are
+conjugate to the component's generic meridian; and `hcover`, that the node's two branch supports
+exhaust the sheets, which is the zero-excess local census `KG-A602` (no affine preimage over a
+node of the ramified fiber). -/
+theorem degreeSix_A6_nodeInertia (G : PlaneGeometry F) (hdeg : G.degree = 6)
+    (hpacket : G.a6BoundaryPacket)
+    (hconj : ∀ (C : G.Curve) (p : G.Point), 2 ≤ G.branchCount C p → ∀ i,
+      IsConj (G.branchInertia C p i) (G.inertia C))
+    (hcover : ∀ (C : G.Curve) (p : G.Point), G.inertia C ≠ 1 → 2 ≤ G.branchCount C p →
+      (Finset.univ : Finset (Fin G.degree)) ⊆
+        (G.branchInertia C p 0).support ∪ (G.branchInertia C p 1).support) :
     G.a6NodeInertia := by
-  sorry
+  obtain ⟨C₀, C₁, -, hall, hs0, -, hi1, -⟩ := hpacket
+  intro C p hram hnode
+  have hsupp : permSupportSize (G.inertia C) = 3 := by
+    rcases hall C with h | h
+    · rw [h]; exact hs0
+    · rw [h] at hram; exact absurd hi1 hram
+  have h0 : permSupportSize (G.branchInertia C p 0) = 3 := by
+    rw [permSupportSize_of_isConj (hconj C p hnode 0), hsupp]
+  have h1 : permSupportSize (G.branchInertia C p 1) = 3 := by
+    rw [permSupportSize_of_isConj (hconj C p hnode 1), hsupp]
+  exact ⟨h0, h1, perm_disjoint_of_cover _ _ (hcover C p hram hnode) (by omega)⟩
 
 /-! ### The global Euler-deficit identity -/
 
