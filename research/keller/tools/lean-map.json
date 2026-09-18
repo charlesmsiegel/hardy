@@ -408,13 +408,13 @@
     },
     "KellerGroupoids.ProjectStatements.commonPencil_exactlyTwoFibers": {
      "item": "KG-EM09",
-     "faithfulness": "statement",
-     "note": "exactly two selected fibers, noncoordinate"
+     "faithfulness": "full",
+     "note": "exactly two selected fibers and a noncoordinate pencil, in the disconnected common-pencil case of a counterexample; from Assi's dichotomy and Braun–Dias–Venato-Santos as Published axioms, with the record's coherence field selectedFibers_ge_two (a disconnected S_F selects at least two fibers); verified once those two inputs are admitted"
     },
     "KellerGroupoids.ProjectStatements.nonmaximal_implies_exactlyTwoNodalFibers": {
      "item": "KG-EM10",
      "faithfulness": "statement",
-     "note": "derived from KG-EM07, KG-EM08, KG-EM09 and Assi's equinodal theorem exactly as the audit derives it; open through their holes"
+     "note": "derived from KG-EM07, KG-EM08, KG-EM09 and Assi's equinodal theorem exactly as the audit derives it; open through the KG-EM07 and KG-EM08 holes"
     },
     "KellerGroupoids.ProjectStatements.onePlace_irreducibleComponents": {
      "item": "KG-P12",

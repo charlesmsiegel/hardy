@@ -151,7 +151,8 @@ def link_claims(problem: Path, owners: ev.ProjectOwners, table: dict, records: d
         per_claim.setdefault(link["item"], []).append({"declaration": decl, **link})
     for claim_id, entry in spec.get("inputs", {}).items():
         item = snapshot.head(claim_id)
-        semantics = [(k, v) for k, v in item.semantics if k not in {"lean_declaration", "lean_file", "formalization"}]
+        semantics = [(k, v) for k, v in item.semantics
+                     if k not in {"lean_declaration", "lean_file", "lean_field", "formalization"}]
         if entry.get("declaration"):
             semantics += [("lean_declaration", entry["declaration"]), ("lean_file", entry["file"])]
             if entry.get("field"):

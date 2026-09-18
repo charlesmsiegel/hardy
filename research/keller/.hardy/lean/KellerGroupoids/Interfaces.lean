@@ -11,7 +11,10 @@ declaring these as global constants (which the packet did with the Lean 3
 keyword `constant`, and which would hide assumptions from an axiom audit)
 they are bundled here as *data a theorem takes*: a `PlaneGeometry F` is a
 record of the geometric notions attached to a plane Keller map `F`, with no
-axioms relating its fields to `F`.
+axioms relating its fields to `F`. The one field that relates fields to
+each other, `selectedFibers_ge_two`, records what the fields mean (a
+disconnected curve in a common pencil selects at least two fibers) and is
+named in the docstring of every theorem that uses it.
 
 A theorem stated over `G : PlaneGeometry F` is therefore a faithful
 transcription of the claim's *shape*: which hypotheses it takes and what it
@@ -94,6 +97,10 @@ structure PlaneGeometry (F : PlaneKellerMap) where
   pencilIsCoordinate : Prop
   /-- The number `q` of selected fibers of the pencil. -/
   selectedFibers : ℕ
+  /-- Coherence of the two fields above with `connected`: when `S_F` is disconnected and lies in a
+  common pencil, its connected components being irreducible, `q` counts those components, so at
+  least two fibers are selected. This is what the fields mean, not a theorem about `F`. -/
+  selectedFibers_ge_two : commonPencil → ¬ connected → 2 ≤ selectedFibers
   /-- `S_F = C₀ ⊔ C₁` is the two exceptional rational nodal members of a noncoordinate one-place
   pencil, with the same positive number of nodes. -/
   exactlyTwoNodalFibers : Prop
