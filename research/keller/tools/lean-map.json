@@ -90,7 +90,9 @@
    },
    "inputs": {
     "PUB-AG-01": {
-     "note": "the Keller condition is the definition KellerGroupoids.KellerMap; étaleness of such a map is not formalised"
+     "declaration": "KellerGroupoids.KellerEtale.etale_comap",
+     "file": ".hardy/lean/KellerGroupoids/KellerEtale.lean",
+     "note": "proved, not assumed: the comorphism of a Keller map is an étale ring map, kernel-checked on standard axioms from the graph presentation and the unit Jacobian"
     },
     "PUB-AG-02": {
      "note": "diagonals of unramified morphisms are not formalised"
@@ -99,7 +101,9 @@
      "note": "diagonals of separated morphisms are not formalised"
     },
     "PUB-AG-04": {
-     "note": "Zariski's Main Theorem is not formalised"
+     "declaration": "KellerGroupoids.ZariskiMain.factorization",
+     "file": ".hardy/lean/KellerGroupoids/ZariskiMain.lean",
+     "note": "proved, not assumed: Mathlib carries Zariski's Main Theorem, so the factorisation through the normalisation is a theorem here; only the finiteness (rather than integrality) of the normalisation is still outside Mathlib"
     },
     "PUB-AG-05": {
      "note": "purity of the branch locus is not formalised"

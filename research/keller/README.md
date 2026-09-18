@@ -148,8 +148,24 @@ The packet's scaffold was replaced, not repaired:
   meaning.
 - `PublishedAxioms.lean` and `ExternalResearchAxioms.lean` state ten literature
   inputs as typed `axiom`s over the record, so an audit names exactly which a
-  proof uses. The inputs that need notions the record lacks (Zariski Main,
-  purity, Ramanujam–Morrow, Orevkov) have no Lean and the ledger says so.
+  proof uses. Purity of the branch locus, Ramanujam–Morrow and Orevkov need
+  notions neither the record nor Mathlib carries; they have no Lean and the
+  ledger says so.
+- `KellerEtale.lean` proves that the comorphism of a Keller map is an étale
+  ring map, on standard axioms alone. `ℂ[x]` is generated over `ℂ[y]` by the
+  coordinates subject to exactly the relations `y_j - P_j(x)`, and the Jacobian
+  of those relations is the Keller Jacobian up to sign, so the presentation is
+  submersive of relative dimension zero. Mathlib has the one-variable kernel
+  computation only, so the multivariate one is proved here. This is the
+  literature input `PUB-AG-01`, now a theorem rather than an assumption; the
+  file is kept separate so later work can import it without carrying its proof.
+- `ZariskiMain.lean` re-states Mathlib's Zariski's Main Theorem in the shape the
+  étale-maximality reduction consumes: a quasi-finite, separated, quasi-compact
+  morphism of finite type factors as an open immersion into an integral
+  morphism. This is the literature input `PUB-AG-04`, which the ledger
+  previously recorded as unformalised; it is a theorem, not an axiom. What
+  Mathlib does not give is finiteness rather than integrality of the
+  normalisation, and the file says so.
 - `keller-groupoids/lean/KellerGeneral/General.lean`: fourteen theorems, all
   kernel-verified on standard axioms: the set-level content of `KG-03`
   (partition decomposition as an equivalence), `KG-04`, `KG-06`, `KG-08`,
