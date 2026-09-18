@@ -80,10 +80,11 @@ def _base(tmp_path: Path) -> LeanWorkspace:
 
 WORKER_A = [
     call("read_item", {"selector": "L17"}),
-    # Named after its Lean declaration: that name is the one correspondence
-    # the session's own verifier accepts between a candidate and a declaration.
+    # Named after its Lean declaration and stated as Lean was given it: the
+    # session's own verifier accepts no other correspondence between a
+    # candidate and a declaration.
     call("propose_finding", {"kind": "candidate_lemma", "summary": "helper_fact",
-                             "payload": "The helper fact holds for the generic fiber", "related_refs": ["L17"]}),
+                             "payload": "helper_fact : True", "related_refs": ["L17"]}),
     call("check_lean", {"path": "Worker.lean", "source": HELPER}),
     call("save_lean", {"path": "Worker.lean", "source": HELPER}),
     call("finish", {"status": "completed", "synthesis": "helper lemma saved and checked"}),
@@ -143,7 +144,7 @@ def test_one_worker_job_from_the_session_to_an_admitted_proof(tmp_path):
         assert [o.action for o in outcomes] == ["created"], [o.reasons for o in outcomes]
         snapshot = LedgerStore(tmp_path).read()
         lemma = snapshot.head(outcomes[0].authoritative_refs[0].id)
-        assert lemma.kind is c.ProjectItemKind.LEMMA and lemma.statement == "The helper fact holds for the generic fiber"
+        assert lemma.kind is c.ProjectItemKind.LEMMA and lemma.statement == "helper_fact : True"
         prove = next(o for o in snapshot.current(c.Obligation)
                      if o.item == lemma.ref and o.kind is c.ObligationKind.PROVE)
         assert prove.status is c.ObligationStatus.RESOLVED and owners.policy.is_accepted(snapshot, prove.resolution)

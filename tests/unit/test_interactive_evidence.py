@@ -140,3 +140,39 @@ def test_admission_refreshes_shared_libraries_before_staging_the_head(session_fa
     with pytest.raises(ValueError):
         chat.admit("no-such-delegation")
     assert refreshed == [True]
+
+
+def test_a_named_declaration_that_states_something_else_is_refused(session_factory, tmp_path):
+    """`HardResult : False` is not proved by a clean `theorem HardResult : True` of the same name."""
+    chat = session_factory()
+    _head(chat, Main=BASE)
+    staged = _staged(chat, tmp_path, Helper=HELPER)
+    evidence, detail = chat.owners.verify(
+        staged, _request("Helper.lean", name="Foo.helper_fact", statement="Foo.helper_fact : False"),
+        _obligation("Foo.helper_fact", "Foo.helper_fact : False"))
+    assert evidence is None and "no audited declaration corresponds" in detail
+
+
+def test_admission_reconciles_recorded_results_the_change_set_removed(session_factory, monkeypatch):
+    """A worker's files land without a save; the ledger still walks the tree afterwards."""
+    from hardy.workflows.interactive import session as session_module
+    from hardy.workflows.ledger.store import LedgerStore
+
+    chat = session_factory()
+    _head(chat, Main=BASE)
+    # Recorded as a save would record it.
+    note = chat.owners.record_saved({"Main": BASE}, {"Main": {"status": "clean", "declarations": [
+        {"name": "base_fact", "axioms": []}], "forbidden": [], "unapproved": [], "assumed": []}}, {"Main": "sig"})
+    assert "base_fact recorded; proof obligation resolved" in note
+
+    def committing(admission, delegation_id):
+        (chat.lean_workspace.root / "Main.lean").write_text(HELPER, encoding="utf-8")
+        return ()
+
+    monkeypatch.setattr(session_module, "admit_delegation", committing)
+    monkeypatch.setattr(chat, "build_shared", lambda: None)
+    assert chat.admit("any") == ()
+    snapshot = LedgerStore(chat.workspace).read()
+    prove = next(o for o in snapshot.current(c.Obligation) if o.item == snapshot.head("lean:base_fact").ref)
+    assert prove.status is c.ObligationStatus.OPEN and "no longer declares base_fact" in (prove.reason or "")
+    assert any("base_fact proof obligation reopened" in notice for notice in chat.notices)

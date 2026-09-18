@@ -157,25 +157,31 @@ def _corresponding(name: str | None, statement: str | None,
                    graded: Mapping[str, tuple[str, str, list[str]]]) -> str | None:
     """The one audited declaration a subject picks out, or None.
 
-    Exact qualified name first; then the bare name when exactly one declaration
-    carries it (`_match_claim` in the web panel reads the same two spellings);
-    then the exact Lean statement, with or without its keyword, when exactly
-    one declaration states it. Ambiguity is no correspondence.
+    By name: the exact qualified name, or the bare name when exactly one
+    declaration carries it (`_match_claim` in the web panel reads the same two
+    spellings). By statement: the exact Lean statement, with or without its
+    keyword, when exactly one declaration states it. A subject that carries a
+    statement must agree with the declaration on it, name or no name: a
+    candidate stating `HardResult : False` is not proved by a clean
+    `theorem HardResult : True`. Ambiguity is no correspondence.
     """
+    by_name: str | None = None
     if name is not None:
         if name in graded:
-            return name
-        leaf = name.rsplit(".", 1)[-1]
-        by_leaf = [declared for declared in graded if declared.rsplit(".", 1)[-1] == leaf]
-        if len(by_leaf) == 1:
-            return by_leaf[0]
-    if statement is not None:
-        wanted = normalise_lean(statement)
-        by_statement = [declared for declared, (_, stated, _) in graded.items()
-                        if wanted in {stated, stated.split(" ", 1)[-1]}]
-        if len(by_statement) == 1:
-            return by_statement[0]
-    return None
+            by_name = name
+        else:
+            leaf = name.rsplit(".", 1)[-1]
+            by_leaf = [declared for declared in graded if declared.rsplit(".", 1)[-1] == leaf]
+            if len(by_leaf) == 1:
+                by_name = by_leaf[0]
+    if statement is None:
+        return by_name
+    wanted = normalise_lean(statement)
+    by_statement = [declared for declared, (_, stated, _) in graded.items()
+                    if wanted in {stated, stated.split(" ", 1)[-1]}]
+    if by_name is not None:
+        return by_name if by_name in by_statement else None
+    return by_statement[0] if len(by_statement) == 1 else None
 
 
 class ProjectOwners:
@@ -258,7 +264,7 @@ class ProjectOwners:
         if match is None:
             return None, (f"no audited declaration corresponds to the candidate {request.subject_name!r}: "
                           f"the change set declares {sorted(graded)}; name the finding after its Lean "
-                          "declaration or state it exactly as Lean was given it")
+                          "declaration and, when it states the result, state it exactly as Lean was given it")
         module, statement, axioms = graded[match]
         status = audit.declaration_status(match, {module: records[module]})
         if status.kind != "verified":
@@ -390,6 +396,15 @@ class ProjectOwners:
             return "\n\nproject ledger: unchanged"
         return "\n\nproject ledger: " + "; ".join(notes)
 
+    def reconcile(self, sources: Mapping[str, str]) -> list[str]:
+        """Reopen what the tree no longer declares, after a change reached it by a route other than a save.
+
+        Admission commits a worker's files without an audit of everything the
+        tree held before; a recorded lemma the change set removed would keep
+        its resolution. The same walk a save makes, over the committed tree.
+        """
+        return self._reopen_vanished(LedgerStore(self.problem), sources)
+
     def _reopen_vanished(self, store: LedgerStore, sources: Mapping[str, str]) -> list[str]:
         """Reopen the proof obligation of every recorded result the tree no longer declares publicly.
 
@@ -403,8 +418,9 @@ class ProjectOwners:
         declared: set[str] = set()
         for source in sources.values():
             found = declarations(source)
-            declared.update(set(found["theorem"]) | set(found["lemma"]))
-            declared.difference_update(found["private"])
+            # Each module's own public names: a private declaration in one
+            # module says nothing about a public one of the same spelling elsewhere.
+            declared.update((set(found["theorem"]) | set(found["lemma"])) - set(found["private"]))
         snapshot = store.read()
         notes: list[str] = []
         for item in snapshot.current(ProjectItem):
@@ -470,7 +486,12 @@ class ProjectOwners:
             snapshot = store.append(batch, expected_revision=snapshot.revision, validate=self.policy.validate)
         if verified:
             if current.status is ObligationStatus.RESOLVED:
-                return "; ".join(said)
+                if self.policy.is_accepted(snapshot, current.resolution):
+                    return "; ".join(said)
+                # Accepted once, under a policy that has since changed its
+                # digest or a record that no longer reads: this audit is
+                # fresh evidence, and the obligation is re-accepted on it.
+                said.append("earlier acceptance no longer reads under the current policy")
             reference = self._mint(subject=item.ref, scope=scope.ref, context=item.context, module=module,
                                    declaration=name, statement=statement, axioms=axioms, signature=signature,
                                    source=source)
@@ -484,7 +505,8 @@ class ProjectOwners:
             closed = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
                                                 "status": "resolved", "resolution": accepted, "reason": None})
             store.append((closed,), expected_revision=snapshot.revision, validate=self.policy.validate)
-            said.append("proof obligation resolved")
+            said.append("proof obligation re-accepted" if current.status is ObligationStatus.RESOLVED
+                        else "proof obligation resolved")
             return "; ".join(said)
         if current.status is ObligationStatus.RESOLVED:
             reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "status": "open",
