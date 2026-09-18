@@ -29,7 +29,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from hardy.app.web import chats, panels, uploads
-from hardy.app.web.host import Busy, WebHost
+from hardy.app.web.host import Busy, NoProject, WebHost
 from hardy.foundation.files import LayoutError
 from hardy.workflows.layout import validate_slug
 
@@ -201,7 +201,11 @@ class Handler(BaseHTTPRequestHandler):
         return data
 
     def _problem(self) -> Path:
-        return self.server.host.config.layout.problem
+        """The open problem's directory, or the one refusal every project-scoped request shares."""
+        host = self.server.host
+        if host.session is None:
+            raise NoProject()
+        return host.config.layout.problem
 
     # -- GET ---------------------------------------------------------------
 
@@ -222,6 +226,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._api_get(path[len("/api/"):], query)
             else:
                 self._static(path)
+        except NoProject as error:
+            self._json(409, {"error": str(error)})
         except RuntimeError:
             self._json(503, {"error": GONE})
         except (ValueError, LayoutError, KeyError) as error:
@@ -231,12 +237,35 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_get(self, name: str, query: dict[str, list[str]]) -> None:
         host = self.server.host
-        session, problem = host.session, self._problem()
+        # What answers with nothing open comes first, before the problem is
+        # asked for: the page reads these to draw the project menu, and the
+        # machine's environment and runs are not any one problem's.
         if name == "state":
             self._json(200, host.state())
-        elif name == "projects":
+            return
+        if name == "projects":
             self._json(200, host.projects())
-        elif name == "commands":
+            return
+        if name == "models":
+            self._json(200, host.models())
+            return
+        if name == "environment":
+            self._json(200, panels.environment(host.config))
+            return
+        if name == "runs":
+            self._json(200, panels.runs(host.config))
+            return
+        if name == "runs/item":
+            self._json(200, panels.run_item(host.config, query.get("id", [""])[0]))
+            return
+        if name == "declarations":
+            self._json(200, self.server.declarations.search(
+                query.get("q", [""])[0], int(query.get("limit", ["20"])[0] or 20)))
+            return
+        if name == "declaration":
+            self._json(200, self.server.declarations.lookup(query.get("name", [""])[0]))
+            return
+        if name == "commands":
             # `kind` says where an entry came from: a built-in the server runs,
             # a bundled prompt shortcut, or a project's own template.
             self._json(200, [{"name": c.name, "summary": c.summary, "argument_hint": c.argument_hint,
@@ -245,7 +274,9 @@ class Handler(BaseHTTPRequestHandler):
                               "kind": ("builtin" if c.template is None
                                        else "shortcut" if c.template.bundled else "project")}
                              for c in host.registry])
-        elif name == "transcript":
+            return
+        session, problem = host.session, self._problem()
+        if name == "transcript":
             self._json(200, panels.transcript(session))
         elif name == "summary":
             self._json(200, panels.summary(session))
@@ -265,12 +296,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.graph(problem))
         elif name == "uploads":
             self._json(200, uploads.staged(problem))
-        elif name == "models":
-            self._json(200, host.models())
         elif name == "cas/cells":
             self._json(200, panels.cas_cells(problem))
-        elif name == "environment":
-            self._json(200, panels.environment(host.config))
         elif name == "record":
             self._json(200, panels.record_counts(problem))
         elif name == "ledger":
@@ -281,21 +308,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.ledger_export(problem, query.get("id", [""])[0]))
         elif name == "results":
             self._json(200, panels.results(problem))
-        elif name == "runs":
-            self._json(200, panels.runs(host.config))
-        elif name == "runs/item":
-            self._json(200, panels.run_item(host.config, query.get("id", [""])[0]))
         elif name == "publications":
             self._json(200, panels.publications(problem))
         elif name == "checkpoints":
             self._json(200, panels.checkpoints(host.config.layout))
         elif name == "spend":
             self._json(200, panels.spend(session))
-        elif name == "declarations":
-            self._json(200, self.server.declarations.search(
-                query.get("q", [""])[0], int(query.get("limit", ["20"])[0] or 20)))
-        elif name == "declaration":
-            self._json(200, self.server.declarations.lookup(query.get("name", [""])[0]))
         elif name == "chats":
             self._json(200, chats.overview(problem))
         else:
@@ -400,9 +418,16 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/cancel":
                 self._json(200, host.cancel())
             elif path == "/api/open":
-                self._json(200, host.open_chat(str(data.get("slug", "")), str(data.get("chat", "main"))))
+                self._json(200, host.open_project(str(data.get("path", "")), str(data.get("chat", "main"))))
+            elif path == "/api/close":
+                self._json(200, host.close_project())
             elif path == "/api/projects":
-                self._json(200, host.create_project(str(data.get("name", ""))))
+                location = data.get("location")
+                self._json(200, host.create_project(str(data.get("name", "")), str(location) if location else None))
+            elif path == "/api/projects/add":
+                self._json(200, host.add_project(str(data.get("path", ""))))
+            elif path == "/api/projects/forget":
+                self._json(200, host.forget_project(str(data.get("path", ""))))
             elif path.startswith("/api/projects/") and path.endswith("/chats"):
                 slug = path[len("/api/projects/"):-len("/chats")]
                 self._json(200, chats.create_chat(self._project(slug), str(data.get("title", ""))).as_dict())
@@ -423,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, result)
             else:
                 self._json(404, {"error": "unknown action"})
-        except Busy as error:
+        except (Busy, NoProject) as error:
             self._json(409, {"error": str(error)})
         except RuntimeError:
             self._json(503, {"error": GONE})
@@ -460,7 +485,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, self.server.host.save_file(relative, str(data.get("source", ""))))
             else:
                 self._json(404, {"error": "unknown action"})
-        except Busy as error:
+        except (Busy, NoProject) as error:
             self._json(409, {"error": str(error)})
         except RuntimeError:
             self._json(503, {"error": GONE})
@@ -484,6 +509,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, renamed.as_dict())
             else:
                 self._json(404, {"error": "unknown action"})
+        except NoProject as error:
+            self._json(409, {"error": str(error)})
         except RuntimeError:
             self._json(503, {"error": GONE})
         except (ValueError, LayoutError) as error:
@@ -502,6 +529,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True})
             else:
                 self._json(404, {"error": "unknown action"})
+        except NoProject as error:
+            self._json(409, {"error": str(error)})
         except RuntimeError:
             self._json(503, {"error": GONE})
         except (ValueError, LayoutError) as error:
@@ -510,17 +539,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(error)})
 
     def _project(self, slug: str) -> Path:
-        """`slug`'s directory under the root, proven to be one project name.
+        """The open problem's directory, once `slug` is proven to name it.
 
         A slug arrives here as a path segment of a URL, so it is held to the
-        rule every other slug is held to before it is joined to anything --
-        `/api/projects/..%2F..%2Fetc/chats` names no project. An existing
-        directory, too: `create_chat` would otherwise conjure a problem
-        directory out of a typo and leave it there with one chat in it.
+        rule every other slug is held to before it is compared to anything --
+        `/api/projects/..%2F..%2Fetc/chats` names no project. Only the OPEN
+        problem: projects now live in any number of roots, so a slug alone no
+        longer names a directory, and the page only ever makes or renames
+        chats of the problem it is showing.
         """
-        problem = self.server.host.config.root / validate_slug(slug)
-        if not problem.is_dir():
-            raise ValueError(f"no project {slug!r}")
+        problem = self._problem()
+        if validate_slug(slug) != self.server.host.config.project:
+            raise ValueError(f"{slug!r} is not the open project")
         return problem
 
 

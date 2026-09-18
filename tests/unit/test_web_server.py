@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from web_fakes import FakeSession, make_config, make_problem
+from web_fakes import FakeSession, make_config, make_problem, make_registry
 
 from hardy.app.web.host import WebHost
 from hardy.app.web.server import serve
@@ -22,19 +22,19 @@ class FakeOpener:
     def __init__(self, tmp_path):
         self.tmp_path, self.session = tmp_path, None
 
-    def __call__(self, slug, confirm, current, *, chat="main"):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None):
         import dataclasses
 
-        self.session = FakeSession(self.tmp_path / slug, chat)
-        return dataclasses.replace(current, project=slug, chat=chat), self.session
+        moved = {"root": root} if root is not None else {}
+        config = dataclasses.replace(current, project=slug, chat=chat, **moved)
+        self.session = FakeSession(config.layout.problem, chat)
+        return config, self.session
 
     def cancel(self):
         return False
 
 
-@pytest.fixture
-def server(tmp_path: Path):
-    make_problem(tmp_path, "sylow")
+def _static(tmp_path: Path) -> Path:
     static = tmp_path / "static"
     static.mkdir()
     (static / "index.html").write_text(
@@ -43,7 +43,10 @@ def server(tmp_path: Path):
     )
     (static / "assets").mkdir()
     (static / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
-    host = WebHost(make_config(tmp_path), FakeOpener(tmp_path), lambda confirm, cfg: FakeSession(cfg.layout.problem))
+    return static
+
+
+def _serve(host: WebHost, static: Path):
     host.start()
     srv = serve(host, port=0, static=static, report=lambda *_: None, serve_forever=False)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -54,6 +57,25 @@ def server(tmp_path: Path):
         srv.shutdown()
         srv.server_close()
         host.stop()
+
+
+@pytest.fixture
+def server(tmp_path: Path):
+    make_problem(tmp_path, "sylow")
+    registry = make_registry(tmp_path)
+    registry.add(tmp_path / "sylow")
+    host = WebHost(
+        make_config(tmp_path), FakeOpener(tmp_path),
+        lambda confirm, cfg: FakeSession(cfg.layout.problem), projects=registry,
+    )
+    yield from _serve(host, _static(tmp_path))
+
+
+@pytest.fixture
+def empty_server(tmp_path: Path):
+    """A server with nothing open: no session, an empty registry."""
+    host = WebHost(make_config(tmp_path), FakeOpener(tmp_path), None, projects=make_registry(tmp_path))
+    yield from _serve(host, _static(tmp_path))
 
 
 def _call(srv, method, path, body=None, *, token=True, headers=None, raw=None):
@@ -170,7 +192,7 @@ def test_refusal_is_409_with_the_dispatcher_text(server) -> None:
     assert status == 200 and json.loads(body)["kind"] == "queued"
     status, _, body = _call(server, "POST", "/api/input", {"text": "/goal x"})
     assert status == 409 and "cannot run" in json.loads(body)["error"]
-    status, _, body = _call(server, "POST", "/api/open", {"slug": "sylow", "chat": "main"})
+    status, _, body = _call(server, "POST", "/api/open", {"path": str(server.host.config.layout.problem), "chat": "main"})
     assert status == 409
     # Let the scripted turn finish before the fixture stops the host: this
     # fake ignores `cancel`, and tearing the loop down under a turn it is
@@ -189,8 +211,11 @@ def test_chats_create_rename_open(server) -> None:
     assert status == 200 and json.loads(body)["title"] == "Lean proof II"
     status, _, body = _call(server, "PATCH", "/api/projects/sylow/chats/main", {"title": "x"})
     assert status == 400
-    status, _, body = _call(server, "POST", "/api/open", {"slug": "sylow", "chat": made["id"]})
+    status, _, body = _call(server, "POST", "/api/open", {"path": str(server.host.config.layout.problem), "chat": made["id"]})
     assert status == 200 and json.loads(body)["chat"] == made["id"]
+    # The chat routes serve the open project only: a slug that is not it names nothing.
+    status, _, body = _call(server, "POST", "/api/projects/other/chats", {"title": "x"})
+    assert status == 400 and "not the open project" in json.loads(body)["error"]
 
 
 def test_projects_route_creates_one_and_refuses_the_rest(server, tmp_path: Path) -> None:
@@ -203,11 +228,12 @@ def test_projects_route_creates_one_and_refuses_the_rest(server, tmp_path: Path)
     """
     status, _, body = _call(server, "POST", "/api/projects", {"name": "frobenius"})
     assert status == 200
-    assert "frobenius" in {entry["slug"] for entry in json.loads(body)}
-    status, _, body = _call(server, "POST", "/api/projects", {"name": "sylow"})
+    rows = {entry["slug"]: entry for entry in json.loads(body)}
+    assert rows["frobenius"]["active"] is True and rows["frobenius"]["path"] == str(tmp_path / "projects" / "frobenius")
+    status, _, body = _call(server, "POST", "/api/projects", {"name": "sylow", "location": str(tmp_path)})
     assert status == 400 and "already a project" in json.loads(body)["error"]
-    stray = tmp_path / "somebody-elses"
-    stray.mkdir()
+    stray = tmp_path / "projects" / "somebody-elses"
+    stray.mkdir(parents=True)
     (stray / "notes.txt").write_text("mine", encoding="utf-8")
     status, _, body = _call(server, "POST", "/api/projects", {"name": "somebody-elses"})
     assert status == 400 and "not a Hardy project" in json.loads(body)["error"]
@@ -215,11 +241,60 @@ def test_projects_route_creates_one_and_refuses_the_rest(server, tmp_path: Path)
     assert not (stray / "lean").exists() and not (stray / ".gitignore").exists()
 
 
-def test_open_route_refuses_a_slug_or_chat_nothing_made(server) -> None:
-    status, _, body = _call(server, "POST", "/api/open", {"slug": "nowhere", "chat": "main"})
-    assert status == 400 and "nowhere" in json.loads(body)["error"]
-    status, _, body = _call(server, "POST", "/api/open", {"slug": "sylow", "chat": "never-made"})
+def test_open_route_refuses_a_path_or_chat_nothing_made(server, tmp_path: Path) -> None:
+    status, _, body = _call(server, "POST", "/api/open", {"path": str(tmp_path / "nowhere"), "chat": "main"})
+    assert status == 400 and "not a registered project" in json.loads(body)["error"]
+    status, _, body = _call(server, "POST", "/api/open", {"path": str(tmp_path / "sylow"), "chat": "never-made"})
     assert status == 400 and "never-made" in json.loads(body)["error"]
+    assert not (tmp_path / "nowhere").exists()
+
+
+def test_nothing_open_answers_the_menu_and_refuses_the_rest(empty_server, tmp_path: Path) -> None:
+    """With no session the page draws the project menu from `state` and
+    `projects`; everything about a problem is one 409 with one sentence."""
+    status, _, body = _call(empty_server, "GET", "/api/state", token=False)
+    state = json.loads(body)
+    assert status == 200 and state["open"] is False and state["slug"] is None
+    assert state["default_root"] == str(tmp_path / "projects")
+    status, _, body = _call(empty_server, "GET", "/api/projects", token=False)
+    assert status == 200 and json.loads(body) == []
+    for name in ("summary", "files", "chats", "transcript", "record", "checkpoints"):
+        status, _, body = _call(empty_server, "GET", f"/api/{name}", token=False)
+        assert status == 409 and json.loads(body)["error"] == "No project is open. Open one from the project menu.", name
+    # Not any one problem's: still answered.
+    for name in ("commands", "models", "environment", "runs"):
+        status, *_ = _call(empty_server, "GET", f"/api/{name}", token=False)
+        assert status == 200, name
+    status, _, body = _call(empty_server, "POST", "/api/input", {"text": "hello"})
+    assert status == 409 and "No project is open" in json.loads(body)["error"]
+    status, *_ = _call(empty_server, "POST", "/api/upload", raw=b"x", headers={"X-Hardy-Filename": "a.txt", "Content-Type": "application/octet-stream"})
+    assert status == 409
+    status, *_ = _call(empty_server, "PUT", "/api/file", {"path": "lean/A.lean", "source": ""})
+    assert status == 409
+    status, *_ = _call(empty_server, "PATCH", "/api/projects/sylow/chats/main", {"title": "x"})
+    assert status == 409
+    status, *_ = _call(empty_server, "POST", "/api/close")
+    assert status == 200
+
+
+def test_add_open_close_and_forget_routes(empty_server, tmp_path: Path) -> None:
+    problem = make_problem(tmp_path / "math", "sylow")
+    status, _, body = _call(empty_server, "POST", "/api/projects/add", {"path": str(tmp_path / "math")})
+    assert status == 200 and [row["slug"] for row in json.loads(body)] == ["sylow"]
+    status, _, body = _call(empty_server, "POST", "/api/open", {"path": str(problem)})
+    state = json.loads(body)
+    assert status == 200 and state["open"] is True and state["slug"] == "sylow" and state["root"] == str(tmp_path / "math")
+    status, _, body = _call(empty_server, "GET", "/api/chats", token=False)
+    assert status == 200
+    status, _, body = _call(empty_server, "POST", "/api/projects/forget", {"path": str(problem)})
+    assert status == 400 and "Close it first" in json.loads(body)["error"]
+    status, _, body = _call(empty_server, "POST", "/api/close")
+    assert status == 200 and json.loads(body)["open"] is False
+    status, _, body = _call(empty_server, "POST", "/api/projects/forget", {"path": str(problem)})
+    assert status == 200 and json.loads(body) == []
+    assert problem.is_dir()
+    status, _, body = _call(empty_server, "POST", "/api/projects/add", {"path": str(tmp_path / "nowhere")})
+    assert status == 400 and "does not exist" in json.loads(body)["error"]
 
 
 def test_library_route_imports_a_staged_document_and_refuses_mid_turn(
