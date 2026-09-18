@@ -305,6 +305,38 @@ def run_installer_functions(body: str, script: Path = POWERSHELL_SCRIPT) -> subp
     return subprocess.run([powershell, "-NoProfile", "-Command", preamble + body], capture_output=True, text=True)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the shortcut is made through the Windows shell's own COM object")
+def test_the_windows_launcher_points_hardy_at_the_browser(tmp_path: Path):
+    """The Desktop and Start Menu shortcuts run `hardy web --open`, from the
+    venv's own hardy.exe, and are not made where the folder is missing."""
+    target = tmp_path / "venv" / "Scripts" / "hardy.exe"
+    made = tmp_path / "desktop"
+    made.mkdir()
+    body = (
+        f"$made = New-Launcher '{target}' '{made}' '{tmp_path}'; "
+        f"$none = New-Launcher '{target}' '{tmp_path / 'missing'}' '{tmp_path}'; "
+        "$shell = New-Object -ComObject WScript.Shell; "
+        "$link = $shell.CreateShortcut($made); "
+        "Write-Output $made; Write-Output $link.TargetPath; Write-Output $link.Arguments; "
+        "Write-Output $link.WorkingDirectory; Write-Output ('none=' + [string]($null -eq $none))"
+    )
+    result = run_installer_functions(body)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert lines[0] == str(made / "Hardy.lnk") and (made / "Hardy.lnk").is_file()
+    assert lines[1].lower() == str(target).lower()
+    assert lines[2] == "web --open"
+    assert lines[3].lower() == str(tmp_path).lower()
+    assert lines[4] == "none=True"
+    assert not (tmp_path / "missing").exists()
+
+
+def test_the_windows_uninstaller_takes_the_launchers():
+    source = (SCRIPTS / "uninstall-windows.ps1").read_text(encoding="utf-8")
+    assert "Hardy.lnk" in source
+    assert "GetFolderPath('Desktop')" in source and "GetFolderPath('Programs')" in source
+
+
 def test_the_windows_installer_writes_files_without_a_byte_order_mark(tmp_path: Path):
     """Windows PowerShell's `-Encoding UTF8` prepends a BOM.
 
