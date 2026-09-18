@@ -38,13 +38,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from web_fakes import FakeSession, make_config, make_problem  # noqa: E402
+from web_fakes import FakeSession, make_config, make_problem, make_registry  # noqa: E402
 
 from hardy.agents.contracts import TurnEvent  # noqa: E402
 from hardy.app.web.host import WebHost  # noqa: E402
 from hardy.app.web.server import serve  # noqa: E402
 
 SLUG = "sylow"
+#: A second registered problem, in a root of its own, so the page's project
+#: menu has something to switch to and the registry routes have two roots
+#: to move between.
+OTHER = "burnside"
 #: The line that runs the interrupted turn described in the module docstring.
 INTERLEAVE = "interleave"
 NOTICE = "a delegation finished while the turn was still streaming"
@@ -254,9 +258,11 @@ class FakeOpener:
     def __init__(self, root: Path) -> None:
         self.root, self.session = root, None
 
-    def __call__(self, slug, confirm, current, *, chat="main"):
-        self.session = ScriptedSession(self.root / slug, chat)
-        return dataclasses.replace(current, project=slug, chat=chat), self.session
+    def __call__(self, slug, confirm, current, *, chat="main", root=None):
+        moved = {"root": root} if root is not None else {}
+        config = dataclasses.replace(current, project=slug, chat=chat, **moved)
+        self.session = ScriptedSession(config.layout.problem, chat)
+        return config, self.session
 
     def cancel(self) -> bool:
         return False
@@ -283,7 +289,17 @@ def main(argv: list[str] | None = None) -> int:
         seed_ledger(problem)
         seed_workspace(problem)
         config = make_config(root, SLUG)
-        host = WebHost(config, FakeOpener(root), lambda confirm, cfg: ScriptedSession(cfg.layout.problem))
+        # Two registered problems in two roots, the way a real registry
+        # holds them; the launch opens the first, as `hardy web` opens the
+        # last one used.
+        registry = make_registry(root)
+        registry.add(problem)
+        registry.add(make_problem(root / "other", OTHER))
+        registry.touch(problem)
+        host = WebHost(
+            config, FakeOpener(root), lambda confirm, cfg: ScriptedSession(cfg.layout.problem),
+            projects=registry,
+        )
         host.start()
         try:
             serve(host, port=options.port, static=options.static, open_browser=options.open)
