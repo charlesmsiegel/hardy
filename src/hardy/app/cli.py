@@ -1164,7 +1164,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utf8_streams(*streams: Any) -> None:
+    """Write UTF-8 whatever the stream would otherwise pick.
+
+    Hardy prints mathematics: `ℕ`, `∀`, `⟨⟩` in every formalization it shows.
+    A Windows console already takes UTF-8, but a redirected stdout (`hardy
+    prove ... > log`) is opened in the ANSI codepage, and the first `ℕ` ended
+    the run with a UnicodeEncodeError -- recorded as an agent failure, after
+    the model had been paid. Anything that is not a text wrapper, such as a
+    test's capture, is left as it is.
+    """
+    for stream in streams:
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None and str(getattr(stream, "encoding", "")).lower().replace("-", "") != "utf8":
+            reconfigure(encoding="utf-8")
+
+
 def main() -> int:
+    _utf8_streams(sys.stdout, sys.stderr)
     parser = build_parser()
     args = parser.parse_args()
     config = _config(args, parser)
