@@ -19,6 +19,7 @@ from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.app import config as configuration
 from hardy.app import doctor
+from hardy.app.project_registry import Entry, ProjectRegistry
 from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
 from hardy.app.terminal import ConsoleTerminal
 from hardy.app.wiring import build_prove_workflow, runtime_factory
@@ -73,11 +74,11 @@ def _project_prompt(args: argparse.Namespace) -> Callable[[list[str]], str | Non
     launch that opens a session -- the terminal's or the browser's -- too:
     `doctor`, `latency` and `batch` resolve the same configuration, and
     stopping any of them to ask which problem is active would make a scripted
-    invocation hang on a question its author never asked for. `web` asks at
-    the terminal it was started from, before the server is up, because that is
-    the terminal the user is standing at.
+    invocation hang on a question its author never asked for. Not `web`
+    either: the browser opens a registered project or nothing, and the
+    question a root can pose -- which of its problems -- is one it never asks.
     """
-    if getattr(args, "command", None) not in (None, "chat", "web"):
+    if getattr(args, "command", None) not in (None, "chat"):
         return None
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return None
@@ -107,8 +108,16 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
 def _launch(
     config: configuration.Config,
     args: argparse.Namespace | None = None,
-) -> tuple[ProjectOpener, Callable[[Callable[[dict[str, Any]], bool]], MathematicsSession], Callable[[], None]]:
+    *,
+    open_session: bool = True,
+) -> tuple[ProjectOpener, Callable[[Callable[[dict[str, Any]], bool]], MathematicsSession] | None, Callable[[], None]]:
     """The machinery a launched session needs, and the one way to put it down.
+
+    `open_session=False` is the browser starting with nothing open: the search
+    runtime and the opener are still built, because they are the process's,
+    but no kernel is started and no builder is returned -- there is no problem
+    for either to be about, and a kernel logging into a `cas/` that does not
+    exist would be the first thing to scaffold one.
 
     `hardy chat` and `hardy web` open the same session over the same
     workspace; only what drives it afterwards differs. Both need the
@@ -128,13 +137,16 @@ def _launch(
     # kernel process is not what that fallback should cost. `close` below
     # puts it down exactly once regardless of which path the caller took,
     # or how it ended.
-    cas, cas_detail = cas_tools.build_runtime(
-        backend_name=config.cas_backend,
-        command=config.cas_command,
-        limits=config.limits,
-        log_path=config.layout.cas / "cells.jsonl",
-        cwd=config.layout.cas,
-    )
+    if open_session:
+        cas, cas_detail = cas_tools.build_runtime(
+            backend_name=config.cas_backend,
+            command=config.cas_command,
+            limits=config.limits,
+            log_path=config.layout.cas / "cells.jsonl",
+            cwd=config.layout.cas,
+        )
+    else:
+        cas, cas_detail = None, ""
 
     # Built here for the same reason the CAS runtime is: `run_session` can call
     # its factory twice when the interactive shell falls back to the plain one,
@@ -147,7 +159,7 @@ def _launch(
     # It owns the live CAS runtime from here on, because a switch replaces it
     # and `close` below has to put down whichever one is current.
     opener = ProjectOpener(
-        config.layout.problem,
+        config.layout.problem if open_session else None,
         cas,
         search=search,
         search_detail=search_detail,
@@ -233,7 +245,7 @@ def _launch(
         if opener.cas is not None:
             opener.cas.session.close()
 
-    return opener, build, close
+    return opener, (build if open_session else None), close
 
 
 def _requested_chat(config: configuration.Config, requested: str) -> configuration.Config:
@@ -336,16 +348,49 @@ def _chat(
         close()
 
 
+def _web_target(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, registry: ProjectRegistry,
+) -> Entry | None:
+    """Which registered project `hardy web` opens first, or None for nothing.
+
+    `--project` names one by slug or path and an unknown name is refused
+    with the registered slugs listed, since the browser is where one is
+    added. Without it, the last project opened in the browser -- as long as
+    it still holds a record; a directory that has lost its record is not
+    reopened and scaffolded back into being.
+    """
+    try:
+        wanted = getattr(args, "project", None)
+        if wanted:
+            entry = registry.find(wanted)
+            if entry is None:
+                names = ", ".join(sorted({known.slug for known in registry.entries()})) or "none"
+                parser.error(
+                    f"no registered project named {wanted!r} (registered: {names}); "
+                    "projects are created and added in the browser"
+                )
+            return entry
+        return registry.last_opened()
+    except ValueError as error:
+        parser.error(str(error))
+    raise AssertionError("unreachable: parser.error exits")
+
+
 def _web(
     config: configuration.Config,
     *,
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
+    registry: ProjectRegistry,
+    entry: Entry | None,
 ) -> int:
     """Serve the same session `_chat` runs, to a browser instead of a terminal.
 
     The launch is `_chat`'s, through `_launch`; what differs is that nothing
-    here reads stdin. The shutdown is the part worth reading: Ctrl+C returns
+    here reads stdin, and that the problem opened is a registered one rather
+    than whatever the current directory holds -- or none at all, in which
+    case no layout is prepared, no kernel is started and the page lands on
+    the project menu. The shutdown is the part worth reading: Ctrl+C returns
     from `serve`, and a turn may still be streaming on a worker at that
     moment. `stop` would close the session under it and the browser would
     never see the turn end, so the turn is asked to stop first and only then
@@ -356,19 +401,23 @@ def _web(
     from hardy.app.web.server import serve
 
     requested = getattr(args, "chat", None)
+    if requested and entry is None:
+        parser.error("--chat names a chat of the project being opened; pass --project too, or open one in the browser")
     if requested:
         try:
             config = _requested_chat(config, requested)
         except layout.LayoutError as error:
             parser.error(str(error))
 
-    try:
-        prepare_layout(config)
-    except layout.LayoutError as error:
-        parser.error(str(error))
+    if entry is not None:
+        try:
+            prepare_layout(config)
+        except layout.LayoutError as error:
+            parser.error(str(error))
 
-    opener, build, close = _launch(config, args)
-    host = WebHost(config, opener, lambda confirm, _config: build(confirm))
+    opener, build, close = _launch(config, args, open_session=entry is not None)
+    factory = (lambda confirm, _config: build(confirm)) if build is not None else None
+    host = WebHost(config, opener, factory, projects=registry)
     try:
         try:
             host.start()
@@ -377,6 +426,13 @@ def _web(
             # an obsolete `session.json`, a transcript that leaves the
             # project -- are raised here by the same session being built.
             parser.error(str(error))
+        if entry is not None:
+            # Opened, so it is the one to reopen next time. Best effort, as
+            # every registry write after an open is: the session is up.
+            try:
+                registry.touch(config.layout.problem)
+            except (OSError, ValueError) as error:
+                print(f"Could not record {config.layout.problem} in the project registry: {error}")
         serve(host, port=args.port, open_browser=args.open)
     finally:
         # Suppressed, not asserted: a host that never finished starting is
@@ -1046,10 +1102,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="never touch the host lakefile.toml",
     )
-    web = subparsers.add_parser("web", help="serve the browser client for this root on 127.0.0.1")
-    web.add_argument("--root", type=Path, help="project root (default: the current directory)")
-    web.add_argument("--project", help=f"which problem to open first (default: the active one, or {layout.DEFAULT_SLUG})")
-    web.add_argument("--chat", help=f"which chat to open first (default {layout.DEFAULT_CHAT})")
+    web = subparsers.add_parser("web", help="serve the browser client on 127.0.0.1")
+    web.add_argument(
+        "--project",
+        help="a registered project to open first, by name or path (default: the last one opened in the browser)",
+    )
+    web.add_argument("--chat", help=f"which chat of that project to open first (default {layout.DEFAULT_CHAT})")
     web.add_argument("--port", type=int, default=0, help="port to listen on (default: an ephemeral one)")
     web.add_argument("--open", action="store_true", help="open the page in the default browser")
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
@@ -1184,6 +1242,17 @@ def main() -> int:
     _utf8_streams(sys.stdout, sys.stderr)
     parser = build_parser()
     args = parser.parse_args()
+    registry: ProjectRegistry | None = None
+    entry: Entry | None = None
+    if args.command == "web":
+        # Before the configuration is resolved, because the root the config
+        # layers are read against is the registered project's own -- never
+        # the current directory, which is what `HARDY_ROOT` and the config's
+        # `root` would otherwise supply and what a launcher cannot control.
+        registry = ProjectRegistry()
+        entry = _web_target(args, parser, registry)
+        args.root = entry.root if entry is not None else registry.default_root
+        args.project = entry.slug if entry is not None else None
     config = _config(args, parser)
     if args.command == "doctor":
         return doctor.report(doctor.run_checks(config, deep=args.deep))
@@ -1206,7 +1275,8 @@ def main() -> int:
 
         return library_main(args, config)
     if args.command == "web":
-        return _web(config, parser=parser, args=args)
+        assert registry is not None
+        return _web(config, parser=parser, args=args, registry=registry, entry=entry)
     # No subcommand is intentionally the primary interactive experience.
     return _chat(config, plain=args.plain, parser=parser, args=args)
 
