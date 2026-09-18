@@ -105,11 +105,22 @@ theorem disconnectedNonproper_commonPencil (G : PlaneGeometry F) (h : ¬ G.conne
     G.commonPencil := by
   sorry
 
-/-- **KG-EM09.** In the common-pencil case of a counterexample, exactly two fibers are selected and
-the pencil is not a coordinate. -/
+/-- **KG-EM09.** In the common-pencil case of a counterexample (the case `KG-EM08` reaches from a
+disconnected `S_F`), exactly two fibers are selected and the pencil is not a coordinate. Proved
+as the audit argues it: Assi's dichotomy gives a coordinate pencil or at most two selected
+fibers; Braun–Dias–Venato-Santos excludes the coordinate case for a counterexample; and a
+disconnected `S_F` selects at least two fibers (the record's coherence field
+`selectedFibers_ge_two`). -/
 theorem commonPencil_exactlyTwoFibers (G : PlaneGeometry F) (h : G.commonPencil)
-    (hce : G.isCounterexample) : G.selectedFibers = 2 ∧ ¬ G.pencilIsCoordinate := by
-  sorry
+    (hdis : ¬ G.connected) (hce : G.isCounterexample) :
+    G.selectedFibers = 2 ∧ ¬ G.pencilIsCoordinate := by
+  have hnc : ¬ G.pencilIsCoordinate := fun hc =>
+    Published.counterexampleMeetsEverySubmersionFiber G hce h hc
+  refine ⟨?_, hnc⟩
+  have hle : G.selectedFibers ≤ 2 :=
+    (Published.assiRationalOnePlacePencilDichotomy G h).resolve_left hnc
+  have hge := G.selectedFibers_ge_two h hdis
+  omega
 
 /-- **KG-EM10, the two-nodal-fiber theorem.** A non-étale-maximal plane Keller counterexample has
 `S_F = C₀ ⊔ C₁`, the two exceptional rational nodal members of a noncoordinate one-place pencil.
@@ -118,7 +129,7 @@ theorem nonmaximal_implies_exactlyTwoNodalFibers (G : PlaneGeometry F) (h : ¬ G
     (hce : G.isCounterexample) : G.exactlyTwoNodalFibers := by
   have hdis := nonmaximal_implies_nonproperDisconnected G h
   have hpencil := disconnectedNonproper_commonPencil G hdis
-  obtain ⟨h2, hnc⟩ := commonPencil_exactlyTwoFibers G hpencil hce
+  obtain ⟨h2, hnc⟩ := commonPencil_exactlyTwoFibers G hpencil hdis hce
   exact Published.assiExceptionalTwoFibersEquinodal G hpencil h2 hnc
 
 /-- **KG-P12.** Each component has normalisation `A¹` and one place at infinity: Jelonek's
