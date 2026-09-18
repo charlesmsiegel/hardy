@@ -29,3 +29,8 @@ corpus/** -text
 # exactly what is committed, on every platform.
 web/index.html text eol=lf
 src/hardy/app/web/static/index.html text eol=lf
+# The Keller research root binds its notes and TeX to ledger records by
+# SHA-256 over their bytes, and each downstream ledger pins the digest of the
+# upstream ledger file it mirrors, so a CRLF checkout would fail
+# research/keller/tools/check.py everywhere.
+research/keller/** -text

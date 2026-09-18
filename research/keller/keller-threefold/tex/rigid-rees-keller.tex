@@ -1,0 +1,2682 @@
+\maketitle
+
+\begin{abstract}
+Let $F\colon\A^3_{\C}\to\A^3_{\C}$ be the explicit noninvertible polynomial map with constant nonzero Jacobian displayed in \eqref{eq:F}.  The construction studied in this paper was motivated by the Zariski cancellation problem: varieties attached to the double points of $F$ were examined as possible characteristic-zero examples of an affine threefold $X\not\simeq\A^3$ with $X\times\A^1\simeq\A^4$.  The construction does not produce such an example.  Instead, it leads to a general rigidity theorem and to an explicit threefold whose topology supplies an independent stable obstruction to cancellation.
+
+The inverse geometry of $F$ is encoded by the binary cubic
+\[
+  \Phi_{A,B,C}(S,T)=2AS^3-BS^2T+2ST^2-CT^3.
+\]
+We prove that the source is isomorphic to the simple-root locus in the projective incidence variety $\{\Phi=0\}\subset\A^3\times\Pj^1$.  This gives the complete fiber census: three points away from the discriminant hypersurface, one point on its smooth stratum, and no point on its triple-root curve.  An affine cubic obtained by eliminating variables remains a useful identity, but it does not separate sheets: two distinct points of a fiber can have the same $x$-coordinate.
+
+The discriminant filling
+\[
+  X=\{w^2=\delta\circ F\}\subset\A^4
+\]
+is a smooth rational affine threefold.  An explicit equation $hz=N$ realizes $X$ as an affine modification of $\A^3$.  We prove that $X$ is factorial, that $\OO(X)^*=\C^*$, and that $\Pic(X)=0$.  A hyperbolic $\Gm$-action identifies $\OO(X)$ with the extended Rees algebra of a $(1,1,2)$-weighted filtration on a smooth affine surface $\Sigma$ of logarithmic Kodaira dimension zero.
+
+The rigidity statement admits two complementary proofs.  A short conceptual proof places it in the general theory of cylindrical elements in graded rings: the theorem of Chitayat--Daigle on graded nonrigidity produces a degree-zero affine-line cylinder, while the surface theory of Miyanishi--Sugie and Keel--McKernan rules out the resulting affine-line covering family when the base surface has nonnegative logarithmic Kodaira dimension.  We also give a direct proof in Rees coordinates, using homogeneous locally nilpotent derivations and a local slice.  Thus a finitely generated extended Rees algebra associated with a multiplicative filtration on such a surface is rigid, and its Makar--Limanov invariant is the whole coordinate ring.  Independently, an integral van Kampen--Thom calculation gives
+\[
+  \pi_1(X)=1,
+  \qquad
+  H_i(X;\Z)=
+  \begin{cases}
+    \Z,&i=0,2,3,\\
+    0,&\text{otherwise},
+  \end{cases}
+  \qquad
+  \pi_2(X)\simeq\Z.
+\]
+Thus $X$ is simply connected, rational, factorial, rigid, and noncontractible, has only constant units, and $X\times\A^d$ is not affine space for any $d\geq0$.  This conjunction is notable because the birational, codimension-one, and fundamental-group invariants are all affine-space-like, while $X$ lies at the opposite extreme from affine space with respect to additive symmetries and has nonzero homology in degrees $2$ and $3$.  After comparison with the closest published constructions, we are not aware of a previously published smooth complex affine threefold carrying this exact package, including $\chi(X)=1$ and $H_2(X;\Z)\simeq H_3(X;\Z)\simeq\Z$; this is a cautious bibliographic assessment, not a theorem.  The Rees coordinate also defines a smooth equivariant family whose nonzero fibers have logarithmic Kodaira dimension zero and whose special fiber is $\A^2$.  We close with a precise reconstruction statement using active monodromy data and with an account of what the failed cancellation strategy reveals about the strengths and limits of additive-group invariants.
+\end{abstract}
+
+\tableofcontents
+
+\part{Orientation and prerequisites}\label{part:orientation}
+\section{Introduction}\label{sec:introduction}
+
+\subsection{The map and the Jacobian problem}
+
+\begin{construction}[The polynomial map]\label{con:polynomial-map}
+Use source coordinates $(x,y,z)$ and target coordinates $(A,B,C)$ on affine three-space.  Define
+\begin{equation}\label{eq:F}
+\begin{aligned}
+ a&=(1+xy)^3z+y^2(1+xy)(4+3xy),\\
+ b&=y+3x(1+xy)^2z+3xy^2(4+3xy),\\
+ c&=2x-3x^2y-x^3z,
+\end{aligned}
+\qquad
+F=(a,b,c)\colon\A^3\longrightarrow\A^3.
+\end{equation}
+The formula was announced by Alp\"oge in July 2026 \cite{Alpoge2026}.  A contemporaneous verification preprint develops a related projective-root description \cite{Verification2026}.  Every property of $F$ used below is proved in this paper from \eqref{eq:F}.
+\end{construction}
+
+\begin{definition}[Jacobian matrix and Keller map]\label{def:keller-map}
+For a polynomial map $G=(g_1,\ldots,g_n)$, its Jacobian matrix is
+\[
+  JG=\left(\frac{\partial g_i}{\partial x_j}\right)_{i,j}.
+\]
+A polynomial endomorphism $G\colon\A^n_{\C}\to\A^n_{\C}$ is a \emph{Keller map} if $\det JG$ is a nonzero constant.
+\end{definition}
+
+\begin{problem}[Jacobian conjecture]\label{prob:jacobian-conjecture}
+The Jacobian conjecture asserted that every Keller map over a characteristic-zero field is a polynomial automorphism \cite{Keller1939,BCW1982,vanDenEssen2000}.
+\end{problem}
+
+\begin{observation}[What the explicit map shows]\label{obs:F-jacobian-outcome}
+The map $F$ is an etale, noninjective polynomial endomorphism: $\det JF=-2$, and one fiber contains three distinct points.  Products with identity maps give analogous examples in every dimension at least three.  This construction does not resolve the planar case.
+\end{observation}
+
+\begin{proof}[Location of the verification]
+The determinant and the explicit three-point fiber are proved in \cref{prop:keller}.  Etaleness then follows from the Jacobian criterion in \cref{thm:basic-morphism-facts}(e).
+\end{proof}
+
+The example is locally regular but globally noninvertible because of behavior at infinity.  Its image omits a curve, while the nonproperness locus is a hypersurface; \cref{sec:fibers} distinguishes these two sets.
+
+\subsection{The cancellation strategy}
+
+\begin{problem}[Zariski cancellation]\label{prob:zariski-cancellation}
+The Zariski cancellation problem asks whether
+\[
+  X\times\A^1\simeq Y\times\A^1
+  \quad\Longrightarrow\quad
+  X\simeq Y.
+\]
+The affine-space specialization asks whether
+\[
+  X\times\A^1\simeq\A^{n+1}
+  \quad\Longrightarrow\quad
+  X\simeq\A^n.
+\]
+\end{problem}
+
+\begin{historicalnote}[Status and the role of additive-group invariants]\label{hist:cancellation-status}
+Cancellation holds for the affine line and affine plane.  In characteristic zero, the affine-space problem remains open in dimensions at least three; see Gupta's survey and the survey of locally nilpotent methods by Venegas--Venegas \cite{Gupta2022,VenegasVenegas2025}.  In positive characteristic it fails in dimensions at least three \cite{Gupta2014}.  The Makar--Limanov invariant has separated many exotic affine varieties from affine space, beginning with the Koras--Russell cubic \cite{MakarLimanov1996,KalimanMakarLimanov1997}, but that invariant can become trivial after forming a cylinder \cite{Dubouloz2009}.
+\end{historicalnote}
+
+\begin{construction}[The two cancellation candidates]\label{con:cancellation-candidates}
+The map $F$ naturally produces two affine threefolds.  The ordered double-point variety is
+\[
+  Y=\{(p,q)\in\A^3\times\A^3:F(p)=F(q),\ p\ne q\}.
+\]
+The discriminant filling is
+\[
+  X=\{(x,y,z,w)\in\A^4:w^2=\delta(F(x,y,z))\},
+\]
+where $\delta$ is the signed discriminant defined in \cref{def:discriminant-hypersurface}.  Their intrinsic definitions and geometry are developed in \cref{sec:double-filling}.
+\end{construction}
+
+\begin{observation}[Outcome of the cancellation strategy]\label{obs:cancellation-outcome}
+Neither $Y$ nor $X$ is a cancellation counterexample.  The ring $\OO(Y)$ has a nonconstant unit.  The filling $X$ has only constant units, but it is rigid and noncontractible.  In fact,
+\[
+  X\times\A^d\not\simeq\A^{3+d}
+  \qquad(d\geq0).
+\]
+\end{observation}
+
+\begin{proof}[Where the obstructions are proved]
+The unit obstruction for $Y$ is \cref{thm:Y}.  Rigidity of $X$ is \cref{cor:X-rigid}, and the stable topological obstruction is \cref{cor:all-cylinders}.
+\end{proof}
+
+\subsection{Main results}
+
+\begin{theorem}[Main results, in geometric form]\label{thm:main-results}
+The following statements hold.
+\begin{enumerate}[label=\textup{(\roman*)},leftmargin=2.5em]
+\item Let $\Sigma$ be a smooth affine surface with $\kbar(\Sigma)\geq0$.  Every finitely generated extended Rees algebra of a nonzero multiplicative ideal filtration on $\Sigma$ is rigid.
+\item The fibers of $F$ are the simple projective roots of a binary cubic.  They have cardinality $3$, $1$, or $0$ according as the target point lies off the discriminant, on its smooth stratum, or on its triple-root curve.  The nonproperness locus is the discriminant hypersurface and the monodromy group is $S_3$.
+\item The discriminant filling $X$ is smooth, rational, factorial, and rigid; $\OO(X)^*=\C^*$ and $\Pic(X)=0$.  Moreover,
+\[
+  \pi_1(X)=1,
+  \qquad
+  H_i(X;\Z)=
+  \begin{cases}
+    \Z,&i=0,2,3,\\
+    0,&\text{otherwise},
+  \end{cases}
+  \qquad
+  \pi_2(X)\simeq\Z.
+\]
+\item The Rees coordinate defines a smooth family $X\to\A^1$ whose nonzero fibers are mutually isomorphic surfaces of logarithmic Kodaira dimension zero and whose special fiber is $\A^2$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}[Location of the proofs]
+Statement (i) is \cref{thm:rees-rigidity}.  Statement (ii) follows from \cref{thm:incidence-isomorphism,thm:fiber-census,thm:nonproperness,prop:monodromy}.  Statement (iii) is assembled from \cref{thm:filling,thm:factorial-units,cor:X-rigid,thm:pi1,thm:homology}.  Statement (iv) is \cref{prop:smooth-family}.
+\end{proof}
+
+\begin{observation}[Why the package is informative]\label{obs:package-informative}
+Rationality controls the function field, factoriality controls codimension-one algebra, simple connectivity controls the first homotopy group, and rigidity controls algebraic $\Ga$-actions.  None of these properties forces contractibility.  Here they coexist with
+\[
+  \chi(X)=1,
+  \qquad
+  H_2(X;\Z)\simeq H_3(X;\Z)\simeq\Z.
+\]
+Thus several coarse tests agree with affine space while higher topology does not; see \cref{subsec:why-notable,subsec:closest-comparisons} for the structural explanation and the closest published comparisons.
+\end{observation}
+
+\subsection{Literature context for Rees rigidity}\label{subsec:rees-literature}
+
+The rigidity criterion belongs to a well-developed circle of ideas.  The following notes separate the four inputs most relevant to its formulation.
+
+\begin{historicalnote}[Filtrations and homogeneous derivations]\label{hist:filtration-method}
+A standard rigidity method places a degree function or filtration on an affine domain, passes a hypothetical locally nilpotent derivation to a homogeneous derivation on an associated graded ring, and rules out the homogeneous possibilities.  Crachiola--Maubach organize this under \emph{filtration techniques} and \emph{parametrization techniques}, including their failure modes \cite{CrachiolaMaubach2013}.  The direct proof of \cref{thm:rees-rigidity} starts this way, but its decisive negative-degree step is global: a local slice produces an affine-line covering family of the degree-zero surface.
+\end{historicalnote}
+
+\begin{historicalnote}[Principal extended Rees algebras]\label{hist:principal-rees}
+For a principal filtration $\mathfrak a_m=(f^m)$,
+\[
+  \cR^{\mathrm{ext}}(\mathfrak a_\bullet)
+  =R[x,fx^{-1}]
+  \simeq R[u,v]/(uv-f).
+\]
+Freudenburg--Moser-Jauslin prove that this ring is rigid whenever $R$ is a rigid affine domain; see their Corollary 4.6 and Remark 10.3 \cite{FreudenburgMoserJauslin2013}.  Their theorem is stronger in the principal case because it requires only rigidity of $R$.  The theorem here allows nonprincipal filtrations, subject to finite generation, but uses the stronger surface hypothesis $\kbar\geq0$.
+\end{historicalnote}
+
+\begin{historicalnote}[Cylindricity of graded rings]\label{hist:graded-cylindricity}
+The closest general antecedent is Chitayat--Daigle's theorem on cylindrical elements of finitely generated $\Z$-graded domains \cite{ChitayatDaigle2024}, recalled precisely in \cref{thm:graded-cylindricity}.  It extends affine-cone criteria of Kishimoto--Prokhorov--Zaidenberg \cite{KishimotoProkhorovZaidenberg2013}.  Because an extended Rees algebra has nonzero homogeneous pieces of both signs, nonrigidity produces a homogeneous localization whose degree-zero ring is a polynomial ring $A[u]$.  The Rees degree-zero ring embeds into that cylinder, yielding the short proof of \cref{thm:rees-rigidity}.
+\end{historicalnote}
+
+\begin{historicalnote}[Affine-line geometry of surfaces]\label{hist:a1-surfaces}
+The final contradiction is special to dimension two.  The structure theory of affine-ruled surfaces was developed by Miyanishi--Sugie, Russell, and Miyanishi \cite{MiyanishiSugie1980,Russell1981,Miyanishi1982}.  Keel--McKernan's logarithmic bend-and-break theorem relates the absence of logarithmic pluricanonical sections to domination by affine lines \cite[Theorem 1.1]{KeelMcKernan1999}.  For smooth affine surfaces this gives the equivalence recalled in \cref{thm:surface-a1}; Dubouloz--Kishimoto provide a concise modern account and explain why the corresponding equivalence fails in higher dimensions \cite[Introduction]{DuboulozKishimoto2015}.
+\end{historicalnote}
+
+\begin{observation}[Position of the theorem in the literature]\label{obs:rees-position}
+The arbitrary-filtration statement proved here is best viewed as an extended-Rees formulation and geometric application of graded cylindricity, rather than as an unrelated rigidity mechanism.  The contribution is the formulation for finitely generated multiplicative ideal filtrations, the short passage through the degree-zero surface, an independent proof in Rees coordinates, and the explicit threefold application developed below.
+\end{observation}
+
+\begin{warning}[Rigidity is not automatically stable]\label{warn:stable-rigidity}
+Crachiola--Makar-Limanov show that one polynomial variable over a finitely generated rigid domain preserves enough of the Makar--Limanov invariant to obstruct an affine-space cylinder \cite[Theorem 3.1]{CrachiolaMakarLimanov2008}.  This is not a general stable-rigidity theorem.  Dubouloz constructed a rigid smooth rational affine surface whose $\A^2$-cylinder is highly flexible away from a codimension-two subset \cite{Dubouloz2015Flexible}.
+\end{warning}
+
+\subsection{Reading guide}
+
+\begin{roadmap}[Organization of the paper]\label{roadmap:paper}
+\Cref{sec:background,sec:actions-rees-log,sec:topological-prelim} collect definitions and recalled results, each with a point-of-use citation.  \Cref{sec:rees-rigidity} proves the general theorem.  \Cref{sec:binary-cubic,sec:fibers,sec:double-filling} analyze the explicit map and its covers.  \Cref{sec:structure,sec:rees-structure,sec:topology} determine the algebraic structure, rigidity, degeneration, and topology of $X$.  The final part discusses active monodromy data, symmetries, mathematical significance, the closest published comparison families, a cautious priority statement, and open questions.  The symbolic regression suite and the source map are placed in appendices.
+\end{roadmap}
+
+\section{Conventions and affine-algebraic preliminaries}\label{sec:background}
+
+\subsection{Basic affine language}
+
+\begin{convention}[Ground field and category]\label{conv:ground-field}
+The ground field is $\C$.  Unless explicitly stated otherwise, every scheme is separated and of finite type over $\C$, and every variety is reduced.  The main geometric objects are affine varieties.  When topology is discussed, a complex variety is replaced by its associated analytic space.
+\end{convention}
+
+\begin{definition}[Affine varieties and coordinate rings]\label{def:affine-variety}
+Let $A$ be a finitely generated reduced $\C$-algebra.  The associated affine variety is $X=\Spec A$, and its ring of global regular functions is $\OO(X)=A$.  A morphism $\Spec B\to\Spec A$ corresponds contravariantly to a $\C$-algebra homomorphism $A\to B$.  For an ideal $I\subseteq A$, write $V(I)$ for the corresponding closed subvariety.  For $g\in A$, write $D(g)=\Spec A_g$ for the principal open subset on which $g$ does not vanish.  A \emph{unit} is an element of $A$ having a multiplicative inverse.
+\end{definition}
+
+\begin{remark}[Textbook references]\label{rem:textbook-references}
+Localization, prime spectra, units, integral dependence, Noetherian rings, the Nullstellensatz, and Krull dimension are treated in Atiyah--Macdonald \cite[Chapters 1, 3, 5, 7, and 11]{AtiyahMacdonald}.  Eisenbud gives a broader commutative-algebra treatment, including filtrations and flat families \cite[Chapters 1--6 and 13]{Eisenbud1995}.  The affine algebra--geometry dictionary is developed in Hartshorne \cite[Chapter I and Chapter II, Sections 2--4]{Hartshorne1977}.
+\end{remark}
+
+\begin{definition}[Irreducibility, function fields, dimension, and rationality]\label{def:function-field-rational}
+An affine variety $X=\Spec A$ is \emph{irreducible} when $A$ is a domain.  For irreducible $X$, its function field is $\C(X)=\Frac A$, and
+\[
+  \dim X=\trdeg_{\C}\C(X).
+\]
+The variety is \emph{rational} if $\C(X)$ is purely transcendental over $\C$, equivalently if $X$ is birational to affine space of the same dimension.
+\end{definition}
+
+\begin{definition}[Dominant and generically finite morphisms]\label{def:dominant-generically-finite}
+A morphism $f\colon X\to Y$ between irreducible varieties is \emph{dominant} if its image is dense; equivalently, the induced map $\C(Y)\to\C(X)$ is injective.  It is \emph{generically finite} if the corresponding extension $\C(Y)\subseteq\C(X)$ is finite.  The degree of that extension is the \emph{generic degree} of $f$.
+\end{definition}
+
+\begin{proof}[Reference]
+These equivalences and definitions are standard; see Hartshorne \cite[Chapter I, Section 4]{Hartshorne1977}.
+\end{proof}
+
+\subsection{Morphisms, normalization, and branch loci}
+
+\begin{definition}[Finite, quasi-finite, proper, smooth, and etale morphisms]\label{def:morphism-types}
+Let $f\colon X\to Y$ be a morphism of finite type.
+\begin{enumerate}[label=\textup{(\alph*)},leftmargin=2.5em]
+\item If $X=\Spec B$ and $Y=\Spec A$, then $f$ is \emph{finite} when $B$ is a finitely generated $A$-module.
+\item The morphism is \emph{quasi-finite} when it has finite fibers locally on the source and target.
+\item The morphism is \emph{proper} when it is separated, of finite type, and universally closed; this is the algebro-geometric analogue of compactness.
+\item It is \emph{smooth of relative dimension $d$} when it is locally of finite presentation, flat, and has smooth geometric fibers of pure dimension $d$.
+\item It is \emph{etale} when it is smooth of relative dimension zero.
+\end{enumerate}
+\end{definition}
+
+\begin{recalledtheorem}[Basic facts about these morphisms]\label{thm:basic-morphism-facts}
+The following standard facts will be used repeatedly.
+\begin{enumerate}[label=\textup{(\alph*)},leftmargin=2.5em]
+\item Finite morphisms are proper and have finite fibers.
+\item A proper locally quasi-finite morphism is finite.
+\item Projective morphisms are proper.
+\item A flat, locally finitely presented morphism with smooth geometric fibers is smooth.
+\item For a polynomial map between smooth affine spaces of the same dimension, an everywhere nonzero Jacobian determinant implies etaleness.
+\item A universally injective etale morphism is an open immersion.
+\end{enumerate}
+\end{recalledtheorem}
+
+\begin{proof}[References]
+See Hartshorne \cite[Chapter II, Section 4]{Hartshorne1977}, the Stacks Project \cite[Tags 0F2P, 01W7, 01W0, 01V4, 02GH, and 02LC]{StacksProject}, and van den Essen \cite[Chapter 1]{vanDenEssen2000}.
+\end{proof}
+
+\begin{recalledtheorem}[Zariski's Main Theorem]\label{thm:zariski-main}
+Every quasi-finite separated morphism factors as an open immersion followed by a finite morphism.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+See the Stacks Project \cite[Tag 02LQ]{StacksProject}.
+\end{proof}
+
+\begin{definition}[Normalization and branch locus]\label{def:normalization}
+Let $A$ be a domain with fraction field $K$.  The \emph{normalization} of $A$ is its integral closure $A^{\nu}$ in $K$; geometrically, $\Spec A^{\nu}\to\Spec A$ is the normalization morphism.  More generally, if $L/K$ is a finite field extension, the normalization of $\Spec A$ in $L$ is obtained from the integral closure of $A$ in $L$.  For a finite generically etale morphism, the \emph{branch locus} is the closed subset of the target over which the morphism is not etale.
+\end{definition}
+
+\begin{recalledtheorem}[Finite normalization and purity]\label{thm:normalization-purity}
+Varieties over $\C$ are Nagata, so normalization in a finite field extension is finite.  If a finite generically etale morphism has normal source and smooth target, then its non-etale locus cannot map only into codimension at least two; equivalently, a nonempty branch locus has pure codimension one.
+\end{recalledtheorem}
+
+\begin{proof}[References]
+For integral closure see Atiyah--Macdonald \cite[Chapter 5]{AtiyahMacdonald} and Eisenbud \cite[Chapter 4]{Eisenbud1995}.  Finiteness and purity are given in the Stacks Project \cite[Tags 035S, 0BXQ, and 0BJE]{StacksProject}.
+\end{proof}
+
+\subsection{Divisors, class groups, and factoriality}
+
+\begin{definition}[Weil divisors, class groups, and Picard groups]\label{def:divisors-class-pic}
+Let $X$ be a normal irreducible variety.  A \emph{Weil divisor} is an integral linear combination of irreducible codimension-one subvarieties.  Principal divisors form a subgroup of the Weil divisors, and the quotient is the divisor class group $\Cl(X)$.  The Picard group $\Pic(X)$ is the group of isomorphism classes of algebraic line bundles under tensor product.
+\end{definition}
+
+\begin{definition}[Factorial affine varieties and principal divisors]\label{def:factorial-principal}
+A domain is a \emph{unique factorization domain} (UFD) if every nonzero nonunit factors uniquely into irreducibles up to order and units.  A normal affine variety $X=\Spec A$ is \emph{factorial} when $A$ is a UFD.  For $f\in\OO(X)$, the notation $\divisor_X(f)$ denotes its principal Weil divisor.  If $D=V(f)$ is an irreducible reduced divisor, the equality $\divisor_X(f)=D$ means that $f$ vanishes to order one along $D$ and has no other divisorial zero.
+\end{definition}
+
+\begin{recalledproposition}[Smoothness, class groups, and the UFD criterion]\label{prop:pic-cl-ufd}
+On a smooth variety, every Weil divisor is Cartier and the natural map $\Pic(X)\to\Cl(X)$ is an isomorphism.  For a normal affine domain $A$, one has $\Cl(\Spec A)=0$ if and only if $A$ is a UFD.  If $U=X\setminus D$ is obtained by removing codimension-one components, the localization sequence expresses $\Cl(U)$ as a quotient of $\Cl(X)$ by the classes of those components.
+\end{recalledproposition}
+
+\begin{proof}[References]
+See Hartshorne \cite[Chapter II, Section 6, especially Propositions 6.2 and 6.5 and Corollary 6.16]{Hartshorne1977} and Eisenbud \cite[Chapters 4 and 11]{Eisenbud1995}.
+\end{proof}
+
+\subsection{Global notation}
+
+\begin{notation}[Persistent symbols]\label{not:global}
+Symbols used across multiple parts of the paper are listed in the following table.  Symbols local to a proof are introduced in the statement or standing setup where they first occur.
+\end{notation}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.19\textwidth}p{0.73\textwidth}}
+\toprule
+Symbol & Meaning \\
+\midrule
+\endfirsthead
+\toprule
+Symbol & Meaning \\
+\midrule
+\endhead
+$\A^n,\Pj^n$ & Affine and projective $n$-space over $\C$. \\
+$\Ga,\Gm$ & Additive and multiplicative algebraic groups. \\
+$S_d$ & Symmetric group on $d$ letters. \\
+$\OO(X)$ & Ring of global regular functions on an affine variety $X$. \\
+$\Cl(X),\Pic(X)$ & Weil divisor class group and Picard group. \\
+$\LND(B),\ML(B)$ & Locally nilpotent derivations and Makar--Limanov invariant of a domain $B$. \\
+$B^{(d)},B_{(f)}$ & The $d$th Veronese subring and the degree-zero part $(B_f)_0$ of a homogeneous localization. \\
+$\kbar(\Sigma)$ & Logarithmic Kodaira dimension of a smooth quasi-projective variety. \\
+$H_i(-;\Z),\pi_i(-),\chi$ & Singular homology, homotopy groups, and compactly supported Euler characteristic. \\
+$(x,y,z)$ & Source coordinates for $F$. \\
+$(A,B,C)$ & Target coordinates for $F$. \\
+$F=(a,b,c),\ JF$ & The polynomial map in \eqref{eq:F} and its Jacobian matrix. \\
+$\Phi_{A,B,C}(S,T)$ & Binary cubic controlling the fibers of $F$; $[S:T]$ are homogeneous root coordinates. \\
+$\Delta$ & Standard discriminant polynomial of $\Phi$; $\delta=-\Delta$ is the sign used in the equation $w^2=\delta\circ F$. \\
+$\cS=V(\Delta)$ & Discriminant and nonproperness hypersurface in the target. \\
+$\Gamma$ & Triple-root curve, equal to $\Sing\cS$ and to the omitted locus. \\
+$\cT=F^{-1}(\cS)$ & One-point stratum in the source. \\
+$Y$ & Ordered double-point threefold. \\
+$\cB$ & Branch divisor $V_X(w)$ in the discriminant filling. \\
+$X$ & Discriminant filling $\{w^2=\delta\circ F\}$. \\
+$X'$ & Isomorphic affine-modification model $\{hz=N\}$. \\
+$H=V(h)$ & Modifying divisor in $\A^3_{x,y,V}$. \\
+$C_0=V(h,N)$ & Center of the affine modification; $C_0\simeq\C^*$. \\
+$D$ & Exceptional divisor in $X'$, isomorphic to $C_0\times\A^1$. \\
+$\Sigma_c$ & Fiber $\{x=c\}\subset X'$; $\Sigma_1$ is also the $\Gm$ quotient. \\
+$s,p,q$ & Quotient invariants $xy,xV,x^2z$ introduced in \eqref{eq:invariants}. \\
+$R$ & A generic surface coordinate ring in the Rees theorem, and later $\OO(\Sigma_1)$ when specified. \\
+$\cE$ & Extended Rees algebra; in the explicit construction, $\cE=\OO(X)$. \\
+\bottomrule
+\end{longtable}
+
+
+\section{Actions, Rees algebras, and logarithmic surfaces}\label{sec:actions-rees-log}
+
+\subsection{Algebraic group actions and locally nilpotent derivations}
+
+\begin{definition}[The groups $\Ga$ and $\Gm$, characters, and semi-invariants]\label{def:basic-groups}
+The additive and multiplicative algebraic groups are
+\[
+  \Ga=\Spec\C[t],
+  \qquad
+  \Gm=\Spec\C[t,t^{-1}].
+\]
+A \emph{character} of an algebraic group $G$ is an algebraic homomorphism $G\to\Gm$.  A regular or rational function that transforms by a character is a \emph{semi-invariant}.
+\end{definition}
+
+\begin{definition}[$\Gm$-actions, gradings, quotients, and hyperbolicity]\label{def:gm-grading}
+An algebraic $\Gm$-action on an affine variety $X=\Spec B$ is equivalent to a $\Z$-grading
+\[
+  B=\bigoplus_{n\in\Z}B_n,
+\]
+where $b\in B_n$ transforms by $\lambda\cdot b=\lambda^n b$.  The invariant ring is $B^{\Gm}=B_0$, and the affine categorical quotient is $X/\!/\Gm=\Spec B_0$.  The action is \emph{hyperbolic} when nonzero homogeneous pieces occur in both positive and negative degrees.
+\end{definition}
+
+\begin{proof}[Reference]
+For affine algebraic groups, characters, actions, and invariant quotients see Milne \cite[Chapters 2, 12, and 14]{Milne2017}.
+\end{proof}
+
+\begin{definition}[Locally nilpotent derivations, rigidity, and the Makar--Limanov invariant]\label{def:lnd-rigidity}
+Let $B$ be a $\C$-domain.  A derivation $\partial\colon B\to B$ is \emph{locally nilpotent} if every $b\in B$ is annihilated by some power of $\partial$.  Write $\LND(B)$ for the set of locally nilpotent derivations and define
+\[
+  \ML(B)=\bigcap_{\partial\in\LND(B)}\ker\partial.
+\]
+The ring $B$, or $\Spec B$, is \emph{rigid} if $\LND(B)=\{0\}$, equivalently $\ML(B)=B$.  A subring $K\subseteq B$ is \emph{factorially closed} if $uv\in K\setminus\{0\}$ implies $u,v\in K$.  A \emph{local slice} for an LND is an element $\tau$ with $\partial(\tau)=1$ after localizing at a nonzero kernel element.
+\end{definition}
+
+\begin{recalledtheorem}[The LND--$\Ga$ dictionary and standard LND facts]\label{thm:lnd-standard}
+Over a field of characteristic zero, algebraic $\Ga$-actions on $\Spec B$ correspond to locally nilpotent derivations of $B$.  If $\partial\neq0$ is locally nilpotent on a domain, then $\ker\partial$ is factorially closed and has transcendence degree one less than $B$.  After localizing at a suitable nonzero element of $\ker\partial$, the algebra is a polynomial ring in a local slice over the localized kernel.  Finally, on a finitely generated graded domain, the highest nonzero homogeneous component of an LND is again locally nilpotent.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+See Freudenburg \cite[Chapter 1, especially Sections 1.1--1.3]{Freudenburg2017}.
+\end{proof}
+
+\begin{definition}[Veronese subrings and cylindrical homogeneous elements]\label{def:cylindrical}
+Let $B=\bigoplus_{n\in\Z}B_n$ be a $\Z$-graded domain.  For $d\geq1$, its $d$th \emph{Veronese subring} is
+\[
+  B^{(d)}=\bigoplus_{n\in\Z}B_{dn}.
+\]
+If $f\in B$ is nonzero, homogeneous, and of nonzero degree, the localization $B_f$ is graded; write $B_{(f)}=(B_f)_0$.  Following Chitayat--Daigle, $f$ is \emph{cylindrical} if $B_{(f)}$ is a polynomial ring in one variable over a subring, say $B_{(f)}=A[u]$.
+\end{definition}
+
+\begin{recalledtheorem}[Graded cylindricity]\label{thm:graded-cylindricity}
+Let $B$ be a finitely generated $\Z$-graded domain over a characteristic-zero field.  Under either of the grading hypotheses in Chitayat--Daigle's theorem, nonrigidity of a suitable Veronese subring is equivalent to the existence of a cylindrical homogeneous element.  In particular, if nonzero homogeneous pieces occur in both positive and negative degrees and $B$ is nonrigid, then $B$ itself has a cylindrical homogeneous element.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+This is the implication needed from Chitayat--Daigle \cite[Theorem 1.2(1)]{ChitayatDaigle2024}; their result extends earlier affine-cone criteria of Kishimoto--Prokhorov--Zaidenberg \cite{KishimotoProkhorovZaidenberg2013}.
+\end{proof}
+
+\begin{definition}[Flexibility]\label{def:flexibility}
+A smooth affine variety is \emph{flexible} if, at every point, its tangent space is spanned by tangent vectors to orbits of one-parameter unipotent subgroups, equivalently by velocity vectors of $\Ga$-actions.
+\end{definition}
+
+\begin{recalledtheorem}[Flexibility and infinite transitivity]\label{thm:flexibility}
+For an irreducible affine variety of dimension at least two, flexibility is equivalent to transitivity, and in fact to infinite transitivity, of the subgroup of automorphisms generated by all $\Ga$-subgroups on the smooth locus.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+See Arzhantsev--Flenner--Kaliman--Kutzschebauch--Zaidenberg \cite[Theorem 0.1]{ArzhantsevEtAl2013}.
+\end{proof}
+
+\begin{remark}\label{rem:affine-space-flexible}
+Affine space $\A^n$ for $n\geq2$ is flexible.  Thus rigidity and flexibility describe opposite forms of additive automorphism geometry.
+\end{remark}
+
+\subsection{Filtrations and extended Rees algebras}
+
+\begin{definition}[Multiplicative filtrations and Rees algebras]\label{def:extended-rees}
+Let $R$ be a domain.  A decreasing sequence of ideals
+\[
+  R=\mathfrak a_0\supseteq\mathfrak a_1\supseteq\mathfrak a_2\supseteq\cdots
+\]
+is a \emph{multiplicative filtration} if $\mathfrak a_m\mathfrak a_n\subseteq\mathfrak a_{m+n}$.  Put $\mathfrak a_j=R$ for $j\leq0$.  Its \emph{extended Rees algebra} is
+\begin{equation}\label{eq:background-extended-rees}
+  \cR^{\mathrm{ext}}(\mathfrak a_\bullet)
+  =\bigoplus_{n\in\Z}\mathfrak a_{-n}x^n
+  \subseteq R[x,x^{-1}].
+\end{equation}
+The associated graded ring is
+\[
+  \operatorname{gr}_{\mathfrak a}R
+  =\bigoplus_{m\geq0}\mathfrak a_m/\mathfrak a_{m+1}.
+\]
+\end{definition}
+
+\begin{recalledproposition}[Geometric meaning of the extended Rees algebra]\label{prop:rees-family-background}
+The degree-zero ring in \eqref{eq:background-extended-rees} is $R$, inverting $x$ gives $R[x,x^{-1}]$, and quotienting by $x$ gives $\operatorname{gr}_{\mathfrak a}R$.  If the extended Rees algebra is finitely generated, its spectrum maps to $\A^1_x$ as a flat degeneration from $\Spec R$ over $x\neq0$ to $\Spec\operatorname{gr}_{\mathfrak a}R$ over $x=0$.
+\end{recalledproposition}
+
+\begin{proof}[Reference and qualification]
+The ring identities follow directly from the grading.  Rees algebras, filtrations, blowups, and their flat families are treated in Swanson--Huneke \cite[Chapter 5]{SwansonHuneke2006} and Eisenbud \cite[Chapters 5 and 6]{Eisenbud1995}.  Finite generation is a substantive hypothesis and is not automatic for arbitrary valuation filtrations.
+\end{proof}
+
+\subsection{Logarithmic Kodaira dimension and affine-line geometry}
+
+\begin{definition}[SNC completions and logarithmic Kodaira dimension]\label{def:log-kodaira}
+Let $\Sigma$ be a smooth quasi-projective surface.  Choose a smooth projective completion $\overline\Sigma$ whose boundary $D=\overline\Sigma\setminus\Sigma$ is a simple normal-crossings divisor.  The \emph{logarithmic Kodaira dimension} is
+\[
+  \kbar(\Sigma)=\kappa(\overline\Sigma,K_{\overline\Sigma}+D),
+\]
+the Iitaka dimension of the logarithmic canonical divisor.  It is independent of the chosen SNC completion and takes the values $-\infty,0,1,2$ for surfaces.  The $m$th logarithmic plurigenus is
+\[
+  P_m^{\log}(\Sigma)=h^0\!\left(\overline\Sigma,
+  \OO_{\overline\Sigma}\bigl(m(K_{\overline\Sigma}+D)\bigr)\right).
+\]
+\end{definition}
+
+\begin{proof}[Reference]
+For completions, logarithmic invariance, and open surfaces see Miyanishi \cite[Chapters 1--2]{Miyanishi2001} and Iitaka \cite{Iitaka1977}.
+\end{proof}
+
+\begin{definition}[$\A^1$-ruled and $\A^1$-uniruled surfaces]\label{def:a1-ruled}
+A surface is \emph{$\A^1$-ruled} if it contains a dense open subset fibered by affine lines over a curve.  It is \emph{$\A^1$-uniruled} if a general point lies on the image of a nonconstant morphism $\A^1\to\Sigma$.
+\end{definition}
+
+\begin{recalledtheorem}[Affine-line geometry of smooth affine surfaces]\label{thm:surface-a1}
+For a smooth affine complex surface $\Sigma$,
+\begin{equation}\label{eq:surface-line-equivalence}
+  \Sigma\text{ is $\A^1$-uniruled}
+  \quad\Longleftrightarrow\quad
+  \Sigma\text{ is $\A^1$-ruled}
+  \quad\Longleftrightarrow\quad
+  \kbar(\Sigma)=-\infty.
+\end{equation}
+Moreover, logarithmic Kodaira dimension is nondecreasing under dominant generically finite morphisms of smooth quasi-projective varieties.
+\end{recalledtheorem}
+
+\begin{proof}[References]
+The ruled-surface theory is due to Miyanishi--Sugie, Russell, and Miyanishi \cite{MiyanishiSugie1980,Russell1981,Miyanishi1982}.  The logarithmic uniruledness criterion follows from Keel--McKernan \cite[Theorem 1.1]{KeelMcKernan1999}; Dubouloz--Kishimoto give a concise modern formulation \cite[Introduction]{DuboulozKishimoto2015}.  Monotonicity is due to Iitaka \cite{Iitaka1977}.
+\end{proof}
+
+\begin{corollary}[The surface obstruction used in this paper]\label{cor:surface-rigidity}
+Let $\Sigma$ be a smooth affine complex surface with $\kbar(\Sigma)\geq0$.  Then $\Sigma$ is rigid.  More generally, there is no dominant generically finite morphism
+\[
+  C^{\circ}\times\A^1\longrightarrow\Sigma
+\]
+from a curve-cylinder.
+\end{corollary}
+
+\begin{proof}
+A nontrivial $\Ga$-action supplies affine-line orbits through general points, so \cref{thm:surface-a1} would force $\kbar(\Sigma)=-\infty$.  A dominant generically finite map from a curve-cylinder has the same consequence either by $\A^1$-uniruledness or by logarithmic Kodaira monotonicity.
+\end{proof}
+
+\begin{warning}[The converse fails]\label{warn:kappa-rigidity-converse}
+The implication $\kbar(\Sigma)\geq0\Rightarrow\Sigma$ rigid is not an equivalence.  Smooth rational affine surfaces with $\kbar=-\infty$ and no nontrivial $\Ga$-action are known \cite{BandmanMakarLimanov2008}.
+\end{warning}
+
+\subsection{Affine modifications}
+
+\begin{definition}[Affine modification]\label{def:affine-modification}
+Let $A$ be a domain, let $f\in A$ be nonzero, and let $I\subseteq A$ be an ideal containing $f$.  The subring
+\[
+  A[I/f]\subseteq A_f
+\]
+generated by $A$ and the fractions $g/f$ for $g\in I$ defines the \emph{affine modification} of $\Spec A$ along the divisor $V(f)$ with center $V(I)$.  Geometrically it is the blowup of the center with the proper transform of the modifying divisor removed.
+\end{definition}
+
+\begin{proof}[Reference]
+See Kaliman--Zaidenberg \cite[Section 1]{KalimanZaidenberg1999}.  The underlying blowup and Rees-algebra constructions are treated in Hartshorne \cite[Chapter II, Section 7]{Hartshorne1977} and Swanson--Huneke \cite[Section 5.6]{SwansonHuneke2006}.
+\end{proof}
+
+\begin{proposition}[Hypersurface model for an affine modification]\label{prop:hypersurface-modification}
+Let $A$ be a domain and $f,g\in A$ with $f\neq0$.  For
+\[
+  X=\{fz=g\}\subseteq\Spec A\times\A^1_z,
+\]
+one has $\OO(X)=A[g/f]$.  The projection $X\to\Spec A$ is an isomorphism away from $V(f)$, while over $V(f,g)$ the new coordinate $z$ is free.
+\end{proposition}
+
+\begin{proof}
+The coordinate ring is $A[z]/(fz-g)$, which maps to $A_f$ by $z\mapsto g/f$.  Because $A$ is a domain and $f\neq0$, this map identifies the quotient with the subring $A[g/f]$.  Localizing at $f$ solves uniquely for $z$.  Modulo $(f,g)$ the defining relation vanishes, so $z$ is unrestricted over the center.
+\end{proof}
+
+\section{Covering-space and topological preliminaries}\label{sec:topological-prelim}
+
+\subsection{Finite covers and monodromy}
+
+\begin{definition}[Monodromy of a finite etale cover]\label{def:monodromy}
+Let $U$ be a connected complex variety.  A finite etale cover of degree $d$ gives a topological covering of $U^{\mathrm{an}}$ and hence, after choosing a fiber labeling, a homomorphism
+\[
+  \rho\colon\pi_1(U^{\mathrm{an}})\longrightarrow S_d,
+\]
+well-defined up to conjugacy.  This is the \emph{monodromy representation} of the cover.
+\end{definition}
+
+\begin{recalledtheorem}[Algebraic Riemann existence]\label{thm:riemann-existence}
+Finite etale covers of a complex algebraic variety are equivalent to finite topological covers of its analytification.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+See SGA 1, Expose XII \cite{SGA1}.  The topological covering-space classification is reviewed in Hatcher \cite[Section 1.3]{Hatcher2002}.
+\end{proof}
+
+\subsection{Euler characteristic and homotopy notation}
+
+\begin{definition}[Topological conventions]\label{def:topological-conventions}
+For a complex variety $X$, write $H_i(X;\Z)$ for singular homology and $\pi_i(X)$ for the homotopy groups of $X^{\mathrm{an}}$.  Write $\chi(X)=\chi_c(X)$ for compactly supported Euler characteristic.  It is additive under finite decompositions into locally closed algebraic subsets and multiplicative for finite etale covers.  For a smooth complex variety, Poincare duality gives $\chi_c=\chi$.
+\end{definition}
+
+\begin{proof}[Reference]
+See Dimca \cite[Chapter 4]{Dimca2004}.
+\end{proof}
+
+\begin{definition}[Meridian]\label{def:meridian}
+Let $D$ be a smooth divisor in a complex manifold $X$.  A \emph{positively oriented meridian} around $D$ is the boundary of a sufficiently small positively oriented disk in a complex normal line to $D$.
+\end{definition}
+
+\begin{recalledtheorem}[Thom, van Kampen, and Hurewicz tools]\label{thm:topological-tools}
+For a smooth divisor $D\subset X$, a tubular neighborhood and the Thom isomorphism give
+\[
+  H_i(X,X\setminus D;\Z)\simeq H_{i-2}(D;\Z).
+\]
+Seifert--van Kampen computes fundamental groups from suitable open covers, and the degree-two Hurewicz theorem identifies $\pi_2$ with $H_2$ for simply connected spaces.
+\end{recalledtheorem}
+
+\begin{proof}[References]
+See Bredon \cite[Chapters VI and VII]{Bredon1993} and Hatcher \cite[Sections 1.2 and 4.2]{Hatcher2002}.
+\end{proof}
+
+\begin{recalledtheorem}[Andreotti--Frankel]\label{thm:andreotti-frankel}
+A smooth affine complex variety of complex dimension $n$ has the homotopy type of a CW complex of real dimension at most $n$.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+See Andreotti--Frankel \cite{AndreottiFrankel1959}.
+\end{proof}
+
+\begin{recalledtheorem}[Topological complex line bundles]\label{thm:topological-line-bundles}
+On a space of CW type, the first Chern class gives a bijection
+\[
+  c_1\colon\operatorname{Vect}^{\mathrm{top}}_1(X)
+  \xrightarrow{\sim} H^2(X;\Z)
+\]
+between isomorphism classes of topological complex line bundles and $H^2(X;\Z)$.
+\end{recalledtheorem}
+
+\begin{proof}[Reference]
+See Hatcher \cite[Proposition 3.10]{HatcherVBKT}.
+\end{proof}
+
+\begin{roadmap}[How to use the preliminaries]\label{roadmap:preliminaries}
+Readers comfortable with affine schemes, etale morphisms, divisor class groups, locally nilpotent derivations, extended Rees algebras, and logarithmic Kodaira dimension may proceed directly to \cref{sec:rees-rigidity}.  Later proofs cite the relevant definition or recalled theorem at the point of use.
+\end{roadmap}
+
+\part{The general rigidity theorem}\label{part:rigidity}
+\section{Rigidity of extended Rees algebras}\label{sec:rees-rigidity}
+
+\subsection{Set-up}
+
+\begin{roadmap}[The two proofs]\label{roadmap:two-rigidity-proofs}
+The first proof of the rigidity theorem is conceptual: \cref{thm:graded-cylindricity} turns a hypothetical locally nilpotent derivation into a degree-zero affine-line cylinder, and \cref{thm:surface-a1} supplies the contradiction.  The second proof is independent of graded cylindricity and works directly with homogeneous derivations on the Rees algebra.  It is retained to display the role of the Rees coordinate and the negative-degree local-slice argument.
+\end{roadmap}
+
+\begin{setup}[Extended Rees data]\label{setup:general-rees}
+Let $\Sigma=\Spec R$ be a smooth affine complex surface.  Let
+\[
+  R=\mathfrak a_0\supseteq\mathfrak a_1\supseteq\mathfrak a_2\supseteq\cdots
+\]
+be nonzero ideals satisfying
+\[
+  \mathfrak a_m\mathfrak a_n\subseteq\mathfrak a_{m+n}
+  \qquad(m,n\geq0),
+\]
+and set $\mathfrak a_m=R$ for $m\leq0$.  Define
+\begin{equation}\label{eq:extended-rees}
+  \cE=\bigoplus_{n\in\Z}\mathfrak a_{-n}x^n
+  \subseteq R[x,x^{-1}],
+  \qquad \deg x=1,
+\end{equation}
+and assume that $\cE$ is finitely generated over $\C$.  Then $\cE$ is a finitely generated $\Z$-graded domain of transcendence degree three, with
+\begin{equation}\label{eq:rees-components}
+  \cE_n=Rx^n\quad(n\geq0),
+  \qquad
+  \cE_{-m}=\mathfrak a_mx^{-m}\quad(m>0),
+  \qquad
+  \cE[x^{-1}]=R[x,x^{-1}].
+\end{equation}
+\end{setup}
+
+\begin{remark}[Why the hypothesis is stronger than rigidity]\label{rem:surface-hypothesis-strength}
+The condition $\kbar(\Sigma)\geq0$ does more than make $R$ rigid.  The direct proof uses rigidity in its nonnegative-degree steps, whereas the negative-degree step and the conceptual proof use the stronger conclusion of \cref{cor:surface-rigidity}: no dominant generically finite morphism $C^{\circ}\times\A^1\to\Sigma$ can exist.  This is why \cref{thm:rees-rigidity} is not stated for every rigid surface.  The principal-filtration theorem of Freudenburg--Moser-Jauslin requires only rigidity of the base; see \cref{rem:principal-rees}.
+\end{remark}
+
+
+\subsection{The graded-cylindricity route}
+
+The following proposition isolates the precise bridge from the general theory of graded rings to the geometry of the degree-zero surface.
+
+\begin{proposition}[A cylindrical localization produces an affine-line covering family]\label{prop:rees-cylinder}
+Let $\cE$ be as in \eqref{eq:extended-rees}.  If $\cE$ is nonrigid, then there exist a smooth affine curve $C^{\circ}$ and a dominant generically finite morphism
+\[
+  C^{\circ}\times\A^1\longrightarrow\Sigma.
+\]
+Consequently $\Sigma$ is $\A^1$-uniruled and $\kbar(\Sigma)=-\infty$.
+\end{proposition}
+
+\begin{proof}
+Because every $\mathfrak a_m$ is nonzero, the grading of $\cE$ has nonzero pieces on both sides of degree zero: for example,
+\[
+  \cE_1=Rx\neq0,
+  \qquad
+  \cE_{-1}=\mathfrak a_1x^{-1}\neq0.
+\]
+If $\cE$ is nonrigid, then condition~(a) of Chitayat--Daigle's Theorem~1.2(1) holds with the first Veronese subring, namely with $d=1$.  Their theorem therefore supplies a cylindrical homogeneous element $f\in\cE$ of nonzero degree and a domain $A$ such that
+\begin{equation}\label{eq:cylindrical-localization}
+  \cE_{(f)}=(\cE_f)_0=A[u]
+\end{equation}
+for an indeterminate $u$ over $A$ \cite[Theorem~1.2(1)]{ChitayatDaigle2024}.
+
+Put $K=\Frac R$.  Every homogeneous element of $\Frac\cE=K(x)$ is of the form $c x^j$ with $c\in K$, so every degree-zero element of the homogeneous localization $\cE_f$ belongs to $K$.  On the other hand, localization does not remove the original degree-zero ring.  Hence
+\begin{equation}\label{eq:degree-zero-sandwich}
+  R=\cE_0\subseteq\cE_{(f)}\subseteq K.
+\end{equation}
+Taking fraction fields in \eqref{eq:degree-zero-sandwich} gives
+\[
+  K=\Frac\cE_{(f)}=\Frac(A)(u).
+\]
+The equality in \eqref{eq:cylindrical-localization} is an equality of domains inside $K$.  Every nonzero scalar in $\C$ is a unit of $A[u]$, and the units of a polynomial ring over a domain are the units of its coefficient ring.  Therefore $\C\subseteq A$.  Since $\trdeg_{\C}K=2$, it follows that $\trdeg_{\C}A=1$.
+
+Choose algebra generators $r_1,\ldots,r_N$ of the finitely generated $\C$-algebra $R$.  Each image of $r_i$ in $A[u]$ involves only finitely many coefficients from $A$.  Let $A_0\subseteq A$ be the finitely generated $\C$-subalgebra generated by all those coefficients.  Then
+\begin{equation}\label{eq:spread-cylinder}
+  R\hookrightarrow A_0[u].
+\end{equation}
+The ring $A_0$ has transcendence degree one.  Indeed, it cannot have transcendence degree zero, since then the right side of \eqref{eq:spread-cylinder} would have transcendence degree one and could not contain the two-dimensional domain $R$.
+
+Let $\widetilde A_0$ be the normalization of $A_0$ in its fraction field.  It is finite over $A_0$, and the one-dimensional normal affine complex variety
+\[
+  C^{\circ}=\Spec\widetilde A_0
+\]
+is a smooth affine curve; see Hartshorne for finiteness of normalization and for the equivalence between normality and nonsingularity for curves \cite[Chapter I, Sections 3 and 6]{Hartshorne1977}.  Composing \eqref{eq:spread-cylinder} with $A_0[u]\subseteq\widetilde A_0[u]$ gives a morphism
+\[
+  C^{\circ}\times\A^1\longrightarrow\Sigma.
+\]
+It is dominant because the ring map is injective.  The corresponding extension of function fields is algebraic, since source and target both have transcendence degree two over $\C$, and it is finite because the larger field is finitely generated.  Thus the morphism is generically finite.
+
+The images of the affine-line fibers cover a dense subset of $\Sigma$, so $\Sigma$ is $\A^1$-uniruled.  Equivalently, one may apply \cref{lem:log-obstruction} below.  In either form, the surface equivalence \eqref{eq:surface-line-equivalence} gives $\kbar(\Sigma)=-\infty$.
+\end{proof}
+
+\begin{remark}[What is specifically Rees-theoretic]\label{rem:rees-specific}
+Chitayat--Daigle's theorem applies to much more general graded domains.  The Rees structure enters \cref{prop:rees-cylinder} in two elementary but decisive places: it guarantees nonzero homogeneous pieces of both signs, and it identifies the degree-zero ring with $R$ inside the common fraction field $K=\Frac R$.  These facts turn an abstract cylindrical localization of the threefold ring into an affine-line covering family of the original surface.
+\end{remark}
+
+\subsection{Three elementary lemmas for the direct proof}
+
+
+\begin{lemma}[Homogeneous top component]\label{lem:top-component}
+Let $\cE$ be a finitely generated $\Z$-graded domain and let $\partial$ be a nonzero locally nilpotent derivation of $\cE$.  Then the highest nonzero homogeneous component of $\partial$ is a nonzero homogeneous locally nilpotent derivation.  This is the standard top-component lemma for graded LNDs; see \cite[Section 1.1]{Freudenburg2017}.
+\end{lemma}
+
+\begin{proof}
+Choose finitely many homogeneous algebra generators $b_1,\dots,b_N$.  Decompose each $\partial(b_i)$ into homogeneous pieces.  Only finitely many degree shifts occur, so
+\[
+  \partial=\partial_{d_1}+\cdots+\partial_{d_r},
+  \qquad d_1<\cdots<d_r,
+\]
+where $\partial_d(\cE_n)\subseteq \cE_{n+d}$.  Comparing the highest-degree part of the Leibniz identity shows that $\partial_{d_r}$ is a derivation.  If $b$ is homogeneous, then the highest-degree part of $\partial^m(b)$ is $\partial_{d_r}^{\,m}(b)$.  Since $\partial^m(b)=0$ for $m\gg0$, the same is true for $\partial_{d_r}^{\,m}(b)$.  Local nilpotency on the homogeneous generators implies local nilpotency on all of $\cE$.
+\end{proof}
+
+\begin{lemma}[A graded quotient-field calculation]\label{lem:graded-field}
+Let $H$ be a $\Z$-graded domain and let $S_{\mathrm h}$ be the multiplicative set of its nonzero homogeneous elements.  Put
+\[
+  Q^{\mathrm g}(H)=S_{\mathrm h}^{-1}H.
+\]
+Assume that the subgroup of degrees occurring in $Q^{\mathrm g}(H)$ is the nonzero subgroup $r\Z$, with $r>0$.  Let
+\[
+  L=Q^{\mathrm g}(H)_0
+\]
+and choose $\eta\in Q^{\mathrm g}(H)$ homogeneous of degree $r$.  Then $L$ is a field and
+\begin{equation}\label{eq:graded-quotient-field}
+  Q^{\mathrm g}(H)=L[\eta,\eta^{-1}],
+  \qquad
+  \Frac H=L(\eta).
+\end{equation}
+If $\tau$ is an indeterminate of degree $k>0$ and $g=\gcd(r,k)$, then
+\begin{equation}\label{eq:graded-invariants}
+  \bigl((\Frac H)[\tau]\bigr)^{\Gm}
+  =L\bigl[\eta^{-k/g}\tau^{r/g}\bigr].
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+Every nonzero homogeneous element of $Q^{\mathrm g}(H)$ is invertible.  In particular, its degree-zero part $L$ is a field.  Every homogeneous element of degree $nr$ differs from $\eta^n$ by an element of $L$, and every element of the homogeneous localization is a finite sum of homogeneous terms.  This proves the first equality in \eqref{eq:graded-quotient-field}; taking ordinary fraction fields proves the second.  The element $\eta$ is transcendental over $L$, because a polynomial relation over $L$ would be a sum of terms of distinct weights.
+
+The induced action on $L(\eta)$ fixes $L$ and satisfies $\lambda\cdot\eta=\lambda^r\eta$.  Its semi-invariants are precisely the elements $c\eta^n$, with $c\in L^*$ and $n\in\Z$: indeed, after extending scalars to an algebraic closure of $L$, the zeros and poles of a semi-invariant rational function on $\mathbb P^1$ form a finite set stable under scaling, and hence are supported at $0$ and $\infty$.
+
+Now write an invariant polynomial as $\sum_{j=0}^N b_j\tau^j$.  Uniqueness of the $\tau$-expansion implies that every nonzero $b_j$ is a semi-invariant of weight $-kj$.  Such a semi-invariant exists only when $r\mid kj$, equivalently $j=(r/g)\ell$, and then
+\[
+  b_j=\lambda_j\eta^{-(k/g)\ell}
+  \qquad(\lambda_j\in L).
+\]
+This proves \eqref{eq:graded-invariants}; the reverse inclusion is immediate.
+\end{proof}
+
+\begin{lemma}[The logarithmic obstruction]\label{lem:log-obstruction}
+Let $\Sigma$ be a smooth affine surface.  If there is a dominant generically finite morphism
+\[
+  C^{\circ}\times\A^1\longrightarrow\Sigma
+\]
+from the product of a smooth affine curve with the affine line, then $\kbar(\Sigma)=-\infty$.
+\end{lemma}
+
+\begin{proof}
+The source is $\A^1$-ruled, so its logarithmic Kodaira dimension is $-\infty$.  Logarithmic pluricanonical forms pull back under a dominant generically finite morphism, after choosing compatible smooth normal-crossings completions.  Thus logarithmic Kodaira dimension cannot decrease under such a morphism \cite{Iitaka1977}.  Therefore $\kbar(\Sigma)=-\infty$.
+\end{proof}
+
+\subsection{The rigidity theorem}
+
+\begin{theorem}[Rigidity of extended Rees algebras]\label{thm:rees-rigidity}
+Let $\Sigma=\Spec R$ be a smooth affine complex surface with $\kbar(\Sigma)\geq0$.  Let $\cE$ be a finitely generated extended Rees algebra as in \eqref{eq:extended-rees}.  Then $\cE$ admits no nonzero locally nilpotent derivation.  Equivalently,
+\[
+  \ML(\cE)=\cE.
+\]
+\end{theorem}
+
+\begin{proof}[Conceptual proof via graded cylindricity]
+If $\cE$ were nonrigid, \cref{prop:rees-cylinder} would give $\kbar(\Sigma)=-\infty$, contrary to the hypothesis.  Hence $\cE$ is rigid.
+\end{proof}
+
+\begin{proof}[Direct proof in Rees coordinates]
+Assume that $\cE$ admits a nonzero locally nilpotent derivation.  By \cref{lem:top-component}, we may take a nonzero homogeneous LND $\partial$ of degree $d$.
+
+\smallskip
+\noindent\emph{Step 1: $\partial(x)\neq0$.}
+Suppose $\partial(x)=0$.  Localizing at $x$ gives an LND on
+\[
+  \cE[x^{-1}]=R[x,x^{-1}].
+\]
+For $f\in R$, homogeneity gives
+\[
+  \partial(f)=x^dD(f)
+\]
+for a derivation $D$ of $R$.  Because $\partial(x)=0$,
+\[
+  \partial^m(f)=x^{md}D^m(f),
+\]
+so $D$ is locally nilpotent.  It is nonzero, since $R[x,x^{-1}]$ is generated by $R$ and $x^{\pm1}$ and $\partial$ is nonzero.  This contradicts $\kbar(\Sigma)\geq0$.  Hence $\partial(x)\neq0$.
+
+\smallskip
+\noindent\emph{Step 2: restrictions on the kernel.}
+Kernels of locally nilpotent derivations on domains are factorially closed \cite[Section 1.1]{Freudenburg2017}.  If a nonzero homogeneous element $h\in\ker\partial$ had positive degree $m$, then $h=rx^m$ for some $r\in R$ and
+\[
+  h=x\cdot(rx^{m-1}).
+\]
+Both factors lie in $\cE$, so factorial closure would imply $x\in\ker\partial$, contrary to Step 1.  Thus the homogeneous elements of $\ker\partial$ have degrees at most zero.
+
+Also $R\not\subseteq\ker\partial$.  Indeed, choose $0\neq a\in\mathfrak a_1$.  In $\cE$ one has
+\[
+  a=x\cdot(ax^{-1}).
+\]
+If $R\subseteq\ker\partial$, factorial closure would again give $x\in\ker\partial$.
+
+\smallskip
+\noindent\emph{Step 3: nonnegative homogeneous degree is impossible.}
+Assume $d\geq0$.  Then $\partial$ preserves the subring
+\[
+  \cE_{\geq0}=R[x]
+\]
+and restricts to a nonzero LND there.  Its kernel has transcendence degree two \cite[Section 1.1]{Freudenburg2017}.  The kernel is graded, and Step 2 excludes all positive homogeneous degrees, so
+\[
+  \ker(\partial|_{R[x]})\subseteq R.
+\]
+For $f\in R$, write
+\[
+  \partial(f)=x^dD(f),
+\]
+where $D$ is a derivation of $R$.  The derivation $D$ vanishes on a subalgebra of $R$ of transcendence degree two.  Therefore $\Frac R$ is algebraic over the fraction field $K_0$ of that subalgebra.  To see directly why the derivation vanishes, let $\alpha$ be algebraic over $K_0$ with minimal polynomial $p(T)$.  Differentiating $p(\alpha)=0$ gives $p'(\alpha)D(\alpha)=0$ because the coefficients lie in $K_0$.  Characteristic zero makes the extension separable, so $p'(\alpha)\neq0$ and $D(\alpha)=0$.  Hence $D=0$, so $R\subseteq\ker\partial$, contradicting Step 2.
+
+\smallskip
+\noindent\emph{Step 4: negative homogeneous degree is impossible.}
+Write $d=-k$ with $k>0$, and put
+\[
+  H=\ker\partial.
+\]
+For $f\in R$, the element $x^k\partial(f)$ belongs to $R$, and
+\[
+  D_R(f)=x^k\partial(f)
+\]
+defines a derivation of $R$.  If $H\cap R$ had transcendence degree two, then $D_R$ would vanish on a full-transcendence-degree subalgebra of $R$ and hence on all of $R$.  This would give $R\subseteq H$, again impossible.  Thus
+\begin{equation}\label{eq:kernel-intersection}
+  \trdeg_{\C}(H\cap R)\leq1.
+\end{equation}
+
+The kernel $H$ has transcendence degree two and is graded.  Since its degree-zero part lies in $R$, \eqref{eq:kernel-intersection} implies that $H$ contains a nonzero homogeneous element of negative degree.  Let $S_{\mathrm h}$ be the multiplicative set of all nonzero homogeneous elements of $H$, let
+\[
+  Q^{\mathrm g}(H)=S_{\mathrm h}^{-1}H,
+  \qquad
+  K=\Frac H,
+\]
+and let $r>0$ generate the nonzero degree subgroup of $Q^{\mathrm g}(H)$.  By \cref{lem:graded-field}, there are a field $L=Q^{\mathrm g}(H)_0$ and a homogeneous $\eta$ of degree $r$ such that
+\[
+  Q^{\mathrm g}(H)=L[\eta,\eta^{-1}],
+  \qquad
+  K=L(\eta),
+  \qquad
+  \trdeg_{\C}L=1.
+\]
+
+Choose a homogeneous $a\in \cE$ and $n\geq1$ with
+\[
+  \partial^{n+1}(a)=0,
+  \qquad
+  c=\partial^n(a)\neq0.
+\]
+Then $c\in H$ is homogeneous and
+\[
+  \tau=\frac{\partial^{n-1}(a)}{c}
+\]
+satisfies $\partial(\tau)=1$.  Its degree is $k$.  Let $S=H\setminus\{0\}$.  The local-slice theorem for locally nilpotent derivations \cite[Section 1.3]{Freudenburg2017} first gives $\cE_c=H_c[\tau]$ and, after localizing further at $S$, gives the $\Gm$-equivariant equality
+\begin{equation}\label{eq:local-slice}
+  S^{-1}\cE=K[\tau].
+\end{equation}
+Let $g=\gcd(r,k)$.  Taking $\Gm$-invariants in \eqref{eq:local-slice} and applying \cref{lem:graded-field} yields
+\[
+  R=\cE_0
+  \hookrightarrow
+  (K[\tau])^{\Gm}
+  =L[u],
+  \qquad
+  u=\eta^{-k/g}\tau^{r/g}.
+\]
+
+Choose finitely many algebra generators of $R$.  Only finitely many coefficients from $L$ occur in their images in $L[u]$.  Let $L_0\subseteq L$ be the field generated by those coefficients.  It has transcendence degree one: it cannot have transcendence degree zero because $R$ has transcendence degree two and cannot inject into $\C[u]$.  By the correspondence between one-variable function fields and nonsingular projective curves \cite[Chapter I, Section 6]{Hartshorne1977}, choose a smooth affine curve $C^{\circ}$ with function field $L_0$, and shrink it so that the finitely many coefficients are regular.  The injection spreads out to
+\[
+  R\hookrightarrow\OO(C^{\circ})[u].
+\]
+Contravariantly this gives a dominant morphism
+\[
+  C^{\circ}\times\A^1\longrightarrow\Sigma.
+\]
+The induced function-field extension is algebraic because both fields have transcendence degree two, and it is finite because it is finitely generated.  Hence the morphism is generically finite.  By \cref{lem:log-obstruction}, $\kbar(\Sigma)=-\infty$, contradicting the hypothesis.
+
+All possible degrees have been excluded, so $\cE$ is rigid.
+\end{proof}
+
+\begin{corollary}\label{cor:general-cancellation}
+Under the hypotheses of \cref{thm:rees-rigidity},
+\[
+  \Spec \cE\not\simeq\A^3
+  \qquad\text{and}\qquad
+  \Spec \cE\times\A^1\not\simeq\A^4.
+\]
+\end{corollary}
+
+\begin{proof}
+The affine space $\A^3$ has Makar--Limanov invariant $\C$, whereas \cref{thm:rees-rigidity} gives $\ML(\cE)=\cE$.  Crachiola--Makar-Limanov prove that for a finitely generated rigid domain $\cE$ one has
+\[
+  \ML(\cE[t])=\cE
+\]
+\cite[Theorem 3.1]{CrachiolaMakarLimanov2008}.  Since $\ML(\C[t_1,t_2,t_3,t_4])=\C$, the cylinder cannot be $\A^4$.
+\end{proof}
+
+
+\begin{remark}[Terminology and attribution]\label{rem:rees-attribution}
+The exact statement of \cref{thm:rees-rigidity}, formulated for arbitrary finitely generated multiplicative ideal filtrations on a smooth affine surface, does not appear verbatim in the sources cited here.  Its short conceptual proof is nevertheless an immediate application of Chitayat--Daigle's graded-cylindricity theorem combined with the classical characterization of smooth affine surfaces of negative logarithmic Kodaira dimension.  We therefore use ``rigidity of extended Rees algebras'' descriptively, not to claim that the underlying cylindricity mechanism is new.  The independent direct proof records how that mechanism unfolds in Rees coordinates.
+\end{remark}
+
+\begin{remark}[Principal filtrations]\label{rem:principal-rees}
+For a nonzero element $f\in R$ and the principal filtration $\mathfrak a_m=(f^m)$, the change of notation $u=x$ and $v=fx^{-1}$ gives
+\[
+  \cR^{\mathrm{ext}}(\mathfrak a_\bullet)
+  =R[x,fx^{-1}]
+  \simeq R[u,v]/(uv-f).
+\]
+Freudenburg--Moser-Jauslin's Corollary~4.6 proves that this ring is rigid whenever $R$ is a rigid affine domain, and their Remark~10.3 explicitly places rings with $uv\in R$ in the extended-Rees setting \cite{FreudenburgMoserJauslin2013}.  Thus the principal case has a stronger antecedent: no surface or logarithmic-Kodaira hypothesis is required.  Conversely, \cref{thm:rees-rigidity} applies to nonprincipal filtrations but only under the stated geometric hypothesis on the degree-zero surface.
+\end{remark}
+
+\begin{remark}[Relation to filtration techniques]\label{rem:filtration-techniques}
+The passage to a top homogeneous component in the direct proof is the standard first move of the filtration method; compare Crachiola--Maubach \cite{CrachiolaMaubach2013}.  What is less formal is the treatment of negative degree.  Rather than relying on a second associated-graded obstruction, the local slice and the $\Gm$-invariant calculation produce a ruled parametrization of the surface.  This is why logarithmic surface geometry, rather than a finite computation in an auxiliary graded ring, closes the proof.
+\end{remark}
+
+\begin{remark}[Scope of the theorem]\label{rem:not-equivalence}
+The condition $\kbar(\Sigma)\geq0$ is sufficient for rigidity, not equivalent to it.  Bandman and Makar--Limanov construct smooth affine rational surfaces with no nontrivial $\Ga$-action and with logarithmic Kodaira dimension $-\infty$ \cite{BandmanMakarLimanov2008}.  The argument above does not cover all rigid surfaces.
+\end{remark}
+
+\begin{remark}[Finite generation]\label{rem:finite-generation}
+Finite generation is an explicit hypothesis.  It holds for ordinary powers $\mathfrak a_m=I^m$ of a finitely generated ideal and for the concrete weighted filtration in \cref{sec:rees-structure}.  No blanket finite-generation claim is made here for arbitrary divisorial or quasi-monomial valuation filtrations.
+\end{remark}
+
+\part{The explicit Keller map}\label{part:keller-map}
+\section{The Keller map and the binary-cubic inverse}\label{sec:binary-cubic}
+
+\subsection{Determinant and a three-point collision}
+
+\begin{notation}[Auxiliary source functions]\label{not:alpha-beta-r}
+Set
+\[
+  \alpha=1+xy,
+  \qquad
+  \beta=\alpha^2z+y^2(4+3xy).
+\]
+Then $a=\alpha\beta$ and $b=y+3x\beta$.  On the dense open set $\alpha\neq0$, put $r=x/\alpha$.  The transformed target coordinates satisfy
+\begin{equation}\label{eq:transformed-F}
+  b=y+3ar,
+  \qquad
+  c=2r-yr^2-ar^3.
+\end{equation}
+\end{notation}
+
+\begin{proposition}\label{prop:keller}
+The map $F$ satisfies
+\[
+  \det JF=-2.
+\]
+Moreover,
+\[
+  F(0,0,-1/4)
+  =F(1,-3/2,13/2)
+  =F(-1,3/2,13/2)
+  =(-1/4,0,0).
+\]
+Hence $F$ is an etale, noninjective polynomial self-map of $\A^3$.
+\end{proposition}
+
+\begin{proof}
+The change $(x,y,z)\mapsto(a,y,r)$ on $\alpha\neq0$ has Jacobian determinant $-\alpha$, while \eqref{eq:transformed-F} gives
+\[
+  \det\frac{\partial(a,b,c)}{\partial(a,y,r)}
+  =2(1-yr)=\frac{2}{\alpha}.
+\]
+Their product is $-2$.  Since both sides are polynomials, the identity extends across $\alpha=0$.  The three displayed substitutions are immediate.
+\end{proof}
+
+\subsection{The incidence variety}
+
+The affine coordinate $x$ does not distinguish all sheets of $F$.  The ratio $x/(1+xy)$ is the correct affine parameter where finite, while $[x:1+xy]$ is globally defined.
+
+\begin{construction}[Binary-cubic incidence variety]\label{con:incidence-variety}
+For target coordinates $(A,B,C)$ define
+\begin{equation}\label{eq:binary-cubic}
+  \Phi_{A,B,C}(S,T)
+  =2AS^3-BS^2T+2ST^2-CT^3.
+\end{equation}
+Let
+\[
+  \cI=\{\Phi_{A,B,C}(S,T)=0\}
+  \subseteq\A^3_{A,B,C}\times\mathbb P^1_{S,T},
+\]
+and let $\cI^{\mathrm{simp}}$ be the open locus where $[S:T]$ is a simple projective root.
+\end{construction}
+
+\begin{theorem}[Simple-root incidence model]\label{thm:incidence-isomorphism}
+The morphism
+\begin{equation}\label{eq:iota}
+  \iota\colon\A^3\longrightarrow\cI,
+  \qquad
+  (x,y,z)\longmapsto\bigl(F(x,y,z),[x:1+xy]\bigr),
+\end{equation}
+induces an isomorphism
+\[
+  \A^3\xrightarrow{\sim}\cI^{\mathrm{simp}}.
+\]
+Consequently, the points of $F^{-1}(A,B,C)$ are in natural bijection with the simple projective roots of $\Phi_{A,B,C}$.
+\end{theorem}
+
+\begin{proof}
+The pair $[x:1+xy]$ is defined everywhere because $x$ and $1+xy$ cannot vanish simultaneously.  Homogenizing \eqref{eq:transformed-F} gives the polynomial identity
+\begin{equation}\label{eq:binary-identity}
+  2ax^3-bx^2(1+xy)+2x(1+xy)^2-c(1+xy)^3=0,
+\end{equation}
+so \eqref{eq:iota} lands in $\cI$.
+
+On the chart $T\neq0$, put $r=S/T$.  The equation is
+\[
+  \phi(r)=2Ar^3-Br^2+2r-C=0.
+\]
+Set
+\begin{equation}\label{eq:T-chart-inverse}
+  D_r=1-Br+3Ar^2=\frac12\phi'(r),
+  \qquad
+  y=B-3Ar,
+  \qquad
+  x=\frac{r}{D_r},
+\end{equation}
+\begin{equation}\label{eq:T-chart-z}
+  z=AD_r^3-y^2(4-ry)D_r.
+\end{equation}
+The root is simple exactly when $D_r\neq0$, so these are regular functions on the simple-root locus of this chart.  They satisfy
+\[
+  1+xy=D_r^{-1},
+  \qquad
+  \frac{x}{1+xy}=r,
+\]
+and direct substitution into \eqref{eq:F}, or equivalently into \eqref{eq:transformed-F}, gives $(a,b,c)=(A,B,C)$.
+
+On the chart $S\neq0$, put $u=T/S$.  The equation is
+\[
+  \psi(u)=2A-Bu+2u^2-Cu^3=0.
+\]
+Set
+\begin{equation}\label{eq:S-chart-inverse}
+  y=-\frac B2+3u-\frac32Cu^2,
+  \qquad
+  E=u-y=\frac B2-2u+\frac32Cu^2=-\frac12\psi'(u),
+\end{equation}
+\begin{equation}\label{eq:S-chart-xz}
+  x=E^{-1},
+  \qquad
+  z=2E^2-3yE-CE^3.
+\end{equation}
+Again, simplicity is equivalent to $E\neq0$.  These formulas give
+\[
+  \frac{1+xy}{x}=u
+\]
+and recover the target coordinates.  On the overlap $u=r^{-1}$, the two sets of formulas agree.  At $u=0$, the incidence equation forces $A=0$, and the formulas reduce to
+\[
+  x=\frac2B,
+  \qquad
+  y=-\frac B2,
+  \qquad
+  z=\frac{5x-C}{x^3},
+\]
+which are regular because simplicity at infinity is equivalent to $B\neq0$.
+
+For a source point in the $T$-chart, \eqref{eq:transformed-F} gives
+\[
+  D_r=1-yr=(1+xy)^{-1},
+\]
+so its root is simple.  On the $S$-chart one has $E=x^{-1}$.  Thus the displayed formulas are inverse to \eqref{eq:iota} on both charts.
+\end{proof}
+
+\begin{proposition}\label{prop:incidence-finite}
+The variety $\cI$ is smooth and irreducible, and the projection
+\[
+  \pi\colon\cI\longrightarrow\A^3_{A,B,C}
+\]
+is finite of degree three.  Its etale locus is exactly $\cI^{\mathrm{simp}}$.
+\end{proposition}
+
+\begin{proof}
+On the chart $T\neq0$, the equation is linear in $C$, with derivative $-1$; on the chart $S\neq0$, it is linear in $A$, with derivative $2$.  Thus $\cI$ is smooth.  The $T\neq0$ chart is isomorphic to $\A^3_{A,B,r}$ and is dense: the locus $T=0$ in $\cI$ is given by $A=0$ and has dimension two.  Hence $\cI$ is irreducible.
+
+The projection is projective, hence proper, because $\cI$ is closed in $\A^3\times\mathbb P^1$ \cite[Chapter II, Section 4]{Hartshorne1977}; see also \cite[Tag 01W7]{StacksProject}.  Every fiber is finite, since the coefficient of $ST^2$ in \eqref{eq:binary-cubic} is the constant $2$, so the binary cubic is never the zero polynomial.  A proper quasi-finite morphism is finite \cite[Tag 0F2P]{StacksProject}.  The generic fiber has three points.  On either affine chart the relative equation is a one-variable cubic, and the relative Jacobian criterion \cite[Tag 01V4, Lemma 29.35.14]{StacksProject} says that the projection is etale exactly where the derivative with respect to the root parameter is nonzero, namely where the chosen root is simple.
+\end{proof}
+
+\section{Fibers, discriminant, and behavior at infinity}\label{sec:fibers}
+
+\subsection{The discriminant hypersurface}
+
+\begin{definition}[Discriminant hypersurface]\label{def:discriminant-hypersurface}
+Define the normalized discriminant
+\begin{equation}\label{eq:Delta}
+  \Delta(A,B,C)
+  =B^2-16A-B^3C+18ABC-27A^2C^2.
+\end{equation}
+The usual discriminant of the binary cubic \eqref{eq:binary-cubic} is $4\Delta$; see \cite[Chapter 1]{GKZ1994}.  The \emph{discriminant hypersurface} is
+\[
+  \cS=V(\Delta)\subseteq\A^3.
+\]
+\end{definition}
+
+\begin{proposition}\label{prop:discriminant-geometry}
+The polynomial $\Delta$ is irreducible.  Its reduced singular locus is the smooth curve
+\begin{equation}\label{eq:Gamma}
+  \Gamma
+  =V(12A-B^2,\,3BC-4)
+  =\left\{\left(\frac1{3t^2},\frac2t,\frac{2t}{3}\right):t\in\C^*\right\}
+  \simeq\C^*.
+\end{equation}
+The points of $\Gamma$ are exactly the target cubics with a triple root.  The hypersurface $\cS$ is smooth away from $\Gamma$; transversely to $\Gamma$ it has the ordinary cubic-discriminant cusp.
+\end{proposition}
+
+\begin{proof}
+Viewed as a quadratic polynomial in $A$, the discriminant of $\Delta$ is
+\[
+  \disc_A(\Delta)=-4(3BC-4)^3,
+\]
+which is not a square in $\C(B,C)$.  Gauss's lemma for primitive polynomials over a UFD gives irreducibility \cite[Chapter 1]{Eisenbud1995}.
+
+A finite triple root $s=t$ forces
+\[
+  \Phi(S,T)=2A(S-tT)^3.
+\]
+Comparing coefficients gives
+\[
+  A=\frac1{3t^2},
+  \qquad B=\frac2t,
+  \qquad C=\frac{2t}{3},
+\]
+which is \eqref{eq:Gamma}.  A triple root at infinity is impossible because the coefficient of $ST^2$ is $2$.
+
+For completeness, differentiate \eqref{eq:Delta}:
+\[
+\begin{aligned}
+  \Delta_A&=-16+18BC-54AC^2,\\
+  \Delta_B&=2B-3B^2C+18AC,\\
+  \Delta_C&=-B^3+18AB-54A^2C.
+\end{aligned}
+\]
+At a critical point one has $C\neq0$.  Put $q=BC$.  The equation $\Delta_A=0$ gives
+\[
+  AC^2=\frac{9q-8}{27},
+\]
+and substituting into $C\Delta_B=0$ yields
+\[
+  -\frac13(3q-4)^2=0.
+\]
+Hence $q=4/3$ and $AC^2=4/27$, which is precisely \eqref{eq:Gamma}.  Conversely every point of \eqref{eq:Gamma} is critical.
+
+Finally, after translating the triple root and dividing by the leading coefficient, the standard local normal form for a cubic near a triple root \cite[Chapter 1]{GKZ1994} is analytically equivalent to
+\[
+  r^3+ur+v.
+\]
+Its discriminant is $-4u^3-27v^2$.  The remaining coefficient gives a smooth parameter along $\Gamma$, so a transverse slice is a cusp.
+\end{proof}
+
+\subsection{The complete fiber census}
+
+\begin{theorem}[Fiber census and image]\label{thm:fiber-census}
+For every $(A,B,C)\in\A^3$,
+\[
+  \#F^{-1}(A,B,C)=
+  \begin{cases}
+    3,&\Delta(A,B,C)\neq0,\\
+    1,&(A,B,C)\in\cS\setminus\Gamma,\\
+    0,&(A,B,C)\in\Gamma.
+  \end{cases}
+\]
+Consequently,
+\[
+  F(\A^3)=\A^3\setminus\Gamma.
+\]
+\end{theorem}
+
+\begin{proof}
+By \cref{thm:incidence-isomorphism}, the fiber points are the simple projective roots of \eqref{eq:binary-cubic}.  A cubic off its discriminant has three simple roots.  A discriminant-zero cubic that is not triple has multiplicity pattern $2+1$, hence exactly one simple root.  A triple-root cubic has no simple root.  The triple-root locus is \eqref{eq:Gamma}.
+\end{proof}
+
+\subsection{The nonproperness set}
+
+\begin{definition}[Nonproperness set]\label{def:nonproperness-set}
+For a polynomial map $G\colon\C^n\to\C^n$, its \emph{nonproperness set} $S_G$ consists of those points $q$ for which there is a sequence of source points escaping every compact set while their images tend to $q$.  This is Jelonek's asymptotic-value formulation \cite{Jelonek1993}.
+\end{definition}
+
+\begin{theorem}[Behavior at infinity]\label{thm:nonproperness}
+The nonproperness set of $F$ is exactly
+\[
+  S_F=\cS=V(\Delta).
+\]
+Thus the omitted set $\Gamma$ has codimension two, while nonproperness occurs along the whole irreducible quartic hypersurface $\cS$.
+\end{theorem}
+
+\begin{proof}
+Over $\A^3\setminus\cS$, the source is identified by \cref{thm:incidence-isomorphism} with the full inverse image of that open set under the finite morphism $\pi\colon\cI\to\A^3$.  Hence $F$ is finite, and therefore proper, over this open set.  Thus $S_F\subseteq\cS$.
+
+It remains to produce escaping families at every point of $\cS$.  First suppose the multiple root is finite.  It cannot be zero, because the derivative of $2As^3-Bs^2+2s-C$ at $s=0$ is $2$.  Write the multiple root as $t\in\C^*$.  The equations $\phi(t)=\phi'(t)=0$ are equivalent to
+\begin{equation}\label{eq:multiple-root-parameters}
+  B=3At+t^{-1},
+  \qquad
+  C=t-At^3.
+\end{equation}
+For $\eps\neq0$, set
+\begin{equation}\label{eq:finite-escape}
+  x_{\eps}=\frac{t}{\eps},
+  \qquad
+  y_{\eps}=\frac{1-\eps}{t},
+  \qquad
+  z_{\eps}=A\eps^3-y_{\eps}^2(4-ty_{\eps})\eps.
+\end{equation}
+Then $\|(x_{\eps},y_{\eps},z_{\eps})\|\to\infty$ and direct substitution gives
+\[
+  F(x_{\eps},y_{\eps},z_{\eps})
+  =\left(A,B-\frac{\eps}{t},C+\eps t\right)
+  \longrightarrow(A,B,C).
+\]
+
+The remaining discriminant points have a multiple root at infinity.  For \eqref{eq:binary-cubic} this occurs exactly when $A=B=0$.  Given $(0,0,C)$, set
+\begin{equation}\label{eq:infinity-escape}
+  x_{\eps}=\frac2\eps,
+  \qquad
+  y_{\eps}=-\frac\eps2,
+  \qquad
+  z_{\eps}=\frac{5x_{\eps}-C}{x_{\eps}^3}.
+\end{equation}
+Then
+\[
+  F(x_{\eps},y_{\eps},z_{\eps})=(0,\eps,C)
+  \longrightarrow(0,0,C),
+\]
+while the source escapes.  Hence $\cS\subseteq S_F$.
+\end{proof}
+
+\subsection{The one-point stratum and monodromy}
+
+\begin{notation}[The one-point source stratum]\label{not:T-stratum}
+Put
+\[
+  \cT=F^{-1}(\cS).
+\]
+\end{notation}
+
+\begin{proposition}\label{prop:T-isomorphism}
+The restriction
+\[
+  F|_{\cT}\colon \cT\longrightarrow\cS\setminus\Gamma
+\]
+is an isomorphism.  In particular, $\cT$ is smooth and irreducible.
+\end{proposition}
+
+\begin{proof}
+The fiber census shows that the restriction is bijective.  It is etale because $F$ is etale.  An etale morphism that is universally injective is an open immersion \cite[Tag 02LC]{StacksProject}; here every geometric fiber has exactly one reduced point.  Since the map is also surjective, it is an isomorphism.  Alternatively, in the finite incidence model the simple-root component over $\cS\setminus\Gamma$ is a degree-one etale cover of the smooth base and hence isomorphic to it.
+\end{proof}
+
+\begin{proposition}\label{prop:monodromy}
+The monodromy group of the three-sheeted covering
+\[
+  F^{-1}(\A^3\setminus\cS)\longrightarrow\A^3\setminus\cS
+\]
+is $S_3$.
+\end{proposition}
+
+\begin{proof}
+The source $F^{-1}(\A^3\setminus\cS)=\A^3\setminus\cT$ is irreducible, so the monodromy action is transitive.  Around a smooth point of the discriminant hypersurface, two roots of the cubic coalesce simply while the third remains separate.  After choosing a transverse coordinate $u$ on the target and a translated root coordinate $r$, the local equation has the form $(r^2-u)(r-r_0)=0$ with $r_0\neq0$.  A loop $u=\eps e^{2\pi i\theta}$ exchanges the two roots $r=\pm\sqrt u$ and fixes the third, so its monodromy is a transposition.  This is the usual covering-space monodromy of a simple branch point; compare \cite[Section 1.3]{Hatcher2002}.  A transitive subgroup of $S_3$ containing a transposition is all of $S_3$.
+\end{proof}
+
+\begin{corollary}\label{cor:euler-strata}
+One has
+\[
+  \chi(\A^3\setminus\cS)=0,
+  \qquad
+  \chi(\cS\setminus\Gamma)=1,
+  \qquad
+  \chi(\cS)=1,
+  \qquad
+  \chi(\cT)=1.
+\]
+\end{corollary}
+
+\begin{proof}
+Using additivity and multiplicativity of $\chi$ as recalled in \cref{sec:background} and \cite[Chapter 4]{Dimca2004}, let $u=\chi(\A^3\setminus\cS)$ and $v=\chi(\cS\setminus\Gamma)$.  Since $\chi(\Gamma)=\chi(\C^*)=0$, the target stratification gives
+\[
+  u+v=1.
+\]
+The source stratification and \cref{prop:T-isomorphism} give
+\[
+  3u+v=1.
+\]
+Thus $u=0$ and $v=1$.
+\end{proof}
+
+\subsection{Why the affine elimination cubic does not parametrize the fiber}
+
+\begin{definition}[Signed discriminant and affine elimination cubic]\label{def:affine-elimination-cubic}
+Set
+\[
+  \delta=-\Delta
+  =27A^2C^2-18ABC+B^3C-B^2+16A.
+\]
+Eliminating $y$ and $z$ from the fiber equations gives the necessary relation
+\begin{equation}\label{eq:affine-elimination-cubic}
+  \delta x^3+(4-3BC)x-2C=0,
+\end{equation}
+whose discriminant is
+\begin{equation}\label{eq:affine-cubic-discriminant}
+  -4(27AC^2-9BC+8)^2\delta.
+\end{equation}
+We call \eqref{eq:affine-elimination-cubic} the \emph{affine elimination cubic}.  It is a relation on the coordinate $x$, not a sheet-separating inverse equation.
+\end{definition}
+
+\begin{proposition}[A coordinate collision in the elimination cubic]\label{prop:affine-coordinate-collision}
+At
+\[
+  (A,B,C)=\left(-\frac8{27},0,1\right)
+\]
+the polynomial \eqref{eq:affine-elimination-cubic} is
+\[
+  -\frac2{27}(2x+3)(4x-3)^2,
+\]
+but the fiber of $F$ has three distinct points:
+\[
+\begin{aligned}
+ p_1&=\left(-\frac32,\frac43,\frac{104}{27}\right),\\
+ p_2&=\left(\frac34,-\frac23+\frac{2\sqrt3}{3},
+                  \frac{104}{27}-\frac{8\sqrt3}{3}\right),\\
+ p_3&=\left(\frac34,-\frac23-\frac{2\sqrt3}{3},
+                  \frac{104}{27}+\frac{8\sqrt3}{3}\right).
+\end{aligned}
+\]
+All three map to $(-8/27,0,1)$.  Thus the double affine root $x=3/4$ corresponds to two different fiber points.
+\end{proposition}
+
+\begin{proof}
+Direct exact substitution gives the stated factorization and the three equal images.  Notice that
+\[
+  \Delta\left(-\frac8{27},0,1\right)=\frac{64}{27}\neq0,
+\]
+so the map is an honest three-sheeted etale covering near this target.  The squared factor in \eqref{eq:affine-cubic-discriminant} records a collision of the chosen coordinate $x$, not ramification of $F$.
+\end{proof}
+
+\begin{remark}\label{rem:elimination-warning}
+The elimination cubic remains useful as an identity and as a warning.  A coordinate function on the source need not be a primitive element for a finite covering over every codimension-one locus.  The projective parameter $[x:1+xy]$ is the correct global separator.
+\end{remark}
+
+\section{The ordered double points and the discriminant filling}\label{sec:double-filling}
+
+\subsection{The ordered double-point threefold}
+
+\begin{definition}[Ordered double-point variety]\label{def:ordered-double-points}
+Let
+\[
+  Z=\A^3\times_F\A^3,
+  \qquad
+  Y=Z\setminus\operatorname{Diag}_{\A^3},
+\]
+where $\operatorname{Diag}_{\A^3}$ is the diagonal copy of the source in the fiber product.  Thus $Y$ parametrizes ordered pairs of distinct source points with the same image under $F$.
+\end{definition}
+
+\begin{theorem}\label{thm:Y}
+The variety $Y$ is a smooth irreducible affine threefold.  The map to the common target is a finite etale cover
+\[
+  Y\longrightarrow\A^3\setminus\cS
+\]
+of degree six, and
+\[
+  \chi(Y)=0.
+\]
+Moreover, $\Delta\circ F$ is a nonconstant unit on $Y$.  Hence
+\[
+  Y\times\A^d\not\simeq\A^{3+d}
+  \qquad(d\geq0).
+\]
+\end{theorem}
+
+\begin{proof}
+Since $F$ is etale, it is unramified and its diagonal in the fiber product is an open immersion \cite[Tag 02G3, Lemma 29.36.13]{StacksProject}; since $F$ is separated, the diagonal is a closed immersion \cite[Tag 01KK]{StacksProject}.  Therefore its complement is also open and closed in the affine variety $Z$, hence is affine.  The fiber census shows that no distinct pair lies over $\cS$, so $Y$ is the ordered-pair cover over $\A^3\setminus\cS$.  It is finite etale of degree $3\cdot2=6$, hence smooth.
+
+The $S_3$ monodromy acts transitively on ordered pairs of distinct sheets.  Thus the cover is connected.  A connected smooth complex variety is irreducible: smoothness makes all local rings regular, hence domains, so distinct irreducible components cannot meet; compare \cite[Chapter I, Section 5]{Hartshorne1977}.  By \cref{cor:euler-strata},
+\[
+  \chi(Y)=6\chi(\A^3\setminus\cS)=0.
+\]
+The pullback $\Delta\circ F$ has empty zero locus on the affine variety $Y$, so the Nullstellensatz makes it a unit; it is nonconstant because $Y$ dominates $\A^3\setminus\cS$ \cite[Chapters 1 and 5]{AtiyahMacdonald}.  Units are unchanged by adjoining polynomial variables over a reduced ring, whereas affine space has only constant units; see \cite[Chapter 1]{AtiyahMacdonald}.
+\end{proof}
+
+\subsection{The filling}
+
+The ordered-pair cover has a nonconstant discriminant unit.  The next construction adjoins a square root and extends the associated two-sheeted cover across the discriminant divisor.
+
+\begin{construction}[Discriminant filling]\label{con:discriminant-filling}
+With $\delta=-\Delta$ as in \cref{def:affine-elimination-cubic}, define
+\begin{equation}\label{eq:X-filling}
+  X=\{w^2=\delta(F(x,y,z))\}\subseteq\A^4_{x,y,z,w}.
+\end{equation}
+We call $X$ the \emph{discriminant filling}.  The sign is immaterial over $\C$, since $-1=i^2$.
+\end{construction}
+
+\begin{theorem}\label{thm:filling}
+The threefold $X$ is smooth and irreducible.  Its branch divisor
+\[
+  \cB=V_X(w)
+\]
+is isomorphic to $\cT\simeq\cS\setminus\Gamma$, and there is an isomorphism, unique up to the deck involution $w\mapsto-w$,
+\[
+  X\setminus\cB\simeq Y.
+\]
+Consequently,
+\[
+  \chi(X)=1.
+\]
+\end{theorem}
+
+\begin{proof}
+Let $G=w^2-\delta(F)$.  If a point of $X$ were singular, then $\partial G/\partial w=2w$ would force $w=0$, and the source derivatives would give
+\[
+  dF^{\mathsf T}\,d\delta=0,
+\]
+where $dF^{\mathsf T}$ is the transpose of the differential of $F$.
+The matrix $dF$ is invertible, so $d\delta=0$ at the target point.  By \cref{prop:discriminant-geometry}, that target lies on $\Gamma$.  But \cref{thm:fiber-census} says that $F$ has no preimage over $\Gamma$, a contradiction.  Thus $X$ is smooth.
+
+The divisor $w=0$ is exactly the graph of the zero square root over $\cT=F^{-1}(\cS)$, so $\cB\simeq\cT$.
+
+Over $U=\A^3\setminus\cS$, the cover $F^{-1}(U)\to U$ has monodromy $S_3$.  Fixing the first sheet identifies the stabilizer with $S_2$.  The two choices of a second sheet form the nontrivial two-sheeted cover associated with the sign character of that stabilizer.  On the other hand, adjoining a square root of the cubic discriminant is the sign-character cover of the $S_3$-torsor; after pulling back to the first-sheet cover, it is the same nontrivial $S_2$-cover.  The algebraic Riemann existence theorem and the classification of finite etale covers by monodromy \cite[Expose XII]{SGA1} therefore give
+\[
+  Y\simeq X\setminus\cB.
+\]
+Since $Y$ is irreducible and dense, $X$ is irreducible.  Finally,
+\[
+  \chi(X)=\chi(Y)+\chi(\cB)=0+1=1
+\]
+by \cref{cor:euler-strata} and \cref{thm:Y}.
+\end{proof}
+
+\part{Algebraic structure and topology}\label{part:structure}
+\section{Affine-modification geometry and the quotient surface}\label{sec:structure}
+
+\subsection{An explicit affine-modification presentation}
+
+\begin{construction}[Affine-modification presentation]\label{con:affine-modification-presentation}
+Define
+\begin{equation}\label{eq:mu-g}
+  \mu=xz(1+xy)+y(1+3xy),
+  \qquad
+  g=(3xy+2)z+9y^2.
+\end{equation}
+The identity
+\begin{equation}\label{eq:delta-identity}
+  \delta\circ F=-9\mu^2+8g
+\end{equation}
+holds.  Set $V=3\mu-iw$, equivalently $w=i(V-3\mu)$.  This triangular automorphism carries \eqref{eq:X-filling} to
+\begin{equation}\label{eq:hzN}
+  X'=\{hz=N\}\subseteq\A^4_{x,y,V,z},
+\end{equation}
+where
+\begin{equation}\label{eq:hN}
+\begin{aligned}
+  h&=6x(1+xy)V-24xy-16,\\
+  N&=V^2-6y(1+3xy)V+72y^2.
+\end{aligned}
+\end{equation}
+Thus $X\simeq X'$.  Put
+\[
+  M=\A^3_{x,y,V},
+  \qquad H=V_M(h),
+  \qquad C_0=V_M(h,N).
+\]
+The projection $\sigma\colon X'\to M$ is the affine modification of $M$ along $H$ with center $C_0$, because
+\[
+  \OO(X')=\C[x,y,V]\left[\frac Nh\right]\subseteq\C[x,y,V,h^{-1}].
+\]
+Below we identify $X$ with $X'$ and suppress the prime when no confusion can arise.
+\end{construction}
+
+\begin{proposition}\label{prop:modification-geometry}
+The divisor $H$ is isomorphic to $(\C^*)^2$.  In the coordinates
+\[
+  t=1+xy,
+\]
+an isomorphism is
+\begin{equation}\label{eq:H-param}
+  (x,t)\longmapsto
+  \left(x,\frac{t-1}{x},\frac{4(3t-1)}{3xt}\right).
+\end{equation}
+Under this identification,
+\[
+  N|_H=\frac{16(3t+1)}{9t^2x^2}.
+\]
+Hence
+\begin{equation}\label{eq:center}
+  C_0=\left\{3xy+4=0,\quad V=\frac8x\right\}
+  \simeq\C^*,
+\end{equation}
+and the exceptional divisor is
+\[
+  D=\sigma^{-1}(C_0)\simeq C_0\times\A^1_z.
+\]
+Moreover,
+\[
+  V_X(h)=D
+\]
+as a reduced Cartier divisor, so $\divisor_X(h)=D$.
+\end{proposition}
+
+\begin{proof}
+The equation $h=0$ becomes
+\[
+  6xtV-24t+8=0.
+\]
+On $H$, neither $x$ nor $t$ can vanish: if $x=0$, then $t=1$ and the equation reads $-16=0$; if $t=0$, it reads $8=0$.  Solving for $y$ and $V$ gives \eqref{eq:H-param}, with regular inverse $(x,y,V)\mapsto(x,1+xy)$.
+
+Substitution gives the displayed formula for $N|_H$.  Its zero set is $t=-1/3$, simple in the $t$-coordinate, which yields \eqref{eq:center}.  Over a point of $H\setminus C_0$, the equation $hz=N$ has no solution.  Over $C_0$ it imposes no condition on $z$, so $D\simeq C_0\times\A^1$.  Finally,
+\[
+  \OO(X')/(h)
+  \simeq\C[x,y,V,z]/(h,N)
+  \simeq\OO(C_0)[z]
+\]
+is reduced.  Thus the principal divisor defined by $h$ is exactly $D$ with multiplicity one.
+\end{proof}
+
+\subsection{Divisor class group and units}
+
+\begin{theorem}\label{thm:factorial-units}
+The threefold $X$ is rational and smooth, and
+\[
+  \Cl(X)=0,
+  \qquad
+  \Pic(X)=0,
+  \qquad
+  \OO(X)\text{ is a UFD},
+  \qquad
+  \OO(X)^*=\C^*.
+\]
+\end{theorem}
+
+\begin{proof}
+Smoothness was proved in \cref{thm:filling}.  The modification map is birational, so $X$ is rational.
+
+Put
+\[
+  U_0=X\setminus D\simeq M\setminus H.
+\]
+Its coordinate ring is the localization $\C[x,y,V,h^{-1}]$, a UFD.  The localization sequence for divisor class groups \cite[Chapter II, Proposition 6.5]{Hartshorne1977} shows that $\Cl(X)$ is generated by the class of the single irreducible divisor $D$.  But $D=\divisor_X(h)$ is principal, so $\Cl(X)=0$.  Since $X$ is smooth, $\Pic(X)=\Cl(X)$ and $\Cl(X)=0$ is equivalent to factoriality of its normal affine coordinate ring \cite[Chapter II, Section 6]{Hartshorne1977}.
+
+Because $\C[x,y,V]$ is a UFD and $h$ is irreducible, localization gives
+\[
+  \OO(M\setminus H)^*=\C^*h^{\Z};
+\]
+this is the standard description of units in the localization of a UFD at one prime element \cite[Chapters 1 and 3]{AtiyahMacdonald}.
+Let $u\in\OO(X)^*$.  Its restriction to $U_0$ is $ch^m$ for some $c\in\C^*$ and $m\in\Z$.  The divisor of this restriction extends to $mD$ on $X$, while a global unit has zero divisor.  Hence $m=0$ and $u=c$.
+\end{proof}
+
+\subsection{The hyperbolic action and its quotient}
+
+\begin{construction}[The hyperbolic $\Gm$-action]\label{con:torus-action}
+Define
+\begin{equation}\label{eq:torus-action}
+  \lambda\cdot(x,y,V,z)
+  =(\lambda x,\lambda^{-1}y,\lambda^{-1}V,\lambda^{-2}z).
+\end{equation}
+The polynomial $h$ has weight zero and both $hz$ and $N$ have weight $-2$, so \eqref{eq:torus-action} preserves $X$.  Positive and negative weights occur, hence the action is hyperbolic in the sense of \cref{def:gm-grading}.
+\end{construction}
+
+\begin{proposition}\label{prop:torus-quotient}
+The action \eqref{eq:torus-action} has the origin as its unique fixed point.  The tangent weights at that point are $(1,-1,-1)$.  Its invariant ring is
+\begin{equation}\label{eq:quotient-ring}
+  R=\C[s,p,q]/(qh_0-N_0),
+\end{equation}
+where
+\begin{equation}\label{eq:invariants}
+  s=xy,
+  \qquad p=xV,
+  \qquad q=x^2z,
+\end{equation}
+\begin{equation}\label{eq:h0N0}
+\begin{aligned}
+  h_0(s,p)&=6p(1+s)-24s-16,\\
+  N_0(s,p)&=p^2-6sp-18s^2p+72s^2.
+\end{aligned}
+\end{equation}
+Thus the affine quotient is the surface
+\[
+  \Sigma_1=\Spec R.
+\]
+Evaluation at $x=1$ identifies $\Sigma_1$ with the fiber $\{x=1\}\subseteq X$.
+\end{proposition}
+
+\begin{proof}
+Every ambient coordinate has nonzero weight, so an ambient fixed point must be the origin, which lies on $X$.  The linear part of the equation $hz-N$ at the origin is $-16z$.  Hence the tangent space is spanned by $x,y,V$, with weights $(1,-1,-1)$.
+
+In the ambient polynomial ring, a weight-zero monomial
+\[
+  x^ay^bV^cz^d
+\]
+satisfies $a=b+c+2d$ and equals $s^bp^cq^d$.  Thus the ambient invariant ring is $\C[s,p,q]$.  The defining equation has weight $-2$.  Every ambient monomial of weight $2$ is $x^2$ times a weight-zero monomial.  Therefore the degree-zero part of the principal ideal $(hz-N)$ is generated over $\C[s,p,q]$ by
+\[
+  x^2(hz-N)=qh_0-N_0.
+\]
+This proves \eqref{eq:quotient-ring}.  Setting $x=1$ sends $(s,p,q)$ to $(y,V,z)$ and turns the quotient relation into the fiber equation, giving the last assertion.
+\end{proof}
+
+\begin{remark}\label{rem:no-torus-uniqueness}
+No uniqueness or maximality statement for the $\Gm$-action is asserted.  The displayed weights are canonical for the given presentation, but classifying all abstract torus actions on $X$ is a separate automorphism problem.
+\end{remark}
+
+\subsection{The quotient surface}
+
+\begin{notation}[Nonzero fibers of the Rees coordinate]\label{not:sigma-c}
+For $c\in\C^*$ set
+\[
+  \Sigma_c=\{x=c\}\subseteq X.
+\]
+The action \eqref{eq:torus-action} identifies all nonzero fibers with one another.
+\end{notation}
+
+\begin{proposition}\label{prop:surface-kappa}
+For every $c\neq0$, the surface $\Sigma_c$ is smooth and
+\[
+  \kbar(\Sigma_c)=0,
+  \qquad
+  \chi(\Sigma_c)=2.
+\]
+More precisely,
+\[
+  \Sigma_c\simeq\operatorname{Bl}_{P_c}(\A^2_{y,V})\setminus\widetilde H_c,
+\]
+where
+\[
+  H_c=\{6c(1+cy)V-24cy-16=0\}
+\]
+is a smooth affine conic, and
+\[
+  P_c=\left(-\frac4{3c},\frac8c\right)
+\]
+is a transverse center point on $H_c$.
+\end{proposition}
+
+\begin{proof}
+The equation of $\Sigma_c$ is $h_cz=N_c$, an affine modification of $\A^2_{y,V}$ along $H_c=V(h_c)$ with center $V(h_c,N_c)$.  In homogeneous coordinates $[Y:V:W]$ on $\mathbb P^2$, the projective closure of $H_c$ has equation
+\[
+  6cVW+6c^2YV-24cYW-16W^2=0.
+\]
+The determinant of its symmetric coefficient matrix is $-72c^4\neq0$, so the conic is smooth.  On the line at infinity $W=0$ its equation is $6c^2YV=0$, giving the two distinct points $[1:0:0]$ and $[0:1:0]$; the linear terms in the corresponding affine charts show that both intersections are transverse.  Solving $h_c=N_c=0$ gives the single point $P_c$, and the Jacobian determinant of $(h_c,N_c)$ there is $-72c^2\neq0$, so the center is transverse.  The blowup description of an affine modification \cite[Section 1]{KalimanZaidenberg1999} gives
+\[
+  \Sigma_c\simeq\operatorname{Bl}_{P_c}(\A^2)\setminus\widetilde H_c.
+\]
+
+Compactify by $\overline\Sigma_c=\operatorname{Bl}_{P_c}(\mathbb P^2)$.  Let $H$ denote the pullback of a line and $E$ the exceptional curve.  The boundary is the union of the line at infinity, of class $H$, and the proper transform of the conic, of class $2H-E$.  It is a simple normal-crossings divisor, and
+\[
+  K_{\overline\Sigma_c}= -3H+E,
+  \qquad
+  D_{\infty}=H+(2H-E)=3H-E.
+\]
+The canonical-divisor formula for the blowup of a smooth surface at a point is the standard formula $K_{\operatorname{Bl}_P S}=\pi^*K_S+E$; see \cite[Chapter II, Exercise 8.5]{Hartshorne1977}.  Thus
+\[
+  K_{\overline\Sigma_c}+D_{\infty}=0,
+\]
+so all logarithmic plurigenera are one and $\kbar(\Sigma_c)=0$.
+
+Finally, blowing up one point replaces a point of Euler characteristic one by an exceptional $\mathbb P^1$ of Euler characteristic two, so $\chi(\operatorname{Bl}_{P_c}\A^2)=2$.  The removed affine conic is the projective conic minus its two points at infinity, hence isomorphic to $\C^*$ and has Euler characteristic zero; these uses of additivity are covered by \cite[Chapter 4]{Dimca2004}.  Hence $\chi(\Sigma_c)=2$.
+\end{proof}
+
+\section{The weighted Rees algebra and the smooth degeneration}\label{sec:rees-structure}
+
+\begin{definition}[The $(1,1,2)$-weighted filtration]\label{def:explicit-weighted-filtration}
+Let $\cE=\OO(X)$ with the grading from \eqref{eq:torus-action}, and let
+\[
+  R=\cE_0=\OO(\Sigma_1)
+\]
+be the invariant ring \eqref{eq:quotient-ring}.  For $m\geq0$, let $\mathfrak a_m\subseteq R$ be the image of
+\begin{equation}\label{eq:weighted-ideal}
+  J_m=(s^bp^cq^d:b+c+2d\geq m)
+  \subseteq\C[s,p,q].
+\end{equation}
+Set $\mathfrak a_m=R$ for $m\leq0$.  Since $J_mJ_n\subseteq J_{m+n}$, these ideals form a multiplicative filtration, called the $(1,1,2)$-weighted-order filtration at $o=(s,p,q)=(0,0,0)$.
+\end{definition}
+
+\begin{theorem}[Rees presentation]\label{thm:explicit-rees}
+For $n\geq0$ and $m\geq1$,
+\[
+  \cE_n=x^nR,
+  \qquad
+  x^m\cE_{-m}=\mathfrak a_m.
+\]
+Consequently,
+\begin{equation}\label{eq:explicit-extended-rees}
+  \cE\simeq\bigoplus_{n\in\Z}\mathfrak a_{-n}x^n
+  \subseteq R[x,x^{-1}]
+\end{equation}
+is the extended Rees algebra of the weighted filtration \eqref{eq:weighted-ideal}.
+\end{theorem}
+
+\begin{proof}
+The graded quotient $\cE$ is spanned in each degree by classes of ambient monomials.  Let
+\[
+  M=x^ay^bV^cz^d.
+\]
+If $\wt(M)=n\geq0$, then
+\[
+  a-b-c-2d=n,
+\]
+so
+\[
+  M=x^n s^bp^cq^d\in x^nR.
+\]
+The reverse inclusion is clear, proving $\cE_n=x^nR$.
+
+If $\wt(M)=-m$, then
+\[
+  b+c+2d-a=m.
+\]
+Multiplying by $x^m$ gives
+\[
+  x^mM=s^bp^cq^d,
+\]
+whose weighted order is
+\[
+  b+c+2d=a+m\geq m.
+\]
+Thus $x^m\cE_{-m}\subseteq\mathfrak a_m$.
+
+Conversely, let $s^bp^cq^d$ have weighted order
+\[
+  w=b+c+2d\geq m.
+\]
+Then
+\[
+  x^{w-m}y^bV^cz^d\in \cE_{-m}
+\]
+and multiplying by $x^m$ gives $s^bp^cq^d$.  Since such monomials generate $\mathfrak a_m$, equality follows.
+
+Finally, after inverting $x$ one has
+\[
+  y=sx^{-1},\qquad V=px^{-1},\qquad z=qx^{-2},
+\]
+so $\cE[x^{-1}]=R[x,x^{-1}]$.  The graded-piece equalities therefore identify $\cE$ with the extended Rees subalgebra displayed in \eqref{eq:explicit-extended-rees}.
+\end{proof}
+
+\begin{corollary}[Rigidity of the filling]\label{cor:X-rigid}
+The threefold $X$ is rigid:
+\[
+  \ML(X)=\OO(X).
+\]
+In particular,
+\[
+  X\not\simeq\A^3,
+  \qquad
+  X\times\A^1\not\simeq\A^4.
+\]
+\end{corollary}
+
+\begin{proof}
+By \cref{prop:surface-kappa}, the smooth affine surface $\Sigma_1$ has $\kbar(\Sigma_1)=0$.  By \cref{thm:explicit-rees}, $\OO(X)$ is its finitely generated extended Rees algebra.  Apply \cref{thm:rees-rigidity,cor:general-cancellation}.
+\end{proof}
+
+
+\begin{remark}[Logarithmic plurigenera]\label{rem:log-plurigenera}
+The notation $P_m^{\log}$ and its independence of an SNC completion were fixed in \cref{def:log-kodaira}; see \cite{Iitaka1977,Miyanishi2001}.
+\end{remark}
+
+\begin{proposition}[Smooth Rees degeneration]\label{prop:smooth-family}
+The coordinate
+\[
+  x\colon X\longrightarrow\A^1
+\]
+is a smooth surjective morphism.  Write $X_c=x^{-1}(c)$.  Its fibers satisfy
+\[
+  X_c\simeq\Sigma_1,
+  \quad \kbar(X_c)=0
+  \qquad(c\neq0),
+\]
+and
+\[
+  X_0\simeq\A^2,
+  \quad \kbar(X_0)=-\infty.
+\]
+All logarithmic plurigenera $P_m^{\log}$ drop from $1$ on the nonzero fibers to $0$ on the special fiber.
+\end{proposition}
+
+\begin{proof}
+By \cref{thm:explicit-rees}, $\C[x]$ embeds in $\cE$.  Since $\cE$ is a domain, it is torsion-free over the PID $\C[x]$, and therefore flat \cite[Tag 0AUW]{StacksProject}.  The nonzero fibers are mutually isomorphic by the $\Gm$-action.  At $x=0$, the equation $hz=N$ becomes
+\[
+  -16z=V^2-6yV+72y^2,
+\]
+which solves uniquely for $z$ and identifies the fiber with $\A^2_{y,V}$.  Every nonzero fiber is smooth by \cref{prop:surface-kappa}, the special fiber is smooth, and the total space is smooth.  A flat morphism locally of finite presentation with smooth geometric fibers is smooth \cite[Tag 01V4, Lemma 29.35.3]{StacksProject}.  For $c\neq0$, the equality $K_{\overline\Sigma_c}+D_{\infty}=0$ gives $P_m^{\log}(X_c)=h^0(\overline\Sigma_c,\OO)=1$.  For $\A^2$, use the completion $(\mathbb P^2,L_\infty)$, for which $K_{\mathbb P^2}+L_\infty=-2H$; hence $P_m^{\log}(\A^2)=0$ for every $m\geq1$ and $\kbar(\A^2)=-\infty$.  Related deformation phenomena for affine-line fibrations are discussed in \cite{GurjarMasudaMiyanishi2014}; the point here is the explicit equivariant Rees realization.
+\end{proof}
+
+\section{Topology and the definitive failure of cancellation}\label{sec:topology}
+
+\begin{setup}[Common complement for the affine modification]\label{setup:topology-common-complement}
+Retain
+\[
+  M=\A^3_{x,y,V},
+  \qquad
+  H=V_M(h)\simeq(\C^*)^2,
+  \qquad
+  D=V_X(h)\simeq\C^*\times\A^1,
+\]
+and the common open complement
+\[
+  U_0=M\setminus H\simeq X\setminus D.
+\]
+Under the coordinates $(x,t)$ of \eqref{eq:H-param}, the center inclusion is
+\begin{equation}\label{eq:center-inclusion}
+  j\colon\C^*\hookrightarrow(\C^*)^2,
+  \qquad
+  x\longmapsto(x,-1/3),
+\end{equation}
+so
+\begin{equation}\label{eq:H1-inclusion}
+  j_*\colon H_1(\C^*;\Z)\longrightarrow H_1((\C^*)^2;\Z),
+  \qquad
+  1\longmapsto(1,0).
+\end{equation}
+The comparison attaches $H$ back on the contractible base side and $D$ back on the modified side.  Meridians control $\pi_1$, while Thom isomorphisms and $j_*$ control integral homology.
+\end{setup}
+
+\subsection{Fundamental group}
+
+\begin{lemma}[Meridian quotient]\label{lem:meridian}
+Let $V$ be a connected smooth complex variety and let $E\subset V$ be a connected smooth divisor.  The inclusion $V\setminus E\hookrightarrow V$ induces a surjection on fundamental groups, and its kernel is normally generated by a positively oriented meridian around $E$.  This is a standard consequence of transversality and Seifert--van Kampen; compare \cite[Chapter VI]{Bredon1993}.
+\end{lemma}
+
+\begin{proof}
+A loop can be moved off the real-codimension-two submanifold $E$ by general position, giving surjectivity.  If a loop in $V\setminus E$ is null-homotopic in $V$, choose a null-homotopy transverse to $E$.  Removing small disks around its finitely many intersection points expresses the boundary loop as a product of conjugates of meridians.  Conversely, a meridian bounds a small transverse disk in $V$.
+\end{proof}
+
+\begin{theorem}\label{thm:pi1}
+The modification map induces
+\[
+  \pi_1(X)\simeq\pi_1(M)=1.
+\]
+\end{theorem}
+
+\begin{proof}
+Apply \cref{lem:meridian} to $H\subset M$ and $D\subset X$.  Both fundamental groups are quotients of $\pi_1(U_0)$ by the normal closure of a meridian.  On the common complement, the defining function is the same regular function $h$.  Since
+\[
+  \divisor_X(h)=D
+\]
+with multiplicity one, a small loop on which $h$ winds once around zero is simultaneously a meridian of $D$ and, under $\sigma$, a meridian of $H$.  The two normal subgroups coincide, so
+\[
+  \pi_1(X)\simeq\pi_1(M)=1.
+\]
+\end{proof}
+
+\subsection{Integral homology}
+
+\begin{theorem}\label{thm:homology}
+The integral homology of $X$ is
+\[
+  H_i(X;\Z)=
+  \begin{cases}
+    \Z,&i=0,2,3,\\
+    0,&\text{otherwise}.
+  \end{cases}
+\]
+Moreover,
+\[
+  \pi_2(X)\simeq\Z.
+\]
+\end{theorem}
+
+\begin{proof}
+The Thom isomorphism for an oriented real rank-two normal bundle \cite[Chapter VI]{Bredon1993} gives
+\begin{equation}\label{eq:thom-M}
+  H_i(M,U_0;\Z)\simeq H_{i-2}(H;\Z),
+\end{equation}
+\begin{equation}\label{eq:thom-X}
+  H_i(X,U_0;\Z)\simeq H_{i-2}(D;\Z).
+\end{equation}
+Since $M$ is contractible and $H\simeq(\C^*)^2$, the long exact sequence of $(M,U_0)$ gives
+\begin{equation}\label{eq:U-homology}
+  H_1(U_0)=\Z,
+  \qquad
+  H_2(U_0)=\Z^2,
+  \qquad
+  H_3(U_0)=\Z,
+\end{equation}
+with all higher reduced homology zero.
+
+Naturality of the Thom isomorphism identifies the relative map induced by
+\[
+  \sigma\colon(X,U_0)\longrightarrow(M,U_0)
+\]
+with the map induced by $D\to H$.  Since $D\simeq C_0\simeq\C^*$ by deformation retraction, this is the inclusion \eqref{eq:center-inclusion}.  On $H_0$ it is an isomorphism, and on $H_1$ it is the primitive injection \eqref{eq:H1-inclusion}.
+
+Therefore the boundary maps in the long exact sequence of $(X,U_0)$ are:
+\[
+  H_2(X,U_0)=\Z\xrightarrow{\sim}H_1(U_0)=\Z,
+\]
+\[
+  H_3(X,U_0)=\Z\hookrightarrow H_2(U_0)=\Z^2,
+  \qquad 1\longmapsto(1,0),
+\]
+and $H_4(X,U_0)=0$.  Exactness now gives
+\[
+  H_1(X)=0,
+\]
+\[
+  H_2(X)\simeq\operatorname{coker}(\Z\hookrightarrow\Z^2)\simeq\Z,
+\]
+\[
+  H_3(X)\simeq H_3(U_0)\simeq\Z,
+\]
+and no higher homology.  Together with \cref{thm:pi1}, the degree-two Hurewicz theorem identifies $\pi_2(X)$ with $H_2(X;\Z)$ \cite[Section 4.2]{Hatcher2002}.
+\end{proof}
+
+\begin{corollary}[Stable topological obstruction]\label{cor:all-cylinders}
+The threefold $X$ is not contractible.  For every $d\geq0$,
+\[
+  X\times\A^d\not\simeq\A^{3+d}.
+\]
+\end{corollary}
+
+\begin{proof}
+The projection $X\times\A^d\to X$ is a homotopy equivalence, whereas affine space is contractible.  Since $H_2(X;\Z)\simeq\Z$, no such isomorphism exists.
+\end{proof}
+
+\begin{remark}\label{rem:two-obstructions}
+For one cylinder, rigidity and \cref{cor:general-cancellation} already rule out affine space.  The homology calculation is independent of locally nilpotent derivations and rules out every number of affine factors.  This is the definitive reason the construction cannot yield a Zariski-cancellation counterexample.
+\end{remark}
+
+\part{Context, reconstruction, and consequences}\label{part:context}
+\section{Reconstruction from active monodromy data}\label{sec:reconstruction}
+
+\subsection{Canonical finite normalization}
+
+\begin{definition}[Monodromy datum and canonical etale filling]\label{def:monodromy-datum}
+Fix $n\geq2$.  A degree-$d$ \emph{monodromy datum} is a pair $(S,\rho)$ in which $S\subseteq\A^n$ is a reduced hypersurface and
+\[
+  \rho\colon\pi_1(\A^n\setminus S)\longrightarrow S_d
+\]
+is a transitive representation, considered up to conjugacy.  Let $W_\rho\to\A^n\setminus S$ be the finite etale cover supplied by \cref{thm:riemann-existence}.  Normalize $\A^n$ in its function field:
+\[
+  \overline Z(S,\rho)\longrightarrow\A^n.
+\]
+This map is finite by \cref{thm:normalization-purity}.  Its etale locus
+\[
+  \widehat Z(S,\rho)\subseteq\overline Z(S,\rho)
+\]
+is the \emph{canonical etale filling} of the datum.  The datum is \emph{nontrivial} when $d\geq2$.
+\end{definition}
+
+\begin{definition}\label{def:active}
+A monodromy datum $(S,\rho)$ is \emph{active} if $S$ is exactly the reduced branch locus of
+\[
+  \overline Z(S,\rho)\longrightarrow\A^n.
+\]
+Equivalently, no irreducible component of $S$ is a dummy component: a small loop around a general smooth point of every component must have nontrivial monodromy.  This local monodromy is the \emph{generic inertia} of that component.
+\end{definition}
+
+\begin{warning}[Dummy branch components]\label{warn:dummy-components}
+Activity is essential.  One may add a hypersurface component with trivial generic inertia without changing the function field, normalization, or etale filling.  Such a dummy component cannot be recovered from the resulting map.
+\end{warning}
+
+\subsection{Etale-maximal maps}
+
+\begin{setup}[Finite normalization of a Keller map]\label{setup:keller-normalization}
+Let $G\colon\A^n\to\A^n$ be a Keller map in the sense of \cref{def:keller-map}.  By \cref{thm:basic-morphism-facts}, it is etale and locally quasi-finite.  Zariski's Main Theorem \cref{thm:zariski-main} factors it as
+\begin{equation}\label{eq:ZMT}
+  \A^n\xhookrightarrow{\ j\ }\overline Z_G
+  \xrightarrow{\ \overline\pi\ }\A^n,
+\end{equation}
+where $\overline Z_G$ is the normalization of the target in the source function field, $\overline\pi$ is finite, and the image of $j$ lies in the etale locus of $\overline\pi$.
+\end{setup}
+
+\begin{definition}\label{def:etale-maximal}
+A Keller map $G$ is \emph{etale-maximal} if the open immersion in \eqref{eq:ZMT} identifies its source with the entire etale locus of $\overline\pi$.
+\end{definition}
+
+\begin{theorem}[Reconstruction from active data]\label{thm:active-reconstruction}
+The following statements hold.
+
+\begin{enumerate}[label=\textup{(\alph*)}]
+\item Etale-maximal Keller maps of generic degree $d\geq2$, up to source and target automorphisms, correspond to active degree-$d$ monodromy data $(S,\rho)$ for which
+\[
+  \widehat Z(S,\rho)\simeq\A^n.
+\]
+\item The Jacobian conjecture in dimension $n$ is equivalent to the following statement: no nontrivial active datum $(S,\rho)$ has an etale filling $\widehat Z(S,\rho)$ containing a dense Zariski-open subset isomorphic to $\A^n$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+For (a), suppose first that $(S,\rho)$ is active and that $\widehat Z(S,\rho)\simeq\A^n$.  Compose such an isomorphism with the finite map restricted to the etale locus:
+\[
+  G\colon\A^n\simeq\widehat Z(S,\rho)\longrightarrow\A^n.
+\]
+This is an etale morphism of affine spaces and therefore, by the affine algebra--geometry dictionary, a polynomial map.  Its Jacobian determinant is a unit of $\C[x_1,\ldots,x_n]$, hence a nonzero constant \cite[Chapter 1]{AtiyahMacdonald}.  Its function field has degree $d$, so $d\geq2$ makes it noninvertible.  It is etale-maximal by construction.  Activity ensures that the reconstructed branch hypersurface is exactly $S$.
+
+Conversely, an etale-maximal Keller map determines the finite normalization \eqref{eq:ZMT}, its actual reduced branch locus $S$, and the monodromy representation over $\A^n\setminus S$.  Purity of the branch locus makes $S$ either empty or a hypersurface \cite[Tag 0BJE]{StacksProject}.  This datum is active, and etale-maximality identifies the source with $\widehat Z(S,\rho)$.  Source and target automorphisms have exactly the expected effect on the chosen affine-space identification and on the branch datum.
+
+For (b), a Keller counterexample gives, by \eqref{eq:ZMT}, a dense open immersion
+\[
+  \A^n\hookrightarrow\widehat Z(S,\rho)
+\]
+for the active datum obtained from the actual branch locus, which is a hypersurface by purity \cite[Tag 0BJE]{StacksProject}.  Conversely, if an active datum has a dense open subset $V\simeq\A^n$ inside its etale locus, then the composite
+\[
+  \A^n\simeq V\hookrightarrow\widehat Z(S,\rho)\longrightarrow\A^n
+\]
+is an etale polynomial map of generic degree $d\geq2$, hence a Keller counterexample.
+\end{proof}
+
+\begin{proposition}\label{prop:F-etale-maximal}
+The explicit map $F$ in \eqref{eq:F} is etale-maximal.  Its active finite normalization is the incidence variety
+\[
+  \pi\colon\cI\longrightarrow\A^3,
+\]
+and its etale locus is $\cI^{\mathrm{simp}}\simeq\A^3$.
+\end{proposition}
+
+\begin{proof}
+By \cref{prop:incidence-finite}, $\cI$ is finite, smooth, normal, and irreducible.  By \cref{thm:incidence-isomorphism}, its dense etale locus is isomorphic to the source and therefore has the same function field.  Hence $\cI$ is the normalization of the target in that function field.  The etale locus of the finite projection is exactly the simple-root locus, again by \cref{prop:incidence-finite}, and its reduced branch locus is $\cS$.  Thus the datum is active and the source exhausts the etale locus.
+\end{proof}
+
+\begin{remark}\label{rem:reconstruction-correction}
+The distinction between \cref{thm:active-reconstruction}(a) and (b) is essential.  Zariski's Main Theorem always gives an open affine-space chart for a Keller source, but it does not say that the whole etale filling is affine space.  The stronger affine-filling recognition problem classifies only etale-maximal counterexamples.
+\end{remark}
+
+\section{Symmetries, comparison, and mathematical significance}\label{sec:significance}
+
+\subsection{No additive one-parameter symmetries}
+
+\begin{proposition}\label{prop:no-additive-symmetries}
+There is no nontrivial pair of algebraic $\Ga$-actions $\alpha_t$ on the source and $\beta_t$ on the target satisfying
+\[
+  F\circ\alpha_t=\beta_t\circ F
+  \qquad(t\in\Ga).
+\]
+\end{proposition}
+
+\begin{proof}
+Equivariance makes the target action preserve the intrinsic nonproperness hypersurface $\cS$.  Since $\Delta$ is irreducible, one has
+\[
+  \beta_t^*(\Delta)=\vartheta(t)\Delta
+\]
+for a character $\vartheta\colon\Ga\to\Gm$.  The additive group has no nontrivial algebraic characters \cite[Chapter 12]{Milne2017}, so $\vartheta=1$.  Hence $\delta\circ\beta_t=\delta$, and the source action lifts to
+\[
+  (p,w)\longmapsto(\alpha_t(p),w)
+\]
+on $X$.  By the LND--$\Ga$ correspondence \cite[Chapter 1]{Freudenburg2017} and \cref{cor:X-rigid}, every $\Ga$-action on $X$ is trivial.  The finite projection $X\to\A^3$ to the source is surjective because every complex number has a square root.  Therefore triviality of the lifted action implies that $\alpha_t$ is trivial.  Dominance of $F$ then forces $\beta_t$ to be trivial as well.
+\end{proof}
+
+\subsection{Geometric information supplied by the Keller map}
+
+\begin{observation}[Three roles of the explicit map]\label{obs:three-roles-F}
+The map $F$ contributes to the construction in three distinct ways.
+\begin{enumerate}[label=\textup{(\roman*)},leftmargin=2.5em]
+\item It supplies a genuinely nonproper etale map whose pathology is concentrated at infinity.  The finite incidence model is smooth and finite, while the affine source is exactly its simple-root, hence etale, locus.  The missing normalization points are the multiple-root points of the projective cubic.
+\item It separates the omitted set from the nonproperness set:
+\[
+  \A^3\setminus F(\A^3)=\Gamma\simeq\C^*,
+  \qquad
+  S_F=\cS.
+\]
+The omitted set has codimension two, whereas the asymptotic-value set is a hypersurface, as predicted by Jelonek's theorem \cite{Jelonek1993}.
+\item Its $S_3$ covering geometry creates the ordered-pair cover and the discriminant double cover.  The filling $X$ is therefore the natural completion, over the source, of the sign-character cover of the ordered double points.
+\end{enumerate}
+\end{observation}
+
+\begin{proof}[References within the paper]
+Part (i) is \cref{thm:incidence-isomorphism,prop:incidence-finite,thm:nonproperness}; part (ii) is \cref{thm:fiber-census,thm:nonproperness}; and part (iii) is \cref{thm:Y,thm:filling}.
+\end{proof}
+
+\subsection{What the cancellation attempt teaches}
+
+\begin{proposition}[Complementary failure mechanisms]\label{prop:cancellation-failure-mechanisms}
+The two natural cancellation candidates fail for complementary reasons.
+\begin{enumerate}[label=\textup{(\arabic*)},leftmargin=2.5em]
+\item The ordered double-point variety $Y$ is too open: the discriminant is a nonconstant unit, and this obstruction survives every affine cylinder.
+\item The filling $X$ repairs the unit group and is factorial, but it is rigid and topologically nontrivial.  Its Makar--Limanov invariant is the whole coordinate ring and
+\[
+  H_2(X;\Z)\simeq H_3(X;\Z)\simeq\Z.
+\]
+Consequently no affine cylinder over $X$ is affine space.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+Statement (1) is \cref{thm:Y}.  Statement (2) combines \cref{thm:factorial-units,cor:X-rigid,thm:homology,cor:all-cylinders}.  The general theorem \cref{thm:rees-rigidity} shows that the rigidity mechanism is not peculiar to this Keller map.
+\end{proof}
+
+\subsection{Why the combination of properties is notable}\label{subsec:why-notable}
+
+\begin{observation}[Separation of geometric layers]\label{obs:separation-layers}
+There is no contradiction in an affine threefold being rational, factorial, simply connected, rigid, and noncontractible.  The interest is that these properties measure distinct layers of affine geometry and point in sharply different directions for the same explicit variety.  The individual adjectives all have substantial precedents.  What appears not to have been recorded previously is their conjunction here, together with $\chi(X)=1$ and $H_2(X;\Z)\simeq H_3(X;\Z)\simeq\Z$; the qualified bibliographic statement and its limitations are given in \cref{warn:priority-scope,obs:cautious-priority}.
+\end{observation}
+
+\begin{observation}[Birational simplicity does not imply additive symmetry]\label{obs:birational-vs-additive}
+Rationality says only that
+\[
+  \C(X)\simeq\C(u_1,u_2,u_3).
+\]
+It identifies neither coordinate rings nor boundaries at infinity nor regular automorphism groups.  The affine modification \eqref{eq:hzN} preserves the function field while changing the global affine geometry.  Affine space is flexible, and its special automorphism group is infinitely transitive \cite{ArzhantsevEtAl2013}; by contrast, \cref{cor:X-rigid} says that $X$ has no nontrivial $\Ga$-action.  Thus $X$ is birationally as simple as affine space but lies at the opposite extreme for additive automorphism geometry.
+\end{observation}
+
+\begin{observation}[Codimension-one algebra is trivial while topology is not]\label{obs:picard-vs-topology}
+By \cref{thm:factorial-units},
+\[
+  \OO(X)^*=\C^*,
+  \qquad
+  \Cl(X)=\Pic(X)=0.
+\]
+Hence every algebraic Weil divisor is principal and every algebraic line bundle is trivial.  On the other hand, \cref{thm:pi1,thm:homology} and the universal coefficient theorem give
+\[
+  H^2(X;\Z)\simeq\Z.
+\]
+By \cref{thm:topological-line-bundles}, nonzero classes in $H^2$ classify nontrivial topological complex line bundles.  Therefore $X$ has topological line bundles that do not arise from nontrivial algebraic line bundles.  Its degree-two topology is invisible to the algebraic Picard group.
+\end{observation}
+
+\begin{proof}[Justification of the cohomology statement]
+The homology groups in \cref{thm:homology} are free, so the universal coefficient theorem gives $H^2(X;\Z)\simeq\operatorname{Hom}(H_2(X;\Z),\Z)\simeq\Z$.  The classification of topological line bundles is \cref{thm:topological-line-bundles}.
+\end{proof}
+
+\begin{observation}[Simple connectivity and Euler characteristic do not imply contractibility]\label{obs:pi1-chi-contractibility}
+One has
+\[
+  \pi_1(X)=1,
+  \qquad
+  \chi(X)=1=\chi(\A^3),
+\]
+but
+\[
+  \pi_2(X)\simeq H_2(X;\Z)\simeq\Z.
+\]
+The equal Euler characteristics occur because the degree-two and degree-three contributions cancel:
+\[
+  \chi(X)=1+\operatorname{rank}H_2(X)-\operatorname{rank}H_3(X)=1+1-1=1.
+\]
+Thus the fundamental group and Euler characteristic look affine-space-like while the next homotopy group already detects noncontractibility.
+\end{observation}
+
+\begin{observation}[The topology reaches the affine dimension bound]\label{obs:andreotti-frankel-sharp}
+By \cref{thm:andreotti-frankel}, a smooth affine complex threefold has the homotopy type of a real three-dimensional CW complex.  Hence $H_3$ is the highest ordinary homology group that can be nonzero.  Since
+\[
+  H_3(X;\Z)\simeq\Z,
+\]
+the topology of $X$ reaches this upper bound.  Its deviation from contractibility is concentrated economically in $H_2$ and $H_3$.
+\end{observation}
+
+\begin{observation}[The obstruction survives every cylinder]\label{obs:stable-topology}
+The projection $X\times\A^d\to X$ is a homotopy equivalence.  Therefore the nonzero groups $H_2$ and $H_3$ survive every stabilization, and topology alone rules out
+\[
+  X\times\A^d\simeq\A^{3+d}
+  \qquad(d\geq0).
+\]
+This is stronger for cancellation than an invariant that may disappear after adjoining variables; for example, the Makar--Limanov invariant of the Koras--Russell cubic becomes trivial after one cylinder \cite{Dubouloz2009}.
+\end{observation}
+
+\begin{remark}[What the example separates]\label{rem:five-notions}
+The construction separates birational simplicity, codimension-one algebraic simplicity, simple connectivity, abundance of additive automorphisms, and contractibility.  The affine-modification and Rees descriptions make these distinctions accessible to direct calculation rather than only to abstract existence arguments.
+\end{remark}
+
+\subsection{Closest published comparisons and a cautious priority statement}\label{subsec:closest-comparisons}
+
+\begin{definition}[Standard and exotic affine three-spheres]\label{def:exotic-affine-three-sphere}
+The \emph{standard complex affine three-sphere} is the smooth affine quadric
+\[
+  Q_3=\{z_1^2+z_2^2+z_3^2+z_4^2=1\}\subset\A^4.
+\]
+Following Dubouloz--Finston, an \emph{exotic affine three-sphere} is a smooth complex affine threefold diffeomorphic to $Q_3^{\mathrm{an}}$ but not algebraically isomorphic to $Q_3$ \cite{DuboulozFinston2014}.  The terminology concerns the underlying real differential manifold, not a compact algebraic sphere.
+\end{definition}
+
+\begin{historicalnote}[Exotic affine three-spheres: the closest topological precedent]\label{hist:exotic-affine-three-spheres}
+Dubouloz--Finston construct affine total spaces $E$ of nontrivial homogeneous $\Ga$-bundles over $\A^2\setminus\{0\}$.  These threefolds are smooth, rational, factorial, simply connected, and noncontractible.  Topologically they strongly deformation retract onto the real three-sphere, so
+\[
+  H_2(E;\Z)=0,
+  \qquad
+  H_3(E;\Z)\simeq\Z,
+  \qquad
+  \chi(E)=0.
+\]
+They are nevertheless at the opposite end of the additive-symmetry spectrum from $X$: the bundle structure supplies a free $\Ga$-action, and Dubouloz--Finston compute $\ML(E)=\C$; in important subfamilies the total spaces are flexible \cite[Introduction and Remark~1.4]{DuboulozFinston2014}.  Dubouloz later constructed algebraic families of pairwise nonisomorphic exotic affine three-spheres, again as total spaces of locally trivial additive bundles \cite{Dubouloz2018Families}.
+\end{historicalnote}
+
+\begin{proof}[Verification of the listed properties]
+The strong deformation retraction and the bundle description are proved in \cite[Section~1]{DuboulozFinston2014}; they give simple connectivity, noncontractibility, and the displayed homology.  Since an $\A^1$-bundle over the rational surface $\A^2\setminus\{0\}$ has function field $\C(x,y)(t)$, its total space is rational.  Dubouloz--Finston show that every algebraic vector bundle on these affine total spaces is trivial \cite[Section~1.2, in the discussion preceding Remark~1.4]{DuboulozFinston2014}; in particular $\Pic(E)=0$.  Smoothness gives $\Cl(E)=\Pic(E)$ by \cref{prop:pic-cl-ufd}, hence $E$ is factorial.  Finally, a principal $\Ga$-bundle carries a free nontrivial $\Ga$-action, and therefore cannot be rigid.  The later family construction and its differential-topological conclusion are stated in \cite[Proposition~10]{Dubouloz2018Families}.
+\end{proof}
+
+\begin{historicalnote}[Factorial principal additive bundles and cancellation]\label{hist:finston-maubach}
+Finston--Maubach construct smooth affine factorial complex threefolds as total spaces of principal $\Ga$-bundles and use them to obtain counterexamples to a generalized cancellation problem \cite{FinstonMaubach2008}.  Their examples are close to the present work in dimension, factoriality, and cancellation motivation, but their locally trivial additive action is built into the construction.
+\end{historicalnote}
+
+\begin{proof}[Why these examples do not match the present package]
+A nontrivial algebraic $\Ga$-action differentiates to a nonzero locally nilpotent derivation by \cref{thm:lnd-standard}.  Hence every nontrivial principal $\Ga$-bundle in the Finston--Maubach class is nonrigid.  This is the decisive mismatch; no topological comparison is needed for that conclusion.
+\end{proof}
+
+\begin{definition}[Integral homology threefold]\label{def:integral-homology-threefold}
+A complex affine threefold $W$ is an \emph{integral homology threefold} if its integral homology agrees with that of a point:
+\[
+  H_0(W;\Z)\simeq\Z,
+  \qquad
+  H_i(W;\Z)=0\quad(i>0).
+\]
+Some authors simply say \emph{homology threefold}.  This condition is stronger than $\chi(W)=1$.
+\end{definition}
+
+\begin{historicalnote}[$\A^1_*$-fibrations and hyperbolic $\Gm$-geometry]\label{hist:a1star-threefolds}
+Gurjar--Koras--Masuda--Miyanishi--Russell study affine threefolds with $\A^1_*=\A^1\setminus\{0\}$-fibrations and with $\Gm$-actions, combining algebraic, topological, and affine-modification methods \cite{GurjarKorasMasudaMiyanishiRussell2013}.  This is a particularly relevant precedent for the hyperbolic $\Gm$-geometry of $X$.  In their terminology, an integral homology threefold is contractible exactly when its fundamental group is trivial.
+\end{historicalnote}
+
+\begin{proof}[Topological separation from $X$]
+The contractibility criterion is stated immediately before Lemma~2.5 of \cite{GurjarKorasMasudaMiyanishiRussell2013}.  Thus a simply connected integral-homology example in that setting is contractible.  Our threefold is instead simply connected and noncontractible with
+\[
+  H_2(X;\Z)\simeq H_3(X;\Z)\simeq\Z,
+\]
+so it lies just outside the homology-threefold class while retaining $\chi(X)=1$.
+\end{proof}
+
+\begin{historicalnote}[Koras--Russell threefolds]\label{hist:koras-russell-comparison}
+The threefold $X$ shares visible features with the hyperbolic Koras--Russell program: it is smooth, rational, factorial, has constant units, carries a hyperbolic $\Gm$-action, and has a unique fixed point with mixed tangent weights.  Classical Koras--Russell threefolds are contractible \cite{KalimanMakarLimanov1997}.  The standard Koras--Russell cubic is not rigid: its Makar--Limanov invariant is a proper subring of its coordinate ring \cite{MakarLimanov1996}.  Its cancellation behavior is subtle because that invariant becomes trivial after adjoining one polynomial variable \cite{Dubouloz2009}; for $X$, the homology obstruction remains effective after every affine cylinder.
+\end{historicalnote}
+
+\begin{proof}[Limit of the comparison]
+There is also a quotient difference.  The quotient of the tangent representation at the fixed point of $X$, with weights $(1,-1,-1)$, is $\A^2$, whereas the actual quotient is the surface $\Sigma_1$ with $\kbar(\Sigma_1)=0$ by \cref{prop:torus-quotient,prop:surface-kappa}.  Thus $X$ does not satisfy every Koras--Russell classification hypothesis except contractibility, and no sharpness statement of that kind is implied.
+\end{proof}
+
+\begin{historicalnote}[Rigid factorial trinomial varieties]\label{hist:trinomial-comparison}
+Arzhantsev proves that a factorial trinomial hypersurface is rigid exactly when every exponent in its defining trinomial is at least two \cite{Arzhantsev2016}.  Gaifullin extends the rigidity criteria to arbitrary trinomial hypersurfaces and to factorial trinomial varieties \cite{Gaifullin2019}.  These works provide an important algebraic comparison: explicit affine varieties with torus actions can be factorial and rigid without arising from Rees algebras.
+\end{historicalnote}
+
+\begin{proof}[Why the basic rigid trinomial hypersurfaces do not supply this example]
+In the hypersurface situation covered by Arzhantsev's criterion, if every exponent is at least two, then every first partial derivative of the trinomial vanishes at the origin.  The origin is therefore singular.  Hence the elementary rigid factorial trinomial hypersurfaces do not yield smooth threefolds with the package of \cref{thm:main-results}.  The broader trinomial-variety literature establishes rigidity criteria, but the cited results do not establish the specific simple-connectivity and integral-homology calculation obtained here.
+\end{proof}
+
+\begin{historicalnote}[Recent rigid word threefolds]\label{hist:word-threefolds}
+Bandman studies affine threefolds
+\[
+  S_{w,g}=\{(a,b)\in \operatorname{SL}_2(\C)^2:w(a,b)=g\}
+\]
+for commutator words $w=[a^n,b^m]$ and proves, under the stated trace hypotheses, that
+\[
+  \ML(S_{w,g})=\OO(S_{w,g}),
+\]
+so these word threefolds are rigid \cite[Theorem~4.3]{Bandman2026Word}.  The paper also develops irreducibility and birational models, including rational cases.  It does not establish factoriality, simple connectivity, or the integral homology package appearing in \cref{thm:main-results}.
+\end{historicalnote}
+
+\begin{proof}[Scope of the word-variety comparison]
+The rigidity assertion is exactly \cite[Theorem~4.3]{Bandman2026Word}.  The irreducibility and birational description are developed in its Section~3.  Since the cited paper does not compute $\Cl$, $\pi_1$, $H_2$, or $H_3$ for the full family, it is used here only as a recent rigidity comparison, not as evidence for or against the exact topological package.
+\end{proof}
+
+\begin{warning}[Scope of the literature search]\label{warn:priority-scope}
+A finite literature search cannot prove that no example exists, and terminology is not uniform across affine geometry, transformation groups, and Stein topology.  The comparison above is therefore deliberately limited to primary sources for the closest identifiable families.  The statement below is a priority assessment as of July 2026, not a mathematical theorem, and should be revised if an earlier example is identified.
+\end{warning}
+
+\begin{observation}[Cautious priority statement]\label{obs:cautious-priority}
+To the authors' knowledge, we are not aware of a previously published smooth complex affine threefold that is simultaneously
+\[
+  \text{rational, factorial, rigid, simply connected, and noncontractible}
+\]
+with Euler characteristic $1$.  The sharper package realized here is
+\[
+  \ML(X)=\OO(X),
+  \qquad
+  \pi_1(X)=1,
+  \qquad
+  H_2(X;\Z)\simeq H_3(X;\Z)\simeq\Z,
+  \qquad
+  \chi(X)=1.
+\]
+The likely novelty is this conjunction, not any individual adjective.  The exotic affine three-spheres are the closest topological precedents but have abundant $\Ga$-actions and $(H_2,H_3,\chi)=(0,\Z,0)$; the closest rigid families either have singularities in their most elementary factorial models or lack the matching topology; and the simply connected integral-homology threefolds in the $\A^1_*$-fibration literature are contractible.
+\end{observation}
+
+\subsection{Open directions}
+
+\begin{question}[Automorphisms and torus actions]\label{q:automorphisms}
+What is the full automorphism group of $X$?  Is the displayed $\Gm$-action unique up to conjugacy, or can $X$ carry another torus action not visible in \eqref{eq:hzN}?
+\end{question}
+
+\begin{question}[Recovering the filtration]\label{q:recover-filtration}
+For a fixed surface $\Sigma$ with $\kbar(\Sigma)\geq0$, how much of $\mathfrak a_\bullet$ can be recovered from the isomorphism type of its extended Rees threefold?  Which points and weights give nonisomorphic rigid threefolds?
+\end{question}
+
+\begin{question}[Effective monodromy recognition]\label{q:active-recognition}
+Can the recognition problem in \cref{thm:active-reconstruction} be made effective in low degree?  In dimension two, can surface classification exclude open affine-plane charts in the relevant canonical etale fillings?
+\end{question}
+
+\section{Conclusion}\label{sec:conclusion}
+
+\begin{observation}[What the construction actually achieves]\label{obs:final-summary}
+The construction began as an attempt to turn the explicit nonproper Keller map into a counterexample to Zariski cancellation.  It fails structurally rather than accidentally.  The ordered double-point variety retains a discriminant unit.  Filling that divisor yields a much better behaved affine threefold, but the filling is an extended Rees algebra over a surface of logarithmic Kodaira dimension zero, so the Rees rigidity theorem applies.  The same affine modification exposes nontrivial topology, giving a stable obstruction under every affine cylinder.
+
+What remains is a coherent package of positive results: an extended-Rees formulation of graded cylindricity and an independent proof in Rees coordinates; a projective-cubic analysis of the Keller map; an explicit rational, factorial, rigid, simply connected, noncontractible affine threefold; and a smooth degeneration in which logarithmic Kodaira dimension drops.  The closest published comparisons show that each adjective has a substantial history, but none of the identified examples carries the same conjunction with $\chi=1$ and $H_2\simeq H_3\simeq\Z$; \cref{warn:priority-scope,obs:cautious-priority} records this only as a cautious bibliographic assessment.  The affine coordinate collision is also instructive: elimination may forget the projective parameter that separates sheets.  The projective incidence model restores that information and makes the geometry robust.
+\end{observation}
+
+\appendix
+\section{Symbolic computation and reproducibility}\label{sec:computation}\label{app:computation}
+
+\begin{computationalnote}[Scope of the script]\label{note:computation-scope}
+The accompanying script is a finite exact regression suite.  It checks polynomial identities, sample fibers, bounded derivation spaces, and low-degree monomials; it is not a formal proof of the global theorems.
+\end{computationalnote}
+
+\begin{center}
+\begin{tabular}{@{}p{0.12\textwidth}p{0.36\textwidth}p{0.42\textwidth}@{}}
+\toprule
+Step & What is checked exactly & What still requires a proof in the text \\
+\midrule
+1 & $\det JF=-2$ and one three-point collision & Generic degree and global fiber geometry \\
+2--3 & A resultant identity and discriminant identities & Sufficiency of inverse equations and separation of sheets \\
+4 & Symbolic factorization and a solver-based smoothness test & Certified irreducibility and ideal-theoretic smoothness \\
+5 & Three sample fibers & The global $3/1/0$ census, image, and monodromy \\
+6 & The identity \eqref{eq:delta-identity} and the change to $hz=N$ & Global geometric consequences of the modification \\
+7 & The resultant defining the center and one rank calculation & The reduced divisor, class group, Picard group, and units \\
+8 & The displayed action and quotient identities & Classification or uniqueness of torus actions \\
+9--11 & Bounded derivation spaces and finite iterate tests & Local nilpotency in all degrees and all coefficient sizes \\
+13 & Low-degree monomial samples for $m=1,2$ & The uniform Rees equality, proved in \cref{thm:explicit-rees} \\
+14--15 & Comments recording exploratory experiments & No executable verification; the bounded search is explicitly inconclusive \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{observation}[What the proofs add beyond the script]\label{obs:proofs-beyond-script}
+The global claims are established by mathematical proofs rather than sampling:
+\begin{itemize}
+\item \cref{thm:incidence-isomorphism} supplies the sheet-separating projective parameter absent from the affine resultant;
+\item \cref{thm:explicit-rees} proves the Rees equality in every weight;
+\item \cref{thm:rees-rigidity} replaces bounded derivation searches;
+\item \cref{thm:factorial-units,thm:homology} replace local rank and numerical checks by divisor-theoretic and topological arguments.
+\end{itemize}
+The exact identities remain valuable for detecting transcription errors and reproducing formulas.
+\end{observation}
+
+
+\section{Reference map for imported results}\label{app:source-map}
+
+\begin{roadmap}[Purpose of the reference map]\label{roadmap:source-map}
+The table records the external theorem used at each major import point.  Every item is also cited in the body where it is applied.  The separate source-index text file supplied with the manuscript gives direct links when stable links are available.
+\end{roadmap}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.32\textwidth}p{0.60\textwidth}}
+\toprule
+Result used & Source \\
+\midrule
+\endfirsthead
+\toprule
+Result used & Source \\
+\midrule
+\endhead
+Jacobian criterion; smooth and etale morphisms & Stacks Project, Tags 01V4 and 02GH; van den Essen, Chapter 1 \cite{StacksProject,vanDenEssen2000}. \\
+Projective implies proper; proper and locally quasi-finite implies finite & Hartshorne, Chapter II, Section 4; Stacks Project, Tags 01W7, 01W0, and 0F2P \cite{Hartshorne1977,StacksProject}. \\
+Zariski's Main Theorem & Stacks Project, Tag 02LQ \cite{StacksProject}. \\
+Finite normalization and purity of the branch locus & Stacks Project, Tags 035S, 0BXQ, and 0BJE \cite{StacksProject}. \\
+Class-group localization, $\Pic=\Cl$ for smooth varieties, and the UFD criterion & Hartshorne, Chapter II, Section 6; Eisenbud, Chapters 4 and 11 \cite{Hartshorne1977,Eisenbud1995}. \\
+Homogeneous top component, factorial closure, kernel dimension, and local slices for LNDs & Freudenburg, Chapter 1 \cite{Freudenburg2017}. \\
+Filtration and parametrization techniques for proving rigidity & Crachiola--Maubach \cite{CrachiolaMaubach2013}. \\
+Cylindrical elements and nonrigidity of two-sided graded domains & Chitayat--Daigle, Theorem 1.2(1), generalizing Kishimoto--Prokhorov--Zaidenberg \cite{ChitayatDaigle2024,KishimotoProkhorovZaidenberg2013}. \\
+Rigidity of the principal extended Rees algebra $R[u,v]/(uv-f)$ over a rigid affine domain & Freudenburg--Moser-Jauslin, Corollary 4.6 and Remark 10.3 \cite{FreudenburgMoserJauslin2013}. \\
+Flexibility and infinite transitivity generated by $\Ga$-actions & Arzhantsev--Flenner--Kaliman--Kutzschebauch--Zaidenberg, Theorem 0.1 \cite{ArzhantsevEtAl2013}. \\
+$\A^1$-uniruledness, $\A^1$-ruledness, and negative logarithmic Kodaira dimension for smooth affine surfaces & Miyanishi--Sugie; Keel--McKernan, Theorem 1.1; Dubouloz--Kishimoto \cite{MiyanishiSugie1980,KeelMcKernan1999,DuboulozKishimoto2015}. \\
+Monotonicity of logarithmic Kodaira dimension under dominant generically finite maps & Iitaka \cite{Iitaka1977}. \\
+Affine modifications as open pieces of blowups & Kaliman--Zaidenberg, Section 1 \cite{KalimanZaidenberg1999}. \\
+Algebraic Riemann existence and monodromy classification & SGA 1, Expose XII \cite{SGA1}. \\
+Euler characteristic, Thom isomorphism, van Kampen, and Hurewicz & Dimca, Bredon, and Hatcher \cite{Dimca2004,Bredon1993,Hatcher2002}. \\
+CW-dimension bound for smooth affine varieties and classification of topological line bundles & Andreotti--Frankel; Hatcher, Proposition 3.10 \cite{AndreottiFrankel1959,HatcherVBKT}. \\
+Makar--Limanov invariant after adjoining one variable to a rigid domain & Crachiola--Makar-Limanov, Theorem 3.1 \cite{CrachiolaMakarLimanov2008}. \\
+Exotic affine three-spheres, their homotopy type, additive actions, and families & Dubouloz--Finston, especially Section 1 and Remark 1.4; Dubouloz, Proposition 10 \cite{DuboulozFinston2014,Dubouloz2018Families}. \\
+Factorial principal $\Ga$-bundles in generalized cancellation & Finston--Maubach \cite{FinstonMaubach2008}. \\
+$\A^1_*$-fibrations, $\Gm$-actions, and the contractibility criterion for homology threefolds & Gurjar--Koras--Masuda--Miyanishi--Russell, Section 2 \cite{GurjarKorasMasudaMiyanishiRussell2013}. \\
+Rigidity criteria for factorial trinomial hypersurfaces and varieties & Arzhantsev, Theorem 1; Gaifullin \cite{Arzhantsev2016,Gaifullin2019}. \\
+Rigidity of commutator word threefolds in $\operatorname{SL}_2(\C)^2$ & Bandman, Theorem 4.3 \cite{Bandman2026Word}. \\
+\bottomrule
+\end{longtable}
+
+\begin{thebibliography}{99}
+
+\bibitem{Alpoge2026}
+L. Alp\"oge,
+\emph{Hello there the Jacobian conjecture is false},
+X post, July 20, 2026.
+\url{https://x.com/__alpoge__/status/2079028340955197566}
+
+\bibitem{Verification2026}
+\emph{A Counterexample to the Jacobian Conjecture},
+verification preprint, July 20, 2026.
+\url{https://www.ulam.ai/research/jacobian.pdf}
+
+\bibitem{AtiyahMacdonald}
+M. F. Atiyah and I. G. Macdonald,
+\emph{Introduction to Commutative Algebra},
+Addison--Wesley, 1969; reprint, CRC Press.
+\url{https://doi.org/10.1201/9780429493638}
+
+\bibitem{Eisenbud1995}
+D. Eisenbud,
+\emph{Commutative Algebra with a View Toward Algebraic Geometry},
+Graduate Texts in Mathematics 150, Springer, 1995.
+\url{https://doi.org/10.1007/978-1-4612-5350-1}
+
+\bibitem{SwansonHuneke2006}
+I. Swanson and C. Huneke,
+\emph{Integral Closure of Ideals, Rings, and Modules},
+London Mathematical Society Lecture Note Series 336, Cambridge University Press, 2006.
+\url{https://www.math.purdue.edu/~iswanso/book/SwansonHuneke.pdf}
+
+\bibitem{Hartshorne1977}
+R. Hartshorne,
+\emph{Algebraic Geometry},
+Graduate Texts in Mathematics 52, Springer, 1977.
+\url{https://doi.org/10.1007/978-1-4757-3849-0}
+
+\bibitem{GKZ1994}
+I. M. Gel'fand, M. M. Kapranov, and A. V. Zelevinsky,
+\emph{Discriminants, Resultants, and Multidimensional Determinants},
+Birkh\"auser, 1994.
+\url{https://doi.org/10.1007/978-0-8176-4771-1}
+
+\bibitem{vanDenEssen2000}
+A. van den Essen,
+\emph{Polynomial Automorphisms and the Jacobian Conjecture},
+Progress in Mathematics 190, Birkh\"auser, 2000.
+\url{https://doi.org/10.1007/978-3-0348-8440-2}
+
+\bibitem{Keller1939}
+O.-H. Keller,
+\emph{Ganze Cremona-Transformationen},
+Monatshefte f\"ur Mathematik und Physik \textbf{47} (1939), 299--306.
+\url{https://doi.org/10.1007/BF01695502}
+
+\bibitem{BCW1982}
+H. Bass, E. H. Connell, and D. Wright,
+\emph{The Jacobian conjecture: reduction of degree and formal expansion of the inverse},
+Bulletin of the American Mathematical Society (N.S.) \textbf{7} (1982), 287--330.
+\url{https://doi.org/10.1090/S0273-0979-1982-15032-7}
+
+\bibitem{Jelonek1993}
+Z. Jelonek,
+\emph{The set of points at which a polynomial map is not proper},
+Annales Polonici Mathematici \textbf{58} (1993), 259--266.
+\url{https://doi.org/10.4064/ap-58-3-259-266}
+
+\bibitem{Freudenburg2017}
+G. Freudenburg,
+\emph{Algebraic Theory of Locally Nilpotent Derivations},
+2nd ed., Encyclopaedia of Mathematical Sciences 136, Springer, 2017.
+\url{https://doi.org/10.1007/978-3-662-55350-3}
+
+
+\bibitem{ChitayatDaigle2024}
+M. Chitayat and D. Daigle,
+\emph{Locally nilpotent derivations of graded integral domains and cylindricity},
+Transformation Groups \textbf{29} (2024), 591--620.
+\url{https://arxiv.org/abs/2105.01729}\quad
+\url{https://doi.org/10.1007/s00031-022-09753-5}
+
+\bibitem{KishimotoProkhorovZaidenberg2013}
+T. Kishimoto, Yu. Prokhorov, and M. Zaidenberg,
+\emph{$\Ga$-actions on affine cones},
+Transformation Groups \textbf{18} (2013), no.~4, 1137--1153.
+\url{https://arxiv.org/abs/1212.4249}\quad
+\url{https://doi.org/10.1007/s00031-013-9246-5}
+
+\bibitem{CrachiolaMaubach2013}
+A. J. Crachiola and S. Maubach,
+\emph{Rigid rings and Makar--Limanov techniques},
+Communications in Algebra \textbf{41} (2013), no.~11, 4248--4266.
+\url{https://arxiv.org/abs/1005.4949}\quad
+\url{https://doi.org/10.1080/00927872.2012.695832}
+
+\bibitem{FreudenburgMoserJauslin2013}
+G. Freudenburg and L. Moser-Jauslin,
+\emph{Locally nilpotent derivations of rings with roots adjoined},
+Michigan Mathematical Journal \textbf{62} (2013), no.~2, 227--258.
+\url{https://moser.perso.math.cnrs.fr/adjoinedroots.pdf}\quad
+\url{https://doi.org/10.1307/mmj/1370870372}
+
+\bibitem{Milne2017}
+J. S. Milne,
+\emph{Algebraic Groups: The Theory of Group Schemes of Finite Type over a Field},
+Cambridge Studies in Advanced Mathematics 170, Cambridge University Press, 2017.
+\url{https://www.jmilne.org/math/Books/iAG2017.pdf}
+
+\bibitem{MiyanishiSugie1980}
+M. Miyanishi and T. Sugie,
+\emph{Affine surfaces containing cylinderlike open sets},
+Journal of Mathematics of Kyoto University \textbf{20} (1980), 11--42.
+\url{https://doi.org/10.1215/kjm/1250522319}
+
+
+\bibitem{Russell1981}
+P. Russell,
+\emph{On affine-ruled rational surfaces},
+Mathematische Annalen \textbf{255} (1981), 287--302.
+\url{https://doi.org/10.1007/BF01450704}
+
+\bibitem{Miyanishi1982}
+M. Miyanishi,
+\emph{On affine-ruled irrational surfaces},
+Inventiones Mathematicae \textbf{70} (1982), 27--43.
+\url{https://doi.org/10.1007/BF01393196}
+
+\bibitem{KeelMcKernan1999}
+S. Keel and J. McKernan,
+\emph{Rational curves on quasi-projective surfaces},
+Memoirs of the American Mathematical Society \textbf{140} (1999), no.~669.
+\url{https://arxiv.org/abs/alg-geom/9707016}\quad
+\url{https://doi.org/10.1090/memo/0669}
+
+\bibitem{DuboulozKishimoto2015}
+A. Dubouloz and T. Kishimoto,
+\emph{Log-uniruled affine varieties without cylinder-like open subsets},
+Bulletin de la Soci\'et\'e Math\'ematique de France \textbf{143} (2015), no.~2, 383--401.
+\url{https://arxiv.org/abs/1212.0521}\quad
+\url{https://doi.org/10.24033/bsmf.2692}
+
+\bibitem{Miyanishi2001}
+M. Miyanishi,
+\emph{Open Algebraic Surfaces},
+CRM Monograph Series 12, American Mathematical Society, 2001.
+\url{https://doi.org/10.1090/crmm/012}
+
+\bibitem{Iitaka1977}
+S. Iitaka,
+\emph{On logarithmic Kodaira dimension of algebraic varieties},
+in \emph{Complex Analysis and Algebraic Geometry}, Iwanami Shoten, 1977, 175--190.
+\url{https://doi.org/10.1017/CBO9780511569197.014}
+
+\bibitem{BandmanMakarLimanov2008}
+T. Bandman and L. Makar-Limanov,
+\emph{On $\C$-fibrations over projective curves},
+Michigan Mathematical Journal \textbf{56} (2008), 669--686.
+\url{https://arxiv.org/abs/0710.3312}\quad\url{https://doi.org/10.1307/mmj/1231770367}
+
+\bibitem{CrachiolaMakarLimanov2008}
+A. J. Crachiola and L. G. Makar-Limanov,
+\emph{An algebraic proof of a cancellation theorem for surfaces},
+Journal of Algebra \textbf{320} (2008), 3113--3119.
+\url{https://doi.org/10.1016/j.jalgebra.2008.03.037}
+
+\bibitem{KalimanZaidenberg1999}
+S. Kaliman and M. Zaidenberg,
+\emph{Affine modifications and affine hypersurfaces with a very transitive automorphism group},
+Transformation Groups \textbf{4} (1999), 53--95.
+\url{https://arxiv.org/abs/math/9801076}\quad
+\url{https://doi.org/10.1007/BF01236662}
+
+\bibitem{Gupta2014}
+N. Gupta,
+\emph{On the cancellation problem for the affine space $\A^3$ in characteristic $p$},
+Inventiones Mathematicae \textbf{195} (2014), 279--288.
+\url{https://doi.org/10.1007/s00222-013-0455-2}
+
+\bibitem{Gupta2022}
+N. Gupta,
+\emph{The Zariski Cancellation Problem and related problems in affine algebraic geometry},
+in \emph{Proceedings of the International Congress of Mathematicians 2022}, vol. 3,
+European Mathematical Society Press, 2022, 1578--1598.
+\url{https://arxiv.org/abs/2208.14736}\quad
+\url{https://doi.org/10.4171/ICM2022/151}
+
+\bibitem{VenegasVenegas2025}
+C. F. Venegas R. and H. J. Venegas R.,
+\emph{Cancellation problem via locally nilpotent derivations},
+arXiv:2512.15590, version 2, February 2026.
+\url{https://arxiv.org/abs/2512.15590}
+
+\bibitem{MakarLimanov1996}
+L. Makar-Limanov,
+\emph{On the hypersurface $x+x^2y+z^2+t^3=0$ in $\C^4$, or a $\C^3$-like threefold which is not $\C^3$},
+Israel Journal of Mathematics \textbf{96} (1996), 419--429.
+\url{https://doi.org/10.1007/BF02937314}
+
+\bibitem{KalimanMakarLimanov1997}
+S. Kaliman and L. Makar-Limanov,
+\emph{On the Russell--Koras contractible threefolds},
+Journal of Algebraic Geometry \textbf{6} (1997), 247--268.
+
+\bibitem{Dubouloz2009}
+A. Dubouloz,
+\emph{The cylinder over the Koras--Russell cubic threefold has a trivial Makar--Limanov invariant},
+Transformation Groups \textbf{14} (2009), 531--539.
+\url{https://arxiv.org/abs/0807.4085}\quad\url{https://doi.org/10.1007/s00031-009-9051-3}
+
+
+\bibitem{Dubouloz2015Flexible}
+A. Dubouloz,
+\emph{Flexible bundles over rigid affine surfaces},
+Commentarii Mathematici Helvetici \textbf{90} (2015), no.~1, 121--137.
+\url{https://arxiv.org/abs/1304.4189}\quad
+\url{https://doi.org/10.4171/CMH/348}
+
+\bibitem{SGA1}
+A. Grothendieck, with a new edition by M. Raynaud,
+\emph{Rev\^etements \`etales et groupe fondamental (SGA 1)},
+Documents Math\'ematiques 3, Soci\'et\'e Math\'ematique de France, 2003.
+\url{https://arxiv.org/abs/math/0206203}
+
+\bibitem{StacksProject}
+The Stacks Project Authors,
+\emph{The Stacks Project}.
+\url{https://stacks.math.columbia.edu/}
+
+\bibitem{GurjarMasudaMiyanishi2014}
+R. V. Gurjar, K. Masuda, and M. Miyanishi,
+\emph{Deformations of $\A^1$-fibrations},
+in \emph{Groups of Automorphisms in Birational and Affine Geometry}, Springer Proceedings in Mathematics \& Statistics 79 (2014), 327--361.
+\url{https://arxiv.org/abs/1403.6930}\quad
+\url{https://doi.org/10.1007/978-3-319-05681-4_19}
+
+\bibitem{Dimca2004}
+A. Dimca,
+\emph{Sheaves in Topology},
+Universitext, Springer, 2004.
+\url{https://doi.org/10.1007/978-3-642-18868-8}
+
+\bibitem{Bredon1993}
+G. E. Bredon,
+\emph{Topology and Geometry},
+Graduate Texts in Mathematics 139, Springer, 1993.
+\url{https://doi.org/10.1007/978-1-4757-6848-0}
+
+\bibitem{Hatcher2002}
+A. Hatcher,
+\emph{Algebraic Topology},
+Cambridge University Press, 2002.
+\url{https://pi.math.cornell.edu/~hatcher/AT/AT.pdf}
+
+\bibitem{AndreottiFrankel1959}
+A. Andreotti and T. Frankel,
+\emph{The Lefschetz theorem on hyperplane sections},
+Annals of Mathematics (2) \textbf{69} (1959), 713--717.
+\url{https://doi.org/10.2307/1970034}
+
+\bibitem{ArzhantsevEtAl2013}
+I. Arzhantsev, H. Flenner, S. Kaliman, F. Kutzschebauch, and M. Zaidenberg,
+\emph{Flexible varieties and automorphism groups},
+Duke Mathematical Journal \textbf{162} (2013), no.~4, 767--823.
+\url{https://arxiv.org/abs/1011.5375}\quad
+\url{https://doi.org/10.1215/00127094-2080132}
+
+\bibitem{HatcherVBKT}
+A. Hatcher,
+\emph{Vector Bundles and K-Theory},
+version 2.2, 2017.
+\url{https://pi.math.cornell.edu/~hatcher/VBKT/VB.pdf}
+
+\bibitem{DuboulozFinston2014}
+A. Dubouloz and D. R. Finston,
+\emph{On exotic affine $3$-spheres},
+Journal of Algebraic Geometry \textbf{23} (2014), no.~3, 445--469.
+\url{https://arxiv.org/abs/1106.2900}\quad
+\url{https://doi.org/10.1090/S1056-3911-2014-00612-3}
+
+\bibitem{Dubouloz2018Families}
+A. Dubouloz,
+\emph{Families of exotic affine $3$-spheres},
+European Journal of Mathematics \textbf{4} (2018), no.~1, 212--222.
+\url{https://arxiv.org/abs/1610.01409}\quad
+\url{https://doi.org/10.1007/s40879-017-0136-6}
+
+\bibitem{GurjarKorasMasudaMiyanishiRussell2013}
+R. V. Gurjar, M. Koras, K. Masuda, M. Miyanishi, and P. Russell,
+\emph{$\A^1_*$-fibrations on affine threefolds},
+in \emph{Affine Algebraic Geometry}, World Scientific, 2013, 62--102.
+\url{https://arxiv.org/abs/1211.1757}\quad
+\url{https://doi.org/10.1142/9789814436700_0004}
+
+\bibitem{FinstonMaubach2008}
+D. R. Finston and S. Maubach,
+\emph{The automorphism group of certain factorial threefolds and a cancellation problem},
+Israel Journal of Mathematics \textbf{163} (2008), 369--381.
+\url{https://arxiv.org/abs/0706.4187}\quad
+\url{https://doi.org/10.1007/s11856-008-0016-3}
+
+\bibitem{Arzhantsev2016}
+I. Arzhantsev,
+\emph{On rigidity of factorial trinomial hypersurfaces},
+International Journal of Algebra and Computation \textbf{26} (2016), no.~5, 1061--1070.
+\url{https://arxiv.org/abs/1601.02251}\quad
+\url{https://doi.org/10.1142/S0218196716500442}
+
+\bibitem{Gaifullin2019}
+S. Gaifullin,
+\emph{On rigidity of trinomial hypersurfaces and factorial trinomial varieties},
+arXiv:1902.06136, 2019.
+\url{https://arxiv.org/abs/1902.06136}
+
+\bibitem{Bandman2026Word}
+T. Bandman,
+\emph{ML-invariant and automorphism groups of certain word varieties in $\operatorname{SL}(2,\C)^2$},
+European Journal of Mathematics \textbf{12} (2026), article 16.
+\url{https://arxiv.org/abs/2512.12126}\quad
+\url{https://doi.org/10.1007/s40879-026-00890-9}
+
+\end{thebibliography}
+

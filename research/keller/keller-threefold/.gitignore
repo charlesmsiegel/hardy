@@ -1,0 +1,6 @@
+# Written by Hardy. Everything here is recomputable from the sources
+# beside it, or belongs to this machine and this account.
+/.build/
+/.local/
+/cas/replay/
+/cas/script-run/
