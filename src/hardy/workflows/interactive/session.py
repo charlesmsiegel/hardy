@@ -833,7 +833,12 @@ class MathematicsSession:
         self.build_shared()
         admission = AuthoritativeAdmission(LedgerStore(self.workspace), self.lean_workspace, self.delegations.store,
                                            verify=owners.verify, policy=owners.policy, decide=owners.decide)
-        return admit_delegation(admission, delegation_id)
+        outcomes = admit_delegation(admission, delegation_id)
+        # A change set can remove a recorded lemma while proving another; the
+        # ledger walks the committed tree afterwards, as it does after a save.
+        for note in self.owners.reconcile(self.lean_workspace.sources()):
+            self._notify(f"project ledger: {note}")
+        return outcomes
 
     def _worker_seconds(self) -> float:
         """One worker's default share of the root's remaining active time."""

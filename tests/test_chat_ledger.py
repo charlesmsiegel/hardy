@@ -262,3 +262,51 @@ def test_results_are_recorded_under_the_bare_project_scope_whatever_else_the_led
     assert prove.scope.id == "project" and prove.scope.allowed_background == ()
     assert prove.status is c.ObligationStatus.RESOLVED
     assert chat.owners.policy.is_accepted(snapshot, prove.resolution)
+
+
+def test_a_private_declaration_elsewhere_does_not_hide_a_public_one_of_the_same_name(tmp_path: Path):
+    shadow = "import Mathlib\n\nprivate lemma HardyHelper : True := by exact True.intro\n"
+    chat = session(tmp_path, FakeChatRuntime([
+        call("save_lean", {"source": HELPER}, "lean"),
+        call("save_lean", {"source": shadow, "path": "Other.lean"}, "other"),
+    ]))
+    chat.send("Prove it, then shadow it privately elsewhere.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+    snapshot = LedgerStore(tmp_path).read()
+    assert _prove(snapshot, snapshot.head("lean:HardyHelper")).status is c.ObligationStatus.RESOLVED
+
+
+def test_a_resolution_the_current_policy_no_longer_accepts_is_re_accepted_on_the_next_save(tmp_path: Path):
+    """A policy whose source changed moves its digest and unauthenticates every earlier
+    acceptance on purpose; a still-verified theorem is re-accepted on fresh evidence."""
+    # The scripted runtime replays its whole script on every turn, so one
+    # save per turn: once under the old digest, once under the new.
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    snapshot = LedgerStore(tmp_path).read()
+    prove = _prove(snapshot, snapshot.head("lean:HardyTarget"))
+    assert chat.owners.policy.is_accepted(snapshot, prove.resolution)
+    # The upgrade: a new digest, so the stored acceptance no longer reads.
+    chat.owners.policy.digest = "b" * 64
+    assert not chat.owners.policy.is_accepted(snapshot, prove.resolution)
+    chat.send("Save it again.")
+    outcome = results(tmp_path, "save_lean")[-1]
+    assert "re-accepted" in outcome["output"], outcome["output"]
+    snapshot = LedgerStore(tmp_path).read()
+    again = _prove(snapshot, snapshot.head("lean:HardyTarget"))
+    assert again.status is c.ObligationStatus.RESOLVED and again.previous == prove.ref
+    assert chat.owners.policy.is_accepted(snapshot, again.resolution)
+
+
+def test_a_corrupt_evidence_journal_is_a_note_on_the_save_not_a_failure(tmp_path: Path):
+    chat = session(tmp_path, FakeChatRuntime([
+        call("save_lean", {"source": CLEAN}, "lean"),
+        call("save_lean", {"source": HELPER, "path": "Helper.lean"}, "helper"),
+    ]))
+    chat.send("Save it.")
+    path = tmp_path / EVIDENCE_DIR / "00000000000000000001.json"
+    path.write_text("{not json", encoding="utf-8")
+    chat.send("Save another.")
+    outcome = results(tmp_path, "save_lean")[-1]
+    assert outcome["ok"] and (tmp_path / "lean" / "Helper.lean").exists()
+    assert "project ledger: not recorded" in outcome["output"], outcome["output"]
