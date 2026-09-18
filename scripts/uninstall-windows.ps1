@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Takes out the virtual environment, the fetched source tree, the `hardy`
-    command, and the PATH entry the installer added. Run it from PowerShell:
+    command, the Desktop and Start Menu launchers, and the PATH entry the
+    installer added. Run it from PowerShell:
 
         powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1
 
@@ -122,6 +123,8 @@ if ($All) {
 }
 
 Remove-Part 'the hardy command' (Join-Path $BinDir 'hardy.cmd')
+Remove-Part 'the Desktop launcher' (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hardy.lnk')
+Remove-Part 'the Start Menu launcher' (Join-Path ([Environment]::GetFolderPath('Programs')) 'Hardy.lnk')
 Remove-Part 'the virtual environment' $Venv
 Remove-Part 'the fetched source tree' $SourceTree
 # What a release install leaves behind instead of a source tree.

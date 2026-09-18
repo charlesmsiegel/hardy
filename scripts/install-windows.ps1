@@ -35,6 +35,12 @@
 .PARAMETER NoConfig
     Do not write the config file.
 
+.PARAMETER NoLauncher
+    Do not put a Hardy launcher on the Desktop and in the Start Menu. The
+    launcher runs `hardy web --open` in a console window; Ctrl+C there stops
+    the server. The Start Menu entry is what makes "Pin to taskbar" a
+    right-click away, since Windows lets no script pin.
+
 .PARAMETER Prefix
     Where Hardy keeps its virtual environment and Lean project.
 
@@ -48,6 +54,7 @@ param(
     [switch]$SkipLatex,
     [switch]$FullLatex,
     [switch]$NoConfig,
+    [switch]$NoLauncher,
     [switch]$FromRelease,
     [switch]$FromSource,
     [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'hardy'),
@@ -474,6 +481,37 @@ function Add-Shim {
     Update-SessionPath
 }
 
+function New-Launcher($Target, $Directory, $WorkingDirectory) {
+    # A .lnk through the Shell's own COM object: the one way to make a
+    # shortcut Windows treats as a shortcut (pinnable, with a working
+    # directory) without a compiled helper. Nothing is made when the folder
+    # does not exist -- a machine with a redirected or removed Desktop is not
+    # an error, it has nowhere to put one.
+    if (-not (Test-Path -LiteralPath $Directory)) { return $null }
+    $path = Join-Path $Directory 'Hardy.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut($path)
+    $link.TargetPath = $Target
+    $link.Arguments = 'web --open'
+    $link.WorkingDirectory = $WorkingDirectory
+    $link.Description = 'Hardy: serve the browser client and open it'
+    $link.Save()
+    return $path
+}
+
+function Add-Launcher {
+    if ($NoLauncher) { return }
+    Write-Step 'Adding the Hardy launcher to the Desktop and the Start Menu'
+    # The venv's own hardy.exe, the same target hardy.cmd wraps: stable
+    # across updates and the same for a release and an editable install.
+    $target = Join-Path $Venv 'Scripts\hardy.exe'
+    foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
+        $made = New-Launcher $target $folder $Prefix
+        if ($made) { Write-Detail "wrote $made" }
+    }
+    Write-Detail 'the launcher runs `hardy web --open` in a console window; Ctrl+C there stops the server'
+}
+
 function Install-Elan {
     Write-Step 'Checking for the Lean toolchain (lake)'
     Update-SessionPath
@@ -708,6 +746,7 @@ function Write-Summary {
   installed    $(if ($script:InstallFrom -eq 'source') { "editable, from $RepoRoot" } else { 'from the published release' })
   lean project $LeanProject$(if ($SkipMathlib) { ' (skipped)' })
   config       $ConfigPath
+  launcher     $(if ($NoLauncher) { 'none (-NoLauncher)' } else { 'Hardy.lnk on the Desktop and in the Start Menu (hardy web --open)' })
 
 Start doing mathematics with an agent:
 
@@ -737,6 +776,7 @@ else {
 Install-Prerequisites
 New-Environment
 Add-Shim
+Add-Launcher
 Install-Elan
 Install-LeanProject
 Install-Latex
