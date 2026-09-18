@@ -20,7 +20,7 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   K05_01["K05-01<br/>Rigidity of extended Rees algebras"]
   class K05_01 llm;
   K06_01["K06-01<br/>Explicit Keller map is étale and noninjective"]
-  class K06_01 llm;
+  class K06_01 lean;
   K06_02["K06-02<br/>Simple-root incidence model"]
   class K06_02 llm;
   K06_03["K06-03<br/>Finite incidence normalization"]
@@ -38,7 +38,7 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   K07_06["K07-06<br/>Euler characteristics of strata"]
   class K07_06 llm;
   K07_07["K07-07<br/>Affine elimination coordinate collision"]
-  class K07_07 llm;
+  class K07_07 lean;
   K08_01["K08-01<br/>Ordered double-point variety Y"]
   class K08_01 llm;
   K08_02["K08-02<br/>Discriminant filling X"]

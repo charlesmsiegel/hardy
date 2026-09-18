@@ -58,7 +58,7 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   KG_BG04["KG-BG04<br/>Topological recognition of A^2"]
   class KG_BG04 llm;
   KG_E02["KG-E02<br/>Global Euler-deficit identity"]
-  class KG_E02 llm;
+  class KG_E02 lean;
   KG_EM01["KG-EM01<br/>Purity of the finite-normalization boundary"]
   class KG_EM01 llm;
   KG_EM02["KG-EM02<br/>Unramified boundary normalization theorem"]
@@ -120,7 +120,7 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   KG_PC01["KG-PC01<br/>Fiber deficit decomposes into inertia support plus deletion"]
   class KG_PC01 llm;
   KG_PC02["KG-PC02<br/>Deficit-one detects unramified deletion"]
-  class KG_PC02 llm;
+  class KG_PC02 lean;
   KG_PC03["KG-PC03<br/>Étale-maximal top configuration stabilization"]
   class KG_PC03 llm;
   KG_PC04["KG-PC04<br/>Configuration filtration recovers generic deletion counts"]
@@ -138,9 +138,9 @@ classDef input fill:#f8f9fa,stroke:#adb5bd,color:#495057,stroke-dasharray: 2 2;
   KG_PM01["KG-PM01<br/>Perfect monodromy in the residual non-maximal case"]
   class KG_PM01 llm;
   KG_PM02["KG-PM02<br/>S_6 is excluded conditionally"]
-  class KG_PM02 llm;
+  class KG_PM02 lean;
   KG_PM03["KG-PM03<br/>Parity of inertia support"]
-  class KG_PM03 llm;
+  class KG_PM03 lean;
   PUB_A1ET["PUB-A1ET<br/>Finite étale rigidity of A^1"]
   class PUB_A1ET input;
   PUB_AF["PUB-AF<br/>Andreotti–Frankel"]
