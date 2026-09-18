@@ -19,12 +19,20 @@ export default function SessionProvider({children}) {
   // `dispatch` is stable, so this is too and no effect below re-runs on it.
   const failed = useCallback((error) => dispatch({type: 'failed', text: String(error?.message ?? error)}), []);
 
+  // The transcript is fetched only once the state says a project is open.
+  // With nothing open `/api/transcript` answers 409, and a `Promise.all`
+  // that included it rejected as a whole -- `loaded` never flipped, no
+  // `state` event replays for a fresh subscription, and the page sat on
+  // the full shell with an empty status instead of the project menu.
+  const transcriptFor = (status) => (status.open ? get('/api/transcript') : Promise.resolve([]));
+
   useEffect(() => {
     let live = true;
-    Promise.all([get('/api/state'), get('/api/commands'), get('/api/transcript'), get('/api/projects')])
-      .then(([status, commands, transcript, projects]) => {
-        if (live) dispatch({type: 'loaded', status, commands, transcript, projects});
-      })
+    Promise.all([get('/api/state'), get('/api/commands'), get('/api/projects')])
+      .then(([status, commands, projects]) =>
+        transcriptFor(status).then((transcript) => {
+          if (live) dispatch({type: 'loaded', status, commands, transcript, projects});
+        }))
       .catch((error) => live && failed(error));
     // Subscribed after the fetches are asked for but without waiting on them:
     // an event that lands while the transcript is in flight is still numbered,
@@ -32,8 +40,10 @@ export default function SessionProvider({children}) {
     // `resync` is the stream saying a reconnect asked for more than the ring
     // holds: the transcript is fetched again rather than drawn from a suffix.
     const resync = () =>
-      Promise.all([get('/api/state'), get('/api/transcript')])
-        .then(([status, transcript]) => live && dispatch({type: 'resynced', status, transcript}))
+      get('/api/state')
+        .then((status) => transcriptFor(status).then((transcript) => {
+          if (live) dispatch({type: 'resynced', status, transcript});
+        }))
         .catch((error) => live && failed(error));
     const stop = events((event) => {
       if (!live) return;
@@ -75,6 +85,9 @@ export default function SessionProvider({children}) {
     }
     if (opened.current === where) return undefined;
     opened.current = where;
+    // A close moves `where` to `null/null`; there is no transcript to fetch
+    // and asking would only file a 409 into the messages.
+    if (!state.status.open) return undefined;
     let live = true;
     get('/api/transcript')
       .then((transcript) => live && dispatch({type: 'switched', transcript}))

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -103,6 +104,12 @@ class ProjectRegistry:
         self.path = path if path is not None else default_registry_path()
         self.default_root = self.resolve(default_root if default_root is not None else default_projects_root())
         self._now = now
+        # Every write is a read-modify-write of the whole file, and the host
+        # calls in from two threads: an open's `touch` on the event loop, a
+        # forget or add on whichever HTTP thread carried the request. Without
+        # this a forget that lands between the touch's read and its write is
+        # undone by the write. One process, one instance, one lock.
+        self._lock = threading.Lock()
 
     @staticmethod
     def resolve(path: Path | str) -> Path:
@@ -205,38 +212,41 @@ class ProjectRegistry:
             # problem's own name has not been through the check yet.
             if layout.validate_slug(problem.name) != problem.name:
                 raise layout.LayoutError(f"{problem.name!r} is not a project name Hardy accepts")
-        data = self._read()
-        known = {row["path"] for row in data["projects"]}
-        stamp = self._now()
-        for problem in found:
-            if str(problem) not in known:
-                data["projects"].append({"path": str(problem), "added": stamp, "last_opened": None})
-        self._write(data)
+        with self._lock:
+            data = self._read()
+            known = {row["path"] for row in data["projects"]}
+            stamp = self._now()
+            for problem in found:
+                if str(problem) not in known:
+                    data["projects"].append({"path": str(problem), "added": stamp, "last_opened": None})
+            self._write(data)
         return self._entries(data)
 
     def forget(self, path: Path | str) -> list[Entry]:
         """Drop the entry. The directory is never touched."""
         target = str(self.resolve(path))
-        data = self._read()
-        remaining = [row for row in data["projects"] if row.get("path") != target]
-        if len(remaining) != len(data["projects"]):
-            data["projects"] = remaining
-            if data.get("last_opened") == target:
-                data["last_opened"] = None
-            self._write(data)
+        with self._lock:
+            data = self._read()
+            remaining = [row for row in data["projects"] if row.get("path") != target]
+            if len(remaining) != len(data["projects"]):
+                data["projects"] = remaining
+                if data.get("last_opened") == target:
+                    data["last_opened"] = None
+                self._write(data)
         return self._entries(data)
 
     def touch(self, path: Path | str) -> list[Entry]:
         """Mark `path` as the project last opened, registering it if it is not."""
         target = str(self.resolve(path))
-        data = self._read()
-        stamp = self._now()
-        for row in data["projects"]:
-            if row.get("path") == target:
-                row["last_opened"] = stamp
-                break
-        else:
-            data["projects"].append({"path": target, "added": stamp, "last_opened": stamp})
-        data["last_opened"] = target
-        self._write(data)
+        with self._lock:
+            data = self._read()
+            stamp = self._now()
+            for row in data["projects"]:
+                if row.get("path") == target:
+                    row["last_opened"] = stamp
+                    break
+            else:
+                data["projects"].append({"path": target, "added": stamp, "last_opened": stamp})
+            data["last_opened"] = target
+            self._write(data)
         return self._entries(data)

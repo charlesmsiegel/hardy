@@ -1274,8 +1274,7 @@ def main() -> int:
         from hardy.app.library import main as library_main
 
         return library_main(args, config)
-    if args.command == "web":
-        assert registry is not None
+    if args.command == "web" and registry is not None:
         return _web(config, parser=parser, args=args, registry=registry, entry=entry)
     # No subcommand is intentionally the primary interactive experience.
     return _chat(config, plain=args.plain, parser=parser, args=args)

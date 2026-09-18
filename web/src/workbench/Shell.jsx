@@ -55,8 +55,12 @@ function runningLabel(status, runningTool) {
 export default function Shell() {
   const [route, go] = useHash();
   const {
-    status, runningTool, prompts, refusal, projects, setProjects, refreshProjects, revision,
+    status, runningTool, prompts, refusal, projects, setProjects, refreshProjects, revision, loaded, messages,
   } = useSession();
+  //: What the first load said if it failed: `failed` files it into the
+  //: transcript, which the unloaded shell does not draw, so it is repeated
+  //: here rather than leaving "Connecting…" up forever with the reason hidden.
+  const loadError = loaded ? null : messages.filter((m) => m.kind === 'system' && m.style === 'error').at(-1);
   //: Chrome state, not session state -- what the user last did with the dock
   //: is not something a reload or another tab needs to agree with, so it
   //: lives here rather than in the hash or the server. `pinned` first, same
@@ -73,7 +77,11 @@ export default function Shell() {
   //: shell rather than claim there is no project. Every project-scoped
   //: endpoint answers 409 in this state, so the jobs panel is not asked.
   const empty = status.open === false;
-  const jobsPanel = usePanel(empty ? null : '/api/jobs', revision);
+  // Nor before the first load has said whether anything is open: mounting
+  // the pages then asked six project-scoped endpoints that all answered 409
+  // for the instant before the project menu replaced them.
+  const settled = loaded && !empty;
+  const jobsPanel = usePanel(settled ? '/api/jobs' : null, revision);
   const jobsAttention = jobsPanel.data?.attention?.length || 0;
   //: The peek popover, or `null` when none is open. Held here, not in a
   //: page, because a page is unmounted the moment the route moves off it --
@@ -115,6 +123,31 @@ export default function Shell() {
     : Page
       ? <Page key={`${status.path}/${route.page}`} arg={route.arg} onPeek={openPeek} />
       : unknownRoute(route.page);
+
+  if (!loaded) {
+    return (
+      <div className="wb-shell">
+        <TopBar
+          status={status}
+          runningTool={runningTool}
+          route={route}
+          go={go}
+          projects={projects}
+          setProjects={setProjects}
+          refreshProjects={refreshProjects}
+          revision={revision}
+        />
+        <TabBar route={route} go={go} dock="hidden" onToggleDock={() => {}} jobsAttention={0} disabled />
+        <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
+          <div className="wb-page">
+            {loadError
+              ? <p className="panel__error">{loadError.text}</p>
+              : <p className="panel__note">Connecting…</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (empty) {
     return (
