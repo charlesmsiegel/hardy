@@ -369,7 +369,7 @@ def test_a_command_that_replaces_the_config_is_what_the_next_open_uses(tmp_path:
 
     opener = FakeOpener(tmp_path)
     host = WebHost(make_config(tmp_path), opener, lambda confirm, cfg: FakeSession(cfg.layout.problem),
-                   registry=[Command("model", "switch the model", remodel)])
+                   registry=[Command("model", "switch the model", remodel)], projects=make_registry(tmp_path))
     host.start()
     try:
         sub = host.subscribe()
@@ -395,7 +395,7 @@ def test_a_retarget_mid_turn_keeps_the_turn_running(tmp_path: Path) -> None:
 
     registry = [*build_registry(), Command("swap", "swap the session", swap, safe_in_flight=True)]
     host = WebHost(config, FakeOpener(tmp_path),
-                   lambda confirm, cfg: FakeSession(cfg.layout.problem), registry=registry)
+                   lambda confirm, cfg: FakeSession(cfg.layout.problem), registry=registry, projects=make_registry(tmp_path))
     host.start()
     try:
         sub = host.subscribe()
@@ -457,7 +457,7 @@ def test_an_open_runs_off_the_loop_and_can_be_cancelled(tmp_path: Path) -> None:
     make_problem(tmp_path, "sylow")
     opener = BlockingOpener(tmp_path)
     host = WebHost(make_config(tmp_path), opener,
-                   lambda confirm, cfg: FakeSession(cfg.layout.problem))
+                   lambda confirm, cfg: FakeSession(cfg.layout.problem), projects=make_registry(tmp_path))
     host.start()
     from hardy.app.web import chats
     made = chats.create_chat(tmp_path / "sylow", "Lean proof")
@@ -582,7 +582,7 @@ def test_input_after_stop_is_refused_rather_than_parked(tmp_path: Path) -> None:
 def test_stop_is_safe_before_start_and_twice(tmp_path: Path) -> None:
     make_problem(tmp_path, "sylow")
     host = WebHost(make_config(tmp_path), FakeOpener(tmp_path),
-                   lambda confirm, cfg: FakeSession(cfg.layout.problem))
+                   lambda confirm, cfg: FakeSession(cfg.layout.problem), projects=make_registry(tmp_path))
     host.stop()
     assert host.session is None
     host.start()

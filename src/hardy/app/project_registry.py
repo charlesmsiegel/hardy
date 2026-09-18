@@ -74,6 +74,22 @@ def _looks_like_a_path(name: str) -> bool:
     return name.startswith("~") or "/" in name or "\\" in name or (len(name) > 1 and name[1] == ":")
 
 
+def default_registry_path() -> Path:
+    """Where the user's registry lives when nothing names another file.
+
+    A function rather than a constant so the test suite can point every
+    `ProjectRegistry()` built without a path -- by a host, by the CLI --
+    somewhere of its own. A test that reaches the user's real registry
+    through a default is a test that writes pytest temp paths into it.
+    """
+    return paths.global_dir() / FILENAME
+
+
+def default_projects_root() -> Path:
+    """Where the browser creates a project when the form names no location."""
+    return paths.global_dir() / DEFAULT_ROOT_NAME
+
+
 class ProjectRegistry:
     """`~/.hardy/projects.json`: the problems the browser lists, and the last one opened."""
 
@@ -84,10 +100,8 @@ class ProjectRegistry:
         default_root: Path | None = None,
         now: Callable[[], float] = time.time,
     ) -> None:
-        # `paths.global_dir()` through the module, not a bare import: a test
-        # that points the user directory elsewhere does so on that module.
-        self.path = path if path is not None else paths.global_dir() / FILENAME
-        self.default_root = self.resolve(default_root if default_root is not None else paths.global_dir() / DEFAULT_ROOT_NAME)
+        self.path = path if path is not None else default_registry_path()
+        self.default_root = self.resolve(default_root if default_root is not None else default_projects_root())
         self._now = now
 
     @staticmethod
