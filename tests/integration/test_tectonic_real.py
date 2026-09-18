@@ -114,9 +114,7 @@ def _identities(tectonic, run_id):
 
 
 @pytest.mark.real_toolchain
-def test_real_tectonic_compiles_verified_and_partial_writeups(tmp_path) -> None:
-    if not (Path(__file__).parents[2] / 'lean_project' / 'lake-manifest.json').exists():
-        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
+def test_real_tectonic_compiles_verified_and_partial_writeups(tmp_path, lean_project: Path) -> None:
     tectonic = _tectonic()
     claim = _claim()
     verified_id = UUID('11111111-1111-1111-1111-111111111111')

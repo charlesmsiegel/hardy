@@ -20,13 +20,11 @@ NOW = datetime(2026, 7, 24, tzinfo=UTC)
 
 @pytest.mark.real_toolchain
 def test_stdio_server_lists_its_tools_and_checks_valid_and_invalid_proofs(
-    tmp_path,
+    tmp_path, lean_project: Path
 ) -> None:
     lake = shutil.which('lake')
     if lake is None:
         pytest.skip('lake is not installed')
-    if not (ROOT / 'lean_project' / 'lake-manifest.json').exists():
-        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
     environment = EnvironmentIdentity(
         lean_version='4.32.0',
         lean_commit='8c9756b28d64dab099da31a4c09229a9e6a2ef35',
@@ -51,7 +49,7 @@ def test_stdio_server_lists_its_tools_and_checks_valid_and_invalid_proofs(
         PurePosixPath('formalization.json'), claim
     )
     config_path = tmp_path / 'hardy.toml'
-    write_setting(config_path, 'lean_project', str(ROOT / 'lean_project'))
+    write_setting(config_path, 'lean_project', str(lean_project))
     write_setting(config_path, 'lake', str(Path(lake)))
     environment_variables = dict(os.environ)
     environment_variables.update(
@@ -75,7 +73,13 @@ def test_stdio_server_lists_its_tools_and_checks_valid_and_invalid_proofs(
         ):
             await session.initialize()
             listed = await session.list_tools()
+            # The CAS tools are registered whenever a CAS runtime starts, and
+            # the default SymPy backend always can.
             assert {tool.name for tool in listed.tools} == {
+                'cas_export',
+                'cas_reset',
+                'cas_run',
+                'cas_state',
                 'lean_check_proof',
                 'lean_check_scratch',
                 'lean_inspect_declarations',

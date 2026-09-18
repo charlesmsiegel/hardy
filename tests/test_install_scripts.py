@@ -1246,6 +1246,9 @@ def test_every_installer_pins_the_same_lean_and_mathlib_as_hardy_records() -> No
     assert re.search(r'^MATHLIB_REVISION="([^"]+)"$', common, re.M).group(1) == installers.MATHLIB_REVISION
     assert re.search(r"^\$LeanToolchain = '([^']+)'$", windows, re.M).group(1) == installers.LEAN_TOOLCHAIN
     assert re.search(r"^\$MathlibRevision = '([^']+)'$", windows, re.M).group(1) == installers.MATHLIB_REVISION
+    # `hardy setup` writes the same project the installers do, package name included.
+    assert re.search(r"^LEAN_PACKAGE=(\S+)$", common, re.M).group(1) == installers.LEAN_PACKAGE
+    assert re.search(r"^\$LeanPackage = '([^']+)'$", windows, re.M).group(1) == installers.LEAN_PACKAGE
     # Neither installer generates the project with `lake init` any more: that
     # template requires Mathlib at its default branch, which is not a pin.
     assert 'init "$LEAN_PACKAGE" math' not in common

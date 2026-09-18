@@ -2,6 +2,8 @@ import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 def _touch(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -312,3 +314,40 @@ def test_the_default_cas_is_not_required_for_a_healthy_report(tmp_path, monkeypa
 def test_a_working_non_default_cas_keeps_the_report_healthy(tmp_path, monkeypatch) -> None:
     report = _discover_with_cas(tmp_path, monkeypatch, cas_backend='singular', cas_healthy=True)
     assert report.healthy
+
+
+def test_setup_creates_and_records_the_shared_lean_project_outside_the_checkout(tmp_path, monkeypatch) -> None:
+    """With no `lean_project` configured, `hardy setup` writes the pinned project
+    where the installers put it and records it, rather than preparing Mathlib
+    in whatever directory it was run from."""
+    cli = importlib.import_module('hardy.app.cli')
+    config_module = importlib.import_module('hardy.app.config')
+    setup = importlib.import_module('hardy.app.setup')
+    paths = importlib.import_module('hardy.foundation.paths')
+    installers = importlib.import_module('hardy.app.installers')
+    monkeypatch.delenv('HARDY_LEAN_PROJECT', raising=False)
+    shared = tmp_path / 'data' / 'hardy' / 'lean'
+    lake = _touch(tmp_path / 'bin' / 'lake.exe')
+    monkeypatch.setattr(paths, 'shared_lean_project', lambda: shared)
+    monkeypatch.setattr(setup, 'backend_probe', lambda _backend: lambda: (True, 'probe'))
+    seen = []
+
+    def discover(config, **_):
+        seen.append(config.lean_project)
+        tools = tuple(
+            SimpleNamespace(name=name, healthy=True, path=lake if name == 'lake' else tmp_path / name,
+                            version='1', detail='ok')
+            for name in ('elan', 'lake', 'tectonic')
+        )
+        return SimpleNamespace(tools=tools, mathlib_ready=True, healthy=True)
+
+    monkeypatch.setattr(setup, 'discover_environment', discover)
+    monkeypatch.setattr(installers, 'prepare_mathlib', lambda **_: pytest.fail('Mathlib is already ready'))
+    config_path = tmp_path / 'config.toml'
+
+    status = cli.run_setup(SimpleNamespace(config=str(config_path)), confirmer=lambda _: True)
+
+    assert status == 0
+    assert (shared / 'lakefile.toml').exists()
+    assert config_module.load(config_path).lean_project == shared
+    assert seen[0] is None and seen[-1] == shared
