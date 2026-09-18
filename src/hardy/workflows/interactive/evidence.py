@@ -29,21 +29,24 @@ named -- the kernel lane and the record lane then say different things about
 the same declaration, which is what the two lanes are for.
 
 Correspondence between a ledger item and a Lean declaration is not something
-the schema binds; the item's `name` is the qualified declaration name, and
-that is the whole of the link (`app/web/panels/record.py:_match_claim` reads
-it the same way).
+the schema binds. A saved result is recorded under its qualified declaration
+name, and that is the whole of the link (`app/web/panels/record.py:_match_claim`
+reads it the same way); a worker's candidate is verified only when its name or
+its exact Lean statement picks out one audited declaration, and a change set
+whose declarations it does not pick out is refused rather than credited.
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from hardy.formal import audit
-from hardy.formal.syntax import declarations, statements
+from hardy.formal.syntax import ImportCycle, declarations, dependents, normalise_lean, statements
 from hardy.formal.workspace import LeanWorkspace, module_name
 from hardy.foundation.journal import Journal, JournalError, StaleRevision, record_digest
 from hardy.foundation.locking import LockTimeout
@@ -82,6 +85,23 @@ _STABLE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 _UNSTABLE = re.compile(r"[^A-Za-z0-9_.:-]+")
 
 Audit = Callable[[LeanWorkspace, Sequence[str]], ToolResult | tuple[dict[str, dict[str, Any]], str]]
+
+
+@dataclass(frozen=True)
+class SaveGates:
+    """The gates a save runs that are not the audit, lent to admission so a worker's change set passes no fewer.
+
+    `final_gates` reads one source as a save would before any build: an
+    `axiom` written into it that nobody approved is refused there, since the
+    audit asks only what theorems and lemmas rest on and never sees an unused
+    one. `missing_names` names the registered declarations a tree would drop
+    against the tree before it; `head_sources` is that tree, the authoritative
+    one, as it stands now.
+    """
+
+    final_gates: Callable[[str], ToolResult | None]
+    missing_names: Callable[[dict[str, str], dict[str, str]], list[str]]
+    head_sources: Callable[[], dict[str, str]]
 
 
 class FormalEvidence(FrozenModel):
@@ -130,13 +150,39 @@ def _stamp() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+def _corresponding(name: str | None, statement: str | None,
+                   graded: Mapping[str, tuple[str, str, list[str]]]) -> str | None:
+    """The one audited declaration a subject picks out, or None.
+
+    Exact qualified name first; then the bare name when exactly one declaration
+    carries it (`_match_claim` in the web panel reads the same two spellings);
+    then the exact Lean statement, with or without its keyword, when exactly
+    one declaration states it. Ambiguity is no correspondence.
+    """
+    if name is not None:
+        if name in graded:
+            return name
+        leaf = name.rsplit(".", 1)[-1]
+        by_leaf = [declared for declared in graded if declared.rsplit(".", 1)[-1] == leaf]
+        if len(by_leaf) == 1:
+            return by_leaf[0]
+    if statement is not None:
+        wanted = normalise_lean(statement)
+        by_statement = [declared for declared, (_, stated, _) in graded.items()
+                        if wanted in {stated, stated.split(" ", 1)[-1]}]
+        if len(by_statement) == 1:
+            return by_statement[0]
+    return None
+
+
 class ProjectOwners:
     """The capability owners a session installs; nothing is minted or accepted without them."""
 
-    def __init__(self, problem: Path, *, audit: Audit) -> None:
+    def __init__(self, problem: Path, *, audit: Audit, gates: SaveGates) -> None:
         self.problem = Path(problem)
         self.journal = Journal(self.problem / EVIDENCE_DIR, types=_TYPES)
         self._audit = audit
+        self._gates = gates
         self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision)
 
     def admission(self) -> AdmissionOwners:
@@ -147,17 +193,46 @@ class ProjectOwners:
 
     def verify(self, workspace: LeanWorkspace, request: VerificationRequest, obligation: Obligation,
                ) -> tuple[tuple[EvidenceRef, ...] | None, str]:
-        """Build a change set's modules on the staged head and audit every result they declare.
+        """Check a change set on the staged head as a save would, and bind evidence to one declaration.
 
-        Evidence is minted only when every public theorem and lemma in the
-        changed modules is kernel-verified on standard axioms; one record per
-        declaration, each bound to the obligation's exact subject, scope and
-        context. The schema binds no declaration to the item the worker's
-        finding named, so the records say exactly which declarations were
-        audited and a reader compares.
+        The same gates a save runs, in the same order: the textual gates on
+        every changed source (an unapproved `axiom` is refused before Lean is
+        asked), the registered-name check against the current head, then a
+        build and audit of the changed modules *and every module that imports
+        them* -- a changed signature that breaks an unchanged dependent is a
+        change set that does not build.
+
+        Evidence is minted for exactly one declaration: the one the subject
+        corresponds to, by its qualified name, by its bare name when only one
+        declaration carries it, or by its exact Lean statement. The schema
+        binds no declaration to an item, so a change set whose declarations
+        none of these pick out is refused rather than credited with whatever
+        happened to be clean beside it.
         """
         sources = workspace.sources()
-        modules = [name for name in (module_name(PurePosixPath(path)) for path in request.files) if name in sources]
+        head = self._gates.head_sources()
+        changed = [module_name(PurePosixPath(path)) for path in request.files]
+        present = [module for module in changed if module in sources]
+        for module in present:
+            refusal = self._gates.final_gates(sources[module])
+            if refusal is not None:
+                return None, f"{module}: {refusal.output}"
+        lost = self._gates.missing_names(sources, head)
+        if lost:
+            return None, f"the change set would drop registered names from the workspace: {lost}"
+        try:
+            affected: dict[str, None] = {}
+            for module in changed:
+                if module in sources:
+                    affected[module] = None
+                # A deleted module's dependents are the head's; they still
+                # exist in the staged tree and must be shown to build without it.
+                for dependent in sorted(dependents(sources if module in sources else head, module)):
+                    if dependent in sources:
+                        affected[dependent] = None
+        except ImportCycle as error:
+            return None, str(error)
+        modules = list(affected)
         if not modules:
             return None, "the change set leaves no module to verify"
         failure = workspace.build_modules(modules)
@@ -167,27 +242,28 @@ class ProjectOwners:
         if isinstance(audited, ToolResult):
             return None, audited.output
         records, note = audited
-        graded = []
+        graded: dict[str, tuple[str, str, list[str]]] = {}
         for module in modules:
             found = declarations(sources[module])
+            stated = statements(sources[module])
             for entry in records.get(module, {}).get("declarations", ()):
                 name = str(entry.get("name"))
                 if name in found["private"]:
                     continue
-                status = audit.declaration_status(name, {module: records[module]})
-                if status.kind != "verified":
-                    return None, f"{name} in {module}: {status}"
-                graded.append((module, name, [str(axiom) for axiom in entry.get("axioms", ())]))
-        if not graded:
-            return None, f"no theorem or lemma to verify in {modules}: {note}"
-        signatures = workspace.current_signatures()
-        references = tuple(
-            self._mint(subject=obligation.item, scope=obligation.scope.ref, context=obligation.context,
-                       module=module, declaration=name, statement=statements(sources[module]).get(name) or name,
-                       axioms=axioms, signature=signatures.get(module, ""), source=sources[module])
-            for module, name, axioms in graded
-        )
-        return references, f"verified on the current head: {', '.join(name for _, name, _ in graded)}; {note}"
+                graded[name] = (module, stated.get(name) or name, [str(axiom) for axiom in entry.get("axioms", ())])
+        match = _corresponding(request.subject_name, request.subject_statement, graded)
+        if match is None:
+            return None, (f"no audited declaration corresponds to the candidate {request.subject_name!r}: "
+                          f"the change set declares {sorted(graded)}; name the finding after its Lean "
+                          "declaration or state it exactly as Lean was given it")
+        module, statement, axioms = graded[match]
+        status = audit.declaration_status(match, {module: records[module]})
+        if status.kind != "verified":
+            return None, f"{match} in {module}: {status}"
+        reference = self._mint(subject=obligation.item, scope=obligation.scope.ref, context=obligation.context,
+                               module=module, declaration=match, statement=statement, axioms=axioms,
+                               signature=workspace.current_signatures().get(module, ""), source=sources[module])
+        return (reference,), f"{match} verified on the current head; {note}"
 
     def _mint(self, *, subject: VersionRef, scope: VersionRef, context: VersionRef | None, module: str,
               declaration: str, statement: str, axioms: Sequence[str], signature: str, source: str) -> EvidenceRef:

@@ -131,7 +131,7 @@ from hardy.workflows.interactive.documents import (
     FormalDocumentFacts,
 )
 from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
-from hardy.workflows.interactive.evidence import ProjectOwners
+from hardy.workflows.interactive.evidence import ProjectOwners, SaveGates
 from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
 from hardy.workflows.interactive.history import HistorySnapshot
 from hardy.workflows.interactive.jobs import ComputationJobs
@@ -547,7 +547,9 @@ class MathematicsSession:
         # beside the ledger. Built here because verification is this session's
         # audit, with its approved assumptions; see `evidence.py` for why the
         # ledger cannot accept anything without them.
-        self.owners = ProjectOwners(workspace, audit=self._audit_tree)
+        self.owners = ProjectOwners(workspace, audit=self._audit_tree, gates=SaveGates(
+            final_gates=self._final_gates, missing_names=self._missing_registered_names,
+            head_sources=lambda: self.lean_workspace.sources()))
         self._save_streak = self.formal._save_streak
         # Streak key -> sha256 hex digests of sources that passed `check_lean`
         # on that path this turn. A green check on a path lifts the brake only
@@ -824,6 +826,11 @@ class MathematicsSession:
         session's own unless a caller installed others.
         """
         owners = self.admission_owners
+        # As before every save: a shared library edited since its last build
+        # is rebuilt and the environment identity moved, so the head that is
+        # copied and verified below is the one the user currently authors,
+        # and evidence is stamped with the identity it was checked under.
+        self.build_shared()
         admission = AuthoritativeAdmission(LedgerStore(self.workspace), self.lean_workspace, self.delegations.store,
                                            verify=owners.verify, policy=owners.policy, decide=owners.decide)
         return admit_delegation(admission, delegation_id)

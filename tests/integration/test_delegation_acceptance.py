@@ -80,7 +80,9 @@ def _base(tmp_path: Path) -> LeanWorkspace:
 
 WORKER_A = [
     call("read_item", {"selector": "L17"}),
-    call("propose_finding", {"kind": "candidate_lemma", "summary": "a helper lemma",
+    # Named after its Lean declaration: that name is the one correspondence
+    # the session's own verifier accepts between a candidate and a declaration.
+    call("propose_finding", {"kind": "candidate_lemma", "summary": "helper_fact",
                              "payload": "The helper fact holds for the generic fiber", "related_refs": ["L17"]}),
     call("check_lean", {"path": "Worker.lean", "source": HELPER}),
     call("save_lean", {"path": "Worker.lean", "source": HELPER}),
