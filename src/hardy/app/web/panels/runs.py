@@ -18,8 +18,8 @@ outside it. What confines a read here instead:
   for anything (`UUID(run_id)` raises `ValueError` on anything else), which
   is what makes an unknown or malformed `run_id` the same clean 400
   `ledger_item`/`ledger_export` already give an unknown ledger id.
-- The matched run directory, and the two files read inside it
-  (`manifest.json`, `trajectory.jsonl`), are each proven with
+- The matched run directory, and the three files read inside it
+  (`manifest.json`, `formalization.json`, `trajectory.jsonl`), are each proven with
   `resolve_named_child` to be their own parent's real, non-symlink child --
   the same proof `workspace.confine()` builds for the problem tree
   (`foundation/files.py:21-48`). A directory or file planted as a symlink
@@ -48,6 +48,7 @@ from uuid import UUID
 
 from hardy.app.config import Config
 from hardy.app.web.panels import vocabulary
+from hardy.formal.contracts import FrozenClaim, freeze_claim
 from hardy.foundation.files import LayoutError, resolve_named_child
 from hardy.workflows.contracts import Grades, RunManifest
 from hardy.workflows.storage import TrajectoryEvent
@@ -62,6 +63,12 @@ from hardy.workflows.storage import TrajectoryEvent
 #: for the identical reason.
 MANIFEST = "manifest.json"
 TRAJECTORY = "trajectory.jsonl"
+#: The frozen, human-approved claim, written by `prove.py` the moment the
+#: user approves a formalization and read back from disk there before
+#: anything is proved against it -- so this file *is* the statement every
+#: check in the run was made against, and `RunManifest.claim_sha256` is its
+#: `content_hash`.
+FORMALIZATION = "formalization.json"
 
 
 def _grade_tones(grades: Grades) -> dict[str, str]:
@@ -189,6 +196,87 @@ def _locate_run_dir(runs_root: Path, run_id: UUID) -> Path:
     return resolve_named_child(candidates[0], resolved_root)
 
 
+def _statement(claim: FrozenClaim) -> str:
+    """The frozen claim as one Lean signature, exactly as the verifier states it.
+
+    The same rendering `formal/lean.py`'s `render_source` builds (minus the
+    trailing `:=` that opens the proof) and `workflows/recorded.py` requires
+    a paper to quote verbatim: `theorem <name> <binders> : <proposition>`,
+    with no binder slot at all when the proposal has no binders. Restated
+    here rather than imported because `lean.py` renders a whole source file,
+    proof included, and this page has no proof to hand it.
+    """
+    proposal = claim.proposal
+    binders = f" {proposal.binders.strip()}" if proposal.binders.strip() else ""
+    return f"theorem {proposal.theorem_name}{binders} : {proposal.proposition.strip()}"
+
+
+def _frozen_claim(run_dir: Path, manifest: RunManifest) -> tuple[dict[str, Any] | None, str | None]:
+    """The statement `manifest.claim_sha256` is the hash of, or `(None, why not)`.
+
+    Issue #174: the detail page's whole point is the frozen statement beside
+    its hash, and the hash alone says only that *something* was pinned. The
+    text lives in `formalization.json`, so this reads it -- under three
+    proofs, because a statement shown beside a hash it is not the hash of
+    would be exactly the fabrication the page exists to refuse:
+
+    - `manifest.claim_sha256` is `None`: the run never reached an approved
+      formalization, so there is no statement to look for. `(None, None)` --
+      the caller renders *does not apply*, not a complaint, and the file is
+      not even opened.
+    - The file is missing, a planted symlink, unreadable, or does not parse
+      as a `FrozenClaim`: `(None, reason)`. The manifest promised a claim
+      this run directory does not carry, and *this run* says so, rather than
+      the page implying the text is never served.
+    - The file parses but its `content_hash` is not the manifest's, or its
+      own text does not hash to its `content_hash` when re-frozen through
+      `freeze_claim` exactly as `prove.py` re-checks it on write (`prove.py`,
+      "persisted Frozen Claim hash mismatch"): `(None, reason)`. The first
+      catches a file from another run; the second catches a statement edited
+      under a hash it no longer earns. `validate_run_consistency`
+      (`workflows/recorded.py`) makes the first check for `hardy accept
+      --recorded`; the second is the one a browser-facing read owes on top.
+    """
+    if manifest.claim_sha256 is None:
+        return None, None
+    try:
+        path = resolve_named_child(run_dir / FORMALIZATION, run_dir)
+        claim = FrozenClaim.model_validate_json(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        # `validate_run_consistency`'s own words for the same finding; the
+        # run's `dir` is already on the page, so the path adds nothing.
+        return None, f"{FORMALIZATION} is missing"
+    except (OSError, ValueError) as error:
+        return None, f"{FORMALIZATION} could not be read: {error}"
+    if claim.content_hash != manifest.claim_sha256:
+        return None, (
+            f"{FORMALIZATION} carries hash {claim.content_hash}, which differs from the manifest's "
+            f"{manifest.claim_sha256}; it is not the statement this run's checks were against"
+        )
+    refrozen = freeze_claim(
+        claim.original_text, claim.proposal, claim.environment, claim.approved_at,
+        semantic_context=claim.semantic_context,
+    )
+    if refrozen.content_hash != claim.content_hash:
+        return None, (
+            f"{FORMALIZATION} does not hash to the {claim.content_hash} it carries; "
+            "its text is not the one that hash was taken over"
+        )
+    return {
+        "content_hash": claim.content_hash,
+        # `request.text` as the user gave it -- `prove.py` freezes exactly
+        # that as `original_text` -- and the model's own reading of it.
+        "original_text": claim.original_text,
+        "restatement": claim.proposal.restatement,
+        "theorem_name": claim.proposal.theorem_name,
+        "binders": claim.proposal.binders,
+        "proposition": claim.proposal.proposition,
+        "statement": _statement(claim),
+        "imports": list(claim.imports),
+        "approved_at": claim.approved_at.isoformat(),
+    }, None
+
+
 def _trajectory(run_dir: Path, run_id: UUID) -> list[dict[str, Any]] | None:
     """Every `trajectory.jsonl` event in order, or `None` when the file cannot be trusted.
 
@@ -243,7 +331,7 @@ def _trajectory(run_dir: Path, run_id: UUID) -> list[dict[str, Any]] | None:
 
 
 def run_item(config: Config, run_id: str) -> dict[str, Any]:
-    """One run's manifest, in full, plus its trajectory.
+    """One run's manifest, in full, plus its frozen statement and its trajectory.
 
     `run_id` must parse as a `UUID` and must name a run whose manifest can be
     read; both refuse with `ValueError`, which `server.py`'s existing 400
@@ -280,6 +368,7 @@ def run_item(config: Config, run_id: str) -> dict[str, Any]:
         raise ValueError(
             f"run directory {run_dir.name!r} names {parsed} but its manifest names {manifest.run_id}"
         )
+    claim, claim_error = _frozen_claim(run_dir, manifest)
     return {
         "run_id": str(manifest.run_id),
         "dir": run_dir.name,
@@ -288,6 +377,11 @@ def run_item(config: Config, run_id: str) -> dict[str, Any]:
         "model": manifest.model,
         "prompt_set_sha256": manifest.prompt_set_sha256,
         "claim_sha256": manifest.claim_sha256,
+        # The statement that hash is the hash of, proven so (`_frozen_claim`),
+        # or `claim_error` saying why this run cannot show it. Both `None`
+        # exactly when `claim_sha256` is: no claim was ever frozen.
+        "claim": claim,
+        "claim_error": claim_error,
         "limits": manifest.limits.model_dump(mode="json"),
         "environment": manifest.environment.model_dump(mode="json") if manifest.environment is not None else None,
         "grades": manifest.grades.model_dump(mode="json"),

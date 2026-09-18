@@ -339,6 +339,10 @@ def test_runs_route_serves_a_real_run_and_refuses_an_unknown_id(server) -> None:
     payload = json.loads(body)
     assert payload["run_id"] == str(run_id) and payload["claim_sha256"] == "b" * 64
     assert payload["trajectory"] == []
+    # The manifest names a hash but this run wrote no `formalization.json`:
+    # the statement is reported missing for *this run*, not silently absent
+    # (issue #174).
+    assert payload["claim"] is None and "formalization.json" in payload["claim_error"]
 
     # An unknown run_id is `run_item`'s own `ValueError`, mapped to a clean
     # 400 by `do_GET` -- the same refusal path `ledger_item`/`ledger_export`
