@@ -1163,6 +1163,38 @@ input {
   color: var(--error);
 }
 
+.wb-switcher__none {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+.wb-switcher__form {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding: 4px 12px 6px;
+}
+
+.wb-switcher__input--wide {
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-switcher__forget {
+  color: var(--muted);
+}
+
+.wb-switcher__forget:hover {
+  color: var(--error);
+}
+
+.wb-tabbar--disabled .wb-tab {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
 /* -- DropOverlay: the fixed drag-and-drop hint ---------------------------- */
 
 .wb-drop {

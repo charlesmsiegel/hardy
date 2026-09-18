@@ -1,21 +1,27 @@
-// The project switcher: the 520px dropdown behind the top bar's project
-// chip. `/api/projects` already lists every problem in the root, each with
-// its chats and which one is live; `/api/chats` (new this shipment) adds
-// turn counts and a last-activity stamp, but only for whichever project is
-// currently open -- it reads the live session, not an arbitrary slug.
+// The project switcher: the 560px dropdown behind the top bar's project
+// chip. `/api/projects` lists every REGISTERED problem -- from any number of
+// roots, since the browser opens what `~/.hardy/projects.json` names rather
+// than whatever directory the server was started in -- each with its path,
+// its chats and whether it is the one open. `/api/chats` adds turn counts
+// and a last-activity stamp, but only for whichever project is open: it
+// reads the live session, not an arbitrary path.
 //
 // Between the two, a row can honestly show a real chat count for every
-// project and a real last-activity stamp for the live one. Everything else
-// the prototype's own mock rows carry -- a goal, per-project theorem and
-// obligation counts, a state word for a project that is not the live one --
-// has no source anywhere in this shipment, so those cells render `Absent`
-// rather than a number nothing asked for.
+// project and a real last-activity stamp for the open one. A goal, a state
+// word for a project that is not open, per-project theorem counts -- none of
+// those has a source, so those cells render `Absent` rather than a number
+// nothing asked for.
 //
-// Picking a row calls the same `/api/open` the old client's `Sidebar` uses
-// to switch chats, not a `/project switch` line through the composer: it is
-// the direct action, refusable the same way (a turn still running answers
-// 409), and the highlight follows the `state` event it produces rather than
-// an optimistic guess here.
+// Picking a row calls `/api/open` with the project's PATH, not a `/project
+// switch` line through the composer: it is the direct action, refusable the
+// same way (a turn still running answers 409), and the highlight follows the
+// `state` event it produces rather than an optimistic guess here. The footer
+// holds the four registry actions: New (a name, and optionally a location;
+// the default root is what the placeholder shows), Add (a path to a problem
+// or to a root holding several), Close (back to nothing open), and a Forget
+// link per row that is not the open one. Forgetting drops the entry and
+// never touches the directory; the server says so if asked to forget the
+// open project.
 
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {get, post} from '../api.js';
@@ -29,7 +35,7 @@ const NOTICE_MS = 6000;
 function stateWord(status) {
   if (status.turn_running) return 'turn running';
   if (status.command_running) return 'running';
-  return 'idle';
+  return 'open';
 }
 
 /** The latest `last_activity` across `/api/chats`' rows, or `null` if none report one. */
@@ -39,7 +45,8 @@ function lastActivity(overview) {
   return stamps.length ? Math.max(...stamps) : null;
 }
 
-function when(ts) {
+export function when(ts) {
+  if (!ts) return null;
   return new Date(ts * 1000).toLocaleString(undefined, {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   });
@@ -54,17 +61,20 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
   const [open, setOpen] = useState(false);
   const [overview, setOverview] = useState(null);
   const [notice, setNotice] = useState('');
-  const [adding, setAdding] = useState(false);
+  //: Which footer form is out: `''`, `'new'` or `'add'`.
+  const [form, setForm] = useState('');
   const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [path, setPath] = useState('');
   const boxRef = useRef(null);
   const timer = useRef(null);
 
-  // The live project's chat overview, fetched only while the dropdown is
+  // The open project's chat overview, fetched only while the dropdown is
   // open -- the same "a mount is a fetch" rule every panel in this client
   // follows -- and refetched if the session's own revision moves while it
   // is open, so a turn that ends mid-browse updates the row under the user.
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || !status.open) return undefined;
     let live = true;
     get('/api/chats')
       .then((rows) => live && setOverview(rows))
@@ -72,7 +82,7 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
     return () => {
       live = false;
     };
-  }, [open, revision]);
+  }, [open, revision, status.open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -98,68 +108,116 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
     timer.current = setTimeout(() => setNotice(''), NOTICE_MS);
   }, []);
 
+  const afterSwitch = useCallback(() => {
+    setNotice('');
+    setOpen(false);
+    refreshProjects();
+    // The switch opens `main`, so the route has to say `main`. While the
+    // hash still read `#/chat/<some-other-id>`, the Chat page's route effect
+    // saw that id differ from the new `status.chat` and called `/api/open`
+    // again for it in the project just opened -- landing on an unintended
+    // same-named chat, or erroring if that project has no such chat. Naming
+    // the chat that was actually opened is what stops the page arguing with
+    // the switch.
+    if (route.page === 'chat' && route.arg) go({page: 'chat', arg: ''});
+  }, [refreshProjects, route.page, route.arg, go]);
+
   const pick = useCallback(
-    (slug) => {
-      if (slug === status.slug) {
+    (projectPath) => {
+      if (status.open && projectPath === status.path) {
         setOpen(false);
         return;
       }
-      post('/api/open', {slug, chat: 'main'})
-        .then(() => {
-          setNotice('');
-          setOpen(false);
-          refreshProjects();
-          // The switch opens `main`, so the route has to say `main`. While
-          // the hash still read `#/chat/<some-other-id>`, the Chat page's
-          // route effect saw that id differ from the new `status.chat` and
-          // called `/api/open` again for it in the project just opened --
-          // landing on an unintended same-named chat, or erroring if that
-          // project has no such chat. Naming the chat that was actually
-          // opened is what stops the page arguing with the switch.
-          if (route.page === 'chat' && route.arg) go({page: 'chat', arg: ''});
-        })
+      post('/api/open', {path: projectPath, chat: 'main'})
+        .then(afterSwitch)
         .catch((error) => say(String(error?.message ?? error)));
     },
-    [status.slug, refreshProjects, say, route.page, route.arg, go],
+    [status.open, status.path, afterSwitch, say],
   );
+
+  const close = useCallback(() => {
+    post('/api/close')
+      .then(() => {
+        setNotice('');
+        setOpen(false);
+        refreshProjects();
+        go('home');
+      })
+      .catch((error) => say(String(error?.message ?? error)));
+  }, [refreshProjects, go, say]);
 
   const createProject = useCallback(() => {
     const wanted = name.trim();
     if (!wanted) return;
-    post('/api/projects', {name: wanted})
+    const body = {name: wanted};
+    if (location.trim()) body.location = location.trim();
+    post('/api/projects', body)
       .then((list) => {
-        setAdding(false);
+        setForm('');
         setName('');
-        setOpen(false);
+        setLocation('');
         setProjects(list);
+        afterSwitch();
       })
       .catch((error) => say(String(error?.message ?? error)));
-  }, [name, setProjects, say]);
+  }, [name, location, setProjects, afterSwitch, say]);
+
+  const addProject = useCallback(() => {
+    const wanted = path.trim();
+    if (!wanted) return;
+    post('/api/projects/add', {path: wanted})
+      .then((list) => {
+        setForm('');
+        setPath('');
+        setProjects(list);
+        say(`added ${wanted}`);
+      })
+      .catch((error) => say(String(error?.message ?? error)));
+  }, [path, setProjects, say]);
+
+  const forget = useCallback(
+    (projectPath) => {
+      post('/api/projects/forget', {path: projectPath})
+        .then((list) => setProjects(list))
+        .catch((error) => say(String(error?.message ?? error)));
+    },
+    [setProjects, say],
+  );
+
+  const onFormKey = (submit) => (event) => {
+    if (event.key === 'Enter') submit();
+    if (event.key === 'Escape') setForm('');
+  };
 
   return (
     <span className="wb-switcher" ref={boxRef}>
       <button type="button" className="wb-switcher__button" onClick={() => setOpen((value) => !value)}>
-        {status.slug || <Absent kind="unreported" />} ▾
+        {status.open ? status.slug : 'no project'} ▾
       </button>
       {open ? (
         <div className="wb-switcher__panel">
           <div className="wb-switcher__header">
-            <span>Project · ~/math</span>
-            <span>Goal</span>
+            <span>Project</span>
+            <span>Location</span>
           </div>
+          {projects.length === 0 ? (
+            <div className="wb-switcher__none">
+              No projects registered. New project… creates one; Add existing… registers a folder.
+            </div>
+          ) : null}
           {projects.map((project) => {
-            const active = project.slug === status.slug;
+            const active = project.active;
             const count = project.chats.length;
             const activity = active ? lastActivity(overview) : null;
             return (
               <a
-                key={project.slug}
+                key={project.path}
                 href="#"
                 className="wb-switcher__row"
                 style={{background: active ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent'}}
                 onClick={(event) => {
                   event.preventDefault();
-                  pick(project.slug);
+                  pick(project.path);
                 }}
               >
                 <span className="wb-switcher__col">
@@ -167,55 +225,102 @@ export default function ProjectSwitcher({status, projects, setProjects, refreshP
                     {project.slug}
                   </span>
                   <span className="wb-switcher__state" style={{color: active ? 'var(--accent)' : 'var(--muted)'}}>
-                    {active ? stateWord(status) : <Absent kind="unreported" />}
+                    {active ? stateWord(status) : project.registered ? 'registered' : <Absent kind="unreported" />}
                   </span>
                 </span>
                 <span className="wb-switcher__col">
-                  <span className="wb-switcher__goal">
-                    <Absent kind="unreported" />
+                  <span className="wb-switcher__goal" title={project.path}>
+                    {project.root}
                   </span>
                   <span className="wb-switcher__facts">
                     {count} chat{count === 1 ? '' : 's'}
-                    {activity ? ` · last activity ${when(activity)}` : ''}
+                    {activity ? ` · last activity ${when(activity)}` : project.last_opened ? ` · opened ${when(project.last_opened)}` : ''}
+                    {active || !project.registered ? null : (
+                      <>
+                        {' · '}
+                        <a
+                          href="#"
+                          className="wb-switcher__forget"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            forget(project.path);
+                          }}
+                        >
+                          forget
+                        </a>
+                      </>
+                    )}
                   </span>
                 </span>
               </a>
             );
           })}
           <div className="wb-switcher__divider" />
-          <div className="wb-switcher__footer">
-            {adding ? (
+          {form === 'new' ? (
+            <div className="wb-switcher__form">
               <input
                 className="wb-switcher__input"
                 autoFocus
                 placeholder="project name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') createProject();
-                  if (event.key === 'Escape') setAdding(false);
-                }}
+                onKeyDown={onFormKey(createProject)}
               />
-            ) : (
-              <a
-                href="#"
-                onClick={(event) => {
-                  event.preventDefault();
-                  setAdding(true);
-                }}
-              >
-                New project…
-              </a>
-            )}
+              <input
+                className="wb-switcher__input wb-switcher__input--wide"
+                placeholder={`location (default ${status.default_root || ''})`}
+                title="the directory the project is created under; leave empty for the default"
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+                onKeyDown={onFormKey(createProject)}
+              />
+              <button type="button" className="wb-switcher__button" onClick={createProject}>create</button>
+            </div>
+          ) : null}
+          {form === 'add' ? (
+            <div className="wb-switcher__form">
+              <input
+                className="wb-switcher__input wb-switcher__input--wide"
+                autoFocus
+                placeholder="path to a Hardy project, or a folder holding several"
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                onKeyDown={onFormKey(addProject)}
+              />
+              <button type="button" className="wb-switcher__button" onClick={addProject}>add</button>
+            </div>
+          ) : null}
+          <div className="wb-switcher__footer">
             <a
               href="#"
               onClick={(event) => {
                 event.preventDefault();
-                say('not available in the browser client');
+                setForm(form === 'new' ? '' : 'new');
               }}
             >
-              Open folder…
+              New project…
             </a>
+            <a
+              href="#"
+              onClick={(event) => {
+                event.preventDefault();
+                setForm(form === 'add' ? '' : 'add');
+              }}
+            >
+              Add existing…
+            </a>
+            {status.open ? (
+              <a
+                href="#"
+                onClick={(event) => {
+                  event.preventDefault();
+                  close();
+                }}
+              >
+                Close project
+              </a>
+            ) : null}
             <span className={notice ? 'wb-switcher__note wb-switcher__note--error' : 'wb-switcher__note'}>
               {notice || 'switching leaves the running turn alone · also /project <name>'}
             </span>

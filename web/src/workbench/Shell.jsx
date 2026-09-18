@@ -23,6 +23,7 @@ import {PAGES} from '../pages/index.js';
 import Dock from './Dock.jsx';
 import DropOverlay from './DropOverlay.jsx';
 import Footer from './Footer.jsx';
+import Landing from './Landing.jsx';
 import Peek from './Peek.jsx';
 import TabBar from './TabBar.jsx';
 import TopBar from './TopBar.jsx';
@@ -66,7 +67,13 @@ export default function Shell() {
   //: `TabBar.jsx`, which stays a plain, stateless row of buttons. Reading it
   //: at the shell costs one request per `revision`, the same as any other
   //: panel, and does not touch the Chat/Tree mounting rules above.
-  const jobsPanel = usePanel('/api/jobs', revision);
+  //: Nothing open: the server started with no registered project, or the
+  //: user closed the one that was. `false`, not falsy -- the status is
+  //: `EMPTY_STATUS` before the first load, and that must draw the loading
+  //: shell rather than claim there is no project. Every project-scoped
+  //: endpoint answers 409 in this state, so the jobs panel is not asked.
+  const empty = status.open === false;
+  const jobsPanel = usePanel(empty ? null : '/api/jobs', revision);
   const jobsAttention = jobsPanel.data?.attention?.length || 0;
   //: The peek popover, or `null` when none is open. Held here, not in a
   //: page, because a page is unmounted the moment the route moves off it --
@@ -106,8 +113,31 @@ export default function Shell() {
   const pageContent = isChat
     ? null
     : Page
-      ? <Page key={`${status.slug}/${route.page}`} arg={route.arg} onPeek={openPeek} />
+      ? <Page key={`${status.path}/${route.page}`} arg={route.arg} onPeek={openPeek} />
       : unknownRoute(route.page);
+
+  if (empty) {
+    return (
+      <div className="wb-shell">
+        <TopBar
+          status={status}
+          runningTool={runningTool}
+          route={route}
+          go={go}
+          projects={projects}
+          setProjects={setProjects}
+          refreshProjects={refreshProjects}
+          revision={revision}
+        />
+        <TabBar route={route} go={go} dock="hidden" onToggleDock={() => {}} jobsAttention={0} disabled />
+        <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
+          <div className="wb-page">
+            <Landing status={status} projects={projects} setProjects={setProjects} refreshProjects={refreshProjects} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const showAside = dock === 'pinned' && !isChat && !isTree;
   const bodyCols = showAside ? 'minmax(0,1fr) 380px' : 'minmax(0,1fr)';

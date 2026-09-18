@@ -32,18 +32,23 @@ const LABEL = {
   hidden: 'chat: hidden ▸ show',
 };
 
-export default function TabBar({route, go, dock, onToggleDock, jobsAttention}) {
+export default function TabBar({route, go, dock, onToggleDock, jobsAttention, disabled = false}) {
   const isChat = route.page === 'chat';
 
   return (
-    <div className="wb-tabbar">
+    <div className={disabled ? 'wb-tabbar wb-tabbar--disabled' : 'wb-tabbar'}>
       {TABS.map(([id, label]) => {
-        const on = id === route.page || (id === 'chat' && route.page === 'tree');
+        // Nothing lit while nothing is open: every tab is a page about a
+        // project, and there is none. The buttons stay, greyed, so the
+        // layout does not jump when one is opened.
+        const on = !disabled && (id === route.page || (id === 'chat' && route.page === 'tree'));
         return (
           <button
             key={id}
             type="button"
             className={on ? 'wb-tab wb-tab--on' : 'wb-tab'}
+            disabled={disabled}
+            title={disabled ? 'open a project first' : undefined}
             onClick={() => go(id)}
           >
             {label}
@@ -54,7 +59,7 @@ export default function TabBar({route, go, dock, onToggleDock, jobsAttention}) {
       {/* Toggling the dock on the Chat page itself would have nothing to show
           for it -- Chat is already full width there -- so the button is not
           drawn rather than drawn to do nothing. */}
-      {isChat ? null : (
+      {isChat || disabled ? null : (
         <button type="button" className="wb-dock-toggle" onClick={() => onToggleDock(NEXT[dock])}>
           {LABEL[dock]}
         </button>

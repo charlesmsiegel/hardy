@@ -16,7 +16,10 @@ let counter = 0;
 //: collides with one minted inside it.
 export const nextId = () => `m${++counter}`;
 
-const EMPTY_STATUS = {slug: '', chat: '', model: '', turn_running: false, command_running: false, queued: 0, prompts: []};
+//: `open` is absent, not `false`, before the first load: the shell draws the
+//: project menu on `open === false` and must not do so before the server
+//: has said whether anything is open.
+const EMPTY_STATUS = {slug: '', chat: '', path: '', root: '', default_root: '', model: '', turn_running: false, command_running: false, queued: 0, prompts: []};
 
 //: What the composer says before the dispatcher has had a chance to say it
 //: itself. The host's own wording, so the first refusal a user sees and every
