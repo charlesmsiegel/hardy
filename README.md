@@ -146,7 +146,7 @@ covers every option, path, and failure mode.
 | Command | What it does |
 | --- | --- |
 | `hardy`, `hardy chat` | Open or resume an interactive session on one problem: Lean, LaTeX, and computer algebra in one durable workspace. |
-| `hardy web` | Serve the browser client for this root on 127.0.0.1. |
+| `hardy web` | Serve the browser client on 127.0.0.1; it opens projects from its own registry, never the current directory. |
 | `hardy prove` | Take one claim from statement to verified document, staged and gated. |
 | `hardy doctor` | Report whether Lean, LaTeX, computer algebra, and the model are usable. |
 | `hardy setup` | Discover, install, and record the pinned toolchain. |

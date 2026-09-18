@@ -683,6 +683,20 @@ because a flag added without a documentation line is what a review misses.
 
 Cost: adding a flag is a two-file change, and the test names the page.
 
+### The browser opens registered projects, never the current directory
+
+We chose to have `hardy web` list and open only the problems recorded in
+`~/.hardy/projects.json`, over resolving a root from the current directory
+as `hardy chat` does, because a server started from a launcher has no
+meaningful current directory, and one started from a checkout scaffolded a
+`main/` problem into it before the page was even up.
+
+Cost: two lookup models, one per launcher; a project made in the browser is
+opened at the terminal by naming its root; a launch with nothing registered
+holds no session, which every project-scoped request has to refuse.
+
+Revisit when: `hardy chat` should read the registry too.
+
 ### Process artifacts are not kept in the tree
 
 We chose to keep specifications, plans and reports out of the repository, over
