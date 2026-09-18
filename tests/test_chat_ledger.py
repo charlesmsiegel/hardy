@@ -17,7 +17,7 @@ from test_chat_audit import APPROVAL, ASSUMED, CLEAN, HOLED, session, state
 from workspace_helpers import results
 
 from hardy.app.web.panels import record as panels
-from hardy.workflows.interactive.evidence import EVIDENCE_DIR, PRODUCER, ProjectOwners
+from hardy.workflows.interactive.evidence import EVIDENCE_DIR, PRODUCER, ProjectOwners, SaveGates
 from hardy.workflows.ledger import contracts as c
 from hardy.workflows.ledger.store import LedgerStore
 
@@ -165,14 +165,15 @@ def test_acceptance_survives_reopening_and_fails_closed_on_a_tampered_record(tmp
     snapshot = LedgerStore(tmp_path).read()
     resolution = _prove(snapshot, snapshot.head("lean:HardyTarget")).resolution
     # A fresh owner over the same bytes authenticates the same acceptance.
-    reopened = ProjectOwners(tmp_path, audit=lambda space, modules: (({}), "unused"))
+    unused = SaveGates(final_gates=lambda source: None, missing_names=lambda after, before: [], head_sources=dict)
+    reopened = ProjectOwners(tmp_path, audit=lambda space, modules: ({}, "unused"), gates=unused)
     assert reopened.policy.is_accepted(snapshot, resolution)
     # A record that no longer says what the reference pinned is refused, not repaired.
     path = tmp_path / EVIDENCE_DIR / "00000000000000000001.json"
     event = json.loads(path.read_text(encoding="utf-8"))
     event["records"][0]["value"]["axioms"] = ["sorryAx"]
     path.write_text(json.dumps(event), encoding="utf-8")
-    assert not ProjectOwners(tmp_path, audit=reopened._audit).policy.is_accepted(snapshot, resolution)
+    assert not ProjectOwners(tmp_path, audit=reopened._audit, gates=unused).policy.is_accepted(snapshot, resolution)
     assert not chat.owners.policy.is_accepted(snapshot, resolution)
 
 

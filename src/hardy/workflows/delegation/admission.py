@@ -409,11 +409,19 @@ class AdmissionAttempt(FrozenModel):
 
 
 class VerificationRequest(FrozenModel):
-    """What a verifier is handed: the files to check on the staged head and what they are for."""
+    """What a verifier is handed: the files to check on the staged head and what they are for.
+
+    `subject_name` and `subject_statement` are the ledger item the obligation
+    is on, as the candidate states it: the schema binds no Lean declaration to
+    an item, so a verifier that must say *which* declaration it verified for
+    the subject has only these to correspond by.
+    """
 
     files: tuple[str, ...]
     candidate_id: str
     change_set_id: str
+    subject_name: str | None = None
+    subject_statement: str | None = None
 
 
 Verify = Callable[[LeanWorkspace, VerificationRequest, Obligation], tuple[tuple[EvidenceRef, ...] | None, str]]
@@ -583,8 +591,11 @@ class AuthoritativeAdmission:
                     phase(AdmissionPhase.FILES_PREPARED, head)
                     if target_prove is None:
                         return fail(head, "rejected", ("no proof obligation to discharge on this candidate",))
+                    subject_item = existing if existing is not None else primary
                     request = VerificationRequest(files=tuple(f.path for f in plan.files), candidate_id=candidate.id,
-                                                  change_set_id=plan.id)
+                                                  change_set_id=plan.id,
+                                                  subject_name=subject_item.name if subject_item else None,
+                                                  subject_statement=subject_item.statement if subject_item else None)
                     evidence, detail = self._verify(staged, request, target_prove)
                     if evidence is None:
                         return fail(head, "rejected", (f"verification on the current head failed: {detail}",))
