@@ -100,8 +100,8 @@ def test_a_cycle_between_problems_is_refused(tmp_path) -> None:
     problem(tmp_path, "left", left)
     problem(tmp_path, "right", right)
     report = check_root(tmp_path)
-    assert report.order == ()
-    assert report.failures == ("problem dependencies form a cycle: left, right",)
+    assert report.cycle == ("left", "right")
+    assert report.failures[-1] == "problem dependencies form a cycle: left, right"
 
 
 def test_lean_declaration_semantics_name_a_declaration_in_either_tree(tmp_path) -> None:
@@ -332,3 +332,134 @@ def test_a_local_instance_is_a_named_declaration() -> None:
 
     source = "local instance projectInhabited : Inhabited Nat := ⟨0⟩\nscoped notation \"x\" => 1\n"
     assert named_declarations(source) == ("projectInhabited",)
+
+
+# -- the third review's cases ---------------------------------------------------------
+
+
+AUDIT = {"status": "clean", "declarations": [{"name": "base_fact", "axioms": []}],
+         "forbidden": [], "unapproved": [], "assumed": []}
+SOURCE = "import Mathlib\n\nlemma base_fact : True := by exact True.intro\n"
+
+
+def _recorded(root, slug, source=SOURCE):
+    """A problem whose result was recorded as a save records it: evidence minted, obligation resolved."""
+    from hardy.workflows.interactive.evidence import ProjectOwners
+
+    path = problem(root, slug, item("lean:base_fact", "lean verified", kind="lemma", name="base_fact",
+                                    statement="lemma base_fact : True"))
+    (path / "lean").mkdir()
+    (path / "lean" / "Main.lean").write_text(source, encoding="utf-8")
+    note = ProjectOwners.reading(path).record_saved({"Main": source}, {"Main": AUDIT}, {"Main": "sig"})
+    assert "proof obligation resolved" in note
+    return path
+
+
+def test_verified_evidence_must_describe_the_lean_source_on_disk(tmp_path) -> None:
+    path = _recorded(tmp_path, "up")
+    assert check_root(tmp_path).ok
+    # The declaration keeps its name and becomes an axiom: the old record verified something else.
+    (path / "lean" / "Main.lean").write_text("import Mathlib\n\naxiom base_fact : True\n", encoding="utf-8")
+    assert check_root(tmp_path).failures == (
+        "up: lean:base_fact: lean verified but the kernel checked Main, which has changed since",)
+    (path / "lean" / "Main.lean").unlink()
+    assert check_root(tmp_path).failures == (
+        "up: lean:base_fact: lean verified but the kernel checked Main, which is no longer under lean/ or .hardy/lean/",)
+
+
+def test_a_module_the_kernel_checked_may_live_in_the_shared_library(tmp_path) -> None:
+    path = _recorded(tmp_path, "up")
+    (tmp_path / ".hardy" / "lean").mkdir(parents=True)
+    (path / "lean" / "Main.lean").rename(tmp_path / ".hardy" / "lean" / "Main.lean")
+    assert check_root(tmp_path).ok
+
+
+def test_artifacts_behind_evidence_are_checked(tmp_path) -> None:
+    from hardy.workflows.ledger.contracts import EvidenceRef
+
+    (tmp_path / "up").mkdir()
+    anchor = item("A", "open")
+    gone = ArtifactRef(uri="notes/gone.md", digest="0" * 64)
+    of = lambda uri: EvidenceRef(kind="document", subject=anchor.ref, producer="hand",  # noqa: E731
+                                 artifact=ArtifactRef(uri=uri, digest="0" * 64))
+    direct = item("D", "open", evidence=(of("notes/direct.md"),))
+    assessed = ProjectItem(id="R", kind="theorem", name="R", origin="human_authored",
+                           research=ResearchState(status="open", evidence=(of("notes/research.md"),)))
+    rel = Relation(id="rel", kind="depends_on", source=direct.ref, target=anchor.ref, evidence=(of("notes/rel.md"),))
+    LedgerStore(tmp_path / "up").append((anchor, direct, assessed, rel), expected_revision=0)
+    del gone
+    assert set(check_root(tmp_path).failures) == {
+        "up: D: artifact notes/direct.md is missing",
+        "up: R: artifact notes/research.md is missing",
+        "up: rel: artifact notes/rel.md is missing",
+    }
+
+
+def test_problems_in_a_cycle_are_still_checked(tmp_path) -> None:
+    left = item("L", "imported", semantics=(("upstream_problem", "right"), ("upstream_item", "R"),
+                                            ("upstream_digest", "0" * 64), ("upstream_status", "open")))
+    right = item("R", "imported", semantics=(("upstream_problem", "left"), ("upstream_item", "L"),
+                                             ("upstream_digest", "0" * 64), ("upstream_status", "open")))
+    problem(tmp_path, "left", left, item("Q", "certified"))
+    problem(tmp_path, "right", right)
+    downstream = item("M", "imported", semantics=(("upstream_problem", "right"), ("upstream_item", "R"),
+                                                  ("upstream_digest", right.digest), ("upstream_status", "imported")))
+    problem(tmp_path, "after", downstream, item("H", "human verified"))
+    report = check_root(tmp_path)
+    # Nothing orders, so every problem is checked in name order; each one's own rules still hold.
+    assert report.order == ("after", "left", "right")
+    assert [p.board_line for p in report.problems] == [
+        "after: ledger revision 1; human verified: 1, imported: 1",
+        "left: ledger revision 1; certified: 1, imported: 1",
+        "right: ledger revision 1; imported: 1"]
+    assert report.failures == (
+        "after: H: human verified has no evidence mechanism here yet",
+        "after: M: mirror names problem 'right', which is not checked before this one",
+        "left: Q: status 'certified' is not in the vocabulary",
+        "left: L: mirror names problem 'right', which is not checked before this one",
+        "right: R: mirror is stale; left now holds " + left.digest[:12],
+        "problem dependencies form a cycle: after, left, right")
+
+
+def test_an_artifact_that_does_not_read_is_that_items_failure(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
+    (tmp_path / "up").mkdir()
+    (tmp_path / "up" / "note.md").write_text("kept\n", encoding="utf-8")
+    held = item("G", "open", artifacts=(ArtifactRef(uri="note.md", digest="0" * 64),))
+    LedgerStore(tmp_path / "up").append((held, item("Q", "certified")), expected_revision=0)
+
+    def refused(self):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_bytes", refused)
+    failures = check_root(tmp_path).failures
+    assert "up: G: artifact note.md does not read: [Errno 13] Permission denied" in failures
+    assert "up: Q: status 'certified' is not in the vocabulary" in failures
+
+
+def test_cycles_through_a_node_of_high_degree_are_found_in_name_order(tmp_path) -> None:
+    from hardy.workflows.root_check import cycles
+
+    edges = {"hub": {f"leaf{i:04d}" for i in range(2000)} | {"back"}, "back": {"hub"}}
+    assert cycles(["back", "hub"], edges) == ["dependency cycle: back -> hub -> back"]
+    seen = []
+    edges = {"a": {"c", "b"}, "b": {"a"}, "c": {"a"}}
+    assert cycles(["a"], edges) == ["dependency cycle: a -> b -> a", "dependency cycle: a -> c -> a"]
+    del seen
+
+
+def test_a_save_of_an_edited_module_re_mints_the_evidence_the_check_reads(tmp_path) -> None:
+    from hardy.workflows.interactive.evidence import ProjectOwners
+
+    path = _recorded(tmp_path, "up")
+    edited = SOURCE + "\nlemma other_fact : True := by exact True.intro\n"
+    (path / "lean" / "Main.lean").write_text(edited, encoding="utf-8")
+    assert not check_root(tmp_path).ok
+    # The same declaration, verified again by a save of the edited module: recorded on this source.
+    note = ProjectOwners.reading(path).record_saved({"Main": edited}, {"Main": AUDIT}, {"Main": "sig"})
+    assert "earlier evidence described an earlier source; proof obligation re-accepted" in note
+    assert check_root(tmp_path).ok
+    # And a save that changes nothing mints nothing.
+    assert ProjectOwners.reading(path).record_saved({"Main": edited}, {"Main": AUDIT}, {"Main": "sig"}) \
+        == "\n\nproject ledger: unchanged"
