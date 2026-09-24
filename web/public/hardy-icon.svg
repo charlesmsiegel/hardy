@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">Hardy logo</title>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17283d"/>
+      <stop offset="1" stop-color="#0b1624"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#dce8f2"/>
+      <stop offset=".45" stop-color="#8398aa"/>
+      <stop offset="1" stop-color="#e7eef4"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#76ecff"/>
+      <stop offset="1" stop-color="#00a9df"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="15" y="15" width="226" height="226" rx="30" fill="url(#panel)" stroke="url(#metal)" stroke-width="7"/>
+  <path d="M188 18h22c16 0 28 12 28 28v42l-53-53z" fill="#edf4f8" stroke="url(#metal)" stroke-width="5"/>
+  <path d="M188 18v48c0 12 9 21 21 21h29" fill="#c7d6e2" stroke="#9fb3c2" stroke-width="3"/>
+
+  <!-- notebook/grid texture -->
+  <g stroke="#38516a" stroke-width="1" opacity=".42">
+    <path d="M44 43v170M72 43v170M100 43v170M128 43v170M156 43v170M184 43v170"/>
+    <path d="M35 58h186M35 86h186M35 114h186M35 142h186M35 170h186M35 198h186"/>
+  </g>
+
+  <!-- mathematics -->
+  <g fill="none" stroke="#dbe7f1" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M46 146h98"/>
+    <path d="M88 198V58"/>
+    <circle cx="88" cy="146" r="58" opacity=".82"/>
+    <path d="M48 178L88 146 132 95" stroke-dasharray="6 7" opacity=".9"/>
+    <path d="M46 151C68 154 78 136 88 118c12-23 25-35 41-28 8 4 12 12 15 24" stroke="url(#cyan)" stroke-width="5" filter="url(#glow)"/>
+  </g>
+  <g fill="#edf5fb" stroke="#7591a5" stroke-width="2">
+    <circle cx="46" cy="178" r="5"/>
+    <circle cx="88" cy="146" r="5"/>
+    <circle cx="132" cy="95" r="5"/>
+  </g>
+
+  <!-- bridge from math to AI -->
+  <path d="M130 146C151 146 155 129 166 118" fill="none" stroke="url(#cyan)" stroke-width="5" filter="url(#glow)"/>
+
+  <!-- neural network -->
+  <g stroke="url(#cyan)" stroke-width="4" fill="none" stroke-linecap="round" filter="url(#glow)">
+    <path d="M166 118l22-31 24 20"/>
+    <path d="M166 118l25 18 23-12"/>
+    <path d="M166 118l18 41 28 1"/>
+    <path d="M188 87l3 49"/>
+    <path d="M212 107l2 17"/>
+    <path d="M191 136l21 24"/>
+  </g>
+  <g fill="url(#cyan)" stroke="#e2f8ff" stroke-width="2.5" filter="url(#glow)">
+    <circle cx="166" cy="118" r="7"/>
+    <circle cx="188" cy="87" r="8"/>
+    <circle cx="212" cy="107" r="8"/>
+    <circle cx="191" cy="136" r="8"/>
+    <circle cx="214" cy="124" r="7"/>
+    <circle cx="184" cy="159" r="7"/>
+    <circle cx="212" cy="160" r="7"/>
+  </g>
+
+  <rect x="29" y="29" width="198" height="198" rx="23" fill="none" stroke="#33516b" stroke-width="2"/>
+</svg>
