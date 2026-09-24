@@ -22,14 +22,23 @@ What it enforces, per problem:
   own `lean/` or the root's shared `.hardy/lean/`, by its qualified name or a
   suffix of it (`Foo.bar` is named by `Foo.bar` or `bar`, never by `Baz.bar`);
 - every artifact an item or a relation references by a path relative to the
-  problem still matches the bytes on disk, whether or not the item is
-  assessed; an artifact named by a URI with a scheme (`arxiv:`, `manuscript:`,
-  `file:`) belongs to the store that issued it and is not read here;
+  problem, directly or behind its evidence, still matches the bytes on disk,
+  whether or not the item is assessed; an artifact named by a URI with a
+  scheme (`arxiv:`, `manuscript:`, `file:`) belongs to the store that issued
+  it and is not read here;
 - a `lean verified` item has a resolved `prove` obligation on its current
   revision whose acceptance the problem's own evidence readers authenticate
-  from its `evidence/` journal; one such obligation suffices, and an open
-  duplicate beside it is not a failure; `human verified` has no evidence
-  mechanism yet and is refused.
+  from its `evidence/` journal, and whose formal evidence describes the Lean
+  source as it stands: the module the kernel checked is still under `lean/`
+  or `.hardy/lean/` with the digest the evidence recorded, so an edit that
+  keeps a declaration's name and changes what it says is not verified by the
+  old record; one such obligation suffices, and an open duplicate beside it
+  is not a failure; `human verified` has no evidence mechanism yet and is
+  refused.
+
+A problem whose mirrors form a cycle with another's is still checked, after
+the problems that could be ordered: its own rules hold whatever the order,
+and only a mirror of a problem not yet checked is reported as unordered.
 
 Relations are read at their current endpoints: a relation names its endpoints
 by stable id, and the check is of the board as it stands, so a relation that
@@ -51,11 +60,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from hardy.formal.syntax import named_declarations
+from hardy.formal.syntax import module_path, named_declarations
 from hardy.foundation.paths import HARDY_DIR
 from hardy.workflows.interactive import evidence as evidence_owner
 from hardy.workflows.layout import RECORD
 from hardy.workflows.ledger.contracts import (
+    ArtifactRef,
     Obligation,
     ObligationKind,
     ObligationStatus,
@@ -63,6 +73,7 @@ from hardy.workflows.ledger.contracts import (
     ProjectItemKind,
     Relation,
     RelationKind,
+    Resolution,
 )
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
@@ -99,7 +110,7 @@ class ProblemReport:
 
 @dataclass(frozen=True)
 class RootReport:
-    """Every problem in dependency order, or the problems whose mirrors form a cycle."""
+    """Every problem in the order it was checked; `cycle` names those whose mirrors could not be ordered."""
 
     order: tuple[str, ...]
     problems: tuple[ProblemReport, ...]
@@ -271,17 +282,60 @@ def order_problems(found: list[Path]) -> tuple[list[Path], list[str]]:
     return ordered, []
 
 
-def _artifact_errors(problem: Path, owner: str, artifacts) -> list[str]:
+def artifacts_of(record: ProjectItem | Relation) -> list[ArtifactRef]:
+    """Every artifact a record references: its own, and those behind its evidence.
+
+    An item's research assessment carries evidence of its own, and a
+    relation's evidence is what backs the relation; a file any of them names
+    is as much the record's as one in its `artifacts`.
+    """
+    found = list(record.artifacts) + [e.artifact for e in record.evidence]
+    if isinstance(record, ProjectItem) and record.research is not None:
+        found.extend(e.artifact for e in record.research.evidence)
+    return found
+
+
+def _artifact_errors(problem: Path, owner: str, artifacts: list[ArtifactRef]) -> list[str]:
     errors = []
     for ref in artifacts:
         if SCHEME.match(ref.uri):
             continue
-        path = (problem / ref.uri).resolve()
-        if not path.is_file():
-            errors.append(f"{owner}: artifact {ref.uri} is missing")
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != ref.digest:
-            errors.append(f"{owner}: artifact {ref.uri} changed since it was recorded")
+        try:
+            path = (problem / ref.uri).resolve()
+            if not path.is_file():
+                errors.append(f"{owner}: artifact {ref.uri} is missing")
+            elif hashlib.sha256(path.read_bytes()).hexdigest() != ref.digest:
+                errors.append(f"{owner}: artifact {ref.uri} changed since it was recorded")
+        except OSError as error:
+            errors.append(f"{owner}: artifact {ref.uri} does not read: {error}")
     return errors
+
+
+def source_binding(problem: Path, owners: evidence_owner.ProjectOwners, resolution: Resolution) -> str | None:
+    """Why the resolution's formal evidence no longer describes the Lean source on disk, or None.
+
+    The evidence records the module the kernel checked and the digest of its
+    source; a module edited since, whether or not the declaration kept its
+    name, is not what was verified. The module is looked for under the
+    problem's `lean/`, then the root's `.hardy/lean/`, and read as the save
+    read it, so the digests compare like for like.
+    """
+    for reference in resolution.evidence:
+        record = owners.formal_record(reference)
+        if record is None:
+            return "its evidence does not authenticate"
+        relative = module_path(record.module)
+        path = next((tree / relative for tree in (problem / LEAN_DIR, problem.parent / HARDY_DIR / LEAN_DIR)
+                     if (tree / relative).is_file()), None)
+        if path is None:
+            return f"the kernel checked {record.module}, which is no longer under lean/ or .hardy/lean/"
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            return f"the kernel checked {record.module}, which does not read: {error}"
+        if hashlib.sha256(source.encode("utf-8")).hexdigest() != record.source_sha256:
+            return f"the kernel checked {record.module}, which has changed since"
+    return None
 
 
 def cycles(nodes: list[str], edges: dict[str, set[str]]) -> list[str]:
@@ -290,7 +344,9 @@ def cycles(nodes: list[str], edges: dict[str, set[str]]) -> list[str]:
     A depth-first walk on an explicit stack, so a chain as long as a board
     can grow is walked without touching the interpreter's recursion limit.
     Each node is entered once; a back edge to a node still on the path is a
-    cycle, reported as the path from that node round to itself.
+    cycle, reported as the path from that node round to itself. Successors
+    are taken in name order, from the end of a reversed list, so a node of
+    high degree costs its degree and not its square.
     """
     found: list[str] = []
     state: dict[str, int] = {}
@@ -298,17 +354,17 @@ def cycles(nodes: list[str], edges: dict[str, set[str]]) -> list[str]:
         if state.get(start) == 2:
             continue
         path: list[str] = [start]
-        pending: list[list[str]] = [sorted(edges.get(start, ()))]
+        pending: list[list[str]] = [sorted(edges.get(start, ()), reverse=True)]
         state[start] = 1
         while path:
             if pending[-1]:
-                nxt = pending[-1].pop(0)
+                nxt = pending[-1].pop()
                 if state.get(nxt) == 1:
                     found.append("dependency cycle: " + " -> ".join((*path, nxt)))
                 elif state.get(nxt) != 2:
                     state[nxt] = 1
                     path.append(nxt)
-                    pending.append(sorted(edges.get(nxt, ())))
+                    pending.append(sorted(edges.get(nxt, ()), reverse=True))
             else:
                 state[path.pop()] = 2
                 pending.pop()
@@ -336,14 +392,15 @@ def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
     heads[problem.name] = items
     declared, unreadable = lean_declarations(problem)
     errors.extend(unreadable)
-    policy = evidence_owner.ProjectOwners.reading(problem).policy
+    owners = evidence_owner.ProjectOwners.reading(problem)
+    policy = owners.policy
     obligations = snapshot.current(Obligation)
 
     for id_, item in items.items():
         for key, value in item.semantics:
             if key == "lean_declaration" and not unreadable and not declares(declared, value):
                 errors.append(f"{id_}: lean_declaration {value} is not declared under lean/ or .hardy/lean/")
-        errors.extend(_artifact_errors(problem, id_, item.artifacts))
+        errors.extend(_artifact_errors(problem, id_, artifacts_of(item)))
         status = status_of(item)
         if status is None:
             continue
@@ -360,10 +417,15 @@ def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
             elif not resolved:
                 found = ", ".join(sorted({o.status.value for o in proofs}))
                 errors.append(f"{id_}: lean verified but its prove obligation is {found}")
-            elif not any(policy.is_accepted(snapshot, o.resolution) for o in resolved):
-                errors.append(f"{id_}: lean verified but its evidence does not authenticate")
+            else:
+                accepted = [o for o in resolved if policy.is_accepted(snapshot, o.resolution)]
+                stale = [source_binding(problem, owners, o.resolution) for o in accepted]
+                if not accepted:
+                    errors.append(f"{id_}: lean verified but its evidence does not authenticate")
+                elif all(stale):
+                    errors.append(f"{id_}: lean verified but {stale[0]}")
     for rel in all_relations:
-        errors.extend(_artifact_errors(problem, rel.id, rel.artifacts))
+        errors.extend(_artifact_errors(problem, rel.id, artifacts_of(rel)))
 
     edges: dict[str, set[str]] = defaultdict(set)
     for rel in relations:
@@ -415,10 +477,17 @@ def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
 
 
 def check_root(root: Path) -> RootReport:
-    """Check every problem of `root`, upstream problems first."""
+    """Check every problem of `root`, upstream problems first.
+
+    The problems whose mirrors could not be ordered are checked last, in name
+    order: a problem's own rules do not depend on the order, and a mirror
+    of a problem not yet checked is that mirror's failure; the cycle itself
+    is the root's.
+    """
     found = problems(Path(root))
     ordered, cycle = order_problems(found)
+    checked = ordered + [problem for problem in found if problem.name in cycle]
     known = {problem.name for problem in found}
     heads: dict[str, dict[str, ProjectItem]] = {}
-    reports = tuple(check_problem(problem, heads, known) for problem in ordered)
-    return RootReport(order=tuple(p.name for p in ordered), problems=reports, cycle=tuple(cycle))
+    reports = tuple(check_problem(problem, heads, known) for problem in checked)
+    return RootReport(order=tuple(p.name for p in checked), problems=reports, cycle=tuple(cycle))

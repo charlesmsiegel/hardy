@@ -301,14 +301,24 @@ class ProjectOwners:
                            artifact=ArtifactRef(uri=EVIDENCE_URI + record.id, digest=record_digest(record),
                                                 locator=declaration))
 
-    def read_evidence(self, reference: EvidenceRef) -> AuthenticatedEvidence | None:
-        """The owner's record behind a reference, if the bytes on disk still say what it pins."""
+    def formal_record(self, reference: EvidenceRef) -> FormalEvidence | None:
+        """The owner's record behind a reference, if the bytes on disk still say what it pins.
+
+        The record, not a verdict on it: what the kernel checked (the module,
+        the declaration, the source's digest) for a reader that compares it
+        with the tree as it stands now. `read_evidence` is the verdict.
+        """
         if reference.kind is not EvidenceKind.FORMAL or reference.producer != PRODUCER:
             return None
         record = self._find(FormalEvidence, EVIDENCE_URI, reference.artifact)
         if record is None or record.subject != reference.subject or record.declaration != reference.artifact.locator:
             return None
-        if any(axiom in audit.FORBIDDEN for axiom in record.axioms):
+        return record
+
+    def read_evidence(self, reference: EvidenceRef) -> AuthenticatedEvidence | None:
+        """What the owner's record behind a reference established, if it still reads and rests on nothing forbidden."""
+        record = self.formal_record(reference)
+        if record is None or any(axiom in audit.FORBIDDEN for axiom in record.axioms):
             return None
         return AuthenticatedEvidence(reference, record.scope, record.context, record.outcome)
 
@@ -344,6 +354,12 @@ class ProjectOwners:
             except StaleRevision:
                 continue
         raise JournalError("the evidence journal kept moving; the record was not written")
+
+    def _describes(self, resolution: Resolution, source: str) -> bool:
+        """Whether every formal record behind an accepted resolution was minted from this source text."""
+        digest = sha256(source.encode("utf-8")).hexdigest()
+        records = [self.formal_record(reference) for reference in resolution.evidence]
+        return all(record is not None and record.source_sha256 == digest for record in records)
 
     def _find(self, record_type: type, prefix: str, artifact: ArtifactRef):
         """The journaled record an artifact reference names, only if its digest still matches."""
@@ -500,11 +516,17 @@ class ProjectOwners:
         if verified:
             if current.status is ObligationStatus.RESOLVED:
                 if self.policy.is_accepted(snapshot, current.resolution):
-                    return "; ".join(said)
-                # Accepted once, under a policy that has since changed its
-                # digest or a record that no longer reads: this audit is
-                # fresh evidence, and the obligation is re-accepted on it.
-                said.append("earlier acceptance no longer reads under the current policy")
+                    if self._describes(current.resolution, source):
+                        return "; ".join(said)
+                    # Accepted on an earlier text of this module: the
+                    # declaration is verified again on the source as saved,
+                    # so the record says what the kernel checked this time.
+                    said.append("earlier evidence described an earlier source")
+                else:
+                    # Accepted once, under a policy that has since changed its
+                    # digest or a record that no longer reads: this audit is
+                    # fresh evidence, and the obligation is re-accepted on it.
+                    said.append("earlier acceptance no longer reads under the current policy")
             reference = self._mint(subject=item.ref, scope=scope.ref, context=item.context, module=module,
                                    declaration=name, statement=statement, axioms=axioms, signature=signature,
                                    source=source)
