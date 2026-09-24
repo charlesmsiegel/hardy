@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/hardy-icon.png" width="128" alt="Hardy logo">
+  <img src="web/public/hardy-icon.svg" width="128" alt="Hardy logo">
 </p>
 
 # Hardy
