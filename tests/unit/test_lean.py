@@ -412,3 +412,38 @@ def test_a_truncated_lean_observation_does_not_start_mid_line() -> None:
 
     body = result.output.split('\n', 1)[1]
     assert all(line.startswith('error: complaint ') for line in body.splitlines())
+
+
+@pytest.mark.parametrize(('line', 'graded'), ((None, True), (3, False), ('none', False)))
+def test_a_batch_audit_reads_only_the_line_hardy_asked_on(line, graded) -> None:
+    """`submit_proof` appends `#print axioms` as the source's last line. A
+    report positioned anywhere else is one the proof made Lean print, and one
+    with no position is not Lean's answer to that line either."""
+    lean_module = importlib.import_module('hardy.formal.lean')
+    batch = importlib.import_module('hardy.workflows.batch')
+    models = importlib.import_module('hardy.workflows.batch_contracts')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+    lean = lean_module.LeanTools(request, ('unused',))
+    source = lean.source('by trivial', audit=True)
+    where = {None: source.count('\n'), 'none': None}.get(line, line)
+    result = lean_module.LeanToolResult(
+        True,
+        'exit=0',
+        source,
+        diagnostics=(
+            lean_module.LeanDiagnostic(
+                severity='information',
+                message="'HardyTarget' does not depend on any axioms",
+                line=where,
+                column=0 if where is not None else None,
+            ),
+        ),
+    )
+
+    audited, verdict, record = batch._audited(result, lean)
+
+    assert audited.ok is graded
+    assert (verdict is not None and verdict.status == 'clean') is graded
+    assert (record is None) is graded

@@ -20,7 +20,7 @@ from hardy.formal.budget import BudgetExhausted, CheckBudget, ReservedBudget
 from hardy.formal.closers import CLOSERS, close
 from hardy.formal.contracts import FormalizationProposal, freeze_claim
 from hardy.formal.lean import LeanTools, scannable
-from hardy.formal.verifier import FORBIDDEN_TOKEN, VerificationResult
+from hardy.formal.verifier import FORBIDDEN_TOKEN, VerificationResult, proof_body_violation
 from hardy.foundation.values import FrozenModel, json_digest
 from hardy.workflows.contracts import ProofSubmission, RunPhase
 from hardy.workflows.ledger.contracts import ArtifactRef, Obligation, ProjectItem, Scope
@@ -145,6 +145,12 @@ class SketchStrategy:
             if FORBIDDEN_TOKEN.search(scannable(submission.proof_body)):
                 return self._finish(task, plan, proved, budget, "partial",
                                     "The assembled proof contains a forbidden hole or declaration.")
+            # A child body is pasted into the parent's; one that issues its own
+            # commands would be writing the parent's file, audit line and all.
+            violation = proof_body_violation(submission.proof_body)
+            if violation is not None:
+                return self._finish(task, plan, proved, budget, "partial",
+                                    f"The assembled proof is refused: {violation}.")
             result = self._check(task, submission, budget, final=True)
             if result.verified:
                 return self._finish(task, plan, proved, budget, "submitted",

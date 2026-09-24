@@ -46,6 +46,25 @@ FORBIDDEN_TOKEN = re.compile(
     r"(sorryAx|sorry|admit|axiom|opaque|by\?)"
     r"(?![A-Za-z0-9_-￿])"
 )
+# A word that starts a Lean command rather than continuing a term or a tactic
+# block. The proof body is pasted after `:=`, so a body holding one of these has
+# closed the declaration and is writing the rest of the file itself: `#exit`
+# stops Lean before Hardy's own `#print axioms` runs, a `#print "..."` supplies
+# a report of its choosing, and `macro_rules` can rewrite the audit command.
+# Bounded like an identifier -- `h.def`, `hdef`, `h_end` and `«end»` are
+# names -- and scanned over text whose comments and strings are blanked but
+# whose guillemet names are kept, so `«sorryAx»` is seen for what it is. The
+# inside of a guillemet name is scanned too, so `«my end lemma»` is refused:
+# blanking it would trust the scanner to find the closing `»` where Lean does,
+# and a char literal `'«'` is where the two part company.
+COMMAND_IN_BODY = re.compile(
+    r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|(?:macro_rules|macro|elab_rules|elab|syntax|notation|"
+    r"infixl?|infixr|prefix|postfix|run_cmd|run_elab|run_meta|initialize|builtin_initialize|"
+    r"declare_syntax_cat|theorem|lemma|def|abbrev|instance|example|structure|class|inductive|"
+    r"axiom|opaque|namespace|section|end|universe|variable|attribute|export|mutual|include|omit)"
+    r"(?![\w'!?»]))"
+)
+ESCAPED_HOLE = re.compile(r"«\s*sorryAx\s*»")
 UNAUTHORIZED_SIGNATURE_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_-￿])"
     r"(axiom|opaque|theorem|lemma|def|abbrev|example|instance|import|namespace|section|end)"
@@ -173,17 +192,17 @@ class FinalVerifier:
                 "Forbidden Lean syntax in Frozen Claim signature: " + signature_violation,
             )
         forbidden = FORBIDDEN_TOKEN.search(scannable(proof_body))
-        if forbidden is not None:
+        refusal = (
+            f"forbidden Lean token: {forbidden.group(1)}"
+            if forbidden is not None
+            else proof_body_violation(proof_body)
+        )
+        if refusal is not None:
             result = VerificationResult(
                 verified=False,
                 reason=TerminalReason.FORBIDDEN_HOLE,
                 axioms=(),
-                diagnostics=(
-                    LeanDiagnostic(
-                        severity="error",
-                        message=f"forbidden Lean token: {forbidden.group(1)}",
-                    ),
-                ),
+                diagnostics=(LeanDiagnostic(severity="error", message=refusal),),
                 source_sha256=source_sha,
                 verification_sha256=None,
             )
@@ -221,12 +240,17 @@ class FinalVerifier:
                 "Fresh Lean verification did not accept the reconstructed source",
                 diagnostics,
             )
+        # Only what Lean said at Hardy's own `#print axioms`, the file's last
+        # line. A message from any other line came from something the body
+        # made Lean say, and one with no position is not Lean's report at all.
         reports = audit.parse(
-            "\n".join(item.message for item in diagnostics), (claim.proposal.theorem_name,)
+            audit_line_messages(source, diagnostics), (claim.proposal.theorem_name,)
         )
         if reports is None:
             # A silent axiom report is not an absence of axioms, and neither is
             # a duplicated one -- Hardy will not pick a winner between two.
+            # Nor is a report on the wrong line: a body that stopped Lean
+            # before the audit ran leaves exactly this silence.
             return _failure(
                 store,
                 source,
@@ -282,6 +306,85 @@ class FinalVerifier:
 def axiom_report_line(theorem_name: str) -> str:
     """The line whose Lean output an evidence record's axiom list comes from."""
     return f"#print axioms {theorem_name}"
+
+
+def proof_body_violation(body: str) -> str | None:
+    """Why `body` is more than a term or tactic block for its declaration, or None.
+
+    Hardy owns the shape of the file the kernel checks; the body is the one
+    part the model writes, and it is pasted after `:=`. A body that issues a
+    command has stepped out of the declaration and is writing Hardy's file for
+    it -- including, with `#exit` or a forged `#print`, the axiom report the
+    verdict is read from. Refused before Lean runs, on every path that
+    accepts a body: this verifier, `submit_proof` in a batch run, the sketch
+    assembly, and `hardy accept --recorded`.
+
+    `strip_comments` rather than `scannable`: comments and strings are blanked,
+    but guillemet names stay, so `«sorryAx»` -- which `scannable` blanks as a
+    name -- is seen here. Syntax quotations are data and are blanked too, but
+    only where their extent is certain (`_blank_bounded_quotations`).
+    """
+    visible = _blank_bounded_quotations(strip_comments(body))
+    found = COMMAND_IN_BODY.search(visible)
+    if found is not None:
+        return (
+            f"the proof body issues a Lean command ({found.group(1)}); only a term or "
+            "tactic block is accepted"
+        )
+    if ESCAPED_HOLE.search(visible):
+        return "the proof body names sorryAx"
+    return None
+
+
+def _blank_bounded_quotations(text: str) -> str:
+    """`text` with each syntax quotation whose end is certain blanked, offsets kept.
+
+    `` `(command| axiom bad : False) `` builds syntax a proof never runs, so the
+    command inside it is not one the body issues. The end of a quotation is
+    found by counting parentheses, and that count is exact only when nothing
+    in between can hold a parenthesis Lean does not count: comments and
+    strings are already blanked, but a char literal `'('` and a guillemet name
+    `«(»` are not. A quotation holding either is left visible, because
+    trusting the count there would blank whatever command follows it.
+    """
+    out = list(text)
+    index = 0
+    while index < len(text) - 1:
+        if text.startswith("`(", index):
+            depth = 0
+            for position in range(index + 1, len(text)):
+                if text[position] == "(":
+                    depth += 1
+                elif text[position] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            else:
+                # Unbalanced: nothing bounds it, so nothing after it is hidden.
+                break
+            if not any(mark in text[index : position + 1] for mark in "'«»"):
+                for blank in range(index, position + 1):
+                    if out[blank] != "\n":
+                        out[blank] = " "
+                index = position
+        index += 1
+    return "".join(out)
+
+
+def audit_line_messages(source: str, diagnostics: Sequence[LeanDiagnostic]) -> str:
+    """What Lean said at `source`'s last line, which is where Hardy asks for axioms.
+
+    Every source Hardy audits ends with its own `#print axioms` line and a
+    newline, so that line's number is the number of newlines. Information
+    only: an error there is not a report, and a report anywhere else is not
+    Hardy's.
+    """
+    line = source.count("\n")
+    return "\n".join(
+        item.message
+        for item in diagnostics
+        if item.line == line and item.severity == "information"
+    )
 
 
 def verification_source(

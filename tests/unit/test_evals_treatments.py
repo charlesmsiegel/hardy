@@ -154,7 +154,8 @@ def _scripted_staged_run(row_dir, *, strategy, history_mode):
         # Keep a long failure to exercise real compact-history shortening.
         data = "'two_eq_two' does not depend on any axioms" if accepted else "type mismatch " + "expected equality; " * 60
         return ProcessResult(argv=spec.argv, cwd=spec.cwd, returncode=0 if accepted else 1,
-                             stdout=json.dumps({"severity": "information" if accepted else "error", "data": data}),
+                             stdout=json.dumps({"severity": "information" if accepted else "error", "data": data,
+                                                "pos": {"line": source.count("\n"), "column": 0}}),
                              stderr="", timed_out=False, output_overflow=False, duration_ms=1)
 
     original_document = controller._writeup_builder

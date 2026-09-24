@@ -142,6 +142,20 @@ def test_hidden_conclusion_hole_is_never_submitted_to_verifier(tmp_path):
     assert all(t.claim != task.claim for t, _, _ in verified)
 
 
+def test_an_assembled_body_that_issues_commands_is_never_submitted_to_verifier(tmp_path):
+    """Every part the model wrote is pasted into the parent's body, and a part
+    that ends the declaration would be writing the parent's audit line."""
+    plan = _plan().model_copy(update={"conclusion": "exact right\n#exit"})
+    task, strategy, store, ledger, verified, proposed = _setup(tmp_path, plan=plan)
+
+    outcome = run_strategy(strategy, task)
+
+    assert outcome.status == "partial"
+    assert outcome.evidence is None
+    assert "issues a Lean command (#exit)" in outcome.detail
+    assert all(t.claim != task.claim for t, _, _ in verified)
+
+
 def test_active_ceiling_is_checked_after_sketch_model_returns(tmp_path):
     ticks = iter((0, 1800))
     task, strategy, store, ledger, verified, proposed = _setup(
@@ -228,7 +242,8 @@ def test_real_final_verifier_controls_parent_evidence_and_exact_assumption_scope
         axiom = parent_axiom if name == task.claim.proposal.theorem_name else "background"
         return ProcessResult(argv=spec.argv, cwd=spec.cwd, returncode=0, stderr="",
                              stdout=json.dumps({"severity": "information", "data":
-                                                f"{name} depends on axioms: [{axiom}]"}),
+                                                f"{name} depends on axioms: [{axiom}]",
+                                                "pos": {"line": source.count("\n"), "column": 0}}),
                              timed_out=False, output_overflow=False, duration_ms=1)
 
     verifier = FinalVerifier(lake=tmp_path / "lake.exe", lean_project=tmp_path,

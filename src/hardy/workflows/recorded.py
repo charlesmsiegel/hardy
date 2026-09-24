@@ -40,6 +40,7 @@ from hardy.formal.verifier import (
     FORBIDDEN_TOKEN,
     VerificationResult,
     axiom_report_line,
+    proof_body_violation,
 )
 from hardy.workflows.contracts import (
     FaithfulnessStatus,
@@ -1210,6 +1211,9 @@ def _verified_batch_issues(
         return issues
     if FORBIDDEN_TOKEN.search(scannable(proof)):
         issues.append("the verified proof carries a forbidden token")
+    violation = proof_body_violation(proof)
+    if violation is not None:
+        issues.append(f"the verified proof is not a proof body: {violation}")
     if not proof_path.exists():
         issues.append("a verified run has no proof.lean")
         return issues
