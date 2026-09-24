@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="web/public/hardy-icon.svg" width="128" alt="Hardy logo">
-</p>
-
-# Hardy
+# <img src="web/public/hardy-icon.svg" width="32" align="top" alt=""> Hardy
 
 [![Tests](https://github.com/charlesmsiegel/hardy/actions/workflows/tests.yml/badge.svg)](https://github.com/charlesmsiegel/hardy/actions/workflows/tests.yml)
 [![Installers](https://github.com/charlesmsiegel/hardy/actions/workflows/installers.yml/badge.svg)](https://github.com/charlesmsiegel/hardy/actions/workflows/installers.yml)
