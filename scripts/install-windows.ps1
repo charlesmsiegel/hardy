@@ -481,7 +481,7 @@ function Add-Shim {
     Update-SessionPath
 }
 
-function New-Launcher($Target, $Directory, $WorkingDirectory) {
+function New-Launcher($Target, $Directory, $WorkingDirectory, $IconPath) {
     # A .lnk through the Shell's own COM object: the one way to make a
     # shortcut Windows treats as a shortcut (pinnable, with a working
     # directory) without a compiled helper. Nothing is made when the folder
@@ -495,6 +495,9 @@ function New-Launcher($Target, $Directory, $WorkingDirectory) {
     $link.Arguments = 'web --open'
     $link.WorkingDirectory = $WorkingDirectory
     $link.Description = 'Hardy: serve the browser client and open it'
+    if ($IconPath -and (Test-Path -LiteralPath $IconPath)) {
+        $link.IconLocation = "$IconPath,0"
+    }
     $link.Save()
     return $path
 }
