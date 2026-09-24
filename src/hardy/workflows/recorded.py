@@ -33,7 +33,7 @@ from hardy.formal.contracts import (
     FrozenClaim,
     VerificationEvidence,
 )
-from hardy.formal.lean import DECLARATION_HEAD, LeanTools, scannable
+from hardy.formal.lean import DECLARATION_HEAD, LeanTools, render_theorem, scannable
 from hardy.formal.syntax import declared_name
 from hardy.formal.verifier import (
     ALLOWED_AXIOMS,
@@ -41,6 +41,7 @@ from hardy.formal.verifier import (
     VerificationResult,
     axiom_report_line,
     proof_body_violation,
+    verification_source,
 )
 from hardy.workflows.contracts import (
     FaithfulnessStatus,
@@ -134,15 +135,35 @@ def _declaration_issues(manifest: RunManifest, main: Path, run_dir: Path) -> lis
     # Byte for byte, in the rendering the verifier uses. Comparing loosely
     # would accept a source that states a weaker or stronger axiom under a
     # declared name, which is the whole thing the declaration is supposed to
-    # pin down.
+    # pin down. And in code: a line inside a comment or a string is not one
+    # the kernel read, so it cannot be the declaration the proof stood on.
     for item in declared:
         rendered = f"axiom {item.name} : {item.statement.strip()}\n"
-        if rendered not in source:
+        if not _states_in_code(source, rendered):
             issues.append(
                 f"lean/Main.lean does not state the declared assumption {item.name!r} as it "
                 "was declared"
             )
     return issues
+
+
+def _states_in_code(source: str, line: str) -> bool:
+    """Whether `source` holds `line` as a whole line of code.
+
+    Compared twice at each place it occurs: as written, and with comments and
+    strings blanked. The two agree only where the line is code -- inside a
+    comment or a string the blanked copy is spaces -- and blanking `line`
+    itself the same way keeps a declaration that quotes a string comparable.
+    """
+    code = scannable(source)
+    expected = scannable(line)
+    start = source.find(line)
+    while start != -1:
+        at_line_start = start == 0 or source[start - 1] == "\n"
+        if at_line_start and code[start : start + len(line)] == expected:
+            return True
+        start = source.find(line, start + 1)
+    return False
 
 
 def permitted_axioms(assumed: Sequence[str] = ()) -> frozenset[str]:
@@ -242,22 +263,48 @@ def _verified_run_issues(
     if hashlib.sha256(main.read_bytes()).hexdigest() != evidence.source_sha256:
         issues.append("Lean source hash differs from verification")
     if claim is not None:
-        issues.extend(_lean_source_issues(main.read_text(encoding="utf-8"), claim))
+        issues.extend(
+            _lean_source_issues(main.read_text(encoding="utf-8"), claim, _declared(run_dir) or ())
+        )
     return issues
 
 
-def _lean_source_issues(source: str, claim: FrozenClaim) -> list[str]:
-    """Check the elaborated source states the frozen claim and audits its axioms."""
+def _lean_source_issues(
+    source: str, claim: FrozenClaim, declared: Sequence[DeclaredAssumption] = ()
+) -> list[str]:
+    """Check the elaborated source is the file the verifier would have written.
+
+    Rebuilt byte for byte rather than searched: the verifier renders the
+    imports, the declarations and the frozen signature, then the proof body,
+    then its own `#print axioms` line, and nothing else. A search for the
+    signature was satisfied by a copy of it in a comment above a different
+    theorem. What lies between the rebuilt head and the audit line is the
+    proof body, and it is held to the rule the verifier held it to.
+
+    The head is the imports, the declarations and the signature together, and
+    a head that differs anywhere is reported under the signature message
+    readers already know; `_declaration_issues` names the declaration when
+    that is the part that differs.
+    """
     issues = []
-    binders = " " + claim.proposal.binders.strip() if claim.proposal.binders.strip() else ""
-    signature = (
-        f"theorem {claim.proposal.theorem_name}{binders} : "
-        f"{claim.proposal.proposition.strip()} :="
-    )
-    if signature not in source:
+    head = render_theorem(claim, "", declared).removesuffix("\n")
+    tail = f"\n{axiom_report_line(claim.proposal.theorem_name)}\n"
+    if not source.startswith(head):
         issues.append("Lean source signature differs from Frozen Claim")
-    if not source.rstrip().endswith(axiom_report_line(claim.proposal.theorem_name)):
+    if not source.endswith(tail):
         issues.append("Lean source does not end with the axiom report the evidence records")
+    if issues:
+        return issues
+    body = source[len(head) : max(len(head), len(source) - len(tail))]
+    if verification_source(claim, body, declared) != source:
+        issues.append(
+            "Lean source is not the Frozen Claim, a proof body and the axiom report, as the "
+            "verifier renders them"
+        )
+        return issues
+    violation = proof_body_violation(body)
+    if violation is not None:
+        issues.append(f"Lean source proof body is refused: {violation}")
     return issues
 
 

@@ -1383,6 +1383,122 @@ def test_a_summary_with_nothing_held_has_no_development_heading() -> None:
     assert 'Goal' in rendered
 
 
+def _frozen_claim():
+    from datetime import UTC, datetime
+
+    domain = importlib.import_module('hardy.workflows.contracts')
+    proposal = domain.FormalizationProposal(
+        restatement='Two equals two.',
+        domains=(),
+        quantifiers=(),
+        assumptions=(),
+        interpretation_choices=(),
+        theorem_name='two_eq_two',
+        binders='',
+        proposition='2 = 2',
+    )
+    environment = domain.EnvironmentIdentity(
+        lean_version='4.32.0',
+        lean_commit='8c9756b',
+        mathlib_revision='81a5d257',
+        lake_manifest_sha256='b' * 64,
+        imports=('Mathlib',),
+    )
+    return domain.freeze_claim('Two equals two.', proposal, environment, datetime(2026, 9, 1, tzinfo=UTC))
+
+
+def _assumed_run(tmp_path: Path, source: str):
+    """A run declaring `foo : True`, whose kept Lean source is `source`."""
+    from types import SimpleNamespace
+
+    (tmp_path / 'assumptions.json').write_text(
+        json.dumps([{'name': 'foo', 'statement': 'True', 'source': 's', 'justification': 'j'}]),
+        encoding='utf-8',
+    )
+    main = tmp_path / 'Main.lean'
+    main.write_text(source, encoding='utf-8')
+    manifest = SimpleNamespace(
+        grades=SimpleNamespace(assumed=('foo',), formal=SimpleNamespace(value='verified_modulo'))
+    )
+    return manifest, main
+
+
+def test_a_declaration_stated_only_in_a_line_comment_is_not_stated(tmp_path) -> None:
+    """The kernel does not read comments, so the declaration in one is not
+    the one the proof stood on: here that one says `foo : False`."""
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    manifest, main = _assumed_run(
+        tmp_path, '-- axiom foo : True\naxiom foo : False\ntheorem t : 1 = 2 := (foo).elim\n'
+    )
+
+    issues = recorded._declaration_issues(manifest, main, tmp_path)
+
+    assert any("does not state the declared assumption 'foo'" in issue for issue in issues)
+
+
+def test_a_declaration_stated_only_in_a_block_comment_is_not_stated(tmp_path) -> None:
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    manifest, main = _assumed_run(
+        tmp_path, '/-\naxiom foo : True\n-/\naxiom foo : False\ntheorem t : 1 = 2 := (foo).elim\n'
+    )
+
+    issues = recorded._declaration_issues(manifest, main, tmp_path)
+
+    assert any("does not state the declared assumption 'foo'" in issue for issue in issues)
+
+
+def test_a_declaration_in_code_is_stated(tmp_path) -> None:
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    manifest, main = _assumed_run(
+        tmp_path, 'import Mathlib\n\naxiom foo : True\n\ntheorem t : True :=\nfoo\n'
+    )
+
+    assert recorded._declaration_issues(manifest, main, tmp_path) == []
+
+
+def test_a_signature_present_only_in_a_comment_differs_from_the_frozen_claim() -> None:
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    claim = _frozen_claim()
+    source = (
+        'import Mathlib\n\n/- theorem two_eq_two : 2 = 2 := -/\n'
+        'theorem two_eq_two : 2 = 3 :=\nby decide\n\n#print axioms two_eq_two\n'
+    )
+
+    issues = recorded._lean_source_issues(source, claim)
+
+    assert 'Lean source signature differs from Frozen Claim' in issues
+
+
+def test_the_verifiers_own_source_has_no_lean_source_issues() -> None:
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    verifier = importlib.import_module('hardy.formal.verifier')
+    claim = _frozen_claim()
+
+    assert recorded._lean_source_issues(verifier.verification_source(claim, 'by rfl'), claim) == []
+
+
+def test_a_source_the_verifier_would_not_have_written_is_refused() -> None:
+    """Anything between the signature and the audit line is the proof body,
+    and the verifier would have refused one that issues a command."""
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    verifier = importlib.import_module('hardy.formal.verifier')
+    claim = _frozen_claim()
+    forged = verifier.verification_source(
+        claim, "by rfl\n#print \"'two_eq_two' does not depend on any axioms\"\n#exit"
+    )
+
+    issues = recorded._lean_source_issues(forged, claim)
+
+    assert any('issues a Lean command' in issue for issue in issues)
+
+
+def test_the_checked_in_prove_verified_run_still_validates() -> None:
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
+    root = Path(__file__).resolve().parents[2] / 'acceptance' / 'recorded' / 'prove-verified'
+
+    assert acceptance.validate_recorded_run(root) == ()
+
+
 def test_a_batch_submission_that_issues_commands_never_reaches_lean(tmp_path) -> None:
     output = _batch(tmp_path, [('submit_proof', {'proof': 'by exact True.intro\n#exit'})])
 
