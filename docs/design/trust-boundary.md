@@ -227,6 +227,19 @@ replacement handler runs and only one report appears. Moving the audit to a
 second invocation does not close it either: the audited module still has to be
 imported, and its elaborator extensions come with it.
 
+Where Hardy writes the file, the proof body cannot take that route. On the
+staged, batch and sketch paths the model supplies only the text after `:=`,
+and a body that issues a command of its own (`#exit`, `#print`, `macro_rules`,
+`elab`, `syntax`, a declaration, an attribute) is refused before Lean runs,
+as is one naming `«sorryAx»`. `hardy accept --recorded` rebuilds the verified
+source byte for byte from the frozen claim and its declarations and holds the
+body between them to the same rule. The report is also bound to its line: only
+what Lean says at Hardy's own `#print axioms`, the file's last line, is graded,
+so a report printed anywhere else is ignored and a body that stopped Lean short
+of that line leaves no report at all, which fails. What remains is the route
+through modules: an interactive workspace audits built modules by importing
+them, and a macro or elaborator a module declares still comes with the import.
+
 So the audit establishes that an artifact is not *accidentally* unsound: that
 a proof reached by ordinary means does not rest on `sorryAx` or on an axiom
 nobody approved. It is not a defence against a source written to subvert

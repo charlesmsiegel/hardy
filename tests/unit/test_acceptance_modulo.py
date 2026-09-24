@@ -94,7 +94,13 @@ def _forge_modulo(run_dir, manifest, *, axiom="falsum", statement="False", decla
     # Bytes, the way `RunStore.write_text` writes them: the audit hashes the
     # file on disk, and `Path.write_text` would translate `\n` to the platform
     # newline while the digest below is taken over the untranslated text.
-    source = f"axiom {axiom} : {statement}\n\n" + main.read_bytes().decode("utf-8")
+    #
+    # The axiom goes where the verifier renders a declaration, after the
+    # imports: Lean admits `import` only at the top, and the audit rebuilds
+    # the file byte for byte, so a declaration anywhere else is a source no
+    # verifier wrote.
+    imports, _, rest = main.read_bytes().decode("utf-8").partition("\n\n")
+    source = f"{imports}\n\naxiom {axiom} : {statement}\n\n{rest}"
     main.write_bytes(source.encode("utf-8"))
     source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
     claim = domain.FrozenClaim.model_validate_json(
