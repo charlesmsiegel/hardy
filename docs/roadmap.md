@@ -478,6 +478,14 @@ saved theorems is still mechanically unremarkable to Hardy.
 
 # Service-hardening lane S — independent until service readiness
 
+## X10 — Root-level verbs — P1
+
+**Status:** `hardy check` implemented (2026-09-24): every problem of a root checked against each other, the files and the status rules, upstream problems first. Not built: a root-level Lean record verb (build, audit and record a root's shared library and each problem's `lean/`, linking declarations to claims), cross-problem references in place of mirrored items, and the recording of the shared `.hardy/lean/` library's declarations.
+
+**Deps:** B0, B2
+
+A root that holds several problems on one subject needs the operations between them to be Hardy's, not a script's: the check, the Lean record path, and references from one problem's ledger to another's item.
+
 ## S0 — Process-isolation design/spike — HARDEN
 
 **Status:** Completed design/spike: shared acceptance policy, disposable Windows baseline and native capability investigation. The baseline establishes current authority, not confinement. See the [isolation policy](isolation.md).

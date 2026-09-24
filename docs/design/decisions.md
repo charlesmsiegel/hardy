@@ -350,6 +350,23 @@ committed active problem would have Hardy write the wrong problem's record.
 
 Cost: a caller wanting a different active problem passes it explicitly.
 
+### A root check is a verb, not a script
+
+We chose to make the check of a root's problems against each other a `hardy`
+command that reads through the ledger store and the problem's own evidence
+readers, over leaving each root to carry a script of its own, because the
+rules it enforces (the status ladder, the direction of dependencies, mirrors
+of another problem's items, artifact digests, authenticated evidence) are
+Hardy's rules, and a script beside a root drifts from them and from the store.
+
+Cost: the status vocabulary the check enforces is stated on the command's
+reference page and not in the ledger contract, so `ResearchState.status`
+stays free text and an item can still be written with a status the check
+will refuse.
+
+Revisit when: the contract fixes the vocabulary, or problems reference each
+other's items directly rather than through mirrored copies.
+
 ### Registration refuses a colliding module name
 
 We chose to refuse to register a problem whose Lean modules collide with

@@ -1112,6 +1112,11 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--open", action="store_true", help="open the page in the default browser")
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
+    root_check = subparsers.add_parser(
+        "check", help="check a root's problem ledgers against each other, the files, and the status rules"
+    )
+    root_check.add_argument("--root", type=Path, help="the root to check (default: the configured root, else the current directory)")
+    root_check.add_argument("--mermaid", action="store_true", help="also print each problem's dependency graph as a Mermaid flowchart")
     # The evidence the interactive-session page (docs/design/interactive-session.md)
     # and issue #54 defer warm pools until. Separate from `doctor` because it
     # answers a design question rather than reporting whether the machine works,
@@ -1256,6 +1261,10 @@ def main() -> int:
     config = _config(args, parser)
     if args.command == "doctor":
         return doctor.report(doctor.run_checks(config, deep=args.deep))
+    if args.command == "check":
+        from hardy.app.check import main as check_main
+
+        return check_main(args, config)
     if args.command == "latency":
         return run_latency(args, config)
     if args.command == "prove":
