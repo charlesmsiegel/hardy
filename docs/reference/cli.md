@@ -84,6 +84,15 @@ Checks the SDK, CLI and login for the configured backend, Lean, LaTeX, Tectonic,
 | --- | --- | --- | --- |
 | `--deep` | off |  | Also compile a Mathlib probe file, which can take minutes. |
 
+### hardy check
+
+Checks every problem of a root against each other, the files on disk and the research-status rules, reading each ledger through Hardy's own store so a damaged chain fails here before it fails in a session; it never writes a ledger. Problems are checked upstream first, in the order their mirrors dictate. Per problem it enforces that every assessed item carries a status from the vocabulary (`open`, `llm proved`, `human verified`, `lean verified`, and the input statuses `published input`, `external research input`, `imported`); that nothing assessed above `open` depends on an `open` item; that a `uses` relation targets an external result; that the `depends_on`/`uses` graph is acyclic; that a mirror of another problem's item names an item still there with the same digest and status; that a `lean_declaration` semantic names a declaration under the problem's `lean/` or the root's `.hardy/lean/`; that every artifact reference still matches its bytes; and that a `lean verified` item has a resolved `prove` obligation whose evidence the problem's own `evidence/` journal authenticates. `human verified` is refused, since no evidence mechanism backs it yet. No status certifies truth; the check enforces the rules between statuses. Prints the problem order, one board line per problem, every failure, and a verdict. Exits `1` when any check failed.
+
+| Option | Default | Env var | Meaning |
+| --- | --- | --- | --- |
+| `--root` | the configured root, else the current directory | `HARDY_ROOT` | The root whose problems to check. |
+| `--mermaid` | off |  | Also print each problem's `depends_on`/`uses` graph as a Mermaid flowchart, prerequisite to dependent, coloured by status. |
+
 ### hardy setup
 
 Discovers the pinned toolchain, records the paths it found in the config file, and prints what is still missing. What it installs depends on the platform: the shared Mathlib project wherever `lake` is present. With no `lean_project` configured, it first creates a Lake project pinned to Hardy's Lean and Mathlib in the per-user data directory (`%LOCALAPPDATA%\hardy\lean` on Windows, `$HARDY_HOME/lean`, default `${XDG_DATA_HOME:-~/.local/share}/hardy/lean`, elsewhere), after asking; it reuses a Lake project already there, refuses a directory there that is not one, and records the result as `lean_project`. It installs elan where `winget` is (so, Windows), and Tectonic on Windows only (that download is checked against its recorded digest before it is installed). On Linux and macOS, a missing elan or Tectonic is reported with instructions rather than installed; a POSIX user who needs them wants `scripts/install.sh`. Takes no options of its own; `--config` selects the file it writes, and the other global flags do not reach it. Exits `1` if the environment is still not healthy afterwards.

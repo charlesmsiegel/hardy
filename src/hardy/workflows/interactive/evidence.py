@@ -194,6 +194,19 @@ class ProjectOwners:
         self._gates = gates
         self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision)
 
+    @classmethod
+    def reading(cls, problem: Path) -> ProjectOwners:
+        """The owners with their readers only: nothing audits and nothing is minted.
+
+        For a check that authenticates what the journal already holds
+        (`hardy check`), the audit and the save gates are never reached, and
+        installing inert ones says so rather than handing the check a
+        capability it must not use.
+        """
+        gates = SaveGates(final_gates=lambda _sources: None, missing_names=lambda _a, _b: [],
+                          head_sources=dict)
+        return cls(problem, audit=lambda *_args, **_kwargs: None, gates=gates)
+
     def admission(self) -> AdmissionOwners:
         """What `AuthoritativeAdmission` speaks to."""
         return AdmissionOwners(verify=self.verify, policy=self.policy, decide=self.decide)

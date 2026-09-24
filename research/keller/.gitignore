@@ -1,6 +1,0 @@
-# A Hardy root committed on its own. If this directory is ever placed inside a
-# repository whose .gitignore excludes every `.hardy/`, this line re-includes
-# this root's tooling directory, which holds committed content (the config and
-# the shared Lean library); Hardy's own .gitignore inside it keeps the build
-# tree and machine-local state out.
-!/.hardy/
