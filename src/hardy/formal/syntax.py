@@ -537,7 +537,30 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     return {kind: tuple(names) for kind, names in found.items()}
 
 
-def _scan(text: str) -> list[tuple[re.Match[str], tuple[str, ...]]]:
+# Every kind of top-level declaration that has a name Lean will report, for a
+# reader that needs to know what a source *declares* rather than what the audit
+# must ask about: a ledger item may cite a definition or an axiom by name.
+ANY_DECLARATION = re.compile(
+    rf"(?m)^[ \t]*{WRAPPER}(?:@\[[^\]]*\]\s*)*"
+    rf"((?:(?:private|protected|nonrec|noncomputable|partial|unsafe)\s+)*)"
+    rf"(theorem|lemma|def|abbrev|axiom|structure|inductive|class|instance|opaque|constant)"
+    rf"\s+({QUALIFIED_NAME})"
+)
+
+
+def named_declarations(source: str) -> tuple[str, ...]:
+    """The qualified name of every top-level declaration of any kind, in order.
+
+    Broader than `declarations`, which reports what the audit asks about; this
+    answers whether a name a ledger item cites is declared at all. Comments are
+    stripped first, and a name is qualified by the namespace open at its line,
+    exactly as `declarations` qualifies a theorem.
+    """
+    return tuple(declared_name(match.group(3), prefix)
+                 for match, prefix in _scan(strip_comments(source), ANY_DECLARATION))
+
+
+def _scan(text: str, pattern: re.Pattern[str] = DECLARATION) -> list[tuple[re.Match[str], tuple[str, ...]]]:
     """Every declaration in an already-stripped source, with its namespace.
 
     Declarations are matched over the whole text so a name on the line after
@@ -558,7 +581,7 @@ def _scan(text: str) -> list[tuple[re.Match[str], tuple[str, ...]]]:
         starts.append(offset)
         offset += len(line) + 1
     scanned = []
-    for match in DECLARATION.finditer(text):
+    for match in pattern.finditer(text):
         index = bisect_right(starts, match.start()) - 1
         scanned.append((match, prefixes[index] if 0 <= index < len(prefixes) else ()))
     return scanned
