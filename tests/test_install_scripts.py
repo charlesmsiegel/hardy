@@ -364,13 +364,16 @@ def test_the_windows_launcher_points_hardy_at_the_browser(tmp_path: Path):
     target = tmp_path / "venv" / "Scripts" / "hardy.exe"
     made = tmp_path / "desktop"
     made.mkdir()
+    icon = tmp_path / "hardy.ico"
+    icon.write_bytes(b"icon")
     body = (
-        f"$made = New-Launcher '{target}' '{made}' '{tmp_path}'; "
-        f"$none = New-Launcher '{target}' '{tmp_path / 'missing'}' '{tmp_path}'; "
+        f"$made = New-Launcher '{target}' '{made}' '{tmp_path}' '{icon}'; "
+        f"$none = New-Launcher '{target}' '{tmp_path / 'missing'}' '{tmp_path}' '{icon}'; "
         "$shell = New-Object -ComObject WScript.Shell; "
         "$link = $shell.CreateShortcut($made); "
         "Write-Output $made; Write-Output $link.TargetPath; Write-Output $link.Arguments; "
-        "Write-Output $link.WorkingDirectory; Write-Output ('none=' + [string]($null -eq $none))"
+        "Write-Output $link.WorkingDirectory; Write-Output $link.IconLocation; "
+        "Write-Output ('none=' + [string]($null -eq $none))"
     )
     result = run_installer_functions(body)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -379,7 +382,9 @@ def test_the_windows_launcher_points_hardy_at_the_browser(tmp_path: Path):
     assert lines[1].lower() == str(target).lower()
     assert lines[2] == "web --open"
     assert lines[3].lower() == str(tmp_path).lower()
-    assert lines[4] == "none=True"
+    assert lines[4].lower().startswith(str(icon).lower())
+    assert lines[4].endswith(",0")
+    assert lines[5] == "none=True"
     assert not (tmp_path / "missing").exists()
 
 
