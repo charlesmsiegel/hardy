@@ -12,8 +12,8 @@ from hardy.workflows.root_check import check_root
 
 def item(id_, status=None, **extra):
     research = ResearchState(status=status) if status else None
-    return ProjectItem(id=id_, kind=extra.pop("kind", "theorem"), name=id_, origin="human_authored",
-                       research=research, **extra)
+    return ProjectItem(id=id_, kind=extra.pop("kind", "theorem"), name=extra.pop("name", id_),
+                       origin="human_authored", research=research, **extra)
 
 
 def relation(kind, source, target):
@@ -262,3 +262,73 @@ def test_every_prove_obligation_of_a_verified_item_is_considered(tmp_path) -> No
     # The resolved obligation is the one judged, although an open one was recorded first;
     # with no journal behind its evidence it fails on authentication, not on being open.
     assert failures == ("up: V: lean verified but its evidence does not authenticate",)
+
+
+# -- the second review's cases --------------------------------------------------------
+
+
+def test_artifacts_named_by_a_uri_scheme_are_left_to_their_store(tmp_path) -> None:
+    stored = item("A", "open", artifacts=(ArtifactRef(uri="arxiv:2401.00001v2", digest="0" * 64),
+                                          ArtifactRef(uri="manuscript:main.tex", digest="0" * 64),
+                                          ArtifactRef(uri="file:///elsewhere/x.pdf", digest="0" * 64)))
+    local = item("B", "open", artifacts=(ArtifactRef(uri="gone.md", digest="0" * 64),))
+    problem(tmp_path, "up", stored, local)
+    assert check_root(tmp_path).failures == ("up: B: artifact gone.md is missing",)
+
+
+def test_a_recorded_problem_without_a_ledger_is_listed_and_not_failed(tmp_path) -> None:
+    (tmp_path / "fresh").mkdir()
+    (tmp_path / "fresh" / "session.json").write_text("{}", encoding="utf-8")
+    problem(tmp_path, "up", item("A", "open"))
+    report = check_root(tmp_path)
+    assert report.ok
+    assert set(report.order) == {"fresh", "up"}
+    assert "fresh: no ledger yet" in report.lines()
+
+
+def test_mermaid_labels_cannot_close_the_fence_or_inject_markup(tmp_path) -> None:
+    hostile = item("H", "open", name='a "quoted" name\n```\n<script>x</script>')
+    other = item("O", "open")
+    problem(tmp_path, "up", hostile, other, relation("depends_on", hostile, other))
+    graph = check_root(tmp_path).problems[0].mermaid
+    assert graph.count("```") == 2 and graph.startswith("```mermaid") and graph.endswith("```")
+    assert "<script>" not in graph and '"quoted"' not in graph
+    assert "#quot;quoted#quot;" in graph and "#lt;script#gt;" in graph
+
+
+def test_an_unreadable_lean_source_is_reported_and_declaration_checks_withheld(tmp_path) -> None:
+    (tmp_path / "up" / "lean").mkdir(parents=True)
+    (tmp_path / "up" / "lean" / "Bad.lean").write_bytes(b"theorem \xff\xfe : True := trivial\n")
+    cited = item("C", "open", semantics=(("lean_declaration", "Nowhere.x"),))
+    LedgerStore(tmp_path / "up").append((cited,), expected_revision=0)
+    failures = check_root(tmp_path).failures
+    assert len(failures) == 1 and failures[0].startswith("up: lean source up/lean/Bad.lean does not read:")
+
+
+def test_a_mirror_must_name_its_upstream_item_and_the_rest(tmp_path) -> None:
+    a = item("A", "llm proved")
+    problem(tmp_path, "up", a)
+    partial = item("A", "imported", semantics=(("upstream_problem", "up"), ("upstream_digest", a.digest)))
+    problem(tmp_path, "down", partial)
+    failures = check_root(tmp_path).failures
+    assert failures == ("down: A: mirror lacks the semantics upstream_item, upstream_status",)
+
+
+def test_a_long_dependency_chain_is_walked_without_recursion(tmp_path) -> None:
+    import sys
+
+    length = sys.getrecursionlimit() * 2
+    chain = [item(f"N{i}", "open") for i in range(length)]
+    rels = [relation("depends_on", chain[i], chain[i + 1]) for i in range(length - 1)]
+    path = tmp_path / "up"
+    path.mkdir()
+    LedgerStore(path).append(chain, expected_revision=0)
+    LedgerStore(path).append(rels, expected_revision=1)
+    assert check_root(tmp_path).ok
+
+
+def test_a_local_instance_is_a_named_declaration() -> None:
+    from hardy.formal.syntax import named_declarations
+
+    source = "local instance projectInhabited : Inhabited Nat := ⟨0⟩\nscoped notation \"x\" => 1\n"
+    assert named_declarations(source) == ("projectInhabited",)
