@@ -542,7 +542,7 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
 # must ask about: a ledger item may cite a definition or an axiom by name.
 ANY_DECLARATION = re.compile(
     rf"(?m)^[ \t]*{WRAPPER}(?:@\[[^\]]*\]\s*)*"
-    rf"((?:(?:private|protected|nonrec|noncomputable|partial|unsafe)\s+)*)"
+    rf"((?:(?:private|protected|nonrec|noncomputable|partial|unsafe|local|scoped)\s+)*)"
     rf"(theorem|lemma|def|abbrev|axiom|structure|inductive|class|instance|opaque|constant)"
     rf"\s+({QUALIFIED_NAME})"
 )

@@ -1,9 +1,11 @@
 """Check a root's problems against each other, the files on disk, and the status rules.
 
-A root holds one or more problems (`docs/reference/on-disk-layout.md`). Each
+A root holds one or more problems (`docs/reference/on-disk-layout.md`): a
+problem is a subdirectory with a record (`session.json`) or a ledger. Each
 problem's ledger is read through Hardy's own store, so a damaged chain is
-reported here as a failure of that problem rather than failing in a session,
-and nothing here writes a ledger.
+reported here as a failure of that problem rather than failing in a session; a
+recorded problem with no ledger yet is listed and not failed; and nothing here
+writes a ledger.
 
 What it enforces, per problem:
 
@@ -19,8 +21,10 @@ What it enforces, per problem:
 - every `lean_declaration` semantic names a declaration under the problem's
   own `lean/` or the root's shared `.hardy/lean/`, by its qualified name or a
   suffix of it (`Foo.bar` is named by `Foo.bar` or `bar`, never by `Baz.bar`);
-- every artifact an item or a relation references still matches the bytes on
-  disk, whether or not the item is assessed;
+- every artifact an item or a relation references by a path relative to the
+  problem still matches the bytes on disk, whether or not the item is
+  assessed; an artifact named by a URI with a scheme (`arxiv:`, `manuscript:`,
+  `file:`) belongs to the store that issued it and is not read here;
 - a `lean verified` item has a resolved `prove` obligation on its current
   revision whose acceptance the problem's own evidence readers authenticate
   from its `evidence/` journal; one such obligation suffices, and an open
@@ -42,6 +46,7 @@ any claim.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +54,7 @@ from pathlib import Path
 from hardy.formal.syntax import named_declarations
 from hardy.foundation.paths import HARDY_DIR
 from hardy.workflows.interactive import evidence as evidence_owner
+from hardy.workflows.layout import RECORD
 from hardy.workflows.ledger.contracts import (
     Obligation,
     ObligationKind,
@@ -66,6 +72,8 @@ INPUT_STATUSES = ("published input", "external research input", "imported")
 RANK = {status: rank for rank, status in enumerate(STATUSES)}
 LEDGER_DIR = "ledger"
 LEAN_DIR = "lean"
+#: A URI with a scheme names something a store issued, not a file beside the ledger.
+SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _CLASSES = {"open": "open", "llm proved": "llm", "human verified": "human", "lean verified": "lean",
             "imported": "imported", "published input": "input", "external research input": "input"}
 
@@ -79,9 +87,12 @@ class ProblemReport:
     board: tuple[tuple[str, int], ...]
     errors: tuple[str, ...]
     mermaid: str
+    ledger: bool = True
 
     @property
     def board_line(self) -> str:
+        if not self.ledger:
+            return f"{self.slug}: no ledger yet"
         counts = ", ".join(f"{k}: {v}" for k, v in self.board)
         return f"{self.slug}: ledger revision {self.revision}; {counts}"
 
@@ -117,20 +128,30 @@ class RootReport:
 
 
 def problems(root: Path) -> list[Path]:
-    """The problems of a root: its subdirectories that hold a ledger."""
+    """The problems of a root: its subdirectories that hold a record or a ledger."""
     return sorted(p for p in Path(root).iterdir()
-                  if p.is_dir() and p.name != HARDY_DIR and (p / LEDGER_DIR).is_dir())
+                  if p.is_dir() and not p.name.startswith(".")
+                  and ((p / RECORD).is_file() or (p / LEDGER_DIR).is_dir()))
 
 
-def lean_declarations(problem: Path) -> set[str]:
-    """Qualified names of every declaration under the problem's `lean/` and the root's `.hardy/lean/`."""
+def lean_declarations(problem: Path) -> tuple[set[str], list[str]]:
+    """Qualified names of every declaration under the problem's `lean/` and the root's `.hardy/lean/`.
+
+    Returns the names and the sources that could not be read, each a failure
+    of the problem; a source that does not read leaves the names it declares
+    unknown, so the declaration checks are withheld rather than failed.
+    """
     names: set[str] = set()
+    unreadable: list[str] = []
     for tree in (problem / LEAN_DIR, problem.parent / HARDY_DIR / LEAN_DIR):
         if not tree.is_dir():
             continue
         for path in sorted(tree.rglob("*.lean")):
-            names.update(named_declarations(path.read_text(encoding="utf-8")))
-    return names
+            try:
+                names.update(named_declarations(path.read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError) as error:
+                unreadable.append(f"lean source {path.relative_to(problem.parent)} does not read: {error}")
+    return names, unreadable
 
 
 def declares(declared: set[str], name: str) -> bool:
@@ -163,11 +184,24 @@ def effective_status(item: ProjectItem, heads: dict[str, dict[str, ProjectItem]]
     return status_of(current)
 
 
+def _label(text: str) -> str:
+    """A name or id as Mermaid quoted-label text, unable to close the label or the fence.
+
+    Mermaid reads `#quot;`, `#lt;` and `#gt;` as the characters themselves, so
+    the text is shown as written; backticks go, since the graph sits in a
+    Markdown fence, and a newline becomes a space.
+    """
+    text = " ".join(text.split())
+    return (text.replace("`", "").replace('"', "#quot;")
+            .replace("<", "#lt;").replace(">", "#gt;"))
+
+
 def mermaid(slug: str, items: dict[str, ProjectItem], relations: list[Relation]) -> str:
     """The `depends_on`/`uses` graph as a Mermaid flowchart, prerequisite to dependent.
 
     Node identifiers are positional (`n0`, `n1`, ...) rather than derived from
-    the ids, so two ids that differ only in punctuation stay two nodes.
+    the ids, so two ids that differ only in punctuation stay two nodes; labels
+    are escaped so a name cannot inject markup or close the fence.
     """
     lines = ["```mermaid", "flowchart LR",
              f"%% {slug}: prerequisite --> dependent; from `hardy check --mermaid`",
@@ -181,8 +215,8 @@ def mermaid(slug: str, items: dict[str, ProjectItem], relations: list[Relation])
     node = {id_: f"n{index}" for index, id_ in enumerate(sorted(used))}
     for id_ in sorted(used):
         item = items.get(id_)
-        label = (item.name if item is not None else id_).replace('"', "'")
-        lines.append(f'  {node[id_]}["{id_}<br/>{label}"]')
+        label = _label(item.name if item is not None else id_)
+        lines.append(f'  {node[id_]}["{_label(id_)}<br/>{label}"]')
         status = status_of(item) if item is not None else None
         if status in _CLASSES:
             lines.append(f"  class {node[id_]} {_CLASSES[status]};")
@@ -240,12 +274,45 @@ def order_problems(found: list[Path]) -> tuple[list[Path], list[str]]:
 def _artifact_errors(problem: Path, owner: str, artifacts) -> list[str]:
     errors = []
     for ref in artifacts:
+        if SCHEME.match(ref.uri):
+            continue
         path = (problem / ref.uri).resolve()
         if not path.is_file():
             errors.append(f"{owner}: artifact {ref.uri} is missing")
         elif hashlib.sha256(path.read_bytes()).hexdigest() != ref.digest:
             errors.append(f"{owner}: artifact {ref.uri} changed since it was recorded")
     return errors
+
+
+def cycles(nodes: list[str], edges: dict[str, set[str]]) -> list[str]:
+    """Every dependency cycle, one line each, found without recursion.
+
+    A depth-first walk on an explicit stack, so a chain as long as a board
+    can grow is walked without touching the interpreter's recursion limit.
+    Each node is entered once; a back edge to a node still on the path is a
+    cycle, reported as the path from that node round to itself.
+    """
+    found: list[str] = []
+    state: dict[str, int] = {}
+    for start in nodes:
+        if state.get(start) == 2:
+            continue
+        path: list[str] = [start]
+        pending: list[list[str]] = [sorted(edges.get(start, ()))]
+        state[start] = 1
+        while path:
+            if pending[-1]:
+                nxt = pending[-1].pop(0)
+                if state.get(nxt) == 1:
+                    found.append("dependency cycle: " + " -> ".join((*path, nxt)))
+                elif state.get(nxt) != 2:
+                    state[nxt] = 1
+                    path.append(nxt)
+                    pending.append(sorted(edges.get(nxt, ())))
+            else:
+                state[path.pop()] = 2
+                pending.pop()
+    return found
 
 
 def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
@@ -255,6 +322,9 @@ def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
     `heads` carries the current items of every problem checked before it and
     `known` the names of every problem under the root.
     """
+    if not (problem / LEDGER_DIR).is_dir():
+        heads[problem.name] = {}
+        return ProblemReport(slug=problem.name, revision=0, board=(), errors=(), mermaid="", ledger=False)
     snapshot = read_ledger(problem)
     if isinstance(snapshot, str):
         heads[problem.name] = {}
@@ -264,13 +334,14 @@ def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
     all_relations = snapshot.current(Relation)
     relations = [r for r in all_relations if r.kind in {RelationKind.DEPENDS_ON, RelationKind.USES}]
     heads[problem.name] = items
-    declared = lean_declarations(problem)
+    declared, unreadable = lean_declarations(problem)
+    errors.extend(unreadable)
     policy = evidence_owner.ProjectOwners.reading(problem).policy
     obligations = snapshot.current(Obligation)
 
     for id_, item in items.items():
         for key, value in item.semantics:
-            if key == "lean_declaration" and not declares(declared, value):
+            if key == "lean_declaration" and not unreadable and not declares(declared, value):
                 errors.append(f"{id_}: lean_declaration {value} is not declared under lean/ or .hardy/lean/")
         errors.extend(_artifact_errors(problem, id_, item.artifacts))
         status = status_of(item)
@@ -309,34 +380,25 @@ def check_problem(problem: Path, heads: dict[str, dict[str, ProjectItem]],
         if rel.kind == RelationKind.USES and target.kind != ProjectItemKind.EXTERNAL_RESULT:
             errors.append(f"{source.id} uses {target.id}, which is not an external result")
 
-    state: dict[str, int] = {}
-
-    def visit(node: str, trail: tuple[str, ...]) -> None:
-        if state.get(node) == 2:
-            return
-        if state.get(node) == 1:
-            errors.append("dependency cycle: " + " -> ".join((*trail, node)))
-            return
-        state[node] = 1
-        for nxt in sorted(edges.get(node, ())):
-            visit(nxt, (*trail, node))
-        state[node] = 2
-
-    for node in sorted(items):
-        visit(node, ())
+    errors.extend(cycles(sorted(items), edges))
 
     for id_, item in items.items():
         if status_of(item) != "imported":
             continue
         meta = dict(item.semantics)
-        upstream = meta.get("upstream_problem", "")
+        absent = [key for key in ("upstream_problem", "upstream_item", "upstream_digest", "upstream_status")
+                  if key not in meta]
+        if absent:
+            errors.append(f"{id_}: mirror lacks the semantics {', '.join(absent)}")
+            continue
+        upstream = meta["upstream_problem"]
         if upstream not in known:
             errors.append(f"{id_}: mirror names problem {upstream!r}, which is not a problem of this root")
             continue
         if upstream not in heads:
             errors.append(f"{id_}: mirror names problem {upstream!r}, which is not checked before this one")
             continue
-        source = heads[upstream].get(meta.get("upstream_item", id_))
+        source = heads[upstream].get(meta["upstream_item"])
         if source is None:
             errors.append(f"{id_}: mirror of an item {upstream} no longer holds")
         elif source.digest != meta.get("upstream_digest"):
