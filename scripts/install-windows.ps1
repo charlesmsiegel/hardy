@@ -508,8 +508,10 @@ function Add-Launcher {
     # The venv's own hardy.exe, the same target hardy.cmd wraps: stable
     # across updates and the same for a release and an editable install.
     $target = Join-Path $Venv 'Scripts\hardy.exe'
+    $venvPython = Join-Path $Venv 'Scripts\python.exe'
+    $icon = & $venvPython -c "from pathlib import Path; import hardy; print(Path(hardy.__file__).parent / 'app' / 'web' / 'static' / 'hardy.ico')"
     foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
-        $made = New-Launcher $target $folder $Prefix
+        $made = New-Launcher $target $folder $Prefix $icon
         if ($made) { Write-Detail "wrote $made" }
     }
     Write-Detail 'the launcher runs `hardy web --open` in a console window; Ctrl+C there stops the server'
