@@ -46,7 +46,14 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from hardy.formal import audit
-from hardy.formal.syntax import ImportCycle, declarations, dependents, normalise_lean, statements
+from hardy.formal.syntax import (
+    ImportCycle,
+    build_order,
+    declarations,
+    dependents,
+    normalise_lean,
+    statements,
+)
 from hardy.formal.workspace import LeanWorkspace, module_name
 from hardy.foundation.journal import Journal, JournalError, StaleRevision, record_digest
 from hardy.foundation.locking import LockTimeout
@@ -108,7 +115,17 @@ class SaveGates:
 
 
 class FormalEvidence(FrozenModel):
-    """What the axiom audit established about one declaration, bound to one exact ledger use."""
+    """What the axiom audit established about one declaration, bound to one exact ledger use.
+
+    `signature` is the module's full build signature (its source, the
+    signatures of what it imports, the shared sources, the toolchain), which
+    only a workspace can recompute; `inputs` is what a reader without one can
+    still compare with the tree: the module and every workspace module it
+    imports, transitively, each with the digest of its source as verified.
+    A record minted before `inputs` existed carries none and binds only its
+    own module's source; it serializes without the field, so its digest, which
+    every reference to it pins, is the digest it was minted with.
+    """
 
     id: str
     subject: VersionRef
@@ -122,6 +139,13 @@ class FormalEvidence(FrozenModel):
     signature: str
     source_sha256: str
     recorded_at: str
+    inputs: tuple[tuple[str, str], ...] = ()
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        data = super().model_dump(**kwargs)
+        if not self.inputs:
+            data.pop("inputs", None)
+        return data
 
 
 class Decision(FrozenModel):
@@ -151,6 +175,14 @@ def item_id(name: str) -> str:
 
 def _stamp() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def source_inputs(module: str, sources: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+    """`module` and every workspace module it imports, transitively, with their source digests, in build order."""
+    if module not in sources:
+        return ()
+    return tuple((name, sha256(sources[name].encode("utf-8")).hexdigest())
+                 for name in build_order(sources, (module,)))
 
 
 def _corresponding(name: str | None, statement: str | None,
@@ -284,17 +316,19 @@ class ProjectOwners:
             return None, f"{match} in {module}: {status}"
         reference = self._mint(subject=obligation.item, scope=obligation.scope.ref, context=obligation.context,
                                module=module, declaration=match, statement=statement, axioms=axioms,
-                               signature=workspace.current_signatures().get(module, ""), source=sources[module])
+                               signature=workspace.current_signatures().get(module, ""), source=sources[module],
+                               inputs=source_inputs(module, sources))
         return (reference,), f"{match} verified on the current head; {note}"
 
     def _mint(self, *, subject: VersionRef, scope: VersionRef, context: VersionRef | None, module: str,
-              declaration: str, statement: str, axioms: Sequence[str], signature: str, source: str) -> EvidenceRef:
+              declaration: str, statement: str, axioms: Sequence[str], signature: str, source: str,
+              inputs: tuple[tuple[str, str], ...] = ()) -> EvidenceRef:
         record = FormalEvidence(
             id=f"formal:{subject.id}:{subject.digest[:12]}:{sha256(declaration.encode('utf-8')).hexdigest()[:8]}"
                f":{sha256(source.encode('utf-8')).hexdigest()[:8]}",
             subject=subject, scope=scope, context=context, outcome="kernel_proof", module=module,
             declaration=declaration, statement=statement, axioms=tuple(axioms), signature=signature,
-            source_sha256=sha256(source.encode("utf-8")).hexdigest(), recorded_at=_stamp(),
+            source_sha256=sha256(source.encode("utf-8")).hexdigest(), recorded_at=_stamp(), inputs=inputs,
         )
         self._append(record)
         return EvidenceRef(kind=EvidenceKind.FORMAL, subject=subject, producer=PRODUCER,
@@ -355,11 +389,17 @@ class ProjectOwners:
                 continue
         raise JournalError("the evidence journal kept moving; the record was not written")
 
-    def _describes(self, resolution: Resolution, source: str) -> bool:
-        """Whether every formal record behind an accepted resolution was minted from this source text."""
-        digest = sha256(source.encode("utf-8")).hexdigest()
+    def _describes(self, resolution: Resolution, module: str, signature: str, sources: Mapping[str, str]) -> bool:
+        """Whether every formal record behind an accepted resolution was minted from this build of `module`.
+
+        The build signature covers everything the kernel saw (the module, its
+        imports, the shared sources, the toolchain); the inputs are what a
+        reader without a workspace compares, and a record minted before they
+        were kept is re-minted so that it carries them.
+        """
         records = [self.formal_record(reference) for reference in resolution.evidence]
-        return all(record is not None and record.source_sha256 == digest for record in records)
+        return all(record is not None and record.signature == signature
+                   and record.inputs == source_inputs(module, sources) for record in records)
 
     def _find(self, record_type: type, prefix: str, artifact: ArtifactRef):
         """The journaled record an artifact reference names, only if its digest still matches."""
@@ -414,7 +454,7 @@ class ProjectOwners:
                 try:
                     note = self._record_declaration(
                         store, name=name, kind=kinds[name], statement=stated.get(name) or name, module=module,
-                        source=source, axioms=[str(axiom) for axiom in entry.get("axioms", ())],
+                        source=source, sources=sources, axioms=[str(axiom) for axiom in entry.get("axioms", ())],
                         signature=signatures.get(module, ""), status=status,
                     )
                 except (ValueError, OSError, LockTimeout) as error:
@@ -469,8 +509,8 @@ class ProjectOwners:
         return notes
 
     def _record_declaration(self, store: LedgerStore, *, name: str, kind: ProjectItemKind, statement: str,
-                            module: str, source: str, axioms: Sequence[str], signature: str,
-                            status: audit.DeclarationStatus) -> str:
+                            module: str, source: str, sources: Mapping[str, str], axioms: Sequence[str],
+                            signature: str, status: audit.DeclarationStatus) -> str:
         snapshot = store.read()
         identity = item_id(name)
         batch: list = []
@@ -516,12 +556,13 @@ class ProjectOwners:
         if verified:
             if current.status is ObligationStatus.RESOLVED:
                 if self.policy.is_accepted(snapshot, current.resolution):
-                    if self._describes(current.resolution, source):
+                    if self._describes(current.resolution, module, signature, sources):
                         return "; ".join(said)
-                    # Accepted on an earlier text of this module: the
-                    # declaration is verified again on the source as saved,
-                    # so the record says what the kernel checked this time.
-                    said.append("earlier evidence described an earlier source")
+                    # Accepted on an earlier build of this module (its text,
+                    # a module it imports, the shared sources, the toolchain):
+                    # the declaration is verified again on the build as
+                    # saved, so the record says what the kernel checked this time.
+                    said.append("earlier evidence described an earlier build")
                 else:
                     # Accepted once, under a policy that has since changed its
                     # digest or a record that no longer reads: this audit is
@@ -529,7 +570,7 @@ class ProjectOwners:
                     said.append("earlier acceptance no longer reads under the current policy")
             reference = self._mint(subject=item.ref, scope=scope.ref, context=item.context, module=module,
                                    declaration=name, statement=statement, axioms=axioms, signature=signature,
-                                   source=source)
+                                   source=source, inputs=source_inputs(module, sources))
             proposal = Resolution(id=f"{current.id}:resolution:{reference.artifact.digest[:12]}",
                                   obligation=current.ref, item=item.ref, evidence=(reference,),
                                   explanation=f"{name} in {module}: {status}")
