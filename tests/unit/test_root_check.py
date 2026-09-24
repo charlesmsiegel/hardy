@@ -422,17 +422,17 @@ def test_problems_in_a_cycle_are_still_checked(tmp_path) -> None:
 
 
 def test_an_artifact_that_does_not_read_is_that_items_failure(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
+    from hardy.workflows import root_check
 
     (tmp_path / "up").mkdir()
     (tmp_path / "up" / "note.md").write_text("kept\n", encoding="utf-8")
     held = item("G", "open", artifacts=(ArtifactRef(uri="note.md", digest="0" * 64),))
     LedgerStore(tmp_path / "up").append((held, item("Q", "certified")), expected_revision=0)
 
-    def refused(self):
+    def refused(base, relative):
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(Path, "read_bytes", refused)
+    monkeypatch.setattr(root_check, "read_bytes", refused)
     failures = check_root(tmp_path).failures
     assert "up: G: artifact note.md does not read: [Errno 13] Permission denied" in failures
     assert "up: Q: status 'certified' is not in the vocabulary" in failures
@@ -458,8 +458,101 @@ def test_a_save_of_an_edited_module_re_mints_the_evidence_the_check_reads(tmp_pa
     assert not check_root(tmp_path).ok
     # The same declaration, verified again by a save of the edited module: recorded on this source.
     note = ProjectOwners.reading(path).record_saved({"Main": edited}, {"Main": AUDIT}, {"Main": "sig"})
-    assert "earlier evidence described an earlier source; proof obligation re-accepted" in note
+    assert "earlier evidence described an earlier build; proof obligation re-accepted" in note
     assert check_root(tmp_path).ok
     # And a save that changes nothing mints nothing.
     assert ProjectOwners.reading(path).record_saved({"Main": edited}, {"Main": AUDIT}, {"Main": "sig"}) \
         == "\n\nproject ledger: unchanged"
+
+
+# -- the fourth review's cases --------------------------------------------------------
+
+
+def test_a_reported_cycle_starts_where_it_closes() -> None:
+    from hardy.workflows.root_check import cycles
+
+    # `a` only leads into the cycle `b -> c -> b`; it is not part of it.
+    assert cycles(["a"], {"a": {"b"}, "b": {"c"}, "c": {"b"}}) == ["dependency cycle: b -> c -> b"]
+
+
+def test_a_symlinked_lean_source_is_refused_and_declaration_checks_withheld(tmp_path) -> None:
+    import os
+
+    outside = tmp_path / "elsewhere.lean"
+    outside.write_text("theorem smuggled : True := trivial\n", encoding="utf-8")
+    path = problem(tmp_path, "up", item("T", "open", semantics=(("lean_declaration", "smuggled"),)))
+    (path / "lean").mkdir()
+    os.symlink(outside, path / "lean" / "Smuggled.lean")
+    failures = check_root(tmp_path).failures
+    assert len(failures) == 1
+    assert failures[0].startswith("up: lean tree up/lean does not read: ") and "symlink" in failures[0]
+
+
+def test_artifacts_must_be_files_inside_the_root(tmp_path) -> None:
+    import os
+
+    outside = tmp_path / "outside.md"
+    outside.write_text("kept\n", encoding="utf-8")
+    digest = hashlib.sha256(b"kept\n").hexdigest()
+    root = tmp_path / "root"
+    (root / "up").mkdir(parents=True)
+    (root / "other" / "notes").mkdir(parents=True)
+    (root / "other" / "notes" / "1.md").write_text("kept\n", encoding="utf-8")
+    os.symlink(outside, root / "up" / "linked.md")
+    # A reference to another problem's file stays inside the root and is read.
+    mirror = item("M", "open", artifacts=(ArtifactRef(uri="../other/notes/1.md", digest=digest),))
+    escaping = item("E", "open", artifacts=(ArtifactRef(uri="../../outside.md", digest=digest),
+                                            ArtifactRef(uri=str(outside), digest=digest),
+                                            ArtifactRef(uri="linked.md", digest=digest),
+                                            ArtifactRef(uri="..", digest=digest)))
+    LedgerStore(root / "up").append((mirror, escaping), expected_revision=0)
+    failures = check_root(root).failures
+    assert len(failures) == 4
+    assert all(f.startswith("up: E: artifact ") and "is not a file inside the root" in f for f in failures)
+
+
+HELPER = "import Mathlib\n\nlemma helper_fact : True := by exact True.intro\n"
+USING = "import Mathlib\nimport Helper\n\nlemma base_fact : True := helper_fact\n"
+
+
+def test_verified_evidence_binds_the_modules_the_kernel_read_through_imports(tmp_path) -> None:
+    from hardy.workflows.interactive.evidence import ProjectOwners
+
+    path = problem(tmp_path, "up", item("lean:base_fact", "lean verified", kind="lemma", name="base_fact",
+                                        statement="lemma base_fact : True"))
+    (path / "lean").mkdir()
+    (path / "lean" / "Helper.lean").write_text(HELPER, encoding="utf-8")
+    (path / "lean" / "Main.lean").write_text(USING, encoding="utf-8")
+    sources = {"Helper": HELPER, "Main": USING}
+    note = ProjectOwners.reading(path).record_saved(sources, {"Main": AUDIT}, {"Main": "sig1"})
+    assert "proof obligation resolved" in note
+    assert check_root(tmp_path).ok
+    # `Main` is untouched; the lemma it rests on becomes an axiom.
+    weakened = "import Mathlib\n\naxiom helper_fact : True\n"
+    (path / "lean" / "Helper.lean").write_text(weakened, encoding="utf-8")
+    assert check_root(tmp_path).failures == (
+        "up: lean:base_fact: lean verified but the kernel checked Main against Helper, which has changed since",)
+    # A save sees the changed import through the build signature and re-mints on the new inputs.
+    note = ProjectOwners.reading(path).record_saved({"Helper": weakened, "Main": USING}, {"Main": AUDIT},
+                                                    {"Main": "sig2"})
+    assert "earlier evidence described an earlier build; proof obligation re-accepted" in note
+    assert check_root(tmp_path).ok
+    # A changed signature alone (the toolchain or the shared sources moved) re-mints too.
+    note = ProjectOwners.reading(path).record_saved({"Helper": weakened, "Main": USING}, {"Main": AUDIT},
+                                                    {"Main": "sig3"})
+    assert "earlier evidence described an earlier build; proof obligation re-accepted" in note
+
+
+def test_evidence_minted_without_inputs_binds_its_own_module(tmp_path) -> None:
+    """A record from before `inputs` existed still binds the module it names, and nothing else."""
+    from hardy.workflows.interactive.evidence import FormalEvidence, ProjectOwners
+
+    path = _recorded(tmp_path, "up")
+    owners = ProjectOwners.reading(path)
+    held = owners.journal.read().of(FormalEvidence)
+    assert all(record.inputs == ((record.module, record.source_sha256),) for record in held)
+    older = FormalEvidence.model_validate({**held[0].model_dump(), "inputs": ()})
+    assert older.inputs == () and "inputs" not in older.model_dump(mode="json")
+    # The digest a reference pins is over the record as it was minted: a record from before
+    # `inputs` existed hashes exactly as it did then, so it still authenticates.
+    assert FormalEvidence.model_validate(older.model_dump(mode="json")) == older

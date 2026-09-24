@@ -23,18 +23,29 @@ What it enforces, per problem:
   suffix of it (`Foo.bar` is named by `Foo.bar` or `bar`, never by `Baz.bar`);
 - every artifact an item or a relation references by a path relative to the
   problem, directly or behind its evidence, still matches the bytes on disk,
-  whether or not the item is assessed; an artifact named by a URI with a
+  whether or not the item is assessed; the path must name a file inside the
+  root (a mirror names the upstream problem's ledger record as
+  `../<problem>/ledger/...`), read through the same guard every project read
+  goes through, so a path that leaves the root, an absolute path, or a
+  symlink is refused rather than hashed; an artifact named by a URI with a
   scheme (`arxiv:`, `manuscript:`, `file:`) belongs to the store that issued
   it and is not read here;
 - a `lean verified` item has a resolved `prove` obligation on its current
   revision whose acceptance the problem's own evidence readers authenticate
   from its `evidence/` journal, and whose formal evidence describes the Lean
-  source as it stands: the module the kernel checked is still under `lean/`
-  or `.hardy/lean/` with the digest the evidence recorded, so an edit that
-  keeps a declaration's name and changes what it says is not verified by the
-  old record; one such obligation suffices, and an open duplicate beside it
-  is not a failure; `human verified` has no evidence mechanism yet and is
-  refused.
+  sources as they stand: the module the kernel checked, and every module of
+  the problem it imports, is still under `lean/` or `.hardy/lean/` with the
+  digest the evidence recorded, so an edit that keeps a declaration's name
+  and changes what it says, or what it rests on, is not verified by the old
+  record; one such obligation suffices, and an open duplicate beside it is
+  not a failure; `human verified` has no evidence mechanism yet and is
+  refused. The shared sources and the toolchain are in the evidence's build
+  signature, which only a save with a workspace recomputes; the check binds
+  what it can read.
+
+Lean sources are read as the workspace reads them: a symlink anywhere under
+`lean/` or `.hardy/lean/` is refused, since a declaration or a digest read
+through it would come from outside the problem.
 
 A problem whose mirrors form a cycle with another's is still checked, after
 the problems that could be ordered: its own rules hold whatever the order,
@@ -58,9 +69,10 @@ import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from hardy.formal.syntax import module_path, named_declarations
+from hardy.foundation.files import LayoutError, files_under, read_bytes, read_text
 from hardy.foundation.paths import HARDY_DIR
 from hardy.workflows.interactive import evidence as evidence_owner
 from hardy.workflows.layout import RECORD
@@ -154,15 +166,25 @@ def lean_declarations(problem: Path) -> tuple[set[str], list[str]]:
     """
     names: set[str] = set()
     unreadable: list[str] = []
-    for tree in (problem / LEAN_DIR, problem.parent / HARDY_DIR / LEAN_DIR):
+    for tree in lean_trees(problem):
         if not tree.is_dir():
             continue
-        for path in sorted(tree.rglob("*.lean")):
+        try:
+            found = files_under(tree, ".lean")
+        except (LayoutError, OSError) as error:
+            unreadable.append(f"lean tree {tree.relative_to(problem.parent)} does not read: {error}")
+            continue
+        for relative in found:
             try:
-                names.update(named_declarations(path.read_text(encoding="utf-8")))
-            except (OSError, UnicodeDecodeError) as error:
-                unreadable.append(f"lean source {path.relative_to(problem.parent)} does not read: {error}")
+                names.update(named_declarations(read_text(tree, relative)))
+            except (LayoutError, OSError, UnicodeDecodeError) as error:
+                unreadable.append(f"lean source {(tree / relative).relative_to(problem.parent)} does not read: {error}")
     return names, unreadable
+
+
+def lean_trees(problem: Path) -> tuple[Path, Path]:
+    """Where a problem's Lean sources live: its own `lean/`, then the root's shared `.hardy/lean/`."""
+    return problem / LEAN_DIR, problem.parent / HARDY_DIR / LEAN_DIR
 
 
 def declares(declared: set[str], name: str) -> bool:
@@ -295,46 +317,83 @@ def artifacts_of(record: ProjectItem | Relation) -> list[ArtifactRef]:
     return found
 
 
+def within_root(problem: Path, uri: str) -> PurePosixPath | None:
+    """`uri`, relative to the problem, as a path relative to the root; None if it leaves the root.
+
+    A mirror names the upstream problem's ledger record as
+    `../<problem>/ledger/<sequence>.json`, which is inside the root and is
+    what the check exists to compare; `../../elsewhere` and an absolute path
+    are not, and a file there matching the digest says nothing about the root.
+    """
+    if uri.startswith(("/", "\\")) or PurePosixPath(uri.replace("\\", "/")).is_absolute():
+        return None
+    parts: list[str] = []
+    for part in (PurePosixPath(problem.name) / uri.replace("\\", "/")).parts:
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        elif part != ".":
+            parts.append(part)
+    return PurePosixPath(*parts) if len(parts) > 1 else None
+
+
 def _artifact_errors(problem: Path, owner: str, artifacts: list[ArtifactRef]) -> list[str]:
+    """The artifacts that are missing, changed, outside the root, or unreadable.
+
+    Read through the same guard as every project file, rooted at the root:
+    a path that leaves it, an absolute path, or a symlink anywhere on the
+    way is refused rather than hashed.
+    """
     errors = []
     for ref in artifacts:
         if SCHEME.match(ref.uri):
             continue
+        relative = within_root(problem, ref.uri)
+        if relative is None:
+            errors.append(f"{owner}: artifact {ref.uri} is not a file inside the root")
+            continue
         try:
-            path = (problem / ref.uri).resolve()
-            if not path.is_file():
-                errors.append(f"{owner}: artifact {ref.uri} is missing")
-            elif hashlib.sha256(path.read_bytes()).hexdigest() != ref.digest:
-                errors.append(f"{owner}: artifact {ref.uri} changed since it was recorded")
+            content = read_bytes(problem.parent, relative)
+        except FileNotFoundError:
+            errors.append(f"{owner}: artifact {ref.uri} is missing")
+        except LayoutError as error:
+            errors.append(f"{owner}: artifact {ref.uri} is not a file inside the root: {error}")
         except OSError as error:
             errors.append(f"{owner}: artifact {ref.uri} does not read: {error}")
+        else:
+            if hashlib.sha256(content).hexdigest() != ref.digest:
+                errors.append(f"{owner}: artifact {ref.uri} changed since it was recorded")
     return errors
 
 
 def source_binding(problem: Path, owners: evidence_owner.ProjectOwners, resolution: Resolution) -> str | None:
-    """Why the resolution's formal evidence no longer describes the Lean source on disk, or None.
+    """Why the resolution's formal evidence no longer describes the Lean sources on disk, or None.
 
-    The evidence records the module the kernel checked and the digest of its
-    source; a module edited since, whether or not the declaration kept its
-    name, is not what was verified. The module is looked for under the
-    problem's `lean/`, then the root's `.hardy/lean/`, and read as the save
-    read it, so the digests compare like for like.
+    The evidence records the module the kernel checked, every module of the
+    problem it imports, and the digest of each source as verified; a module
+    edited since, whether or not a declaration kept its name, is not what was
+    verified. Each is looked for under the problem's `lean/`, then the root's
+    `.hardy/lean/`, and read through the workspace's own guard, so a symlink
+    is refused and the digests compare like for like. A record from before
+    the inputs were kept binds its own module only.
     """
     for reference in resolution.evidence:
         record = owners.formal_record(reference)
         if record is None:
             return "its evidence does not authenticate"
-        relative = module_path(record.module)
-        path = next((tree / relative for tree in (problem / LEAN_DIR, problem.parent / HARDY_DIR / LEAN_DIR)
-                     if (tree / relative).is_file()), None)
-        if path is None:
-            return f"the kernel checked {record.module}, which is no longer under lean/ or .hardy/lean/"
-        try:
-            source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as error:
-            return f"the kernel checked {record.module}, which does not read: {error}"
-        if hashlib.sha256(source.encode("utf-8")).hexdigest() != record.source_sha256:
-            return f"the kernel checked {record.module}, which has changed since"
+        for module, digest in record.inputs or ((record.module, record.source_sha256),):
+            against = "" if module == record.module else f" against {module}"
+            relative = module_path(module)
+            tree = next((t for t in lean_trees(problem) if (t / relative).is_file()), None)
+            if tree is None:
+                return f"the kernel checked {record.module}{against}, which is no longer under lean/ or .hardy/lean/"
+            try:
+                source = read_text(tree, relative)
+            except (LayoutError, OSError, UnicodeDecodeError) as error:
+                return f"the kernel checked {record.module}{against}, which does not read: {error}"
+            if hashlib.sha256(source.encode("utf-8")).hexdigest() != digest:
+                return f"the kernel checked {record.module}{against}, which has changed since"
     return None
 
 
@@ -344,7 +403,8 @@ def cycles(nodes: list[str], edges: dict[str, set[str]]) -> list[str]:
     A depth-first walk on an explicit stack, so a chain as long as a board
     can grow is walked without touching the interpreter's recursion limit.
     Each node is entered once; a back edge to a node still on the path is a
-    cycle, reported as the path from that node round to itself. Successors
+    cycle, reported as the path from that node round to itself, without the
+    nodes that only led into it. Successors
     are taken in name order, from the end of a reversed list, so a node of
     high degree costs its degree and not its square.
     """
@@ -360,7 +420,7 @@ def cycles(nodes: list[str], edges: dict[str, set[str]]) -> list[str]:
             if pending[-1]:
                 nxt = pending[-1].pop()
                 if state.get(nxt) == 1:
-                    found.append("dependency cycle: " + " -> ".join((*path, nxt)))
+                    found.append("dependency cycle: " + " -> ".join((*path[path.index(nxt):], nxt)))
                 elif state.get(nxt) != 2:
                     state[nxt] = 1
                     path.append(nxt)
