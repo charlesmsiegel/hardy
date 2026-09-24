@@ -546,7 +546,9 @@ desktop_dir() {
 # on the Desktop (executable, which is what GNOME requires before it trusts
 # one); macOS gets a .command on the Desktop, which Terminal opens. The kind
 # is the platform's, or whatever the caller names, so a test can exercise
-# either shape on any host.
+# either shape on any host. The installer itself never passes one, which is
+# what SC2120 objects to; the argument is for the tests.
+# shellcheck disable=SC2120
 install_launcher() {
 	[ "$NO_LAUNCHER" = 1 ] && return 0
 	local kind="${1:-$(uname -s | tr '[:upper:]' '[:lower:]')}" desktop entry
