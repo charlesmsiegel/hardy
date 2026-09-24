@@ -227,18 +227,32 @@ replacement handler runs and only one report appears. Moving the audit to a
 second invocation does not close it either: the audited module still has to be
 imported, and its elaborator extensions come with it.
 
-Where Hardy writes the file, the proof body cannot take that route. On the
+Where Hardy writes the file, it narrows that route without closing it. On the
 staged, batch and sketch paths the model supplies only the text after `:=`,
-and a body that issues a command of its own (`#exit`, `#print`, `macro_rules`,
-`elab`, `syntax`, a declaration, an attribute) is refused before Lean runs,
-as is one naming `«sorryAx»`. `hardy accept --recorded` rebuilds the verified
-source byte for byte from the frozen claim and its declarations and holds the
-body between them to the same rule. The report is also bound to its line: only
-what Lean says at Hardy's own `#print axioms`, the file's last line, is graded,
-so a report printed anywhere else is ignored and a body that stopped Lean short
-of that line leaves no report at all, which fails. What remains is the route
-through modules: an interactive workspace audits built modules by importing
-them, and a macro or elaborator a module declares still comes with the import.
+and Hardy refuses, before Lean runs, a body containing the command forms it
+recognises: `#`-commands such as `#exit` and `#print`, `macro_rules`, `elab`,
+`syntax`, declarations and attributes. It also refuses the entry points it
+knows into code run during elaboration (`run_tac`, `run_conv`, `by_elab`,
+`eval%`) and a body naming `«sorryAx»`. `hardy accept --recorded` rebuilds
+the verified source byte for byte from the frozen claim and its declarations,
+and holds the body between them to the same rule. The report is also bound to
+its line: only what Lean says at Hardy's own `#print axioms`, the file's last
+line, is graded. A report printed anywhere else is ignored, and a body that
+stopped Lean short of that line leaves no report at all, which fails.
+
+This is a list of recognised forms, and each residual below still gets past it:
+
+- The scanner does not yet read Lean's char literals, so `'"'` can hide a
+  command from it until that lexer gap is fixed.
+- A top-level `set_option` or `open` is not refused. Refusing it would break
+  the ordinary `set_option ... in` and `open ... in` tactics, and neither
+  command can add an axiom or answer Hardy's line-bound report.
+- Code run during elaboration through an entry point the list does not name
+  can still print a report positioned on the audit line and exit. No word list
+  can close arbitrary elaboration-time code.
+- The route through modules is untouched: an interactive workspace audits built
+  modules by importing them, and a macro or elaborator a module declares comes
+  with the import.
 
 So the audit establishes that an artifact is not *accidentally* unsound: that
 a proof reached by ordinary means does not rest on `sorryAx` or on an axiom

@@ -489,6 +489,14 @@ def _final_verifier(tmp_path, runner):
         # A quotation is data, but only where its extent is certain. A char
         # literal or a guillemet name can hold a parenthesis Lean does not
         # count, and trusting the count there would hide the command after it.
+        # Code run during elaboration can print a report of its own choosing
+        # on the audit line and exit, so the ways into it are refused too.
+        'by\n  run_tac pure ()',
+        'by exact (by_elab pure (Lean.mkConst ``True.intro))',
+        'by\n  conv => run_conv pure ()\n  trivial',
+        'by exact eval% (2 = 2 : Bool)',
+        'by exact eval%(2 = 2 : Bool)',
+        'by trivial\n@[simp]',
         "by\n  have _ := `(term| '(')\n  trivial\n#exit ')'",
         'by\n  have _ := `(term| «(»)\n  trivial\n#exit )',
     ),
