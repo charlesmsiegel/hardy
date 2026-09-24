@@ -1,7 +1,7 @@
 """Shared formalization preserves source meaning, identity and binder origins."""
 import json
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -282,8 +282,10 @@ def test_contextual_claim_reaches_independent_final_verifier(tmp_path):
     observed = []
     def runner(spec):
         observed.append(spec)
+        line = Path(spec.argv[-1]).read_text(encoding="utf-8").count("\n")
         return ProcessResult(argv=spec.argv, cwd=spec.cwd, returncode=0,
-                             stdout=json.dumps({"severity": "information", "data": "target depends on axioms: []"}),
+                             stdout=json.dumps({"severity": "information", "data": "target depends on axioms: []",
+                                                "pos": {"line": line, "column": 0}}),
                              stderr="", timed_out=False, output_overflow=False, duration_ms=1)
     verifier = FinalVerifier(lake=tmp_path / "lake.exe", lean_project=tmp_path,
                              environment=claim.environment, limits=RunLimits(), runner=runner)

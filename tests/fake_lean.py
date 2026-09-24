@@ -14,6 +14,7 @@ real thing behaves, and the only way the interactive audit, which runs over a
 built workspace rather than over source, can be exercised hermetically.
 """
 
+import json
 import os
 import pathlib
 import re
@@ -347,11 +348,28 @@ if ambiguous:
     raise SystemExit(1)
 
 
+def answer(message: str, line: int) -> None:
+    """Say `message` at `line`, as `lean --json` would, or as plain text without it."""
+    if "--json" in argv:
+        print(json.dumps({
+            "fileName": str(path),
+            "pos": {"line": line, "column": 0},
+            "severity": "information",
+            "data": message,
+        }, ensure_ascii=False))
+    else:
+        print(message)
+
+
 def report_axioms() -> None:
     """Stand in for `#print axioms`, in both of real Lean's two forms."""
     # To end of line, not to the first space: `theorem «first result»` is an
     # ordinary Lean declaration and `\S+` would report half its name.
-    for name in re.findall(r"(?m)^#print axioms (.+?)\s*$", source):
+    for asked in re.finditer(r"(?m)^#print axioms (.+?)\s*$", source):
+        name = asked.group(1)
+        # Real Lean positions the answer on the line that asked, and Hardy
+        # reads a report only from the line it wrote its own `#print axioms` on.
+        line = source.count("\n", 0, asked.start()) + 1
         # Per declaration, like the real thing. `sorryAx` is added for the one
         # that actually carries the hole, not for everything the module exports.
         reported = list(axioms)
@@ -380,9 +398,9 @@ def report_axioms() -> None:
             print(f"{path.name}:1:0: error: unknown identifier '{name}'")
             raise SystemExit(1)
         if reported:
-            print(f"'{name}' depends on axioms: [{', '.join(reported)}]")
+            answer(f"'{name}' depends on axioms: [{', '.join(reported)}]", line)
         else:
-            print(f"'{name}' does not depend on any axioms")
+            answer(f"'{name}' does not depend on any axioms", line)
     # `#print <name>` on its own prints the declaration Lean resolves.
     for name in re.findall(r"(?m)^#print (?!axioms )(.+?)\s*$", source):
         print(f"axiom {name} : True")

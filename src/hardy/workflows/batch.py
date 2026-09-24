@@ -21,6 +21,7 @@ from hardy.formal import closers as closer_ladder
 from hardy.formal.contracts import Request
 from hardy.formal.latency import manifest_binds
 from hardy.formal.lean import LeanToolResult, LeanTools, environment_identity
+from hardy.formal.verifier import audit_line_messages, proof_body_violation
 from hardy.foundation.locking import atomic_write_bytes
 from hardy.foundation.values import ToolResult
 from hardy.prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
@@ -78,7 +79,9 @@ def _audited(result: LeanToolResult, lean: LeanTools) -> tuple[ToolResult, audit
         return refused(why), None, audit.unestablished(why)
     # The whole report, not the tail a model is shown: an audit graded on a
     # truncated report would refuse a proof for a line that was merely cut off.
-    reports = audit.parse(result.report, (name,))
+    # And only the audit line's: the source ends with Hardy's `#print axioms`,
+    # and a report positioned anywhere else is one the proof made Lean print.
+    reports = audit.parse(audit_line_messages(result.source, result.diagnostics), (name,))
     if reports is None:
         why = f"the axiom audit for `{name}` could not be established; remove any #print axioms from the proof, Hardy adds its own"
         return refused(why), None, audit.unestablished(why)
@@ -327,7 +330,16 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 _retain(name, proof, result)
             elif name == "submit_proof":
                 proof = str(arguments["proof"])
-                result = lean.check_proof(proof, final=True)
+                # A body that closes the declaration and issues its own
+                # commands is refused before Lean runs, for the reason
+                # `proof_body_violation` gives: it could stop or answer the
+                # audit this submission is about to be graded by.
+                violation = proof_body_violation(proof)
+                result = (
+                    LeanToolResult(False, violation, lean.source(proof))
+                    if violation is not None
+                    else lean.check_proof(proof, final=True)
+                )
                 verdict = None
                 record = None
                 # Whether Lean accepted it, before the audit had its say. The

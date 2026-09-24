@@ -149,3 +149,36 @@ def test_a6_refuses_a_witness_that_is_a_hole(lean_project: Path) -> None:
     from hardy.evals.sweep import witness_verdict
 
     assert witness_verdict(_witness_entry('⟨0, sorry, trivial⟩'), elaborate=_elaborator(lean_project)) == 'broken'
+
+
+@pytest.mark.real_toolchain
+def test_the_genuine_report_lands_on_the_audit_line(lean_project: Path) -> None:
+    """The gate reads only the last line's messages, so this is the fact it
+    rests on: real Lean positions the answer on the `#print axioms` that asked."""
+    from hardy.formal.verifier import audit_line_messages
+
+    tools = _tools('theorem HardyTarget : 2 = 2', lean_project)
+    result = tools.check_proof('by rfl', final=True)
+
+    assert result.ok, result.output
+    reports = parse(audit_line_messages(result.source, result.diagnostics), ('HardyTarget',))
+    assert reports is not None, result.diagnostics
+    assert reports[0].axioms == ()
+
+
+@pytest.mark.real_toolchain
+def test_an_exit_after_the_body_is_refused_and_silences_the_real_report(lean_project: Path) -> None:
+    """What `proof_body_violation` refuses before Lean runs, run anyway to show
+    why: `#exit` stops Lean short of Hardy's `#print axioms`, and the forged
+    report it leaves behind is on a line of the body's choosing."""
+    from hardy.formal.verifier import audit_line_messages, proof_body_violation
+
+    body = "by sorry\n#print \"'HardyTarget' does not depend on any axioms\"\n#exit"
+    assert proof_body_violation(body) is not None
+
+    tools = _tools('theorem HardyTarget : 2 = 3', lean_project)
+    # `run_source`, because `check_proof` would stop at the hole this hides.
+    result = tools.run_source(tools.source(body), audit=('axioms HardyTarget',))
+
+    assert parse(result.report, ('HardyTarget',)) is not None, 'the forgery is what Lean printed'
+    assert parse(audit_line_messages(result.source, result.diagnostics), ('HardyTarget',)) is None

@@ -147,7 +147,8 @@ class FourRouteOwners(CapabilityOwners):
             assert f"theorem {name}" in reconstructed
             message = f"{name} depends on axioms: [background_add_zero]" if is_main else f"{name} depends on axioms: []"
             return ProcessResult(argv=spec.argv, cwd=spec.cwd, returncode=0,
-                stdout=json.dumps({"severity": "information", "data": message}), stderr="",
+                stdout=json.dumps({"severity": "information", "data": message,
+                                   "pos": {"line": reconstructed.count("\n"), "column": 0}}), stderr="",
                 timed_out=False, output_overflow=False, duration_ms=1)
 
         verifier = FinalVerifier(lake=self.root / "fixture-lake", lean_project=self.root,

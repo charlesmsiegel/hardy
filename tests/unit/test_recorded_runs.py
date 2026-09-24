@@ -1381,3 +1381,31 @@ def test_a_summary_with_nothing_held_has_no_development_heading() -> None:
     assert 'Development in hand' not in rendered
     assert 'Statement' not in rendered
     assert 'Goal' in rendered
+
+
+def test_a_batch_submission_that_issues_commands_never_reaches_lean(tmp_path) -> None:
+    output = _batch(tmp_path, [('submit_proof', {'proof': 'by exact True.intro\n#exit'})])
+
+    result = json.loads((output / 'result.json').read_text(encoding='utf-8'))
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    submitted = [
+        event for event in trajectory['events']
+        if event.get('type') == 'tool' and event['name'] == 'submit_proof'
+    ]
+    assert result['terminal_reason'] != 'verified'
+    assert len(submitted) == 1
+    assert not submitted[0]['result']['ok']
+    assert 'issues a Lean command (#exit)' in submitted[0]['result']['output']
+    # Lean never ran: no diagnostics, and no hash of a source it elaborated.
+    assert not submitted[0]['result'].get('diagnostics')
+    assert submitted[0]['result'].get('source_sha256') is None
+
+
+def test_a_verified_batch_proof_that_issues_commands_is_refused_offline(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
+    output = _verified(tmp_path)
+    _rewrite(output / 'result.json', proof='by exact True.intro\n#exit')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('issues a Lean command (#exit)' in issue for issue in issues)

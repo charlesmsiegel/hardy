@@ -61,9 +61,15 @@ def _result(process, spec, *, stdout="", returncode=0):
     )
 
 
-def _axiom_line(axioms: str) -> str:
+def _axiom_line(spec, axioms: str) -> str:
+    """The report, positioned on Hardy's `#print axioms` line as real Lean puts it."""
+    line = Path(spec.argv[-1]).read_text(encoding="utf-8").count("\n")
     return json.dumps(
-        {"severity": "information", "data": f"two_eq_two depends on axioms: [{axioms}]"}
+        {
+            "severity": "information",
+            "pos": {"line": line, "column": 0},
+            "data": f"two_eq_two depends on axioms: [{axioms}]",
+        }
     )
 
 
@@ -202,7 +208,7 @@ def test_a_declared_assumption_is_rendered_into_the_verified_source(tmp_path) ->
     def runner(spec):
         seen["source"] = Path(spec.argv[-1]).read_text(encoding="utf-8")
         return _result(
-            process, spec, stdout=_axiom_line("propext, Papers.perelman.no_local_collapsing")
+            process, spec, stdout=_axiom_line(spec, "propext, Papers.perelman.no_local_collapsing")
         )
 
     final = _verifier(
@@ -226,7 +232,7 @@ def test_a_proof_using_exactly_the_declared_assumptions_is_verified_modulo(tmp_p
 
     def runner(spec):
         return _result(
-            process, spec, stdout=_axiom_line("propext, Papers.perelman.no_local_collapsing")
+            process, spec, stdout=_axiom_line(spec, "propext, Papers.perelman.no_local_collapsing")
         )
 
     final = _verifier(
@@ -250,7 +256,7 @@ def test_a_proof_that_used_none_of_them_is_kernel_verified(tmp_path) -> None:
     store = _store(storage, tmp_path)
 
     def runner(spec):
-        return _result(process, spec, stdout=_axiom_line("propext, Quot.sound"))
+        return _result(process, spec, stdout=_axiom_line(spec, "propext, Quot.sound"))
 
     final = _verifier(
         verifier, domain, claim, tmp_path, runner, allowed=(_assumption(domain),)
@@ -271,7 +277,7 @@ def test_an_axiom_nobody_declared_is_still_refused(tmp_path) -> None:
     store = _store(storage, tmp_path)
 
     def runner(spec):
-        return _result(process, spec, stdout=_axiom_line("propext, Papers.other.smuggled"))
+        return _result(process, spec, stdout=_axiom_line(spec, "propext, Papers.other.smuggled"))
 
     final = _verifier(
         verifier, domain, claim, tmp_path, runner, allowed=(_assumption(domain),)
@@ -294,7 +300,7 @@ def test_a_hole_is_refused_however_much_was_declared(tmp_path) -> None:
     store = _store(storage, tmp_path)
 
     def runner(spec):
-        return _result(process, spec, stdout=_axiom_line("propext, sorryAx"))
+        return _result(process, spec, stdout=_axiom_line(spec, "propext, sorryAx"))
 
     final = _verifier(
         verifier,
@@ -362,7 +368,7 @@ def test_a_comment_in_a_declared_statement_is_not_an_injection(tmp_path) -> None
 
     def runner(spec):
         return _result(
-            process, spec, stdout=_axiom_line("propext, Papers.perelman.no_local_collapsing")
+            process, spec, stdout=_axiom_line(spec, "propext, Papers.perelman.no_local_collapsing")
         )
 
     final = _verifier(

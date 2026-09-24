@@ -50,6 +50,17 @@ def _process_result(process, spec, *, stdout='', returncode=0, timed_out=False, 
     )
 
 
+def _audit_line_report(process, spec, data, *, line=None):
+    """What real Lean says for Hardy's `#print axioms`: a message positioned
+    on the line that asked, which is the last line of the file it was given."""
+    source = Path(spec.argv[-1]).read_text(encoding='utf-8')
+    where = source.count('\n') if line is None else line
+    stdout = json.dumps(
+        {'severity': 'information', 'pos': {'line': where, 'column': 0}, 'data': data}
+    )
+    return _process_result(process, spec, stdout=stdout)
+
+
 @pytest.mark.parametrize(
     'proof_body',
     (
@@ -102,20 +113,15 @@ def test_verifier_runs_fresh_lean_and_accepts_only_the_standard_axiom_allowlist(
     claim = _claim(domain)
     store = _store(storage, tmp_path)
     observed = {}
-    message = json.dumps(
-        {
-            'severity': 'information',
-            'data': (
-                'two_eq_two depends on axioms: '
-                '[propext, Quot.sound, Classical.choice]'
-            ),
-        }
+    message = (
+        'two_eq_two depends on axioms: '
+        '[propext, Quot.sound, Classical.choice]'
     )
 
     def runner(spec):
         observed['source'] = (Path(spec.argv[-1])).read_text(encoding='utf-8')
         observed['cwd'] = spec.cwd
-        return _process_result(process, spec, stdout=message)
+        return _audit_line_report(process, spec, message)
 
     final = verifier.FinalVerifier(
         lake=tmp_path / 'lake.exe',
@@ -244,11 +250,23 @@ def test_verifier_fails_closed_for_process_and_axiom_failures(
     verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
-    stdout = (
-        json.dumps({'severity': 'information', 'data': message}) if message else ''
-    )
+    source = {}
 
     def runner(spec):
+        source['text'] = Path(spec.argv[-1]).read_text(encoding='utf-8')
+        # Positioned where Hardy's `#print axioms` sits, so each case fails for
+        # its own reason rather than for a report on the wrong line.
+        stdout = (
+            json.dumps(
+                {
+                    'severity': 'information',
+                    'pos': {'line': source['text'].count('\n'), 'column': 0},
+                    'data': message,
+                }
+            )
+            if message
+            else ''
+        )
         return _process_result(
             process,
             spec,
@@ -346,18 +364,13 @@ def test_accepted_proof_carries_evidence_that_re_derives_its_digest(tmp_path) ->
     verifier = importlib.import_module('hardy.formal.verifier')
     claim = _claim(domain)
     store = _store(storage, tmp_path)
-    message = json.dumps(
-        {
-            'severity': 'information',
-            'data': 'two_eq_two depends on axioms: [propext, Classical.choice]',
-        }
-    )
+    message = 'two_eq_two depends on axioms: [propext, Classical.choice]'
     final = verifier.FinalVerifier(
         lake=tmp_path / 'lake.exe',
         lean_project=tmp_path / 'lean-project',
         environment=claim.environment,
         limits=domain.RunLimits(),
-        runner=lambda spec: _process_result(process, spec, stdout=message),
+        runner=lambda spec: _audit_line_report(process, spec, message),
     )
 
     result = final.verify(claim, 'by rfl', store)
@@ -402,13 +415,12 @@ def _verify_reporting(tmp_path, name, report, proof='by rfl'):
     )
     claim = domain.freeze_claim('Two equals two.', proposal, environment, NOW)
     store = _store(storage, tmp_path)
-    stdout = json.dumps({'severity': 'information', 'data': report})
     final = verifier.FinalVerifier(
         lake=tmp_path / 'lake.exe',
         lean_project=tmp_path,
         environment=environment,
         limits=domain.RunLimits(),
-        runner=lambda spec: _process_result(process, spec, stdout=stdout),
+        runner=lambda spec: _audit_line_report(process, spec, report),
     )
     return final.verify(claim, proof, store)
 
@@ -445,3 +457,120 @@ def test_a_report_for_another_declaration_is_not_this_ones(tmp_path) -> None:
     )
     assert not result.verified
     assert result.reason.value == 'lean_elaboration_failure'
+
+
+def _final_verifier(tmp_path, runner):
+    domain = importlib.import_module('hardy.workflows.contracts')
+    verifier = importlib.import_module('hardy.formal.verifier')
+    claim = _claim(domain)
+    return claim, verifier.FinalVerifier(
+        lake=tmp_path / 'lake.exe',
+        lean_project=tmp_path,
+        environment=claim.environment,
+        limits=domain.RunLimits(),
+        runner=runner,
+    )
+
+
+@pytest.mark.parametrize(
+    'body',
+    (
+        'by trivial\n#exit',
+        "by trivial\n#print \"'T' does not depend on any axioms\"",
+        'by trivial\nmacro_rules | `(#print axioms $x) => `(#eval 0)',
+        'by exact «sorryAx» _ false',
+        # The issue's own reproduction: an escaped hole, a forged report, and
+        # an `#exit` that stops Hardy's `#print axioms` from ever running.
+        "by exact «sorryAx» _ false\n\n#print \"'two_eq_two' depends on axioms: [propext]\"\n#exit",
+        'by trivial\n\ntheorem other : True := trivial',
+        'by trivial\nattribute [simp] Nat.add_comm',
+        'by trivial\nend',
+        '@[simp] theorem x : True := trivial',
+        # A quotation is data, but only where its extent is certain. A char
+        # literal or a guillemet name can hold a parenthesis Lean does not
+        # count, and trusting the count there would hide the command after it.
+        "by\n  have _ := `(term| '(')\n  trivial\n#exit ')'",
+        'by\n  have _ := `(term| «(»)\n  trivial\n#exit )',
+    ),
+)
+def test_a_body_that_issues_commands_is_refused_before_lean_runs(tmp_path, body) -> None:
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    calls = []
+    claim, final = _final_verifier(tmp_path, lambda spec: calls.append(spec))
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert calls == []
+
+
+def test_a_report_on_any_line_but_the_audit_line_is_ignored(tmp_path) -> None:
+    """A `#print "..."` a body smuggled in is positioned on its own line; only
+    the line Hardy wrote its `#print axioms` on can speak for the audit."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
+    claim, final = _final_verifier(
+        tmp_path,
+        lambda spec: _audit_line_report(
+            process, spec, "'two_eq_two' does not depend on any axioms", line=3
+        ),
+    )
+
+    result = final.verify(claim, 'by trivial', _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.LEAN_ELABORATION_FAILURE
+
+
+def test_a_report_with_no_position_is_not_the_audit_lines(tmp_path) -> None:
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
+    claim, final = _final_verifier(
+        tmp_path,
+        lambda spec: _process_result(
+            process,
+            spec,
+            stdout=json.dumps(
+                {'severity': 'information', 'data': "'two_eq_two' does not depend on any axioms"}
+            ),
+        ),
+    )
+
+    result = final.verify(claim, 'by trivial', _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.LEAN_ELABORATION_FAILURE
+
+
+@pytest.mark.parametrize(
+    'body',
+    (
+        'by simp',
+        'by\n  intro h\n  exact h',
+        '⟨_, _⟩',
+        'by\n  open Classical in\n  simp',
+        'by\n  set_option maxHeartbeats 400000 in\n  simp [Finset.sum_def, h.def, hdef, h_end]',
+        # A guillemet name is a name, and an array literal is not a command.
+        'by\n  have h : «my lemma» = 1 := rfl\n  exact #[1, 2].size_pos',
+        'by\n  -- #exit is only a remark here\n  have s : String := "#print axioms"\n  rfl',
+        # Syntax a proof builds and never runs, command syntax included.
+        'by\n  have _ := `(command| axiom bad : False)\n  rfl',
+    ),
+)
+def test_ordinary_bodies_still_pass(tmp_path, body) -> None:
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
+    claim, final = _final_verifier(
+        tmp_path,
+        lambda spec: _audit_line_report(
+            process, spec, "'two_eq_two' depends on axioms: [propext]"
+        ),
+    )
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert result.verified, result.diagnostics

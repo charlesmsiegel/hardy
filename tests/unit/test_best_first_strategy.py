@@ -168,7 +168,8 @@ def test_real_final_verifier_checks_exact_source_and_rejects_holes(tmp_path):
         sources.append(source)
         return ProcessResult(argv=spec.argv, cwd=spec.cwd, returncode=0, stderr="",
             stdout=json.dumps({"severity": "information", "data":
-                f"{task.claim.proposal.theorem_name} depends on axioms: []"}),
+                f"{task.claim.proposal.theorem_name} depends on axioms: []",
+                "pos": {"line": source.count("\n"), "column": 0}}),
             timed_out=False, output_overflow=False, duration_ms=1)
 
     verifier = FinalVerifier(lake=tmp_path / "lake.exe", lean_project=tmp_path,
