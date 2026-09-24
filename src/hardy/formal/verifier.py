@@ -51,6 +51,10 @@ FORBIDDEN_TOKEN = re.compile(
 # closed the declaration and is writing the rest of the file itself: `#exit`
 # stops Lean before Hardy's own `#print axioms` runs, a `#print "..."` supplies
 # a report of its choosing, and `macro_rules` can rewrite the audit command.
+# The ways into code run *during* elaboration are refused beside them --
+# `run_tac`, `run_conv`, `by_elab` and Mathlib's `eval%` -- because such code
+# can print a positioned report on the audit line and exit before Lean does.
+# A word list cannot close that door in general; it closes the ones it names.
 # Bounded like an identifier -- `h.def`, `hdef`, `h_end` and `«end»` are
 # names -- and scanned over text whose comments and strings are blanked but
 # whose guillemet names are kept, so `«sorryAx»` is seen for what it is. The
@@ -58,10 +62,11 @@ FORBIDDEN_TOKEN = re.compile(
 # blanking it would trust the scanner to find the closing `»` where Lean does,
 # and a char literal `'«'` is where the two part company.
 COMMAND_IN_BODY = re.compile(
-    r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|(?:macro_rules|macro|elab_rules|elab|syntax|notation|"
+    r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|eval%|(?:macro_rules|macro|elab_rules|elab|syntax|notation|"
     r"infixl?|infixr|prefix|postfix|run_cmd|run_elab|run_meta|initialize|builtin_initialize|"
     r"declare_syntax_cat|theorem|lemma|def|abbrev|instance|example|structure|class|inductive|"
-    r"axiom|opaque|namespace|section|end|universe|variable|attribute|export|mutual|include|omit)"
+    r"axiom|opaque|namespace|section|end|universe|variable|attribute|export|mutual|include|omit|"
+    r"run_tac|run_conv|by_elab)"
     r"(?![\w'!?»]))"
 )
 ESCAPED_HOLE = re.compile(r"«\s*sorryAx\s*»")
