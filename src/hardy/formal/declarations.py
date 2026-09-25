@@ -122,7 +122,9 @@ _BODY = re.compile(r":=|\bwhere\b|\bderiving\b")
 # stayed byte-for-byte equal across them would let `reproducible` promise a
 # replay neither can give the other. Any change to what `_file` reads, how
 # names are qualified, or how `search` orders its answers must bump this.
-INDEX_ALGORITHM = "hardy-declaration-index/1"
+# /2: `strip_comments` reads char literals (#192), so a Mathlib file holding
+# `'"'` no longer loses the declarations after it.
+INDEX_ALGORITHM = "hardy-declaration-index/2"
 
 # Root files that are not module sources; same reasoning as `modules.py`.
 _NOT_A_SOURCE = frozenset({"lakefile.lean"})
