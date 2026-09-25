@@ -307,3 +307,32 @@ def test_todo_refuses_batch_budgets_under_staged_exactly_as_run_does(capsys, tmp
     args.problems, args.baseline, args.scoreboards = problems_path, baseline_path, tmp_path / "boards"
     assert commands.run_todo(args, _config()) == 2
     assert "do not govern a staged run" in capsys.readouterr().err
+
+
+def test_the_default_selection_names_partial_entries_rather_than_rerunning_them(monkeypatch, tmp_path, capsys):
+    """An entry holding only some of its repeats under this condition is not
+    selected by the default run (#213): a fresh board would claim a repeat
+    slot an existing board already holds, and `evals pool` refuses that pair.
+    It is named on stderr instead, beside any board the audit refused."""
+    from hardy.evals import outstanding
+
+    monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
+    called = []
+    monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
+    seen = {}
+
+    def fake_outstanding(problems, baseline, root, **kw):
+        seen.update(kw)
+        return {"boards_counted": ["first"], "boards_refused": {"broken": ["an issue"]},
+                "unbaselined_active": [], "unevaluated_active": [], "partially_evaluated_active": ["a"]}
+
+    monkeypatch.setattr(outstanding, "outstanding", fake_outstanding)
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
+    assert code == 2 and called == []
+    err = capsys.readouterr().err
+    assert "only some of their repeats" in err and "a" in err
+    assert "broken" in err
+    assert seen["problems_path"] == problems_path and seen["baseline_path"] == baseline_path

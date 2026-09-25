@@ -156,7 +156,12 @@ under `evals/scoreboards/<label>/`. `--label` is required and names it.
 With no `--only`, `--only-file`, `--status`, or `--tiers`, the selected set
 defaults to active entries not already run under this exact model, mode,
 and limits against this environment, the same pooling key `evals pool` and
-`evals todo` use, not the whole corpus. If every active entry has already
+`evals todo` use, not the whole corpus. Only evidence `evals pool` would
+accept counts as already run: a board that fails its own audit counts for
+nothing, and neither does an `invalid` row. An entry holding some of its
+`--repeats` but not all, as an interrupted board leaves it, is named on
+stderr and not selected, because a new board repeating those slots would
+not pool with the one that holds them. If every active entry has already
 been run under that condition, the command refuses with exit `2` and names
 `--only` as the way to force a rerun.
 
@@ -221,6 +226,13 @@ of them feed the pooling key: without them, `todo` would report the key of
 a default run while an actual `evals run --max-turns 40` recorded a
 different one, and `evals pool` would then refuse the very board `todo`
 said was needed.
+
+It counts the same evidence `evals pool` would accept. `boards_counted`
+names the boards under this key that pass their own audit, and
+`boards_refused` names those that match the key but fail it, with the
+audit's findings. `unevaluated_active` lists the active entries with no
+valid sample on a counted board, and `partially_evaluated_active` lists
+those holding some of their repeats but not all.
 
 ## Pooling
 

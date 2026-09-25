@@ -26,16 +26,39 @@ def _stub_environment_digest(monkeypatch):
     monkeypatch.setattr(outstanding.sweep, "environment_digest_of", lambda environment, host: host.get("digest", ""))
 
 
-def _board(path, *, ids: list[str], key: tuple[str | None, str]) -> None:
+REFUSED_BY_AUDIT: dict[str, tuple[str, ...]] = {}
+
+
+@pytest.fixture(autouse=True)
+def _stub_self_audit(monkeypatch):
+    """`scoreboard_self_issues` re-derives every row from its run directory,
+    which these hand-written boards do not have. What is under test is what
+    `outstanding` does with the audit's answer, so the answer is scripted:
+    a board passes unless its label is in `REFUSED_BY_AUDIT`."""
+    from hardy.evals import scoreboard
+
+    REFUSED_BY_AUDIT.clear()
+    monkeypatch.setattr(scoreboard, "scoreboard_self_issues",
+                        lambda path, **kw: REFUSED_BY_AUDIT.get(path.name, ()))
+
+
+def _board(path, *, ids: list[str] = (), key: tuple[str | None, str], repeats: int = 1,
+           rows: list[dict] | None = None) -> None:
     run_digest, env_digest = key
     path.mkdir(parents=True)
     board = {
-        "condition": {"run_procedure_digest": run_digest},
+        "condition": {"run_procedure_digest": run_digest, "repeats": repeats},
         "environment": IDENTITY.model_dump(mode="json"),
         "host": {"digest": env_digest},
-        "rows": [{"id": id_} for id_ in ids],
+        "rows": rows if rows is not None else [
+            {"id": id_, "repeat": k, "outcome": "solved"} for id_ in ids for k in range(repeats)
+        ],
     }
     (path / "scoreboard.json").write_text(json.dumps(board), encoding="utf-8")
+
+
+def _paths(tmp_path) -> dict:
+    return {"problems_path": tmp_path / "corpus", "baseline_path": tmp_path / "baseline.json"}
 
 
 def _problems() -> ProblemSet:
@@ -69,20 +92,64 @@ def _baseline() -> sweep.Baseline:
 def test_evaluated_ids_counts_only_boards_under_the_same_key(tmp_path):
     _board(tmp_path / "a", ids=["t"], key=("run-digest", "env-digest"))
     _board(tmp_path / "b", ids=["u"], key=("other-digest", "env-digest"))
-    assert outstanding.evaluated_ids(tmp_path, key=("run-digest", "env-digest")) == {"t"}
+    admitted, refused = outstanding.poolable_boards(tmp_path, key=("run-digest", "env-digest"), **_paths(tmp_path))
+    assert (admitted, refused) == (["a"], {})
+    assert outstanding.evaluated_ids(tmp_path, boards=admitted) == ({"t"}, set())
 
 
 def test_a_board_with_no_run_digest_is_not_counted_as_evidence(tmp_path):
     # Absence is staleness, not agreement: a board written before the gate
     # existed says nothing about which condition produced it.
     _board(tmp_path / "old", ids=["t"], key=(None, "env-digest"))
-    assert outstanding.evaluated_ids(tmp_path, key=("run-digest", "env-digest")) == set()
+    assert outstanding.poolable_boards(tmp_path, key=("run-digest", "env-digest"), **_paths(tmp_path)) == ([], {})
 
 
 def test_outstanding_lists_active_work_only(tmp_path):
-    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=("r", "e"))
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=("r", "e"), **_paths(tmp_path))
     assert result["unevaluated_active"] == ["u"]      # `t` and `f` are candidates
     assert result["unbaselined_active"] == ["u"]
+    assert result["partially_evaluated_active"] == []
+    assert result["boards_counted"] == [] and result["boards_refused"] == {}
+
+
+# --- Evidence is what `evals pool` would accept (#213) ---
+
+
+def test_a_board_failing_its_self_audit_counts_nothing_and_is_named_refused(tmp_path):
+    """`evals pool` refuses a board its own audit rejects, so none of that
+    board's rows is evidence -- and `boards_counted` must not claim it."""
+    key = ("r", "e")
+    _board(tmp_path / "bad", ids=["u"], key=key)
+    _board(tmp_path / "good", ids=["t"], key=key)
+    REFUSED_BY_AUDIT["bad"] = ("runs/u/batch-0: the recorded-run audit reports findings",)
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    assert result["boards_counted"] == ["good"]
+    assert result["boards_refused"] == {"bad": ["runs/u/batch-0: the recorded-run audit reports findings"]}
+    assert result["unevaluated_active"] == ["u"]
+
+
+def test_an_invalid_row_leaves_its_id_unevaluated(tmp_path):
+    key = ("r", "e")
+    _board(tmp_path / "a", key=key, rows=[{"id": "u", "repeat": 0, "outcome": "invalid"}])
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    assert result["unevaluated_active"] == ["u"]
+    assert result["partially_evaluated_active"] == []
+
+
+def test_an_entry_with_only_some_of_its_repeats_is_partial_not_evaluated(tmp_path):
+    """An interrupted `--repeats 3` board holding only `(u, 0)`: counting `u`
+    as done pools one sample beside other entries' three, and rerunning it
+    whole claims `(u, 0)` twice, which `evals pool` refuses. It is reported
+    apart, and not selected by the default run."""
+    key = ("r", "e")
+    _board(tmp_path / "a", key=key, repeats=3, rows=[{"id": "u", "repeat": 0, "outcome": "solved"}])
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    assert result["partially_evaluated_active"] == ["u"]
+    assert result["unevaluated_active"] == []
+
+    _board(tmp_path / "b", key=key, repeats=3, rows=[{"id": "u", "repeat": k, "outcome": "solved"} for k in (1, 2)])
+    done = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    assert done["partially_evaluated_active"] == [] and done["unevaluated_active"] == []
 
 
 def _row() -> sweep.EntryBaseline:

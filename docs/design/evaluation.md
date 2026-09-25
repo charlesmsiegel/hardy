@@ -335,6 +335,15 @@ fact to report and not a tie to break silently. And a board recording no
 `run_procedure_digest` is refused as carrying nothing rather than treated as
 agreeing with its neighbours; a blank is not a match.
 
+`hardy evals todo`, and the default selection of `hardy evals run`, judge what
+is left by the same rule, so that "already run" means "already poolable". A
+board that fails its own audit counts for nothing, an `invalid` row is not a
+sample, and an entry is done only when its valid rows fill every repeat slot
+the key's `repeats` names. An entry with some slots but not all is reported
+apart and not rerun by default. A second board repeating its slots would claim
+them twice, which the pool refuses, and counting it as done would pool one
+sample beside other entries' three.
+
 **Budgets are frozen, and workers are the only knob.** `lean_timeout` stays at
 180 and the wall backstop at 600, chosen once, because raising either would
 invalidate the baseline carry-forward and un-pool every prior run. Worker counts
