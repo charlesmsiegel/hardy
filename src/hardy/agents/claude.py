@@ -235,6 +235,13 @@ class ClaudeAgentRuntime:
         # Tool-use id -> bare name, so a completed call can be named when the
         # SDK reports it back by id alone.
         self._called: dict[str, str] = {}
+        # Tool-use ids already recorded as refused, so a call denied twice over
+        # -- the `PreToolUse` hook and the stream's own `ToolUseBlock`, or the
+        # permission callback and either of those -- is recorded once rather
+        # than once per gate that saw it (issue #320 fix round 1). Reset with
+        # the other per-turn state in `stream`, so it cannot grow across a long
+        # session; an id-less refusal is never deduplicated, only ever added.
+        self._refused_tool_use_ids: set[str] = set()
         # One entry per streamed text block that has not completed yet, oldest
         # first, and the block index the last delta belonged to. A completed
         # block consumes its own entry; whatever is left at the end of the turn
@@ -306,6 +313,26 @@ class ClaudeAgentRuntime:
             include_partial_messages=True,
         )
 
+    def _refused_once(self, tool_use_id: str | None) -> bool:
+        """True the first time a given tool call is refused; false on a repeat.
+
+        `_permit`, `_gate` and `_note` each independently notice a refused
+        call, so one denied built-in reaching more than one of them must not
+        turn into more than one `refused_tool` event in the transcript --
+        `documents/export.py` renders every such event as its own line, with
+        no deduplication of its own, and the fifty-slot clip it applies counts
+        raw events. A call with no id -- an older SDK, or a caller that has
+        none to give -- is never deduplicated: recording a real refusal twice
+        is a cosmetic doubling, but dropping one because it happened to share
+        an absent id with another is a refusal the record would then deny.
+        """
+        if tool_use_id is None:
+            return True
+        if tool_use_id in self._refused_tool_use_ids:
+            return False
+        self._refused_tool_use_ids.add(tool_use_id)
+        return True
+
     async def _permit(self, name: str, arguments: dict[str, Any], context: Any) -> Any:
         """Allow Hardy's own tools; refuse everything else by default.
 
@@ -315,7 +342,11 @@ class ClaudeAgentRuntime:
         """
         if name.startswith(f"mcp__{SERVER}__"):
             return self._loaded().PermissionResultAllow(behavior="allow")
-        self._observe({"type": "refused_tool", "name": name})
+        # `context` is a `ToolPermissionContext` carrying `tool_use_id` on every
+        # real call (the wire protocol guarantees it); `None` here only in a
+        # test that calls this directly.
+        if self._refused_once(getattr(context, "tool_use_id", None)):
+            self._observe({"type": "refused_tool", "name": name})
         return self._loaded().PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
 
     async def _gate(self, data: Mapping[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
@@ -333,7 +364,8 @@ class ClaudeAgentRuntime:
         name = str(data.get("tool_name", ""))
         if name.startswith(f"mcp__{SERVER}__"):
             return {}
-        self._observe({"type": "refused_tool", "name": name, "via": "hook"})
+        if self._refused_once(tool_use_id):
+            self._observe({"type": "refused_tool", "name": name, "via": "hook"})
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -370,6 +402,7 @@ class ClaudeAgentRuntime:
         self._cancelled = False
         self._loop, self._client, self._called = None, None, {}
         self._drawn, self._drawing = [], None
+        self._refused_tool_use_ids = set()
         # The interval is counted from here, not from the first delta: the
         # first checkpoint of a turn lands one interval in, like every other.
         self._checkpointed_at = time.monotonic()
@@ -730,11 +763,12 @@ class ClaudeAgentRuntime:
                 # and two calls to the same tool can be in flight at once.
                 self._called[identifier] = plain(name)
                 self._observe({"type": "tool_use", "name": name, "input": getattr(block, "input", {})})
-                if not name.startswith(f"mcp__{SERVER}__"):
+                if not name.startswith(f"mcp__{SERVER}__") and self._refused_once(identifier or None):
                     # `_gate` and `_permit` are what actually stop this from
                     # running; this is the stream's own record that one was
                     # attempted, distinguished by `via` from the hook's report
-                    # of the same refusal.
+                    # of the same refusal -- and deduplicated against it by
+                    # `_refused_once`, since the same call can reach both.
                     self._observe({"type": "refused_tool", "name": name, "via": "stream"})
                 yield TurnEvent("tool_use", name=plain(name), call_id=identifier)
             elif kind == "ToolResultBlock":

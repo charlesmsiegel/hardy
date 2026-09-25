@@ -861,6 +861,18 @@ def test_a_tool_the_sdk_refused_is_reported_as_refused():
     assert "not a Hardy tool" in page
 
 
+def test_a_refusal_the_runtime_recorded_once_renders_as_one_line():
+    """A denied built-in can reach both the `PreToolUse` hook and the stream's
+    own record of the `ToolUseBlock`, and the runtime now records that as a
+    single `refused_tool` event (issue #320 fix round 1) rather than one per
+    gate that noticed it. This section must not turn one recorded refusal into
+    more than one line -- it renders exactly the events the transcript holds,
+    with no dedup of its own, so a doubled *event* would still show as a
+    doubled *line*."""
+    page = build(transcript=[{"type": "refused_tool", "name": "TaskCreate", "via": "hook"}])
+    assert page.count("TaskCreate: not a Hardy tool; the request never ran") == 1
+
+
 def test_a_model_switch_is_marked_where_it_happened():
     page = build(transcript=[
         {"type": "user", "message": {"role": "user", "content": "before"}},

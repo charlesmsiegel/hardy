@@ -211,6 +211,80 @@ def test_a_hardy_tool_use_is_not_recorded_as_refused():
     assert not [event for event in seen if event["type"] == "refused_tool"]
 
 
+def test_a_call_the_hook_denies_and_the_stream_also_sees_is_recorded_once():
+    """One denied built-in can reach both gates -- the `PreToolUse` hook denies
+    it, and it still shows up as a `ToolUseBlock` -- and the transcript must
+    not turn that into two lines of the same refusal (issue #320 fix round 1).
+    """
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, "call-9", None))
+    list(live._note(AssistantMessage(ToolUseBlock("TaskCreate", "call-9")), []))
+    refused = [event for event in seen if event["type"] == "refused_tool"]
+    assert refused == [{"type": "refused_tool", "name": "TaskCreate", "via": "hook"}]
+
+
+def test_the_same_call_seen_by_the_stream_first_and_then_denied_by_the_hook_is_recorded_once():
+    """The other order: the stream draws the attempt before the hook's denial
+    reaches this runtime. Whichever gate notices first keeps the record."""
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    list(live._note(AssistantMessage(ToolUseBlock("TaskCreate", "call-9")), []))
+    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, "call-9", None))
+    refused = [event for event in seen if event["type"] == "refused_tool"]
+    assert refused == [{"type": "refused_tool", "name": "TaskCreate", "via": "stream"}]
+
+
+def test_two_different_denied_calls_are_each_recorded():
+    """Deduplication is per call, not per turn -- a second, different denied
+    call must not be swallowed by the first's record."""
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    list(live._note(AssistantMessage(ToolUseBlock("TaskCreate", "call-1")), []))
+    list(live._note(AssistantMessage(ToolUseBlock("TodoWrite", "call-2")), []))
+    refused = [event for event in seen if event["type"] == "refused_tool"]
+    assert [event["name"] for event in refused] == ["TaskCreate", "TodoWrite"]
+
+
+def test_a_hook_refusal_with_no_tool_use_id_is_never_dropped():
+    """An absent id cannot be deduplicated against -- there is nothing to key
+    it on -- so it must always be recorded rather than silently swallowed."""
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
+    asyncio.run(live._gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
+    refused = [event for event in seen if event["type"] == "refused_tool"]
+    assert len(refused) == 2
+
+
+def test_the_refusal_dedup_set_is_cleared_between_turns():
+    """A denial recorded in one turn must not suppress the same id's refusal
+    in a later, unrelated turn -- ids are not guaranteed unique across turns,
+    and the set must not grow across a long session regardless."""
+    seen: list[dict] = []
+    live, _ = wired(
+        [
+            AssistantMessage(ToolUseBlock("TaskCreate", "call-1")),
+            UserMessage(ToolResultBlock("call-1", is_error=True)),
+            ResultMessage(),
+        ],
+        observe=seen.append,
+    )
+    list(live.stream("go"))
+    live._sdk = types.SimpleNamespace(ClaudeSDKClient=lambda options=None: FakeClient(
+        [
+            AssistantMessage(ToolUseBlock("TaskCreate", "call-1")),
+            UserMessage(ToolResultBlock("call-1", is_error=True)),
+            ResultMessage(),
+        ],
+        None,
+        (),
+    ))
+    list(live.stream("go again"))
+    refused = [event for event in seen if event["type"] == "refused_tool"]
+    assert len(refused) == 2
+
+
 def test_a_failed_tool_call_is_reported_as_failed():
     live, _ = wired(
         [
