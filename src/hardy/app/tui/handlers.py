@@ -1456,8 +1456,8 @@ async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
             delegations.pause(words[1], by="human")
             ui.write(f"Paused {words[1]}.")
         elif words[0] == "resume" and len(words) == 2:
-            delegations.resume(words[1], by="human")
-            ui.write(f"Resumed {words[1]}.")
+            note = delegations.resume(words[1], by="human")
+            ui.write(f"Resumed {words[1]}." + (f" {note}" if note else ""))
         elif words[0] == "reinforce" and len(words) == 3:
             decision = delegations.reinforce(words[1], ResourceDelta(official_checks=int(words[2])),
                                              by="human", reason="reinforced from the terminal")
@@ -1499,7 +1499,18 @@ async def handle_cancel(ui: Ui, argument: str, state: State) -> State:
     if not requested:
         ui.write(f"Nothing to cancel: {target} is unknown or already finished.")
         return state
-    ui.write(f"Cancellation requested for {', '.join(requested)}. Active workers stop at their next step.")
+    # A running worker stops through the session that runs it; another open
+    # session's workers only get the journaled request, which nothing there reads.
+    check = getattr(state.session.delegations, "running_elsewhere", None)
+    elsewhere = set(check(tuple(requested))) if check is not None else set()
+    here = [id for id in requested if id not in elsewhere]
+    if here:
+        ui.write(f"Cancellation requested for {', '.join(here)}. Active workers stop at their next step.")
+    if elsewhere:
+        ui.write(f"{', '.join(id for id in requested if id in elsewhere)} "
+                 f"{'is' if len(elsewhere) == 1 else 'are'} running in another open session on this problem. "
+                 "The request is recorded, but only that session can stop a running worker; cancel it there.",
+                 style="error")
     return state
 
 
