@@ -403,20 +403,37 @@ def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_sess
     assert sympy_session.execute("kept").value_repr == "x**4 + 4*x**3*y + 6*x**2*y**2 + 4*x*y**3 + y**4"
 
 
+#: What `ast.parse` raises on a source deep enough to exhaust some bound
+#: while converting its AST, other than `SyntaxError`. Which one fires is not
+#: stable across Python versions for a given depth: 3.11 hits `RecursionError`
+#: at depths where 3.12/3.13 do not, because the C-level AST-to-object
+#: conversion's own stack use changed between them. The sizes chosen below are
+#: deep enough to fail on every Python Hardy supports (>=3.11); which member
+#: of this set fires is version detail, not the thing being tested.
+_NON_SYNTAX_PARSE_FAILURES = ("RecursionError", "MemoryError")
+
+
 def test_a_cell_the_parser_cannot_handle_is_an_error_not_a_dead_kernel(
     sympy_session,
 ) -> None:
     """Issue #311: only `SyntaxError` was caught around `ast.parse`.
 
-    A flat sum of 3000 terms is small (well under the 64 KiB cell cap) but
-    deep enough that converting its AST raises `RecursionError`, not
-    `SyntaxError` -- and that used to escape `run_cell` entirely and kill the
-    kernel, discarding the whole live namespace over one cell.
+    A flat sum of 20000 terms is small (well under the 64 KiB cell cap) but
+    deep enough that converting its AST fails on every supported Python with
+    something other than `SyntaxError` -- and that used to escape `run_cell`
+    entirely and kill the kernel, discarding the whole live namespace over one
+    cell.
     """
+    source = "+".join(["x"] * 20_000)
+    # Sanity check on the test's own premise: a cell this size is answered as
+    # a parse failure, not refused by `execute`'s separate 64 KiB cell-size
+    # guard (`CasError`, not a `CellRecord` at all) for an unrelated reason.
+    assert len(source.encode("utf-8")) <= 64 * 1024
     sympy_session.execute("x = 41")
-    failed = sympy_session.execute("+".join(["x"] * 3000))
+    failed = sympy_session.execute(source)
     assert failed.status == "error"
-    assert "RecursionError" in failed.stderr
+    assert "SyntaxError" not in failed.stderr
+    assert any(name in failed.stderr for name in _NON_SYNTAX_PARSE_FAILURES), failed.stderr
     assert sympy_session.state == "live"
     assert sympy_session.execute("x").value_repr == "41"
 
@@ -424,10 +441,13 @@ def test_a_cell_the_parser_cannot_handle_is_an_error_not_a_dead_kernel(
 def test_a_deeply_nested_unary_expression_is_also_just_an_error(sympy_session) -> None:
     """The same parser depth failure, reached through unary minus instead of a
     long sum -- confirming the fix is not narrowly tied to one AST shape."""
+    source = "-" * 22_000 + "1"
+    assert len(source.encode("utf-8")) <= 64 * 1024
     sympy_session.execute("x = 41")
-    failed = sympy_session.execute("-" * 5000 + "1")
+    failed = sympy_session.execute(source)
     assert failed.status == "error"
-    assert "RecursionError" in failed.stderr
+    assert "SyntaxError" not in failed.stderr
+    assert any(name in failed.stderr for name in _NON_SYNTAX_PARSE_FAILURES), failed.stderr
     assert sympy_session.state == "live"
     assert sympy_session.execute("x").value_repr == "41"
 
