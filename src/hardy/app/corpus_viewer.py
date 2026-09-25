@@ -491,7 +491,11 @@ def _resolve_names() -> tuple[str, str, list[str]]:
     for name in {n for n in (hostname, fqdn) if n}:
         try:
             addresses.extend(info[4][0] for info in socket.getaddrinfo(name, None))
-        except OSError:
+        except (OSError, UnicodeError):
+            # `getaddrinfo` IDNA-encodes `name` first, and raises
+            # `UnicodeError` -- a `ValueError`, not an `OSError` -- for one
+            # that fails to encode; a non-ASCII or malformed hostname or
+            # FQDN is exactly a name this loop cannot use, not a crash.
             continue
     return hostname, fqdn, addresses
 
@@ -528,7 +532,10 @@ def _allowed_hosts(host: str, port: int, *,
         allowed = set(loopback)
         try:
             hostname, fqdn, addresses = resolve()
-        except OSError:
+        except (OSError, UnicodeError):
+            # Same failure modes `_resolve_names` itself swallows per name,
+            # caught again here for whatever `resolve` an injected caller
+            # substitutes: resolution failing must still leave loopback.
             return allowed
         allowed |= {f"{name}:{port}" for name in (hostname, fqdn) if name}
         allowed |= {f"{_bracket(address)}:{port}" for address in addresses}
