@@ -309,26 +309,39 @@ _TOML_ESCAPES = {"\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"
 _CONTROL_CHARACTERS = frozenset(_TOML_ESCAPES)
 
 
-def _reject_control_characters(key: str, value: str, path: Path) -> str:
-    """Refuse `value` for `key` if it holds a control character TOML read from a backslash.
+def _reject_control_characters(where: str, value: str, *, from_toml: bool) -> str:
+    """Refuse `value` if it holds a control character, naming where it came from.
 
     A path or a command hand-written as `"C:\\temp\\new"` parses without
     error -- `tomllib` turns `\\t` and `\\n` into TAB and LF -- and Hardy used
     to go on to report a directory named with a literal TAB as merely
     "missing", with nothing to say why. Caught here, at the setting that
-    actually holds the bad value, the message names both the setting and the
-    file and says plainly that the backslash was read as an escape.
+    actually holds the bad value, the message names the setting and its
+    source: the file, the environment variable, or the command line (`where`).
+
+    Only a value read from a TOML file can have got its control character
+    from a backslash escape, so only then does the message say so. From the
+    environment or a flag the character was really there, and blaming TOML
+    would send the user to the wrong place.
     """
     if not any(character in value for character in _CONTROL_CHARACTERS):
         return value
+    if from_toml:
+        raise ValueError(
+            f"{where} contains a control character: a backslash there was read by "
+            f"TOML as an escape (\\t, \\n, \\b, \\f, or \\r), not a literal backslash. Write "
+            f"it with forward slashes, in single quotes, or with doubled backslashes."
+        )
     raise ValueError(
-        f"{key} in {path} contains a control character: a backslash there was read by "
-        f"TOML as an escape (\\t, \\n, \\b, \\f, or \\r), not a literal backslash. Write "
-        f"it with forward slashes, in single quotes, or with doubled backslashes."
+        f"{where} contains a control character (a tab, newline, backspace, form feed "
+        f"or carriage return), which no path or command holds; check how the value "
+        f"was quoted where it was set."
     )
 
 
-def split_command(value: str | list[str], *, posix: bool | None = None) -> tuple[str, ...]:
+def split_command(
+    value: str | list[str], *, posix: bool | None = None, setting: str = "command"
+) -> tuple[str, ...]:
     """Argv for a configured command (`lean_command`, `latex_command`), split for the platform.
 
     A TOML array is taken verbatim, after checking every element is a string:
@@ -347,16 +360,30 @@ def split_command(value: str | list[str], *, posix: bool | None = None) -> tuple
     selects the platform by monkeypatching `_POSIX`, and a bound default
     parameter would freeze the value `_POSIX` held when this module was first
     imported and never see that patch.
+
+    `setting` names the value in every refusal -- `load` passes the key and
+    where it was set -- so an unbalanced quote or an empty command is reported
+    against the setting that holds it when the config is read, not as a bare
+    `shlex` error, or an `IndexError` at the first Lean or LaTeX call.
     """
     if isinstance(value, list):
         if not all(isinstance(item, str) for item in value):
-            raise ValueError(f"command list entries must be strings, not {value!r}")
-        return tuple(value)
-    if posix is None:
-        posix = _POSIX
-    if posix:
-        return tuple(shlex.split(value))
-    return tuple(unquoted(word) for word in shlex.split(value, posix=False))
+            raise ValueError(f"{setting} list entries must be strings, not {value!r}")
+        argv = tuple(value)
+    else:
+        if posix is None:
+            posix = _POSIX
+        try:
+            words = shlex.split(value, posix=posix)
+        except ValueError as error:
+            raise ValueError(
+                f"{setting} cannot be split into arguments ({error}): close the quote, "
+                f"or write the command as a TOML array of arguments"
+            ) from None
+        argv = tuple(words) if posix else tuple(unquoted(word) for word in words)
+    if not argv or not argv[0].strip():
+        raise ValueError(f"{setting} is empty: it must name the program to run")
+    return argv
 
 
 @dataclass(frozen=True)
@@ -572,19 +599,27 @@ def load(
         migrate_global()
     path = path or default_config_path()
     values: dict[str, Any] = read_file(path)
+    # Where each value came from, as a phrase for a refusal to name, and
+    # whether TOML parsed it (and so could have turned a backslash into a
+    # control character). Kept beside `values` and overwritten with it, so a
+    # message blames the layer that actually won.
+    origins: dict[str, tuple[str, bool]] = {key: (f"{key} in {path}", True) for key in values}
 
     # The root is resolved before the project layer is located, because the
     # project layer lives inside it. Reading the environment afterwards would
     # make HARDY_ROOT advertised and inert: Hardy would take the project config
     # from the current directory and open the wrong problem there.
-    def _root_from(source: dict[str, Any]) -> Path | None:
-        value = source.get("root")
-        return Path(str(value)).expanduser() if value else None
+    def _root_from(value: Any, where: str, *, from_toml: bool) -> Path | None:
+        if not value:
+            return None
+        return Path(_reject_control_characters(where, str(value), from_toml=from_toml)).expanduser()
 
     resolved_root = (
-        (Path(root).expanduser() if root else None)
-        or (Path(os.environ["HARDY_ROOT"]).expanduser() if os.environ.get("HARDY_ROOT") else None)
-        or _root_from(values)
+        _root_from(root, "root given on the command line", from_toml=False)
+        or _root_from(
+            os.environ.get("HARDY_ROOT"), "root from the environment variable HARDY_ROOT", from_toml=False
+        )
+        or _root_from(values.get("root"), f"root in {path}", from_toml=True)
         or Path.cwd()
     )
 
@@ -607,13 +642,23 @@ def load(
     if dropped:
         print(f"ignoring {dropped} settings in {project_path}; a project config may only set: {', '.join(sorted(PROJECT_SETTINGS))}")
     values.update(project_values)
+    origins.update({key: (f"{key} in {project_path}", True) for key in project_values})
     for key, variable in SETTINGS.items():
         value = os.environ.get(variable)
         if value:
             values[key] = value
+            origins[key] = (f"{key} from the environment variable {variable}", False)
     for key, value in overrides.items():
         if value is not None:
             values[key] = value
+            origins[key] = (f"{key} given on the command line", False)
+
+    def checked(key: str, value: str, *, element: int | None = None) -> str:
+        """`value` for `key`, refused if it holds a control character."""
+        where, from_toml = origins.get(key, (key, False))
+        if element is not None:
+            where = f"{where} (argument {element + 1})"
+        return _reject_control_characters(where, value, from_toml=from_toml)
 
     def text(key: str, default: str) -> str:
         return str(values.get(key) or default)
@@ -622,14 +667,28 @@ def load(
         value = values.get(key)
         if not value:
             return None
-        return Path(_reject_control_characters(key, str(value), path)).expanduser()
+        return Path(checked(key, str(value))).expanduser()
 
-    def command_value(key: str, default: str) -> str | list[str]:
-        """The raw value for a command setting: a TOML list verbatim, or checked text."""
-        value = values.get(key)
+    def command(key: str, default: str) -> tuple[str, ...]:
+        """Argv for a command setting: a TOML list verbatim, or checked and split text.
+
+        An absent setting takes the default. One that is present but empty --
+        `[]`, `[""]`, or a blank value given on the command line -- is refused
+        by `split_command` rather than quietly defaulted: it was written, so it
+        was meant. (A blank value in a file never gets here: `read_file` reads
+        it as unset.)
+        """
+        if key not in values:
+            return split_command(default, setting=key)
+        value = values[key]
         if isinstance(value, list):
-            return value
-        return _reject_control_characters(key, str(value) if value else default, path)
+            value = [
+                checked(key, item, element=index) if isinstance(item, str) else item
+                for index, item in enumerate(value)
+            ]
+        else:
+            value = checked(key, str(value))
+        return split_command(value, setting=origins.get(key, (key, False))[0])
 
     try:
         lean_timeout = float(values.get("lean_timeout", DEFAULT_LEAN_TIMEOUT))
@@ -692,7 +751,7 @@ def load(
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
     provider_budget = None
     if values.get("provider_budget"):
-        budget_path = Path(str(values["provider_budget"])).expanduser()
+        budget_path = Path(checked("provider_budget", str(values["provider_budget"]))).expanduser()
         if not budget_path.is_absolute():
             budget_path = path.parent / budget_path
         provider_budget = SpendPolicy.model_validate_json(budget_path.read_text(encoding="utf-8"))
@@ -706,10 +765,10 @@ def load(
 
     return Config(
         model=str(values["model"]) if values.get("model") else DEFAULT_MODEL,
-        lean_command=split_command(command_value("lean_command", DEFAULT_LEAN_COMMAND)),
+        lean_command=command("lean_command", DEFAULT_LEAN_COMMAND),
         lean_project=location("lean_project"),
         lean_timeout=lean_timeout,
-        latex_command=split_command(command_value("latex_command", DEFAULT_LATEX_COMMAND)),
+        latex_command=command("latex_command", DEFAULT_LATEX_COMMAND),
         root=resolved_root,
         # `choose` reaches here rather than the caller asking first because
         # the root the question is about is resolved in this function, from

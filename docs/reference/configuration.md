@@ -97,20 +97,25 @@ Write a Windows path one of three ways instead:
 - single quotes, which TOML never escapes: `lean_project = 'C:\Users\me\lean'`
 - doubled backslashes: `lean_project = "C:\\Users\\me\\lean"`
 
-This applies to every path setting (`lean_project`, `runs_root`, `lake`,
-`elan`, `tectonic`, `cas_command`) and to `lean_command` and `latex_command`
-when they are written as a plain string; a value that still contains a
-control character after parsing is refused, naming the setting and the file,
-rather than reported later as a directory or executable that is merely
-"missing". A legacy `model` may legitimately hold a real newline and is not
-affected by this check.
+This applies to every path setting (`root`, `lean_project`, `runs_root`,
+`lake`, `elan`, `tectonic`, `cas_command`, `provider_budget`) and to
+`lean_command` and `latex_command`, both as a plain string and as each element
+of a TOML array, since a double-quoted array element reads a backslash the same
+way. A value that still contains a control character after parsing is refused,
+naming the setting and where it was set -- the global or project config file,
+the `HARDY_*` environment variable, or the command line -- rather than reported
+later as a directory or executable that is merely "missing". Only a value from
+a config file is blamed on a TOML escape. A legacy `model` may legitimately
+hold a real newline and is not affected by this check.
 
 `lean_command` and `latex_command` are also split for the platform they run
 on: on Windows, splitting keeps backslashes rather than reading them as
 escapes, the same fix already used for `/import`'s file arguments. Writing
 either setting as a TOML array (`lean_command = ["C:\\Users\\me\\.elan\\bin\\lean.exe"]`)
 sidesteps splitting altogether, since the array already says where the
-arguments end.
+arguments end. A command string with an unbalanced quote, or a command that
+names no program (`[]`, `[""]`, or a blank `--lean-command`), is refused when
+the configuration is read, naming the setting and where it was set.
 
 ## Environment variables without a setting
 
