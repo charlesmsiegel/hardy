@@ -19,6 +19,7 @@ was approved would be worse than no button.
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import json
 import os
 import secrets
@@ -524,6 +525,43 @@ def _bracket(address: str) -> str:
     return address if address.startswith("[") or ":" not in address else f"[{address}]"
 
 
+def _canonicalize_host(host: str) -> str:
+    """`host`, in the one spelling a WHATWG-URL client sends in `Host`.
+
+    An IP literal has more than one spelling for one address --
+    `0:0:0:0:0:0:0:1` and `::1` name the same host -- and a browser, `fetch`,
+    or `curl` canonicalises whichever spelling it was given before it is ever
+    put in a request. Comparing (or announcing) the literal spelling `--host`
+    happened to be given, rather than the address it names, missed exactly
+    that: the server bound and announced a non-canonical spelling, and a real
+    client's canonical `Host` never matched what was admitted.
+
+    A hostname is not an IP literal at all -- `ipaddress.ip_address` raises
+    `ValueError` on one -- and is returned lowercased and otherwise
+    unchanged, since a name (unlike an address) already canonicalises to
+    itself.
+    """
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return host.lower()
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether a *canonicalised* IP literal or hostname is loopback.
+
+    `ipaddress` knows every loopback address -- all of `127.0.0.0/8`, not
+    just `127.0.0.1`, and `::1` -- rather than the one spelling apiece
+    `_LOOPBACK_NAMES` lists; a canonical IP literal is checked against that
+    directly. A hostname is never loopback by this check alone -- `localhost`
+    is handled by `_LOOPBACK_NAMES` membership instead, beside this.
+    """
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _allowed_hosts(host: str, port: int, *,
                     resolve: Callable[[], tuple[str, str, list[str]]] = _resolve_names) -> set[str]:
     """`Host` header values this server, bound to `host:port`, should answer to.
@@ -554,6 +592,14 @@ def _allowed_hosts(host: str, port: int, *,
     incoming header lowercased the same way, treats those as the one host
     they are rather than refusing one spelling of it.
 
+    A specific `--host` that is an IP literal is admitted by its
+    *canonical* spelling (`_canonicalize_host`), not necessarily the one
+    given: `--host 0:0:0:0:0:0:0:1` binds `::1`, but a WHATWG-URL client
+    canonicalises the address before ever sending it, and would send `Host:
+    [::1]:<port>` regardless of how `--host` spelled it. Loopback detection
+    follows the same canonical value, and covers every loopback address
+    (`ipaddress`'s `is_loopback`), not only `127.0.0.1` and `::1`.
+
     On port 80, the admitted set also carries the portless form of every host
     in it: `http://host/` has no `:80` for a client to send, so a browser or
     `curl` sends `Host: host` outright, and refusing that would 403 the one
@@ -572,8 +618,9 @@ def _allowed_hosts(host: str, port: int, *,
         allowed |= {f"{name.lower()}:{port}" for name in (hostname, fqdn) if name}
         allowed |= {f"{_bracket(address.lower())}:{port}" for address in addresses}
         return _with_portless_on_80(allowed, port)
-    allowed = {f"{_bracket(host.lower())}:{port}"}
-    if host.lower() in _LOOPBACK_NAMES:
+    canonical = _canonicalize_host(host)
+    allowed = {f"{_bracket(canonical)}:{port}"}
+    if canonical in _LOOPBACK_NAMES or _is_loopback(canonical):
         allowed |= loopback
     return _with_portless_on_80(allowed, port)
 
@@ -619,14 +666,15 @@ def _announce_host(host: str) -> str:
     admit (`0.0.0.0` is a bind target, not a client-reachable address), so
     the URL `serve()` had just printed 403'd. Loopback is what every bind --
     wildcard or not -- always answers on and always admits, so it is what
-    gets printed instead. A specific host is admitted as itself and is
-    printed as itself, bracketed if it is an IPv6 literal -- lowercased the
-    same way `_allowed_hosts` admits it, or the two would name different
-    hosts for one that mixes case.
+    gets printed instead. A specific host is admitted by its canonical
+    spelling (`_canonicalize_host` -- lowercased if a hostname, the address
+    `ipaddress` names if an IP literal) and is announced the same way, or the
+    two could name different hosts for one that mixes case or spells an IP
+    literal non-canonically.
     """
     if host in _WILDCARD_HOSTS:
         return "[::1]" if host == "::" else "127.0.0.1"
-    return _bracket(host.lower())
+    return _bracket(_canonicalize_host(host))
 
 
 def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Path | None = None,
@@ -637,6 +685,11 @@ def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Pa
     on every request like the corpus is, so a sweep running alongside this
     server fills the filters in as its checkpoints land.
     """
+    # Bound to the caller's own spelling of `host`, not `_canonicalize_host`'s
+    # -- a socket bind takes any spelling of an address and binds the same
+    # one either way, so there is nothing to gain by canonicalising it first.
+    # Only the admitted set and the announced URL need the canonical form,
+    # since that is what a real client's `Host` header will actually be.
     server = _server_class(host)((host, port), partial(Handler, root=root, baseline=baseline))
     server.token = secrets.token_urlsafe(32)
     # A request naming any other `Host` is refused before it is routed at

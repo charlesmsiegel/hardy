@@ -529,6 +529,25 @@ def test_an_ipv6_host_is_admitted_bracketed():
     assert _allowed_hosts("2001:db8::1", 9) == {"[2001:db8::1]:9"}
 
 
+def test_a_non_canonical_ipv6_loopback_literal_is_admitted_by_its_canonical_form():
+    """A WHATWG-URL client (a browser, `fetch`, `curl`) canonicalises an IP
+    literal before ever sending it in `Host` -- `0:0:0:0:0:0:0:1` becomes
+    `::1`. Admitting the literal spelling `--host` happened to be given,
+    rather than the address it names, would 403 every such client."""
+    hosts = _allowed_hosts("0:0:0:0:0:0:0:1", 9)
+    assert hosts == {"[::1]:9", "127.0.0.1:9", "localhost:9"}
+
+
+def test_the_announced_host_for_a_non_canonical_loopback_literal_is_admitted():
+    assert _announce_host("0:0:0:0:0:0:0:1") == "[::1]"
+    assert f"{_announce_host('0:0:0:0:0:0:0:1')}:9" in _allowed_hosts("0:0:0:0:0:0:0:1", 9)
+
+
+def test_an_ipv4_literal_is_unchanged_by_canonicalisation():
+    assert _allowed_hosts("192.168.1.5", 9) == {"192.168.1.5:9"}
+    assert _announce_host("192.168.1.5") == "192.168.1.5"
+
+
 def test_a_wildcard_binds_admitted_names_are_lowercase():
     """`gethostname()`/`getfqdn()` keep whatever casing the machine gives
     them -- "DESKTOP-ABC" is typical on Windows -- but a `Host` header is a
