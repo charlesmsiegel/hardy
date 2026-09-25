@@ -632,17 +632,22 @@ class LatexTools:
             for relative in given
             if (work / relative).is_file()
         }
+        # Over the whole tree, before orphans go: a file only one reading of
+        # an unplaceable conditional reaches is "unreached" below, and its
+        # bindings still count (`read_conditionals` drops only files no
+        # reading may read).
+        uncertain = uncertain_conditionals(sources)
+        conditionals = read_conditionals(sources)
         # A fragment nothing includes is not part of the document, so its
         # labels are not labels this compile created.
         for orphan in unreached_fragments(sources):
             sources.pop(orphan, None)
-        conditionals = read_conditionals(sources)
         executed = {path: _executed(text, conditionals) for path, text in sources.items()}
         labels = references.unreferenced_labels(executed)
         # A false branch holding an `\if...` name Hardy cannot place has no
         # known end: nested, it may hide a live `\input`; not nested, it may
-        # credit one TeX skips. Refused with the name, never guessed.
-        uncertain = uncertain_conditionals(sources)
+        # credit one TeX skips. Refused with the name (`uncertain`, above),
+        # never guessed.
         findings = list(references.unresolved(log))
         if references.unconverged(log):
             # Every pass has been spent and the compiler is still asking for

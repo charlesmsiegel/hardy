@@ -149,8 +149,9 @@ def inventory(sources: Mapping[str, str]) -> Inventory:
     # not placed before a use in another, and such a name is reported rather
     # than guessed at.
     roots = [path for path, text, _ in ordered if BEGIN_DOCUMENT.search(typeset(text))]
+    # Every file counts: the inventory scans each one as though it were read.
     conditionals = read_conditionals(
-        {path: text for path, text, _ in ordered}, roots[0] if len(roots) == 1 else None
+        {path: text for path, text, _ in ordered}, roots[0] if len(roots) == 1 else None, every_file=True
     )
     scanner_results = [
         _Scanner(path, text, digest, conditionals).scan() for path, text, digest in ordered
