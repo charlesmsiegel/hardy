@@ -12,10 +12,12 @@ Four layers, later wins: the global config file, then the project config file
 (which may only set `project`), then the environment, then command-line
 flags.
 
-The global file defaults to `~/.hardy/config.toml` on every platform; one
-directory holds Hardy's settings, skills, prompts and shared Lean build, so
-there is one place to look rather than a different one per operating system.
-`HARDY_CONFIG` or `--config` names a different file to read instead.
+The global file defaults to `~/.hardy/config.toml` on every platform --
+`%USERPROFILE%\.hardy\config.toml` on Windows, since that is what `~`
+resolves to there -- one directory holds Hardy's settings, skills, prompts and
+shared Lean build, so there is one place to look rather than a different one
+per operating system. `HARDY_CONFIG` or `--config` names a different file to
+read instead.
 
 `HARDY_CONFIG` selects the global file only. It never reaches the project
 file at `<root>/.hardy/config.toml`. A wrapper that points `HARDY_CONFIG` at
@@ -46,10 +48,10 @@ nothing.
 | --- | --- | --- | --- |
 | `model` | `HARDY_MODEL` | `claude-opus-5` | The model identity a run or session uses. |
 | `faithfulness_model` | `HARDY_FAITHFULNESS_MODEL` | unset, falls back to the run's own model | Who reads a formalization's translation back before proof search, on a thread of its own. |
-| `lean_command` | `HARDY_LEAN_COMMAND` | `lake env lean` | The command that elaborates a Lean file. |
+| `lean_command` | `HARDY_LEAN_COMMAND` | `lake env lean` | The command that elaborates a Lean file. A string is split into a program and its arguments the way the platform's own shell would (see [Windows paths](#windows-paths)); a TOML array (`["/opt/lean/bin/lean", "--json"]`) is taken as the argv verbatim. |
 | `lean_project` | `HARDY_LEAN_PROJECT` | unset | The Lake project whose imports Lean should resolve. Staged work (`prove`, a live `accept`, `evals baseline`/`run`) refuses to start without it. |
 | `lean_timeout` | `HARDY_LEAN_TIMEOUT` | `180` (seconds) | How long a single Lean call may run before it is treated as failed. |
-| `latex_command` | `HARDY_LATEX_COMMAND` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. |
+| `latex_command` | `HARDY_LATEX_COMMAND` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. Split the same way as `lean_command`, and a TOML array is accepted the same way. |
 | `root` | `HARDY_ROOT` | the current directory | The directory holding one or more problems, for `hardy chat` and the batch commands. `hardy web` does not read it: the browser opens projects from its own registry, each in the root its directory sits in. |
 | `project` | `HARDY_PROJECT` | the sole recorded problem if there is exactly one, else `main` | Which problem this session or run opens. This is the only key the project layer (`<root>/.hardy/config.toml`) may set. |
 | `runs_root` | `HARDY_RUNS_ROOT` | `runs` | Where staged `prove` runs are kept. |
@@ -79,6 +81,36 @@ environment value outside the constraint is refused where the file is read:
   loop it meters does not exist on the other backends.
 - `delegation_workers` must be a whole number of at least `1`.
 - `compute_detach_seconds` must be zero or a finite number of seconds.
+
+### Windows paths
+
+TOML's `"..."` strings treat `\` as an escape character, so a Windows path
+typed the way Explorer shows it -- `lean_project = "C:\Users\me\lean"` --
+either fails to parse (`\U` starts a unicode escape) or, worse, parses into a
+corrupted value (`\t`, `\n` and `\b` become TAB, LF and backspace, and the
+directory Hardy then looks for is not the one that was typed). Either way the
+error names the config file that failed to parse.
+
+Write a Windows path one of three ways instead:
+
+- forward slashes: `lean_project = "C:/Users/me/lean"`
+- single quotes, which TOML never escapes: `lean_project = 'C:\Users\me\lean'`
+- doubled backslashes: `lean_project = "C:\\Users\\me\\lean"`
+
+This applies to every path setting (`lean_project`, `runs_root`, `lake`,
+`elan`, `tectonic`, `cas_command`) and to `lean_command` and `latex_command`
+when they are written as a plain string; a value that still contains a
+control character after parsing is refused, naming the setting and the file,
+rather than reported later as a directory or executable that is merely
+"missing". A legacy `model` may legitimately hold a real newline and is not
+affected by this check.
+
+`lean_command` and `latex_command` are also split for the platform they run
+on: on Windows, splitting keeps backslashes rather than reading them as
+escapes, the same fix already used for `/import`'s file arguments. Writing
+either setting as a TOML array (`lean_command = ["C:\\Users\\me\\.elan\\bin\\lean.exe"]`)
+sidesteps splitting altogether, since the array already says where the
+arguments end.
 
 ## Environment variables without a setting
 

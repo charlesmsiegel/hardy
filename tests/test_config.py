@@ -705,3 +705,133 @@ def test_a_fractional_delegation_pool_is_refused_from_every_source(tmp_path: Pat
     monkeypatch.setenv("HARDY_DELEGATION_WORKERS", "3.9")
     with pytest.raises(ValueError, match="delegation_workers must be a whole number"):
         config.load(write(tmp_path / "ok.toml", "delegation_workers = 3\n"))
+
+
+# --- Windows paths: readable TOML errors and platform-aware command splitting (#303, #260) ---
+
+
+def test_an_unescaped_windows_path_names_the_file_and_suggests_quoting(tmp_path: Path):
+    """`\\U` in a double-quoted string starts a unicode escape and fails to parse.
+
+    The bare `tomllib.TOMLDecodeError` names no file; `_parse_toml` must wrap
+    it so the file that failed to parse is in the message a user sees.
+    """
+    path = write(tmp_path / "config.toml", 'lean_project = "C:\\Users\\me\\lean"\n')
+    with pytest.raises(ValueError, match=r"single quotes") as excinfo:
+        config.load(path)
+    assert str(path) in str(excinfo.value)
+
+
+def test_a_backslash_that_parses_but_becomes_a_control_character_is_refused(tmp_path: Path):
+    """`\\t` and `\\n` inside a double-quoted string are TAB and LF, not path
+
+    separators; `tomllib` parses this without error, and Hardy must catch it
+    before a corrupted path is reported downstream as merely "missing".
+    """
+    path = write(tmp_path / "config.toml", 'lean_project = "C:\\temp\\new"\n')
+    with pytest.raises(ValueError, match="lean_project") as excinfo:
+        config.load(path)
+    assert "control character" in str(excinfo.value)
+
+
+def test_a_single_quoted_windows_path_loads_literally(tmp_path: Path):
+    path = write(tmp_path / "config.toml", "lean_project = 'C:\\Users\\me\\lean'\n")
+    settings = config.load(path)
+    assert settings.lean_project == Path("C:\\Users\\me\\lean")
+
+
+def test_a_legacy_multiline_model_still_round_trips_despite_the_control_character_refusal(tmp_path: Path):
+    """Control-character refusal is scoped to path and command settings only.
+
+    `model` is neither, and `_toml_string`'s docstring documents a legacy
+    multi-line `model` that must keep loading.
+    """
+    path = write(tmp_path / "config.toml", 'model = "line one\\nline two"\n')
+    settings = config.load(path)
+    assert settings.model == "line one\nline two"
+
+
+def test_split_command_posix_is_unchanged():
+    assert config.split_command("lake env lean --quiet", posix=True) == (
+        "lake", "env", "lean", "--quiet",
+    )
+
+
+def test_split_command_windows_keeps_backslashes_and_unquotes():
+    assert config.split_command(r'"C:\a b\lean.exe" --json', posix=False) == (
+        "C:\\a b\\lean.exe", "--json",
+    )
+
+
+def test_split_command_windows_without_quotes_keeps_backslashes():
+    assert config.split_command(r"C:\x\lean.exe", posix=False) == ("C:\\x\\lean.exe",)
+
+
+def test_split_command_reads_a_module_flag_not_os_name(monkeypatch):
+    """Tests select the platform through a module flag so they run on any OS."""
+    monkeypatch.setattr(config, "_POSIX", False)
+    assert config.split_command(r"C:\x\lean.exe") == ("C:\\x\\lean.exe",)
+    monkeypatch.setattr(config, "_POSIX", True)
+    assert config.split_command("lake env lean") == ("lake", "env", "lean")
+
+
+def test_split_command_takes_a_list_verbatim():
+    assert config.split_command(["C:\\x\\lean.exe", "--json"]) == ("C:\\x\\lean.exe", "--json")
+
+
+def test_split_command_rejects_a_list_with_a_non_string_entry():
+    with pytest.raises(ValueError, match="must be strings"):
+        config.split_command(["lake", 1])
+
+
+def test_lean_command_from_the_environment_is_split_the_windows_way(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "_POSIX", False)
+    monkeypatch.setenv("HARDY_LEAN_COMMAND", r"C:\Users\me\.elan\bin\lean.exe")
+    settings = config.load(tmp_path / "missing.toml")
+    assert settings.lean_command == ("C:\\Users\\me\\.elan\\bin\\lean.exe",)
+
+
+def test_lean_command_as_a_toml_list_is_taken_verbatim(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'lean_command = ["C:\\\\x\\\\lean.exe", "--json"]\n')
+    settings = config.load(path)
+    assert settings.lean_command == ("C:\\x\\lean.exe", "--json")
+
+
+def test_latex_command_as_a_toml_list_is_taken_verbatim(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'latex_command = ["pdflatex", "-interaction=nonstopmode"]\n')
+    settings = config.load(path)
+    assert settings.latex_command == ("pdflatex", "-interaction=nonstopmode")
+
+
+def test_a_control_character_in_a_command_setting_is_refused(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'lean_command = "lake\\tenv\\tlean"\n')
+    with pytest.raises(ValueError, match="lean_command") as excinfo:
+        config.load(path)
+    assert "control character" in str(excinfo.value)
+
+
+def test_migrate_global_round_trips_a_command_list(tmp_path: Path):
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('lean_command = ["lake", "env", "lean"]\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    assert config.migrate_global(legacy, destination) is True
+
+    assert config.read_file(destination)["lean_command"] == ["lake", "env", "lean"]
+
+
+def test_a_bad_config_file_is_named_when_the_cli_reads_it(tmp_path: Path, capsys):
+    from hardy.app.cli import build_parser
+
+    bad = write(tmp_path / "config.toml", 'lean_project = "C:\\Users\\me\\lean"\n')
+    parser = build_parser()
+    args = parser.parse_args(["--config", str(bad), "doctor"])
+    from hardy.app.cli import _config
+
+    with pytest.raises(SystemExit):
+        _config(args, parser)
+    err = capsys.readouterr().err
+    assert str(bad) in err
+    assert "single quotes" in err

@@ -196,6 +196,13 @@ setup` has found your toolchain, the three paths it records: `elan`, `lake`,
 `tectonic`. For every other setting, its default, its environment variable,
 and what it means, see [the full settings table](reference/configuration.md#settings).
 
+Hand-editing a path or a command on Windows needs one extra step: TOML's
+`"..."` strings treat `\` as an escape, so a path pasted straight from
+Explorer either fails to parse or is silently corrupted. See
+[Windows paths](reference/configuration.md#windows-paths) for how to write
+one, and how `lean_command` and `latex_command` are split into a program and
+its arguments.
+
 ### The API backend
 
 `backend = "api"` (or `HARDY_BACKEND=api`) sends to the Anthropic Messages
