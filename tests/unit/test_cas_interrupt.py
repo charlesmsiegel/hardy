@@ -472,17 +472,16 @@ def test_a_kill_that_lands_after_the_unrun_answer_still_loses_the_kernel(
     """The pre-send second press, with the kill slower than the driver.
 
     The frame tells the driver to stop, and it answers the cell unrun at once;
-    the kill follows. `SIGKILL` usually wins that race on Linux, but
-    `TerminateProcess` returns before the process is gone, and Windows CI saw
-    the driver's answer arrive first: the cell read as answered by a live
-    kernel, the session stayed `live` holding a dead process, and the next
-    cell would have been recorded as the toolchain falling over. Here the kill
-    is held until the answer is in the buffer, so every platform takes that
-    order.
+    the kill follows. On Linux the kill is usually delivered first, but
+    Windows CI saw the driver write its answer before the kill landed. The
+    kill still waited for the process to exit, but the answer stayed readable
+    in the pipe afterwards, and a complete reply is returned before the
+    stream's end is looked at: the cell read as answered by a live kernel, the
+    session stayed `live` holding a dead process, and the next cell would have
+    been recorded as the toolchain falling over. Here the kill is held until
+    the answer is in the buffer, so every platform takes that order.
     """
-    from hardy.algebra import kernel as kernel_module
-
-    real_kill = kernel_module._Kernel.kill
+    real_kill = cas_module._Kernel.kill
 
     def late(self, *, immediate: bool = False) -> None:
         end = time.monotonic() + 30
@@ -493,7 +492,7 @@ def test_a_kill_that_lands_after_the_unrun_answer_still_loses_the_kernel(
     session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
     try:
         session.execute("a")
-        monkeypatch.setattr(kernel_module._Kernel, "kill", late)
+        monkeypatch.setattr(cas_module._Kernel, "kill", late)
         assert session.interrupt() is False
         assert session.escalate() is False
 
@@ -503,10 +502,56 @@ def test_a_kill_that_lands_after_the_unrun_answer_still_loses_the_kernel(
         assert record.kernel_lost is True
         assert record.accepted is False
         assert session.state == "dead"
+        # It answered -- unrun -- so the note names the press, not a silence.
+        assert "a second press stopped the kernel" in record.restart_note
+        assert "did not answer" not in record.restart_note
         # The next cell rebuilds rather than being sent to the dead process.
-        monkeypatch.setattr(kernel_module._Kernel, "kill", real_kill)
+        monkeypatch.setattr(cas_module._Kernel, "kill", real_kill)
         session.resume()
         assert session.execute("b").status == "ok"
+    finally:
+        session.close()
+
+
+def test_a_second_press_that_races_a_finished_cell_still_loses_the_kernel(
+    cas_session, monkeypatch
+) -> None:
+    """The in-flight half of the same race: the cell has answered `ok`, and
+    the second press lands before Hardy has noticed. The kill really happens,
+    so the kernel is gone whatever the reply said. Driven on one thread --
+    the press is made from inside `read_reply`, just after it found the reply
+    -- so the order is fixed rather than hoped for."""
+    real_read = cas_module._Kernel.read_reply
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    pressed: list[bool] = []
+
+    def then_press(self, *args, **kwargs):
+        reply = real_read(self, *args, **kwargs)
+        pressed.append(session.escalate())
+        return reply
+
+    try:
+        session.execute("a")
+        monkeypatch.setattr(cas_module._Kernel, "read_reply", then_press)
+
+        record = session.execute("b")
+
+        assert pressed == [True]
+        assert record.status == "ok"
+        assert record.kernel_lost is True
+        assert record.accepted is False
+        assert session.state == "dead"
+        # Both notes, and neither contradicts the other: it did report
+        # success, and a second press did stop it.
+        assert "reported success anyway" in record.restart_note
+        assert "a second press stopped the kernel" in record.restart_note
+        assert "did not answer" not in record.restart_note
+
+        monkeypatch.setattr(cas_module._Kernel, "read_reply", real_read)
+        session.resume()
+        rebuilt = session.execute("c")
+        assert rebuilt.status == "ok"
+        assert [item.source for item in session.accepted()] == ["a", "c"]
     finally:
         session.close()
 

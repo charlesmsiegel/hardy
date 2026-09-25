@@ -114,11 +114,16 @@ class CasSession:
         self._stop_level = 0
         # Whether Hardy itself killed the kernel during the cell in flight --
         # the second press, in `escalate` or applied as the cell goes out.
-        # Hardy knows this; the stream cannot say it. A kill is not instant
-        # (`TerminateProcess` returns before the process is gone), and a
-        # driver told by the frame to stop answers the cell unrun at once, so
-        # its reply can be sitting in the buffer before the kill lands. Read
-        # from the stream alone, that cell looks answered by a live kernel.
+        # Hardy knows this; the stream cannot say it. A driver told by the
+        # frame to stop answers the cell unrun at once, and it can write that
+        # answer before the kill is delivered (Windows CI saw exactly this).
+        # The kill then waits for the process to exit, but the answer is
+        # already in the pipe and stays readable after the process is gone,
+        # and `read_reply` returns a complete reply before it looks at the
+        # stream's end. Read from the stream alone, that cell looks answered by
+        # a live kernel. The same holds for an `escalate` that lands just after
+        # a cell has answered. Cleared only as the next frame is built, so it
+        # still describes the last cell when `execute` words its record.
         self._killed = False
         self._records: list[CellRecord] = []
         self._lease: FileLock | None = None
@@ -988,6 +993,11 @@ class CasSession:
             outcome = self._send(source, self._cell_seconds())
             elapsed = time.monotonic() - started
             self.charge(elapsed)
+            # This cell's, not a later one's: `_lock` keeps any other `_send`
+            # from clearing it, and `escalate` can no longer set it once
+            # `_send` has cleared `_in_flight`.
+            with self._signal_lock:
+                killed = self._killed
 
             status = outcome.status
             truncated = outcome.capture_truncated
@@ -1034,7 +1044,17 @@ class CasSession:
                     "export and after a kernel restart. Rerun it printing less, or "
                     "raise cas_output_bytes and rerun it, before building on it.]"
                 )
-            if outcome.kernel_lost:
+            if outcome.kernel_lost and killed:
+                # A second press, which does not wait to see whether the kernel
+                # answers -- and it may have: unrun, or even `ok` if the press
+                # raced a cell that had just finished. Saying it "did not
+                # answer" would contradict the record it sits in.
+                notes = (notes + " " if notes else "") + (
+                    "[a second press stopped the kernel, so every value in the "
+                    "session is gone, whatever this cell answered; the next cell "
+                    "rebuilds from the accepted ones.]"
+                )
+            elif outcome.kernel_lost:
                 notes = (notes + " " if notes else "") + (
                     "[the kernel did not answer the interrupt, so it was stopped. "
                     "Every value in the session is gone; the next cell rebuilds "
