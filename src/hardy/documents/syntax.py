@@ -136,8 +136,9 @@ def _normalise_include(found: str) -> str:
 
 
 _IFFALSE = re.compile(r"\\iffalse(?![a-zA-Z])")
-#: What opens a TeX conditional: the TeX and e-TeX primitives, plus the engine
-#: tests every format defines. An explicit list, because the name alone says
+#: What opens a TeX conditional: the TeX and e-TeX primitives, the pdfTeX and
+#: LuaTeX primitives beyond them, the engine tests every format defines, and
+#: the `iftex` package's. An explicit list, because the name alone says
 #: nothing: `\iff` is a symbol and `\ifthenelse` a macro taking three braced
 #: arguments, and neither has a `\fi`. Read as openers, either left the region
 #: open to the end of the file.
@@ -145,7 +146,10 @@ CONDITIONALS = frozenset({
     "if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode",
     "ifinner", "ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse",
     "ifcase", "ifdefined", "ifcsname", "iffontchar", "ifincsname", "ifpdfprimitive",
+    "ifpdfabsnum", "ifpdfabsdim", "ifabsnum", "ifabsdim", "ifprimitive", "ifcondition",
     "ifpdf", "ifxetex", "ifluatex",
+    "ifpdftex", "ifPDFTeX", "ifXeTeX", "ifLuaTeX", "ifetex", "ifeTeX", "ifptex",
+    "ifuptex", "ifvtex", "ifluahbtex",
 })
 #: `\newif\ifdraft` declares `\ifdraft` as a conditional of the document's own.
 #: The declaration names the conditional without opening it.
