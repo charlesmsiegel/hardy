@@ -100,12 +100,15 @@ class FormalWorkspaceService:
     def _save_digest(source: str) -> str:
         """The identity a green `check_lean` vouches for and a save spends.
 
-        Hashed over `source.rstrip() + "\\n"` -- exactly what
-        `_save_lean_unbraked` writes to disk -- rather than over `source`
-        verbatim, so `check_lean(X)` vouches for `save_lean(X)` *and* for
-        `save_lean(X + "\\n")`: the two calls write identical bytes to the
+        Hashed over `source.rstrip() + "\\n"` -- the text
+        `_save_lean_unbraked` hands to the workspace -- rather than over
+        `source` verbatim, so `check_lean(X)` vouches for `save_lean(X)` *and*
+        for `save_lean(X + "\\n")`: the two calls write identical bytes to the
         workspace, and finding #4 of the second brutal review was this
         digest treating them as different sources and braking the second.
+        Not the bytes on disk, which for a CRLF source are LF-only because
+        `write_text` normalises line endings on the way out; check and save
+        both hash this same unnormalised string, so they still agree.
         """
         return hashlib.sha256((source.rstrip() + "\n").encode("utf-8")).hexdigest()
 

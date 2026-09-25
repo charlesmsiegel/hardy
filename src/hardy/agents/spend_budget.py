@@ -275,6 +275,10 @@ class SpendBudget:
                 "reservations": len(reservations), "pending": pending,
                 "reported_tokens": sum(n or 0 for value in settled.values() for n in value["reported"].values()),
                 "actual_tokens": None if unknown else tokens,
+                # Complete settlements only. A partial report whose stated
+                # counters overran its reservation is not counted here; it
+                # shows only as the "reservation_overrun" deny it causes at
+                # the next reservation, in `ending_limit`.
                 "reservation_overruns": sum(value["tokens"] is not None and (
                     value["tokens"] > reservations[k]["tokens"] or self.policy.tariff is not None
                     and Decimal(value["cost_usd"]) > Decimal(reservations[k]["cost_usd"])) for k, value in settled.items()),
