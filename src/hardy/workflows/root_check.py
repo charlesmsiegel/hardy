@@ -72,7 +72,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from hardy.formal.syntax import DuplicateDeclaration, module_path, named_declarations
+from hardy.formal.syntax import DeclarationRefused, module_path, named_declarations
 from hardy.foundation.files import LayoutError, files_under, read_bytes, read_text
 from hardy.foundation.paths import HARDY_DIR
 from hardy.workflows.interactive import evidence as evidence_owner
@@ -181,7 +181,7 @@ def lean_declarations(problem: Path) -> tuple[set[str], list[str]]:
         for relative in found:
             try:
                 names.update(named_declarations(read_text(tree, relative)))
-            except (LayoutError, OSError, UnicodeDecodeError, DuplicateDeclaration) as error:
+            except (LayoutError, OSError, UnicodeDecodeError, DeclarationRefused) as error:
                 unreadable.append(
                     f"lean source {(tree / relative).relative_to(problem.parent).as_posix()} does not read: {error}"
                 )

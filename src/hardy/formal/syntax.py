@@ -105,7 +105,19 @@ NOT_A_SCOPE_NAME = frozenset({
 Compile = Callable[[str, Path, Path, Path], tuple[bool, str]]
 
 
-class DuplicateDeclaration(ValueError):
+class DeclarationRefused(ValueError):
+    """A source whose theorems and lemmas cannot be named or bounded with confidence.
+
+    Raised by the scans that key a declaration by name or cut its statement
+    out (`statements`, `named_declarations`) rather than answer from a reading
+    that may be wrong: the writeup gate would compare the document with a
+    statement nobody checked, or a ledger item would cite a name nothing
+    declares. `unreadable_structure` reports the same sources, so a save
+    refuses them first.
+    """
+
+
+class DuplicateDeclaration(DeclarationRefused):
     """A source declares one theorem or lemma name twice.
 
     Lean refuses a real repeat (`` `t` has already been declared ``), so one
@@ -114,6 +126,18 @@ class DuplicateDeclaration(ValueError):
     from text, and every consumer addresses a declaration by name: the writeup
     gate compared the document with whichever statement was read last. So a
     repeat is refused, never resolved.
+    """
+
+
+class QuotedDeclaration(DeclarationRefused):
+    """A `theorem` or `lemma` head sits inside a syntax quotation.
+
+    Scanned on purpose, since a module's notation can move where a quotation
+    ends (see `_structure`), so the head may be real -- or syntax a macro
+    builds. Read as real, it ended the statement before it at the quotation's
+    opening, and the writeup gate accepted that truncated prefix; its name
+    became a declaration the audit could resolve to anything that name means.
+    Neither reading is taken.
     """
 
 
@@ -1246,7 +1270,7 @@ def named_declarations(source: str) -> tuple[str, ...]:
     copy, and a scan that cannot tell which copy is real has no answer to give.
     """
     structure = _structure(source)
-    _refuse_duplicates(structure)
+    _refuse_unreadable(structure)
     return tuple(
         declared_name(match.group(3), _prefix_at(structure.marks, match.start(2)))
         for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens, lex(source))
@@ -1262,13 +1286,19 @@ class _Structure(NamedTuple):
     heads: tuple[_Head, ...]
     problems: tuple[str, ...]
     duplicates: tuple[str, ...]
+    quoted: tuple[str, ...]
 
 
-def _refuse_duplicates(structure: _Structure) -> None:
+def _refuse_unreadable(structure: _Structure) -> None:
     if structure.duplicates:
         raise DuplicateDeclaration(
             f"`{structure.duplicates[0]}` is declared twice in this file, so which "
             "statement is the real one cannot be told"
+        )
+    if structure.quoted:
+        raise QuotedDeclaration(
+            f"`{structure.quoted[0]}` is declared inside a syntax quotation, so whether it "
+            "is a declaration, and where the statement before it ends, cannot be told"
         )
 
 
@@ -1353,8 +1383,23 @@ def _structure(source: str) -> _Structure:
     # so a repeat is refused rather than resolved either way.
     first: dict[tuple[str, ...], int] = {}
     duplicates: list[str] = []
+    quoted: list[str] = []
+    spans = (*unbounded, *blanked)
     for head in heads:
         qualified = declared_name(head.name, _prefix_at(marks, head.keyword))
+        # A head the quotation count covers -- bounded, unbounded or of
+        # uncertain extent -- is syntax a macro builds, or real code a module
+        # token moved the count past (N4). Either reading changes what the
+        # file declares and where the statement before it ends, so neither is
+        # taken, as for a scope keyword in the same place.
+        if any(low <= head.keyword < high for low, high in spans):
+            quoted.append(qualified)
+            problems.append(
+                f"line {source.count(chr(10), 0, head.keyword) + 1}: `{head.kind} {qualified}` sits "
+                "inside a syntax quotation, so Hardy cannot tell whether it is a declaration or "
+                "syntax a macro builds, nor where the statement before it ends; build quoted "
+                "commands from a name that is not a declaration keyword, in a separate file"
+            )
         earlier = first.setdefault(_name_key(qualified), head.keyword)
         if earlier == head.keyword:
             continue
@@ -1365,7 +1410,7 @@ def _structure(source: str) -> _Structure:
             "so one copy sits inside a syntax quotation, and Hardy cannot tell which statement "
             "is the real one"
         )
-    return _Structure(text, tokens, marks, tuple(heads), tuple(problems), tuple(duplicates))
+    return _Structure(text, tokens, marks, tuple(heads), tuple(problems), tuple(duplicates), tuple(quoted))
 
 
 def _head_start(text: str, cursor: int) -> int:
@@ -1463,7 +1508,7 @@ def statements(source: str) -> dict[str, str]:
     copy was a quoted `theorem t : False` beside a real `theorem t : True`, and
     the writeup gate accepted a document quoting the false one.
     """
-    _refuse_duplicates(_structure(source))
+    _refuse_unreadable(_structure(source))
     text = strip_comments(source)
     scanned = _scan(source)
     # The extent is read over what every reading calls code, so a `:=` only

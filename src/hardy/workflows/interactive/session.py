@@ -36,7 +36,7 @@ from hardy.formal.modules import ModuleIndex
 from hardy.formal.search import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from hardy.formal.workspace import (
     BuildFailure,
-    DuplicateDeclaration,
+    DeclarationRefused,
     ImportCycle,
     LeanWorkspace,
     WorkspacePathError,
@@ -51,6 +51,7 @@ from hardy.formal.workspace import (
     statements,
     strip_comments,
     unreadable_assumptions,
+    unreadable_structure,
 )
 from hardy.foundation import process
 from hardy.foundation.files import (
@@ -2053,11 +2054,12 @@ class MathematicsSession:
             theorems = set(declared["theorem"]) - set(declared["private"])
             try:
                 stated = statements(source)
-            except DuplicateDeclaration:
-                # A name this module declares twice -- a quoted copy beside the
-                # real one -- has no statement anyone can say is the checked
-                # one. Nothing from the module is credited, and
-                # `_shared_names` puts the repeat in front of the writeup gate.
+            except DeclarationRefused:
+                # A name this module declares twice, or a head inside a syntax
+                # quotation, leaves no statement anyone can say is the checked
+                # one -- a quoted head cut the statement before it short.
+                # Nothing from the module is credited, and `_unreadable_modules`
+                # puts the reason in front of the writeup gate.
                 continue
             found.update({name: text for name, text in stated.items() if name in theorems})
         return found
@@ -2078,6 +2080,22 @@ class MathematicsSession:
             for name, text in self._theorem_statements(sources).items()
             if name not in opened
         }
+
+    def _unreadable_modules(self, sources: dict[str, str] | None = None) -> dict[str, str]:
+        """Each saved module whose declarations cannot be named with confidence, and why.
+
+        `save_lean` refuses such a file (`unreadable_structure`), but a tree
+        edited on disk never met that gate. Nothing in it is credited to the
+        writeup -- `_theorem_statements` skips a module `statements` refuses --
+        and this is what makes that a failing obligation rather than silence.
+        """
+        snapshot = self.lean_workspace.sources() if sources is None else sources
+        found: dict[str, str] = {}
+        for module, source in sorted(snapshot.items()):
+            problems = unreadable_structure(source)
+            if problems:
+                found[module] = problems[0]
+        return found
 
     def _shared_names(self, sources: dict[str, str] | None = None) -> dict[str, list[str]]:
         """Theorem names more than one saved module declares.
@@ -2259,6 +2277,7 @@ class MathematicsSession:
             saved_statements=self._theorem_statements(sources),
             used_assumptions=self._used_assumptions(sources),
             shared_names=self._shared_names(sources),
+            unreadable=self._unreadable_modules(sources),
             open_theorems=opened,
             audit_gaps=tuple(self._audit_gaps(self._saved_theorems(sources) - opened, sources)),
         )

@@ -75,11 +75,11 @@ knows less than it looks like it does. Neither is silent:
 - **A declaration a macro or elaborator generates.** What the audit asks about
   comes from a textual scan of the source, so a declaration with no literal
   `theorem` or `lemma` in the file is not asked about. One written inside a
-  syntax quotation for a macro to emit is asked about under the name it is
-  written with, which Lean never declared, so that save is refused rather than
-  read as data: where a quotation ends depends on tokens the module may
-  declare itself. One that repeats a real declaration's name is refused too,
-  since no gate can tell which statement is the one Lean checked. A module
+  syntax quotation for a macro to emit refuses the save rather than being read
+  either as data or as a declaration: where a quotation ends depends on tokens
+  the module may declare itself, and read as a declaration it would cut short
+  the statement written before it. A name declared twice is refused too, since
+  no gate can tell which statement is the one Lean checked. A module
   with no literal
   declaration at all records "not established"; a module with one literal lemma
   beside a generated theorem records `clean`, and that verdict covers only the

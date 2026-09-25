@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -69,6 +69,8 @@ class FormalDocumentFacts:
     shared_names: dict[str, list[str]]
     open_theorems: set[str]
     audit_gaps: tuple[completion.Obligation, ...]
+    # Module -> why its declarations cannot be named (`unreadable_structure`).
+    unreadable: dict[str, str] = field(default_factory=dict)
 
 class DocumentService:
     def __init__(self, workspace: Path, latex: LatexTools):
@@ -729,6 +731,15 @@ class DocumentService:
             )
             for name, modules in sorted(facts.shared_names.items())
         ]
+        shared.extend(
+            completion.Obligation(
+                "lean",
+                "",
+                f"{module}: Hardy cannot read which declarations this file makes, so nothing "
+                f"in it is credited to the writeup: {problem}",
+            )
+            for module, problem in sorted(facts.unreadable.items())
+        )
         # `_audit_gaps` is asked only about closed theorems. An open one has a
         # current audit record -- being current is how Hardy knows it is open --
         # so it has no gap to report, and reporting it would say the same thing

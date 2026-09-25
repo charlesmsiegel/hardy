@@ -503,6 +503,9 @@ NOTATION_QUOTATION = (
 
 def test_a_quotation_a_notation_extends_hides_no_declaration_or_hole():
     assert syntax.declarations(NOTATION_QUOTATION)["theorem"] == ("good", "bad")
+    # Where the count says `bad` is quoted, the file is unreadable (round 2).
+    assert any("theorem bad`" in problem and "quotation" in problem
+               for problem in syntax.unreadable_structure(NOTATION_QUOTATION))
     assert LeanTools.has_holes(NOTATION_QUOTATION)
     assert "sorry" in scannable(NOTATION_QUOTATION)
 
@@ -587,13 +590,44 @@ def test_every_spelling_of_a_repeat_is_refused(source):
         syntax.statements(source)
 
 
-def test_a_quoted_theorem_under_another_name_keeps_todays_reading():
-    """Not a repeat: reported as a declaration, so the registration gate and
-    the audit refuse it as a name nobody declared -- unchanged."""
-    source = QUOTED_TWIN.replace("theorem t : False", "theorem u : False")
-    assert syntax.unreadable_structure(source) == ()
-    assert syntax.declarations(source)["theorem"] == ("t", "u")
-    assert set(syntax.statements(source)) == {"t", "u"}
+# --- Codex on #393, round 2: a quoted head is never a boundary or a declaration --
+#
+# Lean 4.35.0-rc3 elaborates both with rc=0 (`theorem` in place of Mathlib's
+# `lemma`) and `T` depends on no axioms: the quoted head is syntax. Read as a
+# head it ended `T`'s statement at `` `(command| ``, so a writeup quoting that
+# prefix passed, and the quoted name -- one Mathlib already declares -- was a
+# declaration the audit could resolve.
+
+QUOTED_HEAD = (
+    "open Lean in\n"
+    "theorem T : let q : MacroM Syntax := `(command| lemma Nat.add_comm : False := by sorry); True := by\n"
+    "  intro _; trivial\n"
+)
+QUOTED_IN_PROOF = (
+    "open Lean in\ntheorem T : True := by\n  have _h : True := trivial\n"
+    "  let _q : MacroM Syntax := `(command| lemma Nat.add_comm : False := by sorry)\n"
+    "  exact True.intro\n"
+)
+
+
+@pytest.mark.parametrize("source", [QUOTED_HEAD, QUOTED_IN_PROOF, QUOTED_TWIN], ids=["statement", "proof", "twin"])
+def test_a_head_inside_a_quotation_makes_the_structure_unreadable(source):
+    problems = syntax.unreadable_structure(source)
+    assert any("quotation" in problem and ("lemma" in problem or "theorem" in problem) for problem in problems), problems
+
+
+@pytest.mark.parametrize("source", [QUOTED_HEAD, QUOTED_IN_PROOF], ids=["statement", "proof"])
+def test_statements_refuse_rather_than_bound_at_a_quoted_head(source):
+    with pytest.raises(syntax.QuotedDeclaration, match="Nat.add_comm"):
+        syntax.statements(source)
+    with pytest.raises(syntax.DeclarationRefused):
+        syntax.named_declarations(source)
+
+
+def test_a_quoted_head_is_still_scanned():
+    """N4: a module's notation can move where a quotation ends, so the head is
+    still seen -- it refuses the file rather than disappearing."""
+    assert syntax.declarations(QUOTED_HEAD)["lemma"] == ("Nat.add_comm",)
 
 
 def test_the_same_leaf_in_two_namespaces_is_not_a_repeat():

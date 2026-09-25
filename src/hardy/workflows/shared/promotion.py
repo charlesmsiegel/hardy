@@ -30,7 +30,7 @@ from typing import Any, Literal
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.formal.syntax import (
     Compile,
-    DuplicateDeclaration,
+    DeclarationRefused,
     assumptions,
     build_order,
     module_path,
@@ -273,7 +273,7 @@ class Promoter:
             blockers.append(PromotionBlocker(kind="unknown_claim", detail=f"claim {request.claim.id} is not in the shared ledger: {error}"))
         try:
             formal_type = _formal_type(sources, request.module, request.declaration)
-        except DuplicateDeclaration as error:
+        except DeclarationRefused as error:
             blockers.append(PromotionBlocker(kind="unfaithful", detail=f"{request.module}: {error}"))
         else:
             blockers.extend(_semantic_blockers(request, formal_type))
@@ -300,7 +300,7 @@ class Promoter:
             raise PromotionError("the request does not match the prepared promotion")
         try:
             formal_type = _formal_type(sources, record.source_module, record.declaration)
-        except DuplicateDeclaration as error:
+        except DeclarationRefused as error:
             return self._fail(record, PromotionBlocker(kind="unfaithful", detail=f"{record.source_module}: {error}"))
         semantic = _semantic_blockers(request, formal_type)
         if semantic:
@@ -450,7 +450,7 @@ class Promoter:
 def _formal_type(sources: Mapping[str, str], module: str, declaration: str) -> str | None:
     """The declaration's statement, or None when the module is absent.
 
-    Raises `DuplicateDeclaration` when the module declares a name twice: a
+    Raises `DeclarationRefused` when the module declares a name twice or inside a quotation: a
     faithfulness verdict names one statement, and which copy is the checked
     one cannot be told, so the caller blocks rather than picks.
     """
