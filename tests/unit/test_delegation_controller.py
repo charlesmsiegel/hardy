@@ -1049,6 +1049,45 @@ def test_an_interrupted_worker_does_not_stop_the_next_session_delegating(tmp_pat
         first.shutdown()
 
 
+def test_a_session_joining_a_live_one_is_charged_the_recovered_worker_and_still_delegates(tmp_path):
+    """Issue #196 with the first session still live. The second joins its
+    epoch (review I-1), so the worker whose owner died was released during the
+    epoch and is charged -- at its lease, 19/3540 under 20/3600, not the whole
+    ceiling -- and a join that double-charged would refuse the work that still
+    fits. Both halves of the original repro, pinned."""
+    seed_lemma(tmp_path)
+
+    def session(executor):
+        return DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=executor,
+                                    open_worker=_open([FINISH]),
+                                    root=RootResources(lease=ResourceLease(official_checks=20, active_seconds=3600.0),
+                                                       slots=2),
+                                    notify=lambda text: None)
+
+    first = session(_HeldExecutor())
+    second = None
+    try:
+        first.recover()
+        lost = first.delegate(_session_spec(tmp_path))
+        # A worker process that has since died: nobody holds this owner token.
+        first.store.append(lost.id, "delegation.started", {"owner": "0123456789abcdef"})
+        epoch = LeaseLedger(first.tree()).epoch(ROOT_ID)
+        assert epoch is not None
+        second = session(LocalExecutor(2))                   # opens while `first` is live
+        assert [d.id for d in second.recover()] == [lost.id]
+        assert second.tree().get(lost.id).state is DelegationState.UNKNOWN
+        ledger = LeaseLedger(second.tree())
+        assert ledger.epoch(ROOT_ID) == epoch
+        assert ledger.allocatable(ROOT_ID) == ResourceLease(official_checks=19, active_seconds=3540.0)
+        assert ledger.exhausted(ROOT_ID) == ()
+        worker = second.delegate(_session_spec(tmp_path))
+        assert second.wait(worker.id, timeout=10).state is DelegationState.COMPLETED
+    finally:
+        if second is not None:
+            second.shutdown()
+        first.shutdown()
+
+
 def test_each_session_opens_its_own_root_epoch_and_keeps_it(tmp_path):
     """What one session's workers spent is not the next session's to lose; a
     session's own spending stays charged for as long as it runs."""

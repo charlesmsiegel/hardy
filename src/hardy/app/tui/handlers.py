@@ -1357,9 +1357,12 @@ def _jobs_overview(ui: Ui, delegations: Any) -> None:
     if root:
         ui.write(f"  root lease: {root['lease']}")
         ui.write(f"  root usage: {root['usage']}")
-        if root.get("compute_usage"):
+        compute = root.get("compute_usage") or {}
+        # A dumped model is a non-empty dict even when every dimension is
+        # zero, so the line is shown only when something was really computed.
+        if any(compute.values()):
             # Reported, never charged: a computation is bounded by its tool's timeout.
-            ui.write(f"  computations: {root['compute_usage']}")
+            ui.write(f"  computations: {compute}")
         ui.write(f"  allocatable: {root['allocatable']}; slots {root['slots_in_use']}/{root['slots']} in use")
     for delegation in delegations.tree().delegations.values():
         if delegation.id == "root":
