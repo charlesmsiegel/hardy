@@ -1456,8 +1456,8 @@ async def handle_jobs(ui: Ui, argument: str, state: State) -> State:
             delegations.pause(words[1], by="human")
             ui.write(f"Paused {words[1]}.")
         elif words[0] == "resume" and len(words) == 2:
-            note = delegations.resume(words[1], by="human")
-            ui.write(f"Resumed {words[1]}." + (f" {note}" if note else ""))
+            delegations.resume(words[1], by="human")
+            ui.write(f"Resumed {words[1]}.")
         elif words[0] == "reinforce" and len(words) == 3:
             decision = delegations.reinforce(words[1], ResourceDelta(official_checks=int(words[2])),
                                              by="human", reason="reinforced from the terminal")
@@ -1501,9 +1501,13 @@ async def handle_cancel(ui: Ui, argument: str, state: State) -> State:
         return state
     # A running worker stops through the session that runs it; another open
     # session's workers only get the journaled request, which nothing there reads.
-    check = getattr(state.session.delegations, "running_elsewhere", None)
+    delegations = state.session.delegations
+    check = getattr(delegations, "running_elsewhere", None)
     elsewhere = set(check(tuple(requested))) if check is not None else set()
-    here = [id for id in requested if id not in elsewhere]
+    # And a crashed session's worker, journaled running but run by nobody.
+    check = getattr(delegations, "stranded", None)
+    stranded = set(check(tuple(requested))) if check is not None else set()
+    here = [id for id in requested if id not in elsewhere and id not in stranded]
     if here:
         ui.write(f"Cancellation requested for {', '.join(here)}. Active workers stop at their next step.")
     if elsewhere:
@@ -1511,6 +1515,11 @@ async def handle_cancel(ui: Ui, argument: str, state: State) -> State:
                  f"{'is' if len(elsewhere) == 1 else 'are'} running in another open session on this problem. "
                  "The request is recorded, but only that session can stop a running worker; cancel it there.",
                  style="error")
+    if stranded:
+        ui.write(f"{', '.join(id for id in requested if id in stranded)} "
+                 f"{'is' if len(stranded) == 1 else 'are'} not running in any open session: the session that "
+                 "ran it ended without recording an outcome. The request is recorded; the next session start "
+                 "marks it interrupted.")
     return state
 
 
