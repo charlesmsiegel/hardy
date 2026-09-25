@@ -223,7 +223,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Hermetic suite
         shell: pwsh
-        run: uv run --python 3.12 --extra test pytest -q -m "not real_toolchain and not live" -rs -o faulthandler_timeout=300 --junitxml=windows-junit.xml
+        # -v prints each test id as it starts, so when a test hangs until the
+        # job cap the last unfinished id in the log names it (-q never did).
+        run: uv run --python 3.12 --extra test pytest -v -m "not real_toolchain and not live" -rs -o faulthandler_timeout=300 --junitxml=windows-junit.xml
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: windows-junit, path: windows-junit.xml, if-no-files-found: warn }
