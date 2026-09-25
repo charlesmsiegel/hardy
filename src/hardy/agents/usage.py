@@ -174,8 +174,8 @@ class Usage:
         per-exchange figures loses all but the growth.
 
         **What the Claude Code CLI documents, and what that leaves open.**
-        Read from the SDK message documentation embedded in the installed CLI
-        (`/opt/claude-code/bin/claude`, Claude Code 2.1.282), not observed:
+        Read from the SDK message documentation bundled with the Claude Code
+        CLI (version 2.1.282), not observed:
 
         - `modelUsage` is "Cumulative across turns in streaming-input
           sessions: each result carries the running total so far, so read the
