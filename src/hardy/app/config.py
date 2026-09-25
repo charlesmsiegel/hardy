@@ -12,8 +12,18 @@ from typing import Any
 from hardy.agents import compaction
 from hardy.agents.spend_budget import SpendPolicy
 from hardy.foundation.locking import replace_with_retry
+from hardy.prompts.user import unquoted
 from hardy.workflows import layout
 from hardy.workflows.contracts import RunLimits
+
+#: Whether a configured command is split the way a POSIX shell would.
+#:
+#: A plain `os.name` check, but named and read as a module attribute rather
+#: than inlined at each call site: a test exercises the Windows-mode splitter
+#: on every OS by patching this flag rather than `os.name` itself, which
+#: would also perturb `legacy_config_path` and anything else in the process
+#: that asks the platform what it is.
+_POSIX = os.name != "nt"
 
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_LEAN_COMMAND = "lake env lean"
@@ -154,6 +164,31 @@ def legacy_config_path() -> Path:
     return Path(home) / "hardy" / "config.toml"
 
 
+def _parse_toml(text: str, path: Path) -> dict[str, Any]:
+    """Parse `text` as TOML, naming `path` and explaining Windows escaping on failure.
+
+    `tomllib.TOMLDecodeError` names a line and column, never the file: `hardy
+    doctor` on a bad `config.toml` used to fail with a message an unfamiliar
+    user could not connect back to the file they had just edited. The three
+    call sites that read a config file (`read_file`, `migrate_global`,
+    `write_project_setting`) all route through here, so all three name the
+    file the same way.
+
+    The hint is worth adding even when the failure was not a backslash: a
+    literal `\\` in a double-quoted TOML string is by far the most common
+    cause of a Windows user's config failing to parse at all, since it is
+    exactly how Explorer and PowerShell show a path.
+    """
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(
+            f"{path}: {error}. On Windows write paths with forward slashes "
+            f"(\"C:/Users/me/lean\"), in single quotes ('C:\\Users\\me\\lean'), "
+            f"or with doubled backslashes."
+        ) from None
+
+
 def migrate_global(source: Path | None = None, destination: Path | None = None) -> bool:
     """Move a pre-`~/.hardy/` config into place, keeping the settings that exist.
 
@@ -194,7 +229,7 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     destination = destination or (layout.global_dir() / "config.toml")
     if not source.is_file() or destination.exists():
         return False
-    values = tomllib.loads(source.read_text(encoding="utf-8-sig"))
+    values = _parse_toml(source.read_text(encoding="utf-8-sig"), source)
     kept = {key: value for key, value in values.items() if key in SETTINGS}
     lines = [_render_toml_line(key, value) for key, value in kept.items()]
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -214,12 +249,25 @@ def _render_toml_line(key: str, value: Any) -> str:
     as a quoted string (`lean_timeout = "90"`) would still parse, but nothing
     else in this module ever writes a config that way, and a hand-inspecting
     user comparing before and after would see a spurious change.
+
+    A list is rendered as a TOML array of its own rendered elements, not
+    `str(value)`: `str(["lake", "env"])` is the Python repr `"['lake', 'env']"`,
+    a single string that reads back as one nonsense token rather than the
+    list `lean_command` (issue #260) accepts. This is what lets
+    `migrate_global` round-trip a legacy `lean_command = [...]`.
     """
+    if isinstance(value, list):
+        return f"{key} = [{', '.join(_render_toml_scalar(item) for item in value)}]"
+    return f"{key} = {_render_toml_scalar(value)}"
+
+
+def _render_toml_scalar(value: Any) -> str:
+    """One TOML value literal (no `key = `), for a scalar or a list element."""
     if isinstance(value, bool):
-        return f"{key} = {'true' if value else 'false'}"
+        return "true" if value else "false"
     if isinstance(value, (int, float)):
-        return f"{key} = {value}"
-    return f'{key} = "{_toml_string(str(value))}"'
+        return str(value)
+    return f'"{_toml_string(str(value))}"'
 
 
 def _toml_string(text: str) -> str:
@@ -252,6 +300,63 @@ def _toml_string(text: str) -> str:
 #: character goes out as `\uXXXX`, which the grammar accepts anywhere a basic
 #: string does.
 _TOML_ESCAPES = {"\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+
+#: The characters an unescaped backslash before `t`, `n`, `b`, `f` or `r`
+#: silently becomes inside a double-quoted TOML string (issue #303). Refusing
+#: them is scoped to path and command settings, never every setting: a
+#: legacy `model` may legitimately hold a real newline (`_toml_string`'s
+#: docstring), and that must keep loading.
+_CONTROL_CHARACTERS = frozenset(_TOML_ESCAPES)
+
+
+def _reject_control_characters(key: str, value: str, path: Path) -> str:
+    """Refuse `value` for `key` if it holds a control character TOML read from a backslash.
+
+    A path or a command hand-written as `"C:\\temp\\new"` parses without
+    error -- `tomllib` turns `\\t` and `\\n` into TAB and LF -- and Hardy used
+    to go on to report a directory named with a literal TAB as merely
+    "missing", with nothing to say why. Caught here, at the setting that
+    actually holds the bad value, the message names both the setting and the
+    file and says plainly that the backslash was read as an escape.
+    """
+    if not any(character in value for character in _CONTROL_CHARACTERS):
+        return value
+    raise ValueError(
+        f"{key} in {path} contains a control character: a backslash there was read by "
+        f"TOML as an escape (\\t, \\n, \\b, \\f, or \\r), not a literal backslash. Write "
+        f"it with forward slashes, in single quotes, or with doubled backslashes."
+    )
+
+
+def split_command(value: str | list[str], *, posix: bool | None = None) -> tuple[str, ...]:
+    """Argv for a configured command (`lean_command`, `latex_command`), split for the platform.
+
+    A TOML array is taken verbatim, after checking every element is a string:
+    no shell-splitting rule applies to it, because nothing had to guess where
+    the arguments end -- the list already says. `str(list)` used to reach
+    `shlex.split` instead and produce garbage like `["['lake',"]` (issue #260).
+
+    A string is split with POSIX `shlex` rules, or, off POSIX, with
+    `shlex.split(value, posix=False)` and then unquoted by hand with
+    `hardy.prompts.user.unquoted` -- the same fix `/import` already needed for
+    the same reason: POSIX mode reads every backslash as an escape, and a
+    Windows path is full of them.
+
+    `posix` defaults to `None`, which reads the module flag `_POSIX` at call
+    time rather than baking a default into the function's signature: a test
+    selects the platform by monkeypatching `_POSIX`, and a bound default
+    parameter would freeze the value `_POSIX` held when this module was first
+    imported and never see that patch.
+    """
+    if isinstance(value, list):
+        if not all(isinstance(item, str) for item in value):
+            raise ValueError(f"command list entries must be strings, not {value!r}")
+        return tuple(value)
+    if posix is None:
+        posix = _POSIX
+    if posix:
+        return tuple(shlex.split(value))
+    return tuple(unquoted(word) for word in shlex.split(value, posix=False))
 
 
 @dataclass(frozen=True)
@@ -338,7 +443,7 @@ def read_file(path: Path) -> dict[str, Any]:
     """
     if not path.exists():
         return {}
-    values = tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    values = _parse_toml(path.read_text(encoding="utf-8-sig"), path)
     unknown = sorted(set(values) - set(SETTINGS))
     if unknown:
         raise ValueError(f"{path}: unknown settings {unknown}; known settings are {sorted(SETTINGS)}")
@@ -515,7 +620,16 @@ def load(
 
     def location(key: str) -> Path | None:
         value = values.get(key)
-        return Path(str(value)).expanduser() if value else None
+        if not value:
+            return None
+        return Path(_reject_control_characters(key, str(value), path)).expanduser()
+
+    def command_value(key: str, default: str) -> str | list[str]:
+        """The raw value for a command setting: a TOML list verbatim, or checked text."""
+        value = values.get(key)
+        if isinstance(value, list):
+            return value
+        return _reject_control_characters(key, str(value) if value else default, path)
 
     try:
         lean_timeout = float(values.get("lean_timeout", DEFAULT_LEAN_TIMEOUT))
@@ -592,10 +706,10 @@ def load(
 
     return Config(
         model=str(values["model"]) if values.get("model") else DEFAULT_MODEL,
-        lean_command=tuple(shlex.split(text("lean_command", DEFAULT_LEAN_COMMAND))),
+        lean_command=split_command(command_value("lean_command", DEFAULT_LEAN_COMMAND)),
         lean_project=location("lean_project"),
         lean_timeout=lean_timeout,
-        latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
+        latex_command=split_command(command_value("latex_command", DEFAULT_LATEX_COMMAND)),
         root=resolved_root,
         # `choose` reaches here rather than the caller asking first because
         # the root the question is about is resolved in this function, from
@@ -717,7 +831,7 @@ def write_project_setting(root: Path, key: str, value: str) -> None:
     filename = "config.toml"
     try:
         with guard.open(filename, encoding="utf-8-sig") as handle:
-            values = tomllib.loads(handle.read())
+            values = _parse_toml(handle.read(), guard.path(filename))
     except FileNotFoundError:
         values = {}
     values[key] = value
