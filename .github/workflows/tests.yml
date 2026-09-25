@@ -216,6 +216,7 @@ jobs:
     name: hermetic suite on windows-latest
     runs-on: windows-latest
     continue-on-error: true   # remove once green
+    timeout-minutes: 45
     steps:
       - run: git config --global core.autocrlf true
       - uses: actions/checkout@v4
