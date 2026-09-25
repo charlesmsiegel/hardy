@@ -466,3 +466,112 @@ def test_a_declared_assumption_is_in_scope_for_the_loop_that_writes_the_proof(
 
     assert rendered.splitlines()[0] == "import Mathlib"
     assert "axiom Papers.perelman.no_local_collapsing : True" in rendered
+
+
+# --- An approved assumption's statement, checked by Lean (#188) ---------------------
+#
+# The textual gate compares an `axiom` the model *wrote* against the approved
+# statement. An axiom it did not write -- `run_cmd ... addDecl (.axiomDecl ...)`,
+# or one hidden from the scan -- was matched by name alone, so an approval of
+# `trusted : P` graded a proof resting on `trusted : False` as `modulo`. The
+# audit now asks Lean, one line per approved name the reports carry, whether
+# the constant's type is the approved statement, and reads the answer by line.
+
+
+def _checked(source_lines, *, ok=True, diagnostics=(), **flags):
+    lean = importlib.import_module("hardy.formal.lean")
+    return lean.LeanToolResult(
+        ok, "", "\n".join(source_lines), diagnostics=tuple(diagnostics), **flags
+    )
+
+
+def _error(line, message="Type mismatch"):
+    lean = importlib.import_module("hardy.formal.lean")
+    return lean.LeanDiagnostic(severity="error", message=message, line=line, column=0)
+
+
+def test_each_approved_name_is_checked_on_its_own_known_line() -> None:
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+
+    source, lines = formal.statement_checks(
+        ["Main", "Helper"], {"trusted": "True", "Papers.smith2020.main": "∀ n : Nat,  n = n"}
+    )
+
+    rows = source.splitlines()
+    assert rows[:3] == ["import Main", "import Helper", ""]
+    assert lines == {4: "trusted", 5: "Papers.smith2020.main"}
+    # Fully qualified from the root, so nothing the namespace declares can
+    # stand in for the approved constant.
+    assert rows[3] == "example : (type_of% @_root_.trusted) = (True) := rfl"
+    # A minted axiom was elaborated inside its paper's namespace, where a
+    # sibling constant is named by its leaf; the check is elaborated there too.
+    assert rows[4] == (
+        "namespace Papers.smith2020 "
+        "example : (type_of% @_root_.Papers.smith2020.main) = (∀ n : Nat, n = n) := rfl "
+        "end Papers.smith2020"
+    )
+
+
+def test_a_statement_that_cannot_sit_on_one_line_is_not_checked() -> None:
+    """Which name failed is read off the line an error lands on, so a
+    statement that spills onto a second line cannot be checked at all."""
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+
+    assert formal.statement_checks(["Main"], {"odd": 'f "a\nb" = 1'}) is None
+
+
+def test_a_clean_check_establishes_every_statement() -> None:
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+
+    verdict = formal.judge_statement_checks(_checked(["x"]), {3: "trusted"})
+
+    assert verdict.established
+    assert verdict.mismatched == ()
+
+
+def test_an_error_on_a_check_line_is_a_different_statement() -> None:
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+
+    verdict = formal.judge_statement_checks(
+        _checked(["x"], ok=False, diagnostics=[_error(4)]), {3: "fine", 4: "trusted"}
+    )
+
+    assert verdict.established
+    assert [name for name, _ in verdict.mismatched] == ["trusted"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        # Nothing Lean said can be read as an answer: never a pass.
+        _checked(["x"], ok=False),
+        _checked(["x"], timed_out=True),
+        _checked(["x"], interrupted=True),
+        _checked(["x"], output_overflow=True),
+        _checked(["x"], ok=False, diagnostics=[_error(None)]),
+        # An import that failed: Lean never reached the checks.
+        _checked(["x"], ok=False, diagnostics=[_error(1, "unknown module prefix")]),
+    ],
+    ids=["silent-failure", "timeout", "interrupted", "overflow", "unplaced", "import"],
+)
+def test_no_readable_answer_is_not_established(result) -> None:
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+
+    verdict = formal.judge_statement_checks(result, {3: "trusted"})
+
+    assert not verdict.established
+    assert verdict.caveat
+
+
+def test_a_check_closed_by_sorry_is_not_a_pass() -> None:
+    """`sorry` would make a check line clean for a reason that says nothing
+    about the constant's type."""
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+    lean = importlib.import_module("hardy.formal.lean")
+    warning = lean.LeanDiagnostic(
+        severity="warning", message="declaration uses 'sorry'", line=3, column=0
+    )
+
+    verdict = formal.judge_statement_checks(_checked(["x"], diagnostics=[warning]), {3: "trusted"})
+
+    assert not verdict.established

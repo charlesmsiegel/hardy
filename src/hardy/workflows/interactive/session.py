@@ -133,7 +133,13 @@ from hardy.workflows.interactive.documents import (
 )
 from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
 from hardy.workflows.interactive.evidence import ProjectOwners, SaveGates
-from hardy.workflows.interactive.formal import FormalWorkspaceService, SavePolicy
+from hardy.workflows.interactive.formal import (
+    FormalWorkspaceService,
+    SavePolicy,
+    StatementVerdict,
+    judge_statement_checks,
+    statement_checks,
+)
 from hardy.workflows.interactive.history import HistorySnapshot
 from hardy.workflows.interactive.jobs import ComputationJobs
 from hardy.workflows.interactive.record import SchemaError as SchemaError
@@ -1904,12 +1910,71 @@ class MathematicsSession:
                     "the axiom audit could not be established for "
                     f"{wanted}, so nothing was written. Remove any #print axioms from your source; Hardy adds its own.",
                 )
+            refused = self._check_assumed_statements(space, group, answered)
+            if refused is not None:
+                return refused
             reports.extend(answered)
             by_name = {report.declaration: report for report in answered}
             for module in group:
                 if declared[module]:
                     covering[module] = [by_name[name] for name in declared[module]]
         return reports, covering
+
+    def _check_assumed_statements(
+        self, space: LeanWorkspace, group: list[str], answered: Sequence[audit.AxiomReport]
+    ) -> ToolResult | None:
+        """Refuse a group whose approved axioms are not the statements approved.
+
+        `audit.classify` matches an approved assumption by name, and a name is
+        not an identity: `run_cmd ... addDecl (.axiomDecl ...)` declares a real
+        axiom no textual scan sees, so an approval of `trusted : P` graded a
+        proof resting on `trusted : False` as `modulo`. So every approved name
+        a report carries is checked by Lean, over the same imports the report
+        came from. The textual gate in `_final_gates` stays in front as the
+        cheap first refusal; this is the one that holds.
+
+        A second elaboration, and only when a report names an approved
+        assumption: a check cannot share the `#print axioms` file, because
+        which names to ask about is only known once that file has answered,
+        and asking about an approved name nothing declares is an error.
+        """
+        approved = {
+            str(item["formal_name"]): str(item["lean_statement"])
+            for item in self.state["assumptions"]
+        }
+        named = [
+            axiom
+            for axiom in dict.fromkeys(axiom for report in answered for axiom in report.axioms)
+            if axiom in approved
+        ]
+        if not named:
+            return None
+        built = statement_checks(group, {name: approved[name] for name in named})
+        verdict = (
+            judge_statement_checks(
+                self.lean.run_source(built[0], env={"LEAN_PATH": self._lean_path(space)}),
+                built[1],
+            )
+            if built is not None
+            else StatementVerdict(caveat="an approved statement does not fit on one line")
+        )
+        if not verdict.established:
+            return ToolResult(
+                False,
+                f"the axiom audit could not establish that the approved assumptions {named} are "
+                f"declared with their approved statements, so this is not established and "
+                f"nothing was written: {verdict.caveat}.",
+            )
+        if verdict.mismatched:
+            name, said = verdict.mismatched[0]
+            return ToolResult(
+                False,
+                f"approved assumption `{name}` is declared with a different statement: Lean does "
+                f"not accept its type as the approved `{approved[name].strip()}` ({said[:300]}). "
+                "Nothing was written. Declare it as `axiom NAME : STATEMENT` with exactly the "
+                "approved statement, or request the statement you need.",
+            )
+        return None
 
     def _missing_registered_names(
         self, sources: dict[str, str], before: dict[str, str]
