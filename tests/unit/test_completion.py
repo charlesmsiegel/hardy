@@ -677,3 +677,22 @@ def test_a_declaration_in_a_file_loaded_any_way_still_counts(load: str) -> None:
     body = load + "\n\\iffalse\n\\ifdraft x \\fi\n" + LISTING + "\\fi\n"
     tex = {**document(body), "defs.tex": "\\newif\\ifdraft\n"}
     assert "statement" in kinds(owed(tex)), kinds(owed(tex))
+
+
+# --- Round 2 review, C2: any `\let`-like binding, whatever its target -----------
+
+
+@pytest.mark.parametrize(
+    ("binding", "use"),
+    [
+        ("\\let\\a\\iftrue\\let\\mycond\\a\n", "\\mycond"),
+        ("\\csletcs{mycond}{iftrue}\n", "\\mycond"),
+        ("\\cslet{mycond}\\iftrue\n", "\\mycond"),
+        ("\\letcs\\mycond{iftrue}\n", "\\mycond"),
+        ("\\futurelet\\mycond\\relax\\iftrue\n", "\\mycond"),
+    ],
+    ids=["chain", "csletcs", "cslet", "letcs", "futurelet"],
+)
+def test_a_let_like_binding_is_not_credited(binding: str, use: str) -> None:
+    found = kinds(owed(_skipped(binding, use)))
+    assert "conditional" in found and "statement" in found, found

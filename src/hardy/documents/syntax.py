@@ -184,17 +184,77 @@ _DEFINES = re.compile(
     r"\\(?:[gxe]?def|(?:re)?newcommand\*?|providecommand\*?|DeclareRobustCommand\*?)"
     r"\s*\{?\s*\\(if[a-zA-Z]+)(?![a-zA-Z])"
 )
-_LETS = re.compile(r"\\(?:global\s*)?\\?let\s*\\(if[a-zA-Z]+)(?![a-zA-Z])")
-#: `\let\mycond\iftrue`: a control word of any name bound by `\let` to a
-#: conditional (or to `\fi`) is one TeX counts while it skips.
-_LETS_TO_CONDITIONAL = re.compile(
-    r"\\(?:global\s*)?\\?let\s*\\([a-zA-Z]+)\s*=?\s*\\(?:if[a-zA-Z]*|fi)(?![a-zA-Z])"
+#: The `\let`-like commands: each binds a control word to the meaning of a
+#: token, which may be a conditional TeX counts while it skips -- directly, or
+#: through a chain (`\let\a\iftrue \let\mycond\a`) no text scan can follow.
+_CS = r"\\(?:[a-zA-Z@]+|.)"
+_CSNAME = r"\\csname(?![a-zA-Z])([^{}]*?)\\endcsname"
+_LET_BINDING = re.compile(
+    rf"\\let(?![a-zA-Z])\s*(?:{_CSNAME}|\\([a-zA-Z@]+)|\\.)\s*=?\s?(?:{_CSNAME}|({_CS})|(.))?", re.DOTALL
 )
+_FUTURELET = re.compile(r"\\futurelet(?![a-zA-Z])\s*\\([a-zA-Z@]+)")
+_CSLET = re.compile(rf"\\cslet(?![a-zA-Z])\s*\{{([^{{}}]*)\}}\s*(?:({_CS})|(.))?", re.DOTALL)
+_CSLETCS = re.compile(r"\\csletcs(?![a-zA-Z])\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
+_LETCS = re.compile(r"\\letcs(?![a-zA-Z])\s*\\([a-zA-Z@]+)\s*\{([^{}]*)\}")
+_NEWIF_CSNAME = re.compile(rf"\\newif\s*{_CSNAME}")
+#: Every control word a `\def`-like command defines, whatever it is called.
+_ANY_DEFINES = re.compile(
+    r"\\(?:[gxe]?def|(?:re)?newcommand\*?|providecommand\*?|DeclareRobustCommand\*?)"
+    r"\s*\{?\s*\\([a-zA-Z@]+)"
+)
+#: Targets that are never a conditional -- while nothing in the tree rebinds
+#: them. A `\let` to one of these, or to a character, binds a name TeX never
+#: counts while it skips.
+_HARMLESS_TARGETS = frozenset({"relax", "undefined", "empty", "@empty", "par", "space", "bgroup", "egroup"})
 #: `ifthen`'s `\newboolean{draft}` and `\provideboolean{draft}` declare `\ifdraft`.
 _BOOLEAN = re.compile(r"\\(?:new|provide)boolean\s*\{\s*([a-zA-Z]+)\s*\}")
-#: `\expandafter\newif\csname ifdraft\endcsname`, `\expandafter\let\csname x\endcsname`:
-#: a conditional whose name is built rather than written.
-_CSNAME_BINDING = re.compile(r"\\(?:newif|let)\s*\\csname(?![a-zA-Z])([^{}]*?)\\endcsname")
+
+
+@dataclass(frozen=True)
+class _Binding:
+    """One `\\let`-like binding: the name bound (`None` when it cannot be read),
+    what it is bound to (a control word's name, `""` for a character, `None`
+    when unknown), and where the bound control word is written, if it is."""
+
+    name: str | None
+    target: str | None
+    at: int | None
+
+
+def _csname_text(text: str) -> str | None:
+    r"""A `\csname ... \endcsname` name read literally, or `None` when it holds
+    a control sequence and so could be anything."""
+    return None if "\\" in text else text.strip()
+
+
+def _let_bindings(text: str) -> list[_Binding]:
+    found: list[_Binding] = []
+
+    def target(control: str | None, csname: str | None, character: str | None) -> str | None:
+        if control is not None:
+            return control[1:]
+        if csname is not None:
+            return _csname_text(csname)
+        return "" if character is not None and not character.isspace() else None
+
+    for match in _LET_BINDING.finditer(text):
+        if match.group(1) is not None:
+            name, at = _csname_text(match.group(1)), None
+        elif match.group(2) is not None:
+            name, at = match.group(2), match.start(2) - 1
+        else:
+            continue  # `\let\&...`: a control symbol, never written as a word
+        found.append(_Binding(name, target(match.group(4), match.group(3), match.group(5)), at))
+    found.extend(_Binding(match.group(1), None, match.start(1) - 1) for match in _FUTURELET.finditer(text))
+    for match in _CSLET.finditer(text):
+        found.append(_Binding(_csname_text(match.group(1)), target(match.group(2), None, match.group(3)), None))
+    for match in _CSLETCS.finditer(text):
+        found.append(_Binding(_csname_text(match.group(1)), _csname_text(match.group(2)), None))
+    for match in _LETCS.finditer(text):
+        found.append(_Binding(match.group(1), _csname_text(match.group(2)), match.start(1) - 1))
+    return found
+
+
 _LETTERS = re.compile(r"[a-zA-Z]+")
 
 
@@ -278,22 +338,35 @@ def read_conditionals(
         read = may_reach(texts, root)
         texts = {path: text for path, text in texts.items() if path in read}
     defined: set[str] = set()
-    let: set[str] = set()
+    defined_any: set[str] = set()
     newif: set[str] = set()
     built: set[str] = set()
+    bindings: list[_Binding] = []
     opaque = False
     for text in texts.values():
         defined.update(found.group(1) for found in _DEFINES.finditer(text))
-        let.update(found.group(1) for found in _LETS.finditer(text))
-        let.update(found.group(1) for found in _LETS_TO_CONDITIONAL.finditer(text))
+        defined_any.update(found.group(1) for found in _ANY_DEFINES.finditer(text))
         newif.update(found.group(1) for found in _NEWIF.finditer(text))
         newif.update(f"if{found.group(1)}" for found in _BOOLEAN.finditer(text))
-        for found in _CSNAME_BINDING.finditer(text):
-            name = found.group(1).strip()
-            if _LETTERS.fullmatch(name):
+        for found in _NEWIF_CSNAME.finditer(text):
+            name = _csname_text(found.group(1))
+            if name is not None and _LETTERS.fullmatch(name):
                 built.add(name)
             else:
                 opaque = True
+        bindings.extend(_let_bindings(text))
+    # Any name a `\let`-like command binds may be a conditional, whatever it
+    # is bound to -- a chain (`\let\a\iftrue \let\mycond\a`) is not
+    # followed.
+    let: set[str] = set()
+    for binding in bindings:
+        if binding.name is None:
+            opaque = True
+            continue
+        if _LETTERS.fullmatch(binding.name):
+            let.add(binding.name)
+        else:
+            opaque = True
     rebound = let | built | (defined & (newif | CONDITIONALS))
     # Counted as openers for "does this run": everything that might be one.
     openers = CONDITIONALS | newif | let | built
@@ -339,10 +412,8 @@ def _conditional_events(text: str, openers: Collection[str]) -> _Events:
         return any(start <= index < end for start, end in bodies)
 
     # The name a `\def` or `\let` binds is not a use of it.
-    targets = {
-        found.start(1) - 1
-        for pattern in (_DEFINES, _LETS, _LETS_TO_CONDITIONAL)
-        for found in pattern.finditer(text)
+    targets = {found.start(1) - 1 for found in _DEFINES.finditer(text)} | {
+        binding.at for binding in _let_bindings(text) if binding.at is not None
     }
     depth = 0
     depths: list[tuple[int, int]] = [(0, 0)]
