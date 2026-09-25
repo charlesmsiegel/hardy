@@ -132,6 +132,61 @@ def test_a_locked_writeup_pdf_is_not_fatal(tmp_path: Path, monkeypatch):
     assert not (output / "writeup.pdf").exists()
 
 
+def test_the_scratch_copy_is_compiled_lf_only_as_it_is_saved(tmp_path: Path, monkeypatch):
+    """What is compiled is byte for byte what the save writes: the save
+    normalises line endings, so the scratch copy the compiler reads must too."""
+    from hardy.documents import latex
+
+    seen: list[bytes] = []
+    real_run = latex.run_guarded
+
+    def spying(argv, *, cwd, **kwargs):
+        seen.append((Path(cwd) / "writeup.tex").read_bytes())
+        return real_run(argv, cwd=cwd, **kwargs)
+
+    monkeypatch.setattr(latex, "run_guarded", spying)
+
+    assert LatexTools(COMMAND).check(FINE.replace("\n", "\r\n")).ok
+    # Every pass the compiler makes reads the same LF-only file.
+    assert seen and set(seen) == {FINE.encode("utf-8")}
+
+
+def test_a_locked_aux_file_is_not_fatal_and_stamps_nothing(tmp_path: Path, monkeypatch):
+    """An indexer or scanner holding `.build/tex/writeup.aux` past the retry
+    window used to raise `FileInUse` out of `check`, after the source had
+    already been committed -- exactly what #335 set out to prevent. The save
+    stands, nothing is stamped, and the report says which file was held."""
+    from hardy.foundation import files as foundation_files
+    from hardy.foundation.locking import FileInUse
+
+    real_replace = foundation_files.replace_with_retry
+
+    def locked_aux(source, target):
+        if Path(target).name == "writeup.aux":
+            raise FileInUse(f"{target} is open in another program")
+        real_replace(source, target)
+
+    monkeypatch.setattr(foundation_files, "replace_with_retry", locked_aux)
+
+    output = tmp_path / "workspace"
+    aux = tmp_path / "build"
+    committed, published = [], []
+
+    result = LatexTools(COMMAND).check(
+        FINE,
+        output_dir=output,
+        aux_dir=aux,
+        commit=lambda: committed.append(True),
+        published=lambda: published.append(True),
+    )
+
+    assert result.ok
+    assert committed == [True]
+    assert not published
+    assert "writeup.aux is open in another program" in result.output
+    assert not (aux / "writeup.aux").exists()
+
+
 def test_an_unlocked_writeup_pdf_still_fires_published(tmp_path: Path):
     """The ordinary case beside the locked one: `published` runs exactly once
     when the PDF really was replaced."""

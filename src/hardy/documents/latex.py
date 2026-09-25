@@ -41,7 +41,14 @@ from hardy.documents.syntax import compiles_document as compiles_document
 from hardy.documents.syntax import typeset as typeset
 from hardy.documents.syntax import uncommented as uncommented
 from hardy.documents.syntax import unfinished_definition as unfinished_definition
-from hardy.foundation.files import LayoutError, WriteGuard, files_under, guard_for, read_bytes
+from hardy.foundation.files import (
+    LayoutError,
+    WriteGuard,
+    files_under,
+    guard_for,
+    normalize_newlines,
+    read_bytes,
+)
 from hardy.foundation.locking import FileInUse
 from hardy.foundation.process import GuardedResult, run_guarded
 from hardy.foundation.values import ToolResult
@@ -201,7 +208,7 @@ def _diagnostics(work: Path, outcome: GuardedResult) -> str:
     return text + outcome.stdout + outcome.stderr
 
 
-def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> bool:
+def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> Path | None:
     r"""Copy the compiled document out of the scratch tree, through a guard.
 
     Its own function, and not part of `check`, because of what the ratchet in
@@ -230,9 +237,15 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> bool:
     it. The aux file is Hardy-internal (`.build/tex/`), essentially never held
     open by a program the user chose, and it is what the completion gate
     reads; publishing it first means a locked PDF costs the PDF and nothing
-    else. Returns whether `writeup.pdf` itself was replaced, which is what
-    `check` bases the stamp on: a compile that could not update the PDF must
-    not be recorded as though it had.
+    else.
+
+    Returns the file something else held open past `replace_with_retry`'s
+    window, or `None` when both were published. `check` stamps only on
+    `None`: a compile that could not update the PDF must not be recorded as
+    though it had. A held aux file stops here, before the PDF: it runs after
+    the source commit, so raising would throw past a save that already
+    succeeded (#335), and publishing a PDF beside a stale aux file would pair
+    a new document with the old document's labels.
     """
     # The compiler's own record of the labels it created. What a caller needs
     # to know is which labels LaTeX *made*, not which ones appear in the text
@@ -245,7 +258,10 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> bool:
             # `MAX_AUX_BYTES` before publication is reached -- but only when a
             # caller passed `vouched`, and the callers that do not would
             # otherwise reach this line with whatever the compiler wrote.
-            WriteGuard(aux_dir, create=True).write_from("writeup.aux", aux)
+            try:
+                WriteGuard(aux_dir, create=True).write_from("writeup.aux", aux)
+            except FileInUse:
+                return aux_dir / "writeup.aux"
         else:
             # This compile made no auxiliary file -- `\nofiles` suppresses it,
             # and a PDF is still produced -- so there is nothing to publish
@@ -277,8 +293,8 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> bool:
         # source that was just compiled; only the PDF a reader would open is
         # stale, and `check` says so in words rather than raising past a
         # commit that already succeeded.
-        return False
-    return True
+        return output_dir / "writeup.pdf"
+    return None
 
 
 class LatexTools:
@@ -321,14 +337,14 @@ class LatexTools:
         made to happen before the outputs leave the scratch tree: if it raises,
         nothing is published and the workspace is exactly as it was.
 
-        `published`, in the same style as `commit`, is called only when
-        `writeup.pdf` itself was replaced -- never for a probe, and never when
-        `_publish` reports the PDF locked (#335). A caller that stamps the
-        writeup as current on a successful save passes this rather than
-        trusting `result.ok`: the compile can succeed, the aux file and the
-        source can both be published, and the PDF can still be the one thing
-        left stale because a viewer had it open, in which case `ok` is true
-        but nothing may be stamped.
+        `published`, in the same style as `commit`, is called only when the
+        aux file and `writeup.pdf` were both replaced -- never for a probe, and
+        never when `_publish` reports either one held open (#335). A caller
+        that stamps the writeup as current on a successful save passes this
+        rather than trusting `result.ok`: the compile can succeed and the
+        source be saved, and the aux file or the PDF can still be left stale
+        because another program had it open, in which case `ok` is true but
+        nothing may be stamped.
         """
         started = time.monotonic()
         # Whether what gets compiled is the document itself. A probe carries the
@@ -342,7 +358,11 @@ class LatexTools:
                 _copy_tree(tree, work)
             candidate = work / path
             candidate.parent.mkdir(parents=True, exist_ok=True)
-            candidate.write_text(source, encoding="utf-8", newline="\n")
+            # Normalised as the save normalises it (`WriteGuard.write_text`),
+            # so what is compiled is byte for byte what is committed: a CRLF
+            # source was compiled with its CR bytes and saved without them.
+            compiled = normalize_newlines(source)
+            candidate.write_text(compiled, encoding="utf-8", newline="\n")
             # Listed BEFORE the compiler runs: these are the files it is
             # given, and anything `.tex` in the tree afterwards it wrote
             # itself. See `_references`.
@@ -355,7 +375,7 @@ class LatexTools:
                         f"there is no {ROOT_DOCUMENT} to compile {path} into; save the root document first",
                         source,
                     )
-                root.write_text(source, encoding="utf-8", newline="\n")
+                root.write_text(compiled, encoding="utf-8", newline="\n")
             elif path != ROOT_DOCUMENT and path not in _reached(work):
                 # The root does not pull this fragment in yet, which is exactly
                 # the fragment-first order a split writeup has to be built in.
@@ -446,18 +466,18 @@ class LatexTools:
             # create, from a document nobody will ever read.
             pdf_note = ""
             if actual and resolved and output_dir is not None and pdf.exists():
-                if _publish(work, output_dir, aux_dir):
+                held = _publish(work, output_dir, aux_dir)
+                if held is None:
                     if published is not None:
                         published()
                 else:
-                    # The aux file is published; only the PDF a reader would
-                    # open is stale. `ok` stays true -- the source is saved and
-                    # the labels are current -- and the model is told in words
-                    # rather than being handed an exception past a commit that
-                    # already succeeded.
+                    # Something held the aux file or the PDF open. `ok` stays
+                    # true -- the source is saved -- nothing is stamped, and
+                    # the model is told in words rather than being handed an
+                    # exception past a commit that already succeeded.
                     pdf_note = (
-                        f"{output_dir / 'writeup.pdf'} is open in another program and could "
-                        "not be replaced; close it and run check_latex/save again to refresh it"
+                        f"{held} is open in another program and could not be replaced; "
+                        "close it and run check_latex/save again to refresh it"
                     )
             report = broken or references.note(labels)
             if pdf_note:
