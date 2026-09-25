@@ -218,10 +218,15 @@ the artifact, since a cell may rewrite the path it was run from, and the answer
 is to put the published bytes back and refuse the verdict rather than to check
 a file no reader will run. Whatever the run started is stopped before the file
 is read back, because a descendant that outlives the script is free to rewrite
-the artifact after the verdict has been drawn on it. A descendant that leaves
-its process group outlives that sweep, and on a platform with no process groups
-nobody can look at all, so both published files are read back once more before
-the manifest describes them. What becomes of a file after an export has
+the artifact after the verdict has been drawn on it. The script's tree is held
+as one from the moment it starts: a process group on POSIX, a job object on
+Windows (`contain` in `foundation/process.py`, which the kernel gets too). The
+sweep asks the group, or the job's count of active processes, whether anything
+is still running, and only then kills it; a run whose tree nothing held, such
+as a job the host refused to assign, answers "unknown" and is `unverified`
+for that reason, never "nothing left behind". A descendant that leaves its
+process group, or breaks away from the job, outlives that sweep, so both
+published files are read back once more before the manifest describes them. What becomes of a file after an export has
 finished is what the manifest's hashes let a reader detect, and not something
 any verdict speaks for.
 

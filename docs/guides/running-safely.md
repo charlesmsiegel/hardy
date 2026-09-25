@@ -99,8 +99,8 @@ is the bad assumption this document exists to prevent.
   compiled, so a downloaded archive's contents are still not trustworthy
   just because unpacking them was careful.
 - **Helper processes.** Lean, `lake`, TeX, and the CAS kernel are ordinary
-  child processes of your account. On Windows, a tracked child is placed
-  in a Job Object, and `TerminateJobObject` reaches every descendant in
+  child processes of your account. On Windows, a tracked child, the CAS
+  kernel and an exported CAS script are each placed in a Job Object, and `TerminateJobObject` reaches every descendant in
   it, the Windows equivalent of killing a process group. The assignment
   is best effort: a grandchild spawned in the microseconds before it
   completes escapes the job, and a child that has already exited, or a

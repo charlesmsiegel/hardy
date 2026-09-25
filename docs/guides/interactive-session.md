@@ -489,7 +489,7 @@ than shown, and no tool call runs either way. A second Esc stops waiting and
 kills whatever had not taken the first hint, at the cost of that child's
 state, such as a computer algebra kernel's namespace; on Windows this reaches
 the whole tree Hardy started, not only its leader, through a job object every
-tracked child is placed in. The residue is narrower: a grandchild spawned in
+tracked child, and the computer algebra kernel, is placed in. The residue is narrower: a grandchild spawned in
 the brief window before that job assignment lands, and any child Hardy never
 tracked in the first place, are reached only at the leader. Against a
 command that owns a child of its own, a running `/cas` cell or a `/prove`

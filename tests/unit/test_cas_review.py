@@ -1287,12 +1287,6 @@ def test_an_ordinary_namespace_is_still_within_the_payload_bound() -> None:
 # --------------------------------------------------- and the twelfth review's
 
 
-@pytest.mark.skipif(
-    os.name == "nt",
-    reason="the sweep is a process-group probe and kill (os.killpg), which Windows "
-    "has no equivalent of; there the descendant is not stopped and the artifact is "
-    "rewritten, which `can_sweep_descendants` is what admits to",
-)
 def test_a_descendant_cannot_rewrite_the_artifact_after_the_verdict(
     sympy_session, tmp_path
 ) -> None:
@@ -1506,11 +1500,11 @@ def test_a_mutating_repr_is_caught_end_to_end(sympy_session, tmp_path) -> None:
 def test_a_platform_that_cannot_sweep_descendants_does_not_claim_verified(
     sympy_session, tmp_path, monkeypatch
 ) -> None:
-    """Windows has no process group to ask about or to signal, so a script's
-    children can neither be accounted for nor stopped. Reporting "nothing was
-    left behind" there said `verified` where the truth is that nobody looked —
-    and a delayed child was still free to rewrite the published file after the
-    readback and the manifest hash.
+    """A host that can hold no process tree -- no process group, no job
+    object -- can neither account for a script's children nor stop them.
+    Reporting "nothing was left behind" there said `verified` where the truth
+    is that nobody looked — and a delayed child was still free to rewrite the
+    published file after the readback and the manifest hash.
     """
     monkeypatch.setattr(scripts, "can_sweep_descendants", lambda: False)
     sympy_session.execute("1 + 1")
@@ -1540,12 +1534,149 @@ def test_a_script_printing_non_ascii_is_read_back_as_written(tmp_path) -> None:
 
 
 def test_a_platform_that_can_sweep_still_verifies(sympy_session, tmp_path) -> None:
-    """And where Hardy can look, it says what it found."""
-    assert cas.can_sweep_descendants() is (os.name != "nt")
+    """And where Hardy can look, it says what it found -- on Windows too, where
+    the script runs in a job object whose active processes are what is asked
+    about. A script that starts nothing is `verified` on every platform."""
+    assert cas.can_sweep_descendants()
     sympy_session.execute("1 + 1")
     report = export_session(sympy_session, tmp_path / "cas")
-    expected = "verified" if cas.can_sweep_descendants() else "unverified"
-    assert report.script_verdict == expected, report.model_dump_json(indent=2)
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+
+# ------------------------------------------ both CAS spawn sites are contained (#286)
+
+
+def test_the_kernel_is_contained_the_moment_it_starts(sympy_session, monkeypatch) -> None:
+    """The kernel was the one child no job held: on Windows a stop reached the
+    interpreter and nothing a cell had started."""
+    from hardy.algebra import kernel
+
+    contained: list[subprocess.Popen] = []
+    monkeypatch.setattr(kernel, "contain", contained.append)
+    sympy_session.execute("1 + 1")
+
+    assert [child.pid for child in contained] == [sympy_session._kernel.process.pid]
+
+
+def test_an_exported_script_is_contained_the_moment_it_starts(tmp_path, monkeypatch) -> None:
+    contained: list[subprocess.Popen] = []
+    monkeypatch.setattr(scripts, "contain", contained.append)
+    script = tmp_path / "quiet.py"
+    script.write_text("print(1)\n", encoding="utf-8")
+
+    run = scripts.run_exported_script(
+        backend=backend_for("sympy"), command=None, script=script,
+        cwd=tmp_path / "run", timeout=120, max_output_bytes=4096,
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert len(contained) == 1 and isinstance(contained[0], subprocess.Popen)
+
+
+def test_a_tree_nobody_could_ask_about_is_not_verified(sympy_session, tmp_path, monkeypatch) -> None:
+    """`None` is "unknown": a job that could not be assigned, a query that
+    failed. It is not "nothing left behind"."""
+    monkeypatch.setattr(scripts, "tree_has_members", lambda child: None)
+    sympy_session.execute("1 + 1")
+
+    report = export_session(sympy_session, tmp_path / "cas")
+
+    assert report.script_verdict == "unverified", report.model_dump_json(indent=2)
+    assert "cannot account for what a script starts" in report.script_detail
+
+
+def test_a_tree_with_members_is_a_script_that_left_something(sympy_session, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(scripts, "tree_has_members", lambda child: True)
+    sympy_session.execute("1 + 1")
+
+    report = export_session(sympy_session, tmp_path / "cas")
+
+    assert report.script_verdict == "unverified", report.model_dump_json(indent=2)
+    assert "left a process running" in report.script_detail
+
+
+def _sleeper_parent(ready: Path) -> list[str]:
+    """A leader that starts a sleeping child, says so, and exits."""
+    return [
+        sys.executable, "-c",
+        "import pathlib, subprocess, sys; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"pathlib.Path({str(ready)!r}).write_text('ready')",
+    ]
+
+
+def test_a_contained_tree_reports_a_descendant_the_leader_left(tmp_path) -> None:
+    from hardy.foundation.process import child_creation, contain, kill_group, tree_has_members
+
+    leader = subprocess.Popen(_sleeper_parent(tmp_path / "ready"), **child_creation())
+    contain(leader)
+    try:
+        leader.wait(timeout=60)
+        assert (tmp_path / "ready").exists()
+        assert tree_has_members(leader) is True
+    finally:
+        kill_group(leader)
+
+
+def test_a_contained_tree_that_started_nothing_has_no_members(tmp_path) -> None:
+    from hardy.foundation.process import child_creation, contain, tree_has_members
+
+    leader = subprocess.Popen([sys.executable, "-c", "pass"], **child_creation())
+    contain(leader)
+    leader.wait(timeout=60)
+
+    assert tree_has_members(leader) is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a job object is Windows' process tree")
+def test_an_uncontained_windows_child_is_unknown_rather_than_empty() -> None:
+    from hardy.foundation.process import tree_has_members
+
+    leader = subprocess.Popen([sys.executable, "-c", "pass"])
+    leader.wait(timeout=60)
+
+    assert tree_has_members(leader) is None
+
+
+def _windows_process(pid: int):
+    """A handle that can be waited on for `pid`, or None if it is already gone."""
+    import ctypes
+    from ctypes import wintypes
+
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    api.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    api.OpenProcess.restype = wintypes.HANDLE
+    api.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    api.WaitForSingleObject.restype = wintypes.DWORD
+    api.CloseHandle.argtypes = (wintypes.HANDLE,)
+    api.CloseHandle.restype = wintypes.BOOL
+    synchronize = 0x00100000
+    handle = api.OpenProcess(synchronize, False, pid)
+    return api, handle
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the job-object sweep is Windows' spelling of killpg")
+def test_a_reset_ends_what_a_cell_started_on_windows(sympy_session) -> None:
+    """A cell that shells out leaves a child the interpreter does not wait for.
+    Before the kernel had a job, a reset ended the interpreter and left the
+    child running for as long as it liked."""
+    record = sympy_session.execute(
+        "import subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(3600)'])\n"
+        "print(child.pid)\n"
+    )
+    pid = int(record.stdout.strip().splitlines()[-1])
+    api, handle = _windows_process(pid)
+    assert handle, "the cell's child was never running"
+    try:
+        wait_object_0, wait_timeout = 0x0, 0x102
+        assert api.WaitForSingleObject(handle, 0) == wait_timeout, "the child exited on its own"
+
+        sympy_session.reset()
+
+        assert api.WaitForSingleObject(handle, 10_000) == wait_object_0, "the reset left it running"
+    finally:
+        api.CloseHandle(handle)
 
 
 # ----------------------------------------------- and the fourteenth review's

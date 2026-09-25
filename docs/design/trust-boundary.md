@@ -129,7 +129,9 @@ Controlled:
   stderr, and classifies termination so that an output overflow stays distinct
   from a timeout and never becomes a success. On Windows a tracked child is
   put in a Job Object and `TerminateJobObject` reaches its descendants, which
-  is the Windows spelling of killing a process group. The residual gap is
+  is the Windows spelling of killing a process group; the computer algebra
+  kernel and an exported script, which outlive one call and are not tracked
+  that way, are put in one too (`contain`). The residual gap is
   narrow and stated in the code: the child has been running since `Popen`
   returned, so a grandchild spawned in the microseconds before the job
   assignment escapes the job. The second residue is a process this launcher
