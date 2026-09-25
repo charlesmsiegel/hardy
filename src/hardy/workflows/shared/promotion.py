@@ -37,7 +37,7 @@ from hardy.formal.syntax import (
     statements,
 )
 from hardy.formal.workspace import LeanWorkspace
-from hardy.foundation.files import files_under, guard_for
+from hardy.foundation.files import files_under, guard_for, normalize_newlines
 from hardy.foundation.journal import Journal, JournalSnapshot
 from hardy.foundation.locking import FileLock
 from hardy.foundation.values import FrozenModel, json_digest
@@ -301,7 +301,16 @@ class Promoter:
         missing = [m for m in renames if m not in sources]
         if missing:
             return self._fail(record, PromotionBlocker(kind="missing_module", detail=f"project sources no longer hold {', '.join(missing)}"))
-        staged = {shared: rewrite_imports(sources[project_module], renames) for project_module, shared in renames.items()}
+        # Normalised here, once, rather than at each of the three places that
+        # read `staged` below: the digest (`source_sha`), the conflict check
+        # against what is already published, and the write itself all have to
+        # agree on the same bytes, and a project source read off a Windows
+        # checkout can carry CRLF that none of the three would otherwise strip
+        # (#366).
+        staged = {
+            shared: normalize_newlines(rewrite_imports(sources[project_module], renames))
+            for project_module, shared in renames.items()
+        }
         temporary = Path(tempfile.mkdtemp(prefix="hardy-promotion-"))
         shadow_root, shadow_build = temporary / "lean", temporary / "build"
         try:
@@ -316,8 +325,10 @@ class Promoter:
                 shadow_build.mkdir(parents=True)
             for shared, source in staged.items():
                 guard, name = guard_for(shadow_root, module_path(shared), create=True)
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(source)
+                # Not fsynced: every byte here lands in a scratch tree that is
+                # deleted once this promotion either commits its own write
+                # into the real shared tree below, or fails.
+                guard.write_text(name, source, sync=False)
             shadow = LeanWorkspace(shadow_root, shadow_build, self._compile, environment=json_digest(self.environment.model_dump(mode="json")))
             targets = tuple(staged)
             failure = shadow.build_modules(targets)
@@ -358,7 +369,11 @@ class Promoter:
                 before = {shared: _read_if_file(self.shared_root / module_path(shared)) for shared in staged}
                 for shared, source in staged.items():
                     published = before[shared]
-                    if published is not None and published.decode("utf-8", "replace").replace("\r\n", "\n") != source.replace("\r\n", "\n"):
+                    # `source` is already LF-only (`staged` was normalised
+                    # above); `published` is read straight off disk and may
+                    # still carry CRLF from a promotion made before this fix,
+                    # so it alone needs normalising here.
+                    if published is not None and normalize_newlines(published.decode("utf-8", "replace")) != source:
                         # A published module is what its consumers import; different
                         # mathematics under the same name would change what an old
                         # realization means. Identical bytes are a harmless re-promotion.
@@ -368,8 +383,7 @@ class Promoter:
                     shutil.copytree(self.shared_build, build_before)
                 for shared, source in staged.items():
                     guard, name = guard_for(self.shared_root, module_path(shared), create=True)
-                    with guard.open(name, "w", encoding="utf-8") as handle:
-                        handle.write(source)
+                    guard.write_text(name, source)
                 if self.shared_build.is_dir():
                     shutil.rmtree(self.shared_build)
                 shutil.copytree(shadow_build, self.shared_build)

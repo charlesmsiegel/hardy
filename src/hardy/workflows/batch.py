@@ -688,7 +688,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     sketch = None if final else (dict(sketched) if sketched["proof"] else None)
     result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING], toolchain, sketch)
     if final and proof:
-        (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
+        (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8", newline="\n")
     else:
         # Removed rather than merely not written. An output directory is
         # reusable -- `hardy-output` is the default and is reused by anyone who
@@ -712,7 +712,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     if sketch is not None:
         writeup += sketch_section(sketch)
-    (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
+    (output_dir / "writeup.md").write_text(writeup, encoding="utf-8", newline="\n")
     trajectory = {"schema_version": 2, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed, context_window, compacted), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason}
     trajectory["attempt_receipt"] = recorder.finish(trajectory, result.as_dict())
     _write_json(output_dir / "trajectory.json", trajectory)

@@ -401,8 +401,10 @@ class LeanWorkspace:
             # depend on source that is no longer in the workspace.
             shadow.forget(module_name(relative))
         else:
-            with shadow_guard.open(shadow_name, "w", encoding="utf-8") as handle:
-                handle.write(source)
+            # Not fsynced: every byte here lands in a scratch tree that is
+            # discarded (`discard`) once the caller either commits the real
+            # write below or decides against it.
+            shadow_guard.write_text(shadow_name, source, sync=False)
 
         def commit() -> None:
             # `guard_for`, not `self.root / relative`. `safe_relative` has
@@ -417,8 +419,7 @@ class LeanWorkspace:
             if source is None:
                 guard.unlink(name, missing_ok=True)
             else:
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(source)
+                guard.write_text(name, source)
             if self.build.is_dir():
                 shutil.rmtree(self.build)
             shutil.copytree(shadow_build, self.build)

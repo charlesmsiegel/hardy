@@ -26,7 +26,7 @@ from typing import Literal
 from uuid import uuid4
 
 from hardy.formal.workspace import LeanWorkspace
-from hardy.foundation.files import guard_for
+from hardy.foundation.files import guard_for, normalize_newlines
 from hardy.foundation.locking import FileLock
 from hardy.foundation.values import FrozenModel, json_digest
 from hardy.workflows.delegation.attention import AttentionInbox
@@ -587,7 +587,12 @@ class AuthoritativeAdmission:
                             staged.forget(change.path.removesuffix(".lean").replace("/", "."))
                         else:
                             target.parent.mkdir(parents=True, exist_ok=True)
-                            target.write_text(change.content or "", encoding="utf-8")
+                            # Normalised and pinned to "\n" here, in the staged
+                            # copy that gets built and audited, so that what is
+                            # verified is byte-for-byte what `_commit_files`
+                            # (through `guard.write_text`) then commits -- not a
+                            # platform-translated cousin of it (#366).
+                            target.write_text(normalize_newlines(change.content or ""), encoding="utf-8", newline="\n")
                     phase(AdmissionPhase.FILES_PREPARED, head)
                     if target_prove is None:
                         return fail(head, "rejected", ("no proof obligation to discharge on this candidate",))
@@ -657,8 +662,7 @@ class AuthoritativeAdmission:
             if change.operation == "delete":
                 guard.unlink(name, missing_ok=True)
             else:
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(change.content or "")
+                guard.write_text(name, change.content or "")
         if self.workspace.build.is_dir():
             shutil.rmtree(self.workspace.build)
         shutil.copytree(staged.build, self.workspace.build)

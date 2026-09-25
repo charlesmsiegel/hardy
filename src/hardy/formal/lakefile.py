@@ -46,9 +46,24 @@ def append_stanza(lakefile: Path, stanza: str) -> None:
     Proven again here rather than trusted from the parse: the read happened
     before a human was asked whether to register at all, and a file can be
     replaced by a link in between.
+
+    This is the user's own file, not a project tree Hardy owns, so LF is not
+    forced onto it the way it is everywhere else: appending in text mode with
+    `newline=None` would leave `lakefile.toml` with the platform's line ending
+    on the new stanza and whatever the user already had on every earlier
+    line -- CRLF on Windows beside a file the user wrote in LF, or the reverse
+    (#366). Detecting which one the file already uses and writing the stanza
+    in binary with that ending matches it instead of adding a second
+    convention to a file Hardy did not create.
     """
-    with host_lakefile(lakefile).open("a", encoding="utf-8") as handle:
-        handle.write(stanza)
+    proven = host_lakefile(lakefile)
+    try:
+        existing = proven.read_bytes()
+    except OSError:
+        existing = b""
+    ending = "\r\n" if b"\r\n" in existing else "\n"
+    with proven.open("ab") as handle:
+        handle.write(stanza.replace("\n", ending).encode("utf-8"))
 
 
 def exposed_modules(lean_root: Path) -> set[str]:

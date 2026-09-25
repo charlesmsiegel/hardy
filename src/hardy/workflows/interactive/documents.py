@@ -134,8 +134,7 @@ class DocumentService:
             # `writeup.tex -> ~/.bashrc`.
             try:
                 guard, name = guard_for(self.tex_root, relative, create=True)
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(source.rstrip() + "\n")
+                guard.write_text(name, source.rstrip() + "\n")
             except OSError as error:
                 # Raised on, never swallowed: the whole point of running here
                 # is that `check` publishes nothing when this fails. Wrapped

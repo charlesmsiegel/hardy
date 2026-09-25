@@ -81,7 +81,7 @@ def create_lean_project(
             manual_instructions="Set `lean_project` in the config file, or run `hardy setup` again when ready.",
         )
     lean_project.mkdir(parents=True, exist_ok=True)
-    (lean_project / "lean-toolchain").write_text(LEAN_TOOLCHAIN + "\n", encoding="utf-8")
+    (lean_project / "lean-toolchain").write_text(LEAN_TOOLCHAIN + "\n", encoding="utf-8", newline="\n")
     (lean_project / "lakefile.toml").write_text(
         f'name = "{LEAN_PACKAGE}"\n'
         'defaultTargets = ["HardyMath"]\n'
@@ -94,8 +94,9 @@ def create_lean_project(
         "[[lean_lib]]\n"
         'name = "HardyMath"\n',
         encoding="utf-8",
+        newline="\n",
     )
-    (lean_project / "HardyMath.lean").write_text("import Mathlib\n", encoding="utf-8")
+    (lean_project / "HardyMath.lean").write_text("import Mathlib\n", encoding="utf-8", newline="\n")
     return InstallOutcome(
         status="installed",
         manual_instructions=f"Created the pinned Lake project at {lean_project}.",
