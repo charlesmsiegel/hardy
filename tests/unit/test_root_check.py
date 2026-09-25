@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import importlib
 
+import pytest
+
 from hardy.workflows.ledger.contracts import ArtifactRef, ProjectItem, Relation, ResearchState
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.root_check import check_root
@@ -45,7 +47,8 @@ def test_status_direction_vocabulary_and_artifacts_are_enforced(tmp_path) -> Non
     unbacked = item("L", "lean verified")
     (tmp_path / "up").mkdir()
     note = tmp_path / "up" / "note.md"
-    note.write_text("kept\n", encoding="utf-8")
+    # Bytes: the digest is over them, and `write_text` writes CRLF on Windows.
+    note.write_bytes(b"kept\n")
     good = item("G", "open", artifacts=(ArtifactRef(uri="note.md", digest=hashlib.sha256(b"kept\n").hexdigest()),))
     stale = item("S", "open", artifacts=(ArtifactRef(uri="note.md", digest="0" * 64),))
     gone = item("M", "open", artifacts=(ArtifactRef(uri="missing.md", digest="0" * 64),))
@@ -492,12 +495,13 @@ def test_artifacts_must_be_files_inside_the_root(tmp_path) -> None:
     import os
 
     outside = tmp_path / "outside.md"
-    outside.write_text("kept\n", encoding="utf-8")
+    # Bytes: the digest is over them, and `write_text` writes CRLF on Windows.
+    outside.write_bytes(b"kept\n")
     digest = hashlib.sha256(b"kept\n").hexdigest()
     root = tmp_path / "root"
     (root / "up").mkdir(parents=True)
     (root / "other" / "notes").mkdir(parents=True)
-    (root / "other" / "notes" / "1.md").write_text("kept\n", encoding="utf-8")
+    (root / "other" / "notes" / "1.md").write_bytes(b"kept\n")
     os.symlink(outside, root / "up" / "linked.md")
     # A reference to another problem's file stays inside the root and is read.
     mirror = item("M", "open", artifacts=(ArtifactRef(uri="../other/notes/1.md", digest=digest),))
@@ -509,6 +513,23 @@ def test_artifacts_must_be_files_inside_the_root(tmp_path) -> None:
     failures = check_root(root).failures
     assert len(failures) == 4
     assert all(f.startswith("up: E: artifact ") and "is not a file inside the root" in f for f in failures)
+
+
+@pytest.mark.parametrize("uri", ["C:\\elsewhere\\outside.md", "C:/elsewhere/outside.md", "c:outside.md",
+                                 "\\\\server\\share\\outside.md", "//server/share/outside.md"])
+def test_a_windows_absolute_artifact_path_is_refused_on_every_platform(tmp_path, uri) -> None:
+    """A drive letter is not a URI scheme, and a drive path is not relative.
+
+    `C:` matched the scheme pattern, so on Windows an artifact named by its
+    absolute path was skipped as a store's URI -- neither refused nor hashed
+    -- and read on POSIX, the same ledger's `C:/...` was a relative path. A
+    ledger written on one machine is checked on another, so both readings
+    are refused everywhere.
+    """
+    (tmp_path / "up").mkdir()
+    ref = ArtifactRef(uri=uri, digest=hashlib.sha256(b"kept\n").hexdigest())
+    LedgerStore(tmp_path / "up").append((item("E", "open", artifacts=(ref,)),), expected_revision=0)
+    assert check_root(tmp_path).failures == (f"up: E: artifact {uri} is not a file inside the root",)
 
 
 HELPER = "import Mathlib\n\nlemma helper_fact : True := by exact True.intro\n"

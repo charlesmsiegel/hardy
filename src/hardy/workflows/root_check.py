@@ -29,7 +29,8 @@ What it enforces, per problem:
   goes through, so a path that leaves the root, an absolute path, or a
   symlink is refused rather than hashed; an artifact named by a URI with a
   scheme (`arxiv:`, `manuscript:`, `file:`) belongs to the store that issued
-  it and is not read here;
+  it and is not read here, and a Windows drive (`C:\\...`) is a path, not a
+  scheme, so it is refused as absolute;
 - a `lean verified` item has a resolved `prove` obligation on its current
   revision whose acceptance the problem's own evidence readers authenticate
   from its `evidence/` journal, and whose formal evidence describes the Lean
@@ -69,7 +70,7 @@ import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from hardy.formal.syntax import module_path, named_declarations
 from hardy.foundation.files import LayoutError, files_under, read_bytes, read_text
@@ -96,7 +97,10 @@ RANK = {status: rank for rank, status in enumerate(STATUSES)}
 LEDGER_DIR = "ledger"
 LEAN_DIR = "lean"
 #: A URI with a scheme names something a store issued, not a file beside the ledger.
-SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+#: Two characters at least: a single letter before the colon is a Windows drive
+#: (`C:\Users\...`, `C:notes.md`), and reading one as a scheme skipped the
+#: artifact altogether -- neither refused as outside the root nor hashed.
+SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
 _CLASSES = {"open": "open", "llm proved": "llm", "human verified": "human", "lean verified": "lean",
             "imported": "imported", "published input": "input", "external research input": "input"}
 
@@ -172,13 +176,15 @@ def lean_declarations(problem: Path) -> tuple[set[str], list[str]]:
         try:
             found = files_under(tree, ".lean")
         except (LayoutError, OSError) as error:
-            unreadable.append(f"lean tree {tree.relative_to(problem.parent)} does not read: {error}")
+            unreadable.append(f"lean tree {tree.relative_to(problem.parent).as_posix()} does not read: {error}")
             continue
         for relative in found:
             try:
                 names.update(named_declarations(read_text(tree, relative)))
             except (LayoutError, OSError, UnicodeDecodeError) as error:
-                unreadable.append(f"lean source {(tree / relative).relative_to(problem.parent)} does not read: {error}")
+                unreadable.append(
+                    f"lean source {(tree / relative).relative_to(problem.parent).as_posix()} does not read: {error}"
+                )
     return names, unreadable
 
 
@@ -325,7 +331,10 @@ def within_root(problem: Path, uri: str) -> PurePosixPath | None:
     what the check exists to compare; `../../elsewhere` and an absolute path
     are not, and a file there matching the digest says nothing about the root.
     """
-    if uri.startswith(("/", "\\")) or PurePosixPath(uri.replace("\\", "/")).is_absolute():
+    # `anchor` catches every Windows form a POSIX reading misses -- `C:\x`,
+    # the drive-relative `C:x`, `\\server\share` -- whichever platform reads
+    # the ledger: a path written on one machine is checked on another.
+    if uri.startswith(("/", "\\")) or PureWindowsPath(uri).anchor:
         return None
     parts: list[str] = []
     for part in (PurePosixPath(problem.name) / uri.replace("\\", "/")).parts:
