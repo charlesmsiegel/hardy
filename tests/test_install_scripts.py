@@ -338,23 +338,169 @@ def test_every_supported_platform_has_an_installer():
         assert (SCRIPTS / name).exists()
 
 
-def run_installer_functions(body: str, script: Path = POWERSHELL_SCRIPT) -> subprocess.CompletedProcess:
+def run_installer_functions(
+    body: str, script: Path = POWERSHELL_SCRIPT, *, require_ps51: bool = False
+) -> subprocess.CompletedProcess:
     """Run `body` with the installer's function definitions in scope.
 
     The script installs Hardy when it is dot-sourced, so its functions are
     lifted out of the parse tree instead: that tests the definitions actually
     shipped rather than a copy of them.
+
+    `require_ps51` insists on Windows PowerShell 5.1 (`powershell.exe`) rather
+    than accepting `pwsh`, and adds `$ErrorActionPreference = 'Stop'` to the
+    preamble. That combination is what #301 is about: PowerShell 7.2 stopped
+    treating a redirected native command's stderr as a terminating error
+    (PSNotApplyErrorActionToStderr), so a test run under `pwsh`, or without
+    `$ErrorActionPreference = 'Stop'` (the default here otherwise, since that
+    assignment lives at script scope and is not one of the lifted functions),
+    would pass whether or not the fix is really there.
     """
-    powershell = shutil.which("pwsh") or shutil.which("powershell")
-    if powershell is None:
-        pytest.skip("PowerShell is not installed")
+    if require_ps51:
+        powershell = shutil.which("powershell")
+        if powershell is None:
+            pytest.skip("Windows PowerShell 5.1 is not installed")
+    else:
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if powershell is None:
+            pytest.skip("PowerShell is not installed")
     preamble = (
-        "$e = $null; $t = $null; "
+        ("$ErrorActionPreference = 'Stop'; " if require_ps51 else "")
+        + "$e = $null; $t = $null; "
         f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{script}', [ref]$t, [ref]$e); "
         "$ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | "
         "ForEach-Object { Invoke-Expression $_.Extent.Text }; "
     )
     return subprocess.run([powershell, "-NoProfile", "-Command", preamble + body], capture_output=True, text=True)
+
+
+# --- Windows-only: PS 5.1 native stderr (#301) and the Unicode shim (#305) --
+#
+# Everything below needs real Windows semantics (PowerShell 5.1's stderr
+# handling, cmd.exe's OEM code page, git for Windows' autocrlf warnings) that
+# cannot be faked on another OS or under pwsh. It is skipped everywhere except
+# the `windows` job in .github/workflows/installers.yml, which has both
+# Windows PowerShell 5.1 (`powershell.exe`) and git for Windows.
+windows_only = pytest.mark.skipif(os.name != "nt", reason="needs real Windows PowerShell 5.1 and cmd.exe semantics")
+
+
+@windows_only
+@pytest.mark.parametrize("exit_code, expected", [(0, "True"), (1, "False")])
+def test_stub_lake_stderr_does_not_abort_the_probe_under_ps51(tmp_path: Path, exit_code: int, expected: str):
+    """#301's own reproduction: elan and Lake write download progress to
+    stderr on a project's first `lake` invocation. Under Windows PowerShell
+    5.1 with `$ErrorActionPreference = 'Stop'`, that must never be fatal by
+    itself -- only the stub's exit code may decide `Test-LeanProject`'s
+    answer.
+    """
+    bin_dir = tmp_path / "stub-bin"
+    bin_dir.mkdir()
+    (bin_dir / "lake.cmd").write_text(
+        "@echo off\r\n"
+        "echo info: downloading component 'lean' 1>&2\r\n"
+        f"exit /b {exit_code}\r\n",
+        encoding="utf-8",
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    body = (
+        f"$LeanProject = '{project}'; "
+        f"$env:Path = '{bin_dir}' + ';' + $env:Path; "
+        "Write-Output (Test-LeanProject)"
+    )
+    result = run_installer_functions(body, require_ps51=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == expected, result.stdout + result.stderr
+
+
+@windows_only
+def test_update_source_survives_autocrlf_diff_warnings(tmp_path: Path):
+    """`git diff --quiet` on a checkout with Git for Windows' default
+    `core.autocrlf=true` prints an LF/CRLF warning to stderr for any tracked
+    file with an uncommitted change. Under Windows PowerShell 5.1 with
+    `$ErrorActionPreference = 'Stop'`, that must not stop `Update-Source`
+    before it pulls (#301) -- it must still notice the uncommitted change and
+    ask, exactly as it would with no warning at all.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    run = functools.partial(subprocess.run, check=True, capture_output=True, text=True)
+
+    origin = tmp_path / "origin.git"
+    run(["git", "init", "-q", "--bare", str(origin)])
+    seed = tmp_path / "seed"
+    run(["git", "clone", "-q", str(origin), str(seed)])
+    (seed / "f.txt").write_text("a\nb\n", encoding="utf-8")
+    run(["git", "-C", str(seed), "add", "f.txt"])
+    run([
+        "git", "-C", str(seed), "-c", "user.email=t@example.com", "-c", "user.name=t",
+        "commit", "-q", "-m", "seed",
+    ])
+    branch = run(["git", "-C", str(seed), "branch", "--show-current"]).stdout.strip()
+    run(["git", "-C", str(seed), "push", "-q", "origin", f"HEAD:refs/heads/{branch}"])
+    run(["git", "-C", str(origin), "symbolic-ref", "HEAD", f"refs/heads/{branch}"])
+
+    tree = tmp_path / "checkout"
+    run(["git", "clone", "-q", "-c", "core.autocrlf=true", str(origin), str(tree)])
+    run(["git", "-C", str(tree), "config", "core.autocrlf", "true"])
+    # An uncommitted change to a tracked file: exactly what an editor leaves
+    # behind, and what makes `git diff --quiet` both warn and return 1.
+    (tree / "f.txt").write_text("a\nb\nc\n", encoding="utf-8")
+
+    # $Yes stands in for the switch parameter Confirm-Step reads from its
+    # caller's scope; set here so the "uncommitted changes" prompt does not
+    # block the test the way it would an unattended run without -Yes.
+    body = f"$Yes = $true; Update-Source '{tree}'"
+    result = run_installer_functions(body, script=SCRIPTS / "update-windows.ps1", require_ps51=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "NativeCommandError" not in (result.stdout + result.stderr)
+
+
+@windows_only
+def test_get_shim_content_runs_under_a_hostile_path(tmp_path: Path):
+    """#305: a shim written under a non-ASCII, space- and `%`-containing path
+    must still run and pass arguments through -- in both the default-layout
+    branch (pure ASCII, `%~dp0`-relative) and the OEM-code-page branch
+    `Get-ShimContent` falls back to outside the default layout and outside
+    `%LOCALAPPDATA%`/`%USERPROFILE%`.
+    """
+    hostile = tmp_path / "Hardy Jos\u00e9 100%x"
+    echo_args = hostile / "echo_args.py"
+    hostile.mkdir(parents=True)
+    echo_args.write_text("import sys\nprint(' '.join(sys.argv[1:]))\n", encoding="utf-8")
+
+    def shim_case(bin_dir: Path, venv: Path, extra_preamble: str = "") -> subprocess.CompletedProcess:
+        (venv / "Scripts").mkdir(parents=True)
+        shutil.copy(sys.executable, venv / "Scripts" / "hardy.exe")
+        bin_dir.mkdir(parents=True)
+        shim = bin_dir / "hardy.cmd"
+        body = (
+            extra_preamble
+            + f"$shim = Get-ShimContent '{bin_dir}' '{venv}'; "
+            f"[System.IO.File]::WriteAllText('{shim}', $shim.Text, $shim.Encoding); "
+            f"& '{shim}' '{echo_args}' alpha beta"
+        )
+        return run_installer_functions(body, require_ps51=True)
+
+    # Default layout: BinDir and Venv are siblings under the same prefix, so
+    # Get-ShimContent never encodes a path at all.
+    prefix = hostile / "prefix"
+    default = shim_case(prefix / "bin", prefix / "venv")
+    assert default.returncode == 0, default.stdout + default.stderr
+    assert "alpha beta" in default.stdout, default.stdout + default.stderr
+
+    # Outside the default layout, and (via the sentinel overrides below)
+    # outside %LOCALAPPDATA%/%USERPROFILE% too, whatever tmp_path really sits
+    # under: the OEM-code-page branch.
+    sentinel = (
+        "$env:LOCALAPPDATA = 'C:\\Hardy-Test-Sentinel-Local'; "
+        "$env:USERPROFILE = 'C:\\Hardy-Test-Sentinel-Profile'; "
+    )
+    oem = shim_case(hostile / "elsewhere" / "bin", hostile / "somewhere-else" / "venv", sentinel)
+    if oem.returncode != 0 and "code page" in (oem.stdout + oem.stderr):
+        pytest.skip(f"this machine's OEM code page cannot represent {hostile}: {oem.stdout}{oem.stderr}")
+    assert oem.returncode == 0, oem.stdout + oem.stderr
+    assert "alpha beta" in oem.stdout, oem.stdout + oem.stderr
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the shortcut is made through the Windows shell's own COM object")
@@ -442,6 +588,59 @@ def test_the_windows_scripts_generate_no_utf8_bom(script: Path):
     code = [line for line in script.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("#")]
     offenders = [line.strip() for line in code if "-Encoding UTF8" in line]
     assert not offenders, f"-Encoding UTF8 writes a BOM on Windows PowerShell; use Write-Utf8File: {offenders}"
+
+
+@pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
+def test_the_windows_scripts_write_no_ascii_only_shim(script: Path):
+    """`-Encoding ASCII` silently replaces every non-ASCII character with `?`.
+
+    That is exactly what turned `hardy.cmd` into a broken command for a
+    `José`, `Zoë`, or `Łukasz` profile path: the embedded venv path came out
+    as `C:\\Users\\Jos?\\...`, which is not a legal path at all (#305).
+    """
+    code = [line for line in script.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("#")]
+    offenders = [line.strip() for line in code if "-Encoding ASCII" in line]
+    assert not offenders, f"-Encoding ASCII replaces non-ASCII characters with '?': {offenders}"
+
+
+def _function_body(source: str, name: str) -> str:
+    """The brace-matched body of `function <name> { ... }`, PowerShell-style.
+
+    A plain substring or regex search can't find the matching close brace on
+    its own, and the whole point here is telling code inside the function from
+    code outside it.
+    """
+    marker = f"function {name} {{"
+    start = source.index(marker) + len(marker) - 1  # the opening brace itself
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"unbalanced braces in function {name}")
+
+
+@pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
+def test_native_stderr_is_only_ever_redirected_inside_invoke_native(script: Path):
+    """Under Windows PowerShell 5.1 (and 7.0/7.1), redirecting a native
+    command's error stream turns each line it writes there into a terminating
+    `NativeCommandError` when `$ErrorActionPreference = 'Stop'` -- whatever the
+    command's own exit code says, and whatever the redirect target is. That
+    killed the installer at its very first `lake` invocation, since elan and
+    Lake both write download progress to stderr (#301). `Invoke-Native` is the
+    one place allowed to redirect a native command's error stream; it handles
+    the PS 5.1 behaviour itself, so nothing else may bypass it.
+    """
+    source = script.read_text(encoding="utf-8")
+    outside = source
+    if "function Invoke-Native" in source:
+        outside = source.replace(_function_body(source, "Invoke-Native"), "")
+    code = [line for line in outside.splitlines() if not line.lstrip().startswith("#")]
+    offenders = [line.strip() for line in code if re.search(r"2>|[*]>", line)]
+    assert not offenders, f"native stderr redirected outside Invoke-Native: {offenders}"
 
 
 @pytest.mark.parametrize(

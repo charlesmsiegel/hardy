@@ -158,6 +158,14 @@ installer is cheap and safe.
 | Config file | `~/.hardy/config.toml` | `%USERPROFILE%\.hardy\config.toml` |
 | Lean toolchain | `~/.elan` | `%USERPROFILE%\.elan` |
 
+`hardy.cmd` finds `hardy.exe` in the venv relative to itself (`%~dp0..\venv\...`)
+rather than embedding your profile path, so it works for any account name --
+Windows profile folders take the account name verbatim, accented letters and
+all. A `-BinDir` outside the default `bin` folder writes the venv's path
+relative to `%LOCALAPPDATA%`/`%USERPROFILE%` when it can, or in your system's
+own code page otherwise, and refuses rather than write a path that would come
+out wrong.
+
 Nothing is installed system-wide except distribution packages (Python, git,
 curl, TeX), which are the only steps that use `sudo`.
 
@@ -368,6 +376,12 @@ exactly which files it touched.
 
 **`lake: command not found`** after installing elan, same cause; elan adds
 `~/.elan/bin` to your profile. Open a new terminal.
+
+**On Windows, `hardy` runs but fails, or cmd reports it cannot find the
+path**, `hardy.cmd` is written fresh on every install, so re-running
+`scripts\install-windows.ps1` replaces a broken one. The installer's own
+verification step runs `hardy.cmd` itself, not just `hardy.exe`, so this
+should not reach you in the first place; if it does, it is worth reporting.
 
 **Lean errors mentioning `import Mathlib`**, either the shared project was
 skipped (`--skip-mathlib`) or its cache is incomplete. Rebuild it:

@@ -58,6 +58,33 @@ function Write-Warn($message) { Write-Warning $message }
 function Stop-Update($message) { Write-Host "error: $message" -ForegroundColor Red; exit 1 }
 function Test-Command($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
+# See install-windows.ps1's copy for why this exists: under Windows PowerShell
+# 5.1, redirecting a native command's stderr turns each line it writes there
+# into a terminating NativeCommandError under $ErrorActionPreference = 'Stop',
+# whatever the exit code is. Only $LASTEXITCODE decides success here. (#301)
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory)][string]$File,
+        [string[]]$Arguments = @(),
+        $InputObject,
+        [switch]$Quiet,
+        [switch]$DropErrors
+    )
+    $ErrorActionPreference = 'Continue'
+    if ($Quiet) {
+        if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments *> $null }
+        else { & $File @Arguments *> $null }
+    }
+    elseif ($DropErrors) {
+        if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments 2> $null }
+        else { & $File @Arguments 2> $null }
+    }
+    else {
+        if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments }
+        else { & $File @Arguments }
+    }
+}
+
 function Confirm-Step($question) {
     if ($Yes) { return $true }
     if (-not [Environment]::UserInteractive) { return $true }
@@ -171,7 +198,7 @@ if recorded:
             raise SystemExit(0)
 raise SystemExit(3)
 '@
-    $found = ($probe | & $VenvPython -) 2>$null
+    $found = Invoke-Native $VenvPython @('-') -InputObject $probe -DropErrors
     if ($LASTEXITCODE -eq 0 -and $found) { return $found.Trim() }
     if ($LASTEXITCODE -eq 3) { return '' }
     Stop-Update "the environment at $Venv has no Hardy in it to update; re-run scripts\install-windows.ps1, or pass -Source DIR"
@@ -226,8 +253,8 @@ function Update-Source($tree) {
         return
     }
     if (-not (Test-Command 'git')) { Stop-Update 'git is required to update a checkout' }
-    $before = (& git -C $tree rev-parse HEAD 2>$null)
-    & git -C $tree diff --quiet 2>$null
+    $before = Invoke-Native git @('-C', $tree, 'rev-parse', 'HEAD') -DropErrors
+    Invoke-Native git @('-C', $tree, 'diff', '--quiet') -Quiet
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "$tree has uncommitted changes"
         if (-not (Confirm-Step 'Pull anyway? Your changes are left in place and may conflict.')) {
@@ -236,7 +263,7 @@ function Update-Source($tree) {
     }
     & git -C $tree pull --ff-only
     if ($LASTEXITCODE -ne 0) { Stop-Update "git pull failed in $tree" }
-    $after = (& git -C $tree rev-parse HEAD 2>$null)
+    $after = Invoke-Native git @('-C', $tree, 'rev-parse', 'HEAD') -DropErrors
     if ($before -eq $after) { Write-Detail "already up to date ($before)" }
     else { Write-Detail "$before -> $after" }
 }

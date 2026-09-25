@@ -252,6 +252,61 @@ jobs:
       - name: The installer test suite, on Windows
         run: uv run --extra test pytest -q tests/test_install_scripts.py
 
+      # #305: a non-ASCII, space-containing prefix used to leave hardy.cmd
+      # with a literal `?` in the venv path (-Encoding ASCII), which is not a
+      # legal path character. -BinDir inside the prefix is the default
+      # layout, so this exercises Get-ShimContent's pure-ASCII %~dp0 branch --
+      # the one real installs actually take.
+      - name: Install into a prefix with a non-ASCII space in its name
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = Join-Path $env:RUNNER_TEMP "Hardy Jos$([char]0xE9)"
+          $bin = Join-Path $prefix 'bin'
+          & powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 `
+            -Yes -SkipMathlib -SkipLatex -FromSource -Prefix $prefix -BinDir $bin
+          if ($LASTEXITCODE -ne 0) { throw "the installer exited $LASTEXITCODE for a non-ASCII prefix" }
+          $shim = Join-Path $bin 'hardy.cmd'
+          if (-not (Test-Path $shim)) { throw "$shim was not written" }
+          # The shell that will actually run it, and the shell an `&` from a
+          # PowerShell profile or script routes through the same way.
+          cmd /c "`"$shim`" --help" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "cmd could not run the shim under a non-ASCII prefix" }
+          & $shim --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell could not run the shim under a non-ASCII prefix" }
+          Write-Host "the shim ran from both cmd and PowerShell under $prefix"
+
+      # #301: under Windows PowerShell 5.1, a redirected native command's
+      # stderr is a terminating NativeCommandError when
+      # $ErrorActionPreference = 'Stop', whatever its exit code says. `pwsh`
+      # (7.2+) no longer has this behaviour, so this step deliberately uses
+      # `shell: powershell` -- Windows PowerShell 5.1 -- the documented entry
+      # point every other step in this job reaches through `powershell -File`.
+      - name: Native stderr does not abort a probe under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stub = Join-Path $env:RUNNER_TEMP 'stub-lake'
+          New-Item -ItemType Directory -Force -Path $stub | Out-Null
+          Set-Content -Encoding ASCII -Path (Join-Path $stub 'lake.cmd') -Value @(
+            '@echo off',
+            'echo info: downloading component ''lean'' 1>&2',
+            'exit /b 0'
+          )
+          $env:Path = "$stub;$env:Path"
+          $errors = $null; $tokens = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts\install-windows.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors) { throw 'install-windows.ps1 does not parse' }
+          $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+            ForEach-Object { Invoke-Expression $_.Extent.Text }
+          $LeanProject = Join-Path $env:RUNNER_TEMP 'stub-lean-project'
+          New-Item -ItemType Directory -Force -Path $LeanProject | Out-Null
+          if (-not (Test-LeanProject)) {
+            throw 'a stub lake.cmd exiting 0 while writing to stderr was treated as failure under PS 5.1'
+          }
+          Write-Host 'native stderr on a redirected call did not abort the probe under PS 5.1'
+
       - name: Update, then uninstall, the installation that is really there
         shell: pwsh
         run: |
