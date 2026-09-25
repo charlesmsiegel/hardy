@@ -328,9 +328,10 @@ trajectory records which one it actually was either way. See
 ## Toolchain pins
 
 Hardy pins a specific toolchain rather than tracking whatever is newest:
-Lean `4.33.1`, Mathlib `v4.33.1`, elan `4.2.1`, and Tectonic `0.16.9`. The
-Tectonic download is the one checked against a recorded digest before it
-is installed.
+Lean `4.35.0-rc3`, Mathlib commit
+`5e0c4e5239cb0a2d86d68a884bf52cfd963fce22` (the `master` of 2026-09-25),
+elan `4.2.1`, and Tectonic `0.16.9`. The Tectonic download is the one
+checked against a recorded digest before it is installed.
 
 ```sh
 hardy setup
