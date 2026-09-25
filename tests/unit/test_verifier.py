@@ -641,3 +641,101 @@ def test_a_report_after_an_exit_is_not_graded(tmp_path) -> None:
 
     assert not result.verified
     assert result.reason is domain.TerminalReason.LEAN_ELABORATION_FAILURE
+
+
+FORGE = "\n\nmacro_rules | `(#print axioms $_) => `(#print \"'two_eq_two' depends on axioms: []\")"
+
+
+@pytest.mark.parametrize(
+    'hiding_line',
+    (
+        # Review round 1, C1: after a symbol token ending in `'` (core's `]'`
+        # and `×'`), `'"'` is not a char literal to Lean.
+        "  have _q : Lean.MacroM Lean.Syntax := `(xs[0]'\"'\")",
+        "  have _q : Lean.MacroM Lean.Syntax := `(Nat ×'\"'\")",
+        # C2: inside an interpolation, and after `!` or `λ`, it is one.
+        "  have _s : String := s!\"{'\"'}\"",
+        "  have _q : Lean.MacroM Lean.Syntax := `(!'\"')",
+        "  have _q : Lean.MacroM Lean.Syntax := `(λ'\"' => 0)",
+    ),
+)
+def test_a_body_hiding_a_forged_report_behind_a_quote_is_refused(tmp_path, hiding_line) -> None:
+    """Each of these elaborates under Lean 4.35.0-rc3 and puts the forged
+    report on Hardy's audit line; with the lexer reading `'"'` one way when
+    Lean reads it the other, the gate saw neither `«sorryAx»` nor
+    `macro_rules`, and the verifier graded the proof of a `sorryAx` clean.
+    Driven end to end: the runner must never be called."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    calls = []
+    claim, final = _final_verifier(tmp_path, lambda spec: calls.append(spec))
+    body = f"by\n{hiding_line}\n  exact «sorryAx» _ false{FORGE}"
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    'body',
+    (
+        # BitVec literals: `#` straight after a numeral is not a command.
+        'by\n  have h : (0#w : BitVec w) = 0 := rfl\n  simp',
+        'by\n  have h : x + 0#w = x := by simp\n  exact h',
+        'by\n  have h : (1#(w+1)).toNat = 1 := by simp\n  simp [h, -1#w]',
+        # A keyword after a projection dot is a field (Lean's `rawIdent`).
+        'by\n  have e := (i).end\n  trivial',
+        # A char literal where it certainly starts.
+        "by\n  have c : Char := '\"'\n  decide",
+        "by\n  have l : List Char := ['a', 'b']\n  rfl",
+    ),
+)
+def test_bitvec_literals_fields_and_plain_chars_still_pass(tmp_path, body) -> None:
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
+    claim, final = _final_verifier(
+        tmp_path,
+        lambda spec: _audit_line_report(
+            process, spec, "'two_eq_two' depends on axioms: [propext]"
+        ),
+    )
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert result.verified, result.diagnostics
+
+
+@pytest.mark.parametrize(
+    'body',
+    ('rfl\n0#exit', 'by simp [0#eval]', 'Eq.refl 0#print', 'Eq.refl 0#where'),
+)
+def test_a_command_after_a_numeral_is_still_refused(tmp_path, body) -> None:
+    """Lean splits `0#exit` into `0` and the `#exit` command: `#exit` is the
+    longest token there. Only a short width variable is BitVec's."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    calls = []
+    claim, final = _final_verifier(tmp_path, lambda spec: calls.append(spec))
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert calls == []
+
+
+def test_a_body_with_too_many_readings_is_refused(tmp_path) -> None:
+    """Past the lexer's bound nothing says where the body's literals end."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    calls = []
+    claim, final = _final_verifier(tmp_path, lambda spec: calls.append(spec))
+    body = "by\n" + '  have s := "{"\n' * 60 + "  trivial"
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert calls == []

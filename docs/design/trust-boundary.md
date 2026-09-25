@@ -197,9 +197,21 @@ from there; an exported declaration that uses a private helper reports the
 helper's axioms as its own. A declaration a command macro or elaborator
 generates is not seen at all, since the scan is textual: a module with a
 literal lemma beside a generated theorem records `clean` over the literal one
-alone. The record names the declarations it covers, and a clean verdict is a
-statement about those names and nothing more; the
-[output contract](output-contract.md) lists this among the gate's known gaps.
+alone. A `theorem` inside a syntax quotation is data rather than a
+declaration, and is not audited either. The record names the declarations it
+covers, and a clean verdict is a statement about those names and nothing more;
+the [output contract](output-contract.md) lists this among the gate's known gaps.
+
+The scan reads Lean's grammar where it is certain and every possible reading
+where it is not. The characters alone do not say where a symbol token ends
+(core's `]'` and `×'`, Mathlib's `∑'` and `//`, anything `notation` adds), so a
+`'` after a symbol may or may not open a char literal, and a `--` or `/-` there
+may or may not open a comment. They do not say whether a string is interpolated
+either (`s!"{'"'}"`). Hardy scans every such reading and reports what any of
+them shows, so a hole or a declaration only one reading contains is still
+found. The name a declaration gets cannot be taken from two readings at once,
+so a `namespace`, `section` or `end` that only some readings call code, or that
+sits in a syntax quotation whose end is uncertain, refuses the save instead.
 
 A module with nothing auditable, one declaring only definitions or only
 private lemmas, records "not established" and the save goes through carrying
@@ -244,9 +256,11 @@ Where Hardy writes the file, it narrows that route without closing it. On the
 staged, batch and sketch paths the model supplies only the text after `:=`,
 and Hardy refuses, before Lean runs, a body containing the command forms it
 recognises: `#`-commands such as `#exit` and `#print`, `macro_rules`, `elab`,
-`syntax`, declarations and attributes. They are found where Lean's own tokens
-start, so a command glued to what precedes it (`rfl#exit`, `1macro_rules`) is
-refused as surely as one on a line of its own. It also refuses the entry points it
+`syntax`, declarations and attributes. A command word is also looked for
+where it starts a token straight after a name or a numeral (`rfl#exit`,
+`1macro_rules`), not only after a space; after a numeral, a `#` followed by a
+short name is taken for BitVec's literal syntax (`0#w`) unless Lean core spells
+a `#` command that way. It also refuses the entry points it
 knows into code run during elaboration (`run_tac`, `run_conv`, `by_elab`,
 `eval%`) and a body naming `«sorryAx»`. `hardy accept --recorded` rebuilds
 the verified source byte for byte from the frozen claim and its declarations,
@@ -259,6 +273,13 @@ one on any path, whatever else it printed.
 
 This is a list of recognised forms, and each residual below still gets past it:
 
+- The lexer these scans stand on knows Lean's grammar and Lean core's tokens,
+  not every token a source's imports or its own `notation` declare. Where
+  that could matter it reads the source every way it can (see above), but a
+  token that runs through a character the lexer treats as certain -- one
+  holding a `"`, or starting with identifier characters and ending in `'"` --
+  can still make it read a literal or a comment where Lean reads code
+  (issue #192).
 - A top-level `set_option` or `open` is not refused. Refusing it would break
   the ordinary `set_option ... in` and `open ... in` tactics, and neither
   command can add an axiom or answer Hardy's line-bound report.

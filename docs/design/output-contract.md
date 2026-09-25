@@ -74,7 +74,8 @@ knows less than it looks like it does. Neither is silent:
   have to sanction one is ASCII-only and never sees it.
 - **A declaration a macro or elaborator generates.** What the audit asks about
   comes from a textual scan of the source, so a declaration with no literal
-  `theorem` or `lemma` in the file is not asked about. A module with no literal
+  `theorem` or `lemma` in the file is not asked about, and neither is one
+  written inside a syntax quotation for a macro to emit. A module with no literal
   declaration at all records "not established"; a module with one literal lemma
   beside a generated theorem records `clean`, and that verdict covers only the
   declarations the record names. It is not a statement about everything the
