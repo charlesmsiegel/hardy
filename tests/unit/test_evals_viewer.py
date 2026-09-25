@@ -19,6 +19,7 @@ from hardy.app.corpus_viewer import (
     PAGE,
     ReviewRefused,
     _allowed_hosts,
+    _announce_host,
     payload,
     record_review,
     serve,
@@ -523,6 +524,120 @@ def test_a_specific_loopback_host_admits_the_usual_aliases_too():
 
 def test_an_ipv6_host_is_admitted_bracketed():
     assert _allowed_hosts("2001:db8::1", 9) == {"[2001:db8::1]:9"}
+
+
+def test_a_wildcard_binds_admitted_names_are_lowercase():
+    """`gethostname()`/`getfqdn()` keep whatever casing the machine gives
+    them -- "DESKTOP-ABC" is typical on Windows -- but a `Host` header is a
+    DNS name, and DNS names are case-insensitive: a client is free to spell
+    it differently. The admitted set is normalised to lowercase so a
+    case-sensitive membership check cannot refuse a legitimate host over
+    casing alone; `desktop-abc:9`, not `DESKTOP-ABC:9`, is what a lowercased
+    incoming `Host` is compared against."""
+    hosts = _allowed_hosts("0.0.0.0", 9, resolve=lambda: ("DESKTOP-ABC", "DESKTOP-ABC.LOCAL", ["10.0.0.5"]))
+    assert hosts == {"desktop-abc:9", "desktop-abc.local:9", "10.0.0.5:9",
+                     "127.0.0.1:9", "localhost:9", "[::1]:9"}
+
+
+def test_a_specific_hosts_admitted_name_is_lowercase_too():
+    assert _allowed_hosts("DESKTOP-ABC", 9) == {"desktop-abc:9"}
+    assert _allowed_hosts("LOCALHOST", 9) == {"127.0.0.1:9", "localhost:9", "[::1]:9"}
+
+
+def test_a_host_header_of_different_case_from_the_admitted_one_is_allowed(running):
+    """The server side of the same normalisation: an admitted host must stay
+    admitted no matter how a client capitalizes its `Host` header."""
+    port = urlsplit(running).port
+    request = urllib.request.Request(f"{running}/api/corpus", headers={"Host": f"Localhost:{port}"})
+    with urllib.request.urlopen(request) as response:
+        assert response.status == 200
+
+
+def test_port_80_also_admits_the_portless_form_of_a_specific_host():
+    """A client reaching the default HTTP port sends a bare `Host: host`,
+    with no `:80` on it (`curl http://127.0.0.1:80/` sends `Host: 127.0.0.1`)
+    -- refusing that on the one port where it is normal, not short, would
+    403 every ordinary request to it."""
+    hosts = _allowed_hosts("127.0.0.1", 80)
+    assert hosts == {"127.0.0.1:80", "localhost:80", "[::1]:80",
+                     "127.0.0.1", "localhost", "[::1]"}
+
+
+def test_port_80_admits_the_portless_form_on_a_wildcard_bind_too():
+    hosts = _allowed_hosts("0.0.0.0", 80, resolve=lambda: ("mybox", "mybox.local", ["10.0.0.5"]))
+    assert hosts == {"mybox:80", "mybox.local:80", "10.0.0.5:80",
+                     "127.0.0.1:80", "localhost:80", "[::1]:80",
+                     "mybox", "mybox.local", "10.0.0.5",
+                     "127.0.0.1", "localhost", "[::1]"}
+
+
+def test_a_non_80_port_carries_no_portless_forms():
+    """The portless admission is specific to port 80 -- an ordinary port
+    still requires the port a client actually connects to."""
+    hosts = _allowed_hosts("127.0.0.1", 8765)
+    assert hosts == {"127.0.0.1:8765", "localhost:8765", "[::1]:8765"}
+
+
+def test_wildcard_hosts_announce_a_url_that_is_actually_admitted():
+    """`serve()` used to print the bind string itself for a wildcard bind --
+    `http://0.0.0.0:.../` -- which `_allowed_hosts` does not admit, so the
+    link it had just printed 403'd. It must announce a host the same
+    machine's `_allowed_hosts` call actually lets through."""
+    assert _announce_host("0.0.0.0") == "127.0.0.1"
+    assert _announce_host("") == "127.0.0.1"
+    assert _announce_host("::") == "[::1]"
+    for host in ("0.0.0.0", ""):
+        assert f"{_announce_host(host)}:9" in _allowed_hosts(host, 9)
+    assert f"{_announce_host('::')}:9" in _allowed_hosts("::", 9)
+
+
+def test_a_specific_hosts_announced_url_is_itself_bracketed_if_ipv6():
+    assert _announce_host("192.168.1.5") == "192.168.1.5"
+    assert _announce_host("2001:db8::1") == "[2001:db8::1]"
+
+
+def test_a_wildcard_binds_report_line_names_an_admitted_host(tmp_path):
+    write_corpus(tmp_path / "corpus", (_entry(),))
+    lines: list[str] = []
+    server = serve(tmp_path / "corpus", host="0.0.0.0", port=0, report=lines.append, serve_forever=False)
+    try:
+        match = re.search(r"http://([^/]+)/", lines[0])
+        assert match, lines[0]
+        assert match.group(1) in server.allowed_hosts
+    finally:
+        server.server_close()
+
+
+def _ipv6_bindable() -> bool:
+    if not socket.has_ipv6:
+        return False
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind(("::1", 0))
+    except OSError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(not _ipv6_bindable(), reason="IPv6 loopback is not bindable on this host")
+def test_a_wildcard_ipv6_bind_actually_serves_over_af_inet6(tmp_path):
+    """`--host ::` is documented as a wildcard bind, but a plain `HTTPServer`
+    is hardcoded to `AF_INET`: binding `::` on it raised `socket.gaierror`
+    before anything was served."""
+    write_corpus(tmp_path / "corpus", (_entry(),))
+    server = serve(tmp_path / "corpus", host="::", port=0, report=lambda _: None, serve_forever=False)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_port
+        request = urllib.request.Request(
+            f"http://[::1]:{port}/api/corpus", headers={"Host": f"[::1]:{port}"}
+        )
+        with urllib.request.urlopen(request) as response:
+            assert response.status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_a_cross_site_post_is_refused_and_the_shard_is_unchanged(reviewing):
