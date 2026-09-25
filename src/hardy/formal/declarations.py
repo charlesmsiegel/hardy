@@ -78,6 +78,13 @@ _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|ins
 # `workspace.DECLARATION`'s comment states: Lean allows a newline between the
 # keyword and the name, and a line-oriented match loses the declaration
 # entirely. The same crossing lets an attribute sit on its own line.
+#
+# Still anchored to a line start, unlike `workspace.DECLARATION`, which gave its
+# anchor up because a theorem it misses is one the axiom audit never asks
+# about. This index is a lead, not a gate: it offers names a model may search
+# for in installed packages, and a declaration it misses is only one fewer
+# suggestion. Mathlib does not put two commands on one line, and matching
+# mid-line here would buy nothing but a slower walk over every file it ships.
 DECLARATION = re.compile(
     rf"(?m)^[ \t]*{WRAPPER}{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
 )
@@ -89,9 +96,8 @@ DECLARATION = re.compile(
 # anything. A `section` may carry a name and may be `noncomputable`; a
 # `mutual` block ends with a bare `end` that must not pop anything else.
 _NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
-# Anchored to the whole line, exactly like `workspace.SECTION`: a line that
-# merely begins with the word must not push a scope whose phantom `end` then
-# swallows a real namespace close.
+# Anchored to the whole line: a line that merely begins with the word must not
+# push a scope whose phantom `end` then swallows a real namespace close.
 _SECTION = re.compile(rf"^\s*(?:noncomputable\s+)?section(?:\s+{QUALIFIED_NAME})?\s*$")
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(rf"^\s*end(?:\s+({QUALIFIED_NAME}))?\s*$")

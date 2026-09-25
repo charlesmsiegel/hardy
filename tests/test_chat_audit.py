@@ -1167,3 +1167,40 @@ def test_the_banner_stays_ascii_for_a_unicode_goal(tmp_path: Path):
     banner = chat._stamp()
     assert banner.isascii(), banner
     assert "221A" in banner
+
+
+def test_a_theorem_sharing_a_line_with_another_command_is_reserved_too(tmp_path: Path):
+    """Lean reads `def a := trivial theorem sneaky ...` as two commands. The
+    scan used to see only line starts, so `sneaky` was never checked against
+    the registry -- a `theorem` nobody registered, saved as if it were not one.
+    """
+    source = (
+        "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro\n"
+        "def a : True := trivial theorem sneaky : True := by exact True.intro\n"
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "sneaky" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_a_same_line_theorem_with_a_hole_is_audited_open(tmp_path: Path):
+    """Registered, it may be saved -- and then the audit has to ask about it.
+    Unseen, the module recorded `clean` over the honest lemma beside it."""
+    source = (
+        "import Mathlib\n\nlemma good : True := by exact True.intro\n"
+        "def a : True := trivial theorem sneaky : True := sorry\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": source}, "lean")]),
+        registered=(*RESULTS, "sneaky"),
+    )
+    chat.send("Save it.")
+    outcome = results(tmp_path, "save_lean")[-1]
+    assert outcome["ok"], outcome["output"]
+    record = state(tmp_path)["audit"]["Main"]
+    assert record["status"] == "open"
+    assert "sneaky" in str(record["declarations"])

@@ -24,20 +24,17 @@ from hardy.formal.syntax import CLOSERS as CLOSERS
 from hardy.formal.syntax import COMMAND as COMMAND
 from hardy.formal.syntax import COMPONENT as COMPONENT
 from hardy.formal.syntax import DECLARATION as DECLARATION
-from hardy.formal.syntax import END as END
 from hardy.formal.syntax import ESCAPED as ESCAPED
 from hardy.formal.syntax import HEADER_KEYWORDS as HEADER_KEYWORDS
 from hardy.formal.syntax import IDENTIFIER as IDENTIFIER
 from hardy.formal.syntax import IMPORT_PREFIX as IMPORT_PREFIX
 from hardy.formal.syntax import MODULE as MODULE
-from hardy.formal.syntax import NAMESPACE as NAMESPACE
 from hardy.formal.syntax import OPENERS as OPENERS
 from hardy.formal.syntax import OPENS_PROOF as OPENS_PROOF
 from hardy.formal.syntax import PRIVATE as PRIVATE
 from hardy.formal.syntax import PROOF as PROOF
 from hardy.formal.syntax import QUALIFIED as QUALIFIED
 from hardy.formal.syntax import QUALIFIED_NAME as QUALIFIED_NAME
-from hardy.formal.syntax import SECTION as SECTION
 from hardy.formal.syntax import WRAPPER as WRAPPER
 from hardy.formal.syntax import (
     Compile,
@@ -53,7 +50,7 @@ from hardy.formal.syntax import ImportCycle as ImportCycle
 from hardy.formal.syntax import WorkspacePathError as WorkspacePathError
 from hardy.formal.syntax import _raw_string_opener as _raw_string_opener
 from hardy.formal.syntax import _scan as _scan
-from hardy.formal.syntax import _scope_prefixes as _scope_prefixes
+from hardy.formal.syntax import _scopes as _scopes
 from hardy.formal.syntax import _statement_end as _statement_end
 from hardy.formal.syntax import _word_at as _word_at
 from hardy.formal.syntax import assumptions as assumptions

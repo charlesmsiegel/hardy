@@ -224,10 +224,9 @@ def test_a_section_does_not_disturb_the_namespace_its_end_sits_inside(tmp_path) 
 
 
 def test_a_section_line_is_only_a_section_when_the_line_is_one(tmp_path) -> None:
-    """`workspace.SECTION` is anchored to the whole line, and this scanner's
-    section matcher now is too: a line that merely begins with the word --
-    however malformed the rest -- must not push a scope whose phantom `end`
-    then swallows a real namespace close."""
+    """This scanner's section matcher is anchored to the whole line: a line
+    that merely begins with the word -- however malformed the rest -- must not
+    push a scope whose phantom `end` then swallows a real namespace close."""
     root = _package(tmp_path)
     _write(
         root,

@@ -40,13 +40,21 @@ EXPORTS = re.compile(r"--\s*exports:\s*(.*)")
 # A declaration another module can name. `private` deliberately makes one that
 # nothing outside this file can reach, which is exactly the visibility a caller
 # building `#print axioms` over an import has to respect.
+#
+# Found wherever it starts, like the real thing: Lean commands are
+# whitespace-insensitive, so `def a := 1 theorem t : ...` declares `t`, and a
+# stand-in that only looked at line starts could not exercise a save that
+# carries one.
 DECLARED = re.compile(
-    r"(?m)^\s*(?:(private|protected)\s+)?(?:theorem|lemma)\s+(«[^»\n]+»|\S+)"
+    r"(?<![\w'!?.«])(?:(private|protected)\s+)?(?:theorem|lemma)(?:\s+|(?=«))(«[^»\n]+»|\S+)"
 )
-# Where any declaration begins, used to cut the source into one chunk each.
+# Where any declaration begins, used to cut the source into one chunk each. A
+# theorem or lemma opens a chunk anywhere on its line; the other kinds only at
+# a line start, where `attribute [instance]` cannot be mistaken for one.
 OPENS = re.compile(
     r"(?m)^[ \t]*(?:(?:private|protected|noncomputable|nonrec)\s+)*"
     r"(?:theorem|lemma|def|abbrev|instance|structure|example)\b"
+    r"|(?<![\w'!?.«])(?:(?:private|protected|noncomputable|nonrec)\s+)*(?:theorem|lemma)\b"
 )
 # A proof body this stand-in is willing to call elaborated. Everything else is
 # a type error, which is what keeps "only the hole is forgiven" honest: a file
@@ -192,7 +200,8 @@ def qualifiers(text: str) -> list[tuple[int, str]]:
     """
     scope: list[str] = []
     marks: list[tuple[int, str]] = []
-    for match in re.finditer(r"(?m)^[ \t]*(namespace|section|end)\b[ \t]*(\S*)", text):
+    # Anywhere on a line, because `end Foo theorem t` closes `Foo` before `t`.
+    for match in re.finditer(r"(?<![\w'!?.«])(namespace|section|end)\b[ \t]*(\S*)", text):
         keyword, name = match.group(1), match.group(2)
         if keyword == "namespace" and name:
             scope.append(name)

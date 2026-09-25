@@ -14,21 +14,26 @@ from pathlib import Path
 import pytest
 
 from hardy.app.config import load
+from hardy.formal import audit
 from hardy.formal.contracts import Request
 from hardy.formal.lean import LeanTools
-from hardy.formal.workspace import LeanWorkspace
+from hardy.formal.workspace import LeanWorkspace, declarations
 
 
-def _workspace(tmp_path: Path) -> LeanWorkspace:
+def _tools() -> LeanTools:
     config = load()
     if config.lean_project is None or not config.lean_project.is_dir():
         pytest.skip("no Lean project configured")
-    tools = LeanTools(
+    return LeanTools(
         Request("example : True", "workspace", ()),
         config.lean_command,
         timeout=config.lean_timeout,
         project=config.lean_project,
     )
+
+
+def _workspace(tmp_path: Path) -> LeanWorkspace:
+    tools = _tools()
 
     def compile(module, source_root, build_root, source_file):
         result = tools.compile_module(source_root, build_root, source_file)
@@ -74,3 +79,31 @@ def test_an_unchanged_tree_recompiles_nothing(tmp_path: Path):
     stamp = (tmp_path / "build" / "Basic.olean").stat().st_mtime_ns
     assert space.build_modules(["Basic"]) is None
     assert (tmp_path / "build" / "Basic.olean").stat().st_mtime_ns == stamp
+
+
+@pytest.mark.real_toolchain
+def test_a_theorem_sharing_its_line_is_declared_and_its_axioms_are_read(tmp_path: Path):
+    """Lean commands are whitespace-insensitive: `def a := 1 theorem sneaky`
+    declares `sneaky`, and so does `end Foo theorem t`. The scan has to find
+    both under the names Lean gives them, and the audit probe has to be able
+    to ask about them -- a hole in one must reach the report as `sorryAx`."""
+    space = _workspace(tmp_path)
+    source = (
+        "theorem good : True := trivial\n"
+        "def a : Nat := 1 theorem sneaky : 1 = 1 := sorry\n"
+        "namespace Foo\nend Foo theorem after : True := sorry\n"
+    )
+    _write(space, "Main.lean", source)
+    assert space.build_modules(["Main"]) is None
+    names = declarations(source)["theorem"]
+    assert names == ("good", "sneaky", "after")
+    result = _tools().run_source(
+        "import Main\n",
+        env={"LEAN_PATH": str(tmp_path / "build")},
+        audit=tuple(f"axioms {name}" for name in names),
+    )
+    assert result.ok, result.output
+    reports = {report.declaration: report.axioms for report in audit.parse(result.report, names)}
+    assert "sorryAx" not in reports["good"]
+    assert "sorryAx" in reports["sneaky"]
+    assert "sorryAx" in reports["after"]
