@@ -3019,6 +3019,17 @@ class MathematicsSession:
 
         root = self.tex_root / ROOT_DOCUMENT
         if root.is_file():
+            # Set from `published`, called by `check` only when `writeup.pdf`
+            # itself was replaced (#335). A PDF a viewer has locked leaves this
+            # False even though the compile resolved, and the stamp below must
+            # not claim a document that is not the one on disk -- an unstamped
+            # writeup reads as stale, which is what it is.
+            pdf_published = False
+
+            def _mark_published() -> None:
+                nonlocal pdf_published
+                pdf_published = True
+
             try:
                 checked = self.latex.check(
                     self._tex_root_source(),
@@ -3037,6 +3048,7 @@ class MathematicsSession:
                     # unresolved-reference check sees nothing wrong with an
                     # invented `\bibitem` that resolves.
                     vouched=self._vouched_references,
+                    published=_mark_published,
                 )
             except BaseException:
                 # The stamp is already gone -- dropped before the unlink, for
@@ -3066,8 +3078,12 @@ class MathematicsSession:
             # This compile is as good as a save's, and the tree it compiled is
             # the tree on disk -- so it is stamped like one. Without this a
             # deletion left a freshly compiled writeup reading as stale, and
-            # the only way out was a save that changed nothing.
-            self._stamp_writeup(compiled_against)
+            # the only way out was a save that changed nothing. Only when the
+            # PDF was actually replaced, though (#335): a locked writeup.pdf
+            # leaves the tree correctly reading as stale rather than claiming
+            # a document that the disk does not have.
+            if pdf_published:
+                self._stamp_writeup(compiled_against)
         # After the point of no return: a deletion the compile above refused
         # was restored, and its provenance must survive with it.
         self._forget_import(f"{TEX_DIR}/{relative}")

@@ -94,6 +94,58 @@ def test_the_pdf_lands_in_the_output_directory(tmp_path: Path):
     assert (output / "writeup.pdf").read_bytes() == b"%PDF-fake"
 
 
+def test_a_locked_writeup_pdf_is_not_fatal(tmp_path: Path, monkeypatch):
+    """#335: a PDF viewer holding `writeup.pdf` open must not fail the save.
+
+    The aux file is published first and describes the compile that ran; the
+    PDF is the one thing left stale, reported in words rather than as a
+    traceback past a commit that already succeeded.
+    """
+    from hardy.foundation import files as foundation_files
+    from hardy.foundation.locking import FileInUse
+
+    real_replace = foundation_files.replace_with_retry
+
+    def locked_pdf(source, target):
+        if Path(target).name == "writeup.pdf":
+            raise FileInUse(f"{target} is open in another program")
+        real_replace(source, target)
+
+    monkeypatch.setattr(foundation_files, "replace_with_retry", locked_pdf)
+
+    output = tmp_path / "workspace"
+    aux = tmp_path / "build"
+    document = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "Real.\\label{thm:real}\n\\end{document}\n"
+    )
+    published = []
+
+    result = LatexTools(COMMAND).check(
+        document, output_dir=output, aux_dir=aux, published=lambda: published.append(True)
+    )
+
+    assert result.ok
+    assert "open in another program" in result.output
+    assert "thm:real" in (aux / "writeup.aux").read_text(encoding="utf-8")
+    assert not published
+    assert not (output / "writeup.pdf").exists()
+
+
+def test_an_unlocked_writeup_pdf_still_fires_published(tmp_path: Path):
+    """The ordinary case beside the locked one: `published` runs exactly once
+    when the PDF really was replaced."""
+    output = tmp_path / "workspace"
+    published = []
+
+    result = LatexTools(COMMAND).check(
+        FINE, output_dir=output, published=lambda: published.append(True)
+    )
+
+    assert result.ok
+    assert published == [True]
+
+
 def test_a_braced_mention_is_not_an_inclusion(tmp_path: Path):
     r"""`{sections/one}` in a comment, or as another command's argument, means
     nothing to TeX. Reading it as an inclusion would leave the fragment

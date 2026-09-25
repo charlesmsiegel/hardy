@@ -80,6 +80,67 @@ def test_document_owner_never_publishes_after_source_write_refusal(tmp_path):
     assert published == stamps == []
 
 
+def test_document_owner_does_not_stamp_when_the_pdf_could_not_be_published(tmp_path):
+    """#335: a `check` that resolves but could not replace `writeup.pdf` (a
+    locked PDF viewer, on Windows) must leave the writeup reading as stale
+    rather than stamp it against a document that is not on disk."""
+    from hardy.foundation.values import ToolResult
+    from hardy.workflows.interactive.documents import DocumentPolicy, DocumentService
+
+    class Compiler:
+        def check(self, source, **kwargs):
+            kwargs["commit"]()
+            # The compile and the source write succeeded; the PDF publish
+            # did not, so `published` is never called -- exactly what
+            # `_publish` does when `replace_with_retry` raises `FileInUse`.
+            return ToolResult(True, "compiled; writeup.pdf is open in another program", source)
+
+    (tmp_path / "tex").mkdir(parents=True)
+    (tmp_path / "tex" / "writeup.tex").write_text("old", encoding="utf-8")
+    document = DocumentService(tmp_path, Compiler())
+    stamps = []
+    policy = DocumentPolicy(
+        bibliography_refusal=lambda path, source: "",
+        stamp=lambda: "",
+        vouch=lambda keys: "",
+        stamp_writeup=lambda bibliography, tree: stamps.append(tree),
+        registry=lambda: [],
+        owed_note=lambda: "",
+    )
+    result = document._save_latex("writeup.tex", "revised", policy=policy)
+    assert result.ok
+    assert stamps == []
+
+
+def test_document_owner_stamps_once_the_pdf_actually_publishes(tmp_path):
+    """The ordinary case beside the locked one: `published` firing is what
+    releases the stamp."""
+    from hardy.foundation.values import ToolResult
+    from hardy.workflows.interactive.documents import DocumentPolicy, DocumentService
+
+    class Compiler:
+        def check(self, source, **kwargs):
+            kwargs["commit"]()
+            kwargs["published"]()
+            return ToolResult(True, "compiled", source)
+
+    (tmp_path / "tex").mkdir(parents=True)
+    (tmp_path / "tex" / "writeup.tex").write_text("old", encoding="utf-8")
+    document = DocumentService(tmp_path, Compiler())
+    stamps = []
+    policy = DocumentPolicy(
+        bibliography_refusal=lambda path, source: "",
+        stamp=lambda: "",
+        vouch=lambda keys: "",
+        stamp_writeup=lambda bibliography, tree: stamps.append(tree),
+        registry=lambda: [],
+        owed_note=lambda: "",
+    )
+    result = document._save_latex("writeup.tex", "revised", policy=policy)
+    assert result.ok
+    assert len(stamps) == 1
+
+
 def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_path):
     from types import SimpleNamespace
 
