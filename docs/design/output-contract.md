@@ -289,9 +289,13 @@ mentions its name outside comments and verbatim blocks and none loads a name
 built from a macro. A name
 Hardy cannot place is not guessed at: any control word bound with `\let` or a
 `\let`-like command (`\futurelet`, etoolbox's `\cslet`, `\csletcs` and
-`\letcs`), whatever it is bound to, since a chain of them is not followed;
-any `\newif` whose name is built with `\csname` (and, when a built name cannot
-be read, every false branch); one
+`\letcs`), whatever it is bound to, since a chain of them is not followed,
+unless the name is written out, is not spelled `\if...`, and is bound to a
+character or to `\relax`, `\undefined`, `\empty` or a few such targets that
+nothing in the writeup rebinds; a name built with `\csname` counts when it is
+letters, is ignored when it is literal text no control word can spell (as in
+`\csname ver@hyperref.sty\endcsname`), and makes every false branch uncertain
+when it holds a control sequence; one
 both declared and redefined; one declared inside a conditional or a macro; or
 one used before its declaration. Inside a false branch such a name
 refuses the writeup's compile check and owes an obligation, because nesting it
