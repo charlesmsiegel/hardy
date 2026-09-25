@@ -4,12 +4,16 @@
   "source": "exit=0 elapsed=6.698s\n/tmp/hardy-lean-gu5i42qa/Main.lean:3:0: information: Nat.Prime.irrational_sqrt {p : ℕ} (hp : Nat.Prime p) : Irrational √↑p\n/tmp/hardy-lean-gu5i42qa/Main.lean:4:0: information: theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p :=\nfun {p} hp => irrational_sqrt_natCast_iff.mpr (Irreducible.not_isSquare hp)",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "Nat.Prime.irrational_sqrt"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "Nat.Prime.irrational_sqrt": "theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -64,12 +68,16 @@
   "source": "exit=0 elapsed=6.375s\n/tmp/hardy-lean-dfipw9pc/Main.lean:3:0: information: Nat.Prime.irrational_sqrt {p : ℕ} (hp : Nat.Prime p) : Irrational √↑p\n/tmp/hardy-lean-dfipw9pc/Main.lean:4:0: information: theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p :=\nfun {p} hp => irrational_sqrt_natCast_iff.mpr (Irreducible.not_isSquare hp)",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "Nat.Prime.irrational_sqrt"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "Nat.Prime.irrational_sqrt": "theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -146,12 +154,16 @@
   "source": "exit=0 elapsed=6.495s\n/tmp/hardy-lean-gp4rqcgd/Main.lean:3:0: information: Nat.Prime.irrational_sqrt {p : ℕ} (hp : Nat.Prime p) : Irrational √↑p\n/tmp/hardy-lean-gp4rqcgd/Main.lean:4:0: information: theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p :=\nfun {p} hp => irrational_sqrt_natCast_iff.mpr (Irreducible.not_isSquare hp)",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "Nat.Prime.irrational_sqrt"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "Nat.Prime.irrational_sqrt": "theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -162,12 +174,16 @@
   "source": "exit=0 elapsed=7.049s\n/tmp/hardy-lean-bia79mg_/Main.lean:3:0: information: Real.sq_sqrt {x : ℝ} (h : 0 ≤ x) : √x ^ 2 = x\n/tmp/hardy-lean-bia79mg_/Main.lean:4:0: information: theorem Real.sq_sqrt : ∀ {x : ℝ}, 0 ≤ x → √x ^ 2 = x :=\nfun {x} h =>\n  Eq.mpr (id (congrArg (fun _a => _a = x) (sq √x)))\n    (Eq.mpr (id (congrArg (fun _a => _a = x) (Real.mul_self_sqrt h))) (Eq.refl x))",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "Real.sq_sqrt"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "Real.sq_sqrt": "theorem Real.sq_sqrt : ∀ {x : ℝ}, 0 ≤ x → √x ^ 2 = x"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -178,12 +194,16 @@
   "source": "exit=0 elapsed=7.950s\n/tmp/hardy-lean-qmm9vgcp/Main.lean:3:0: information: irrational_sqrt_natCast_iff {n : ℕ} : Irrational √↑n ↔ ¬IsSquare n\n/tmp/hardy-lean-qmm9vgcp/Main.lean:4:0: information: theorem irrational_sqrt_natCast_iff : ∀ {n : ℕ}, Irrational √↑n ↔ ¬IsSquare n :=\nfun {n} =>\n  Eq.mpr (id (congrArg (fun _a => Irrational √↑n ↔ ¬_a) (Eq.symm (propext Rat.isSquare_natCast_iff))))\n    (Eq.mpr\n      (id\n        (congrArg (fun _a => Irrational √↑n ↔ _a)\n          (Eq.symm (propext (irrational_sqrt_ratCast_iff_of_nonneg (Nat.cast_nonneg n))))))\n      (Eq.mpr (id (congrArg (fun _a => Irrational √↑n ↔ Irrational √_a) (Rat.cast_natCast n))) Iff.rfl))",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "irrational_sqrt_natCast_iff"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "irrational_sqrt_natCast_iff": "theorem irrational_sqrt_natCast_iff : ∀ {n : ℕ}, Irrational √↑n ↔ ¬IsSquare n"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -283,6 +303,7 @@
   "scan": {
    "declarations": {
     "theorem": [
+     "HardySqrtSum",
      "HardySqrtSum"
     ],
     "lemma": [],
@@ -2692,7 +2713,8 @@
    "declarations": {
     "theorem": [],
     "lemma": [
-     "is"
+     "is",
+     "name"
     ],
     "private": []
    },
@@ -2700,7 +2722,8 @@
     "is"
    ],
    "statements": {
-    "is": "lemma is called something else than a lemma name, Lean's answer names a missing file and reads as a broken installation. One session read it that way and stopped writing Lean."
+    "is": "lemma is called something else than a",
+    "name": "lemma name, Lean's answer names a missing file and reads as a broken installation. One session read it that way and stopped writing Lean."
    },
    "assumptions": [],
    "unreadable": [],
@@ -2756,12 +2779,16 @@
   "source": "A later read can ask for LESS, not only for more: an edit that removes\n    an undocumented theorem between the reads left the page showing that\n    theorem's statement and its verdict beside \"Nothing outstanding\".",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "between"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "between": "theorem between the reads left the page showing that theorem's statement and its verdict beside \"Nothing outstanding\"."
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -5299,12 +5326,17 @@
   "source": "`theorem t : let n := 1; n = 1 := by rfl` is ordinary Lean.\n\n    Stopping at that first `:=` recorded the statement as `theorem t : let n`,\n    which left the rest of the proposition outside what a writeup has to quote\n    -- so a document could show a different one and still match.\n    ",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "t",
+     "t"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "t": "theorem t : let n`, which left the rest of the proposition outside what a writeup has to quote"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -5443,12 +5475,16 @@
   "source": "`theorem p : A where left := ...` has no `:=` of its own; reading on to\n    the first field assignment recorded a fragment that is not a statement.",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "p"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "p": "theorem p : A"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -6564,16 +6600,21 @@
   "scan": {
    "declarations": {
     "theorem": [
+     "one",
      "sylow_count_congruence"
     ],
-    "lemma": [],
+    "lemma": [
+     "that"
+    ],
     "private": []
    },
    "named": [
     "sylow_count_congruence"
    ],
    "statements": {
-    "sylow_count_congruence": "theorem sylow_count_congruence ... : ∃ (n_p : ℕ), n_p ∣ Nat.card G ∧ n_p ≡ 1 [MOD p]"
+    "one": "theorem one tactic closes is disclosed, never refused. Observed on a live run: refused an axiom for Sylow III, the model saved",
+    "sylow_count_congruence": "theorem sylow_count_congruence ... : ∃ (n_p : ℕ), n_p ∣ Nat.card G ∧ n_p ≡ 1 [MOD p]",
+    "that": "lemma that falls to one tactic is still a lemma."
    },
    "assumptions": [],
    "unreadable": [
@@ -7730,21 +7771,21 @@
    "declarations": {
     "theorem": [
      "Foo.Bar.inner_one",
-     "Foo.Bar.still_in_foo",
-     "Foo.Bar.top_level_one"
+     "Foo.still_in_foo",
+     "top_level_one"
     ],
     "lemma": [],
     "private": []
    },
    "named": [
     "Foo.Bar.inner_one",
-    "Foo.Bar.still_in_foo",
-    "Foo.Bar.top_level_one"
+    "Foo.still_in_foo",
+    "top_level_one"
    ],
    "statements": {
     "Foo.Bar.inner_one": "theorem inner_one : True",
-    "Foo.Bar.still_in_foo": "theorem still_in_foo : True",
-    "Foo.Bar.top_level_one": "theorem top_level_one : True"
+    "Foo.still_in_foo": "theorem still_in_foo : True",
+    "top_level_one": "theorem top_level_one : True"
    },
    "assumptions": [],
    "unreadable": [],
@@ -7756,12 +7797,16 @@
   "source": "Mathlib routinely wraps a head -- binders and result type on indented\n    lines under the keyword. Recording only the first physical line handed\n    the ranking `theorem foo` as a signature, and the index's rendering wins\n    over Loogle's complete one, so the model read a name where a type should\n    be. The body is still cut: what follows `:=` or `where` is the proof or\n    the fields, not the head.",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "foo"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "foo": "theorem foo` as a signature, and the index's rendering wins over Loogle's complete one, so the model read a name"
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -8024,12 +8069,17 @@
   "source": "`theorem t : \"a := b\" = \"a := b\" := rfl` carries `:=` inside its\n    proposition's literals. Cutting at the first raw occurrence recorded\n    `theorem t : \"a` -- a malformed type shown as though it were the head --\n    so markers are found on the comment- and string-blanked text and the cut\n    applied to the raw at the same offset, which line-length-preserving\n    blanking makes valid.",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "t",
+     "t"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "t": "theorem t : \"a` -- a malformed type shown as though it were the head --\n    so markers are found on the comment- and string-blanked text and the cut\n    applied to the raw at the same offset, which line-length-preserving\n    blanking makes valid."
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -8978,12 +9028,16 @@
   "source": "Extra imports could expose a previously proved theorem and let the\n    model obtain a clean kernel-verified result unavailable under the\n    entry's declared environment (item 7).\n\n    Built as a genuinely different, self-consistent run under the extra\n    import (not a post-hoc edit of `trajectory.json` alone), for the same\n    reason `test_each_check_breaks_one_at_a_time` check 3 is: an edit that\n    leaves `proof.lean` disagreeing with the tampered request trips the\n    recorded-run audit first, and item 3 then skips `_entry_issues`.\n    ",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "and"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "and": "theorem and let the model obtain a clean kernel-verified result unavailable under the entry's declared environment (item 7). Built as a genuinely different, self-consistent run under the extra import (not a post-hoc edit of `trajectory.json` alone), for the same reason `test_each_check_breaks_one_at_a_time` check 3 is: an edit that leaves `proof.lean` disagreeing with the tampered request trips the recorded-run audit first, and item 3 then skips `_entry_issues`."
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -9496,12 +9550,16 @@
   "source": "An earlier version of this test asserted the opposite, on the reasoning\n    that a token shape could not occur in valid Lean by accident. It can:\n    `theorem t : \"Bearer abc123\" = \"Bearer abc123\" := rfl` is a proposition\n    ABOUT a string literal, and rewriting it exports a different proposition\n    from the one the kernel checked.\n\n    The cost is stated rather than hidden: a credential a user pastes into\n    their own `.lean` file travels with the export, and the page's header says\n    the redaction is a filter and not a proof. Altering what Lean checked is\n    the worse failure -- it is the one thing the page exists to get right.\n    ",
   "scan": {
    "declarations": {
-    "theorem": [],
+    "theorem": [
+     "t"
+    ],
     "lemma": [],
     "private": []
    },
    "named": [],
-   "statements": {},
+   "statements": {
+    "t": "theorem t : \"Bearer abc123\" = \"Bearer abc123\""
+   },
    "assumptions": [],
    "unreadable": [],
    "has_holes": false
@@ -11454,16 +11512,28 @@
   "scan": {
    "declarations": {
     "theorem": [
+     "and",
+     "carrying",
+     "is",
+     "to",
      "to"
     ],
-    "lemma": [],
+    "lemma": [
+     "in",
+     "revision"
+    ],
     "private": []
    },
    "named": [
     "to"
    ],
    "statements": {
-    "to": "theorem to lemma) is stale the *generic* way: `stale_artifacts()` (`ledger/views.py:158-166`) only reports on `documents`/`formalizes` relations, so a `depends_on` edge's `expected_version`/`current_version` are both `None` and the browser falls back to its generic sentence. `rel-formalizes` (`formalizes`, the same theorem to the same lemma) is stale the *real-versions* way: `formalizes` is one of the two kinds `stale_artifacts()` does track, so this edge carries the lemma's exact pinned and current version numbers and the browser names them. Both point at the one lemma revision below second transaction, after both relations pinned the version it had so one edit exercises both of the stale-sentence paths a browser-level check can reach; the previous, `depends_on`-only fixture left the real-versions path with no coverage above the Python unit tests. Imported inside the function, like `library_import` does, so a smoke server that is only serving the page does not pull the ledger package in."
+    "and": "theorem and a",
+    "in": "lemma in *results*, a question in *research*, a section in *documents*), so the fill colours can be told apart; * a",
+    "carrying": "theorem carrying `formal` evidence, for the \"F\" badge. It takes two transactions: a record cannot pin its own digest, since the digest would then have to include the reference that names it, and `validate_structure` refuses a reference to a version the snapshot does not hold. So the bare",
+    "is": "theorem is committed first and the evidenced revision pins that committed version; * four relations, `depends_on` and `formalizes` solid, `poses` and `documents` dashed (`panels/vocabulary.py`'s `_STYLE`, `panels/vocabulary.py:47-58`); * two stale edges, one on each of the two paths `graph()`'s own docstring distinguishes (`panels/record.py:84-92`). `rel-depends` (`depends_on`,",
+    "to": "theorem to the same lemma) is stale the *real-versions* way: `formalizes` is one of the two kinds `stale_artifacts()` does track, so this edge carries the lemma's exact pinned and current version numbers and the browser names them. Both point at the one",
+    "revision": "lemma revision below second transaction, after both relations pinned the version it had so one edit exercises both of the stale-sentence paths a browser-level check can reach; the previous, `depends_on`-only fixture left the real-versions path with no coverage above the Python unit tests. Imported inside the function, like `library_import` does, so a smoke server that is only serving the page does not pull the ledger package in."
    },
    "assumptions": [],
    "unreadable": [],

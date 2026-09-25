@@ -40,19 +40,41 @@ HEADER_KEYWORDS = frozenset({"prelude", "module"})
 # asks about, and an unseen axiom is one whose statement is never compared
 # against what a human approved.
 WRAPPER = r"(?:(?:set_option|open|attribute|universe|variable|section)\b[^\n]*?\sin\s+)*"
+# Not anchored to the start of a line. Lean commands are whitespace-insensitive,
+# so `def a := 1 theorem sneaky : False := sorry` declares `sneaky` as surely as
+# a line of its own does, and so do `end Foo theorem t` and `include h in
+# theorem t`. A scan that looked only at line starts never asked the audit about
+# such a theorem, never reserved it to a registered result, and never counted
+# it towards the writeup ratchet. Where a match may start is decided instead by
+# Lean's own token boundaries (`_identifier_tokens`), so `«a theorem b»`,
+# `mytheorem` and `Foo.theorem` are names while `1theorem` -- a numeral and
+# then a keyword, to Lean -- is a declaration. `theorem«name»` needs no space.
 DECLARATION = re.compile(
-    rf"(?m)^[ \t]*{WRAPPER}(?:@\[[^\]]*\]\s*)*((?:(?:private|protected|nonrec|noncomputable)\s+)*)"
-    rf"(theorem|lemma)\s+({QUALIFIED_NAME})"
+    rf"{WRAPPER}(?:@\[[^\]]*\]\s*)*((?:(?:private|protected|nonrec|noncomputable)\s+)*)"
+    rf"(theorem|lemma)(?:\s+|(?=«))({QUALIFIED_NAME})"
 )
 # `private` is the one modifier that changes who can name a declaration: Lean
 # mangles the name so no importing module can reach it. Anything that has to
 # address a declaration from outside its own file -- the axiom audit does --
 # needs to know which ones those are.
 PRIVATE = re.compile(r"(?:^|\s)private(?:\s|$)")
-NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
-# `section` may be anonymous, and `end` may be bare -- both are ordinary Lean.
-SECTION = re.compile(rf"^\s*section(?:\s+({QUALIFIED_NAME}))?\s*$")
-END = re.compile(rf"^\s*end(?:\s+({QUALIFIED_NAME}))?\s*$")
+# The commands that open and close a scope. `noncomputable section` is a
+# `section` token like any other, and `mutual ... end` is a scope a bare `end`
+# closes; missing either let that `end` close the namespace around it.
+SCOPE_KEYWORDS = frozenset({"namespace", "section", "end", "mutual"})
+# Words that are never the optional name of a `section` or an `end`, because
+# they begin the next command. Lean knows its keywords from its token table;
+# this is the list a Hardy workspace or Mathlib puts after a scope command.
+NOT_A_SCOPE_NAME = frozenset({
+    "abbrev", "add_decl_doc", "alias", "assert_not_exists", "attribute", "axiom", "class",
+    "constant", "declare_syntax_cat", "def", "deriving", "elab", "elab_rules", "end", "example",
+    "export", "import", "include", "inductive", "infix", "infixl", "infixr", "initialize",
+    "instance", "irreducible_def", "lemma", "library_note", "local", "macro", "macro_rules",
+    "meta", "mutual", "namespace", "noncomputable", "nonrec", "notation", "omit", "opaque",
+    "open", "partial", "postfix", "prefix", "private", "protected", "public", "run_cmd",
+    "scoped", "section", "set_option", "structure", "suppress_compilation", "syntax",
+    "theorem", "universe", "unsafe", "variable",
+})
 
 Compile = Callable[[str, Path, Path, Path], tuple[bool, str]]
 
@@ -121,13 +143,25 @@ def declared_name(name: str, prefix: tuple[str, ...] = ()) -> str:
     return ".".join((*prefix, name)) if prefix else name
 
 
-def _scope_prefixes(lines: list[str]) -> list[tuple[str, ...]]:
-    """The namespace prefix in force at each line of an already-stripped source.
+def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, ...]]]:
+    """The namespace prefix in force from each offset of an already-stripped source on.
 
-    Both kinds of scope, because a bare `end` closes whichever is innermost and
+    Returned as `(offset, prefix)` marks in order; `_prefix_at` reads one. Read
+    from the token stream rather than line by line, because `end Foo theorem t`
+    closes `Foo` before `t` is declared, and a walk that recognised a scope
+    command only when it filled its line qualified `t` as `Foo.t` -- a name Lean
+    never gave anything, so the audit asked about the wrong declaration.
+
+    Every kind of scope, because a bare `end` closes whichever is innermost and
     only a namespace contributes to a name. Tracking namespaces alone would let
     `section ... end` pop a namespace that is still open, and every later
-    declaration would be recorded under a name Lean never gave it.
+    declaration would be recorded under a name Lean never gave it. `namespace
+    A.B` opens one scope per component, as Lean does: `end B` then closes only
+    the inner one and `end A.B` both.
+
+    An `end` or a `section` takes the identifier after it as its name when it
+    is on the same line, or on a later one indented past the keyword (Lean's
+    `checkColGt`); a keyword is never a name.
 
     One copy, shared by the declaration scan and the assumption scan. They had
     a walk each, and the pair drifted twice: the second defined its own
@@ -137,30 +171,184 @@ def _scope_prefixes(lines: list[str]) -> list[tuple[str, ...]]:
     namespace that had closed.
     """
     scope: list[tuple[str, str | None]] = []
-    prefixes: list[tuple[str, ...]] = []
-    for line in lines:
-        opening = NAMESPACE.match(line)
-        section = SECTION.match(line)
-        if opening:
-            scope.append(("namespace", opening.group(1)))
-        elif section:
-            scope.append(("section", section.group(1)))
+    marks: list[tuple[int, tuple[str, ...]]] = [(0, ())]
+    starts = sorted(tokens)
+    position = 0
+    while position < len(starts):
+        start = starts[position]
+        word = text[start : tokens[start]]
+        position += 1
+        if word not in SCOPE_KEYWORDS:
+            continue
+        name = None
+        after = tokens[start]
+        if word != "mutual" and position < len(starts):
+            following = starts[position]
+            candidate = text[following : tokens[following]]
+            gap = text[after:following]
+            if (
+                not gap.strip()
+                and candidate not in NOT_A_SCOPE_NAME
+                and ("\n" not in gap or _column(text, following) > _column(text, start))
+            ):
+                name = candidate
+                after = tokens[following]
+                position += 1
+        if word == "namespace":
+            if name is not None:
+                scope.extend(("namespace", part) for part in _components(name))
+        elif word in {"section", "mutual"}:
+            scope.append((word, name))
+        elif name is None:
+            if scope:
+                scope.pop()
         else:
-            closing = END.match(line)
-            if closing:
-                name = closing.group(1)
-                if name is None:
-                    if scope:
-                        scope.pop()
-                else:
-                    # A named `end` closes that scope and anything still open
-                    # inside it.
-                    for index in range(len(scope) - 1, -1, -1):
-                        if scope[index][1] == name:
-                            del scope[index:]
-                            break
-        prefixes.append(tuple(item for kind, item in scope if kind == "namespace" and item))
-    return prefixes
+            _close(scope, name)
+        marks.append((after, tuple(item for kind, item in scope if kind == "namespace" and item)))
+    return marks
+
+
+def _close(scope: list[tuple[str, str | None]], name: str) -> None:
+    """Close the scope a named `end` names, and anything still open inside it."""
+    parts = _components(name)
+    for index in range(len(scope) - 1, -1, -1):
+        first = index - len(parts) + 1
+        if first >= 0 and [item for _, item in scope[first : index + 1]] == parts:
+            del scope[first:]
+            return
+        if scope[index][1] == name:
+            del scope[index:]
+            return
+
+
+def _components(name: str) -> list[str]:
+    """`A.«b.c».D` as `["A", "«b.c»", "D"]`: a guillemet may hold a dot."""
+    return re.findall(ANY_NAME, name)
+
+
+def _column(text: str, offset: int) -> int:
+    return offset - (text.rfind("\n", 0, offset) + 1)
+
+
+def _prefix_at(marks: list[tuple[int, tuple[str, ...]]], offset: int) -> tuple[str, ...]:
+    """The namespace prefix `_scopes` says is in force at `offset`."""
+    return marks[bisect_right(marks, offset, key=lambda mark: mark[0]) - 1][1]
+
+
+def _number_end(text: str, index: int) -> int:
+    """Where the numeral starting at `index` ends, by Lean 4.35's grammar.
+
+    `0x`, `0b` and `0o` literals, and decimals with `_` separators, a fraction
+    and an exponent. The end matters because a keyword may follow a numeral
+    directly -- `1theorem x` declares `x` -- while `0xdef` is one hex numeral
+    and declares nothing.
+    """
+    length = len(text)
+    radix = {"0x": "0123456789abcdefABCDEF_", "0b": "01_", "0o": "01234567_"}.get(
+        text[index : index + 2].lower()
+    )
+    if radix is not None:
+        end = index + 2
+        while end < length and text[end] in radix:
+            end += 1
+        return end
+    end = _digits_end(text, index)
+    if end < length and text[end] == "." and (
+        _is_digit(text, end + 1) or _exponent_end(text, end + 1) is not None
+    ):
+        end = _digits_end(text, end + 1)
+    exponent = _exponent_end(text, end)
+    return end if exponent is None else exponent
+
+
+def _is_digit(text: str, index: int) -> bool:
+    return index < len(text) and "0" <= text[index] <= "9"
+
+
+def _digits_end(text: str, index: int) -> int:
+    while index < len(text) and (_is_digit(text, index) or text[index] == "_"):
+        index += 1
+    return index
+
+
+def _exponent_end(text: str, index: int) -> int | None:
+    if index >= len(text) or text[index] not in "eE":
+        return None
+    index += 1
+    if index < len(text) and text[index] in "+-":
+        index += 1
+    return _digits_end(text, index) if _is_digit(text, index) else None
+
+
+def _component_end(text: str, index: int) -> int | None:
+    """Where the name component starting at `index` ends, or None if none does."""
+    character = text[index]
+    if character == "«":
+        closing = text.find("»", index + 1)
+        newline = text.find("\n", index + 1)
+        if closing > index + 1 and (newline == -1 or closing < newline):
+            return closing + 1
+        return None
+    if not (character.isalpha() or character == "_"):
+        return None
+    end = index + 1
+    while end < len(text) and (text[end].isalnum() or text[end] in "_'!?"):
+        end += 1
+    return end
+
+
+def _identifier_tokens(text: str) -> dict[int, int]:
+    """Start -> end of every identifier or keyword token in already-stripped text.
+
+    A small forward tokenizer rather than a lookbehind, because whether a
+    keyword starts a token depends on what came before it in a way no
+    fixed-width assertion sees: `x1theorem` is one identifier, `1theorem` is a
+    numeral and then `theorem`, `0xdef` is a numeral, and `Foo.theorem` is a
+    dotted name. Strings, comments and char literals are already blank, and
+    `«...»` components are part of the name they sit in.
+    """
+    tokens: dict[int, int] = {}
+    index = 0
+    length = len(text)
+    while index < length:
+        if _is_digit(text, index):
+            index = _number_end(text, index)
+            continue
+        end = _component_end(text, index)
+        if end is None:
+            index += 1
+            continue
+        start = index
+        while end + 1 < length and text[end] == ".":
+            following = _component_end(text, end + 1)
+            if following is None:
+                break
+            end = following
+        tokens[start] = end
+        index = end
+    return tokens
+
+
+def _keyword_matches(
+    text: str, pattern: re.Pattern[str], tokens: Mapping[int, int]
+) -> list[re.Match[str]]:
+    """Every match of `pattern` whose first word and keyword (group 2) are tokens.
+
+    Searched from each rejected start plus one, not from its end, so a match
+    that began inside a name cannot swallow a real declaration after it.
+    """
+    found: list[re.Match[str]] = []
+    position = 0
+    while (match := pattern.search(text, position)) is not None:
+        start = match.start()
+        if tokens.get(match.start(2)) == match.end(2) and (
+            start in tokens or _component_end(text, start) is None
+        ):
+            found.append(match)
+            position = max(match.end(), start + 1)
+        else:
+            position = start + 1
+    return found
 
 
 def _continues_identifier(character: str) -> bool:
@@ -493,8 +681,10 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     on its name alone. A wrapped statement fared no better: it was truncated at
     the first newline and then failed a comparison it should have passed.
     """
-    lines = strip_comments(source).splitlines()
-    prefixes = _scope_prefixes(lines)
+    text = strip_comments(source)
+    lines = text.splitlines()
+    marks = _scopes(text, _identifier_tokens(text))
+    starts = _line_starts(lines)
     found: list[tuple[str, str]] = []
     index = 0
     while index < len(lines):
@@ -502,7 +692,8 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
         if declared is None:
             index += 1
             continue
-        prefix = prefixes[index]
+        line = lines[index]
+        prefix = _prefix_at(marks, starts[index] + len(line) - len(line.lstrip()))
         name, parts = declared.group(1), [declared.group(2).strip()]
         index += 1
         while index < len(lines):
@@ -538,10 +729,21 @@ def unreadable_assumptions(source: str) -> tuple[str, ...]:
     asks whether the line parsed rather than whether it matched some list of
     known-bad forms.
     """
+    stripped = strip_comments(source)
+    lines = stripped.splitlines()
+    # By token as well as by pattern: `def a := 1axiom cheat : False` declares
+    # `cheat`, and `AXIOM_KEYWORD`'s lookbehind reads the `1` as the start of a
+    # name. Either finding is enough to refuse.
+    starts = _line_starts(lines)
+    keyworded = {
+        bisect_right(starts, start) - 1
+        for start, end in _identifier_tokens(stripped).items()
+        if stripped[start:end] in {"axiom", "constant", "opaque"}
+    }
     found: list[str] = []
-    for line in strip_comments(source).splitlines():
+    for number, line in enumerate(lines):
         text = line.strip()
-        if AXIOM_KEYWORD.search(text) and ASSUMPTION.match(text) is None:
+        if (number in keyworded or AXIOM_KEYWORD.search(text)) and ASSUMPTION.match(text) is None:
             found.append(text)
     return tuple(found)
 
@@ -641,8 +843,8 @@ def _scan(text: str, pattern: re.Pattern[str] = DECLARATION) -> list[tuple[re.Ma
     """Every declaration in an already-stripped source, with its namespace.
 
     Declarations are matched over the whole text so a name on the line after
-    its keyword is still found, then attributed to the scope open at the line
-    the keyword sits on.
+    its keyword is still found, then attributed to the scope open where the
+    keyword sits -- which may be partway along a line, after an `end`.
 
     One walk, shared by `declarations` and `statements`. They must agree about
     what a declaration is called: a theorem the first names `Hardy.one` and the
@@ -650,18 +852,18 @@ def _scan(text: str, pattern: re.Pattern[str] = DECLARATION) -> list[tuple[re.Ma
     the ratchet, and the statement the document was checked against would not
     be the statement anyone had to write up.
     """
-    lines = text.splitlines()
-    prefixes = _scope_prefixes(lines)
+    tokens = _identifier_tokens(text)
+    marks = _scopes(text, tokens)
+    return [(match, _prefix_at(marks, match.start(2))) for match in _keyword_matches(text, pattern, tokens)]
+
+
+def _line_starts(lines: list[str]) -> list[int]:
     starts = []
     offset = 0
     for line in lines:
         starts.append(offset)
         offset += len(line) + 1
-    scanned = []
-    for match in pattern.finditer(text):
-        index = bisect_right(starts, match.start()) - 1
-        scanned.append((match, prefixes[index] if 0 <= index < len(prefixes) else ()))
-    return scanned
+    return starts
 
 
 # What a statement may nest, and what closes it. Depth is tracked so that the
