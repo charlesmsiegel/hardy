@@ -25,7 +25,14 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from hardy.documents.syntax import INCLUSION, ROOT_DOCUMENT, uncommented
+from hardy.documents.syntax import (
+    _CONDITIONAL,
+    INCLUSION,
+    ROOT_DOCUMENT,
+    declared_conditionals,
+    opens_conditional,
+    uncommented,
+)
 from hardy.formal.syntax import COMMAND, normalise_lean, strip_comments
 
 # Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
@@ -41,8 +48,9 @@ ENVIRONMENTS = frozenset(
 # A branch TeX compiles without typesetting. Bounded to the literal spelling:
 # this is a scanner, not a TeX engine, and the general conditional is a limit
 # stated in docs/design/output-contract.md rather than a case pretended to be handled.
+# Inside one, only a real conditional nests (`documents.syntax.opens_conditional`),
+# the same rule `_drop_iffalse` keeps for the reachability walk.
 FALSE_BRANCH = re.compile(r"\\iffalse(?![A-Za-z])")
-BRANCH_END = re.compile(r"\\fi(?![A-Za-z])")
 # An environment opening, with whatever optional arguments it carries:
 # `\begin{Verbatim}[fontsize=\small]`, `\begin{minted}{lean}`.
 OPENING = re.compile(r"\\begin\{([A-Za-z*]+)\}((?:\[[^\]]*\]|\{[^}]*\})*)")
@@ -141,7 +149,7 @@ class Displayed:
     quoted: tuple[tuple[int, str], ...]
 
 
-def displayed(source: str) -> Displayed:
+def displayed(source: str, declared: Collection[str] | None = None) -> Displayed:
     r"""What one TeX file runs and what it displays, in one scan.
 
     Scanned line by line rather than matched with one regex, because the two
@@ -156,13 +164,21 @@ def displayed(source: str) -> Displayed:
     This is the same rule the label gate already lived by, arrived at the same
     way: what LaTeX would put in front of a reader, not what the source
     contains somewhere.
+
+    A false branch nests the conditionals written inside it: the `\fi` of an
+    `\ifx` there closes the `\ifx`, and stopping at it credited a listing TeX
+    never typeset as one shown to the reader. `declared` names the `\newif`
+    conditionals that nest too; by default, the ones `source` itself declares.
     """
+    if declared is None:
+        declared = declared_conditionals((source,))
     blocks: list[tuple[int, str]] = []
     ran: list[str] = []
     position = 0
     started = 0
     pending: list[str] | None = None
-    skipping = False
+    # How many conditionals deep inside an `\iffalse`; 0 outside one.
+    skipping = 0
     trusted = True
     closing = ""
 
@@ -188,11 +204,19 @@ def displayed(source: str) -> Displayed:
             if skipping:
                 # Inside `\iffalse`, where TeX compiles but typesets nothing.
                 # Nothing here is a quotation, an inclusion, or an appendix.
-                end = BRANCH_END.search(line)
-                if end is None:
+                # Depth-counted, and read without comments: TeX still drops a
+                # `% \fi` while it skips.
+                visible = uncommented(line)
+                cursor = 0
+                while skipping and (found := _CONDITIONAL.search(visible, cursor)) is not None:
+                    cursor = found.end()
+                    if found.group(2) == "fi":
+                        skipping -= 1
+                    elif found.group(1) is None and opens_conditional(found.group(2), declared):
+                        skipping += 1
+                if skipping:
                     break
-                skipping = False
-                line = line[end.end() :]
+                line = line[cursor:]
                 continue
             # A comment truncates the line, and `uncommented` only ever cuts,
             # so an offset into what is left is an offset into the raw line --
@@ -218,7 +242,7 @@ def displayed(source: str) -> Displayed:
             skipped = FALSE_BRANCH.search(visible)
             if skipped is not None and (opening is None or skipped.start() < opening.start()):
                 emit(visible[: skipped.start()])
-                skipping = True
+                skipping = 1
                 line = line[skipped.end() :]
                 continue
             if opening is None:
@@ -265,12 +289,14 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
     not typeset, and a statement quoted there is in front of nobody.
     """
     seen: set[str] = set()
+    # Over every file at once: a preamble usually declares what the body uses.
+    declared = declared_conditionals(tex.values())
 
     def walk(path: str) -> Displayed:
         if not path or path in seen or path not in tex:
             return Displayed("", ())
         seen.add(path)
-        page = displayed(tex[path])
+        page = displayed(tex[path], declared)
         parts: list[str] = []
         quoted: list[tuple[int, str]] = []
         length = 0

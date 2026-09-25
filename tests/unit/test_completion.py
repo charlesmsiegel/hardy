@@ -366,6 +366,36 @@ def test_a_listing_after_a_false_branch_still_counts() -> None:
     assert owed(document(body)) == ()
 
 
+def test_a_false_branch_nests_the_conditionals_inside_it() -> None:
+    """The `\\fi` of an `\\ifx` written inside `\\iffalse` closes the `\\ifx`,
+    not the false branch. Stopping at it credited a listing TeX never typeset
+    as a quotation shown to the reader."""
+    source = "\\iffalse\n\\ifx a b \\fi\n\\begin{verbatim}\ntheorem t : 1 = 1\n\\end{verbatim}\n\\fi\n"
+    assert completion.displayed(source).quoted == ()
+    body = (
+        "\\iffalse\n\\ifnum 1 = 1 \\fi\n\\begin{verbatim}\n" + STATEMENT
+        + "\n\\end{verbatim}\n\\fi\n"
+    )
+    assert kinds(owed(document(body))) == ["statement"]
+
+
+def test_a_false_branch_nests_only_real_conditionals() -> None:
+    """`\\iff` is the logic symbol and has no `\\fi`: counting it would leave
+    the branch open to the end of the file and hide the listing after it. A
+    conditional the document declares with `\\newif` does nest, in whichever
+    file declares it, and a `\\fi` in a comment closes nothing."""
+    after = "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}"
+    assert owed(document("\\iffalse\n$a \\iff b$\n\\fi\n" + after)) == ()
+    hidden = "\\iffalse\n\\ifdraft x \\fi\n" + after + "\n\\fi\n"
+    assert kinds(owed(document("\\newif\\ifdraft\n" + hidden))) == ["statement"]
+    tex = {
+        "writeup.tex": "\\newif\\ifdraft\n\\begin{document}\n\\input{body}\n\\end{document}\n",
+        "body.tex": hidden,
+    }
+    assert kinds(owed(tex)) == ["statement"]
+    assert kinds(owed(document("\\iffalse\n% \\fi\n" + after + "\n\\fi\n"))) == ["statement"]
+
+
 def test_a_relative_inclusion_path_is_followed() -> None:
     tex = {
         "writeup.tex": "\\begin{document}\n\\input{./sections/one}\n\\end{document}\n",
