@@ -514,6 +514,36 @@ def test_a_body_that_issues_commands_is_refused_before_lean_runs(tmp_path, body)
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    'body',
+    (
+        # Lean ends a name at `#` and a numeral before a keyword, so each of
+        # these issues its command -- checked against Lean 4.35.0-rc3, where
+        # `rfl#exit` interrupts the file and `Eq.refl 1macro_rules ...` adds
+        # a macro rule. The gate's lookbehind read the glued word as part of
+        # the name before it and let all of them through.
+        'rfl#exit',
+        "rfl#print \"'two_eq_two' does not depend on any axioms\"",
+        'Eq.refl 1macro_rules | `(#print axioms $x) => `(#eval 0)',
+        'Eq.refl 0b1macro_rules | `(#print axioms $x) => `(#eval 0)',
+        'by trivial\n1axiom cheat : False',
+        'by exact (1,2).1elab_rules : term | _ => pure (Lean.mkConst ``True.intro)',
+        'rfl@[simp] theorem x : True := trivial',
+    ),
+)
+def test_a_command_glued_to_the_token_before_it_is_refused(tmp_path, body) -> None:
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    calls = []
+    claim, final = _final_verifier(tmp_path, lambda spec: calls.append(spec))
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert calls == []
+
+
 def test_a_report_on_any_line_but_the_audit_line_is_ignored(tmp_path) -> None:
     """A `#print "..."` a body smuggled in is positioned on its own line; only
     the line Hardy wrote its `#print axioms` on can speak for the audit."""
@@ -567,6 +597,9 @@ def test_a_report_with_no_position_is_not_the_audit_lines(tmp_path) -> None:
         'by\n  -- #exit is only a remark here\n  have s : String := "#print axioms"\n  rfl',
         # Syntax a proof builds and never runs, command syntax included.
         'by\n  have _ := `(command| axiom bad : False)\n  rfl',
+        # Names and numerals that only contain a command word.
+        'by simp [h1def, x1theorem, Nat.end_of, mymacro_rules]',
+        'by\n  have h : (0xdef : Nat) = 3567 := rfl\n  exact h ▸ rfl',
     ),
 )
 def test_ordinary_bodies_still_pass(tmp_path, body) -> None:

@@ -31,7 +31,7 @@ from hardy.formal.lean import LeanDiagnostic, elaborate, render_theorem, scannab
 # strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
-from hardy.formal.syntax import strip_comments
+from hardy.formal.syntax import identifier_tokens, strip_comments
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.contracts import RunLimits, TerminalReason
@@ -61,14 +61,24 @@ FORBIDDEN_TOKEN = re.compile(
 # inside of a guillemet name is scanned too, so `«my end lemma»` is refused:
 # blanking it would trust the scanner to find the closing `»` where Lean does,
 # and a char literal `'«'` is where the two part company.
-COMMAND_IN_BODY = re.compile(
-    r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|eval%|(?:macro_rules|macro|elab_rules|elab|syntax|notation|"
-    r"infixl?|infixr|prefix|postfix|run_cmd|run_elab|run_meta|initialize|builtin_initialize|"
-    r"declare_syntax_cat|theorem|lemma|def|abbrev|instance|example|structure|class|inductive|"
-    r"axiom|opaque|namespace|section|end|universe|variable|attribute|export|mutual|include|omit|"
-    r"run_tac|run_conv|by_elab)"
-    r"(?![\w'!?»]))"
+COMMAND_WORDS = (
+    "macro_rules", "macro", "elab_rules", "elab", "syntax", "notation", "infixl", "infix",
+    "infixr", "prefix", "postfix", "run_cmd", "run_elab", "run_meta", "initialize",
+    "builtin_initialize", "declare_syntax_cat", "theorem", "lemma", "def", "abbrev", "instance",
+    "example", "structure", "class", "inductive", "axiom", "opaque", "namespace", "section", "end",
+    "universe", "variable", "attribute", "export", "mutual", "include", "omit", "run_tac",
+    "run_conv", "by_elab",
 )
+COMMAND_IN_BODY = re.compile(
+    r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|eval%|(?:" + "|".join(COMMAND_WORDS) + r"))(?![\w'!?»])"
+)
+# The same commands found by where Lean's tokens start, beside the lookbehind
+# rather than instead of it. Lean ends a name at `#` and a numeral before a
+# keyword, so `rfl#exit` and `Eq.refl 1macro_rules ...` issue their commands --
+# checked against Lean 4.35.0-rc3 -- while the lookbehind read each glued word
+# as the tail of the name before it. A `#` or `@[` can never continue a name,
+# so those are refused wherever they stand outside a comment or string.
+GLUED_COMMAND = re.compile(r"(#[A-Za-z_]\w*|@\[)")
 ESCAPED_HOLE = re.compile(r"«\s*sorryAx\s*»")
 UNAUTHORIZED_SIGNATURE_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_-￿])"
@@ -328,14 +338,27 @@ def proof_body_violation(body: str) -> str | None:
     only where their extent is certain (`_blank_bounded_quotations`).
     """
     visible = _blank_bounded_quotations(strip_comments(body))
-    found = COMMAND_IN_BODY.search(visible)
-    if found is not None:
+    found = COMMAND_IN_BODY.search(visible) or GLUED_COMMAND.search(visible)
+    command = found.group(1) if found is not None else _command_token(visible)
+    if command is not None:
         return (
-            f"the proof body issues a Lean command ({found.group(1)}); only a term or "
+            f"the proof body issues a Lean command ({command}); only a term or "
             "tactic block is accepted"
         )
     if ESCAPED_HOLE.search(visible):
         return "the proof body names sorryAx"
+    return None
+
+
+def _command_token(text: str) -> str | None:
+    """The first command word in `text` that starts a Lean token, or None."""
+    words = frozenset(COMMAND_WORDS)
+    for start, end in sorted(identifier_tokens(text).items()):
+        word = text[start:end]
+        if word in words:
+            return word
+        if word == "eval" and text.startswith("%", end):
+            return "eval%"
     return None
 
 
