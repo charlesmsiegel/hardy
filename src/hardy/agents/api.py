@@ -32,7 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from hardy.agents.contracts import TurnEvent, final_text
 from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
-from hardy.agents.spend_budget import SpendBudget
+from hardy.agents.spend_budget import COUNTERS, SpendBudget
 from hardy.foundation.values import ToolResult
 
 BACKEND = "anthropic-api"
@@ -253,6 +253,25 @@ def _usage(reported: Any) -> dict[str, Any] | None:
     return stated or None
 
 
+#: Statuses the Messages API answers before it does any work: rate limited
+#: (429) and overloaded (529). Neither bills anything.
+REJECTED_BEFORE_WORK = frozenset({429, 529})
+
+
+def _rejected(error: BaseException) -> bool:
+    """Whether a failed call was an explicit pre-execution rejection.
+
+    By shape rather than by class, since the SDK is loaded lazily: an
+    `anthropic.APIStatusError` carries the HTTP status and the response it
+    came in. Every other failure -- a 5xx, a dropped connection, Hardy's own
+    deadline -- may have happened after the provider started work, so it is
+    not one of these (owner decision 4).
+    """
+    status = getattr(error, "status_code", None)
+    return (isinstance(status, int) and not isinstance(status, bool) and status in REJECTED_BEFORE_WORK
+            and getattr(error, "response", None) is not None)
+
+
 class AnthropicProvider:
     """One Messages API call. The loop decides whether to make it."""
 
@@ -376,7 +395,10 @@ class AnthropicProvider:
             reported = _usage(getattr(reply, "usage", None))
         except BaseException as error:
             if reservation is not None:
-                self.spend_budget.settle(reservation, None)
+                # Zero only where the provider refused before doing any work;
+                # anything else may have been billed, and settling it unknown
+                # keeps it charged at its reservation.
+                self.spend_budget.settle(reservation, dict.fromkeys(COUNTERS, 0) if _rejected(error) else None)
             # The SDK's own timeout is an `APITimeoutError` -- a subclass of
             # `APIConnectionError`, not of Python's `TimeoutError` -- so a
             # request that ran out of the wall clock Hardy handed it would
