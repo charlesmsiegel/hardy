@@ -103,10 +103,59 @@ def poolable_boards(scoreboards_root: Path, *, key: tuple[str | None, str], prob
     return admitted, refused
 
 
+def board_slots(scoreboards_root: Path, label: str) -> set[tuple[str, int]]:
+    """Every `(id, repeat)` a board's rows claim, `invalid` ones included:
+    `evals pool` refuses a slot two boards claim whatever its outcome."""
+    board = json.loads((scoreboards_root / label / "scoreboard.json").read_text(encoding="utf-8"))
+    return {(str(row.get("id")), int(row.get("repeat") or 0)) for row in board.get("rows") or []}
+
+
+def conflicting_boards(scoreboards_root: Path, *, boards: list[str]
+                       ) -> tuple[list[str], dict[str, list[str]], set[str]]:
+    """Split admitted `boards` into those `evals pool` accepts together and those it cannot.
+
+    `evals pool` refuses a set of boards in which two claim the same
+    `(id, repeat)` slot, so each board passing its own audit is not enough:
+    with one repeat, A holding x and y and B holding y and z are refused
+    together, and a union of their rows counted x, y and z complete. Every
+    board that shares a slot with another is left out -- which of them a
+    human keeps is theirs to decide, by setting the others aside -- and the
+    rest share no slot pairwise, so `evals pool` accepts them together.
+
+    Returns the boards still counted, sorted; each conflicting board with
+    the slots it shares and the boards it shares them with; and the entry
+    ids any conflicting board holds a slot of. A board that cannot be read
+    again here is set aside the same way, never counted.
+    """
+    slots: dict[str, set[tuple[str, int]]] = {}
+    unreadable: dict[str, list[str]] = {}
+    for label in boards:
+        try:
+            slots[label] = board_slots(scoreboards_root, label)
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            unreadable[label] = [f"the board could not be read again: {type(error).__name__}: {error}"]
+    claimed: dict[tuple[str, int], list[str]] = {}
+    for label in sorted(slots):
+        for slot in slots[label]:
+            claimed.setdefault(slot, []).append(label)
+    conflicts: dict[str, list[str]] = dict(unreadable)
+    for (id_, repeat), holders in sorted(claimed.items()):
+        if len(holders) < 2:
+            continue
+        for label in holders:
+            others = ", ".join(other for other in holders if other != label)
+            conflicts.setdefault(label, []).append(
+                f"{id_} repeat {repeat} is also claimed by {others}; `evals pool` refuses them together"
+            )
+    held = {id_ for label in conflicts for id_, _ in slots.get(label, ())}
+    return sorted(label for label in boards if label not in conflicts), conflicts, held
+
+
 def evaluated_ids(scoreboards_root: Path, *, boards: list[str]) -> tuple[set[str], set[str]]:
     """The entry ids `boards` fully cover, and those they cover only in part.
 
-    `boards` are labels `poolable_boards` admitted. An id is complete when
+    `boards` are labels `poolable_boards` admitted and `conflicting_boards`
+    kept, so `evals pool` accepts them together. An id is complete when
     its rows across them, leaving out `invalid` ones, fill every repeat slot
     `range(condition.repeats)`; `repeats` is in the pooling key, so every
     admitted board shares it. An id with some slots but not all is partial:
@@ -196,8 +245,12 @@ def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tu
                 problems_path: Path, baseline_path: Path, procedure_digest: str) -> dict[str, Any]:
     """What is left under `key`, judged by the boards `evals pool` would admit.
 
-    - `boards_counted`: the boards admitted as evidence; `boards_refused`:
-      those matching `key` that fail their own audit, with its findings.
+    - `boards_counted`: the boards admitted as evidence, a set `evals pool`
+      accepts together; `boards_refused`: those matching `key` that fail
+      their own audit, with its findings; `boards_conflicting`: those that
+      pass it but claim an `(id, repeat)` slot another admitted board claims
+      too, with the slots and the other boards. `evals pool` refuses such a
+      pair together, so neither is counted until one is set aside.
     - `baseline_sweeps`: what a bare `evals baseline` would sweep now
       (`baseline_default`, under `key`'s environment digest and the sweep's
       `procedure_digest`), and `baseline_moved`: why no prior row can be
@@ -207,21 +260,30 @@ def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tu
     - `partially_evaluated_active`: active entries holding some of their
       repeats but not all. The default run leaves them out, because a fresh
       board repeating their slots would not pool with the one holding them.
+    - `conflicted_active`: active entries a conflicting board holds a slot
+      of, and no counted board completes. Left out of the default run for
+      the same reason: a rerun would claim a slot a conflicting board still
+      holds. Setting boards aside is the remedy, not a rerun.
 
     Only `active` entries: a `candidate` has not been checked by a human yet,
     and spending model time on one would benchmark a draft.
     """
     admitted, refused = poolable_boards(scoreboards_root, key=key, problems_path=problems_path,
                                         baseline_path=baseline_path)
-    complete, partial = evaluated_ids(scoreboards_root, boards=admitted)
+    counted, conflicting, held = conflicting_boards(scoreboards_root, boards=admitted)
+    complete, partial = evaluated_ids(scoreboards_root, boards=counted)
+    blocked = held - complete
     active = [e.id for e in problems.entries if e.status == "active"]
     sweeps, moved = baseline_default(problems, baseline, environment_digest=key[1], procedure_digest=procedure_digest)
     return {
-        "boards_counted": admitted,
+        "boards_counted": counted,
         "boards_refused": refused,
+        "boards_conflicting": conflicting,
         "baseline_sweeps": sweeps,
         "baseline_moved": moved,
         "unbaselined_active": [id_ for id_ in sweeps if id_ in set(active)],
-        "unevaluated_active": [id_ for id_ in active if id_ not in complete and id_ not in partial],
-        "partially_evaluated_active": [id_ for id_ in active if id_ in partial],
+        "unevaluated_active": [id_ for id_ in active
+                               if id_ not in complete and id_ not in partial and id_ not in blocked],
+        "partially_evaluated_active": [id_ for id_ in active if id_ in partial and id_ not in blocked],
+        "conflicted_active": [id_ for id_ in active if id_ in blocked],
     }

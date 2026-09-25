@@ -246,12 +246,20 @@ a default run while an actual `evals run --max-turns 40` recorded a
 different one, and `evals pool` would then refuse the very board `todo`
 said was needed.
 
-It counts the same evidence `evals pool` would accept. `boards_counted`
-names the boards under this key that pass their own audit, and
-`boards_refused` names those that match the key but fail it, with the
-audit's findings. `unevaluated_active` lists the active entries with no
-valid sample on a counted board, and `partially_evaluated_active` lists
-those holding some of their repeats but not all. `baseline_sweeps` is
+It counts the same evidence `evals pool` would accept, and only a set of
+boards it would accept together. `boards_counted` names the boards under
+this key that pass their own audit and share no `(id, repeat)` slot with
+another; `boards_refused` names those that match the key but fail the
+audit (a missing or altered exposure journal included), with its
+findings; and `boards_conflicting` names those that pass it but claim a
+slot another board also claims, with the slots. `evals pool` refuses two
+such boards together, so neither counts until you set one aside by moving
+its directory out of the scoreboards directory; rerunning the entries
+would only claim the same slots again. `unevaluated_active` lists the
+active entries with no valid sample on a counted board,
+`partially_evaluated_active` lists those holding some of their repeats
+but not all, and `conflicted_active` lists those a conflicting board
+holds. A default `evals run` selects only the first. `baseline_sweeps` is
 exactly what a bare `hardy evals baseline` would sweep now, including
 every held row after an environment or procedure digest move, which
 `baseline_moved` then explains; `unbaselined_active` is its active part.

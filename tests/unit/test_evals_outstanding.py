@@ -212,6 +212,84 @@ def test_the_baseline_default_includes_an_unmeasured_row_whatever_its_status():
     assert ids == ["t", "u"] and moved is None
 
 
+# --- Codex on #393: evidence is a set of boards `evals pool` accepts together ---
+
+
+def _three_entries() -> ProblemSet:
+    """Three active entries, `x`, `y` and `z`, for the overlap example."""
+    base = {
+        "input": "True.", "conclusion": "True", "expected": "true", "source": "textbook",
+        "msc": ("11Axx",), "difficulty": "routine", "rationale": "test fixture",
+        "witness": None, "witness_note": "test fixture",
+    }
+    entries = []
+    for id_ in ("x", "y", "z"):
+        draft = Entry(id=id_, name=id_.upper(), **base)
+        review = Review(
+            reviewer="cms", reviewed_at="2026-09-03T00:00:00Z",
+            statement_digest=draft.statement_digest(), prompt_digest=draft.prompt_digest(),
+            msc=list(draft.msc), group=taxonomy.group_of(draft.msc[0]), verdict="faithful",
+        )
+        entries.append(Entry(id=id_, name=id_.upper(), status="active", review=review, **base))
+    return ProblemSet(entries=tuple(entries))
+
+
+def test_boards_that_overlap_on_a_slot_count_nothing_and_are_named_conflicting(tmp_path):
+    """One repeat: A holds x and y, B holds y and z. Each passes its own audit,
+    but `evals pool` refuses them together (`y repeat 0 appears in both`), so
+    neither is evidence -- the union counted x, y and z complete and the
+    default run selected nothing."""
+    key = ("r", "e")
+    _board(tmp_path / "a", ids=["x", "y"], key=key)
+    _board(tmp_path / "b", ids=["y", "z"], key=key)
+    result = outstanding.outstanding(_three_entries(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert result["boards_counted"] == []
+    assert result["boards_refused"] == {}
+    assert set(result["boards_conflicting"]) == {"a", "b"}
+    assert any("y repeat 0" in finding and "b" in finding for finding in result["boards_conflicting"]["a"])
+    # A rerun of any of them would claim a slot one of the two still holds,
+    # so none is selected: setting a board aside is the remedy.
+    assert result["unevaluated_active"] == []
+    assert result["partially_evaluated_active"] == []
+    assert result["conflicted_active"] == ["x", "y", "z"]
+
+
+def test_a_board_clear_of_the_conflict_still_counts(tmp_path):
+    key = ("r", "e")
+    _board(tmp_path / "a", ids=["x"], key=key)
+    _board(tmp_path / "b", ids=["x"], key=key)
+    _board(tmp_path / "c", ids=["y"], key=key)
+    result = outstanding.outstanding(_three_entries(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert result["boards_counted"] == ["c"]
+    assert set(result["boards_conflicting"]) == {"a", "b"}
+    assert result["conflicted_active"] == ["x"]
+    assert result["unevaluated_active"] == ["z"]
+
+
+def test_an_invalid_row_still_claims_its_slot(tmp_path):
+    """`evals pool` refuses a slot two boards claim whatever its outcome."""
+    key = ("r", "e")
+    _board(tmp_path / "a", key=key, rows=[{"id": "x", "repeat": 0, "outcome": "invalid"}])
+    _board(tmp_path / "b", ids=["x"], key=key)
+    result = outstanding.outstanding(_three_entries(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert set(result["boards_conflicting"]) == {"a", "b"}
+    assert result["conflicted_active"] == ["x"]
+
+
+def test_setting_a_conflicting_board_aside_is_the_remedy(tmp_path):
+    key = ("r", "e")
+    _board(tmp_path / "a", ids=["x", "y"], key=key)
+    _board(tmp_path / "b", ids=["y", "z"], key=key)
+    (tmp_path / "a").rename(tmp_path.parent / f"{tmp_path.name}-aside")
+    result = outstanding.outstanding(_three_entries(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert result["boards_counted"] == ["b"] and result["boards_conflicting"] == {}
+    assert result["unevaluated_active"] == ["x"] and result["conflicted_active"] == []
+
+
 # --- Codex on #393: a board's exposure failure is reported, not skipped ---
 
 

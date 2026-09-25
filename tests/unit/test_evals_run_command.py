@@ -260,6 +260,40 @@ def test_the_default_selection_refuses_when_nothing_active_is_outstanding(monkey
 
 
 
+
+def test_the_default_run_refuses_to_rerun_entries_conflicting_boards_hold(monkeypatch, tmp_path, capsys):
+    """Codex on #393: A holds x and y, B holds y and z, one repeat. `evals
+    pool` refuses them together, so nothing is counted -- and rerunning x, y
+    or z would claim a slot A or B still holds. The advice is to set a board
+    aside; nothing runs."""
+    from hardy.evals import outstanding
+
+    monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
+    called = []
+    monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
+    monkeypatch.setattr(outstanding, "outstanding", lambda *a, **kw: {
+        "boards_counted": [], "boards_refused": {},
+        "boards_conflicting": {"a": ["y repeat 0 is also claimed by b; `evals pool` refuses them together"],
+                               "b": ["y repeat 0 is also claimed by a; `evals pool` refuses them together"]},
+        "baseline_sweeps": [], "baseline_moved": None, "unbaselined_active": [],
+        "unevaluated_active": [], "partially_evaluated_active": [], "conflicted_active": ["x", "y", "z"],
+    })
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
+    err = capsys.readouterr().err
+    assert code == 2 and called == []
+    assert "not counted: board a passes its own audit" in err
+    assert "set aside the boards you do not want pooled" in err
+    assert "A rerun is not the remedy" in err
+    assert "not selected: these active entries are held by boards `evals pool` refuses together" in err
+    assert "x, y, z" in err
+    assert "already been run" not in err and "--only to re-run" not in err
+
+
+
+
 def _parse(*argv: str) -> argparse.Namespace:
     """The real CLI parser, so a flag `run` has and `todo` does not is a test
     failure rather than a silent default.
@@ -323,8 +357,9 @@ def test_the_default_selection_names_partial_entries_rather_than_rerunning_them(
 
     def fake_outstanding(problems, baseline, root, **kw):
         seen.update(kw)
-        return {"boards_counted": ["first"], "boards_refused": {"broken": ["an issue"]},
-                "unbaselined_active": [], "unevaluated_active": [], "partially_evaluated_active": ["a"]}
+        return {"boards_counted": ["first"], "boards_refused": {"broken": ["an issue"]}, "boards_conflicting": {},
+                "unbaselined_active": [], "unevaluated_active": [], "partially_evaluated_active": ["a"],
+                "conflicted_active": []}
 
     monkeypatch.setattr(outstanding, "outstanding", fake_outstanding)
     problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
