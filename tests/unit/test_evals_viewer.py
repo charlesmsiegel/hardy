@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
+import stat
 import threading
 import urllib.error
 import urllib.request
@@ -617,6 +619,58 @@ def test_a_new_objection_reverts_the_shard_to_the_original_bytes(monkeypatch, re
         record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
 
     assert shard.read_bytes() == original
+
+
+def test_check_issues_raising_reverts_the_shard_and_propagates(monkeypatch, reviewable):
+    """`check_issues` blowing up outright -- not returning a fresh objection --
+    must be treated the same as one: the write is not left in place, and the
+    fault is not swallowed on its way out."""
+    import hardy.app.corpus_viewer as corpus_viewer
+
+    shard = reviewable / "problems" / "13.json"
+    original = shard.read_bytes()
+    calls = iter([[], None])
+
+    def _check_issues(root):
+        result = next(calls)
+        if result is None:
+            raise RuntimeError("check_issues blew up")
+        return result
+
+    monkeypatch.setattr(corpus_viewer, "check_issues", _check_issues)
+
+    with pytest.raises(RuntimeError, match="check_issues blew up"):
+        record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+
+    assert shard.read_bytes() == original
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits do not apply on Windows")
+def test_a_reviewed_shard_keeps_its_existing_permission_bits(reviewable):
+    """`NamedTemporaryFile` creates its file `0600`; a review must not leave
+    the shard less readable than it was, e.g. by a teammate's git checkout at
+    the usual `0644`."""
+    shard = reviewable / "problems" / "13.json"
+    shard.chmod(0o644)
+
+    record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+
+    assert stat.S_IMODE(shard.stat().st_mode) == 0o644
+
+
+def test_a_failed_write_leaves_no_temp_file_behind(monkeypatch, reviewable):
+    """A write that is reverted (or that fails outright) must not leave a
+    stray `tmpXXXXXX` file beside the shard."""
+    import hardy.app.corpus_viewer as corpus_viewer
+
+    calls = iter([[], ["x: a new objection"]])
+    monkeypatch.setattr(corpus_viewer, "check_issues", lambda root: next(calls))
+
+    with pytest.raises(ReviewRefused):
+        record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+
+    leftovers = [p for p in (reviewable / "problems").iterdir() if p.name != "13.json"]
+    assert leftovers == [], leftovers
 
 
 # --- Citations: AMS alpha labels and the per-source locator conventions ---

@@ -18,11 +18,12 @@ was approved would be worse than no button.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
 import socket
-import tempfile
+import stat
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
@@ -43,6 +44,7 @@ from hardy.corpus.catalog import (
 )
 from hardy.corpus.problems import Entry, Review
 from hardy.evals.sweep import witness_source
+from hardy.foundation.locking import atomic_write_bytes
 
 PAGE = Path(__file__).resolve().parent / "viewer.html"
 BIBLIOGRAPHY = Path(__file__).resolve().parent / "bibliography.html"
@@ -252,15 +254,27 @@ def _write_atomically(path: Path, data: bytes) -> None:
     """A crash mid-write must not leave a half-written shard: the whole corpus
     fails to load on one truncated file.
 
-    Bytes through a binary temp file, not `str` through `write_text` (#237):
-    `write_text` without `newline=` translates every `\\n` in the JSON to the
-    platform default, so a shard written this way on Windows would show as
-    changed on every line to a diff that expects `\\n`. A binary file never
-    translates anything, so the bytes written are exactly the bytes given.
+    Delegates to `foundation.locking.atomic_write_bytes` (bytes through a
+    binary temp file, not `str` through `write_text` -- #237 -- fsynced
+    before the rename, and cleaned up on any failure) rather than
+    re-implementing it here with less.
+
+    `atomic_write_bytes`'s temp file is `NamedTemporaryFile`'s usual `0600`,
+    so a shard that already existed at the ordinary `0644` would otherwise
+    come back less readable after every review. The mode is read before the
+    write and restored after, best-effort: a shard that does not yet exist
+    has no prior mode to keep, and a `chmod` that fails leaves the content
+    written -- correct but with whatever mode the write happened to produce,
+    which is the failure this is already better than.
     """
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
-        tmp.write(data)
-    os.replace(tmp.name, path)
+    try:
+        mode: int | None = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        mode = None
+    atomic_write_bytes(path, data)
+    if mode is not None:
+        with contextlib.suppress(OSError):
+            os.chmod(path, mode)
 
 
 def _tiers(baseline_path: Path | None) -> dict[str, dict[str, Any]]:
