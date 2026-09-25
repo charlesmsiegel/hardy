@@ -274,7 +274,9 @@ quotations.
 ### The document is scanned, not typeset
 
 The reader of the writeup is a scanner, not a TeX engine. Comments are dropped,
-a literal `\iffalse` branch is skipped, macro definition bodies are removed
+a literal `\iffalse` branch is skipped, with only real conditionals nesting
+inside it (TeX's primitives and whatever the document declares with `\newif`;
+`\iff` and `\ifthenelse` are not conditionals), macro definition bodies are removed
 rather than expanded, a listing configured to transform what it shows is not
 counted as a quotation, and `\input` is followed only where TeX would execute
 it. A document that reaches its listings or its assertions through macro

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import PurePosixPath
 
 # Fragments are `\input` from one document, and that document is what a
@@ -136,10 +136,47 @@ def _normalise_include(found: str) -> str:
 
 
 _IFFALSE = re.compile(r"\\iffalse(?![a-zA-Z])")
-# Any TeX conditional opener (`\iftrue`, `\iffalse`, `\ifx`, `\ifnum`, ...)
-# or `\fi`, with the lookahead making sure a longer command name -- `\finish`
-# is not `\fi` followed by `nish` -- is never mistaken for either.
-_CONDITIONAL = re.compile(r"\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
+#: What opens a TeX conditional: the TeX and e-TeX primitives, plus the engine
+#: tests every format defines. An explicit list, because the name alone says
+#: nothing: `\iff` is a symbol and `\ifthenelse` a macro taking three braced
+#: arguments, and neither has a `\fi`. Read as openers, either left the region
+#: open to the end of the file.
+CONDITIONALS = frozenset({
+    "if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode",
+    "ifinner", "ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse",
+    "ifcase", "ifdefined", "ifcsname", "iffontchar", "ifincsname", "ifpdfprimitive",
+    "ifpdf", "ifxetex", "ifluatex",
+})
+#: `\newif\ifdraft` declares `\ifdraft` as a conditional of the document's own.
+#: The declaration names the conditional without opening it.
+_NEWIF = re.compile(r"\\newif\s*\{?\s*\\(if[a-zA-Z]+)(?![a-zA-Z])")
+# Any `\if...` control word or `\fi`, with the lookahead making sure a longer
+# command name -- `\finish` is not `\fi` followed by `nish` -- is never
+# mistaken for either. The optional `\newif` in front is what lets a
+# declaration be told from a use; `opens_conditional` decides the rest.
+_CONDITIONAL = re.compile(r"(\\newif\s*\{?\s*)?\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
+
+
+def declared_conditionals(sources: Iterable[str]) -> frozenset[str]:
+    r"""Every conditional a `\newif` in `sources` declares, outside comments.
+
+    Over every source at once, because a preamble usually declares what the
+    body files use.
+    """
+    return frozenset(
+        found.group(1) for text in sources for found in _NEWIF.finditer(uncommented(text))
+    )
+
+
+def opens_conditional(name: str, declared: Collection[str] = frozenset()) -> bool:
+    r"""Whether the control word `\<name>` opens a conditional that needs a `\fi`.
+
+    A TeX conditional primitive, or one the document declared with `\newif`
+    (`declared_conditionals`). Nothing else: an `\if...` macro from a package,
+    or one declared somewhere Hardy was not shown, is an ordinary control
+    word, and its `\fi`, if any, is then a stray one.
+    """
+    return name in CONDITIONALS or name in declared
 # `\b` after an optional `*` never matches: `*` is a non-word character, so a
 # starred command followed by `{` or `\` -- both also non-word -- has no
 # word/non-word transition for `\b` to land on. `\newcommand*{\g}{...}` fell
@@ -203,8 +240,12 @@ def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
     return length
 
 
-def _drop_iffalse(text: str) -> str:
+def _drop_iffalse(text: str, declared: Collection[str] = frozenset()) -> str:
     r"""`text` with every `\iffalse ... \fi` region removed.
+
+    Only a real conditional opens a nested region (`opens_conditional`, with
+    the `\newif` names in `declared`): `\iff` in a false branch has no `\fi`,
+    and counting it left the branch open to the end of the file.
 
     Depth-tracked rather than matched to the nearest `\fi`: a conditional
     written inside the false branch -- `\ifx\a\b ... \fi` guarding something
@@ -229,7 +270,11 @@ def _drop_iffalse(text: str) -> str:
             if found is None:
                 pos = length
                 break
-            depth += -1 if found.group(1) == "fi" else 1
+            name = found.group(2)
+            if name == "fi":
+                depth -= 1
+            elif found.group(1) is None and opens_conditional(name, declared):
+                depth += 1
             pos = found.end()
         index = pos
     return "".join(out)
@@ -644,7 +689,7 @@ def typeset(source: str, *, carried: _MacroState | None = None) -> str:
     return "".join(kept)
 
 
-def _executed(source: str) -> str:
+def _executed(source: str, declared: Collection[str] = frozenset()) -> str:
     r"""`source` with everything TeX would never actually run removed.
 
     `uncommented` drops what a human comment hides from TeX; this drops
@@ -662,7 +707,7 @@ def _executed(source: str) -> str:
     answered by what the writeup's `\input` chain names, not by which of
     those inputs would run.
     """
-    return _drop_macro_bodies(_drop_iffalse(typeset(source)))
+    return _drop_macro_bodies(_drop_iffalse(typeset(source), declared))
 
 
 def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
@@ -710,9 +755,10 @@ def reached_fragments(sources: Mapping[str, str]) -> set[str]:
             by_stem[normal[: -len(".tex")]] = path
     reached = {ROOT_DOCUMENT}
     frontier = [ROOT_DOCUMENT]
+    declared = declared_conditionals(sources.values())
     while frontier:
         current = frontier.pop()
-        for found in INCLUSION.findall(_executed(sources[current])):
+        for found in INCLUSION.findall(_executed(sources[current], declared)):
             key = _normalise_include(found)
             target = by_stem.get(key)
             if target is None and key.endswith(".tex"):

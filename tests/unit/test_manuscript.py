@@ -194,3 +194,88 @@ def test_title_nested_occurrences_are_reported_as_bounded_unsupported():
     assert [item.value for item in found.labels] == ["after"]
     assert len(found.unsupported) == 1
     assert _slice(source, found.unsupported[0].span) == title
+
+
+# --- Only real TeX conditionals open a conditional (#189) ------------------------------
+
+
+def _labels(found) -> list[str]:
+    return [label.value for label in found.labels]
+
+
+def _conditionals(found) -> list[str]:
+    return [finding.detail for finding in found.findings if finding.kind == "conditional"]
+
+
+def test_iff_is_an_ordinary_control_word() -> None:
+    """`\\iff` has no `\\fi`, and reading it as a conditional swallowed the
+    rest of the file: every section, label and citation after the first
+    "if and only if" was missing from the inventory."""
+    source = (
+        "\\section{Intro}\n"
+        "We have $a \\iff b$.\n"
+        "\\section[Short]{Main results}\\label{sec:main}\n"
+        "\\begin{theorem}\\label{thm:a} x \\end{theorem}\n"
+        "See \\cite{foo,bar}.\n"
+    )
+    found = inventory({"a.tex": source})
+
+    assert len(found.sections) == 2
+    assert _labels(found) == ["sec:main", "thm:a"]
+    assert [citation.key for citation in found.citations] == ["foo", "bar"]
+    assert "theorem" in [environment.name for environment in found.environments]
+    assert _conditionals(found) == []
+
+
+def test_iff_inside_a_real_conditional_does_not_deepen_it() -> None:
+    found = inventory({"a.tex": "\\ifx\\a\\b $p\\iff q$ \\fi \\label{after}"})
+
+    assert _conditionals(found) == ["literal conditional source is not interpreted"]
+    assert _labels(found) == ["after"]
+
+
+def test_a_newif_conditional_is_a_conditional() -> None:
+    found = inventory({"a.tex": "\\newif\\ifdraft \\ifdraft x\\fi \\label{z}"})
+
+    assert _conditionals(found) == ["literal conditional source is not interpreted"]
+    assert _labels(found) == ["z"]
+    assert not [item for item in found.findings if item.kind == "stray_conditional_end"]
+
+
+def test_a_newif_declared_in_another_file_is_still_a_conditional() -> None:
+    found = inventory({
+        "macros.tex": "\\newif\\ifdraft\n",
+        "paper.tex": "\\ifdraft \\label{hidden}\\fi \\label{z}",
+    })
+
+    assert _conditionals(found) == ["literal conditional source is not interpreted"]
+    assert _labels(found) == ["z"]
+
+
+def test_a_commented_newif_declares_nothing() -> None:
+    found = inventory({"a.tex": "% \\newif\\ifdraft\n\\ifdraft x\\fi \\label{z}"})
+
+    assert _conditionals(found) == []
+    assert _labels(found) == ["z"]
+
+
+def test_ifthenelse_takes_arguments_and_opens_nothing() -> None:
+    found = inventory({"a.tex": "\\ifthenelse{\\equal{a}{b}}{x}{y}\\label{w}"})
+
+    assert _conditionals(found) == []
+    assert _labels(found) == ["w"]
+
+
+def test_iffalse_still_hides_what_it_wraps() -> None:
+    found = inventory({"a.tex": "\\iffalse \\label{hidden}\\fi \\label{shown}"})
+
+    assert _conditionals(found) == ["literal conditional source is not interpreted"]
+    assert _labels(found) == ["shown"]
+
+
+def test_the_inventory_and_the_writeup_scan_share_one_predicate() -> None:
+    """Two readers of the same TeX must agree on what opens a conditional."""
+    from hardy.documents import syntax
+    from hardy.literature import manuscript
+
+    assert manuscript.opens_conditional is syntax.opens_conditional
