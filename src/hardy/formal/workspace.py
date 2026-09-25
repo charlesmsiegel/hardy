@@ -23,7 +23,6 @@ from hardy.formal.syntax import BINDERS as BINDERS
 from hardy.formal.syntax import CLOSERS as CLOSERS
 from hardy.formal.syntax import COMMAND as COMMAND
 from hardy.formal.syntax import COMPONENT as COMPONENT
-from hardy.formal.syntax import DECLARATION as DECLARATION
 from hardy.formal.syntax import ESCAPED as ESCAPED
 from hardy.formal.syntax import HEADER_KEYWORDS as HEADER_KEYWORDS
 from hardy.formal.syntax import IDENTIFIER as IDENTIFIER
@@ -48,7 +47,7 @@ from hardy.formal.syntax import (
 )
 from hardy.formal.syntax import ImportCycle as ImportCycle
 from hardy.formal.syntax import WorkspacePathError as WorkspacePathError
-from hardy.formal.syntax import _raw_string_opener as _raw_string_opener
+from hardy.formal.syntax import _raw_hashes as _raw_hashes
 from hardy.formal.syntax import _scan as _scan
 from hardy.formal.syntax import _scopes as _scopes
 from hardy.formal.syntax import _statement_end as _statement_end
@@ -64,6 +63,7 @@ from hardy.formal.syntax import safe_relative as safe_relative
 from hardy.formal.syntax import statements as statements
 from hardy.formal.syntax import strip_comments as strip_comments
 from hardy.formal.syntax import unreadable_assumptions as unreadable_assumptions
+from hardy.formal.syntax import unreadable_structure as unreadable_structure
 from hardy.foundation.files import WriteGuard, files_under, guard_for, read_text
 from hardy.foundation.values import FrozenModel
 

@@ -1204,3 +1204,20 @@ def test_a_same_line_theorem_with_a_hole_is_audited_open(tmp_path: Path):
     record = state(tmp_path)["audit"]["Main"]
     assert record["status"] == "open"
     assert "sneaky" in str(record["declarations"])
+
+
+def test_a_scope_hardy_cannot_place_refuses_the_save(tmp_path: Path):
+    """Behind an ambiguous quote a `namespace` is code in one reading and a
+    string in the other, so the theorem after it has two possible names and
+    an audit of either could meet a clean twin. The save is refused, naming
+    the line, rather than guessed at."""
+    source = (
+        "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro\n"
+        "def q := `(xs[0]'\"'\nnamespace Foo \")\n"
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "scopes" in refusal["output"]
+    assert not saved(tmp_path).exists()

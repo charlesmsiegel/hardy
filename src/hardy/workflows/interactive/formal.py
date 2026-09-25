@@ -29,6 +29,7 @@ from hardy.formal.workspace import (
     module_name,
     safe_relative,
     unreadable_assumptions,
+    unreadable_structure,
 )
 from hardy.foundation.values import ToolResult
 
@@ -320,6 +321,21 @@ class FormalWorkspaceService:
         a claim is made instead: the audit records it, the obligations name it,
         and `report_result` grades it partial.
         """
+        # Before anything is named: where Hardy cannot tell whether a scope
+        # command is code, it cannot tell what the declarations after it are
+        # called, and an audit asked about the wrong name can find a clean twin.
+        # Refused with the line, so the model can make it unambiguous -- a
+        # space before a char literal, a quotation moved into its own `def`.
+        unplaced = unreadable_structure(source)
+        if unplaced:
+            return ToolResult(
+                False,
+                f"Hardy cannot read where this file's scopes open and close: {unplaced[0]}. "
+                "Make it unambiguous -- put a space before a char literal that follows a "
+                "symbol, and keep `namespace`/`section`/`end` out of syntax quotations and "
+                "strings -- and save again.",
+                source,
+            )
         found = declarations(source)
         # The audit asks `#print axioms` about theorems and lemmas, and about
         # nothing else -- so those are the only declarations a hole can be
