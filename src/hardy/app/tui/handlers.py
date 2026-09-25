@@ -527,10 +527,21 @@ async def handle_assume(ui: Ui, argument: str, state: State) -> State:
     calls `assume_statement`, so every approval, probe and independent read
     happens exactly where it does for a lazily minted axiom. A command that
     wrote axioms directly would be a second write path into the trust base.
+
+    Composes the request and hands it back as `queued_text` rather than
+    calling `session.send` here (#208): a handler runs on the UI loop, and
+    `send` is a whole blocking turn. Worse, the turn asks the model to call
+    `assume_statement`, whose approval prompt is marshalled back onto that
+    same loop -- send it from here and the turn and the prompt wait on each
+    other forever. `_jobs_continue` is the same pattern: the terminal submits
+    `queued_text` through its ordinary turn path, streamed and cancellable.
     """
     session = state.session
     if session is None:
         ui.write("No session yet.", style="error")
+        return state
+    if state.turn_running:
+        ui.write("A turn is running; /assume starts its own turn once it ends.", style="error")
         return state
     parts = argument.split()
     if not parts:
@@ -552,8 +563,7 @@ async def handle_assume(ui: Ui, argument: str, state: State) -> State:
             "I will say which of them to assume."
         )
     ui.write(f"Assume: {paper}" + (f" — {', '.join(refs)}" if refs else " — listing statements"))
-    session.send(request)
-    return state
+    return dataclasses.replace(state, queued_text=request)
 
 
 IMPORT_USAGE = (

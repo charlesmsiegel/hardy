@@ -123,6 +123,27 @@ def test_input_during_a_turn_is_queued_and_becomes_the_next_turn_in_order(tmp_pa
         host.stop()
 
 
+def test_assume_command_starts_its_request_as_an_ordinary_turn(tmp_path: Path) -> None:
+    """#208: `/assume` used to call `session.send` synchronously on the loop,
+    which deadlocks the moment the model asks for the assumption approval
+    (the prompt is marshalled back onto that same blocked loop). `submit`
+    must return promptly -- the request runs as a queued turn, same as any
+    typed line -- and the composed request is what `session.stream` sees."""
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        started = time.time()
+        result = host.submit("/assume 2401.00001 thm:main")
+        assert time.time() - started < 1.0
+        assert result["kind"] == "command"
+        _drain(sub, {"turn_end"})
+        assert len(host.session.sent) == 1
+        request = host.session.sent[0]
+        assert "2401.00001" in request and "thm:main" in request and "assume_statement" in request
+    finally:
+        host.stop()
+
+
 def test_a_finished_job_starts_a_hardy_authored_turn_only_when_the_session_is_idle(tmp_path: Path) -> None:
     host = _host(tmp_path)
     try:
