@@ -22,7 +22,13 @@ from hardy.foundation.locking import FileInUse, replace_with_retry
 
 @pytest.fixture(autouse=True)
 def simulated_windows(monkeypatch):
-    """Retry semantics on, and no real sleeping, for every test but the last."""
+    """Retry semantics on, and no real sleeping.
+
+    The real-reader test at the end puts `time.sleep` back itself: the retry
+    window is measured by adding up the delays asked for, not by the clock, so
+    with a no-op sleep all eleven retries spend the 1.5s budget in
+    microseconds and a reader holding the file for 50ms outlasts it.
+    """
     monkeypatch.setattr(locking, "_SHARING_RETRY", True)
     monkeypatch.setattr(locking, "_sleep", lambda seconds: None)
 
@@ -103,8 +109,10 @@ def test_off_windows_the_error_propagates_after_one_call(monkeypatch):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="exercises real MoveFileExW sharing-violation semantics")
-def test_a_real_reader_holding_the_file_for_50ms_does_not_fail_the_write(tmp_path):
-    """The one test that needs Windows itself, rather than a simulation of it."""
+def test_a_real_reader_holding_the_file_for_50ms_does_not_fail_the_write(tmp_path, monkeypatch):
+    """The one test that needs Windows itself, rather than a simulation of it,
+    and so the one that needs the backoff to take real time."""
+    monkeypatch.setattr(locking, "_sleep", time.sleep)
     directory = tmp_path / "problem"
     directory.mkdir()
     guard = WriteGuard(directory)
