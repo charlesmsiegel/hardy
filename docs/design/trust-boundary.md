@@ -308,6 +308,11 @@ This is a list of recognised forms, and each residual below still gets past it:
 - The route through modules is untouched: an interactive workspace audits built
   modules by importing them, and a macro or elaborator a module declares comes
   with the import.
+- The interactive statement check for an approved assumption elaborates the
+  approved text in that same imported environment, so an ordinary `instance`,
+  `notation`, `macro_rules` or shadowing declaration in the audited modules
+  can change what the approved text means, and the check then compares the
+  axiom against the changed meaning (see the assumptions section below).
 
 So the audit establishes that an artifact is not *accidentally* unsound: that
 a proof reached by ordinary means does not rest on `sorryAx` or on an axiom
@@ -468,11 +473,11 @@ narrower than what was asked for.
   `app/terminal.py` returns false, including an unexpected exception from the
   prompting path itself and a prompt that could not be shown at all. A bug in
   the presentation must not be able to fail this gate open.
-- **An approved name is held to its approved statement by Lean.** The
+- **An approved name is checked against its approved statement by Lean.** The
   declared-axiom gate in `_final_gates` compares an `axiom` the model writes
   against the approved `lean_statement`, as text, and refuses a mismatch
-  before Lean runs. That is the fast first refusal and no longer the one that
-  holds: a scan sees only what is written as an `axiom`, and
+  before Lean runs. That is the fast first refusal and no longer the only
+  one: a scan sees only what is written as an `axiom`, and
   `run_cmd ... addDecl (.axiomDecl ...)` declares a real one with no keyword
   at all. So once `#print axioms` has answered, every approved name a report
   carries is checked in a second elaboration over the same imports, one line
@@ -487,12 +492,22 @@ narrower than what was asked for.
   `sorry`, is "not established" and refuses the save too. Silence is never a
   pass. `rfl` accepts a type definitionally equal to the approved statement,
   which is the same axiom to the kernel. The same check covers an axiom that
-  arrives through an **imported file** Hardy did not write, and an approved
-  statement that drifts after a Mathlib or project upgrade: approval is no
-  longer a trust decision about a name alone. Like `#print axioms`, the check
-  is elaborated in an environment the audited modules can extend, so it holds
-  against an ordinary declaration and not against a module written to
-  subvert elaboration (see above).
+  arrives through an **imported file** Hardy did not write.
+
+  What it establishes is narrower than "the axiom is the statement the human
+  read". The approved text is elaborated in the audited modules' own
+  environment, the same environment the constant was declared in, so the
+  check says the constant's type is what the approved text means *there*. A
+  module that changes that meaning changes both sides of the equation alike
+  and passes: an `instance` of higher priority (an `Add Nat` whose sum is
+  always `0` makes a verbatim `axiom trusted : ∀ x : Nat, x + 0 = x` prove
+  `0 = 1`), a `notation` or `macro_rules`, including one for `type_of%`, or a
+  declaration in `X`'s namespace shadowing a name the statement uses. None of
+  these needs anything a textual scan would call unusual. For the same reason
+  a Mathlib or project upgrade that changes what a name in the statement means
+  is not detected, since it moves both sides together. Closing this means
+  comparing against the statement as it was elaborated at approval, which
+  [the roadmap](../roadmap.md) carries under the audit-gate residue.
 
 Two limits are worth naming. A `sorry` in a shared file makes every
 dependent report `sorryAx`, which no human may approve. And **who approved an

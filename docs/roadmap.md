@@ -8,7 +8,7 @@ with satisfied dependencies. **E1/E3/E4 have automated acceptance; E0/E2 remain 
 tested commit for each item and require clean tests before landing each branch.
 Sections X7-X9, F4, F5 and V4-V10, and the independent-verifier lead recorded under S2,
 come from retired design documents, plans, and reports: they describe designs those sources specified and
-nobody built. All of them are not started, except X7's drift detection (built 2026-09-25), and each
+nobody built. All of them are not started, except X7's drift detection (partly built 2026-09-25), and each
 states its own dependencies.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
@@ -413,8 +413,9 @@ Do not rebuild already-shipped `run_procedure_digest`, environment pooling, or r
 
 **Deps:** A3; X0 for the save-gate order
 
-**Status:** Drift detection implemented (2026-09-25, issue #188). At-audit approval,
-disclosure, registry-change invalidation and the re-approval flow are not started.
+**Status:** Drift detection partly implemented (2026-09-25, issue #188): the type check
+runs in the audited environment; the admission-time fingerprint is not started, and nor
+are at-audit approval, disclosure, registry-change invalidation or re-approval.
 
 The axiom audit gate ships with its fail-closed unattended path, but pieces of its
 design remain unbuilt. **At-audit approval:** when the audit finds a non-standard
@@ -437,13 +438,21 @@ outside TeX comments, in the shape of the existing registered-label check.
 **Registry-change invalidation:** `record_name` drops the stored verdict, because
 registering a declaration widens the audited set without re-auditing, and `save_latex`
 refuses to grade against a verdict that no longer describes the current registry.
-**Drift detection** is built: after `#print axioms` answers, the interactive audit
-asks Lean, one `type_of%` check per approved name a report carries, whether the
-constant's type is the recorded statement, so a mismatch refuses the save whether the
-axiom was declared by metaprogramming, reached through an import, or changed by a
-Mathlib or project upgrade, and a check with no readable answer is not established
-(issue #188). What remains of it is the re-approval flow: a mismatch refuses, and
-nothing yet offers the human the new statement to approve in its place. The related
+**Drift detection** is partly built: after `#print axioms` answers, the interactive
+audit asks Lean, one `type_of%` check per approved name a report carries, whether the
+constant's type is the recorded statement as elaborated in the audited modules' own
+environment, so an axiom declared by metaprogramming or reached through an import
+with a different statement refuses the save, and a check with no readable answer is
+not established (issue #188). What remains: that environment is the model's, so an
+`instance`, `notation`, `macro_rules` or shadowing declaration there changes what the
+approved text means on both sides and passes, and a Mathlib or project upgrade that
+changes a name the statement uses moves both sides together and is not detected. The
+open piece is a fingerprint: at admission, where `assumption_probe` elaborates the
+statement under a plain `import Mathlib`, record the elaborated statement printed with
+`pp.all`, `pp.universes` and `pp.fullNames` (or an `Expr` hash); in the audit, print
+`type_of% @_root_.X` under the same options and compare, so a changed meaning and real
+drift both refuse. Also open: a re-approval flow, since a mismatch refuses and nothing
+yet offers the human the new statement to approve in its place. The related
 declared-axiom text match runs to the next top-level declaration rather than to end of
 line, so a statement split across lines cannot pass as an approved bare name.
 

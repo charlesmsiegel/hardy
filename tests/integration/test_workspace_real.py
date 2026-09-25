@@ -152,7 +152,7 @@ def test_an_approved_name_is_checked_against_the_type_lean_gives_it(tmp_path: Pa
         "Papers.Key.leaf": "∀ n, foo n = foo n",
     }
     built = statement_checks(["Main"], approved)
-    assert built is not None
+    assert not isinstance(built, str), built
     checked = _tools().run_source(built[0], env=env)
     verdict = judge_statement_checks(checked, built[1])
 
