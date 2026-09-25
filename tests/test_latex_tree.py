@@ -777,3 +777,29 @@ def test_a_binding_in_a_file_only_a_dead_branch_inputs_still_counts() -> None:
     }
 
     assert uncertain_conditionals(sources) == [("writeup.tex", "ifdraft")]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    ["\\let\\mycond\\iftrue", "\\expandafter\\let\\csname mycond\\endcsname\\iftrue"],
+)
+def test_a_let_bound_conditional_of_any_name_is_not_read_as_plain(binding: str) -> None:
+    sources = {
+        "writeup.tex": binding + "\\iffalse \\mycond \\fi \\input{x}\\fi\\input{a}",
+        "a.tex": "x",
+        "x.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex"]
+    assert uncertain_conditionals(sources) == [("writeup.tex", "mycond")]
+
+
+def test_a_newboolean_conditional_nests_inside_a_false_branch() -> None:
+    sources = {
+        "writeup.tex": "\\newboolean{draft}\\iffalse \\ifdraft \\fi \\input{x}\\fi\\input{a}",
+        "a.tex": "x",
+        "x.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex"]
+    assert uncertain_conditionals(sources) == []

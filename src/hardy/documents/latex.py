@@ -661,9 +661,9 @@ class LatexTools:
             placed = ", ".join(f"\\{name} in {path}" for path, name in uncertain)
             refusal = "\n".join(part for part in (refusal, (
                 f"a false branch (\\iffalse) holds {placed}, and Hardy cannot tell whether TeX "
-                "counts it as a conditional there -- it is bound with \\let, both declared and "
-                "redefined, declared where the declaration may not run, or used before its "
-                "\\newif -- so where the branch ends is not known. Declare it once with \\newif "
+                "counts it as a conditional there -- it is bound with \\let or built with "
+                "\\csname, both declared and redefined, declared where the declaration may not "
+                "run, or used before its \\newif -- so where the branch ends is not known. Declare it once with \\newif "
                 "before any use, outside any conditional or macro, and bind it no other way."
             )) if part)
         return refusal, labels
