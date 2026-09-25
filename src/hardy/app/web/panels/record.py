@@ -350,8 +350,12 @@ def _shared_names(modules: Mapping[str, dict[str, Any]]) -> dict[str, tuple[str,
     """Names more than one module declares -- the one thing `declaration_status` cannot grade."""
     occurrences: dict[str, list[str]] = {}
     for module, found in modules.items():
-        for name in (*found["theorem"], *found["lemma"]):
-            if name in found["private"]:
+        named = (*found["theorem"], *found["lemma"])
+        for name in named:
+            # A repeat inside one module is counted even when a copy is private:
+            # Lean refuses a real one, so a copy is quoted, and a quoted
+            # `private theorem t` must not take the real public `t` out.
+            if name in found["private"] and named.count(name) == 1:
                 continue
             occurrences.setdefault(name, []).append(module)
     return {name: tuple(mods) for name, mods in occurrences.items() if len(mods) > 1}

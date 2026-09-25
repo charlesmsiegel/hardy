@@ -78,7 +78,9 @@ knows less than it looks like it does. Neither is silent:
   syntax quotation for a macro to emit is asked about under the name it is
   written with, which Lean never declared, so that save is refused rather than
   read as data: where a quotation ends depends on tokens the module may
-  declare itself. A module with no literal
+  declare itself. One that repeats a real declaration's name is refused too,
+  since no gate can tell which statement is the one Lean checked. A module
+  with no literal
   declaration at all records "not established"; a module with one literal lemma
   beside a generated theorem records `clean`, and that verdict covers only the
   declarations the record names. It is not a statement about everything the

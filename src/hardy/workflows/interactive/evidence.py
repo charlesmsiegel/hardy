@@ -47,6 +47,7 @@ from typing import Any, Literal
 
 from hardy.formal import audit
 from hardy.formal.syntax import (
+    DuplicateDeclaration,
     ImportCycle,
     build_order,
     declarations,
@@ -299,7 +300,13 @@ class ProjectOwners:
         graded: dict[str, tuple[str, str, list[str]]] = {}
         for module in modules:
             found = declarations(sources[module])
-            stated = statements(sources[module])
+            # A dependent is rebuilt here without passing the textual gates, so
+            # a repeat it carries is met here: no statement for that name can
+            # be said to be the checked one, and none is credited.
+            try:
+                stated = statements(sources[module])
+            except DuplicateDeclaration as error:
+                return None, f"{module}: {error}"
             for entry in records.get(module, {}).get("declarations", ()):
                 name = str(entry.get("name"))
                 if name in found["private"]:
@@ -442,7 +449,13 @@ class ProjectOwners:
             found = declarations(source)
             kinds = {name: ProjectItemKind.THEOREM for name in found["theorem"]}
             kinds.update({name: ProjectItemKind.LEMMA for name in found["lemma"]})
-            stated = statements(source)
+            try:
+                stated = statements(source)
+            except DuplicateDeclaration as error:
+                # Not recorded rather than recorded under whichever copy was
+                # read last: a quoted twin's statement is not the checked one.
+                notes.append(f"{module} not recorded ({error})")
+                continue
             for entry in records[module].get("declarations", ()):
                 name = str(entry.get("name"))
                 if name in found["private"] or name not in kinds:

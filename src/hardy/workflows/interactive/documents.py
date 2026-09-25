@@ -719,6 +719,14 @@ class DocumentService:
                 "stand for both in the registry, the label, or the statement the writeup "
                 "quotes. Put one of them in a namespace.",
             )
+            if len(set(modules)) == len(modules)
+            else completion.Obligation(
+                "lean",
+                name,
+                f"{sorted(set(modules))} declare `{name}` twice in one module. Lean refuses a "
+                "real repeat, so one copy sits inside a syntax quotation, and Hardy cannot "
+                "tell which statement is the one Lean checked. Rename the quoted declaration.",
+            )
             for name, modules in sorted(facts.shared_names.items())
         ]
         # `_audit_gaps` is asked only about closed theorems. An open one has a

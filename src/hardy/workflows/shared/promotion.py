@@ -30,6 +30,7 @@ from typing import Any, Literal
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.formal.syntax import (
     Compile,
+    DuplicateDeclaration,
     assumptions,
     build_order,
     module_path,
@@ -270,7 +271,12 @@ class Promoter:
             self.claims.get(request.claim)
         except Exception as error:
             blockers.append(PromotionBlocker(kind="unknown_claim", detail=f"claim {request.claim.id} is not in the shared ledger: {error}"))
-        blockers.extend(_semantic_blockers(request, _formal_type(sources, request.module, request.declaration)))
+        try:
+            formal_type = _formal_type(sources, request.module, request.declaration)
+        except DuplicateDeclaration as error:
+            blockers.append(PromotionBlocker(kind="unfaithful", detail=f"{request.module}: {error}"))
+        else:
+            blockers.extend(_semantic_blockers(request, formal_type))
         closure = compute_closure(sources, request.module, shared_modules=shared_modules_in(self.shared_root), audit=audit)
         blockers.extend(blockers_of(closure))
         if request.module in sources and request.declaration not in _declared(sources[request.module]):
@@ -292,7 +298,11 @@ class Promoter:
             raise PromotionError(f"promotion {record_id} is {record.status}; only a prepared promotion is promoted")
         if (record.project, record.source_module, record.declaration, record.claim) != (request.project, request.module, request.declaration, request.claim):
             raise PromotionError("the request does not match the prepared promotion")
-        semantic = _semantic_blockers(request, _formal_type(sources, record.source_module, record.declaration))
+        try:
+            formal_type = _formal_type(sources, record.source_module, record.declaration)
+        except DuplicateDeclaration as error:
+            return self._fail(record, PromotionBlocker(kind="unfaithful", detail=f"{record.source_module}: {error}"))
+        semantic = _semantic_blockers(request, formal_type)
         if semantic:
             return self._fail(record, semantic[0])
         if shared_head(self.shared_root) != record.shared_head:
@@ -438,6 +448,12 @@ class Promoter:
 
 
 def _formal_type(sources: Mapping[str, str], module: str, declaration: str) -> str | None:
+    """The declaration's statement, or None when the module is absent.
+
+    Raises `DuplicateDeclaration` when the module declares a name twice: a
+    faithfulness verdict names one statement, and which copy is the checked
+    one cannot be told, so the caller blocks rather than picks.
+    """
     source = sources.get(module)
     return None if source is None else (statements(source).get(declaration) or declaration)
 

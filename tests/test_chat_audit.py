@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from test_chat import FakeChatRuntime, call
 from test_chat import session as _session
 from workspace_helpers import results
@@ -1437,3 +1438,73 @@ def test_a_registered_theorem_inside_such_a_quotation_is_audited(tmp_path: Path)
     record = state(tmp_path)["audit"]["Main"]
     assert record["status"] == "open"
     assert "bad" in str(record["declarations"])
+
+
+# Codex on #393. Lean 4.35.0-rc3 accepts this (rc=0; `'t' does not depend on any
+# axioms`): the quoted `theorem t : False` is syntax inside the real theorem's
+# proposition. The scans read quotations on purpose (N4), so they saw `t`
+# twice; the audit deduped it, the registration gate passed both, and the
+# statement the writeup gate held for `t` was the quoted `False`.
+QUOTED_TWIN = (
+    "import Mathlib\n\nopen Lean in\n"
+    "theorem t : let s : MacroM Syntax := `(command| theorem t : False := by sorry); True := by\n"
+    "  exact True.intro\n"
+)
+
+
+# The same twin inside a tactic proof. Lean 4.35.0-rc3: rc=0, `'t' does not
+# depend on any axioms`. Unlike the proposition form, the fake Lean elaborates
+# this one, so the gates -- not the stand-in -- are what a refusal shows.
+TACTIC_TWIN = (
+    "import Mathlib\n\nopen Lean in\ntheorem t : True := by\n"
+    "  have _h : True := trivial\n"
+    "  let _s : MacroM Syntax := `(command| theorem t : False := by sorry)\n"
+    "  exact True.intro\n"
+)
+
+
+@pytest.mark.parametrize("source", [QUOTED_TWIN, TACTIC_TWIN], ids=["proposition", "tactic"])
+def test_a_quoted_theorem_repeating_the_real_name_is_refused_at_save(tmp_path: Path, source: str):
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": source}, "lean")]),
+        registered=(*RESULTS, "t"),
+    )
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "`t` is declared twice" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_the_writeup_gate_never_takes_the_quoted_statement_for_the_real_one(tmp_path: Path):
+    """The tree edited on disk, past `save_lean`: a document quoting the quoted
+    `theorem t : False` must not count as writing up the `True` theorem."""
+    chat = session(tmp_path, FakeChatRuntime([]), registered=(*RESULTS, "t"))
+    saved(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    saved(tmp_path).write_text(QUOTED_TWIN, encoding="utf-8")
+    assert "theorem t : False" not in chat._theorem_statements().values()
+    owed = [item for item in chat._obligations() if item.subject == "t"]
+    assert any(item.kind == "lean" and "twice" in item.detail for item in owed), owed
+
+
+def test_a_dependent_carrying_a_quoted_twin_is_refused_by_the_audit(tmp_path: Path):
+    """A dependent is rebuilt and audited without passing `_final_gates`; the
+    audit would ask about `t` once and let one verdict stand for both copies.
+    The save states a lemma, so the writeup ratchet -- which refuses a new
+    theorem over the repeat first -- does not stand in front of the audit."""
+    helper = "import Mathlib\n\nlemma helper : True := by exact True.intro\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"path": "Main.lean", "source": helper}, "lean")]),
+        registered=(*RESULTS, "t"),
+    )
+    saved(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    saved(tmp_path, "Dep.lean").write_text(
+        TACTIC_TWIN.replace("import Mathlib\n", "import Mathlib\nimport Main\n", 1), encoding="utf-8"
+    )
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "Dep declares `t` twice" in refusal["output"]
+    assert not saved(tmp_path).exists()

@@ -105,6 +105,18 @@ NOT_A_SCOPE_NAME = frozenset({
 Compile = Callable[[str, Path, Path, Path], tuple[bool, str]]
 
 
+class DuplicateDeclaration(ValueError):
+    """A source declares one theorem or lemma name twice.
+
+    Lean refuses a real repeat (`` `t` has already been declared ``), so one
+    that reaches Hardy's scans has a copy inside a syntax quotation, which the
+    scans read on purpose (see `_structure`). Which copy is real cannot be told
+    from text, and every consumer addresses a declaration by name: the writeup
+    gate compared the document with whichever statement was read last. So a
+    repeat is refused, never resolved.
+    """
+
+
 class WorkspacePathError(ValueError):
     """A path that is not a Lean module inside the workspace."""
 
@@ -1228,8 +1240,13 @@ def named_declarations(source: str) -> tuple[str, ...]:
     answers whether a name a ledger item cites is declared at all. Comments are
     stripped first, and a name is qualified by the namespace open where it is
     declared, exactly as `declarations` qualifies a theorem.
+
+    Refused with `DuplicateDeclaration` when a theorem or lemma name is
+    declared twice: whether a cited name is declared is answered by the real
+    copy, and a scan that cannot tell which copy is real has no answer to give.
     """
     structure = _structure(source)
+    _refuse_duplicates(structure)
     return tuple(
         declared_name(match.group(3), _prefix_at(structure.marks, match.start(2)))
         for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens, lex(source))
@@ -1244,6 +1261,20 @@ class _Structure(NamedTuple):
     marks: list[tuple[int, tuple[str, ...]]]
     heads: tuple[_Head, ...]
     problems: tuple[str, ...]
+    duplicates: tuple[str, ...]
+
+
+def _refuse_duplicates(structure: _Structure) -> None:
+    if structure.duplicates:
+        raise DuplicateDeclaration(
+            f"`{structure.duplicates[0]}` is declared twice in this file, so which "
+            "statement is the real one cannot be told"
+        )
+
+
+def _name_key(name: str) -> tuple[str, ...]:
+    """What Lean compares: `«t»` and `t` are one name, a guillemet only spells it."""
+    return tuple(part.removeprefix("«").removesuffix("»") for part in _components(name))
 
 
 @functools.lru_cache(maxsize=64)
@@ -1255,7 +1286,9 @@ def _structure(source: str) -> _Structure:
     Lean's token table, which a module extends with `notation`, so blanking
     one by counting parentheses could hide a real declaration after it (a
     `theorem` a macro quotes is reported instead, and the audit, asking Lean
-    about a name nobody declared, refuses the save). Scopes are walked with
+    about a name nobody declared, refuses the save; one that repeats a real
+    declaration's name is a problem, since which copy is real cannot be told
+    and every consumer addresses a declaration by name). Scopes are walked with
     bounded quotations blanked, so `` `(command| namespace Bar) `` moves no
     scope -- but a scope command inside any quotation, one whose extent is
     uncertain, or one at a character only some readings call code is a
@@ -1313,7 +1346,26 @@ def _structure(source: str) -> _Structure:
         heads.append(
             _Head(_head_start(full, cursor), start, named.end(), " ".join(reversed(modifiers)), word, named.group(1))
         )
-    return _Structure(text, tokens, marks, tuple(heads), tuple(problems))
+    # A name two heads resolve to. Lean refuses a real repeat, so one of them is
+    # quoted -- and since quotations are scanned on purpose, nothing here can
+    # say which. Every consumer addresses a declaration by name (the audit
+    # dedupes, the registration gate passes both, `statements` kept the last),
+    # so a repeat is refused rather than resolved either way.
+    first: dict[tuple[str, ...], int] = {}
+    duplicates: list[str] = []
+    for head in heads:
+        qualified = declared_name(head.name, _prefix_at(marks, head.keyword))
+        earlier = first.setdefault(_name_key(qualified), head.keyword)
+        if earlier == head.keyword:
+            continue
+        duplicates.append(qualified)
+        problems.append(
+            f"line {source.count(chr(10), 0, head.keyword) + 1}: `{qualified}` is declared twice "
+            f"(first on line {source.count(chr(10), 0, earlier) + 1}); Lean refuses a real repeat, "
+            "so one copy sits inside a syntax quotation, and Hardy cannot tell which statement "
+            "is the real one"
+        )
+    return _Structure(text, tokens, marks, tuple(heads), tuple(problems), tuple(duplicates))
 
 
 def _head_start(text: str, cursor: int) -> int:
@@ -1405,7 +1457,13 @@ def statements(source: str) -> dict[str, str]:
     neither changes the proposition and both differ harmlessly between the
     Lean file and the listing in the paper. Nothing else is normalised: the
     proposition is compared character for character.
+
+    Keyed by name, so a name declared twice is refused with
+    `DuplicateDeclaration` rather than keyed to whichever copy came last: that
+    copy was a quoted `theorem t : False` beside a real `theorem t : True`, and
+    the writeup gate accepted a document quoting the false one.
     """
+    _refuse_duplicates(_structure(source))
     text = strip_comments(source)
     scanned = _scan(source)
     # The extent is read over what every reading calls code, so a `:=` only

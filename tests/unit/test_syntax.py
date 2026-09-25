@@ -533,3 +533,70 @@ def test_a_simp_like_tactic_declaration_declares_a_token():
     assert syntax.declares_tokens(syntax.lex(declared))
     source = "open Lean in\ndef q : MacroM Syntax := `(tactic| sorry)\n"
     assert LeanTools.has_holes(declared + source)
+
+
+# --- Codex on #393: a quoted `theorem` that repeats a real one's name ----------
+#
+# Lean 4.35.0-rc3 elaborates `QUOTED_TWIN` with rc=0 and reports `'t' does not
+# depend on any axioms`: the quoted `theorem t : False` is syntax, not a
+# declaration. Round 3 scans `theorem` inside quotations on purpose (a
+# module's notation can move where one ends, N4), so the scan sees two heads
+# named `t`, and `statements()` kept the quoted one -- the writeup gate then
+# accepted `theorem t : False` for a theorem the kernel checked as `True`.
+# Lean refuses a real name declared twice (`t` has already been declared), so
+# a repeat is never a module Lean accepts with both real.
+
+QUOTED_TWIN = (
+    "open Lean in\n"
+    "theorem t : let s : MacroM Syntax := `(command| theorem t : False := by sorry); True := by\n"
+    "  intro _; trivial\n"
+)
+
+
+def test_a_name_declared_twice_makes_the_structure_unreadable():
+    problems = syntax.unreadable_structure(QUOTED_TWIN)
+    assert any("`t`" in problem and "twice" in problem for problem in problems), problems
+
+
+def test_statements_refuse_a_name_declared_twice_rather_than_overwrite():
+    with pytest.raises(syntax.DuplicateDeclaration, match="`t`"):
+        syntax.statements(QUOTED_TWIN)
+
+
+def test_named_declarations_refuse_a_theorem_name_declared_twice():
+    with pytest.raises(syntax.DuplicateDeclaration, match="`t`"):
+        syntax.named_declarations(QUOTED_TWIN)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "theorem t : True := trivial\ntheorem t : False := sorry\n",
+        # A private repeat collides too: `a non-private declaration `t` has
+        # already been declared`.
+        "theorem t : True := trivial\nprivate theorem t : True := trivial\n",
+        # Guillemets change the spelling, not the name.
+        "theorem t : True := trivial\nlemma «t» : True := trivial\n",
+        # Qualified the same way by the namespace in force.
+        "namespace A\ntheorem t : True := trivial\nend A\ntheorem A.t : True := trivial\n",
+    ],
+)
+def test_every_spelling_of_a_repeat_is_refused(source):
+    assert any("twice" in problem for problem in syntax.unreadable_structure(source))
+    with pytest.raises(syntax.DuplicateDeclaration):
+        syntax.statements(source)
+
+
+def test_a_quoted_theorem_under_another_name_keeps_todays_reading():
+    """Not a repeat: reported as a declaration, so the registration gate and
+    the audit refuse it as a name nobody declared -- unchanged."""
+    source = QUOTED_TWIN.replace("theorem t : False", "theorem u : False")
+    assert syntax.unreadable_structure(source) == ()
+    assert syntax.declarations(source)["theorem"] == ("t", "u")
+    assert set(syntax.statements(source)) == {"t", "u"}
+
+
+def test_the_same_leaf_in_two_namespaces_is_not_a_repeat():
+    source = "namespace A\ntheorem t : True := trivial\nend A\ntheorem t : True := trivial\n"
+    assert syntax.unreadable_structure(source) == ()
+    assert set(syntax.statements(source)) == {"A.t", "t"}

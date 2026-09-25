@@ -286,3 +286,22 @@ def test_a_verdict_about_another_formalization_blocks_promotion(tmp_path):
     prepared = promoter.prepare(request, SOURCES, AUDIT)
     failed = promoter.promote(prepared.id, unbound, SOURCES)
     assert failed.status == "failed" and failed.blockers[-1].kind == "unfaithful" and compiled == []
+
+
+def test_a_declaration_name_repeated_by_a_quoted_twin_blocks_promotion(tmp_path):
+    """Codex on #393: a quoted `theorem Prym.fibers_bound : False` beside the
+    real one. The faithfulness verdict names one statement, and which copy is
+    the checked one cannot be told, so promotion blocks rather than picks."""
+    root, claims, claim, promoter, request, compiled = setup(tmp_path)
+    twin = MAIN.replace(
+        ":= Prym.two_le_three",
+        ":= let _s : Lean.MacroM Lean.Syntax := `(command| theorem Prym.fibers_bound : False := sorry); Prym.two_le_three",
+    )
+    sources = {**SOURCES, "Prym.Main": twin}
+    blocked = promoter.prepare(request, sources, AUDIT)
+    assert blocked.status == "blocked"
+    assert any(b.kind == "unfaithful" and "twice" in b.detail for b in blocked.blockers), blocked.blockers
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+    failed = promoter.promote(prepared.id, request, sources)
+    assert failed.status == "failed" and "twice" in failed.blockers[-1].detail
+    assert promoter.realizations.for_claim(claim.id) == ()

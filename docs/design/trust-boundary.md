@@ -203,7 +203,13 @@ alone. A `theorem` written inside a syntax quotation for a macro to emit is
 reported as a declaration all the same: where a quotation ends depends on
 Lean's token table, which the module's own `notation` can change, so Hardy
 never lets one hide a declaration keyword. The audit then asks Lean about a
-name nobody declared, and the save is refused. The record names the declarations it
+name nobody declared, and the save is refused. A quoted `theorem` that repeats
+the name of a real one (`theorem t : let s := `(command| theorem t : False
+...); True`) cannot be told from it by name, and every gate addresses a
+declaration by name, so a name a file declares twice refuses the save; Lean
+refuses a real repeat anyway. The statement scan, the writeup obligations, the
+audit of a rebuilt dependent, promotion and the root check each refuse such a
+file rather than pick a copy. The record names the declarations it
 covers, and a clean verdict is a statement about those names and nothing more;
 the [output contract](output-contract.md) lists this among the gate's known gaps.
 
