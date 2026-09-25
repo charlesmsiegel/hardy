@@ -163,6 +163,15 @@ def _scope_prefixes(lines: list[str]) -> list[tuple[str, ...]]:
     return prefixes
 
 
+def _continues_identifier(character: str) -> bool:
+    """Whether `character`, just before a token, would make it part of a name.
+
+    `for"` is the identifier `for` and then a string, not a raw-string opener,
+    and `x'` is the identifier `x'`, not `x` and then a char literal.
+    """
+    return character.isalnum() or character in "_'!?."
+
+
 def _raw_string_opener(source: str, index: int) -> int | None:
     """The hash count of a raw-string opener at `index`, or None.
 
@@ -172,7 +181,7 @@ def _raw_string_opener(source: str, index: int) -> int | None:
     """
     if source[index] != "r":
         return None
-    if index and (source[index - 1].isalnum() or source[index - 1] in "_'!?."):
+    if index and _continues_identifier(source[index - 1]):
         return None
     hashes = 0
     while index + 1 + hashes < len(source) and source[index + 1 + hashes] == "#":
@@ -180,6 +189,54 @@ def _raw_string_opener(source: str, index: int) -> int | None:
     if index + 1 + hashes >= len(source) or source[index + 1 + hashes] != '"':
         return None
     return hashes
+
+
+# What may follow a backslash in a Lean char literal, besides `x` with two hex
+# digits and `u` with four. Lean 4.35 refuses anything else (`'\0'`,
+# `'\u{41}'`), and a literal Lean refuses is not one this lexer may blank.
+_SIMPLE_ESCAPES = frozenset("\\\"'nrt")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _char_literal_end(source: str, index: int) -> int | None:
+    """Where the char literal opening at `index` ends (exclusive), or None.
+
+    `'"'` is one `Char`. A lexer that knew only strings read its `"` as an
+    opener and blanked everything to the next `"` in the file -- a theorem, an
+    axiom and a `sorry` all vanished from every scan built on this one.
+
+    Only what Lean itself reads as a character is recognised, checked against
+    Lean 4.35.0-rc3. The quote must start a token, by the rule
+    `_raw_string_opener` uses: after an identifier character it continues the
+    name (`x'`, `f''`, `add_comm'`). It may not be followed by another quote
+    (`''` is not a literal; Mathlib's `f '' s` is an image). Then exactly one
+    code point, or one backslash escape, and the closing quote. Anything else
+    is left alone: recognising a literal Lean does not see would blank text
+    that Lean reads as code.
+    """
+    length = len(source)
+    if source[index] != "'" or (index and _continues_identifier(source[index - 1])):
+        return None
+    body = index + 1
+    if body >= length or source[body] == "'":
+        return None
+    if source[body] != "\\":
+        close = body + 1
+    else:
+        escape = source[body + 1 : body + 2]
+        digits = {"x": 2, "u": 4}.get(escape)
+        if digits is not None:
+            code = source[body + 2 : body + 2 + digits]
+            if len(code) != digits or not set(code) <= _HEX_DIGITS:
+                return None
+            close = body + 2 + digits
+        elif escape and escape in _SIMPLE_ESCAPES:
+            close = body + 2
+        else:
+            return None
+    if close < length and source[close] == "'":
+        return close + 1
+    return None
 
 
 def strip_comments(source: str, *, keep_strings: bool = False) -> str:
@@ -266,6 +323,17 @@ def strip_comments(source: str, *, keep_strings: bool = False) -> str:
                 if index + offset < length:
                     out[index + offset] = " "
             index = min(index + len(closer), length)
+            continue
+        literal = _char_literal_end(source, index)
+        if literal is not None:
+            # A char literal is a literal like a string: blanked, or copied
+            # through, by the same rule. Its newline -- `'` newline `'` is a
+            # character -- stays a newline so no line moves.
+            if not keep_strings:
+                for position in range(index, literal):
+                    if source[position] != "\n":
+                        out[position] = " "
+            index = literal
             continue
         if character == '"' and keep_strings:
             index = _string_end(source, index)
@@ -355,6 +423,15 @@ def normalise_lean(text: str) -> str:
             end = length if found == -1 else found + 1
             out.append(text[index:end])
             index = end
+            continue
+        literal = _char_literal_end(text, index)
+        if literal is not None:
+            # `' '` is a character, not whitespace to collapse, and `'"'` is
+            # not a string opener: read as one, the phantom string's end
+            # would open another over real code, whose whitespace -- and
+            # whose string literals' -- would then be treated backwards.
+            out.append(text[index:literal])
+            index = literal
             continue
         if character == '"':
             start = index
