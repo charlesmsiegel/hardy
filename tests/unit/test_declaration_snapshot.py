@@ -34,7 +34,7 @@ def refused(read: Callable[[], object]) -> object:
     """`read()`, or the refusal a scan that meets a repeated name gives instead."""
     try:
         return read()
-    except syntax.DuplicateDeclaration as error:
+    except syntax.DeclarationRefused as error:
         return {"refused": str(error)}
 
 

@@ -47,7 +47,7 @@ from typing import Any, Literal
 
 from hardy.formal import audit
 from hardy.formal.syntax import (
-    DuplicateDeclaration,
+    DeclarationRefused,
     ImportCycle,
     build_order,
     declarations,
@@ -305,7 +305,7 @@ class ProjectOwners:
             # be said to be the checked one, and none is credited.
             try:
                 stated = statements(sources[module])
-            except DuplicateDeclaration as error:
+            except DeclarationRefused as error:
                 return None, f"{module}: {error}"
             for entry in records.get(module, {}).get("declarations", ()):
                 name = str(entry.get("name"))
@@ -451,7 +451,7 @@ class ProjectOwners:
             kinds.update({name: ProjectItemKind.LEMMA for name in found["lemma"]})
             try:
                 stated = statements(source)
-            except DuplicateDeclaration as error:
+            except DeclarationRefused as error:
                 # Not recorded rather than recorded under whichever copy was
                 # read last: a quoted twin's statement is not the checked one.
                 notes.append(f"{module} not recorded ({error})")

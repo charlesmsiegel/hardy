@@ -1426,18 +1426,22 @@ def test_a_theorem_inside_a_quotation_a_notation_extends_is_not_hidden(tmp_path:
     assert not saved(tmp_path).exists()
 
 
-def test_a_registered_theorem_inside_such_a_quotation_is_audited(tmp_path: Path):
+def test_a_registered_theorem_inside_such_a_quotation_is_refused(tmp_path: Path):
+    """Registered, `bad` passes the registration gate, but the parenthesis
+    count says it is quoted and Lean says it is not: which it is decides what
+    the file declares, so the save is refused naming it (round 2 of #393; it
+    was saved and audited `open` before, which a quoted head that is really
+    syntax would have turned into a name credited to nothing)."""
     chat = session(
         tmp_path,
         FakeChatRuntime([call("save_lean", {"source": NOTATION_QUOTATION}, "lean")]),
         registered=(*RESULTS, "bad"),
     )
     chat.send("Save it.")
-    outcome = results(tmp_path, "save_lean")[-1]
-    assert outcome["ok"], outcome["output"]
-    record = state(tmp_path)["audit"]["Main"]
-    assert record["status"] == "open"
-    assert "bad" in str(record["declarations"])
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "theorem bad`" in refusal["output"] and "quotation" in refusal["output"]
+    assert not saved(tmp_path).exists()
 
 
 # Codex on #393. Lean 4.35.0-rc3 accepts this (rc=0; `'t' does not depend on any
@@ -1473,7 +1477,8 @@ def test_a_quoted_theorem_repeating_the_real_name_is_refused_at_save(tmp_path: P
     chat.send("Save it.")
     refusal = results(tmp_path, "save_lean")[-1]
     assert not refusal["ok"]
-    assert "`t` is declared twice" in refusal["output"]
+    # Either problem refuses it: the repeat, or the quoted head (round 2).
+    assert "`t` is declared twice" in refusal["output"] or "theorem t` sits inside a syntax quotation" in refusal["output"]
     assert not saved(tmp_path).exists()
 
 
@@ -1508,3 +1513,45 @@ def test_a_dependent_carrying_a_quoted_twin_is_refused_by_the_audit(tmp_path: Pa
     assert not refusal["ok"]
     assert "Dep declares `t` twice" in refusal["output"]
     assert not saved(tmp_path).exists()
+
+
+# Codex on #393, round 2. `T`'s statement was bounded at the quoted head, so a
+# writeup quoting `theorem T : let q : MacroM Syntax := `(command|` passed,
+# and the quoted `Nat.add_comm` was a declaration the audit could resolve from
+# Mathlib. Lean 4.35.0-rc3 accepts both forms (core `theorem` for `lemma`).
+QUOTED_HEAD = (
+    "import Mathlib\n\nopen Lean in\n"
+    "theorem T : let q : MacroM Syntax := `(command| lemma Nat.add_comm : False := by sorry); True := by\n"
+    "  exact True.intro\n"
+)
+QUOTED_IN_PROOF = (
+    "import Mathlib\n\nopen Lean in\ntheorem T : True := by\n"
+    "  have _h : True := trivial\n"
+    "  let _q : MacroM Syntax := `(command| lemma Nat.add_comm : False := by sorry)\n"
+    "  exact True.intro\n"
+)
+
+
+@pytest.mark.parametrize("source", [QUOTED_HEAD, QUOTED_IN_PROOF], ids=["statement", "proof"])
+def test_a_quoted_head_refuses_the_save(tmp_path: Path, source: str):
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": source}, "lean")]),
+        registered=(*RESULTS, "T", "Nat.add_comm"),
+    )
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "Nat.add_comm" in refusal["output"] and "quotation" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_the_writeup_gate_never_takes_a_truncated_statement(tmp_path: Path):
+    """On disk, past `save_lean`: nothing in the module is credited, and the
+    writeup owes an obligation naming why."""
+    chat = session(tmp_path, FakeChatRuntime([]), registered=(*RESULTS, "T"))
+    saved(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    saved(tmp_path).write_text(QUOTED_HEAD, encoding="utf-8")
+    assert not any("(command|" in text for text in chat._theorem_statements().values())
+    owed = [item for item in chat._obligations() if item.kind == "lean"]
+    assert any("Nat.add_comm" in item.detail and "quotation" in item.detail for item in owed), owed
