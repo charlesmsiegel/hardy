@@ -1729,6 +1729,11 @@ def test_a_fault_in_the_driver_itself_is_diagnosable_not_silent(tmp_path) -> Non
         child.wait(timeout=30)
         stderr = child.stderr.read().decode("utf-8", errors="replace")
         assert "ZeroDivisionError" in stderr, stderr
+        assert child.returncode != 0, (
+            "a driver-plumbing fault that writes its traceback and returns must "
+            "still exit non-zero, or a supervisor sees a clean exit and never "
+            "notices the kernel died mid-session"
+        )
     finally:
         child.stdin.close()
         child.kill()
