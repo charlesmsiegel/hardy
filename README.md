@@ -55,7 +55,7 @@ and with these grades in its `manifest.json`:
   "document": "tex_compiled",
   "verification_evidence": {
     "axioms": ["propext", "Classical.choice", "Quot.sound"],
-    "toolchain": {"lean_version": "4.33.1", "mathlib_revision": "0df444a3..."}
+    "toolchain": {"lean_version": "4.35.0-rc3", "mathlib_revision": "5e0c4e52..."}
   }
 }
 ```

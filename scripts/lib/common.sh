@@ -23,8 +23,8 @@ LEAN_PACKAGE=hardymath
 # release the shared project is built with and the Mathlib tag it requires.
 # src/hardy/installers.py and scripts/install-windows.ps1 carry the same two
 # values, and tests/test_install_scripts.py holds all three in agreement.
-LEAN_TOOLCHAIN="leanprover/lean4:v4.33.1"
-MATHLIB_REVISION="v4.33.1"
+LEAN_TOOLCHAIN="leanprover/lean4:v4.35.0-rc3"
+MATHLIB_REVISION="5e0c4e5239cb0a2d86d68a884bf52cfd963fce22"
 
 # Whether the repository was chosen or merely defaulted. An install records the
 # repository its release came from, and only an explicit choice now may override
