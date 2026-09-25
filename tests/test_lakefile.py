@@ -184,3 +184,71 @@ def test_a_module_name_that_is_not_an_identifier_is_refused(tmp_path: Path):
 
     with pytest.raises(lakefile.RegistrationRefused, match="not a Lean module"):
         lakefile.exposed_modules(lean)
+
+
+# --- #366: `append_stanza` matches the host lakefile's own line ending ------
+#
+# This is the user's own file, so the stanza is appended with whatever ending
+# it already uses rather than the LF every project-tree write forces (see
+# `append_stanza`'s docstring). `register()`'s own tests above all use LF
+# fixtures and never look at the bytes appended, so none of them would have
+# caught a regression here -- these go straight at `append_stanza` and the
+# raw bytes it produces.
+
+STANZA = '\n[[lean_lib]]\nname = "sylow"\nsrcDir = "sylow/lean"\nroots = ["Main"]\n'
+
+
+def test_append_stanza_matches_an_existing_crlf_lakefile(tmp_path: Path):
+    host = tmp_path / "lakefile.toml"
+    original = b'name = "host"\r\n\r\n[[lean_lib]]\r\nname = "other"\r\n'
+    host.write_bytes(original)
+
+    lakefile.append_stanza(host, STANZA)
+
+    raw = host.read_bytes()
+    assert raw.startswith(original)
+    appended = raw[len(original) :]
+    assert appended == STANZA.replace("\n", "\r\n").encode("utf-8")
+    # Every line ending in what was appended is a whole `\r\n`: none bare, and
+    # none doubled the way a text-mode write on top of an already-CRLF file
+    # would double it.
+    stripped = appended.replace(b"\r\n", b"")
+    assert b"\n" not in stripped and b"\r" not in stripped
+
+
+def test_append_stanza_keeps_an_lf_only_lakefile_lf(tmp_path: Path):
+    host = tmp_path / "lakefile.toml"
+    original = b'name = "host"\n'
+    host.write_bytes(original)
+
+    lakefile.append_stanza(host, STANZA)
+
+    raw = host.read_bytes()
+    assert raw == original + STANZA.encode("utf-8")
+    assert b"\r" not in raw
+
+
+def test_append_stanza_onto_a_file_with_no_trailing_newline_defaults_to_lf(tmp_path: Path):
+    """No `\\r\\n` anywhere in the file (including no newline at all) reads as
+    LF, the same default a brand-new file gets."""
+    host = tmp_path / "lakefile.toml"
+    original = b'name = "host"'
+    host.write_bytes(original)
+
+    lakefile.append_stanza(host, STANZA)
+
+    raw = host.read_bytes()
+    assert raw == original + STANZA.encode("utf-8")
+    assert b"\r" not in raw
+
+
+def test_append_stanza_onto_a_missing_file_defaults_to_lf(tmp_path: Path):
+    """`append_stanza` opens with `\"ab\"`, which creates the file if it is not
+    there yet; the ending-detection read must survive that rather than raise."""
+    host = tmp_path / "lakefile.toml"
+
+    lakefile.append_stanza(host, STANZA)
+
+    raw = host.read_bytes()
+    assert raw == STANZA.encode("utf-8")
+    assert b"\r" not in raw

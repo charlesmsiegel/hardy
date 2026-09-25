@@ -55,6 +55,17 @@ def append_stanza(lakefile: Path, stanza: str) -> None:
     (#366). Detecting which one the file already uses and writing the stanza
     in binary with that ending matches it instead of adding a second
     convention to a file Hardy did not create.
+
+    The detection read widens the "a file can be replaced by a link in
+    between" window above rather than closing it: there are now two opens of
+    `proven` -- the `read_bytes` that finds the ending, then the `"ab"` open
+    that appends -- where there used to be one, and each is an independent
+    chance for a link swapped in after `host_lakefile`'s proof to be followed.
+    Neither open re-proves the path the way `WriteGuard` re-`stat`s a guarded
+    directory at the moment of every write; this module accepts that gap
+    already, for the reason given above (registration is a convenience that
+    always costs nothing to decline), so one more syscall's worth of it is
+    left alone rather than given its own fix in a task about newlines.
     """
     proven = host_lakefile(lakefile)
     try:
