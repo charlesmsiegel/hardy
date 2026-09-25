@@ -352,21 +352,32 @@ def read_conditionals(
             name = _csname_text(found.group(1))
             if name is not None and _LETTERS.fullmatch(name):
                 built.add(name)
-            else:
+            elif name is None or name.startswith("if"):
                 opaque = True
         bindings.extend(_let_bindings(text))
     # Any name a `\let`-like command binds may be a conditional, whatever it
     # is bound to -- a chain (`\let\a\iftrue \let\mycond\a`) is not
-    # followed.
+    # followed. Except a literal name not spelled `\if...` bound to a
+    # character or to a target that is never a conditional while nothing
+    # rebinds it: `\let\oldx\relax`, the package-faking
+    # `\expandafter\let\csname ver@hyperref.sty\endcsname\relax`.
+    bound = {binding.name for binding in bindings if binding.name}
+    unsafe = bound | defined_any
     let: set[str] = set()
     for binding in bindings:
         if binding.name is None:
             opaque = True
             continue
-        if _LETTERS.fullmatch(binding.name):
-            let.add(binding.name)
-        else:
-            opaque = True
+        harmless = binding.target == "" or (
+            binding.target in _HARMLESS_TARGETS and binding.target not in unsafe
+        )
+        if binding.name.startswith("if") or not harmless:
+            if _LETTERS.fullmatch(binding.name):
+                let.add(binding.name)
+            elif binding.name.startswith("if"):
+                opaque = True
+            # A literal name that is not letters (`ver@hyperref.sty`) can never
+            # be written as a control word in a false branch.
     rebound = let | built | (defined & (newif | CONDITIONALS))
     # Counted as openers for "does this run": everything that might be one.
     openers = CONDITIONALS | newif | let | built

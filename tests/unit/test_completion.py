@@ -696,3 +696,31 @@ def test_a_declaration_in_a_file_loaded_any_way_still_counts(load: str) -> None:
 def test_a_let_like_binding_is_not_credited(binding: str, use: str) -> None:
     found = kinds(owed(_skipped(binding, use)))
     assert "conditional" in found and "statement" in found, found
+
+
+# --- Round 2 review, C3: a literal name or a harmless target refuses nothing ----
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "\\expandafter\\let\\csname ver@hyperref.sty\\endcsname\\relax\n",
+        "\\let\\oldx\\relax\n",
+        "\\let\\oldx=a\n",
+    ],
+    ids=["package-faking", "relax", "character"],
+)
+def test_a_let_to_a_non_conditional_target_is_no_finding(binding: str) -> None:
+    body = binding + "\\iffalse\n\\oldx not typeset\n\\fi\n" + LISTING
+    assert owed(document(body)) == ()
+
+
+def test_a_let_to_a_rebound_harmless_target_still_counts() -> None:
+    """`\\relax` is only harmless while nothing rebinds it."""
+    binding = "\\let\\relax\\iftrue\n\\let\\oldx\\relax\n"
+    assert "conditional" in kinds(owed(_skipped(binding, "\\oldx")))
+
+
+def test_a_csname_name_holding_a_control_sequence_is_still_unreadable() -> None:
+    tex = document("\\expandafter\\let\\csname my\\x\\endcsname\\iftrue\n\\iffalse\nnot typeset\n\\fi\n" + LISTING)
+    assert "conditional" in kinds(owed(tex))
