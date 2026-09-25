@@ -230,7 +230,7 @@ class FileLock:
         return True
 
 
-if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
+if sys.platform == "win32":  # pragma: no cover - exercised on non-blocking Windows CI
     import msvcrt
 
     def _lock(handle: int) -> None:

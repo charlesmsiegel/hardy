@@ -55,8 +55,9 @@ and `live` markers declared in `pyproject.toml`.
 **Hermetic** tests need nothing beyond the Python environment `uv` builds.
 They are the default: a bare `pytest -m "not real_toolchain and not live"`
 runs only these. CI's `Tests` workflow runs them with coverage on every push
-to `main` and every pull request, then lints with ruff, and for pull requests
-also checks any corpus release against the merge base.
+to `main` and every pull request on Ubuntu, then lints with ruff, and for pull requests
+also checks any corpus release against the merge base. A non-blocking hermetic suite
+also runs on Windows.
 
 **Real toolchain** tests invoke a real installed binary: Lean, Tectonic,
 Singular, or Macaulay2. They carry the `real_toolchain` marker and skip

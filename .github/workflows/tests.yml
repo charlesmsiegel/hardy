@@ -211,3 +211,18 @@ jobs:
           if [ -f /tmp/web-smoke-server.pid ]; then
             kill "$(cat /tmp/web-smoke-server.pid)" 2>/dev/null || true
           fi
+
+  hermetic-windows:
+    name: hermetic suite on windows-latest
+    runs-on: windows-latest
+    continue-on-error: true   # remove once green
+    steps:
+      - run: git config --global core.autocrlf true
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Hermetic suite
+        shell: pwsh
+        run: uv run --python 3.12 --extra test pytest -q -m "not real_toolchain and not live" -rs --junitxml=windows-junit.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: windows-junit, path: windows-junit.xml, if-no-files-found: warn }
