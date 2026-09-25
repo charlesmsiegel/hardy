@@ -439,7 +439,12 @@ class Handler(BaseHTTPRequestHandler):
         something else -- and is the one check a write cannot pass without
         having read the page Hardy served.
         """
-        host = self.headers.get("Host", "")
+        # Lowercased once, here: `self.server.allowed_hosts` is itself
+        # lowercase (`_allowed_hosts`), and every use of `host` below --
+        # membership and the `Origin` comparison alike -- has to agree on the
+        # same casing or a client that spells its own `Host` differently
+        # could pass one check and fail the other.
+        host = self.headers.get("Host", "").lower()
         ok = host in self.server.allowed_hosts and self.headers.get("Sec-Fetch-Site") != "cross-site"
         if write:
             token = self.headers.get("X-Hardy-Token", "")
@@ -540,6 +545,19 @@ def _allowed_hosts(host: str, port: int, *,
     A LAN client whose address is not among those -- reached by a bare IP a
     reverse-DNS lookup does not name -- is refused; `--host <that address>`
     admits it exactly.
+
+    Every entry is lowercase: `gethostname()`, `getfqdn()`, and `--host`
+    itself keep whatever casing the machine or the command line gave them,
+    but a client's `Host` header may spell the same name differently -- a DNS
+    name is case-insensitive, and nothing stops a browser or `curl` from
+    lowercasing it (or not). Comparing against a lowercase set, with the
+    incoming header lowercased the same way, treats those as the one host
+    they are rather than refusing one spelling of it.
+
+    On port 80, the admitted set also carries the portless form of every host
+    in it: `http://host/` has no `:80` for a client to send, so a browser or
+    `curl` sends `Host: host` outright, and refusing that would 403 the one
+    port where a portless `Host` is normal rather than short.
     """
     loopback = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
     if host in _WILDCARD_HOSTS:
@@ -550,14 +568,54 @@ def _allowed_hosts(host: str, port: int, *,
             # Same failure modes `_resolve_names` itself swallows per name,
             # caught again here for whatever `resolve` an injected caller
             # substitutes: resolution failing must still leave loopback.
-            return allowed
-        allowed |= {f"{name}:{port}" for name in (hostname, fqdn) if name}
-        allowed |= {f"{_bracket(address)}:{port}" for address in addresses}
-        return allowed
-    allowed = {f"{_bracket(host)}:{port}"}
-    if host in _LOOPBACK_NAMES:
+            return _with_portless_on_80(allowed, port)
+        allowed |= {f"{name.lower()}:{port}" for name in (hostname, fqdn) if name}
+        allowed |= {f"{_bracket(address.lower())}:{port}" for address in addresses}
+        return _with_portless_on_80(allowed, port)
+    allowed = {f"{_bracket(host.lower())}:{port}"}
+    if host.lower() in _LOOPBACK_NAMES:
         allowed |= loopback
-    return allowed
+    return _with_portless_on_80(allowed, port)
+
+
+def _with_portless_on_80(allowed: set[str], port: int) -> set[str]:
+    """Add the portless spelling of every admitted host, on port 80 alone.
+
+    Every entry here is `<host>:<port>`, so the host alone is everything
+    before the last `:` -- true for a bracketed IPv6 literal too, since the
+    bracket protects its internal colons from being the *last* one.
+    """
+    if port != 80:
+        return allowed
+    return allowed | {entry.rsplit(":", 1)[0] for entry in allowed}
+
+
+class _HTTPServerV6(HTTPServer):
+    """`HTTPServer`, bound to `AF_INET6` instead of the hardcoded `AF_INET`.
+
+    `HTTPServer.address_family` is `AF_INET` unconditionally, so binding an
+    IPv6 literal -- notably the documented wildcard `--host ::` -- fails
+    before anything is served: the socket it opens cannot take an IPv6
+    address at all. Nothing else changes.
+    """
+
+    address_family = socket.AF_INET6
+
+
+def _announce_host(host: str) -> str:
+    """The host `serve()` prints its URL with -- always one it admits.
+
+    A wildcard bind (`0.0.0.0`, `::`, or unset) has no address of its own:
+    printing the bind string itself named a host `_allowed_hosts` does not
+    admit (`0.0.0.0` is a bind target, not a client-reachable address), so
+    the URL `serve()` had just printed 403'd. Loopback is what every bind --
+    wildcard or not -- always answers on and always admits, so it is what
+    gets printed instead. A specific host is admitted as itself and is
+    printed as itself, bracketed if it is an IPv6 literal.
+    """
+    if host in _WILDCARD_HOSTS:
+        return "[::1]" if host == "::" else "127.0.0.1"
+    return _bracket(host)
 
 
 def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Path | None = None,
@@ -568,13 +626,14 @@ def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Pa
     on every request like the corpus is, so a sweep running alongside this
     server fills the filters in as its checkpoints land.
     """
-    server = HTTPServer((host, port), partial(Handler, root=root, baseline=baseline))
+    server_cls = _HTTPServerV6 if ":" in host else HTTPServer
+    server = server_cls((host, port), partial(Handler, root=root, baseline=baseline))
     server.token = secrets.token_urlsafe(32)
     # A request naming any other `Host` is refused before it is routed at
     # all (#217); see `_allowed_hosts` for exactly which values that is.
     server.allowed_hosts = _allowed_hosts(host, server.server_port)
     Handler.timeout = 10
-    report(f"Corpus viewer on http://{host}:{server.server_port}/  (Ctrl-C to stop)")
+    report(f"Corpus viewer on http://{_announce_host(host)}:{server.server_port}/  (Ctrl-C to stop)")
     report(f"Serving {root.resolve()} -- edit a shard and refresh to see it.")
     if serve_forever:
         try:
