@@ -326,3 +326,57 @@ def test_an_exposure_finding_the_board_check_alone_makes_still_refuses(tmp_path)
     assert any("exposure" in finding for finding in result["boards_refused"]["tampered"])
     assert result["boards_counted"] == []
     assert result["unevaluated_active"] == ["u"]
+
+
+# --- Review minors: the stderr account of what was not counted ----------------
+
+
+def test_a_board_refused_only_by_the_board_exposure_check_is_not_said_to_fail_pool(tmp_path, capsys):
+    """`evals pool` does not run `board_exposure_issues`, so saying pool would
+    refuse such a board was false; it is left out of the evidence anyway."""
+    from hardy.app.evals import _report_uncounted
+
+    key = ("r", "e")
+    _exposed_board(tmp_path / "tampered", ids=["u"], key=key)
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    _report_uncounted(result)
+    err = capsys.readouterr().err
+    assert "tampered" in err and "exposure" in err
+    assert "`evals pool` would refuse it" not in err
+
+
+def test_a_board_the_self_audit_refuses_is_still_said_to_fail_pool(tmp_path, capsys):
+    from hardy.app.evals import _report_uncounted
+
+    key = ("r", "e")
+    _board(tmp_path / "bad", ids=["u"], key=key)
+    REFUSED_BY_AUDIT["bad"] = ("runs/u/batch-0: the recorded-run audit reports findings",)
+    _report_uncounted(outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                              procedure_digest="p" * 64))
+    assert "board bad fails its own audit, so `evals pool` would refuse it" in capsys.readouterr().err
+
+
+def test_a_board_that_cannot_be_read_again_is_refused_not_conflicting(tmp_path, monkeypatch, capsys):
+    from hardy.app.evals import _report_uncounted
+
+    key = ("r", "e")
+    _board(tmp_path / "a", ids=["x"], key=key)
+    _board(tmp_path / "b", ids=["y"], key=key)
+    real = outstanding.board_slots
+
+    def flaky(root, label):
+        if label == "a":
+            raise OSError("gone")
+        return real(root, label)
+
+    monkeypatch.setattr(outstanding, "board_slots", flaky)
+    result = outstanding.outstanding(_three_entries(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert result["boards_conflicting"] == {}
+    assert list(result["boards_refused"]) == ["a"] and "could not be read" in result["boards_refused"]["a"][0]
+    assert result["boards_counted"] == ["b"]
+    _report_uncounted(result)
+    err = capsys.readouterr().err
+    assert "passes its own audit" not in err
+    assert "board a" in err and "could not be read" in err

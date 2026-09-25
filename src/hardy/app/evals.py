@@ -432,9 +432,17 @@ def _refuse_staged_budget_overrides(args: argparse.Namespace) -> bool:
 
 def _report_uncounted(left: dict[str, Any]) -> None:
     """Say on stderr what `outstanding` left out of the evidence, and why."""
+    from hardy.evals.outstanding import BOARD_EXPOSURE
+
     for label, issues in sorted(left["boards_refused"].items()):
-        print(f"not counted: board {label} fails its own audit, so `evals pool` would refuse it: "
-              + "; ".join(issues), file=sys.stderr)
+        if all(issue.startswith(BOARD_EXPOSURE) for issue in issues):
+            # `evals pool` does not run this check, so it is not pool's refusal.
+            print(f"not counted: board {label} passes the audit `evals pool` runs, but its exposure "
+                  "record does not authenticate, so none of its samples is counted as evidence: "
+                  + "; ".join(issue.removeprefix(BOARD_EXPOSURE) for issue in issues), file=sys.stderr)
+        else:
+            print(f"not counted: board {label} fails its own audit, so `evals pool` would refuse it: "
+                  + "; ".join(issues), file=sys.stderr)
     for label, findings in sorted(left["boards_conflicting"].items()):
         print(f"not counted: board {label} passes its own audit, but `evals pool` refuses it beside "
               "another board under this key: " + "; ".join(findings), file=sys.stderr)
