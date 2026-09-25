@@ -210,3 +210,41 @@ def test_the_baseline_default_includes_an_unmeasured_row_whatever_its_status():
     })
     ids, moved = outstanding.baseline_default(problems, prior, environment_digest="e", procedure_digest="p" * 64)
     assert ids == ["t", "u"] and moved is None
+
+
+# --- Codex on #393: a board's exposure failure is reported, not skipped ---
+
+
+def _exposed_board(path, *, ids: list[str], key: tuple[str | None, str]) -> None:
+    """A board whose rows name an exposure journal that is not on disk."""
+    _board(path, key=key, rows=[
+        {"id": id_, "repeat": 0, "outcome": "solved", "run_dir": f"runs/{id_}", "exposure_sha256": "0" * 64}
+        for id_ in ids
+    ])
+
+
+def test_a_board_whose_exposure_the_self_audit_rejects_is_named_refused(tmp_path):
+    """`matching_boards` dropped a board with a missing or tampered exposure
+    artifact before the self-audit ran, so it never reached `boards_refused`
+    and its entries were silently selected again."""
+    key = ("r", "e")
+    _exposed_board(tmp_path / "tampered", ids=["u"], key=key)
+    REFUSED_BY_AUDIT["tampered"] = ("runs/u: exposure journal digest mismatch",)
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert result["boards_refused"] == {"tampered": ["runs/u: exposure journal digest mismatch"]}
+    assert result["boards_counted"] == []
+
+
+def test_an_exposure_finding_the_board_check_alone_makes_still_refuses(tmp_path):
+    """Belt and braces: whatever the board-level exposure check finds is a
+    refusal with its finding, never a silent skip, even where the self-audit
+    passes."""
+    key = ("r", "e")
+    _exposed_board(tmp_path / "tampered", ids=["u"], key=key)
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path),
+                                     procedure_digest="p" * 64)
+    assert list(result["boards_refused"]) == ["tampered"]
+    assert any("exposure" in finding for finding in result["boards_refused"]["tampered"])
+    assert result["boards_counted"] == []
+    assert result["unevaluated_active"] == ["u"]
