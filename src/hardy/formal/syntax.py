@@ -738,7 +738,7 @@ def _quotation_spans(
 # parenthesis count over its quotations is no longer Lean's.
 TOKEN_COMMANDS = frozenset({
     "notation", "notation3", "syntax", "infix", "infixl", "infixr", "prefix", "postfix",
-    "macro", "elab", "binder_predicate",
+    "macro", "elab", "binder_predicate", "declare_simp_like_tactic",
 })
 
 

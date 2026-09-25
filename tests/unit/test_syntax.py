@@ -524,3 +524,12 @@ def test_quotations_stay_data_for_the_hole_scan_without_local_tokens():
     source = "open Lean in\ndef q : MacroM Syntax := `(tactic| sorry)\n"
     assert not LeanTools.has_holes(source)
     assert LeanTools.has_holes('notation "⊕⊕" => 1\n' + source)
+
+
+def test_a_simp_like_tactic_declaration_declares_a_token():
+    """`declare_simp_like_tactic` adds its string to Lean's token table, like
+    `syntax` does, so a module using it keeps its quotations visible."""
+    declared = 'declare_simp_like_tactic mySimp "my_simp(" fun c => c\n'
+    assert syntax.declares_tokens(syntax.lex(declared))
+    source = "open Lean in\ndef q : MacroM Syntax := `(tactic| sorry)\n"
+    assert LeanTools.has_holes(declared + source)

@@ -675,15 +675,17 @@ def test_a_quotation_in_a_verified_proof_survives_recorded_acceptance(tmp_path: 
     """`submit_proof` lets a syntax quotation through; the validator must too.
 
     A quotation builds a piece of syntax Lean never runs, so the token inside it
-    is data -- and `axiom` is one of the tokens the offline scan forbids.
+    is data -- and `by?` is one of the tokens the offline scan forbids.
     Scanned with `strip_comments` alone, `hardy accept --recorded` read the
     quoted keyword and rejected Hardy's own verified artifact: the same lexical
-    rule wrong in a second place, which is the mismatch this closes.
+    rule wrong in a second place, which is the mismatch this closes. (Quoted
+    *command* syntax is refused outright by the proof-body gate, which reads a
+    quotation like the rest of the body.)
     """
     import importlib
 
     acceptance = importlib.import_module("hardy.workflows.acceptance")
-    proof = "by have _ := `(command| axiom bad : False); exact True.intro"
+    proof = "by have _ := `(term| by? trivial); exact True.intro"
     result = run(
         proof_request,
         factory([call("submit_proof", {"proof": proof})]),
