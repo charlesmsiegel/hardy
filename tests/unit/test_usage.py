@@ -138,6 +138,38 @@ def test_a_restart_is_seen_even_where_one_figure_happens_to_rise():
     assert spent.cache_read_tokens == 5_400
 
 
+def test_a_restart_forgets_the_baselines_its_report_did_not_restate():
+    """A restart resets every counter, not only those its report happened to
+    state. A field the restart report omitted must not carry the old session's
+    baseline forward, or the next report that does state it -- necessarily
+    smaller -- reads as a second restart and is added whole (#322)."""
+    spent = (
+        Usage()
+        .record({"session_id": "S1", "usage": {"input_tokens": 1000, "cache_read_input_tokens": 50000}})
+        # A restart that says nothing about cache reads.
+        .record({"session_id": "S2", "usage": {"input_tokens": 100}})
+        # The same session, 100 input tokens and 300 cache reads on.
+        .record({"session_id": "S2", "usage": {"input_tokens": 200, "cache_read_input_tokens": 300}})
+    )
+    assert spent.input_tokens == 1200   # not 1300
+    assert spent.cache_read_tokens == 50300
+
+
+def test_a_restart_leaves_only_its_own_figures_as_baselines():
+    """What persists in `session.json` after a restart holds no stale field,
+    so a reopened workspace differences exactly as the live one would."""
+    spent = (
+        Usage()
+        .record({"session_id": "S1", "usage": {"input_tokens": 1000, "cache_read_input_tokens": 50000}})
+        .record({"session_id": "S2", "usage": {"input_tokens": 100}})
+    )
+    assert spent.baselines == {"input_tokens": 100}
+    reopened = Usage.from_dict(spent.as_dict())
+    assert reopened is not None and reopened.baselines == {"input_tokens": 100}
+    after = reopened.record({"session_id": "S2", "usage": {"input_tokens": 200, "cache_read_input_tokens": 300}})
+    assert (after.input_tokens, after.cache_read_tokens) == (1200, 50300)
+
+
 def test_an_ordinary_continuation_is_not_mistaken_for_a_restart():
     """Every figure climbing is what a restored counter looks like."""
     spent = (
