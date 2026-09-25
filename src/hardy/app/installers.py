@@ -28,8 +28,8 @@ ELAN_VERSION = "4.2.1"
 # three in agreement; a result records what it actually ran against
 # (`lean.environment_identity`), so a project someone repinned is reported as
 # what it is rather than as this. (Issue #81.)
-LEAN_TOOLCHAIN = "leanprover/lean4:v4.33.1"
-MATHLIB_REVISION = "v4.33.1"
+LEAN_TOOLCHAIN = "leanprover/lean4:v4.35.0-rc3"
+MATHLIB_REVISION = "5e0c4e5239cb0a2d86d68a884bf52cfd963fce22"
 LEAN_PACKAGE = "hardymath"
 TECTONIC_VERSION = "0.16.9"
 TECTONIC_URL = (

@@ -122,8 +122,8 @@ installer is cheap and safe.
    (`-NoLauncher`) skips this step.
 3. **`lake`**, installed through [elan](https://github.com/leanprover/elan),
    the Lean toolchain manager, which supplies `lake`, `lean`, and `elan`.
-4. **A shared Mathlib project**, a Lake project pinned to one Lean release
-   and one Mathlib tag (the values in `scripts/lib/common.sh`, which
+4. **A shared Mathlib project**, a Lake project pinned to one Lean toolchain
+   and one Mathlib commit (the values in `scripts/lib/common.sh`, which
    `hardy.app.installers` and the Windows installer repeat), with Mathlib's
    prebuilt cache fetched (`lake exe cache get`). This is the long step:
    several gigabytes and typically 10 to 30 minutes. Every recorded run names

@@ -76,8 +76,8 @@ $LeanProject = Join-Path $Prefix 'lean'
 $LeanPackage = 'hardymath'
 # Pinned by identity; scripts/lib/common.sh and src/hardy/installers.py carry
 # the same two values, and tests/test_install_scripts.py holds them together.
-$LeanToolchain = 'leanprover/lean4:v4.33.1'
-$MathlibRevision = 'v4.33.1'
+$LeanToolchain = 'leanprover/lean4:v4.35.0-rc3'
+$MathlibRevision = '5e0c4e5239cb0a2d86d68a884bf52cfd963fce22'
 $ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $HOME '.hardy\config.toml' }
 $ConfiguredModel = ''
 $Python = ''
