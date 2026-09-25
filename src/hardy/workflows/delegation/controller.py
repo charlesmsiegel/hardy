@@ -39,7 +39,7 @@ from hardy.workflows.delegation.attention import (
     resolve_continuation,
     route,
 )
-from hardy.workflows.delegation.budget import LeaseLedger, LeaseRefused, grant
+from hardy.workflows.delegation.budget import HOLDING_SLOTS, LeaseLedger, LeaseRefused, grant
 from hardy.workflows.delegation.context import (
     ContextPolicy,
     build_problem_core,
@@ -101,6 +101,10 @@ _TERMINAL_EVENT = {
     DelegationState.EXHAUSTED: "delegation.exhausted",
     DelegationState.UNKNOWN: "delegation.recovered",
 }
+
+
+class _StartedElsewhere(Exception):
+    """A launch this controller held for a node another session had already started, or retired."""
 
 
 @dataclass(frozen=True)
@@ -354,9 +358,10 @@ class DelegationController:
         one is -- a second terminal, a browser tab, or a chat switch that
         builds its session before closing the last. Concurrent sessions on
         one project therefore share one budget, and none can forgive what
-        another live session spent. A join adopts the epoch's reservation,
-        so they share the first session's ceilings too, and nobody changes
-        them while more than one session of the epoch is live. `LeaseLedger`
+        another live session spent. A join adopts the epoch's current
+        reservation -- the first session's ceilings, or a survivor's own
+        once it was left alone and re-reserved -- and nobody changes it while
+        more than one session of the epoch is live. `LeaseLedger`
         stops charging the root for children released before its epoch
         began. Later calls re-reserve only when this session's ceilings
         differ from the epoch's and it is the epoch's only live session,
@@ -632,18 +637,25 @@ class DelegationController:
                 raise ValueError(f"{id} is already handed to the executor; cancel it instead of pausing")
             self.store.append(id, "delegation.paused", {"by": by})
 
-    def resume(self, id: str, *, by: str) -> None:
+    def resume(self, id: str, *, by: str) -> str | None:
+        """Return paused work to the queue; a note when another session will be the one to run it."""
         with self._lock:
             node = self.tree().get(id)
             if node.state is not DelegationState.PAUSED:
                 raise ValueError(f"{id} is not paused")
             self.store.append(id, "delegation.resumed", {"by": by})
-            if id not in self._pending and id not in self._handles:
+            note = None
+            if id in self._foreign_live(self.tree()):
+                # Another live session queued it and still holds its launch;
+                # a second launch here could only race it.
+                note = f"{id} was queued by another open session on this problem; that session runs it."
+            elif id not in self._pending and id not in self._handles:
                 # Paused before this process started: relaunch from the persisted package.
                 launch = self._relaunch(self.tree().get(id), LeaseLedger(self.tree()).reserved(id))
                 if launch is not None:
                     self._pending[id] = launch
             self._dispatch()
+            return note
 
     def set_lane(self, id: str, lane: Lane, *, by: str) -> None:
         with self._lock:
@@ -719,6 +731,12 @@ class DelegationController:
             if free <= 0 or not self._pending or self._closed:
                 return
             tree = self.tree()
+            # A launch held for work that has since ended, or that another
+            # session started, is nobody's to run any more.
+            for id in [id for id in self._pending
+                       if (node := tree.delegations.get(id)) is None or node.terminal
+                       or (node.owner is not None and node.owner != self._owner.id)]:
+                self._pending.pop(id, None)
             ledger = LeaseLedger(tree)
             taken: dict[str, int] = {}
             for id in self._handles:
@@ -808,7 +826,16 @@ class DelegationController:
                 raise WorkerCancelled
             if tree.get(id).state is DelegationState.PAUSED:
                 raise WorkerCancelled
-            self.store.append(id, "delegation.started", {"owner": self._owner.id})
+
+            def start(tree: DelegationTree) -> dict[str, Any] | None:
+                # Decided under the journal lock: only queued work starts, so
+                # two sessions holding a launch for one node cannot both start it.
+                return {"owner": self._owner.id} if tree.get(id).state is DelegationState.QUEUED else None
+
+            if self.store.append_decided(id, "delegation.started", start) is None:
+                # Started by another session between the check above and this
+                # one, or ended or paused meanwhile; not this launch's to run.
+                raise _StartedElsewhere(id)
         result = run_worker(launch, self._open_worker, token)
         with self._lock:
             if result.status is DelegationState.CANCELLED:
@@ -838,16 +865,21 @@ class DelegationController:
             tree = self.tree()
             delegation = tree.get(id)
             if not delegation.terminal:
+                reason: str | None
                 try:
                     handle.result(0)
                     reason = "worker returned without a terminal record"
+                except _StartedElsewhere:
+                    # Another session runs it (or it was paused); nothing here to record.
+                    reason = None
                 except WorkerCancelled:
                     reason = "cancelled"
                 except Exception as error:  # noqa: BLE001 - a job's crash is a journaled failure
                     reason = f"{type(error).__name__}: {error}"
-                kind = "delegation.cancelled" if reason == "cancelled" else "delegation.failed"
-                event = self.store.append(id, kind, {"reason": reason})
-                self._after_terminal(id, event)
+                if reason is not None:
+                    kind = "delegation.cancelled" if reason == "cancelled" else "delegation.failed"
+                    event = self.store.append(id, kind, {"reason": reason})
+                    self._after_terminal(id, event)
             elif not LeaseLedger(tree).released(id):
                 self.store.release(id)
             # Last, so `wait` sees a settled journal once the handle is gone.
@@ -1033,7 +1065,11 @@ class DelegationController:
         alive: dict[str, bool] = {}
         foreign = set()
         for id, owner in self._owners(tree).items():
-            if owner == self._owner.id or id in self._pending or id in self._handles or tree.get(id).terminal:
+            if owner == self._owner.id or tree.get(id).terminal:
+                continue
+            # A launch held here makes unstarted work this session's; once the
+            # journal says another session started it, the journal wins.
+            if tree.get(id).owner is None and (id in self._pending or id in self._handles):
                 continue
             if owner not in alive:
                 alive[owner] = OwnerToken.alive(self.store.workspace, owner)
@@ -1047,9 +1083,12 @@ class DelegationController:
         Owner-scoped. Concurrent sessions on one problem share the root, and
         closing one must not cancel what another live session launched: a
         subtree holding any such work is descended into rather than cancelled
-        whole, so only this session's nodes (and work nobody live owns) end.
-        An explicit `/cancel <id>` is not this: it names its target and
-        reaches it whoever runs it.
+        whole, and so is a node another session owns, so only this session's
+        nodes (and work nobody live owns) end, wherever they sit. An explicit
+        `/cancel <id>` is not this: it names its target, cancels queued work
+        whichever session made it, and journals the request for a running
+        worker, which only the session running it can act on
+        (`running_elsewhere`).
         """
         requested: list[str] = []
         with self._lock:
@@ -1064,13 +1103,28 @@ class DelegationController:
             pending = list(tree.children(ROOT_ID))
             while pending:
                 child = pending.pop(0)
-                if tree.get(child).terminal or child in foreign:
+                if tree.get(child).terminal:
                     continue
-                if keeps_foreign(child):
+                if child in foreign or keeps_foreign(child):
+                    # Not cancelled whole; this session's work beneath it still is.
                     pending.extend(tree.children(child))
                     continue
                 requested.extend(self.cancel(child, reason=reason))
         return tuple(requested)
+
+    def running_elsewhere(self, ids: tuple[str, ...]) -> tuple[str, ...]:
+        """Which of `ids` are running in another live session: a cancel request reaches those only there.
+
+        Workers stop through the cancel token of the process that runs them;
+        nothing in that process reads another's request from the journal, so
+        such a worker runs to its own end.
+        """
+        with self._lock:
+            tree = self.tree()
+            foreign = self._foreign_live(tree)
+            # An interior cell runs nothing: whoever cancels it settles it once its children end.
+            return tuple(id for id in ids if id in foreign and tree.get(id).state in HOLDING_SLOTS
+                         and not tree.get(id).interior)
 
     def wait(self, id: str, timeout: float | None = None) -> Delegation:
         """Block until the journal shows a terminal state. For tests and command-line callers."""

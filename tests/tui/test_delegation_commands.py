@@ -181,6 +181,22 @@ async def test_cancel_requests_cancellation_and_names_what_it_reached(ui, settin
     assert "nothing" in ui.text.lower()
 
 
+async def test_cancel_does_not_claim_to_stop_a_worker_another_session_runs(ui, settings):
+    """A running worker stops only through the session running it: the answer says so."""
+    session = _Session()
+    session.delegations.running_elsewhere = lambda ids: tuple(id for id in ids if id == "d-1")
+    await handlers.handle_cancel(ui, "d-1", State(config=settings, session=session))
+    assert "Cancellation requested" not in ui.text and "Active workers stop" not in ui.text
+    assert "d-1 is running in another open session" in ui.text and "cancel it there" in ui.text
+
+
+async def test_resume_passes_on_the_controllers_note(ui, settings):
+    session = _Session()
+    session.delegations.resume = lambda id, *, by: f"{id} was queued by another open session on this problem; that session runs it."
+    await handlers.handle_jobs(ui, "resume d-1", State(config=settings, session=session))
+    assert "Resumed d-1. d-1 was queued by another open session" in ui.text
+
+
 def test_plain_session_wires_notices_to_the_terminal(settings):
     written = []
     session = _Session()

@@ -1230,10 +1230,13 @@ def test_concurrent_sessions_on_one_project_share_one_budget(tmp_path):
                 controller.shutdown()
 
 
-def _live_session(tmp_path, open_worker, *, checks=4, slots=1):
-    """A controller opened the way a session opens one: constructed, then recovered."""
+def _live_session(tmp_path, open_worker, *, checks=4, slots=1, pool=None):
+    """A controller opened the way a session opens one: constructed, then recovered.
+
+    `pool` is the executor's size when it differs from the root's slots.
+    """
     controller = DelegationController(
-        DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(max(slots, 1)),
+        DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(pool or max(slots, 1)),
         open_worker=open_worker, root=RootResources(lease=ResourceLease(official_checks=checks), slots=slots),
         notify=lambda text: None)
     controller.recover()
@@ -1353,4 +1356,131 @@ def test_a_joining_session_cannot_lower_the_shared_ceiling_until_it_is_alone(tmp
         assert len(_root_reservations(second)) == before
     finally:
         second.shutdown()
+        first.shutdown()
+
+
+def _cell_spec(tmp_path):
+    from hardy.workflows.delegation.contracts import SpawnPolicy
+
+    snapshot = LedgerStore(tmp_path).read()
+    return DelegationSpec(objective="cell", project_refs=(snapshot.head("L17").ref,), scope=snapshot.head("scope").ref,
+                          lease=ResourceLease(official_checks=2), concurrency=ConcurrencyLease(slots=1),
+                          created_by="human", spawn=SpawnPolicy(can_spawn=True, max_children=2, max_depth=1))
+
+
+def test_closing_a_session_cancels_its_own_worker_under_another_live_sessions_cell(tmp_path):
+    """Re-review I-A: a foreign node is descended into, not skipped with everything under it."""
+    seed_lemma(tmp_path)
+    first = _live_session(tmp_path, _open([FINISH]), checks=4, slots=2)
+    started, release = threading.Event(), threading.Event()
+    second = None
+    try:
+        cell = first.delegate(_cell_spec(tmp_path))
+        second = _live_session(tmp_path, _open([FINISH], gate=(started, release)), checks=4, slots=2)
+        worker = second.delegate(_spec(tmp_path, checks=1), parent_id=cell.id)
+        assert started.wait(5)
+        assert second.cancel_all(reason="session closed") == (worker.id,)
+        assert second.wait(worker.id, timeout=10).state is DelegationState.CANCELLED
+        tree = first.tree()
+        assert tree.get(cell.id).state is DelegationState.ACTIVE and not tree.cancel_requested(cell.id)
+    finally:
+        release.set()
+        if second is not None:
+            second.shutdown()
+        first.shutdown()
+
+
+def test_a_worker_is_started_once_even_when_two_sessions_hold_its_launch(tmp_path):
+    """Re-review M-B: the start is decided under the journal lock, so a second
+    holder of the launch is refused rather than starting it again, and records
+    nothing about a node another session runs. That node is the other
+    session's: closing this one leaves it running."""
+    seed_lemma(tmp_path)
+    held, free = threading.Event(), threading.Event()
+    # The root has two slots; `first`'s pool has one, so its second worker waits in `first`.
+    first = _live_session(tmp_path, _open([FINISH], gate=(held, free)), checks=4, slots=2, pool=1)
+    started, release = threading.Event(), threading.Event()
+    second = None
+    try:
+        running = first.delegate(_spec(tmp_path))
+        assert held.wait(5)
+        shared = first.delegate(_spec(tmp_path))            # waits in `first` for its one worker thread
+        stale = first._pending[shared.id]
+        second = _live_session(tmp_path, _open([FINISH], gate=(started, release)), checks=4, slots=2)
+        # The second holder of one launch, as a cross-session resume used to make it.
+        second._pending[shared.id] = second._relaunch(second.tree().get(shared.id),
+                                                      LeaseLedger(second.tree()).reserved(shared.id))
+        second._dispatch()
+        assert started.wait(5)                              # `second` started it first
+        # The window the in-process checks cannot close: `first` reaching the
+        # start with its own launch. The journal refuses it and nothing is written.
+        from hardy.agents.executor import CancelToken
+        from hardy.workflows.delegation.controller import _StartedElsewhere
+        with pytest.raises(_StartedElsewhere):
+            first._run(stale, CancelToken())
+        # `first` still holds a launch for it, but the journal says whose it is.
+        assert set(first.cancel_all(reason="session closed")) == {running.id}
+        assert first.wait(running.id, timeout=10).state is DelegationState.CANCELLED
+        release.set()
+        assert second.wait(shared.id, timeout=10).state is DelegationState.COMPLETED
+        events = [e for e in first.store.events() if e.delegation_id == shared.id]
+        assert [e.kind for e in events].count("delegation.started") == 1
+        assert not any(e.kind in {"cancel.requested", "delegation.cancelled", "delegation.failed"} for e in events)
+        deadline = time.monotonic() + 5
+        while shared.id in first._handles and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert shared.id not in first._handles and shared.id not in first._pending
+    finally:
+        free.set()
+        release.set()
+        if second is not None:
+            second.shutdown()
+        first.shutdown()
+
+
+def test_resuming_another_live_sessions_queued_work_leaves_its_launch_where_it_is(tmp_path):
+    """Re-review M-B: a pause and resume from a second session does not give it
+    a launch of its own; the session that queued the work runs it, once."""
+    seed_lemma(tmp_path)
+    held, free = threading.Event(), threading.Event()
+    first = _live_session(tmp_path, _open([FINISH], gate=(held, free)), checks=4, slots=1)
+    second = None
+    try:
+        running = first.delegate(_spec(tmp_path))
+        assert held.wait(5)
+        queued = first.delegate(_spec(tmp_path))
+        second = _live_session(tmp_path, _open([FINISH]), checks=4, slots=2)
+        second.pause(queued.id, by="human")
+        note = second.resume(queued.id, by="human")
+        assert note and "another open session" in note
+        assert queued.id not in second._pending and queued.id not in second._handles
+        free.set()
+        assert first.wait(running.id, timeout=10).state is DelegationState.COMPLETED
+        assert first.wait(queued.id, timeout=10).state is DelegationState.COMPLETED
+        starts = [e for e in first.store.events() if e.delegation_id == queued.id and e.kind == "delegation.started"]
+        assert len(starts) == 1
+    finally:
+        free.set()
+        if second is not None:
+            second.shutdown()
+        first.shutdown()
+
+
+def test_cancel_says_which_targets_only_another_session_can_stop(tmp_path):
+    """Re-review M-A: a running worker's cancellation reaches it only in the
+    session that runs it; the caller is told, rather than told it stopped."""
+    seed_lemma(tmp_path)
+    held, free = threading.Event(), threading.Event()
+    first = _live_session(tmp_path, _open([FINISH], gate=(held, free)), checks=4, slots=1)
+    second = None
+    try:
+        running = first.delegate(_spec(tmp_path))
+        assert held.wait(5)
+        second = _live_session(tmp_path, _open([FINISH]), checks=4, slots=1)
+        assert second.running_elsewhere((running.id,)) == (running.id,)
+        assert first.running_elsewhere((running.id,)) == ()
+    finally:
+        free.set()
+        if second is not None:
+            second.shutdown()
         first.shutdown()
