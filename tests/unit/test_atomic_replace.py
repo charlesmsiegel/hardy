@@ -40,6 +40,21 @@ def guard(tmp_path: Path) -> WriteGuard:
     return WriteGuard(directory)
 
 
+def _denied(winerror: int) -> PermissionError:
+    """A `PermissionError` carrying a Windows error code, on any platform.
+
+    Set as an attribute rather than passed as the constructor's fourth
+    argument: that argument becomes `winerror` on Windows and is dropped
+    everywhere else. A bare `PermissionError(13, ...)` is no simulation of a
+    Windows `os.replace` failure at all -- there it carries `winerror=None`,
+    which a real one never does, and `replace_with_retry` rightly re-raises it
+    as not a sharing violation.
+    """
+    error = PermissionError(13, "Access is denied")
+    error.winerror = winerror
+    return error
+
+
 def test_a_transient_sharing_violation_is_retried_until_it_succeeds(monkeypatch, guard):
     """Two access-denied errors, then a real `os.replace`: the write still lands."""
     calls: list[str] = []
@@ -48,7 +63,7 @@ def test_a_transient_sharing_violation_is_retried_until_it_succeeds(monkeypatch,
     def flaky(source, target):
         calls.append(str(target))
         if len(calls) <= 2:
-            raise PermissionError(13, "Access is denied")
+            raise _denied(5)  # ERROR_ACCESS_DENIED, what a held target reports
         real_replace(source, target)
 
     monkeypatch.setattr(locking.os, "replace", flaky)
@@ -64,7 +79,7 @@ def test_a_permanent_sharing_violation_raises_fileinuse_and_leaves_no_temporary(
     guard.write_json("session.json", {"a": 1})
 
     def always_denied(source, target):
-        raise PermissionError(13, "Access is denied")
+        raise _denied(32)  # ERROR_SHARING_VIOLATION
 
     monkeypatch.setattr(locking.os, "replace", always_denied)
 
@@ -73,13 +88,6 @@ def test_a_permanent_sharing_violation_raises_fileinuse_and_leaves_no_temporary(
 
     assert json.loads((guard.directory / "session.json").read_text(encoding="utf-8")) == {"a": 1}
     assert [entry.name for entry in guard.directory.iterdir()] == ["session.json"]
-
-
-def _denied(winerror: int) -> PermissionError:
-    """A `PermissionError` carrying a Windows error code, on any platform."""
-    error = PermissionError(13, "Access is denied")
-    error.winerror = winerror
-    return error
 
 
 def test_a_permission_error_that_is_not_a_sharing_violation_is_raised_as_itself(monkeypatch):
@@ -99,6 +107,28 @@ def test_a_permission_error_that_is_not_a_sharing_violation_is_raised_as_itself(
 
     assert not isinstance(excinfo.value, FileInUse)
     assert excinfo.value.winerror == 1920
+    assert len(calls) == 1
+
+
+def test_a_permission_error_with_no_windows_code_is_raised_as_itself(monkeypatch):
+    """What `PermissionError(13, "...")` is on Windows: `winerror` is present
+    and `None`. No real `os.replace` failure looks like that, so it is not
+    read as a sharing violation -- the rule a Windows run of this module
+    holds its simulations to, pinned here on every platform."""
+    calls: list[str] = []
+
+    def uncoded(source, target):
+        calls.append(str(target))
+        error = PermissionError(13, "Access is denied")
+        error.winerror = None
+        raise error
+
+    monkeypatch.setattr(locking.os, "replace", uncoded)
+
+    with pytest.raises(PermissionError) as excinfo:
+        replace_with_retry(Path("source"), Path("target"))
+
+    assert not isinstance(excinfo.value, FileInUse)
     assert len(calls) == 1
 
 

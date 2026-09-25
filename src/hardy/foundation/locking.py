@@ -44,15 +44,16 @@ _sleep: Callable[[float], None] = time.sleep
 
 #: `winerror` values Windows reports for "something else has this file open",
 #: as opposed to a genuinely unwritable destination: `ERROR_ACCESS_DENIED` (5),
-#: `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33). A
-#: `PermissionError` built without a `winerror` -- which is every one this
-#: process constructs, and every one a test builds to simulate Windows on
-#: Linux -- has no such attribute at all, and `getattr(..., 5)` below reads
-#: that absence as `ERROR_ACCESS_DENIED` rather than as "not a sharing
-#: violation": on real Windows a `PermissionError` out of `os.replace` always
-#: carries one of these codes, so treating "no attribute" as the most common
-#: of them retries what a real failure would be, and lets a test written
-#: without Windows to hand exercise the same branch a real one takes.
+#: `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33). A real
+#: `PermissionError` out of `os.replace` on Windows always carries a code.
+#:
+#: What one built in Python carries depends on the platform, and this has to
+#: be read with both in mind. Off Windows, `OSError` has no `winerror`
+#: attribute at all, and `getattr(..., 5)` below reads that absence as
+#: `ERROR_ACCESS_DENIED`. On Windows the attribute always exists, and is
+#: `None` when nothing set it -- a `PermissionError(13, "...")` there is
+#: re-raised at once as not a sharing violation. A test simulating a sharing
+#: violation therefore sets `winerror` itself, which reads the same on both.
 _SHARING_ERRORS = frozenset({5, 32, 33})
 
 
