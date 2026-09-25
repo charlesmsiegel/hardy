@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -29,12 +30,20 @@ ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = ROOT / "tests" / "fixtures" / "lean" / "declaration-scan.json"
 
 
+def refused(read: Callable[[], object]) -> object:
+    """`read()`, or the refusal a scan that meets a repeated name gives instead."""
+    try:
+        return read()
+    except syntax.DuplicateDeclaration as error:
+        return {"refused": str(error)}
+
+
 def scan(source: str) -> dict[str, object]:
     """Every declaration-reading entry point's answer for `source`, as JSON values."""
     return {
         "declarations": {kind: list(names) for kind, names in syntax.declarations(source).items()},
-        "named": list(syntax.named_declarations(source)),
-        "statements": syntax.statements(source),
+        "named": refused(lambda: list(syntax.named_declarations(source))),
+        "statements": refused(lambda: syntax.statements(source)),
         "assumptions": [list(item) for item in syntax.assumptions(source)],
         "unreadable": list(syntax.unreadable_assumptions(source)),
         "has_holes": LeanTools.has_holes(source),

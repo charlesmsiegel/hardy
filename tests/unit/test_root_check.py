@@ -308,6 +308,23 @@ def test_an_unreadable_lean_source_is_reported_and_declaration_checks_withheld(t
     assert len(failures) == 1 and failures[0].startswith("up: lean source up/lean/Bad.lean does not read:")
 
 
+def test_a_theorem_name_declared_twice_is_an_unreadable_lean_source(tmp_path) -> None:
+    """Codex on #393: a quoted `theorem t : False` inside the real `t`'s
+    statement. Which copy is real cannot be told, so the source does not
+    read, rather than answering for a cited `t` from a scan that saw two."""
+    (tmp_path / "up" / "lean").mkdir(parents=True)
+    (tmp_path / "up" / "lean" / "Twin.lean").write_text(
+        "open Lean in\ntheorem t : let s : MacroM Syntax := `(command| theorem t : False := sorry); True := by\n"
+        "  intro _; trivial\n",
+        encoding="utf-8",
+    )
+    cited = item("C", "open", semantics=(("lean_declaration", "t"),))
+    LedgerStore(tmp_path / "up").append((cited,), expected_revision=0)
+    failures = check_root(tmp_path).failures
+    assert len(failures) == 1 and failures[0].startswith("up: lean source up/lean/Twin.lean does not read:")
+    assert "twice" in failures[0]
+
+
 def test_a_mirror_must_name_its_upstream_item_and_the_rest(tmp_path) -> None:
     a = item("A", "llm proved")
     problem(tmp_path, "up", a)

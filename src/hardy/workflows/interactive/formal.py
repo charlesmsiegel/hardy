@@ -554,6 +554,21 @@ class FormalWorkspaceService:
         # `declarations` strips comments and rescans the whole file, so it is
         # asked once per module rather than once per kind.
         found_in = {module: declarations(sources[module]) for module in modules}
+        # A name one module declares twice is asked about once below, and the
+        # one verdict would stand for both copies. Lean refuses a real repeat,
+        # so a copy is quoted and which statement was checked cannot be told.
+        # `_final_gates` refuses it in the saved file; a dependent rebuilt here
+        # never passed those gates, so it is refused here too.
+        for module, found in found_in.items():
+            named = (*found["theorem"], *found["lemma"])
+            repeated = [name for name in named if named.count(name) > 1]
+            if repeated:
+                return ToolResult(
+                    False,
+                    f"{module} declares `{repeated[0]}` twice; Lean refuses a real repeat, so one "
+                    "copy sits inside a syntax quotation, and the audit cannot tell which statement "
+                    "it would be checking. Rename the quoted declaration.",
+                )
         # Private declarations are left out because Lean will not let this probe
         # name one: it elaborates a file that *imports* the module, and a private
         # name is mangled out of reach from there. Asking anyway is an unknown

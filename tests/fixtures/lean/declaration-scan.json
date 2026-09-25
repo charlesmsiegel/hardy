@@ -309,11 +309,11 @@
     "lemma": [],
     "private": []
    },
-   "named": [
-    "HardySqrtSum"
-   ],
+   "named": {
+    "refused": "`HardySqrtSum` is declared twice in this file, so which statement is the real one cannot be told"
+   },
    "statements": {
-    "HardySqrtSum": "theorem HardySqrtSum : Irrational (Real.sqrt 2 + Real.sqrt 3)"
+    "refused": "`HardySqrtSum` is declared twice in this file, so which statement is the real one cannot be told"
    },
    "assumptions": [],
    "unreadable": [],
@@ -5333,9 +5333,11 @@
     "lemma": [],
     "private": []
    },
-   "named": [],
+   "named": {
+    "refused": "`t` is declared twice in this file, so which statement is the real one cannot be told"
+   },
    "statements": {
-    "t": "theorem t : let n`, which left the rest of the proposition outside what a writeup has to quote"
+    "refused": "`t` is declared twice in this file, so which statement is the real one cannot be told"
    },
    "assumptions": [],
    "unreadable": [],
@@ -8076,9 +8078,11 @@
     "lemma": [],
     "private": []
    },
-   "named": [],
+   "named": {
+    "refused": "`t` is declared twice in this file, so which statement is the real one cannot be told"
+   },
    "statements": {
-    "t": "theorem t : \"a` -- a malformed type shown as though it were the head --\n    so markers are found on the comment- and string-blanked text and the cut\n    applied to the raw at the same offset, which line-length-preserving\n    blanking makes valid."
+    "refused": "`t` is declared twice in this file, so which statement is the real one cannot be told"
    },
    "assumptions": [],
    "unreadable": [],
@@ -11524,16 +11528,11 @@
     ],
     "private": []
    },
-   "named": [
-    "to"
-   ],
+   "named": {
+    "refused": "`to` is declared twice in this file, so which statement is the real one cannot be told"
+   },
    "statements": {
-    "and": "theorem and a",
-    "in": "lemma in *results*, a question in *research*, a section in *documents*), so the fill colours can be told apart; * a",
-    "carrying": "theorem carrying `formal` evidence, for the \"F\" badge. It takes two transactions: a record cannot pin its own digest, since the digest would then have to include the reference that names it, and `validate_structure` refuses a reference to a version the snapshot does not hold. So the bare",
-    "is": "theorem is committed first and the evidenced revision pins that committed version; * four relations, `depends_on` and `formalizes` solid, `poses` and `documents` dashed (`panels/vocabulary.py`'s `_STYLE`, `panels/vocabulary.py:47-58`); * two stale edges, one on each of the two paths `graph()`'s own docstring distinguishes (`panels/record.py:84-92`). `rel-depends` (`depends_on`,",
-    "to": "theorem to the same lemma) is stale the *real-versions* way: `formalizes` is one of the two kinds `stale_artifacts()` does track, so this edge carries the lemma's exact pinned and current version numbers and the browser names them. Both point at the one",
-    "revision": "lemma revision below second transaction, after both relations pinned the version it had so one edit exercises both of the stale-sentence paths a browser-level check can reach; the previous, `depends_on`-only fixture left the real-versions path with no coverage above the Python unit tests. Imported inside the function, like `library_import` does, so a smoke server that is only serving the page does not pull the ledger package in."
+    "refused": "`to` is declared twice in this file, so which statement is the real one cannot be told"
    },
    "assumptions": [],
    "unreadable": [],

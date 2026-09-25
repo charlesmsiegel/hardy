@@ -45,6 +45,7 @@ from hardy.formal.syntax import (
     module_name,
     module_path,
 )
+from hardy.formal.syntax import DuplicateDeclaration as DuplicateDeclaration
 from hardy.formal.syntax import ImportCycle as ImportCycle
 from hardy.formal.syntax import WorkspacePathError as WorkspacePathError
 from hardy.formal.syntax import _scan as _scan

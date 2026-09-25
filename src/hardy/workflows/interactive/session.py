@@ -36,6 +36,7 @@ from hardy.formal.modules import ModuleIndex
 from hardy.formal.search import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from hardy.formal.workspace import (
     BuildFailure,
+    DuplicateDeclaration,
     ImportCycle,
     LeanWorkspace,
     WorkspacePathError,
@@ -2050,9 +2051,15 @@ class MathematicsSession:
             # module can refer to it, so nothing outside can owe a writeup for
             # it either.
             theorems = set(declared["theorem"]) - set(declared["private"])
-            found.update(
-                {name: text for name, text in statements(source).items() if name in theorems}
-            )
+            try:
+                stated = statements(source)
+            except DuplicateDeclaration:
+                # A name this module declares twice -- a quoted copy beside the
+                # real one -- has no statement anyone can say is the checked
+                # one. Nothing from the module is credited, and
+                # `_shared_names` puts the repeat in front of the writeup gate.
+                continue
+            found.update({name: text for name, text in stated.items() if name in theorems})
         return found
 
     def _saved_statements(self, sources: dict[str, str] | None = None) -> dict[str, str]:
@@ -2102,8 +2109,19 @@ class MathematicsSession:
             # the obligation asking the model to namespace one of them could
             # not be satisfied -- there was nothing wrong to fix.
             hidden = set(found["private"])
-            for name in (*found["theorem"], *found["lemma"]):
-                if name in hidden:
+            named = (*found["theorem"], *found["lemma"])
+            # A name the module repeats. Lean will not let one module declare
+            # a name twice, so the scan saw a copy inside a syntax quotation,
+            # and which statement is the real one cannot be told. Listed as
+            # the module twice, private or not -- a quoted `private theorem t`
+            # would otherwise take the real public `t` out of every count --
+            # and the writeup gate refuses over it.
+            for name in dict.fromkeys(name for name in named if named.count(name) > 1):
+                holders.setdefault(name, []).extend((module, module))
+                if name in found["theorem"]:
+                    theorems.add(name)
+            for name in named:
+                if name in hidden or named.count(name) > 1:
                     continue
                 if name in found["theorem"]:
                     # Which names a THEOREM answers to somewhere. A lemma is
@@ -2114,9 +2132,6 @@ class MathematicsSession:
                     # impossible to satisfy.
                     theorems.add(name)
                 modules = holders.setdefault(name, [])
-                # Once per module: Lean will not let one module declare a name
-                # twice, and counting a repeat as a collision would report a
-                # module as ambiguous with itself.
                 if module not in modules:
                     modules.append(module)
         # A lemma is still counted above, because a lemma in one module and a
