@@ -486,9 +486,11 @@ def _final_verifier(tmp_path, runner):
         'by trivial\nattribute [simp] Nat.add_comm',
         'by trivial\nend',
         '@[simp] theorem x : True := trivial',
-        # A quotation is data, but only where its extent is certain. A char
-        # literal or a guillemet name can hold a parenthesis Lean does not
-        # count, and trusting the count there would hide the command after it.
+        # Commands Batteries and Mathlib add, stepping out of the body as any
+        # other command does.
+        'by trivial\ndeclare_simp_like_tactic mySimp "my_simp " fun c => c',
+        'by trivial\nirreducible_def f : Nat := 1',
+        'by trivial\nalias foo := Nat.add_comm',
         # Code run during elaboration can print a report of its own choosing
         # on the audit line and exit, so the ways into it are refused too.
         'by\n  run_tac pure ()',
@@ -497,8 +499,15 @@ def _final_verifier(tmp_path, runner):
         'by exact eval% (2 = 2 : Bool)',
         'by exact eval%(2 = 2 : Bool)',
         'by trivial\n@[simp]',
+        # A quotation is read like the rest of the body. Where it ends is
+        # Lean's token table's to say, and a token the imports declare with an
+        # unbalanced parenthesis (`⟪(`, `⸨)`) ends it somewhere no count here
+        # can see, so blanking it could hide a real command. The cost is a
+        # body that builds quoted command syntax, which is refused.
         "by\n  have _ := `(term| '(')\n  trivial\n#exit ')'",
         'by\n  have _ := `(term| «(»)\n  trivial\n#exit )',
+        'by\n  have _ := `(command| axiom bad : False)\n  rfl',
+        'by\n  have _ := `(term| ⟪( 1)\n  trivial\nmacro_rules | `(#print axioms $x) => `(#eval 0)\n⸨)',
     ),
 )
 def test_a_body_that_issues_commands_is_refused_before_lean_runs(tmp_path, body) -> None:
@@ -595,8 +604,8 @@ def test_a_report_with_no_position_is_not_the_audit_lines(tmp_path) -> None:
         # A guillemet name is a name, and an array literal is not a command.
         'by\n  have h : «my lemma» = 1 := rfl\n  exact #[1, 2].size_pos',
         'by\n  -- #exit is only a remark here\n  have s : String := "#print axioms"\n  rfl',
-        # Syntax a proof builds and never runs, command syntax included.
-        'by\n  have _ := `(command| axiom bad : False)\n  rfl',
+        # Syntax a proof builds and never runs.
+        'by\n  have _ := `(tactic| simp)\n  rfl',
         # Names and numerals that only contain a command word.
         'by simp [h1def, x1theorem, Nat.end_of, mymacro_rules]',
         'by\n  have h : (0xdef : Nat) = 3567 := rfl\n  exact h ▸ rfl',

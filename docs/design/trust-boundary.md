@@ -215,11 +215,13 @@ may or may not open a comment. They do not say whether a string is interpolated
 either (`s!"{'"'}"`). Hardy scans every such reading at once: a character any
 reading calls code is scanned as code, a token boundary any reading makes is a
 boundary, and a `«...»` name is treated as one unit only where every reading
-opens it. A syntax quotation is skipped as data only where every reading agrees
-on its extent, and even then never by the declaration scan, and never by the
-hole scan in a source that declares tokens of its own (`notation`, `syntax`,
-`macro`, ...): a module's token such as `notation "⟪(" x => x` moves where
-Lean ends a quotation, and a parenthesis count cannot know it. So a `sorry`, a
+opens it. A syntax quotation is skipped as data only by the hole scan, only
+where every reading agrees on its extent, and never in a source that declares
+tokens of its own (`notation`, `syntax`, `macro`, ...): a module's token such
+as `notation "⟪(" x => x` moves where Lean ends a quotation, and a parenthesis
+count cannot know it. The declaration scans never let a quotation hide a
+declaration or scope keyword, and the proof-body gate reads a quotation like
+any other code. So a `sorry`, a
 `theorem` or `lemma` keyword, or a proof-body command that any one reading
 contains is found. The name a declaration gets cannot be taken from two
 readings at once, so a `namespace`, `section`, `end` or `mutual` that only some
@@ -306,11 +308,13 @@ This is a list of recognised forms, and each residual below still gets past it:
   token that runs through a character the lexer treats as certain -- one
   holding a `"`, or starting with identifier characters and ending in `'"` --
   can still make it read a literal or a comment where Lean reads code
-  (issue #192). The same holds for quotations: a token from the imports that
-  holds an unbalanced parenthesis would move where Lean ends one, which only a
-  source's *own* token declarations are checked for. Lean core's such tokens
-  (`date(`, `term(`, ...) close their own parenthesis; Mathlib's were not
-  checked.
+  (issue #192). The same holds for the quotations the hole scan skips as
+  data: a token from the imports that holds an unbalanced parenthesis would
+  move where Lean ends one, which only a source's *own* token declarations are
+  checked for. Lean core's such tokens (`date(`, `term(`, ...) close their own
+  parenthesis; Mathlib's were not checked. The proof-body gate skips no
+  quotation, so a command there is refused wherever a quotation ends, and a
+  body that builds quoted command syntax is refused with it.
 - A top-level `set_option` or `open` is not refused. Refusing it would break
   the ordinary `set_option ... in` and `open ... in` tactics, and neither
   command can add an axiom or answer Hardy's line-bound report.

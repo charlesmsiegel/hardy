@@ -33,7 +33,6 @@ from hardy.formal.lean import LeanDiagnostic, elaborate, render_theorem, scannab
 # one. Two implementations of the same job drifted, and only one was fixed.
 from hardy.formal.syntax import (
     Lexed,
-    blank_bounded_quotations,
     identifier_tokens,
     lex,
     numeral_ends,
@@ -74,7 +73,7 @@ COMMAND_WORDS = (
     "builtin_initialize", "declare_syntax_cat", "theorem", "lemma", "def", "abbrev", "instance",
     "example", "structure", "class", "inductive", "axiom", "opaque", "namespace", "section", "end",
     "universe", "variable", "attribute", "export", "mutual", "include", "omit", "run_tac",
-    "run_conv", "by_elab",
+    "run_conv", "by_elab", "declare_simp_like_tactic", "irreducible_def", "alias",
 )
 COMMAND_IN_BODY = re.compile(
     r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|eval%|(?:" + "|".join(COMMAND_WORDS) + r"))(?![\w'!?»])"
@@ -359,9 +358,11 @@ def proof_body_violation(body: str) -> str | None:
     open whether text is code or a literal (`xs[0]'"'`, `s!"{'"'}"`), a
     command any reading shows is refused. `strip_comments` rather than
     `scannable`: guillemet names stay, so `«sorryAx»` -- which `scannable`
-    blanks as a name -- is seen here. Syntax quotations are data and are
-    blanked too, but only where their extent is certain, and never one holding
-    a quote or a guillemet.
+    blanks as a name -- is seen here. Syntax quotations are read like the rest
+    of the body, not blanked as data: where one ends is the token table's to
+    say, and a token the imports declare with an unbalanced parenthesis ends
+    it where no count here can see, so blanking it could hide a real command.
+    A body that builds quoted command syntax is refused.
     """
     lexed = lex(body)
     if lexed.overflow is not None:
@@ -372,7 +373,7 @@ def proof_body_violation(body: str) -> str | None:
             "Hardy cannot tell where the name ends; write the char literal or name so it "
             "stands alone"
         )
-    visible, _ = blank_bounded_quotations(lexed, refuse="'«»")
+    visible = lexed.text
     found = COMMAND_IN_BODY.search(visible)
     command = found.group(1) if found is not None else _glued_command(visible, lexed)
     if command is not None:
