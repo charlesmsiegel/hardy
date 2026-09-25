@@ -308,11 +308,12 @@ def test_an_exchange_the_provider_never_reported_on_is_still_counted(tmp_path) -
     assert usage['reported']['cost_usd'] == 0
 
 
-def test_each_provider_report_is_counted_whole(tmp_path) -> None:
-    """The staged runtime's reports are per exchange, not session-to-date:
-    the recorded staged run's manifest stated $0.68 for five reports summing
-    to $0.78 because a report smaller than the last was read as an increment
-    or a restart. Two reports under one session id must simply add."""
+def test_a_report_smaller_than_its_sessions_last_is_counted_whole(tmp_path) -> None:
+    """The recorded staged run's manifest stated $0.68 for five reports summing
+    to $0.78: threads that shared one session id each reported their own
+    exchange, and a report smaller than the last was read as an increment. A
+    session-to-date figure cannot go backwards, so a smaller one is a restart
+    and counts whole."""
     _, _, runtime = _staged(tmp_path)
 
     for cost, read in ((0.06, 38443), (0.04, 38443)):
@@ -324,6 +325,76 @@ def test_each_provider_report_is_counted_whole(tmp_path) -> None:
     assert usage['exchanges'] == 2
     assert abs(usage['cost_usd'] - 0.10) < 1e-9
     assert usage['cache_read_tokens'] == 2 * 38443
+
+
+def _report(runtime, session, cost, tokens, **extra) -> None:
+    runtime._asked += 1
+    runtime._observe(
+        {'type': 'result', 'session_id': session, 'cost_usd': cost,
+         'usage': {'input_tokens': tokens, 'output_tokens': tokens // 10}, **extra}
+    )
+
+
+def test_climbing_reports_on_one_resumed_session_count_the_last_figure(tmp_path) -> None:
+    """A resumed thread's reports are session-to-date (`usage.py`): three
+    exchanges of $0.50 report 0.50, 1.00, 1.50. Adding them up gave $3.00, and
+    the error grew with the square of the attempts (#197)."""
+    _, _, runtime = _staged(tmp_path)
+
+    for step in (1, 2, 3):
+        _report(runtime, 'S', 0.5 * step, 1000 * step)
+
+    usage = runtime.usage
+    assert usage['exchanges'] == 3
+    assert abs(usage['cost_usd'] - 1.5) < 1e-9
+    assert usage['input_tokens'] == 3000 and usage['output_tokens'] == 300
+
+
+def test_interleaved_threads_are_each_differenced_against_their_own_last(tmp_path) -> None:
+    """Staged threads interleave -- formalizer, reader, formalizer again. One
+    ledger for all of them would read A, B, A as two restarts and count A's
+    second report whole; one ledger per session sums each session's last."""
+    _, _, runtime = _staged(tmp_path)
+
+    _report(runtime, 'A', 0.5, 1000)
+    _report(runtime, 'B', 0.3, 700)
+    _report(runtime, 'A', 1.2, 2500)
+
+    usage = runtime.usage
+    assert usage['exchanges'] == 3
+    assert abs(usage['cost_usd'] - 1.5) < 1e-9
+    assert usage['input_tokens'] == 3200
+    assert usage['reported']['cost_usd'] == 3
+
+
+def test_a_report_the_runtime_marks_not_cumulative_counts_in_full(tmp_path) -> None:
+    """When the CLI did not restore the session's running total -- another
+    session ran in the same directory in between -- the report states that
+    exchange alone, even where every figure happens to climb. `_note` says so,
+    and the ledger must not difference it away."""
+    _, _, runtime = _staged(tmp_path)
+
+    _report(runtime, 'A', 0.5, 1000)
+    _report(runtime, 'A', 0.7, 1500, cumulative=False)
+
+    usage = runtime.usage
+    assert abs(usage['cost_usd'] - 1.2) < 1e-9
+    assert usage['input_tokens'] == 2500
+
+
+def test_unreported_exchanges_pad_the_count_across_sessions(tmp_path) -> None:
+    """An exchange sent and never reported on is counted with nothing stated,
+    whichever sessions the reported ones came from."""
+    _, _, runtime = _staged(tmp_path)
+
+    _report(runtime, 'A', 0.5, 1000)
+    _report(runtime, 'B', 0.3, 700)
+    runtime._asked += 1
+
+    usage = runtime.usage
+    assert usage['exchanges'] == 3
+    assert usage['reported']['cost_usd'] == 2
+    assert usage['cache_read_tokens'] is None
 
 
 def test_a_cancelled_runtime_refuses_to_open_a_new_turn():

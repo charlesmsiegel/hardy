@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from hardy.agents.usage import Usage
+from hardy.agents.usage import Usage, combined
 
 
 def _ledger(**fields) -> Usage:
@@ -168,6 +168,67 @@ def test_a_restart_leaves_only_its_own_figures_as_baselines():
     assert reopened is not None and reopened.baselines == {"input_tokens": 100}
     after = reopened.record({"session_id": "S2", "usage": {"input_tokens": 200, "cache_read_input_tokens": 300}})
     assert (after.input_tokens, after.cache_read_tokens) == (1200, 50300)
+
+
+def test_a_report_marked_not_cumulative_is_counted_whole():
+    """`ClaudeAgentRuntime._note` marks a report `cumulative: False` when it
+    states no more than the exchange's own messages did -- so it carries no
+    earlier exchange, however its figures compare with the last report's."""
+    spent = (
+        Usage()
+        .record({"session_id": "t1", "cost_usd": 0.10, "usage": {"input_tokens": 100}})
+        .record({"session_id": "t1", "cost_usd": 0.25, "usage": {"input_tokens": 260}, "cumulative": False})
+    )
+    assert spent.cost_usd == pytest.approx(0.35)
+    assert spent.input_tokens == 360
+
+
+def test_a_climb_smaller_than_the_exchanges_own_messages_is_a_restart():
+    """Whichever way the CLI reports, a resumed exchange that restored the
+    running total states at least the old total plus what this exchange's own
+    messages moved. A report short of that did not restore, so it is this
+    exchange alone and counts whole -- differencing it would count less than
+    the messages the provider streamed."""
+    spent = (
+        Usage()
+        .record({"session_id": "t1", "cost_usd": 0.10,
+                 "usage": {"input_tokens": 100, "cache_read_input_tokens": 5_000}})
+        .record({"session_id": "t1", "cost_usd": 0.25,
+                 "usage": {"input_tokens": 260, "cache_read_input_tokens": 9_000},
+                 "exchange_usage": {"input_tokens": 260, "cache_read_input_tokens": 9_000}})
+    )
+    assert spent.cost_usd == pytest.approx(0.35)
+    assert (spent.input_tokens, spent.cache_read_tokens) == (360, 14_000)
+
+
+def test_a_restored_total_is_still_differenced_when_the_messages_agree():
+    """The same guard leaves a genuinely session-to-date report alone: it
+    climbs by at least what the exchange's messages moved."""
+    spent = (
+        Usage()
+        .record({"session_id": "t1", "cost_usd": 0.10,
+                 "usage": {"input_tokens": 100, "cache_read_input_tokens": 5_000}})
+        .record({"session_id": "t1", "cost_usd": 0.25,
+                 "usage": {"input_tokens": 260, "cache_read_input_tokens": 9_000}, "cumulative": True,
+                 "exchange_usage": {"input_tokens": 160, "cache_read_input_tokens": 4_000}})
+    )
+    assert spent.cost_usd == pytest.approx(0.25)
+    assert (spent.input_tokens, spent.cache_read_tokens) == (260, 9_000)
+
+
+def test_ledgers_combine_figure_by_figure_keeping_silence_silent():
+    """One ledger per provider session, summed for a run's record. A figure
+    no ledger stated stays None rather than becoming a summed 0."""
+    first = Usage().record({"session_id": "a", "cost_usd": 0.5, "usage": {"input_tokens": 10}})
+    second = Usage().record({"session_id": "b", "usage": {"input_tokens": 5, "output_tokens": 2}})
+    merged = combined([first.summary(), second.summary()])
+    assert merged["exchanges"] == 2
+    assert merged["cost_usd"] == 0.5 and merged["reported"]["cost_usd"] == 1
+    assert merged["input_tokens"] == 15 and merged["reported"]["input_tokens"] == 2
+    assert merged["output_tokens"] == 2
+    assert merged["cache_read_tokens"] is None
+    assert merged["total_tokens"] == 17
+    assert combined([]) == Usage().summary()
 
 
 def test_an_ordinary_continuation_is_not_mistaken_for_a_restart():
