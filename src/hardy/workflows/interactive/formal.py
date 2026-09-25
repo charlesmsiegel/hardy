@@ -16,6 +16,7 @@ from typing import Any
 from hardy.formal import audit
 from hardy.formal.lean import LeanTools
 from hardy.formal.workspace import (
+    ANY_NAME,
     IDENTIFIER,
     QUALIFIED_NAME,
     BuildFailure,
@@ -27,7 +28,9 @@ from hardy.formal.workspace import (
     dependents,
     internal_imports,
     module_name,
+    normalise_lean,
     safe_relative,
+    strip_comments,
     unreadable_assumptions,
     unreadable_structure,
 )
@@ -48,6 +51,109 @@ THEOREM_HEAD = re.compile(rf"^theorem\s+({QUALIFIED_NAME})(\.\{{[^}}]*\}})?\s*(.
 # this cannot read would put an unparseable `universe` command on the probe
 # file's own lines, and a parse error there takes every verdict with it.
 UNIVERSE_NAME = re.compile(rf"^{IDENTIFIER}$")
+# What would put a check on a second line, and so attribute Lean's answer about
+# one approved name to the next one's line.
+LINE_BREAKS = ("\n", "\r", "\x0b", "\x0c", " ", " ")
+
+
+def statement_checks(
+    modules: Sequence[str], approved: Mapping[str, str]
+) -> tuple[str, dict[int, str]] | None:
+    """A file asking Lean whether each approved constant has its approved type.
+
+    One `import` per module, a blank line, then one check per name:
+
+        example : (type_of% @_root_.X) = (<approved statement>) := rfl
+
+    `rfl` closes it exactly when the constant's type is definitionally the
+    approved statement, which is the question: an axiom whose type is that
+    statement up to definitional unfolding is the axiom the human approved,
+    and one whose type is `False` is not, whatever it is called. Returned with
+    the line each name's check sits on, because the answer is read by line.
+
+    The name is written from the root (`@_root_.`), so a declaration the tree
+    adds under the namespace cannot stand in for the approved constant. A
+    qualified name's check is elaborated inside its namespace, which is where
+    a minted `Papers.<key>` axiom was elaborated and where its statement names
+    a sibling constant by its leaf.
+
+    None when some statement cannot sit on one line -- a line break kept
+    inside a literal -- since its answer could then land on another name's
+    line. Comments are blanked first: a trailing `--` would swallow the rest
+    of the check.
+    """
+    lines: dict[int, str] = {}
+    checks: list[str] = []
+    first = len(modules) + 2
+    for index, (name, statement) in enumerate(approved.items()):
+        text = normalise_lean(strip_comments(statement, keep_strings=True))
+        if not text or any(mark in text for mark in LINE_BREAKS):
+            return None
+        if not re.fullmatch(QUALIFIED_NAME, name):
+            return None
+        check = f"example : (type_of% @_root_.{name}) = ({text}) := rfl"
+        components = re.findall(ANY_NAME, name)
+        if len(components) > 1:
+            namespace = ".".join(components[:-1])
+            check = f"namespace {namespace} {check} end {namespace}"
+        checks.append(check)
+        lines[first + index] = name
+    header = "".join(f"import {module}\n" for module in modules)
+    return f"{header}\n" + "\n".join(checks) + "\n", lines
+
+
+@dataclass(frozen=True)
+class StatementVerdict:
+    """What one statement-check elaboration established.
+
+    `mismatched` pairs each approved name Lean refused with what it said.
+    A non-empty `caveat` means nothing was established at all -- not a pass,
+    and not a mismatch either.
+    """
+
+    mismatched: tuple[tuple[str, str], ...] = ()
+    caveat: str = ""
+
+    @property
+    def established(self) -> bool:
+        return not self.caveat
+
+
+def judge_statement_checks(result: Any, lines: Mapping[int, str]) -> StatementVerdict:
+    """Read a `statement_checks` elaboration, fail-safe towards "not established".
+
+    A check line with no error on it is a pass only once Lean is known to have
+    reached it and finished, which is the asymmetry `refute.judge` reads its
+    probe with: a run that timed out, was stopped, overflowed, failed without
+    diagnostics, or failed somewhere other than a check line (an import, or an
+    error Lean could not place) establishes nothing. A `sorry` warning on a
+    check line establishes nothing either, since it closes any goal.
+    """
+    if (
+        getattr(result, "timed_out", False)
+        or getattr(result, "interrupted", False)
+        or getattr(result, "output_overflow", False)
+    ):
+        return StatementVerdict(caveat="the statement check did not finish")
+    diagnostics = tuple(getattr(result, "diagnostics", ()))
+    errors = [item for item in diagnostics if item.severity == "error"]
+    if any(item.line is None for item in errors):
+        return StatementVerdict(caveat="Lean reported an error the statement check could not place")
+    if any(item.line not in lines for item in errors):
+        return StatementVerdict(caveat="the statement check failed before it reached its own lines")
+    if not getattr(result, "ok", False) and not errors:
+        return StatementVerdict(
+            caveat="Lean failed the statement check without diagnostics Hardy could read"
+        )
+    if any(
+        item.line in lines and item.severity != "error" and "sorry" in item.message
+        for item in diagnostics
+    ):
+        return StatementVerdict(caveat="a statement check was closed by `sorry`")
+    mismatched: dict[str, str] = {}
+    for item in errors:
+        mismatched.setdefault(lines[item.line], " ".join(item.message.split()))
+    return StatementVerdict(mismatched=tuple(mismatched.items()))
 
 @dataclass(frozen=True)
 class SavePolicy:

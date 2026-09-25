@@ -107,3 +107,54 @@ def test_a_theorem_sharing_its_line_is_declared_and_its_axioms_are_read(tmp_path
     assert "sorryAx" not in reports["good"]
     assert "sorryAx" in reports["sneaky"]
     assert "sorryAx" in reports["after"]
+
+
+@pytest.mark.real_toolchain
+def test_an_approved_name_is_checked_against_the_type_lean_gives_it(tmp_path: Path):
+    """Issue #188, against the real elaborator. `run_cmd ... addDecl` declares a
+    real axiom that no textual scan sees; `#print axioms` names it, and only
+    asking Lean for its type tells `trusted : False` from the approved
+    `trusted : True`. The verbatim axiom and the minted-style namespaced pair,
+    whose statement names a sibling constant by its leaf, pass."""
+    from hardy.workflows.interactive.formal import judge_statement_checks, statement_checks
+
+    space = _workspace(tmp_path)
+    source = (
+        "import Lean\n"
+        "open Lean Elab Command in\n"
+        "run_cmd liftCoreM <| addDecl (.axiomDecl { name := `trusted, levelParams := [], "
+        "type := mkConst ``False, isUnsafe := false })\n"
+        "theorem main_result : 1 = 2 := (trusted).elim\n"
+        "axiom honest : 2 + 2 = 4\n"
+        "theorem uses_honest : 2 + 2 = 4 := honest\n"
+        "namespace Papers.Key\n"
+        "opaque foo : Nat → Nat\n"
+        "axiom leaf : ∀ n, foo n = foo n\n"
+        "end Papers.Key\n"
+        "theorem uses_leaf : Papers.Key.foo 0 = Papers.Key.foo 0 := Papers.Key.leaf 0\n"
+    )
+    _write(space, "Main.lean", source)
+    assert space.build_modules(["Main"]) is None
+    names = ("main_result", "uses_honest", "uses_leaf")
+    env = {"LEAN_PATH": str(tmp_path / "build")}
+    printed = _tools().run_source(
+        "import Main\n", env=env, audit=tuple(f"axioms {name}" for name in names)
+    )
+    assert printed.ok, printed.output
+    reports = {report.declaration: report.axioms for report in audit.parse(printed.report, names)}
+    # The scan saw no axiom; Lean did.
+    assert "trusted" in reports["main_result"]
+
+    approved = {
+        "trusted": "True",
+        "honest": "4 = 4",  # definitionally the declared `2 + 2 = 4`
+        "Papers.Key.foo": "Nat → Nat",
+        "Papers.Key.leaf": "∀ n, foo n = foo n",
+    }
+    built = statement_checks(["Main"], approved)
+    assert built is not None
+    checked = _tools().run_source(built[0], env=env)
+    verdict = judge_statement_checks(checked, built[1])
+
+    assert verdict.established, checked.output
+    assert [name for name, _ in verdict.mismatched] == ["trusted"], checked.output

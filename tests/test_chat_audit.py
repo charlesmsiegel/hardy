@@ -1221,3 +1221,68 @@ def test_a_scope_hardy_cannot_place_refuses_the_save(tmp_path: Path):
     assert not refusal["ok"]
     assert "scopes" in refusal["output"]
     assert not saved(tmp_path).exists()
+
+
+# --- An approved name must carry the approved statement (#188) -----------------------
+
+TRUSTED = dict(APPROVAL, formal_name="trusted", lean_statement="True")
+#: The issue's module: `run_cmd` adds a real axiom with no `axiom` keyword, so
+#: the textual gate has nothing to compare. `-- declares:` tells the stand-in
+#: the type that `addDecl` gives it; real Lean needs no telling.
+METAPROGRAMMED = (
+    "import Mathlib\n\n"
+    "open Lean Elab Command in\n"
+    "run_cmd liftCoreM <| addDecl (.axiomDecl { name := `trusted, levelParams := [], "
+    "type := mkConst ``False, isUnsafe := false })\n"
+    "-- declares: trusted : False\n\n"
+    "theorem HardyTarget : True := by exact True.intro -- axioms: trusted\n"
+)
+
+
+def _approve_then_save(tmp_path: Path, source: str):
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("request_assumption", dict(TRUSTED), "ask"),
+            call("save_lean", {"source": source}, "lean"),
+        ]),
+        approvals=[True],
+    )
+    chat.send("Assume it, then save.")
+    return results(tmp_path, "save_lean")[-1]
+
+
+def test_an_approved_name_declared_with_another_statement_is_refused(tmp_path: Path):
+    """The scan sees no `axiom`, the audit sees `trusted`, and `trusted` is
+    approved -- so the proof of `1 = 2` from `False` was graded `modulo`."""
+    refusal = _approve_then_save(tmp_path, METAPROGRAMMED)
+
+    assert not refusal["ok"]
+    assert "approved assumption `trusted` is declared with a different statement" in refusal["output"]
+    assert not saved(tmp_path).exists()
+    assert "Main" not in state(tmp_path).get("audit", {})
+
+
+def test_an_approved_axiom_declared_verbatim_still_grades_modulo(tmp_path: Path):
+    source = (
+        "import Mathlib\n\naxiom trusted : True\n\n"
+        "theorem HardyTarget : True := by exact True.intro -- axioms: trusted\n"
+    )
+    result = _approve_then_save(tmp_path, source)
+
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["Main"]["status"] == "modulo"
+
+
+def test_a_statement_check_without_an_answer_is_not_established(tmp_path: Path):
+    """Silence on a check line is only a pass when Lean is known to have
+    reached it. A run that said nothing readable established nothing."""
+    source = (
+        "import Mathlib\n\naxiom trusted : True\n-- checks: silent\n\n"
+        "theorem HardyTarget : True := by exact True.intro -- axioms: trusted\n"
+    )
+    refusal = _approve_then_save(tmp_path, source)
+
+    assert not refusal["ok"]
+    assert "not established" in refusal["output"]
+    assert not saved(tmp_path).exists()

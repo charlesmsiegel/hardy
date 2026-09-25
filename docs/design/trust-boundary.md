@@ -449,18 +449,33 @@ narrower than what was asked for.
   `app/terminal.py` returns false, including an unexpected exception from the
   prompting path itself and a prompt that could not be shown at all. A bug in
   the presentation must not be able to fail this gate open.
+- **An approved name is held to its approved statement by Lean.** The
+  declared-axiom gate in `_final_gates` compares an `axiom` the model writes
+  against the approved `lean_statement`, as text, and refuses a mismatch
+  before Lean runs. That is the fast first refusal and no longer the one that
+  holds: a scan sees only what is written as an `axiom`, and
+  `run_cmd ... addDecl (.axiomDecl ...)` declares a real one with no keyword
+  at all. So once `#print axioms` has answered, every approved name a report
+  carries is checked in a second elaboration over the same imports, one line
+  each, as
+  `example : (type_of% @_root_.X) = (<approved statement>) := rfl`, inside
+  `X`'s own namespace so a minted statement's sibling names resolve as they
+  did in `Papers.<key>`. The answer is read by line
+  (`judge_statement_checks` in `workflows/interactive/formal.py`): an error on
+  a name's line refuses the save with "approved assumption `X` is declared
+  with a different statement"; a run that timed out, was stopped, overflowed,
+  failed without diagnostics or failed off its own lines, or a line closed by
+  `sorry`, is "not established" and refuses the save too. Silence is never a
+  pass. `rfl` accepts a type definitionally equal to the approved statement,
+  which is the same axiom to the kernel. The same check covers an axiom that
+  arrives through an **imported file** Hardy did not write, and an approved
+  statement that drifts after a Mathlib or project upgrade: approval is no
+  longer a trust decision about a name alone. Like `#print axioms`, the check
+  is elaborated in an environment the audited modules can extend, so it holds
+  against an ordinary declaration and not against a module written to
+  subvert elaboration (see above).
 
-Two limits are worth naming. An axiom that arrives through an **imported file**
-Hardy did not write is approved by name alone. The declared-axiom gate compares
-an `axiom` the model writes in its own source against the approved
-`lean_statement`; an imported axiom declares nothing in Hardy's source, so the
-audit's refusal names it, `request_assumption` records the human's approval, and
-the audit thereafter matches the approved set by formal name only. The
-statement the human read at approval is never compared against the type the
-imported declaration actually has, so the approval is a trust decision about a
-name; re-printing every approved assumption and comparing it against the
-recorded statement is the drift-detection piece of the roadmap's audit-gate
-residue item ([roadmap](../roadmap.md)). A `sorry` in a shared file makes every
+Two limits are worth naming. A `sorry` in a shared file makes every
 dependent report `sorryAx`, which no human may approve. And **who approved an
 assumption is not recorded**: the durable record carries a status and no
 identity, so a versioned record cannot attribute a trust decision to a person.

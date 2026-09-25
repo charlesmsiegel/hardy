@@ -74,6 +74,22 @@ CHAR_LITERAL = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)|[^\\'])'
 DECLARES_AXIOM = re.compile(r"^\s*(?:axiom|opaque|constant)\s")
 # The lines that only open or close a scope, which carry nothing to check.
 SCOPING = re.compile(r"^\s*(?:namespace|end|section|open|universe|variable)\b")
+# What an `axiom` or `opaque` declares its constant to be, read over the
+# comment-blanked text and taken from the source at the same offsets.
+TYPED_DECLARATION = re.compile(r"(?m)^[ \t]*(?:axiom|opaque)\s+(«[^»\n]+»|\S+)\s*:\s*(.+?)\s*$")
+# `-- declares: trusted : False` stands in for a constant that metaprogramming
+# adds -- `run_cmd ... addDecl (.axiomDecl ...)` -- which this stand-in cannot
+# run. What an olean says each constant's type is travels as `-- typed:`.
+DECLARES = re.compile(r"(?m)--\s*declares:\s*(\S+)\s*:\s*(.+?)\s*$")
+TYPED = re.compile(r"(?m)^--\s*typed:\s*(\S+)\s*:=\s*(.+?)\s*$")
+# `-- checks: silent` makes a statement check over a module carrying it fail
+# without a word, which is how a test stands in for a run that answered nothing.
+SILENT = re.compile(r"--\s*checks:\s*silent")
+# Hardy's check that an approved constant has its approved type, one per line,
+# optionally elaborated inside the constant's namespace.
+CHECK = re.compile(
+    r"^(?:namespace \S+ )?example : \(type_of% @_root_\.(.+?)\) = \((.*)\) := rfl(?: end \S+)?$"
+)
 
 argv = sys.argv[1:]
 output = None
@@ -328,6 +344,17 @@ exports = [
     if name and not re.match(r"\s*private\b", chunk)
 ]
 visible: list[str] = []
+# What each constant's type is, as far as this stand-in was told: declared by
+# an `axiom`/`opaque` here or in an import, or by a `-- declares:` marker.
+marks = qualifiers(code)
+typed: dict[str, str] = {}
+for match in TYPED_DECLARATION.finditer(code):
+    prefix = prefix_at(marks, match.start())
+    name = match.group(1)
+    typed[f"{prefix}.{name}" if prefix else name] = source[match.start(2):match.end(2)]
+for match in DECLARES.finditer(source):
+    typed[match.group(1)] = match.group(2)
+silent = SILENT.search(source) is not None
 # Names two different imported modules both export. Lean's environment maps a
 # name to one declaration, so importing both is an error where the duplicate is
 # found -- not later, at whichever name the importer happens to mention. A
@@ -351,6 +378,9 @@ for line in source.splitlines():
         print(f"{path.name}:1:0: error: unknown module prefix '{name}'")
         raise SystemExit(1)
     carried = found.read_text(encoding="utf-8", errors="replace")
+    for match in TYPED.finditer(carried):
+        typed.setdefault(match.group(1), match.group(2))
+    silent = silent or SILENT.search(carried) is not None
     carried_holes = listed(HOLED_MARK, carried)
     if carried_holes:
         imports_holed = True
@@ -383,6 +413,19 @@ def answer(message: str, line: int) -> None:
         }, ensure_ascii=False))
     else:
         print(message)
+
+
+def error(message: str, line: int) -> None:
+    """Say `message` as an error at `line`, as `lean --json` would, or as plain text."""
+    if "--json" in argv:
+        print(json.dumps({
+            "fileName": str(path),
+            "pos": {"line": line, "column": 0},
+            "severity": "error",
+            "data": message,
+        }, ensure_ascii=False))
+    else:
+        print(f"{path.name}:{line}:0: error: {message}")
 
 
 def report_axioms() -> None:
@@ -441,6 +484,9 @@ def write_olean() -> None:
     trailer += f"-- holed: {', '.join(sorted(holed))}\n".encode() if holed else b""
     # And the names an importer may use, for the same reason.
     trailer += f"-- exports: {', '.join(exports)}\n".encode() if exports else b""
+    # And what each constant it declares is, for a statement check to compare.
+    trailer += "".join(f"-- typed: {name} := {kind}\n" for name, kind in typed.items()).encode()
+    trailer += b"-- checks: silent\n" if silent else b""
     output.write_bytes(OLEAN_PREFIX + trailer)
 
 
@@ -455,6 +501,39 @@ body = [
 if not body:
     report_axioms()
     raise SystemExit(0)
+
+
+def answer_checks(lines: list[tuple[int, re.Match[str]]]) -> None:
+    """Stand in for Hardy's `type_of%` checks, erring on the line that asked.
+
+    A constant whose type this stand-in was told is compared as text; one it
+    knows only from an `-- axioms:` marker is taken to have whatever type it
+    is asked about, because nothing told it otherwise -- a test whose subject
+    is a mismatch says so with `-- declares:`. Definitional unfolding is the
+    real toolchain's business.
+    """
+    if silent:
+        raise SystemExit(1)
+    failed = False
+    for number, match in lines:
+        name, statement = match.group(1), match.group(2)
+        known = typed.get(name)
+        if known is None and name not in axioms:
+            error(f"Unknown identifier `_root_.{name}`", number)
+            failed = True
+        elif known is not None and " ".join(known.split()) != " ".join(statement.split()):
+            error(f"Type mismatch: {known} is not {statement}", number)
+            failed = True
+    raise SystemExit(1 if failed else 0)
+
+
+checks = [
+    (number, CHECK.match(line.strip()))
+    for number, line in enumerate(source.splitlines(), start=1)
+    if line.strip() and not line.strip().startswith(("import ", "#", "--"))
+]
+if checks and all(match for _, match in checks):
+    answer_checks(checks)
 
 # Read over comment-blanked text, because a doc comment is not a declaration:
 # the generated module states each axiom under a `/-- ... -/` naming the paper,

@@ -8,7 +8,8 @@ with satisfied dependencies. **E1/E3/E4 have automated acceptance; E0/E2 remain 
 tested commit for each item and require clean tests before landing each branch.
 Sections X7-X9, F4, F5 and V4-V10, and the independent-verifier lead recorded under S2,
 come from retired design documents, plans, and reports: they describe designs those sources specified and
-nobody built. All of them are not started, and each states its own dependencies.
+nobody built. All of them are not started, except X7's drift detection (built 2026-09-25), and each
+states its own dependencies.
 
 This file is the source of truth for **planned work**. GitHub Issues are not the product backlog.
 
@@ -412,10 +413,11 @@ Do not rebuild already-shipped `run_procedure_digest`, environment pooling, or r
 
 **Deps:** A3; X0 for the save-gate order
 
-**Status:** Not started.
+**Status:** Drift detection implemented (2026-09-25, issue #188). At-audit approval,
+disclosure, registry-change invalidation and the re-approval flow are not started.
 
-The axiom audit gate ships with its fail-closed unattended path, but four pieces of
-its design remain unbuilt. **At-audit approval:** when the audit finds a non-standard
+The axiom audit gate ships with its fail-closed unattended path, but pieces of its
+design remain unbuilt. **At-audit approval:** when the audit finds a non-standard
 axiom nobody approved, interactive `save_lean` prompts the human through the existing
 `confirm` callback, tagged so the prompt reads as an audit finding rather than a model
 request. Approving records the axiom into the session assumptions with
@@ -435,12 +437,15 @@ outside TeX comments, in the shape of the existing registered-label check.
 **Registry-change invalidation:** `record_name` drops the stored verdict, because
 registering a declaration widens the audited set without re-auditing, and `save_latex`
 refuses to grade against a verdict that no longer describes the current registry.
-**Drift detection:** the same audit run re-prints every approved assumption and
-compares its statement against the one recorded at approval, so a mismatch after a
-Mathlib or project upgrade refuses the save and asks for the approval again; a name is
-not an identity. The related declared-axiom text match runs to the next top-level
-declaration rather than to end of line, so a statement split across lines cannot pass
-as an approved bare name.
+**Drift detection** is built: after `#print axioms` answers, the interactive audit
+asks Lean, one `type_of%` check per approved name a report carries, whether the
+constant's type is the recorded statement, so a mismatch refuses the save whether the
+axiom was declared by metaprogramming, reached through an import, or changed by a
+Mathlib or project upgrade, and a check with no readable answer is not established
+(issue #188). What remains of it is the re-approval flow: a mismatch refuses, and
+nothing yet offers the human the new statement to approve in its place. The related
+declared-axiom text match runs to the next top-level declaration rather than to end of
+line, so a statement split across lines cannot pass as an approved bare name.
 
 ## X8 — Attribution for an approved assumption — P2
 
