@@ -13,7 +13,7 @@ from typing import Any
 
 from hardy.algebra import tools as cas_tools
 from hardy.app import config as configuration
-from hardy.app.wiring import runtime_factory
+from hardy.app.wiring import session_runtime
 from hardy.formal import lakefile
 from hardy.formal import search as search_tools
 from hardy.workflows import layout
@@ -420,7 +420,7 @@ class ProjectOpener:
 
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model), config.backend),
+                session_runtime(config),
                 config.lean_command,
                 config.latex_command,
                 confirm,

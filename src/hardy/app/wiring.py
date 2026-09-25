@@ -51,6 +51,19 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
     return make
 
 
+def session_runtime(config: configuration.Config) -> Callable[..., Any]:
+    """The runtime factory a configuration asks for, provider budget included.
+
+    One place for every path that opens a session or a run -- the launch, the
+    batch runner, and the project opener behind `/project switch`, `/project
+    new` and every browser open -- so none of them can drop the configured
+    `provider_budget` again: built without it, `bind_spend_budget` hands the
+    session an unmetered factory while the configuration still reads as if a
+    ceiling applied.
+    """
+    return runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget)
+
+
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
     if getattr(config, "provider_budget", None) is not None:

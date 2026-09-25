@@ -455,6 +455,27 @@ def test_every_setting_but_the_problem_comes_from_the_live_session(opener, live)
     assert dataclasses.replace(config, project=moved.project) == moved
 
 
+def test_the_configured_provider_budget_meters_the_opened_session(opener, live, monkeypatch):
+    """`/project switch`, `/project new` and every browser open go through the
+    opener. Built without `spend_policy`, `bind_spend_budget` returned the
+    factory unbound and the new problem ran the `api` backend with no ceiling
+    while the configuration still carried one (#334)."""
+    from hardy.agents.spend_budget import SpendPolicy
+
+    policy = SpendPolicy.model_validate({"id": "p", "models": ["m"], "token_limit": 1000})
+    handed = {}
+    monkeypatch.setattr(
+        cli, "MathematicsSession", lambda problem, make_runtime, *a, **k: handed.update(make=make_runtime) or object()
+    )
+    budgeted = dataclasses.replace(live, model="m", backend="api", provider_budget=policy)
+
+    config, _ = opener("burnside", _decline, budgeted)
+
+    assert config.provider_budget is policy
+    assert handed["make"].spend_policy is policy
+    assert handed["make"].budget_backend == "api"
+
+
 # -- a switch nobody is waiting for -------------------------------------
 
 
