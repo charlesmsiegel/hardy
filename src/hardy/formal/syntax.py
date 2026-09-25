@@ -46,7 +46,7 @@ WRAPPER = r"(?:(?:set_option|open|attribute|universe|variable|section)\b[^\n]*?\
 # theorem t`. A scan that looked only at line starts never asked the audit about
 # such a theorem, never reserved it to a registered result, and never counted
 # it towards the writeup ratchet. Where a match may start is decided instead by
-# Lean's own token boundaries (`_identifier_tokens`), so `«a theorem b»`,
+# Lean's own token boundaries (`identifier_tokens`), so `«a theorem b»`,
 # `mytheorem` and `Foo.theorem` are names while `1theorem` -- a numeral and
 # then a keyword, to Lean -- is a declaration. `theorem«name»` needs no space.
 DECLARATION = re.compile(
@@ -297,7 +297,7 @@ def _component_end(text: str, index: int) -> int | None:
     return end
 
 
-def _identifier_tokens(text: str) -> dict[int, int]:
+def identifier_tokens(text: str) -> dict[int, int]:
     """Start -> end of every identifier or keyword token in already-stripped text.
 
     A small forward tokenizer rather than a lookbehind, because whether a
@@ -683,7 +683,7 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     """
     text = strip_comments(source)
     lines = text.splitlines()
-    marks = _scopes(text, _identifier_tokens(text))
+    marks = _scopes(text, identifier_tokens(text))
     starts = _line_starts(lines)
     found: list[tuple[str, str]] = []
     index = 0
@@ -737,7 +737,7 @@ def unreadable_assumptions(source: str) -> tuple[str, ...]:
     starts = _line_starts(lines)
     keyworded = {
         bisect_right(starts, start) - 1
-        for start, end in _identifier_tokens(stripped).items()
+        for start, end in identifier_tokens(stripped).items()
         if stripped[start:end] in {"axiom", "constant", "opaque"}
     }
     found: list[str] = []
@@ -852,7 +852,7 @@ def _scan(text: str, pattern: re.Pattern[str] = DECLARATION) -> list[tuple[re.Ma
     the ratchet, and the statement the document was checked against would not
     be the statement anyone had to write up.
     """
-    tokens = _identifier_tokens(text)
+    tokens = identifier_tokens(text)
     marks = _scopes(text, tokens)
     return [(match, _prefix_at(marks, match.start(2))) for match in _keyword_matches(text, pattern, tokens)]
 

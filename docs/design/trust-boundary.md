@@ -244,7 +244,9 @@ Where Hardy writes the file, it narrows that route without closing it. On the
 staged, batch and sketch paths the model supplies only the text after `:=`,
 and Hardy refuses, before Lean runs, a body containing the command forms it
 recognises: `#`-commands such as `#exit` and `#print`, `macro_rules`, `elab`,
-`syntax`, declarations and attributes. It also refuses the entry points it
+`syntax`, declarations and attributes. They are found where Lean's own tokens
+start, so a command glued to what precedes it (`rfl#exit`, `1macro_rules`) is
+refused as surely as one on a line of its own. It also refuses the entry points it
 knows into code run during elaboration (`run_tac`, `run_conv`, `by_elab`,
 `eval%`) and a body naming `«sorryAx»`. `hardy accept --recorded` rebuilds
 the verified source byte for byte from the frozen claim and its declarations,
