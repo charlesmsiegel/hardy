@@ -501,3 +501,102 @@ def test_a_journal_from_before_charging_still_audits_clean(tmp_path, budget_modu
     record = owner.summary()
     assert record["actual_tokens"] is None and record["derived_cost_usd"] is None
     assert module.budget_record_issues(tmp_path, record) == ()
+
+
+def _repro(module, **changes):
+    """The #190 issue's policy and request: a 633-token quote."""
+    value = module.SpendPolicy.model_validate({"id": "p", "models": ["m"], "token_limit": 10_000_000, **changes})
+    return value, {"model": "m", "max_tokens": 100, "messages": [{"role": "user", "content": "hi"}]}
+
+
+def _quoted(owner, reservation):
+    return next(json.loads(line)["payload"] for line in owner.path.read_text().splitlines()
+                if json.loads(line)["kind"] == "reserve" and json.loads(line)["payload"]["id"] == reservation)
+
+
+def test_a_partial_report_above_its_quote_is_a_reported_overrun(tmp_path, budget_module):
+    """#190 review I2: a gateway that omits the cache counters settles every
+    call as partial, and its stated counters are a floor under spend. 5000
+    input tokens against a 633 quote is an overrun whatever else is missing."""
+    module = budget_module
+    value, asked = _repro(module)
+    owner = module.SpendBudget(tmp_path / "provider-budget.jsonl", value)
+    reservation = owner.reserve(asked)
+    assert _quoted(owner, reservation)["tokens"] == 633
+    owner.settle(reservation, {"input_tokens": 5000, "output_tokens": 100})
+    with pytest.raises(module.SpendLimitReached, match="reservation_overrun"):
+        owner.reserve(asked)
+    with pytest.raises(module.SpendLimitReached, match="reservation_overrun"):
+        module.SpendBudget(tmp_path / "provider-budget.jsonl", value).reserve(asked)
+    record = owner.summary()
+    # Counted from complete reports only, as every earlier record was.
+    assert record["reservation_overruns"] == 0
+    assert module.budget_record_issues(tmp_path, record) == ()
+
+
+def test_a_partial_cost_above_its_quote_is_a_reported_overrun(tmp_path, budget_module):
+    module = budget_module
+    tariff = {"id": "t", "input_per_million": "1", "output_per_million": "100",
+              "cache_read_per_million": "1", "cache_write_per_million": "1"}
+    value, asked = _repro(module, tariff=tariff)
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", value)
+    reservation = owner.reserve(asked)
+    # Within the token quote, but 600 output tokens at $100/M is over the quoted cost.
+    assert _quoted(owner, reservation)["tokens"] >= 610
+    owner.settle(reservation, {"input_tokens": 10, "output_tokens": 600})
+    with pytest.raises(module.SpendLimitReached, match="reservation_overrun"):
+        owner.reserve(asked)
+
+
+@pytest.mark.parametrize("limit, admitted", [(700 + 633, True), (700 + 632, False)])
+def test_a_missing_output_count_is_charged_at_the_output_cap(tmp_path, budget_module, limit, admitted):
+    """#190 review M4: 600 input tokens stated, output unstated. The call may
+    have written up to its 100-token cap, so it is charged 700 -- not the 633
+    quote, which assumed the input estimate held."""
+    module = budget_module
+    value, asked = _repro(module, token_limit=limit)
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", value)
+    owner.settle(owner.reserve(asked), {"input_tokens": 600})
+    if admitted:
+        owner.reserve(asked)
+    else:
+        with pytest.raises(module.SpendLimitReached, match="token_limit"):
+            owner.reserve(asked)
+
+
+@pytest.mark.parametrize("reported", [None, {"input_tokens": 1, "output_tokens": 1}], ids=["unknown", "partial"])
+def test_unknown_and_partial_reports_are_charged_their_quoted_cost(tmp_path, budget_module, reported):
+    """#190 review M9: the cost side of the charge ends in `cost_limit`."""
+    from decimal import Decimal
+    module = budget_module
+    tariff = {"id": "t", "input_per_million": "2", "output_per_million": "4",
+              "cache_read_per_million": "1", "cache_write_per_million": "3"}
+    value, asked = _repro(module, token_limit=None, cost_limit_usd="1", tariff=tariff)
+    probe = module.SpendBudget(tmp_path / "probe.jsonl", value)
+    quoted = Decimal(_quoted(probe, probe.reserve(asked))["cost_usd"])
+    value, asked = _repro(module, token_limit=None, cost_limit_usd=str(2 * quoted), tariff=tariff)
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", value)
+    owner.settle(owner.reserve(asked), reported)
+    owner.reserve(asked)
+    with pytest.raises(module.SpendLimitReached, match="cost_limit"):
+        owner.reserve(asked)
+    assert owner.summary()["derived_cost_usd"] is None
+
+
+class Unanswered(Exception):
+    """A 429 with no response: not the SDK's rejection, and not proof of one."""
+
+    status_code = 429
+
+
+@pytest.mark.parametrize("error", [Unanswered("no response"), Rejected(True)], ids=["no-response", "bool-status"])
+def test_only_a_status_error_with_its_response_settles_at_zero(tmp_path, budget_module, error):
+    """#190 review M9: `_rejected`'s shape guard, at its edges."""
+    module = budget_module
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote()))
+    client = Client([error, usage()])
+    provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner)
+    with pytest.raises(type(error)):
+        provider.complete(system="", messages=[], specs=[])
+    with pytest.raises(module.SpendLimitReached, match="token_limit"):
+        provider.complete(system="", messages=[], specs=[])

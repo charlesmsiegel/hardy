@@ -2,11 +2,14 @@
 
 One owner reserves expected spend for all conversations in a run. Reservations
 are estimates, never provider billing guarantees. Exact reported token fields
-settle them. Admission never counts less than was spent: a call whose usage is
-missing or incomplete, and a reservation nobody settled (a crashed process, or
-another live one), stays charged at its quote -- or at what it did report, if
-that is more -- and later calls are admitted while the headroom covers them.
-Only a reported overrun forbids later calls outright. The journal survives
+settle them. A call whose usage is missing or incomplete, and a reservation
+nobody settled (a crashed process, or another live one), stays charged at
+least at its quote or at what it did report -- the output cap standing in
+for an output count it did not report -- whichever is more; later calls are
+admitted while the headroom covers them. The quote is itself an estimate, so
+this is not a promise never to count less than the provider billed. A
+reported overrun -- complete or partial counters, or their derived cost,
+above the quote -- forbids later calls outright. The journal survives
 restarts without turning an unfinished call into a refund. An explicit
 immutable tariff derives cost; it does not manufacture an invoice.
 """
@@ -84,7 +87,6 @@ class SpendBudget:
         self.guard = WriteGuard(self.path.parent, create=not read_only)
         self._read_only = read_only
         self._lock = threading.Lock()
-        self._active: set[str] = set()
         with self._lock, self._file_lock():
             if not self.path.exists() and not read_only:
                 self._append([], "start", {"schema": "hardy.provider-budget/v1", "policy": self.policy.model_dump(mode="json")})
@@ -167,22 +169,43 @@ class SpendBudget:
         return {"id": identifier, "reported": reported, "tokens": sum(reported.values()) if complete else None,
                 "cost_usd": str(cost) if cost is not None else None}
 
+    def _stated(self, settled: Mapping[str, Any]) -> tuple[int, Decimal]:
+        """What an incomplete report did state, and its tariff cost: a floor."""
+        reported = {key: value or 0 for key, value in settled["reported"].items()}
+        return sum(reported.values()), self.policy.tariff.cost(reported) if self.policy.tariff else Decimal(0)
+
     def _charged(self, quoted: Mapping[str, Any], settled: Mapping[str, Any]) -> tuple[int, Decimal]:
-        """What admission counts for one settled call: never less than was spent.
+        """What admission counts for one settled call.
 
         A complete report is the spend. An incomplete or missing one is the
         larger of the reservation's quote and what the counters that did
-        arrive already add up to -- the quote bounds a call the provider
-        stopped at `max_tokens`, and a partial report above it is spend that
-        was stated. Computed from the journal as it stands, so the schema is
-        unchanged and an old journal is charged the same way.
+        arrive add up to, with the call's output cap standing in for an
+        output count it did not state -- the call may have written that much
+        whatever its input came to. Computed from the journal as it stands, so
+        the schema is unchanged and an old journal is charged the same way.
         """
         if settled["tokens"] is not None:
             return settled["tokens"], Decimal(settled["cost_usd"] or "0")
         reported = {key: value or 0 for key, value in settled["reported"].items()}
-        partial = sum(reported.values())
+        if settled["reported"]["output_tokens"] is None:
+            reported["output_tokens"] = quoted["max_tokens"]
         derived = self.policy.tariff.cost(reported) if self.policy.tariff else Decimal(0)
-        return max(quoted["tokens"], partial), max(Decimal(quoted["cost_usd"]), derived)
+        return max(quoted["tokens"], sum(reported.values())), max(Decimal(quoted["cost_usd"]), derived)
+
+    def _overran(self, quoted: Mapping[str, Any], settled: Mapping[str, Any]) -> bool:
+        """Whether the provider reported more than was reserved.
+
+        Partial counters count: what they state is a floor under the call's
+        spend, so a floor above the quote is an overrun whatever else is
+        missing. The output cap `_charged` assumes for a missing output count
+        is not a report, and does not.
+        """
+        if settled["tokens"] is not None:
+            tokens = settled["tokens"]
+            cost = Decimal(settled["cost_usd"]) if self.policy.tariff else Decimal(0)
+        else:
+            tokens, cost = self._stated(settled)
+        return tokens > quoted["tokens"] or (self.policy.tariff is not None and cost > Decimal(quoted["cost_usd"]))
 
     def reserve(self, request: Mapping[str, Any]) -> str:
         if self._read_only:
@@ -196,7 +219,6 @@ class SpendBudget:
             raise ValueError("provider budget requires an actual positive output cap")
         serialized = json.dumps(dict(request), ensure_ascii=False, sort_keys=True, allow_nan=False)
         tokens, cost = self._quote(len(serialized), output)
-        tariff = self.policy.tariff
         with self._lock, self._file_lock():
             events = self._read()
             reservations, settled, _ = self._state(events)
@@ -214,11 +236,7 @@ class SpendBudget:
                 limit = "token_limit"
             elif self.policy.cost_limit_usd is not None and spent_cost + cost > self.policy.cost_limit_usd:
                 limit = "cost_limit"
-            elif any(value["tokens"] is not None and (value["tokens"] > reservations[k]["tokens"] or
-                     tariff and Decimal(value["cost_usd"]) > Decimal(reservations[k]["cost_usd"]))
-                     for k, value in settled.items()):
-                # Only a reported overrun: an unknown settlement is charged
-                # above, and says nothing about whether the quote held.
+            elif any(self._overran(reservations[k], value) for k, value in settled.items()):
                 limit = "reservation_overrun"
             if limit:
                 self._append(events, "deny", {"limit": limit})
@@ -226,27 +244,24 @@ class SpendBudget:
             identifier = str(uuid.uuid4())
             self._append(events, "reserve", {"id": identifier, "model": request["model"], "request_sha256": sha256(serialized.encode()).hexdigest(),
                 "input_characters": len(serialized), "max_tokens": output, "tokens": tokens, "cost_usd": str(cost)})
-            self._active.add(identifier)
             return identifier
 
     def settle(self, identifier: str, usage: Mapping | None) -> None:
         if self._read_only:
             raise ValueError("provider budget reader cannot settle")
-        with self._lock:
-            # Even a failed write ends our knowledge of this call. Its durable
-            # pending reservation must become unknown liability, not live credit.
-            self._active.discard(identifier)
-            with self._file_lock():
-                value = self._settlement(identifier, usage)
-                events = self._read()
-                reservations, settled, _ = self._state(events)
-                if identifier not in reservations:
-                    raise ValueError("unknown provider reservation")
-                if identifier in settled:
-                    if settled[identifier] != value:
-                        raise ValueError("provider reservation already has a different settlement")
-                    return
-                self._append(events, "settle", value)
+        # A failed write leaves the reservation pending in the journal, where
+        # admission charges it at its quote like any other.
+        with self._lock, self._file_lock():
+            value = self._settlement(identifier, usage)
+            events = self._read()
+            reservations, settled, _ = self._state(events)
+            if identifier not in reservations:
+                raise ValueError("unknown provider reservation")
+            if identifier in settled:
+                if settled[identifier] != value:
+                    raise ValueError("provider reservation already has a different settlement")
+                return
+            self._append(events, "settle", value)
 
     def summary(self) -> dict[str, Any]:
         with self._lock, self._file_lock():
