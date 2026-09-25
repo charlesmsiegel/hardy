@@ -31,6 +31,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from hardy.foundation.locking import replace_with_retry
 from hardy.workflows.layout import CAS_SCRATCH, Layout, LayoutError
 
 #: Under `<root>/.hardy/`, where a slug's checkpoints live.
@@ -129,7 +130,7 @@ def save(paths: Layout, *, name: str = "", now: datetime | None = None) -> Check
                                         encoding="utf-8")
         # The manifest is the last thing written and the rename the last
         # thing done: a checkpoint either exists whole or not at all.
-        os.replace(staging, home)
+        replace_with_retry(staging, home)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

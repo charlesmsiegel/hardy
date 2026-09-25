@@ -44,6 +44,7 @@ from typing import Any
 # The key-name rule a trajectory is already written under. Imported rather than
 # restated so one list decides what counts as a credential for both.
 from hardy.formal.audit import DeclarationStatus, declaration_status
+from hardy.foundation.locking import replace_with_retry
 from hardy.foundation.truncation import truncate
 from hardy.workflows.storage import SECRET_KEY
 from hardy.workflows.storage import _redact as redact_payload
@@ -1271,7 +1272,7 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
         # already had. So: the mode that is already there when replacing one,
         # and otherwise what an ordinary file would get under this umask.
         os.chmod(temporary, previous if previous is not None else _default_mode())
-        os.replace(temporary, path)
+        replace_with_retry(Path(temporary), path)
     except BaseException:
         # Including a cancellation: a half-written temporary left in the
         # workspace is litter the user did not ask for and would have to

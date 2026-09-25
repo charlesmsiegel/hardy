@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from hardy.foundation.locking import replace_with_retry
+
 
 class LayoutError(ValueError):
     """A slug that is not a single safe directory beneath the root."""
@@ -286,7 +288,7 @@ class WriteGuard:
                 if sync:
                     handle.flush()
                     os.fsync(handle.fileno())
-            os.replace(temporary, target)
+            replace_with_retry(Path(temporary), target)
             temporary = None
         finally:
             if temporary is not None:
@@ -322,7 +324,7 @@ class WriteGuard:
                 if sync:
                     handle.flush()
                     os.fsync(handle.fileno())
-            os.replace(temporary, target)
+            replace_with_retry(Path(temporary), target)
             temporary = None
         finally:
             if temporary is not None:

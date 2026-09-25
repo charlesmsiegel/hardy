@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -21,6 +20,7 @@ from hardy.evals.runner import _batch_runner, limits_for, run_set, source_revisi
 from hardy.evals.sweep import Baseline, environment_digest_of
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.formal.lean import Elaboration, elaborate, environment_identity
+from hardy.foundation.locking import replace_with_retry
 
 DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
@@ -359,7 +359,7 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         text = json.dumps(baseline.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
         tmp = args.out.with_suffix(args.out.suffix + ".tmp")
         tmp.write_text(text, encoding="utf-8", newline="\n")
-        os.replace(tmp, args.out)
+        replace_with_retry(tmp, args.out)
 
     swept = 0
 
