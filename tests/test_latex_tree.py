@@ -591,6 +591,16 @@ def test_a_newif_conditional_inside_a_false_branch_carries_its_own_fi() -> None:
     assert unreached_fragments(sources) == ["x.tex", "y.tex"]
 
 
+def test_an_iftex_conditional_inside_a_false_branch_carries_its_own_fi() -> None:
+    sources = {
+        "writeup.tex": "\\iffalse \\ifpdftex a\\fi \\input{x}\\fi\\input{a}",
+        "a.tex": "x",
+        "x.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex"]
+
+
 def test_an_input_after_a_closed_iffalse_is_still_reached() -> None:
     """The false branch ends at its own matching `\\fi` -- ordinary text
     after that `\\fi` is executed normally, `\\input` included."""

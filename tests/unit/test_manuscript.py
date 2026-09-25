@@ -279,3 +279,28 @@ def test_the_inventory_and_the_writeup_scan_share_one_predicate() -> None:
     from hardy.literature import manuscript
 
     assert manuscript.opens_conditional is syntax.opens_conditional
+
+
+def test_an_iftex_conditional_inside_iffalse_carries_its_own_fi() -> None:
+    """`\\ifpdftex` is the `iftex` package's conditional. Not counted, its `\\fi`
+    closed the `\\iffalse` early and recorded the label the branch hides."""
+    found = inventory({"a.tex": "\\iffalse \\ifpdftex a\\fi \\label{hidden}\\fi \\label{shown}"})
+
+    assert _labels(found) == ["shown"]
+    assert not [item for item in found.findings if item.kind == "stray_conditional_end"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # The `iftex` package's engine tests.
+        "ifpdftex", "ifPDFTeX", "ifXeTeX", "ifLuaTeX", "ifetex", "ifeTeX",
+        "ifptex", "ifuptex", "ifvtex", "ifluahbtex",
+        # Engine primitives beyond TeX and e-TeX.
+        "ifpdfabsnum", "ifpdfabsdim", "ifabsnum", "ifabsdim", "ifprimitive", "ifcondition",
+    ],
+)
+def test_engine_and_iftex_conditionals_are_conditionals(name) -> None:
+    from hardy.documents.syntax import opens_conditional
+
+    assert opens_conditional(name)
