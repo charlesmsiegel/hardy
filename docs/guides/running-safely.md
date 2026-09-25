@@ -30,10 +30,13 @@ What Hardy controls:
   staged `--backend codex` run serves them from a Hardy-owned MCP subprocess
   instead, still Hardy's code, but across a process seam, on the same
   unconfined host.
-- **Claude Code's own tools are refused.** `Bash`, `Read`, `Write`, `Edit`,
-  `Glob`, `Grep`, `WebFetch`, `WebSearch`, and the rest are disallowed
-  outright, and the permission callback refuses anything that is not a
-  Hardy tool, by default.
+- **Claude Code's own tools are absent, not merely refused.** The runtime
+  passes `tools=[]`, so the CLI's whole built-in set -- `Bash`, `Read`,
+  `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`, `WebSearch`, and the rest -- is
+  never offered to the model. `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
+  `WebFetch`, and `WebSearch` are additionally disallowed by name, and both the
+  permission callback and a `PreToolUse` hook refuse anything that is not a
+  Hardy tool, by default, whatever still arrives.
 - **No inherited configuration.** Your Claude Code settings and
   `CLAUDE.md` files are not read. An interactive session reads exactly one
   project file, `AGENTS.md` at the project root or `HARDY.md` in its
@@ -46,9 +49,9 @@ What Hardy controls:
 - **No extension surface.** Nothing can register a tool, intercept a tool
   result, or supply a summary of the session.
 - **A faithfulness reader with no tools.** On the default Claude backend the
-  independent reader is offered no tools at all and the runtime refuses
-  filesystem access by default; under `--backend codex` that isolation
-  cannot be enforced.
+  independent reader is offered no tools at all -- the built-in set is empty,
+  not merely disallowed -- and the runtime refuses filesystem access by
+  default; under `--backend codex` that isolation cannot be enforced.
 
 All of that is an honesty boundary, not a security boundary. It governs
 what the model can reach through the SDK and what a run's record can

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
 from hardy.agents import claude as claude_runtime
+from hardy.foundation.values import ToolResult
 
 
 class ResultMessage:
@@ -93,6 +95,36 @@ def test_the_permission_callback_is_not_shadowed_by_an_allowlist():
     assert options.setting_sources == []
 
 
+def test_no_builtin_tools_are_offered():
+    """`can_use_tool` is only consulted for a tool whose own check answers
+    "ask" -- an auto-allowed built-in (`TaskCreate`, `TodoWrite`, ...) never
+    reaches it. An empty `tools` list is what keeps the built-ins out of the
+    conversation at all, and `strict_mcp_config` keeps out any MCP server this
+    runtime did not itself register."""
+    options = runtime()._options()
+    assert options.tools == []
+    assert options.strict_mcp_config is True
+    assert options.hooks["PreToolUse"]
+
+
+def test_pre_tool_use_hook_allows_hardy_tools():
+    out = asyncio.run(runtime()._gate({"tool_name": "mcp__hardy__check_lean", "tool_input": {}}, "id-1", None))
+    assert out == {}
+
+
+def test_pre_tool_use_hook_denies_non_hardy_tools():
+    """The belt-and-braces gate for whatever the built-in `tools=[]` and the
+    `can_use_tool` callback both miss: a tool call that still reaches
+    PreToolUse is refused there too, and recorded so the transcript can say
+    what the model tried."""
+    seen: list[dict] = []
+    out = asyncio.run(runtime(observe=seen.append)._gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert {"type": "refused_tool", "name": "TaskCreate", "via": "hook"} in seen
+
+
 def test_a_stalled_exchange_is_cut_off_at_the_wall_clock_budget():
     """`max_turns` is the SDK's to enforce, but nothing there bounds a stalled
     request, so the deadline is Hardy's to keep."""
@@ -131,3 +163,36 @@ def test_a_new_conversation_opens_under_a_session_id_hardy_chose():
     assert fresh.session_id and fresh.resume is None
     assert other.session_id and other.session_id != fresh.session_id
     assert resumed.resume == "existing-session" and resumed.session_id is None
+
+
+@pytest.mark.live
+def test_asking_the_live_model_to_call_a_builtin_gets_no_result(tmp_path):
+    """The reproduction in issue #320. With no Hardy tools registered, ask a
+    real Claude Code CLI to call `TaskCreate`: `tools=[]` and the two
+    default-deny gates must mean it never completes, and that the refusal is
+    on the record. Off by default -- needs a logged-in CLI and spends a real
+    turn -- set HARDY_CLAUDE_LIVE=1 to run it."""
+    if not os.environ.get("HARDY_CLAUDE_LIVE"):
+        pytest.skip("set HARDY_CLAUDE_LIVE=1 to run a real Claude Code turn")
+
+    seen: list[dict] = []
+    live = claude_runtime.ClaudeAgentRuntime(
+        "claude-haiku-4-5",
+        system_prompt=(
+            "Call the TaskCreate tool once with subject 'probe' and description "
+            "'probe', then reply with the comma-separated names of every tool "
+            "available to you."
+        ),
+        specs=[],
+        dispatch=lambda name, args: ToolResult(True, ""),
+        cwd=tmp_path,
+        observe=seen.append,
+        max_turns=4,
+        wall_seconds=120,
+    )
+    events = list(live.stream("Go."))
+
+    completed = [event for event in events if event.kind == "tool_result" and event.name == "TaskCreate"]
+    assert not completed, "a Claude Code built-in must never complete as a tool call"
+    refused = [event for event in seen if event["type"] == "refused_tool" and event["name"] == "TaskCreate"]
+    assert refused, "the refusal must be on the record"

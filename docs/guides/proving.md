@@ -160,9 +160,12 @@ was actually worth on the backend that produced it.
 What each backend records there differs, and neither backend is
 misrepresented:
 
-- On `claude`, the reader is offered no tools at all, which is what makes
-  the independence real rather than aspirational, and `reviewer_isolation`
-  records `tools-refused`.
+- On `claude`, the reader is offered no tools at all -- the runtime passes
+  `tools=[]`, so the CLI's own built-ins are absent from the conversation
+  too, not only disallowed by name -- and a `PreToolUse` hook and the
+  permission callback both refuse by default whatever still arrives. That is
+  what makes the independence real rather than aspirational, and
+  `reviewer_isolation` records `tools-refused`.
 - On `codex`, the reader is given an empty working directory outside the
   run tree and the narrowest sandbox that SDK offers, but that sandbox's
   read-only mode permits reads anywhere and carries no readable-root
