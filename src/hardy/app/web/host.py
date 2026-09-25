@@ -432,12 +432,23 @@ class WebHost:
             })
         return rows
 
-    def _busy(self) -> str | None:
-        """The refusal text for whatever owns the session, or None. Loop thread only."""
+    def _busy(self, *, jobs: bool = False) -> str | None:
+        """The refusal text for whatever owns the session, or None. Loop thread only.
+
+        `jobs` also counts a detached background job, for work that writes
+        what such a job writes -- the Lean tree, the build cache, the record.
+        A job is neither a turn nor a command, yet its thread holds the
+        session's tool gate until it finishes (issue #349). Opening or closing
+        a project does not ask: closing the session cancels its jobs and
+        waits for them, which is what leaving a problem is meant to do.
+        """
         if self._state is not None and self._state.turn_running:
             return "A turn is still running. Wait for it to finish."
         if self._commands_running:
             return "A command is still running. Wait for it to finish."
+        running = getattr(getattr(self.session, "jobs", None), "running", None) if jobs else None
+        if running is not None and running():
+            return "A background job is still writing to this problem. Wait for it to finish."
         return None
 
     # -- opening ---------------------------------------------------------
@@ -652,12 +663,12 @@ class WebHost:
         """Run `fn` on the calling thread while the session is held as if a command ran.
 
         For work the HTTP layer owns rather than a handler -- importing a
-        library, say -- which still must not interleave with a turn. `fn` runs
-        off the loop on purpose: it may block for as long as it likes without
-        stalling the stream.
+        library, say -- which still must not interleave with a turn, a command
+        or a detached background job. `fn` runs off the loop on purpose: it
+        may block for as long as it likes without stalling the stream.
         """
         def begin() -> None:
-            reason = self._busy()
+            reason = self._busy(jobs=True)
             if reason:
                 raise Busy(reason)
             self._commands_running += 1
@@ -667,6 +678,9 @@ class WebHost:
             self._commands_running -= 1
             self.emit({"type": "state", **self.state()})
             self.emit({"type": "changed"})
+            # A job that finished meanwhile looked for a turn to start while
+            # this held the session, and found none; look again now.
+            self._after_turn()
 
         self._call(begin)
         try:
@@ -677,8 +691,8 @@ class WebHost:
     def save_file(self, path: str, source: str) -> dict[str, Any]:
         """One editor save, held exclusive, reported as the session reported it.
 
-        `run_exclusive` raises `Busy` while a turn is in flight, which the
-        boundary turns into 409 -- the same answer `/api/open` and
+        `run_exclusive` raises `Busy` while a turn, a command or a detached
+        job is in flight, which the boundary turns into 409 -- the same answer `/api/open` and
         `/api/library` give, so a browser that tried to save mid-turn learns
         what it would have learned from any other mutation.
 

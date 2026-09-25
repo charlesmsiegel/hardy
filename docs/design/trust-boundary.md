@@ -102,16 +102,21 @@ Controlled:
   twice, at the boundary (`panels.workspace.confine`, which refuses `..`, an
   absolute path, and a symlink at any component) and again in the workspace
   (`safe_relative`), because the boundary is where a path stops being
-  arbitrary text from a browser. The save is refused while a turn is in
-  flight -- `WebHost.run_exclusive` raises `Busy`, answered as 409 -- so an
-  edit cannot interleave with a turn's own writes. And the model's
+  arbitrary text from a browser. The save is refused while a turn, a
+  command or a detached background job is in flight -- `WebHost.run_exclusive`
+  raises `Busy`, answered as 409 -- so an edit cannot interleave with a
+  turn's own writes or a job's. The session's `save_authored` and
+  `check_authored` also take the tool gate every model tool call passes
+  through, which a detached job's thread holds until it finishes, so a
+  caller that reaches them without the host still waits for the job rather
+  than writing the Lean tree and build cache beside it. And the model's
   save-streak brake does not apply: that brake refuses a fourth consecutive
   failed save of a path until `check_lean` passes, and its sentence is
   addressed to a caller in a loop, cleared at the start of each model turn. A
   person's saves belong to no turn, so counted there they would accumulate
   for the session and lock a file until a model happened to take one. The
   editor therefore calls the unbraked save, which skips the loop-breaker and
-  nothing else.
+  nothing else: not the tool gate.
 
   Every save writes one transcript line, `author="hardy"` and
   `starts_turn: False`, naming the file and whether the save went through.
