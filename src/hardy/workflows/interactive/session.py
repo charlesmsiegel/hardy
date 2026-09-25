@@ -1931,7 +1931,9 @@ class MathematicsSession:
         proof resting on `trusted : False` as `modulo`. So every approved name
         a report carries is checked by Lean, over the same imports the report
         came from. The textual gate in `_final_gates` stays in front as the
-        cheap first refusal; this is the one that holds.
+        cheap first refusal. The check runs in the audited modules' own
+        environment, so it compares against what the approved text means
+        there, which a module can change (`statement_checks` says how).
 
         A second elaboration, and only when a report names an approved
         assumption: a check cannot share the `#print axioms` file, because
@@ -1955,8 +1957,8 @@ class MathematicsSession:
                 self.lean.run_source(built[0], env={"LEAN_PATH": self._lean_path(space)}),
                 built[1],
             )
-            if built is not None
-            else StatementVerdict(caveat="an approved statement does not fit on one line")
+            if not isinstance(built, str)
+            else StatementVerdict(caveat=built)
         )
         if not verdict.established:
             return ToolResult(

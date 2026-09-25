@@ -517,7 +517,22 @@ def test_a_statement_that_cannot_sit_on_one_line_is_not_checked() -> None:
     statement that spills onto a second line cannot be checked at all."""
     formal = importlib.import_module("hardy.workflows.interactive.formal")
 
-    assert formal.statement_checks(["Main"], {"odd": 'f "a\nb" = 1'}) is None
+    refused = formal.statement_checks(["Main"], {"odd": 'f "a\nb" = 1'})
+
+    assert isinstance(refused, str)
+    assert "`odd`" in refused and "one line" in refused
+
+
+def test_a_name_that_is_not_a_lean_name_is_refused_for_that_reason() -> None:
+    """Failing closed either way, but the reason given has to be the true one:
+    a malformed name is not a statement that spilled onto a second line."""
+    formal = importlib.import_module("hardy.workflows.interactive.formal")
+
+    refused = formal.statement_checks(["Main"], {"not a name": "True"})
+
+    assert isinstance(refused, str)
+    assert "`not a name`" in refused and "qualified" in refused
+    assert "one line" not in refused
 
 
 def test_a_clean_check_establishes_every_statement() -> None:

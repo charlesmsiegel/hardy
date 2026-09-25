@@ -58,7 +58,7 @@ LINE_BREAKS = ("\n", "\r", "\x0b", "\x0c", " ", " ")
 
 def statement_checks(
     modules: Sequence[str], approved: Mapping[str, str]
-) -> tuple[str, dict[int, str]] | None:
+) -> tuple[str, dict[int, str]] | str:
     """A file asking Lean whether each approved constant has its approved type.
 
     One `import` per module, a blank line, then one check per name:
@@ -77,20 +77,26 @@ def statement_checks(
     a minted `Papers.<key>` axiom was elaborated and where its statement names
     a sibling constant by its leaf.
 
-    None when some statement cannot sit on one line -- a line break kept
-    inside a literal -- since its answer could then land on another name's
-    line. Comments are blanked first: a trailing `--` would swallow the rest
-    of the check.
+    What this establishes is the constant's type against the approved text
+    *as elaborated in the audited modules' environment*: an instance, a
+    notation or a shadowing declaration there changes what the text means on
+    both sides alike, and passes. `docs/design/trust-boundary.md` states it.
+
+    A reason, instead of a file, when some name cannot be checked: its
+    statement cannot sit on one line -- a line break kept inside a literal --
+    so its answer could land on another name's line, or the name is not a
+    qualified Lean name, so it cannot be written after `@_root_.`. Comments
+    are blanked first: a trailing `--` would swallow the rest of the check.
     """
     lines: dict[int, str] = {}
     checks: list[str] = []
     first = len(modules) + 2
     for index, (name, statement) in enumerate(approved.items()):
         text = normalise_lean(strip_comments(statement, keep_strings=True))
-        if not text or any(mark in text for mark in LINE_BREAKS):
-            return None
         if not re.fullmatch(QUALIFIED_NAME, name):
-            return None
+            return f"the approved name `{name}` is not a qualified Lean name Hardy can check"
+        if not text or any(mark in text for mark in LINE_BREAKS):
+            return f"the approved statement of `{name}` does not fit on one line"
         check = f"example : (type_of% @_root_.{name}) = ({text}) := rfl"
         components = re.findall(ANY_NAME, name)
         if len(components) > 1:
