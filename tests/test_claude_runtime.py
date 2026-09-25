@@ -12,10 +12,10 @@ from hardy.foundation.values import ToolResult
 class ResultMessage:
     """`_note` dispatches on the SDK's class name, so the fake must wear it."""
 
-    def __init__(self, *, is_error=False, subtype=None, num_turns=3, cost=None, usage=None):
+    def __init__(self, *, is_error=False, subtype=None, num_turns=3, cost=None, usage=None, model_usage=None):
         self.content, self.session_id = [], "thread-9"
         self.is_error, self.subtype, self.num_turns = is_error, subtype, num_turns
-        self.total_cost_usd, self.usage = cost, usage
+        self.total_cost_usd, self.usage, self.model_usage = cost, usage, model_usage
 
 
 def runtime(**kwargs) -> claude_runtime.ClaudeAgentRuntime:
@@ -68,6 +68,7 @@ def test_the_result_event_carries_what_the_exchange_cost():
         # session-to-date report from one exchange's by.
         "exchange_usage": None,
         "cumulative": None,
+        "model_usage": None,
     }]
 
 
@@ -123,6 +124,43 @@ def test_each_exchange_sums_only_its_own_messages():
     second = [event for event in seen if event["type"] == "result"][1]
     assert second["exchange_usage"] == {"input_tokens": 4}
     assert second["cumulative"] is True
+
+
+def test_model_usage_is_summed_over_models_under_the_usage_names():
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    per_model = {
+        "claude-haiku-4-5": {"inputTokens": 10, "outputTokens": 5, "cacheReadInputTokens": 100,
+                             "cacheCreationInputTokens": 0, "costUSD": 0.01, "webSearchRequests": 0},
+        "claude-sonnet-4-5": {"inputTokens": 1, "outputTokens": 2, "cacheReadInputTokens": True},
+    }
+    _exchange(live, result=ResultMessage(model_usage=per_model))
+    result = next(event for event in seen if event["type"] == "result")
+    assert result["model_usage"] == {"input_tokens": 11, "output_tokens": 7, "cache_read_input_tokens": 100,
+                                     "cache_creation_input_tokens": 0}
+
+
+def test_the_interactive_ledger_counts_the_documented_cli_once():
+    """End to end through `_note` into the ledger interactive and batch keep
+    (#197 review I1): per-turn `usage` beside a running-total cost and
+    `modelUsage`. The cost was right before the guard and still is."""
+    from hardy.agents.usage import Usage
+
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    for n in (1, 2, 3):
+        _exchange(
+            live,
+            AssistantMessage(f"m{n}", {"input_tokens": 1000, "output_tokens": 100}),
+            result=ResultMessage(cost=0.5 * n, usage={"input_tokens": 1000, "output_tokens": 100},
+                                 model_usage={"m": {"inputTokens": 1000 * n, "outputTokens": 100 * n}}),
+        )
+    spent = Usage()
+    for event in seen:
+        if event["type"] == "result":
+            spent = spent.record(event)
+    assert spent.cost_usd == pytest.approx(1.5)
+    assert (spent.input_tokens, spent.output_tokens) == (3000, 300)
 
 
 def test_a_provider_that_reports_no_usage_reports_none_and_not_zero():
@@ -257,18 +295,20 @@ def test_asking_the_live_model_to_call_a_builtin_gets_no_result(tmp_path):
 
 
 @pytest.mark.live
-def test_resumed_usage_reports_are_never_undercounted_by_the_ledger(tmp_path):
+def test_resumed_usage_reports_are_counted_once_by_the_ledger(tmp_path):
     """Issue #197: what the CLI reports across resumed exchanges, and that the
-    ledger never counts less than an exchange's own messages moved, whichever
-    way it reports.
+    ledger counts each exchange once -- neither less nor more -- whichever way
+    it reports.
 
-    Thread A asks twice back to back (the CLI's last-seen session, which the
-    CLI source says it restores), thread B asks in the same directory, then A
-    asks again (not the last-seen session, which it says it does not). Each
-    report is kept per session in its own `Usage`, as the staged runtime does.
-    `-s` prints what the CLI actually did, for the decision record. Off by
-    default -- needs a logged-in CLI and spends four real turns -- set
-    HARDY_CLAUDE_LIVE=1 to run it."""
+    Thread A asks twice back to back, thread B asks in the same directory,
+    then A asks again. Each report is kept per session in its own `Usage`, as
+    the staged runtime does. For every exchange whose report is recognisably
+    one exchange's figures, or recognisably the session's running total (the
+    evidence that shares its lifecycle climbed by exactly the exchange's own
+    streamed messages), the ledger must add exactly that exchange: so an
+    overcount fails here, as well as an undercount. `-s` prints what the CLI
+    did, for the decision record. Off by default -- needs a logged-in CLI and
+    spends four real turns -- set HARDY_CLAUDE_LIVE=1 to run it."""
     if not os.environ.get("HARDY_CLAUDE_LIVE"):
         pytest.skip("set HARDY_CLAUDE_LIVE=1 to run real Claude Code turns")
     from hardy.agents.usage import Usage
@@ -290,20 +330,59 @@ def test_resumed_usage_reports_are_never_undercounted_by_the_ledger(tmp_path):
     assert results[0]["session_id"] == results[1]["session_id"] == results[3]["session_id"]
     assert results[2]["session_id"] != results[0]["session_id"]
 
+    inputs = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    names = {"input_tokens": "input_tokens", "output_tokens": "output_tokens",
+             "cache_creation_input_tokens": "cache_write_tokens", "cache_read_input_tokens": "cache_read_tokens"}
+
+    def reading(evidence, before, own):
+        """Whether `evidence` shows one exchange ("whole"), a running total ("delta"), or neither."""
+        if not evidence or not own:
+            return None
+        alone = all(evidence.get(k, 0) == own.get(k, 0) for k in inputs)
+        climbed = before is not None and all(evidence.get(k, 0) - before.get(k, 0) == own.get(k, 0) for k in inputs)
+        if alone and not climbed:
+            return "whole"
+        if climbed and not alone:
+            return "delta"
+        return None
+
     ledgers: dict[str, Usage] = {}
+    last: dict[str, dict] = {}
+    determined = {"tokens": 0, "cost": 0}
     for step, event in enumerate(results):
         own = event["exchange_usage"] or {}
-        print(f"exchange {step}: session={event['session_id'][:8]} cost={event['cost_usd']} "
-              f"usage={event['usage']} own={own} cumulative={event['cumulative']}")
-        before = ledgers.get(event["session_id"], Usage())
+        session = event["session_id"]
+        previous = last.get(session)
+        print(f"exchange {step}: session={session[:8]} cost={event['cost_usd']} usage={event['usage']} "
+              f"model_usage={event['model_usage']} own={own} cumulative={event['cumulative']}")
+        before = ledgers.get(session, Usage())
         after = before.record(event)
-        ledgers[event["session_id"]] = after
-        # Whatever the CLI's semantics, an exchange is charged at least what
-        # its own messages moved, and never more than the report stated whole.
-        for key, field in (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
-                           ("cache_creation_input_tokens", "cache_write_tokens"),
-                           ("cache_read_input_tokens", "cache_read_tokens")):
-            added = getattr(after, field) - getattr(before, field)
+        ledgers[session], last[session] = after, event
+
+        tokens = reading(event["usage"], previous and previous["usage"], own)
+        for key, field in names.items():
             reported = (event["usage"] or {}).get(key)
-            if isinstance(reported, int):
-                assert own.get(key, 0) <= added <= max(reported, own.get(key, 0)), (step, field)
+            if not isinstance(reported, int):
+                continue
+            added = getattr(after, field) - getattr(before, field)
+            assert added >= own.get(key, 0), (step, field, "undercount")
+            if tokens == "whole":
+                assert added == reported, (step, field)
+            elif tokens == "delta":
+                assert added == reported - previous["usage"][key], (step, field)
+        determined["tokens"] += tokens is not None
+
+        cost = reading(event["model_usage"], previous and previous["model_usage"], own)
+        if isinstance(event["cost_usd"], (int, float)):
+            added = (after.cost_usd or 0.0) - (before.cost_usd or 0.0)
+            if cost == "whole":
+                assert added == pytest.approx(event["cost_usd"]), (step, "cost")
+            elif cost == "delta":
+                assert added == pytest.approx(event["cost_usd"] - previous["cost_usd"]), (step, "cost")
+            else:
+                assert added >= event["cost_usd"] - (previous["cost_usd"] if previous else 0.0) - 1e-12
+        determined["cost"] += cost is not None
+    print(f"determined: {determined}")
+    # A run where no report could be read either way proves nothing, and is
+    # itself worth knowing: the ledger would then count every report whole.
+    assert determined["tokens"] and determined["cost"], determined

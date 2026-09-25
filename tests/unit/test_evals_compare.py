@@ -183,3 +183,23 @@ def test_staged_review_verdict_cost_is_not_authenticated_usage(tmp_path):
     data = compare._row(board_dir, row, authenticated=True)
     assert data["canonical_review_usage"]["cost_usd"]["value"] == .03
     assert data["canonical_review_usage"]["cost_usd"]["coverage"] == "partial"
+
+
+def test_staged_review_usage_folds_each_session_on_its_own(tmp_path):
+    """#197 review M7: a canonical trajectory's reports are folded per
+    session, as the staged manifest folds them. One ledger read A, B, A as
+    two restarts and counted A's running total whole a second time."""
+    from test_evals_staged import _solved_fixture
+
+    from hardy.evals import scoreboard
+    board_dir, row_dir, _, entry, *_ = _solved_fixture(tmp_path)
+    row = scoreboard.staged_row(entry, 3, row_dir, board_dir, repeat=0)
+    reports = [("A", .01, 100), ("B", .02, 50), ("A", .03, 300)]
+    with (row_dir / "canonical-trajectory.jsonl").open("a", encoding="utf-8") as sink:
+        for session, cost, tokens in reports:
+            sink.write(json.dumps({"kind": "claude.result", "payload": {
+                "type": "result", "cost_usd": cost, "usage": {"input_tokens": tokens}, "session_id": session,
+            }}) + "\n")
+    data = compare._row(board_dir, row, authenticated=True)
+    assert data["canonical_review_usage"]["cost_usd"]["value"] == pytest.approx(.05)
+    assert data["canonical_review_usage"]["input_tokens"]["value"] == 350

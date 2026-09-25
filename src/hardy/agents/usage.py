@@ -65,6 +65,19 @@ def _count(value: Any) -> int | None:
     return value
 
 
+#: Where `Usage.baselines` keeps the last `model_usage` figure for each
+#: counter, beside the report's own figures, so cost's evidence is differenced
+#: against its own history.
+_MODEL = "model_usage."
+
+
+def _fields(report: Any) -> dict[str, int]:
+    """A provider usage report's usable token counters, under Hardy's names."""
+    if not isinstance(report, Mapping):
+        return {}
+    return {field: counted for key, field in _COUNTERS.items() if (counted := _count(report.get(key))) is not None}
+
+
 def _money(value: float) -> str:
     """A cost, never rounded down to something that reads as unmeasured.
 
@@ -154,93 +167,118 @@ class Usage:
         errored one, which burned tokens before it failed. What the provider
         did not state is left unstated rather than counted as zero.
 
-        Every figure in the report is differenced against the last one stated
-        for its own field.
+        A figure is either differenced against the last one stated for its own
+        field, when the report is a running total, or counted whole, when it
+        is not. Summing running totals is triangular -- three $0.50 exchanges
+        reporting 0.50, 1.00, 1.50 would read as $3.00 -- and differencing
+        per-exchange figures loses all but the growth.
 
-        **They are session-to-date, not per-exchange.**
-        The CLI restores a resumed session's running totals before the exchange
-        starts -- `aEo` -> `Tws` -> `z$r`, which writes back both
-        `Ot.totalCostUSD` and `Ot.modelUsage` -- and reports them afterwards:
-        `total_cost_usd` reads `Ot.totalCostUSD`, and `usage` is `qya()`, which
-        sums that same restored `Ot.modelUsage`. So three exchanges of $0.50
-        report 0.50, 1.00, 1.50, and their token counts climb the same way.
-        Adding those up is triangular -- the error grows with the square of the
-        turn count.
+        **What the Claude Code CLI documents, and what that leaves open.**
+        Read from the SDK message documentation embedded in the installed CLI
+        (`/opt/claude-code/bin/claude`, Claude Code 2.1.282), not observed:
 
-        The counters do restart: the CLI restores them only when the session it
-        resumes is the last one it saw, so an unrelated session in between
-        leaves them at zero. A restart is taken from the session id when the
-        report carries one, and otherwise from a figure having gone backwards,
-        which is something a session-to-date total cannot otherwise do. That
-        second test is only sound for a report from the turn in flight -- a
-        stale one is *expected* to be smaller, and reading it as a restart
-        would add spend already counted. `MathematicsSession._observed` is
+        - `modelUsage` is "Cumulative across turns in streaming-input
+          sessions: each result carries the running total so far, so read the
+          latest result rather than summing across results", and "a resumed or
+          forked session continues from the totals its transcript saved, when
+          it has them (so the first result already carries the earlier
+          turns)". It covers "every model call made through the query pipeline
+          ... main loop, Task subagents, sidechains, and internal calls such as
+          compaction", and is "The correct field for token/cost accounting".
+        - `total_cost_usd` shares that lifecycle: a held-back result "carries
+          the counts as of when it is written ... as do its total_cost_usd,
+          duration_api_ms and modelUsage (and usage where that is a running
+          total; a per-turn main-loop usage keeps its turn-end value)".
+        - So `usage` may be a running total or one turn's main-loop figure.
+        - Its changelog, under 2.1.277: "Fixed a headless resume (`claude -p
+          --resume`, the SDK, ...) starting the session's cost and usage
+          totals at zero; headless sessions now save their totals at exit". So
+          an older CLI reports each resumed exchange from zero, and a newer one
+          carries the running total.
+
+        Hardy opens a fresh client per exchange and resumes the thread's
+        session, so which of these a report is depends on the CLI version and
+        may differ between cost and tokens. Nothing here assumes an answer; the
+        live test in `tests/test_claude_runtime.py` prints what a CLI does.
+
+        **So cost and tokens are decided separately, and only on proof.**
+        Where the runtime ran its guard (`ClaudeAgentRuntime._note` supplies
+        `exchange_usage`, the exchange's own streamed messages summed), a
+        family is differenced against its last figure only when the evidence
+        sharing its lifecycle climbed by *exactly* what this exchange's
+        messages moved, in every input-side counter (output only by at least
+        that, since a streamed message's output count can lag):
+
+        - tokens: `usage` against its own baselines;
+        - cost: `model_usage` (the `modelUsage` counters, summed over models)
+          against its baselines, and the cost may not have fallen.
+
+        Anything else -- a new session, `cumulative: False`, no floor to test
+        against, a cost with no token counters, no `model_usage`, or a climb
+        other than the exchange's own -- counts that family whole. Whole
+        overcounts a report that really was a running total; differencing
+        would undercount one that was not, and an overcount is the side a
+        spend meter may err on. The case where the two cannot both be right is
+        an exchange the CLI made calls for that it never streamed (compaction,
+        in Hardy's tool-less threads): a running total then climbs by more
+        than the exchange's messages, and is counted whole. The residual
+        undercount is a per-exchange report whose unstreamed calls equal the
+        session's previous running total exactly, in every input-side
+        counter at once.
+
+        A report without the guard's keys -- the API loop's own running
+        totals, a transcript written before the guard existed -- is read the
+        way it always was: session-to-date, restarted by a new session id or by
+        any figure going backwards, which a running total cannot otherwise do.
+        That test is only sound for a report from the turn in flight -- a stale
+        one is *expected* to be smaller. `MathematicsSession._observed` is
         where stale reports are kept away from here.
-
-        That reading of the CLI comes from its source, not from a run; the
-        live test in `tests/test_claude_runtime.py` is what checks it. Nothing
-        here depends on it being right: where the runtime says what the
-        exchange's own messages moved (`exchange_usage`, `cumulative`), a
-        report that did not climb by at least that much is taken as a restart
-        and counted whole, so a per-exchange report is never differenced away.
         """
         if event.get("provider_unasked") is True:
             return self
         session = event.get("session_id")
         session = session if isinstance(session, str) and session else self.provider_session
-        restarted = session != self.provider_session
-        report = event.get("usage")
-        counts = report if isinstance(report, Mapping) else {}
+        switched = session != self.provider_session
         stated: dict[str, float] = {}
         cost = event.get("cost_usd")
         if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
             stated["cost_usd"] = float(cost)
-        for key, field in _COUNTERS.items():
-            counted = _count(counts.get(key))
-            if counted is not None:
-                stated[field] = counted
-        # What this exchange's own messages moved, where the runtime could sum
-        # them (`ClaudeAgentRuntime._note`): a floor under the exchange's real
+        tokens = _fields(event.get("usage"))
+        stated.update(tokens)
+        # What this exchange's own messages moved: a floor under its real
         # spend that does not depend on how the CLI accumulates its report.
-        own = event.get("exchange_usage")
-        own = own if isinstance(own, Mapping) else {}
-        floors = {
-            field: counted
-            for key, field in _COUNTERS.items()
-            if field in stated and (counted := _count(own.get(key))) is not None
-        }
+        own = _fields(event.get("exchange_usage"))
+        model = {f"{_MODEL}{field}": figure for field, figure in _fields(event.get("model_usage")).items()}
+        guarded = "exchange_usage" in event or "cumulative" in event
 
-        # A restart is a property of the report, not of one field: `z$r` writes
-        # every restored counter back at once, so they go to zero together. One
-        # figure below its baseline is therefore enough to condemn the whole
-        # report -- and taking it field by field would miss the case where a
-        # fresh counter happens to pass an old baseline, which for the cost of
-        # a cheap session is easy. The token counters are what usually give it
-        # away: a new exchange's cache reads start in the thousands where an
-        # accumulated baseline is in the hundreds of thousands.
-        #
-        # The exchange's own messages sharpen the same test, and are what keep
-        # it from undercounting whichever way the CLI turns out to report. A
-        # report that restored the running total states at least the old total
-        # plus what this exchange's messages moved; one short of that in any
-        # counter did not restore, and is this exchange alone even where every
-        # figure happens to climb -- which is what an unrelated session in the
-        # same directory leaves behind. `cumulative: False` is the runtime
-        # saying outright that the report states no more than those messages.
-        restarted = (
-            restarted
-            or event.get("cumulative") is False
-            or any(
-                figure < self.baselines[field] + floors.get(field, 0)
-                for field, figure in stated.items()
-                if field in self.baselines
+        if guarded:
+            tokens_restored = (
+                not switched and bool(own) and event.get("cumulative") is not False
+                and self._climbed(tokens, own)
             )
-        )
-        # A restart invalidates every baseline, not just the ones this report
-        # restates: an omitted field left holding the old session's figure
+            cost_restored = (
+                not switched and bool(own) and bool(tokens) and "cost_usd" in self.baselines
+                and stated.get("cost_usd", self.baselines["cost_usd"]) >= self.baselines["cost_usd"]
+                and self._climbed(model, {f"{_MODEL}{field}": n for field, n in own.items()})
+            )
+        else:
+            # A restart is a property of the report, not of one field: the
+            # CLI writes every restored counter back at once. One figure below
+            # its baseline condemns the whole report -- taken field by field,
+            # a fresh counter that happened to pass an old baseline would be
+            # read as an increment.
+            restarted = switched or any(
+                figure < self.baselines[field] for field, figure in stated.items() if field in self.baselines
+            )
+            tokens_restored = cost_restored = not restarted
+        # A restart invalidates every baseline of its family, not just the ones
+        # this report restates: an omitted field left holding the old figure
         # would make the next report that does state it -- necessarily smaller
         # -- read as a second restart and be added whole.
-        baselines = {} if restarted else dict(self.baselines)
+        baselines = {
+            field: figure for field, figure in self.baselines.items()
+            if (tokens_restored if field in self.COUNTERS else cost_restored)
+        }
         reports = dict(self.reports)
         totals = {field: getattr(self, field) for field in self.COUNTERS}
         spent = self.cost_usd
@@ -248,13 +286,14 @@ class Usage:
             base = baselines.get(field)
             added = figure if base is None or figure < base else figure - base
             # Never less than the exchange's own messages moved.
-            added = max(added, floors.get(field, 0))
+            added = max(added, own.get(field, 0) if field in tokens else 0)
             baselines[field] = figure
             reports[field] = reports.get(field, 0) + 1
             if field == "cost_usd":
                 spent = (self.cost_usd or 0.0) + added
             else:
                 totals[field] += int(added)
+        baselines.update(model)
         return dataclasses.replace(
             self,
             turns=self.turns + 1,
@@ -264,6 +303,27 @@ class Usage:
             reports=reports,
             **totals,
         )
+
+    def _climbed(self, figures: Mapping[str, float], own: Mapping[str, int]) -> bool:
+        """Whether `figures` are the last ones plus exactly this exchange's own.
+
+        Exactly, in every input-side counter: a running total that restored
+        climbs by what the exchange's messages moved, and a per-exchange report
+        matching that would need its unstreamed calls to equal the previous
+        total to the token. Output by at least that much, since a streamed
+        message's output count can lag its API call's. Nothing to compare, or
+        a counter with no baseline, is no proof.
+        """
+        if not figures:
+            return False
+        for field, figure in figures.items():
+            base = self.baselines.get(field)
+            if base is None:
+                return False
+            grew, mine = figure - base, own.get(field, 0)
+            if grew < mine if field.endswith("output_tokens") else grew != mine:
+                return False
+        return True
 
     # -- rendering --------------------------------------------------------
 
@@ -467,3 +527,17 @@ def combined(summaries: list[dict[str, Any]]) -> dict[str, Any]:
         for field in ("cost_usd", *Usage.COUNTERS)
     }
     return merged
+
+
+def fold_by_session(ledgers: Mapping[str, Usage], event: Mapping[str, Any]) -> dict[str, Usage]:
+    """`ledgers` with one more `result` report folded into its own session's.
+
+    One ledger per provider session, keyed by the CLI's session id, because
+    threads interleave -- formalizer, reader, formalizer again -- and a single
+    ledger would read every change of thread as a restart and count the next
+    report on an old thread whole. Every consumer of a staged run's reports
+    folds them here, so the manifest and anything re-reading the trajectory
+    cannot disagree. A new mapping: `Usage` is frozen, and so is this.
+    """
+    session = str(event.get("session_id") or "")
+    return {**ledgers, session: ledgers.get(session, Usage()).record(event)}
