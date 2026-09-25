@@ -138,7 +138,15 @@ async def blast(settings, session, keys: str, until: str | None = None) -> tuple
     timer, in case nothing else in a given test ever does -- `.run()` drives
     `asyncio.run()`, whose own shutdown joins the default executor, so an
     un-released `SlowSession.send` would otherwise stall this call on its
-    own multi-second wait.
+    own multi-second wait. A timer races the input, so no session whose
+    *answer* depends on when it fires may rely on it: `RacingSession` waits
+    for the cancel it is about instead.
+
+    Every caller's keys start a turn, and a Ctrl+C is sent only once one has
+    started and settled: `wait_for_turn_to_settle` returns at once if the
+    Enter has not been read yet, and a Ctrl+C sharing the Enter's batch lands
+    on a running turn and only warns. The exit is bounded, as `drive`'s is, so
+    that failure is a message rather than a hung job.
     """
     release = getattr(session, "release", None)
     if release is not None:
@@ -154,16 +162,30 @@ async def blast(settings, session, keys: str, until: str | None = None) -> tuple
             built = shell.Shell(
                 settings, session, handlers.build_registry(), input=pipe, output=output
             )
+            started = threading.Event()
+            start_turn = built._start_turn
+
+            def counted(*args, **kwargs):
+                started.set()
+                return start_turn(*args, **kwargs)
+
+            built._start_turn = counted
             task = asyncio.ensure_future(built.run_async())
             await asyncio.sleep(0.05)
             pipe.send_text(content)
             if has_ctrl_c:
-                await asyncio.sleep(0.05)  # let `content` actually be read first
+                end = time.monotonic() + 30
+                while not started.is_set() and time.monotonic() < end:
+                    await asyncio.sleep(0.01)
+                assert started.is_set(), f"no turn started after {content!r}"
                 await wait_for_turn_to_settle(built)
                 if until is not None:
                     await _wait_for_render(buffer, until)
                 pipe.send_text("\x03")
-            code = await task
+            try:
+                code = await asyncio.wait_for(task, timeout=30)
+            except TimeoutError:
+                pytest.fail("the shell did not exit within 30s of the last key")
     return code, buffer.getvalue()
 
 
@@ -655,10 +677,17 @@ async def test_spinner_ticking_does_not_paint_under_a_nested_prompt(settings):
 
 class RacingSession(Streams):
     """Reports which thread started the turn, and whether a cancellation
-    that arrived with the Enter survived into the turn itself."""
+    that arrived with the Enter survived into the turn itself.
+
+    The worker reads the flag only once `cancel` has been called, never on a
+    timer. It used to wait on a `release` that `blast` set from a 0.3s timer
+    armed before the app had read a key; under load the app read the Enter
+    after that, the worker's wait returned at once, and it read the flag
+    while the loop was still between the Enter and the Esc behind it.
+    """
 
     def __init__(self):
-        self.release = threading.Event()
+        self.cancel_seen = threading.Event()
         self.started_on = ""
         self.cancelled_when_read = None
         self._cancelled = False
@@ -672,12 +701,13 @@ class RacingSession(Streams):
         return self._events()
 
     def _events(self):
-        self.release.wait(timeout=5)
+        self.cancel_seen.wait(timeout=5)
         self.cancelled_when_read = self._cancelled
         yield TurnEvent("reply", text="late reply")
 
     def cancel(self, reason: str = "user_cancelled") -> None:
         self._cancelled = True
+        self.cancel_seen.set()
 
     def switch_model(self, model: str) -> None: ...
 
