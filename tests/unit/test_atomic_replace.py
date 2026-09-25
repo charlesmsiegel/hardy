@@ -75,6 +75,50 @@ def test_a_permanent_sharing_violation_raises_fileinuse_and_leaves_no_temporary(
     assert [entry.name for entry in guard.directory.iterdir()] == ["session.json"]
 
 
+def _denied(winerror: int) -> PermissionError:
+    """A `PermissionError` carrying a Windows error code, on any platform."""
+    error = PermissionError(13, "Access is denied")
+    error.winerror = winerror
+    return error
+
+
+def test_a_permission_error_that_is_not_a_sharing_violation_is_raised_as_itself(monkeypatch):
+    """Not every `PermissionError` is somebody else's open handle. One outside
+    the sharing set is re-raised unchanged and at once, rather than relabelled
+    "open in another program" -- advice nobody could act on."""
+    calls: list[str] = []
+
+    def refused(source, target):
+        calls.append(str(target))
+        raise _denied(1920)  # ERROR_CANT_ACCESS_FILE
+
+    monkeypatch.setattr(locking.os, "replace", refused)
+
+    with pytest.raises(PermissionError) as excinfo:
+        replace_with_retry(Path("source"), Path("target"))
+
+    assert not isinstance(excinfo.value, FileInUse)
+    assert excinfo.value.winerror == 1920
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("winerror", [32, 33])
+def test_an_exhausted_sharing_violation_is_fileinuse(monkeypatch, winerror):
+    """Only a sharing or lock violation that outlasts the window becomes `FileInUse`."""
+    calls: list[str] = []
+
+    def held(source, target):
+        calls.append(str(target))
+        raise _denied(winerror)
+
+    monkeypatch.setattr(locking.os, "replace", held)
+
+    with pytest.raises(FileInUse, match="target"):
+        replace_with_retry(Path("source"), Path("target"))
+
+    assert len(calls) > 1
+
+
 def test_file_not_found_is_not_retried(monkeypatch):
     """A missing destination component is not a sharing violation; one call, and it raises."""
     calls: list[str] = []

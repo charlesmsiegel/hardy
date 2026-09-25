@@ -85,11 +85,14 @@ def replace_with_retry(source: Path, target: Path) -> None:
     build tool retries a save on Windows, so this backs off from 5ms and
     doubles up to 250ms, for a total wait of about 1.5s, before giving up.
 
-    A `winerror` outside `_SHARING_ERRORS`, or one still failing after the
-    whole window, is not a queue this can wait out -- a read-only destination
-    reports `ERROR_ACCESS_DENIED` too, and no amount of retrying opens it --
-    so it becomes `FileInUse`, naming the file rather than repeating Windows'
-    own sentence about it.
+    A `winerror` outside `_SHARING_ERRORS` is not a sharing violation at all,
+    so the original `PermissionError` is raised unchanged and at once:
+    calling it "open in another program" would hand the user advice they
+    cannot act on. A sharing violation still failing after the whole window
+    becomes `FileInUse`, naming the file rather than repeating Windows' own
+    sentence about it. (`ERROR_ACCESS_DENIED` is in the set because a held
+    file reports it; a read-only destination reports it too, and cannot be
+    told apart from the error, so that one does end as `FileInUse`.)
     """
     if not _SHARING_RETRY:
         os.replace(source, target)
@@ -100,7 +103,9 @@ def replace_with_retry(source: Path, target: Path) -> None:
             os.replace(source, target)
             return
         except PermissionError as error:
-            if getattr(error, "winerror", 5) not in _SHARING_ERRORS or waited >= 1.5:
+            if getattr(error, "winerror", 5) not in _SHARING_ERRORS:
+                raise
+            if waited >= 1.5:
                 raise FileInUse(f"{target} is open in another program") from error
         _sleep(delay)
         waited += delay
