@@ -21,16 +21,24 @@ Controlled:
   `--backend codex` run serves the same tools from a Hardy-owned MCP subprocess
   (`agents/codex.py`), which is a process seam on the same unconfined host and
   not a boundary.
-- **On the Claude backend, anything that is not a Hardy tool is refused.** The
-  permission callback in `agents/claude.py` allows a call only when its name is
-  one of the tools Hardy registered, and denies everything else whatever it is
-  called. Claude Code's `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
-  `WebFetch`, `WebSearch` and the rest are additionally disallowed outright,
-  but the default-deny gate is what carries the guarantee: a denylist has to
-  anticipate every built-in the CLI grows next, and this one does not. The
-  scoping to that backend is load-bearing. A staged `--backend codex` run has
-  no such gate: its working thread is started with `sandbox=workspace_write`
-  and
+- **On the Claude backend, the model is offered no Claude Code built-in at
+  all.** `agents/claude.py` passes `tools=[]`, which the SDK documents as
+  disabling the CLI's whole built-in set, so the conversation carries only the
+  Lean and LaTeX tools Hardy registered. That alone would be an enumeration
+  Hardy trusts a specific SDK version to honour, so two default-deny gates back
+  it up rather than replace it: the `can_use_tool` callback, consulted for any
+  tool call whose own permission check answers "ask", and a `PreToolUse` hook,
+  consulted for every tool call regardless of what its own check said (some
+  built-ins the CLI auto-allows outright never reach `can_use_tool` at all --
+  issue #320). Both allow a call only when its name is one of the tools Hardy
+  registered, and deny everything else whatever it is called, recording a
+  `refused_tool` event either way. Claude Code's `Bash`, `Read`, `Write`,
+  `Edit`, `Glob`, `Grep`, `WebFetch`, `WebSearch` and the rest are additionally
+  disallowed outright, but the default-deny gates are what carry the
+  guarantee: a denylist has to anticipate every built-in the CLI grows next,
+  and this one does not. The scoping to that backend is load-bearing. A staged
+  `--backend codex` run has no such gate: its working thread is started with
+  `sandbox=workspace_write` and
   `approval_mode=auto_review` (`agents/codex.py`), so that SDK's agent keeps
   its own file and shell tools, auto-approved, over the run directory. Hardy's
   tools are still the only way to reach Lean, TeX and the record, but on that

@@ -180,6 +180,37 @@ def test_both_ends_of_a_tool_call_are_reported():
     assert [(event.name, event.ok) for event in finished] == [("check_lean", True)]
 
 
+def test_a_stray_builtin_tool_use_is_recorded_as_refused():
+    """`tools=[]` and the `PreToolUse` hook are what actually keep a built-in
+    from running; this is the stream's own record of one that still showed up,
+    distinguished from the hook's own report by `via`."""
+    seen: list[dict] = []
+    live, _ = wired(
+        [
+            AssistantMessage(ToolUseBlock("TaskCreate", "call-9")),
+            UserMessage(ToolResultBlock("call-9", is_error=True)),
+            ResultMessage(),
+        ],
+        observe=seen.append,
+    )
+    list(live.stream("go"))
+    assert {"type": "refused_tool", "name": "TaskCreate", "via": "stream"} in seen
+
+
+def test_a_hardy_tool_use_is_not_recorded_as_refused():
+    seen: list[dict] = []
+    live, _ = wired(
+        [
+            AssistantMessage(ToolUseBlock("mcp__hardy__check_lean", "call-1")),
+            UserMessage(ToolResultBlock("call-1")),
+            ResultMessage(),
+        ],
+        observe=seen.append,
+    )
+    list(live.stream("check"))
+    assert not [event for event in seen if event["type"] == "refused_tool"]
+
+
 def test_a_failed_tool_call_is_reported_as_failed():
     live, _ = wired(
         [

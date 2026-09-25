@@ -259,10 +259,26 @@ class ClaudeAgentRuntime:
         return self._sdk
 
     def _options(self) -> Any:
-        return self._loaded().ClaudeAgentOptions(
+        sdk = self._loaded()
+        return sdk.ClaudeAgentOptions(
             model=self.model,
             system_prompt=self._system_prompt,
             mcp_servers={SERVER: self._server},
+            # `can_use_tool` is consulted only for a tool whose own permission
+            # check answers "ask" -- a built-in the CLI auto-allows outright
+            # (`TaskCreate`, `TodoWrite`, `EnterPlanMode`, ...) never reaches it,
+            # and with no `tools` option the model would be offered the CLI's
+            # whole built-in set besides (issue #320). An empty list is what the
+            # SDK documents as disabling every built-in, and `strict_mcp_config`
+            # keeps out any MCP server this runtime did not itself register, so
+            # what is left to offer is exactly Hardy's own tools.
+            tools=[],
+            strict_mcp_config=True,
+            # A second gate for whatever still reaches the model despite the
+            # above -- an older CLI, a future built-in class this version does
+            # not empty `tools` for. `_gate` denies by the same default-deny
+            # rule as `_permit` below, and records the refusal either way.
+            hooks={"PreToolUse": [sdk.HookMatcher(matcher=None, hooks=[self._gate])]},
             # Deliberately no `allowed_tools`: an entry there auto-approves
             # before `can_use_tool` is consulted, which would leave the callback
             # gating only the tools it was never the point of gating.
@@ -301,6 +317,30 @@ class ClaudeAgentRuntime:
             return self._loaded().PermissionResultAllow(behavior="allow")
         self._observe({"type": "refused_tool", "name": name})
         return self._loaded().PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
+
+    async def _gate(self, data: Mapping[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
+        """The `PreToolUse` hook: a second default-deny gate for whatever
+        `tools=[]` and `_permit` above do not stop.
+
+        `can_use_tool` is bypassed by any built-in whose own permission check
+        answers "allow" outright rather than "ask", which is exactly the class
+        of tool `tools=[]` exists to remove from the conversation. This hook
+        fires on every tool call regardless, so a call that still arrives --
+        because a future CLI stops honouring an empty `tools` list, say --
+        is refused here too, by the same rule: allowed only when it is one of
+        Hardy's own tools, whatever else it is called.
+        """
+        name = str(data.get("tool_name", ""))
+        if name.startswith(f"mcp__{SERVER}__"):
+            return {}
+        self._observe({"type": "refused_tool", "name": name, "via": "hook"})
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Hardy runs its own tools only.",
+            }
+        }
 
     def ask(self, text: str) -> str:
         """One exchange, for a caller with nothing to draw it on."""
@@ -690,6 +730,12 @@ class ClaudeAgentRuntime:
                 # and two calls to the same tool can be in flight at once.
                 self._called[identifier] = plain(name)
                 self._observe({"type": "tool_use", "name": name, "input": getattr(block, "input", {})})
+                if not name.startswith(f"mcp__{SERVER}__"):
+                    # `_gate` and `_permit` are what actually stop this from
+                    # running; this is the stream's own record that one was
+                    # attempted, distinguished by `via` from the hook's report
+                    # of the same refusal.
+                    self._observe({"type": "refused_tool", "name": name, "via": "stream"})
                 yield TurnEvent("tool_use", name=plain(name), call_id=identifier)
             elif kind == "ToolResultBlock":
                 # The far end of a tool call, which Hardy used to drop. Drawing

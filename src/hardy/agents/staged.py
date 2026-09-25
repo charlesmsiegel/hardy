@@ -131,9 +131,11 @@ class ClaudeStagedRuntime:
 
     backend = "claude"
     # What an `isolated` thread here is actually worth. `ClaudeAgentRuntime`
-    # refuses `Read`, `Bash`, `Glob`, `Grep` and the rest by name, and its
-    # `_permit` callback refuses by default rather than by enumeration, so a
-    # thread offered no tool specs has no way to reach the filesystem at all.
+    # offers no Claude Code built-ins at all (`tools=[]`, issue #320) and
+    # additionally disallows `Read`, `Bash`, `Glob`, `Grep` and the rest by
+    # name; its `_permit` callback and `_gate` `PreToolUse` hook both refuse by
+    # default rather than by enumeration, so a thread offered no tool specs has
+    # no way to reach the filesystem at all.
     isolation_guarantee = "tools-refused"
 
     def __init__(
