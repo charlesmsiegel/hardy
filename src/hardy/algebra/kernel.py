@@ -62,8 +62,14 @@ class _Kernel:
         # process group: without one `kill()` reached the interpreter and
         # nothing a cell had started. Not registered with `tracked`, because
         # the session owns this child rather than the turn that started it
-        # (see `interrupt_children`). The driver starts nothing before it
-        # reads its first frame, so `contain`'s race has nothing to lose here.
+        # (see `interrupt_children`). `contain`'s race is real here: the
+        # driver itself starts nothing before its first frame, but on Windows
+        # a venv's `python.exe` is a launcher that starts the real interpreter
+        # as its child at once. Assignment usually wins that millisecond
+        # window; when it loses, the interpreter and everything its cells
+        # start are outside the job, and a stop reaches only the launcher, as
+        # it did before any job existed. Closing it would take a suspended
+        # start (`CREATE_SUSPENDED`, assign, resume), which is not done.
         contain(self.process)
         for pipe, destination in ((self.process.stdout, self.out), (self.process.stderr, self.err)):
             if pipe is not None:

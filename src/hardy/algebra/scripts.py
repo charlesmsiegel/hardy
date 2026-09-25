@@ -149,8 +149,9 @@ def run_exported_script(
         raise CasError(
             f"could not run the exported script ({' '.join(argv)}): {error}"
         ) from None
-    # Its tree, held as one before anything else happens: a process group on
-    # POSIX already, a job object on Windows from here.
+    # Its tree, held as one: a process group on POSIX already, a job object on
+    # Windows from here -- with `contain`'s race, which a venv launcher that
+    # starts the real interpreter at once makes a real, if narrow, window.
     contain(process)
 
     workers = [
