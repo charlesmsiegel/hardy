@@ -337,13 +337,6 @@ def test_an_ambiguous_quote_leaves_the_reading_uncertain_and_a_certain_one_does_
          ("t", "constant.t")),
         ("theorem t : True := trivial\nnamespace alias\ntheorem t : False := sorry\nend alias\n",
          ("t", "alias.t")),
-        # (b) a scope command in a syntax quotation is data.
-        ("theorem Bar.bad : True := trivial\nopen Lean in\n"
-         "def q : MacroM Syntax := `(command| namespace Bar)\ntheorem bad : False := sorry\n",
-         ("Bar.bad", "bad")),
-        ("theorem x : True := trivial\nnamespace Foo\nopen Lean in\n"
-         "def q : MacroM Syntax := `(command| end Foo)\ntheorem x : False := sorry\nend Foo\n",
-         ("x", "Foo.x")),
         # (c) a keyword after a projection dot is a field name.
         ("structure I where\n  «end» : Nat\ntheorem x : True := trivial\nnamespace Foo\n"
          "def i : I := ⟨1⟩\ndef e : Nat := (i).end\ntheorem x : False := sorry\nend Foo\n",
@@ -353,6 +346,26 @@ def test_an_ambiguous_quote_leaves_the_reading_uncertain_and_a_certain_one_does_
 def test_the_scope_walk_is_not_misled_by_names_quotations_or_fields(source, names):
     assert syntax.declarations(source)["theorem"] == names
     assert syntax.unreadable_structure(source) == ()
+
+
+@pytest.mark.parametrize(
+    ("source", "names"),
+    [
+        ("theorem Bar.bad : True := trivial\nopen Lean in\n"
+         "def q : MacroM Syntax := `(command| namespace Bar)\ntheorem bad : False := sorry\n",
+         ("Bar.bad", "bad")),
+        ("theorem x : True := trivial\nnamespace Foo\nopen Lean in\n"
+         "def q : MacroM Syntax := `(command| end Foo)\ntheorem x : False := sorry\nend Foo\n",
+         ("x", "Foo.x")),
+    ],
+)
+def test_a_scope_command_in_a_quotation_moves_no_scope_and_is_refused(source, names):
+    """C3 (b): read as data, the quoted scope names nothing -- the names are
+    Lean's. But a module's own `notation` can move where a quotation ends
+    (review round 3, N4), so whether it *is* data is not something Hardy can
+    count; a gate naming declarations refuses the file instead."""
+    assert syntax.declarations(source)["theorem"] == names
+    assert syntax.unreadable_structure(source)
 
 
 def test_named_declarations_share_the_scope_walk():
@@ -372,9 +385,13 @@ def test_a_scope_command_hardy_cannot_place_is_unreadable():
     assert syntax.unreadable_structure(unbalanced)
 
 
-def test_a_theorem_inside_a_command_quotation_is_not_declared():
+def test_a_theorem_inside_a_command_quotation_is_reported():
+    """Review round 3, N4: where a quotation ends depends on the token table,
+    so a `theorem` inside one is reported. For a macro's quoted theorem that
+    is a name Lean never declares -- the audit cannot find it and the save is
+    refused, which is the side to be wrong on."""
     source = 'macro "mk" : command => `(theorem x : True := trivial)\ntheorem y : True := trivial\n'
-    assert syntax.declarations(source)["theorem"] == ("y",)
+    assert syntax.declarations(source)["theorem"] == ("x", "y")
 
 
 # I1: a wrapper span cannot swallow a theorem.
@@ -468,3 +485,42 @@ def test_a_boundary_one_reading_makes_splits_the_token_for_all():
     source = "def q := x ×'a'theorem t : True := sorry\n"
     assert "t" in syntax.declarations(source)["theorem"]
     assert LeanTools.has_holes(source)
+
+
+# --- Review round 3 (N4): a module's notation moves where a quotation ends ----
+#
+# Lean 4.35.0-rc3 elaborates both with rc=0 and reports `bad` / `Foo.x` as
+# resting on `sorryAx`: `⟪(` swallows the quotation's `(`, so the quotation
+# ends at `⸨)`'s parenthesis rather than at the first `)`, and everything
+# between is code. Counting parentheses blanked it.
+
+NOTATION_QUOTATION = (
+    'notation "⟪(" x => x\nnotation:max x "⸨)" => x\ntheorem good : True := trivial\n'
+    "open Lean in\ndef q : MacroM Syntax := `(⟪( 1)\ntheorem bad : False := sorry\n"
+    "def r : Nat := 1 ⸨)\n"
+)
+
+
+def test_a_quotation_a_notation_extends_hides_no_declaration_or_hole():
+    assert syntax.declarations(NOTATION_QUOTATION)["theorem"] == ("good", "bad")
+    assert LeanTools.has_holes(NOTATION_QUOTATION)
+    assert "sorry" in scannable(NOTATION_QUOTATION)
+
+
+def test_a_scope_inside_a_quotation_a_notation_extends_is_refused():
+    source = (
+        'notation "⟪(" x => x\nnotation:max x "⸨)" => x\ntheorem x : True := trivial\n'
+        "open Lean in\ndef q : MacroM Syntax := `(⟪( 1)\nnamespace Foo\n"
+        "theorem x : False := sorry\nend Foo\ndef r : Nat := 1 ⸨)\n"
+    )
+    problems = syntax.unreadable_structure(source)
+    assert any("namespace" in problem for problem in problems)
+    assert LeanTools.has_holes(source)
+
+
+def test_quotations_stay_data_for_the_hole_scan_without_local_tokens():
+    """Without a `notation`, `syntax`, `macro`, ... of its own, the table is
+    Lean's and the imports', and a quoted `sorry` is still not a hole."""
+    source = "open Lean in\ndef q : MacroM Syntax := `(tactic| sorry)\n"
+    assert not LeanTools.has_holes(source)
+    assert LeanTools.has_holes('notation "⊕⊕" => 1\n' + source)

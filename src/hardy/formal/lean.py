@@ -22,7 +22,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from hardy.formal.contracts import EnvironmentIdentity, FrozenClaim, Request
-from hardy.formal.syntax import QUALIFIED_NAME, blank_bounded_quotations, declared_name, lex
+from hardy.formal.syntax import (
+    QUALIFIED_NAME,
+    blank_bounded_quotations,
+    declared_name,
+    declares_tokens,
+    lex,
+)
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.truncation import truncate
@@ -168,7 +174,10 @@ def scannable(source: str) -> str:
     `sorry` that is a piece of quoted syntax or a declaration's own name.
     """
     lexed = lex(source)
-    quoted, _ = blank_bounded_quotations(lexed)
+    # A source adding tokens of its own can end a quotation where no
+    # parenthesis count says, so its quotations stay visible: a `sorry` Lean
+    # reads as code is never blanked as quoted syntax.
+    quoted = lexed.text if declares_tokens(lexed) else blank_bounded_quotations(lexed)[0]
     # A Lean escaped identifier, `«like this»`, is a *name*, not syntax, so
     # `«sorry»` is an ordinary lemma somebody may legitimately call -- and `\b`
     # matches inside the guillemets, so an unblanked scan reported a hole in a

@@ -199,8 +199,11 @@ from there; an exported declaration that uses a private helper reports the
 helper's axioms as its own. A declaration a command macro or elaborator
 generates is not seen at all, since the scan is textual: a module with a
 literal lemma beside a generated theorem records `clean` over the literal one
-alone. A `theorem` inside a syntax quotation is data rather than a
-declaration, and is not audited either. The record names the declarations it
+alone. A `theorem` written inside a syntax quotation for a macro to emit is
+reported as a declaration all the same: where a quotation ends depends on
+Lean's token table, which the module's own `notation` can change, so Hardy
+never lets one hide a declaration keyword. The audit then asks Lean about a
+name nobody declared, and the save is refused. The record names the declarations it
 covers, and a clean verdict is a statement about those names and nothing more;
 the [output contract](output-contract.md) lists this among the gate's known gaps.
 
@@ -211,15 +214,19 @@ where it is not. The characters alone do not say where a symbol token ends
 may or may not open a comment. They do not say whether a string is interpolated
 either (`s!"{'"'}"`). Hardy scans every such reading at once: a character any
 reading calls code is scanned as code, a token boundary any reading makes is a
-boundary, and a `«...»` name or a syntax quotation is treated as one unit only
-where every reading agrees on where it starts and ends. So a `sorry`, a
+boundary, and a `«...»` name is treated as one unit only where every reading
+opens it. A syntax quotation is skipped as data only where every reading agrees
+on its extent, and even then never by the declaration scan, and never by the
+hole scan in a source that declares tokens of its own (`notation`, `syntax`,
+`macro`, ...): a module's token such as `notation "⟪(" x => x` moves where
+Lean ends a quotation, and a parenthesis count cannot know it. So a `sorry`, a
 `theorem` or `lemma` keyword, or a proof-body command that any one reading
 contains is found. The name a declaration gets cannot be taken from two
-readings at once, so a `namespace`, `section` or `end` that only some readings
-call code, one that sits in a syntax quotation whose end is uncertain, or a `«`
-that only some readings open, refuses the save instead; a proof body holding
-such a `«` is refused too. Past 32 simultaneous readings Hardy stops telling
-them apart and refuses the same way.
+readings at once, so a `namespace`, `section`, `end` or `mutual` that only some
+readings call code, one inside any syntax quotation, or a `«` that only some
+readings open, refuses the save instead; a proof body holding such a `«` is
+refused too. Past 32 simultaneous readings Hardy stops telling them apart and
+refuses the same way.
 
 That refuses some ordinary Lean, which is the price of never guessing. A file
 repeating `"{" ++ ...` about fifteen times (a plain string to Lean, but one
@@ -230,7 +237,8 @@ uncertain text. A namespace named `constant` makes its `namespace constant`
 and `end constant` lines read as axioms the assumption scan cannot read. In
 each case the save is refused naming the line, and the file can be rewritten
 to avoid it: a space before a char literal, a different name, a string built
-another way.
+another way. A macro whose quotation holds a `theorem`, or a `namespace` or
+`end`, is refused the same way.
 
 A module with nothing auditable, one declaring only definitions or only
 private lemmas, records "not established" and the save goes through carrying
@@ -298,7 +306,11 @@ This is a list of recognised forms, and each residual below still gets past it:
   token that runs through a character the lexer treats as certain -- one
   holding a `"`, or starting with identifier characters and ending in `'"` --
   can still make it read a literal or a comment where Lean reads code
-  (issue #192).
+  (issue #192). The same holds for quotations: a token from the imports that
+  holds an unbalanced parenthesis would move where Lean ends one, which only a
+  source's *own* token declarations are checked for. Lean core's such tokens
+  (`date(`, `term(`, ...) close their own parenthesis; Mathlib's were not
+  checked.
 - A top-level `set_option` or `open` is not refused. Refusing it would break
   the ordinary `set_option ... in` and `open ... in` tactics, and neither
   command can add an axiom or answer Hardy's line-bound report.
