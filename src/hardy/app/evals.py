@@ -267,19 +267,9 @@ def _identity(config: Any) -> EnvironmentIdentity:
     return environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
 
 
-def _moved_identity(prior: Baseline | None, *, environment_digest: str, procedure_digest: str) -> str | None:
-    """Why `prior`'s rows cannot be carried into a sweep made today, or
-    `None` when they can (or there is no prior file at all)."""
-    if prior is None or sweep.reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest):
-        return None
-    reasons = []
-    if prior.environment_digest != environment_digest:
-        reasons.append("its environment digest is not this toolchain and machine's")
-    if prior.procedure_digest != procedure_digest:
-        reasons.append("its procedure digest is not this build's")
-    if not prior.statement_digests:
-        reasons.append("it records no statement digests")
-    return "; ".join(reasons)
+def _wall_backstop(config: Any) -> float:
+    """The sweep's process backstop, which `procedure_digest_of` folds in."""
+    return max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR
 
 
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
@@ -324,11 +314,6 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
             print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
             return 2
-    elaborate = elaborate or make_elaborate(config)
-    import_seconds = None
-    if config is not None:
-        probe = elaborate(sweep.header(("Mathlib",)) + "\nexample : True := trivial\n")
-        import_seconds = probe.process.duration_ms / 1000.0 if probe.success else None
     # Carry forward every entry whose identity did not move (spec §3). The
     # single repair route for a stale baseline is this command, so without it
     # a one-line correction re-elaborates the whole corpus.
@@ -338,29 +323,26 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
             prior = sweep.Baseline.model_validate_json(args.out.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             prior = None   # unreadable prior: sweep everything, say nothing
-    wall_backstop_seconds = (max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None
-                             else sweep.WALL_BACKSTOP_FLOOR)
+    wall_backstop_seconds = _wall_backstop(config)
     host = host_info()
+    environment_digest = sweep.environment_digest_of(identity, host)
+    procedure_digest = sweep.procedure_digest_of(wall_backstop_seconds)
     if ids is None:
-        # Nobody named entries: default to the active entries the tier file
-        # does not yet cover, not the whole corpus's candidates and retirees
-        # too. Needs no run digest -- a sweep is Lean-only, gated by the
-        # corpus and the toolchain, not by which model a run would use.
-        from hardy.evals.outstanding import unbaselined_active
+        # Nobody named entries: default to what the tier file does not yet
+        # cover usably (`baseline_default`), not the whole corpus's candidates
+        # and retirees too. Needs no run digest -- a sweep is Lean-only, gated
+        # by the corpus and the toolchain, not by which model a run would use.
+        from hardy.evals.outstanding import baseline_default
 
-        default = unbaselined_active(problems, prior)
-        moved = _moved_identity(prior, environment_digest=sweep.environment_digest_of(identity, host),
-                                procedure_digest=sweep.procedure_digest_of(wall_backstop_seconds))
+        default, moved = baseline_default(problems, prior, environment_digest=environment_digest,
+                                          procedure_digest=procedure_digest)
         if moved is not None:
-            # None of the prior rows may be carried, and none may be
-            # restamped, so the only honest default is to measure every row
-            # the old file holds again, plus whatever it never covered.
-            held = [e.id for e in problems.entries if e.id in prior.entries]
-            default = held + [id_ for id_ in default if id_ not in prior.entries]
+            held = sum(1 for id_ in default if id_ in prior.entries)
             print(
                 f"{args.out}: {moved}. None of its rows can be carried forward and none are restamped, "
-                f"so this re-sweeps all {len(held)} entries it holds"
-                + (f" and {len(default) - len(held)} active entries it does not" if len(default) > len(held) else ""),
+                f"so this re-sweeps all {held} entries it holds"
+                + (f" and {len(default) - held} active entries it does not" if len(default) > held else "")
+                + f". Back it up first if you need it: the first checkpoint replaces {args.out}.",
                 file=sys.stderr,
             )
         if not default:
@@ -371,6 +353,19 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
             )
             return 2
         ids = default
+    # Decided before any elaboration, the import probe included: a sweep that
+    # would have to restamp a row is refused outright. Only the toolchain
+    # identity lookup runs first, because the environment digest needs it.
+    refusal = sweep.carry_refusal(problems, prior, ids, environment_digest=environment_digest,
+                                  procedure_digest=procedure_digest)
+    if refusal is not None:
+        print(f"Refused: {refusal}", file=sys.stderr)
+        return 2
+    elaborate = elaborate or make_elaborate(config)
+    import_seconds = None
+    if config is not None:
+        probe = elaborate(sweep.header(("Mathlib",)) + "\nexample : True := trivial\n")
+        import_seconds = probe.process.duration_ms / 1000.0 if probe.success else None
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     def write(baseline: sweep.Baseline) -> None:
@@ -445,7 +440,8 @@ def _report_uncounted(left: dict[str, Any]) -> None:
             "not selected: these active entries hold only some of their repeats under this condition, "
             "and a new board repeating those slots would not pool with the one holding them: "
             + ", ".join(left["partially_evaluated_active"])
-            + ". Set the interrupted board aside to run them afresh, or name them with --only.",
+            + ". To complete them, set the interrupted board aside (it will not be pooled) and rerun the "
+            "default, or run them with --only on a board you will not pool with the interrupted one.",
             file=sys.stderr,
         )
 
@@ -493,7 +489,11 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     environment_digest = sweep.environment_digest_of(identity, host_info())
     key = (run_digest, environment_digest)
     left = compute_outstanding(problems, baseline, args.scoreboards, key=key,
-                               problems_path=args.problems, baseline_path=args.baseline)
+                               problems_path=args.problems, baseline_path=args.baseline,
+                               procedure_digest=sweep.procedure_digest_of(_wall_backstop(config)))
+    if left["baseline_moved"] is not None:
+        print(f"{args.baseline}: {left['baseline_moved']}; a bare `hardy evals baseline` re-sweeps every row it holds",
+              file=sys.stderr)
     _report_uncounted(left)
     print(json.dumps({
         "pooling_key": {"run_procedure_digest": run_digest, "environment_digest": environment_digest},
@@ -783,7 +783,8 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         default_baseline = Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
         default_key = (run_digest, environment_digest_of(environment, host_info()))
         left = compute_outstanding(problems, default_baseline, args.scoreboards, key=default_key,
-                                   problems_path=args.problems, baseline_path=args.baseline)
+                                   problems_path=args.problems, baseline_path=args.baseline,
+                                   procedure_digest=sweep.procedure_digest_of(_wall_backstop(config)))
         _report_uncounted(left)
         only = left["unevaluated_active"]
         if not only:

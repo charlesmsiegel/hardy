@@ -143,13 +143,58 @@ def unbaselined_active(problems: Any, baseline: Any | None) -> list[str]:
     ]
 
 
+def moved_identity(prior: Any | None, *, environment_digest: str, procedure_digest: str) -> str | None:
+    """Why no row of `prior` can be carried into a sweep made today, or
+    `None` when rows can be (or there is no prior file at all)."""
+    if prior is None or sweep.reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest):
+        return None
+    reasons = []
+    if prior.environment_digest != environment_digest:
+        reasons.append("its environment digest is not this toolchain and machine's")
+    if prior.procedure_digest != procedure_digest:
+        reasons.append("its procedure digest is not this build's")
+    if not prior.statement_digests:
+        reasons.append("it records no statement digests")
+    return "; ".join(reasons)
+
+
+def baseline_default(problems: Any, prior: Any | None, *, environment_digest: str,
+                     procedure_digest: str) -> tuple[list[str], str | None]:
+    """What a bare `hardy evals baseline` sweeps now, in corpus order, and why
+    no prior row can be carried when that is the case.
+
+    - Under a prior file whose environment and procedure still match: the
+      active entries with no row the sweep would carry
+      (`unbaselined_active`), plus any entry, active or not, whose row has
+      an attempt that never ran. `staleness` refuses such a row file-wide,
+      so the default must be able to clear it whatever the entry's status.
+    - Under a prior file swept under another environment or procedure: every
+      entry the file holds a row for, plus the active entries it lacks. No
+      prior row may be carried or restamped, so they are all measured again.
+
+    `evals baseline` and `evals todo` both call this, so what `todo` reports
+    is what the command would do.
+    """
+    moved = moved_identity(prior, environment_digest=environment_digest, procedure_digest=procedure_digest)
+    wanted = set(unbaselined_active(problems, prior))
+    held = prior.entries if prior is not None else {}
+    for entry in problems.entries:
+        row = held.get(entry.id)
+        if row is not None and (moved is not None or sweep.never_ran(row)):
+            wanted.add(entry.id)
+    return [e.id for e in problems.entries if e.id in wanted], moved
+
+
 def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tuple[str | None, str],
-                problems_path: Path, baseline_path: Path) -> dict[str, Any]:
+                problems_path: Path, baseline_path: Path, procedure_digest: str) -> dict[str, Any]:
     """What is left under `key`, judged by the boards `evals pool` would admit.
 
     - `boards_counted`: the boards admitted as evidence; `boards_refused`:
       those matching `key` that fail their own audit, with its findings.
-    - `unbaselined_active`: active entries with no usable baseline row.
+    - `baseline_sweeps`: what a bare `evals baseline` would sweep now
+      (`baseline_default`, under `key`'s environment digest and the sweep's
+      `procedure_digest`), and `baseline_moved`: why no prior row can be
+      carried, or `None`. `unbaselined_active` is its active part.
     - `unevaluated_active`: active entries with no valid sample on an
       admitted board -- what the default `evals run` selects.
     - `partially_evaluated_active`: active entries holding some of their
@@ -163,10 +208,13 @@ def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tu
                                         baseline_path=baseline_path)
     complete, partial = evaluated_ids(scoreboards_root, boards=admitted)
     active = [e.id for e in problems.entries if e.status == "active"]
+    sweeps, moved = baseline_default(problems, baseline, environment_digest=key[1], procedure_digest=procedure_digest)
     return {
         "boards_counted": admitted,
         "boards_refused": refused,
-        "unbaselined_active": unbaselined_active(problems, baseline),
+        "baseline_sweeps": sweeps,
+        "baseline_moved": moved,
+        "unbaselined_active": [id_ for id_ in sweeps if id_ in set(active)],
         "unevaluated_active": [id_ for id_ in active if id_ not in complete and id_ not in partial],
         "partially_evaluated_active": [id_ for id_ in active if id_ in partial],
     }

@@ -130,8 +130,9 @@ or an out-of-memory message on line 1, says nothing about any tactic, so every
 attempt in that process is recorded `not_run`. That is not a measurement. If
 any attempt for the entry or for its A3 negation is `not_run`, the sweep files
 no row for it and records `<id>: stage A did not run: <message>` among the
-baseline's problems instead. The rest of the sweep carries on, and the next
-sweep measures that entry again. Attempts that all come back `timed_out` after
+baseline's problems instead. The rest of the sweep carries on. The next bare
+`hardy evals baseline` measures the entry again if it is active; a non-active
+one stays without a row until it is named. Attempts that all come back `timed_out` after
 the per-tactic fallback are different: those tactics ran and hit the wall
 backstop, which is a measurement of this machine and is recorded as one.
 
@@ -161,8 +162,12 @@ refused as well. That check is not in the validator: `hardy evals baseline`
 reads a prior file that fails validation as no prior at all, so a rule there
 would silently discard every good row beside the bad one. It is re-derived by
 `staleness` at every run instead, the same way the twin and witness guards are,
-so clearing the top-level `problems` list cannot hide it. The sweep never reuses
-such a row, and `hardy evals baseline` with no selection re-sweeps it.
+so clearing the top-level `problems` list cannot hide it. The check covers every
+row in the file, not only the entries a run selects. The automation floor a
+board and a pool report counts the tier of every row in the tier file, so a
+narrower check would let an unmeasured row's tier 3 into a pooled figure. The sweep never reuses such a row, and
+`hardy evals baseline` with no selection re-sweeps it whatever the entry's
+status, so the strict check never leaves the file stuck.
 
 ## The environment gate is not advisory
 

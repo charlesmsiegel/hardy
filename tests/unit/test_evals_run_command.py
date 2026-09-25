@@ -336,3 +336,45 @@ def test_the_default_selection_names_partial_entries_rather_than_rerunning_them(
     assert "only some of their repeats" in err and "a" in err
     assert "broken" in err
     assert seen["problems_path"] == problems_path and seen["baseline_path"] == baseline_path
+
+
+def _todo(tmp_path, capsys, *, procedure_digest: str) -> tuple[dict, str]:
+    """`evals todo` over one active entry `a` whose baseline row is otherwise
+    fresh, stamped with `procedure_digest`."""
+    from hardy.app.cli import build_parser
+
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+    from hardy.corpus.catalog import load_corpus
+
+    a = load_corpus(problems_path).by_id("a")
+    baseline = baseline.model_copy(update={
+        "entries": {"a": sweep.EntryBaseline(tier=3, elaborates=False, attempts={}, closed_by=())},
+        "statement_digests": {"a": a.statement_digest()},
+        "environment_digest": sweep.environment_digest_of(IDENTITY, sweep.host_info()),
+        "procedure_digest": procedure_digest,
+    })
+    baseline_path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
+    args = build_parser().parse_args(["evals", "todo"])
+    args.problems, args.baseline, args.scoreboards = problems_path, baseline_path, tmp_path / "boards"
+    capsys.readouterr()
+    assert runner.run_todo(args, _config()) == 0
+    captured = capsys.readouterr()
+    return json.loads(captured.out), captured.err
+
+
+def test_todo_reports_what_a_bare_baseline_would_sweep_after_a_procedure_move(monkeypatch, tmp_path, capsys):
+    """Right after a digest move every row is still per-row fresh, so `todo`
+    used to report nothing to sweep while a bare `evals baseline` re-swept
+    every row. Both now read `baseline_default`."""
+    monkeypatch.setattr(runner, "_identity", lambda _: IDENTITY)
+    report, err = _todo(tmp_path, capsys, procedure_digest="q" * 64)
+    assert report["baseline_sweeps"] == ["a"] and report["unbaselined_active"] == ["a"]
+    assert "procedure digest" in report["baseline_moved"] and "procedure digest" in err
+
+
+def test_todo_reports_nothing_to_sweep_when_the_baseline_is_current(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(runner, "_identity", lambda _: IDENTITY)
+    current = sweep.procedure_digest_of(max(_config().lean_timeout, sweep.WALL_BACKSTOP_FLOOR))
+    report, _ = _todo(tmp_path, capsys, procedure_digest=current)
+    assert report["baseline_sweeps"] == [] and report["unbaselined_active"] == [] and report["baseline_moved"] is None

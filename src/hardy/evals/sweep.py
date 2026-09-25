@@ -519,6 +519,31 @@ def reusable(prior: Baseline | None, *, environment_digest: str, procedure_diges
     )
 
 
+def carry_refusal(problems: ProblemSet, prior: Baseline | None, only: Iterable[str] | None, *,
+                  environment_digest: str, procedure_digest: str) -> str | None:
+    """Why a sweep of `only` would have to restamp a row, or `None` when it would not.
+
+    A row `only` leaves unnamed is carried into the new file, and a file has
+    one environment and one procedure digest, so no such row may come from a
+    prior file swept under other ones. `sweep` raises this as `SweepRefused`;
+    `hardy evals baseline` asks it first, before it starts any Lean process
+    of its own.
+    """
+    if only is None or prior is None or reusable(prior, environment_digest=environment_digest,
+                                                 procedure_digest=procedure_digest):
+        return None
+    named = set(only)
+    left_out = [e.id for e in problems.entries if e.id not in named and e.id in prior.entries]
+    if not left_out:
+        return None
+    return (
+        f"the prior tier file was swept under another environment or procedure digest, so its "
+        f"row for {left_out[0]} (and any other entry not named) cannot be carried into this one; "
+        "rows are never restamped: re-run `hardy evals baseline` with no --only, --only-file or "
+        "--status to re-sweep every row it holds"
+    )
+
+
 def row_carries(prior: Baseline, entry: Entry, statement_digest: str | None) -> bool:
     """Whether `prior`'s row for `entry` may stand for it today, once the
     prior file as a whole is `reusable`.
@@ -611,6 +636,10 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     procedure_digest = procedure_digest_of(wall_backstop_seconds)
     current = prior_statement_digests or {e.id: e.statement_digest() for e in problems.entries}
     carry = reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest)
+    refusal = carry_refusal(problems, prior, only, environment_digest=environment_digest,
+                            procedure_digest=procedure_digest)
+    if refusal is not None:
+        raise SweepRefused(refusal)
 
     entries: dict[str, EntryBaseline] = {}
     # Entries whose stage A did not run: no row, and a finding instead.
@@ -643,13 +672,8 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
         if only is not None and entry.id not in only:
             if prior_row is None:
                 continue   # never selected, never baselined: no row to carry
-            if not carry:
-                raise SweepRefused(
-                    f"the prior tier file was swept under another environment or procedure digest, so its "
-                    f"row for {entry.id} (and any other entry not named) cannot be carried into this one; "
-                    "rows are never restamped: re-run `hardy evals baseline` with no --only, --only-file or "
-                    "--status to re-sweep every row it holds"
-                )
+            if not carry:   # unreachable past `carry_refusal`; kept so no path can restamp
+                raise SweepRefused(f"{entry.id}: a row from another environment or procedure cannot be carried")
             entries[entry.id] = prior_row
             if (digest := prior.statement_digests.get(entry.id)) is None:
                 recorded.pop(entry.id, None)

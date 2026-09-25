@@ -105,7 +105,7 @@ def test_a_board_with_no_run_digest_is_not_counted_as_evidence(tmp_path):
 
 
 def test_outstanding_lists_active_work_only(tmp_path):
-    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=("r", "e"), **_paths(tmp_path))
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=("r", "e"), **_paths(tmp_path), procedure_digest="p" * 64)
     assert result["unevaluated_active"] == ["u"]      # `t` and `f` are candidates
     assert result["unbaselined_active"] == ["u"]
     assert result["partially_evaluated_active"] == []
@@ -122,7 +122,7 @@ def test_a_board_failing_its_self_audit_counts_nothing_and_is_named_refused(tmp_
     _board(tmp_path / "bad", ids=["u"], key=key)
     _board(tmp_path / "good", ids=["t"], key=key)
     REFUSED_BY_AUDIT["bad"] = ("runs/u/batch-0: the recorded-run audit reports findings",)
-    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path), procedure_digest="p" * 64)
     assert result["boards_counted"] == ["good"]
     assert result["boards_refused"] == {"bad": ["runs/u/batch-0: the recorded-run audit reports findings"]}
     assert result["unevaluated_active"] == ["u"]
@@ -131,7 +131,7 @@ def test_a_board_failing_its_self_audit_counts_nothing_and_is_named_refused(tmp_
 def test_an_invalid_row_leaves_its_id_unevaluated(tmp_path):
     key = ("r", "e")
     _board(tmp_path / "a", key=key, rows=[{"id": "u", "repeat": 0, "outcome": "invalid"}])
-    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path), procedure_digest="p" * 64)
     assert result["unevaluated_active"] == ["u"]
     assert result["partially_evaluated_active"] == []
 
@@ -143,12 +143,12 @@ def test_an_entry_with_only_some_of_its_repeats_is_partial_not_evaluated(tmp_pat
     apart, and not selected by the default run."""
     key = ("r", "e")
     _board(tmp_path / "a", key=key, repeats=3, rows=[{"id": "u", "repeat": 0, "outcome": "solved"}])
-    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path), procedure_digest="p" * 64)
     assert result["partially_evaluated_active"] == ["u"]
     assert result["unevaluated_active"] == []
 
     _board(tmp_path / "b", key=key, repeats=3, rows=[{"id": "u", "repeat": k, "outcome": "solved"} for k in (1, 2)])
-    done = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path))
+    done = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=key, **_paths(tmp_path), procedure_digest="p" * 64)
     assert done["partially_evaluated_active"] == [] and done["unevaluated_active"] == []
 
 
@@ -180,3 +180,33 @@ def test_an_active_entry_whose_row_never_ran_counts_as_unbaselined():
     row = sweep.EntryBaseline(tier=3, elaborates=True, attempts=never, closed_by=())
     baseline = _baseline().model_copy(update={"entries": {"u": row}, "statement_digests": {"u": u.statement_digest()}})
     assert outstanding.unbaselined_active(problems, baseline) == ["u"]
+
+
+def test_the_baseline_default_after_a_moved_procedure_is_every_held_row():
+    """What `evals todo` and a bare `evals baseline` share (review of #202):
+    under a file swept by another procedure, nothing may be carried, so the
+    default is every row the file holds -- candidates too -- plus the active
+    entries it lacks, and it says why."""
+    problems = _problems()
+    t = problems.by_id("t")
+    held = _baseline().model_copy(update={
+        "entries": {"t": _row()}, "statement_digests": {"t": t.statement_digest()},
+        "environment_digest": "e", "procedure_digest": "q" * 64,
+    })
+    ids, moved = outstanding.baseline_default(problems, held, environment_digest="e", procedure_digest="p" * 64)
+    assert ids == ["t", "u"] and "procedure digest" in moved
+    current = held.model_copy(update={"procedure_digest": "p" * 64})
+    assert outstanding.baseline_default(problems, current, environment_digest="e", procedure_digest="p" * 64) == (["u"], None)
+
+
+def test_the_baseline_default_includes_an_unmeasured_row_whatever_its_status():
+    problems = _problems()
+    t = problems.by_id("t")   # a candidate
+    never = {name: sweep.Attempt(status="not_run", message="panic") for name in (*sweep.SINGLES, *sweep.CHAINS)}
+    row = sweep.EntryBaseline(tier=3, elaborates=True, attempts=never, closed_by=())
+    prior = _baseline().model_copy(update={
+        "entries": {"t": row}, "statement_digests": {"t": t.statement_digest()},
+        "environment_digest": "e", "procedure_digest": "p" * 64,
+    })
+    ids, moved = outstanding.baseline_default(problems, prior, environment_digest="e", procedure_digest="p" * 64)
+    assert ids == ["t", "u"] and moved is None
