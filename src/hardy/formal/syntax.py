@@ -141,6 +141,18 @@ class QuotedDeclaration(DeclarationRefused):
     """
 
 
+class UncertainDeclaration(DeclarationRefused):
+    """A `theorem` or `lemma` head only some reading of the file calls code.
+
+    After a symbol, `--` and `/-` may open a comment or continue a token a
+    notation declares, and a quote may open a literal or end one; the union
+    view keeps every character any reading calls code, so a head written in
+    what Lean reads as a comment is still seen. Read as real, it ended the
+    statement before it inside the comment (`theorem T : 1 +--`) and named a
+    declaration the audit could resolve to anything. Neither reading is taken.
+    """
+
+
 class WorkspacePathError(ValueError):
     """A path that is not a Lean module inside the workspace."""
 
@@ -1271,9 +1283,14 @@ def named_declarations(source: str) -> tuple[str, ...]:
     """
     structure = _structure(source)
     _refuse_unreadable(structure)
+    lexed = lex(source)
+    # A declaration only some reading calls code -- a `def` in what Lean may
+    # read as a comment -- is not credited: this answers whether a cited name
+    # exists, and a name nothing may have declared must not answer yes.
     return tuple(
         declared_name(match.group(3), _prefix_at(structure.marks, match.start(2)))
-        for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens, lex(source))
+        for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens, lexed)
+        if not lexed.uncertain(match.start(2), match.end(3))
     )
 
 
@@ -1287,6 +1304,7 @@ class _Structure(NamedTuple):
     problems: tuple[str, ...]
     duplicates: tuple[str, ...]
     quoted: tuple[str, ...]
+    uncertain: tuple[str, ...] = ()
 
 
 def _refuse_unreadable(structure: _Structure) -> None:
@@ -1294,6 +1312,12 @@ def _refuse_unreadable(structure: _Structure) -> None:
         raise DuplicateDeclaration(
             f"`{structure.duplicates[0]}` is declared twice in this file, so which "
             "statement is the real one cannot be told"
+        )
+    if structure.uncertain:
+        raise UncertainDeclaration(
+            f"`{structure.uncertain[0]}` is declared where only some reading of the file sees "
+            "code, so whether it is a declaration, and where the statement before it ends, "
+            "cannot be told"
         )
     if structure.quoted:
         raise QuotedDeclaration(
@@ -1384,9 +1408,23 @@ def _structure(source: str) -> _Structure:
     first: dict[tuple[str, ...], int] = {}
     duplicates: list[str] = []
     quoted: list[str] = []
+    uncertain: list[str] = []
     spans = (*unbounded, *blanked)
     for head in heads:
         qualified = declared_name(head.name, _prefix_at(marks, head.keyword))
+        # A head only some reading calls code -- after `+--`, `+/-` or a quote
+        # that may open a literal -- may be inside a comment or a literal to
+        # Lean. Taken as a head, it cut the real statement before it short and
+        # named a declaration nobody wrote. Keyword and name must be code in
+        # every reading, as a scope keyword must.
+        if lexed.uncertain(head.keyword, head.end):
+            uncertain.append(qualified)
+            problems.append(
+                f"line {source.count(chr(10), 0, head.keyword) + 1}: `{head.kind} {qualified}` sits "
+                "where Hardy cannot tell code from a comment or a literal, so it cannot tell whether "
+                "it is a declaration, nor where the statement before it ends; put a space before a "
+                "`--`, `/-` or char literal that follows a symbol"
+            )
         # A head the quotation count covers -- bounded, unbounded or of
         # uncertain extent -- is syntax a macro builds, or real code a module
         # token moved the count past (N4). Either reading changes what the
@@ -1410,7 +1448,9 @@ def _structure(source: str) -> _Structure:
             "so one copy sits inside a syntax quotation, and Hardy cannot tell which statement "
             "is the real one"
         )
-    return _Structure(text, tokens, marks, tuple(heads), tuple(problems), tuple(duplicates), tuple(quoted))
+    return _Structure(
+        text, tokens, marks, tuple(heads), tuple(problems), tuple(duplicates), tuple(quoted), tuple(uncertain)
+    )
 
 
 def _head_start(text: str, cursor: int) -> int:

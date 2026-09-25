@@ -208,7 +208,9 @@ statement before it at the quotation's opening (``theorem T : let q :=
 `(command| lemma Nat.add_comm : ...); True`` was recorded as the statement
 ``theorem T : let q := `(command|``, which a writeup could quote) and made its
 name one the audit could resolve to whatever that name already means. So
-neither reading is taken, as for a scope keyword in the same place. A name a
+neither reading is taken, as for a scope keyword in the same place. A head
+only some reading calls code, such as one after `+--` or `+/-`, which Lean may
+read as the start of a comment, refuses the save the same way. A name a
 file declares twice refuses the save as well; Lean refuses a real repeat
 anyway. The statement scan, the writeup obligations, the audit of a rebuilt
 dependent, promotion and the root check each refuse such a file rather than

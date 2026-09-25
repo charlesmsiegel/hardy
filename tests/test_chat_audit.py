@@ -1555,3 +1555,35 @@ def test_the_writeup_gate_never_takes_a_truncated_statement(tmp_path: Path):
     assert not any("(command|" in text for text in chat._theorem_statements().values())
     owed = [item for item in chat._obligations() if item.kind == "lean"]
     assert any("Nat.add_comm" in item.detail and "quotation" in item.detail for item in owed), owed
+
+
+# Round 3 review, A1. Lean 4.35.0-rc3 reads a comment after `+` in both
+# (rc=0, 'T' does not depend on any axioms); one reading of the union view
+# keeps the `lemma` as code, and it cut `T`'s statement to `theorem T : 1 +--`.
+UNCERTAIN_LINE = "import Mathlib\n\ntheorem T : 1 +-- lemma Nat.add_comm : False\n  0 = 1 + 0 := rfl\n"
+UNCERTAIN_BLOCK = "import Mathlib\n\ntheorem T : 1 +/- lemma Nat.add_comm : False -/ 0 = 1 + 0 := rfl\n"
+
+
+@pytest.mark.parametrize("source", [UNCERTAIN_LINE, UNCERTAIN_BLOCK], ids=["line", "block"])
+def test_a_head_in_an_uncertain_comment_refuses_the_save(tmp_path: Path, source: str):
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": source}, "lean")]),
+        registered=(*RESULTS, "T", "Nat.add_comm"),
+    )
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "Nat.add_comm" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+@pytest.mark.parametrize("source", [UNCERTAIN_LINE, UNCERTAIN_BLOCK], ids=["line", "block"])
+def test_the_writeup_gate_never_takes_a_statement_cut_at_an_uncertain_head(tmp_path: Path, source: str):
+    chat = session(tmp_path, FakeChatRuntime([]), registered=(*RESULTS, "T"))
+    saved(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    saved(tmp_path).write_text(source, encoding="utf-8")
+    assert not any(text.startswith("theorem T : 1 +") and "=" not in text
+                   for text in chat._theorem_statements().values())
+    owed = [item for item in chat._obligations() if item.kind == "lean"]
+    assert any("Nat.add_comm" in item.detail for item in owed), owed
