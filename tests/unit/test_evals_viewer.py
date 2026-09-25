@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import threading
 import urllib.error
 import urllib.request
@@ -476,6 +477,32 @@ def test_a_resolver_failure_on_a_wildcard_bind_still_yields_loopback():
         raise OSError("no resolver here")
 
     assert _allowed_hosts("0.0.0.0", 9, resolve=_boom) == {"127.0.0.1:9", "localhost:9", "[::1]:9"}
+
+
+def test_a_resolver_raising_unicode_error_on_a_wildcard_bind_still_yields_loopback():
+    """`getaddrinfo` IDNA-encodes its argument before resolving it, and
+    raises `UnicodeError` -- a `ValueError`, not an `OSError` -- for one that
+    fails to encode. An injected resolver that fails this way must be caught
+    exactly like one that raises `OSError`."""
+    def _bad_name() -> tuple[str, str, list[str]]:
+        raise UnicodeError("label empty or too long")
+
+    assert _allowed_hosts("0.0.0.0", 9, resolve=_bad_name) == {"127.0.0.1:9", "localhost:9", "[::1]:9"}
+
+
+def test_the_real_resolver_swallows_a_getaddrinfo_unicode_error_too(monkeypatch):
+    """Exercises `_resolve_names` itself, not just the injected seam: a
+    non-ASCII or malformed hostname or FQDN must not crash `serve()` either,
+    which a bare `except OSError` around `getaddrinfo` would miss."""
+    monkeypatch.setattr(socket, "gethostname", lambda: "mybox")
+    monkeypatch.setattr(socket, "getfqdn", lambda: "mybox.local")
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise UnicodeError("label empty or too long")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _boom)
+    assert _allowed_hosts("0.0.0.0", 9) == {"mybox:9", "mybox.local:9",
+                                            "127.0.0.1:9", "localhost:9", "[::1]:9"}
 
 
 def test_a_specific_host_admits_only_itself():
