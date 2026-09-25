@@ -227,9 +227,16 @@ class _Overflow(Exception):
 class Lexed:
     """One source, lexed under every reading that could be Lean's.
 
-    Per character: whether any reading reads it as code, as part of a literal,
-    as a comment, as a literal's delimiter, or as part of a `«...»` name.
-    `uncertain` is code in one reading and not in another.
+    Per character: whether any reading reads it as code, as code outside a
+    `«...»` name (`plain`), as part of a literal, as a comment, as a literal's
+    delimiter, or as part of a `«...»` name. `uncertain` is code in one reading
+    and not in another.
+
+    A span one reading opens is never trusted to hide what another reading
+    calls code. The view scans read (`text`) shows every character any reading
+    calls code; token boundaries come from `profiles`, so a boundary one reading
+    has is kept even where another reading's code runs through it; and a
+    `«...»` is one name only where every reading opens it (`certain_name`).
     """
 
     def __init__(self, source: str) -> None:
@@ -240,6 +247,7 @@ class Lexed:
         self.comment = bytearray(length)
         self.delimiter = bytearray(length)
         self.name = bytearray(length)
+        self.plain = bytearray(length)
         self.overflow: int | None = None
         _run(self)
         prefix = [0]
@@ -249,7 +257,32 @@ class Lexed:
                 total += 1
             prefix.append(total)
         self._uncertain = prefix
+        # One byte per character saying which kinds of reading it has. Where
+        # two neighbours differ, some reading may break a token there that
+        # another reading runs through, so the tokenizer breaks there too.
+        # Each flag byte is 0 or 1, so one shift of the whole array moves every
+        # byte's bit without a carry into its neighbour.
+        self.profiles = (
+            int.from_bytes(self.code, "big")
+            | int.from_bytes(self.literal, "big") << 1
+            | int.from_bytes(self.comment, "big") << 2
+            | int.from_bytes(self.delimiter, "big") << 3
+        ).to_bytes(length, "big")
 
+    def certain_name(self, index: int) -> bool:
+        """Whether every reading reads `index` as part of a `«...»` name."""
+        return bool(
+            self.name[index]
+            and not (self.plain[index] or self.literal[index] or self.comment[index])
+        )
+
+    def uncertain_names(self) -> tuple[int, ...]:
+        """Each `«` that some reading opens a name at and another does not."""
+        return tuple(
+            index
+            for index, character in enumerate(self.source)
+            if character == "«" and self.name[index] and not self.certain_name(index)
+        )
     def uncertain(self, start: int = 0, end: int | None = None) -> bool:
         """Whether any character in `[start, end)` is code in only some readings."""
         end = len(self.source) if end is None else end
@@ -263,9 +296,15 @@ class Lexed:
 
     @functools.cached_property
     def text(self) -> str:
-        """Code in any reading; literals, comments and delimiters blanked."""
-        code, delimiter = self.code, self.delimiter
-        return self._render(lambda index: code[index] and not delimiter[index])
+        """Every character any reading calls code; the rest blanked.
+
+        A delimiter one reading uses (a quote, a raw string's `r#`) stays
+        visible where another reading calls it code: blanking it would hide
+        code on a reading's word. The boundary it makes in the reading that
+        uses it reaches the tokenizer through `profiles` instead.
+        """
+        code = self.code
+        return self._render(lambda index: code[index])
 
     @functools.cached_property
     def kept(self) -> str:
@@ -323,6 +362,7 @@ def _run(lexed: Lexed) -> None:
             # and every caller that asks is told the reading is uncertain.
             lexed.overflow = position
             lexed.code[position:] = _ones(length - position)
+            lexed.plain[position:] = _ones(length - position)
             lexed.literal[position:] = _ones(length - position)
             return
 
@@ -341,6 +381,7 @@ def _step(lexed: Lexed, index: int, state: tuple[Any, ...]) -> list[tuple[int, t
     # The forced readings of one ambiguous position.
     if kind == "symbol":
         lexed.code[index] = 1
+        lexed.plain[index] = 1
         return [(index + 1, ("code", False, state[1]))]
     if kind == "char":
         _mark_char(lexed, index, state[1])
@@ -370,6 +411,7 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
     `context` holds the brace depth of each interpolation this code sits in.
     """
     source, code = lexed.source, lexed.code
+    plain = lexed.plain
     length = len(source)
     while index < length:
         character = source[index]
@@ -378,6 +420,7 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
             while end < length and source[end] in _LEAN_SPACE:
                 end += 1
             code[index:end] = _ones(end - index)
+            plain[index:end] = _ones(end - index)
             index, boundary = end, True
             continue
         if context and character in "{}":
@@ -387,6 +430,7 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
                 return [(index + 1, ("string", True, context[:-1]))]
             context = context[:-1] + (depth + (1 if character == "{" else -1),)
             code[index] = 1
+            plain[index] = 1
             index, boundary = index + 1, False
             continue
         if character == '"':
@@ -399,6 +443,7 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
             if boundary and source.startswith("''", index):
                 # Lean never starts a char literal at `''` (Mathlib's `f '' s`).
                 code[index : index + 2] = _ones(2)
+                plain[index : index + 2] = _ones(2)
                 index, boundary = index + 2, False
                 continue
             if end is not None and boundary:
@@ -408,6 +453,7 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
             if end is not None:
                 return [(index, ("char", end, context)), (index, ("symbol", context))]
             code[index] = 1
+            plain[index] = 1
             index, boundary = index + 1, False
             continue
         if source.startswith("--", index):
@@ -441,6 +487,7 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
         if identifier is not None:
             end = identifier.end()
             code[index:end] = _ones(end - index)
+            plain[index:end] = _ones(end - index)
             index, boundary = end, True
             continue
         if "0" <= character <= "9":
@@ -448,9 +495,11 @@ def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) ->
             # token, so a digit after a symbol may still be inside it.
             end = _number_end(source, index)
             code[index:end] = _ones(end - index)
+            plain[index:end] = _ones(end - index)
             index = end
             continue
         code[index] = 1
+        plain[index] = 1
         index, boundary = index + 1, False
     return []
 
@@ -629,7 +678,9 @@ def blank_bounded_quotations(lexed: Lexed, refuse: str = "") -> tuple[str, tuple
     Bar) `` build syntax a proof never runs, so neither is a hole or a scope.
     Its end is found by counting parentheses, and that count is exact only
     where every reading agrees what is code: parentheses inside literals and
-    comments are already blank, and those inside a `«...»` name are skipped.
+    comments are already blank, and those inside a `«...»` name every reading
+    opens are skipped. One only some reading opens is counted through, since
+    another reading's parentheses may be inside it.
     A quotation holding an uncertain character, or any of `refuse`, is left
     visible and returned in the second element with every unbalanced one, so
     a caller can say it could not read it rather than guess.
@@ -642,7 +693,7 @@ def blank_bounded_quotations(lexed: Lexed, refuse: str = "") -> tuple[str, tuple
         depth = 0
         end = None
         for position in range(index + 1, len(text)):
-            if lexed.name[position]:
+            if lexed.certain_name(position):
                 continue
             if text[position] == "(":
                 depth += 1
@@ -817,16 +868,40 @@ def _exponent_end(text: str, index: int) -> int | None:
     return _digits_end(text, index) if _is_digit(text, index) else None
 
 
-def _component_end(text: str, index: int) -> int | None:
-    """Where the name component starting at `index` ends, or None if none does."""
+def _component_end(text: str, index: int, lexed: Lexed | None = None) -> int | None:
+    """Where the name component starting at `index` ends, or None if none does.
+
+    With `lexed`, a `«...»` is a component only where every reading opens a
+    name at its `«`: a `«` that only some reading opens -- `('«')` read as a
+    symbol, `"{«"` read as interpolated -- would otherwise swallow everything
+    up to the next `»`, code another reading shows included. And an
+    identifier stops where the readings' profile changes, so one reading's
+    `a'theorem` cannot hide the `theorem` another reading's `'a'` exposes.
+    """
     if text[index] == "«":
+        if lexed is not None and not lexed.certain_name(index):
+            return None
         closing = text.find("»", index + 1)
         return closing + 1 if closing > index + 1 else None
     found = _ID_PART.match(text, index)
-    return None if found is None else found.end()
+    if found is None:
+        return None
+    return _clip(lexed, index, found.end())
 
 
-def _code_tokens(text: str) -> tuple[dict[int, int], frozenset[int]]:
+def _clip(lexed: Lexed | None, start: int, end: int) -> int:
+    """`end`, or the first position before it where the profile of `start` changes."""
+    if lexed is None:
+        return end
+    profiles = lexed.profiles
+    first = profiles[start]
+    for position in range(start + 1, end):
+        if profiles[position] != first:
+            return position
+    return end
+
+
+def _code_tokens(text: str, lexed: Lexed | None = None) -> tuple[dict[int, int], frozenset[int]]:
     """Identifier tokens (start -> end) and numeral ends in already-stripped text.
 
     A small forward tokenizer rather than a lookbehind, because whether a
@@ -836,44 +911,53 @@ def _code_tokens(text: str) -> tuple[dict[int, int], frozenset[int]]:
     dotted name. A name straight after a `.` that no identifier precedes --
     `(i).end`, `xs[0].def`, `.theorem` -- is a field or a dot-identifier, which
     Lean reads with `rawIdent`, so it is never a keyword and is left out.
+
+    With the `lexed` source this text came from, a token never runs across a
+    change in the readings' profile and a `«` only some reading opens is a
+    plain symbol (`_component_end`), so a keyword any reading shows is a token.
     """
+    profiles = lexed.profiles if lexed is not None else None
+
+    def same(first: int, second: int) -> bool:
+        return profiles is None or profiles[first] == profiles[second]
+
     tokens: dict[int, int] = {}
     numerals: set[int] = set()
     index = 0
     length = len(text)
     while index < length:
         if _is_digit(text, index):
-            index = _number_end(text, index)
+            index = _clip(lexed, index, _number_end(text, index))
             numerals.add(index)
             continue
-        end = _component_end(text, index)
+        end = _component_end(text, index, lexed)
         if end is None:
             index += 1
             continue
         start = index
-        while end + 1 < length and text[end] == ".":
-            following = _component_end(text, end + 1)
+        while end + 1 < length and text[end] == "." and same(end, start) and same(end + 1, start):
+            following = _component_end(text, end + 1, lexed)
             if following is None:
                 break
             end = following
-        if not (start and text[start - 1] == "."):
+        if not (start and text[start - 1] == "." and same(start - 1, start)):
             tokens[start] = end
         index = end
     return tokens, frozenset(numerals)
 
 
-def identifier_tokens(text: str) -> dict[int, int]:
+def identifier_tokens(text: str, lexed: Lexed | None = None) -> dict[int, int]:
     """Start -> end of every identifier or keyword token in already-stripped text."""
-    return _code_tokens(text)[0]
+    return _code_tokens(text, lexed)[0]
 
 
-def numeral_ends(text: str) -> frozenset[int]:
+def numeral_ends(text: str, lexed: Lexed | None = None) -> frozenset[int]:
     """Where each numeral in already-stripped text ends."""
-    return _code_tokens(text)[1]
+    return _code_tokens(text, lexed)[1]
 
 
 def _keyword_matches(
-    text: str, pattern: re.Pattern[str], tokens: Mapping[int, int]
+    text: str, pattern: re.Pattern[str], tokens: Mapping[int, int], lexed: Lexed | None = None
 ) -> list[re.Match[str]]:
     """Every match of `pattern` whose first word and keyword (group 2) are tokens.
 
@@ -885,7 +969,7 @@ def _keyword_matches(
     while (match := pattern.search(text, position)) is not None:
         start = match.start()
         if tokens.get(match.start(2)) == match.end(2) and (
-            start in tokens or _component_end(text, start) is None
+            start in tokens or _component_end(text, start, lexed) is None
         ):
             found.append(match)
             position = max(match.end(), start + 1)
@@ -995,7 +1079,7 @@ def unreadable_assumptions(source: str) -> tuple[str, ...]:
     starts = _line_starts(stripped)
     keyworded = {
         bisect_right(starts, start) - 1
-        for start, end in identifier_tokens(stripped).items()
+        for start, end in identifier_tokens(stripped, lex(source)).items()
         if stripped[start:end] in {"axiom", "constant", "opaque"}
     }
     found: list[str] = []
@@ -1098,7 +1182,7 @@ def named_declarations(source: str) -> tuple[str, ...]:
     structure = _structure(source)
     return tuple(
         declared_name(match.group(3), _prefix_at(structure.marks, match.start(2)))
-        for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens)
+        for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens, lex(source))
     )
 
 
@@ -1124,7 +1208,7 @@ def _structure(source: str) -> _Structure:
     """
     lexed = lex(source)
     text, unbounded = blank_bounded_quotations(lexed)
-    tokens = identifier_tokens(text)
+    tokens = identifier_tokens(text, lexed)
     marks = _scopes(text, tokens)
     heads: list[_Head] = []
     ends = {end: start for start, end in tokens.items()}
@@ -1133,6 +1217,11 @@ def _structure(source: str) -> _Structure:
         problems.append(
             f"line {source.count(chr(10), 0, lexed.overflow) + 1}: Hardy cannot tell where "
             "the strings and comments from here on end"
+        )
+    for index in lexed.uncertain_names():
+        problems.append(
+            f"line {source.count(chr(10), 0, index) + 1}: a `«` opens a name in one reading "
+            "of this file and not in another, so Hardy cannot tell where the name ends"
         )
     for start in sorted(tokens):
         end = tokens[start]

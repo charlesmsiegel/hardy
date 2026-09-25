@@ -33,11 +33,6 @@ if TYPE_CHECKING:
     from hardy.formal.modules import ModuleIndex
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
-#: A Lean escaped identifier, `«like this»`. Its contents are a *name*, not
-#: syntax, so `«sorry»` is an ordinary lemma somebody may legitimately call --
-#: and `\b` matches inside the guillemets, so an unblanked scan reported a hole
-#: in a proof that has none and kept a complete candidate as a partial one.
-ESCAPED_NAME = re.compile(r"«[^»\n]*»")
 # Lean's report for an import it cannot resolve. It names the `.olean` first,
 # which is why it reads as a damaged installation rather than as a wrong path.
 MISSING_MODULE = re.compile(r"object file '[^']*' of module ([\w.'!?«»]+) does not exist")
@@ -172,8 +167,18 @@ def scannable(source: str) -> str:
     a proof `submit_proof` was right to accept is not refused offline for a
     `sorry` that is a piece of quoted syntax or a declaration's own name.
     """
-    quoted, _ = blank_bounded_quotations(lex(source))
-    return ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), quoted)
+    lexed = lex(source)
+    quoted, _ = blank_bounded_quotations(lexed)
+    # A Lean escaped identifier, `«like this»`, is a *name*, not syntax, so
+    # `«sorry»` is an ordinary lemma somebody may legitimately call -- and `\b`
+    # matches inside the guillemets, so an unblanked scan reported a hole in a
+    # proof that has none. Only a name every reading opens is blanked: a `«`
+    # one reading opens and Lean may not (`('«')`) would blank Lean's code up
+    # to the next `»`, and did, hiding a `sorry` from every gate.
+    return "".join(
+        " " if character != "\n" and lexed.certain_name(index) else character
+        for index, character in enumerate(quoted)
+    )
 
 
 class Hole(FrozenModel):

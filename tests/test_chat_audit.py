@@ -1286,3 +1286,40 @@ def test_a_statement_check_without_an_answer_is_not_established(tmp_path: Path):
     assert not refusal["ok"]
     assert "not established" in refusal["output"]
     assert not saved(tmp_path).exists()
+
+
+def test_a_guillemet_only_one_reading_opens_refuses_the_save(tmp_path: Path):
+    """Review round 2, N1: `"{«"` is a plain string to Lean, but read as
+    interpolated it opens a name running to the `»` in the comment -- which
+    hid the unregistered, holed `bad` from the registration gate and the audit,
+    and the save went through recorded `clean`."""
+    source = (
+        "import Mathlib\n\nlemma good : True := by exact True.intro\n"
+        'def s : True := (fun _ => trivial) "{«"\ntheorem bad : True := sorry\n-- »\n'
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    # `bad` is seen again, so the registration gate is the first to refuse.
+    assert "bad" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_a_registered_theorem_behind_a_one_reading_guillemet_still_refuses(tmp_path: Path):
+    """Registered, `bad` passes the registration gate; the ambiguous `«` is
+    what refuses, because where that name ends decides what the file says."""
+    source = (
+        "import Mathlib\n\nlemma good : True := by exact True.intro\n"
+        'def s : True := (fun _ => trivial) "{«"\ntheorem bad : True := sorry\n-- »\n'
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": source}, "lean")]),
+        registered=(*RESULTS, "bad"),
+    )
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "«" in refusal["output"]
+    assert not saved(tmp_path).exists()

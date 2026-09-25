@@ -411,3 +411,60 @@ def test_normalise_lean_compares_ambiguous_text_verbatim():
     the comparison gets stricter, never looser."""
     assert syntax.normalise_lean("f  `(xs[0]'\"'  a  \")") == "f `(xs[0]'\"'  a  \")"
     assert syntax.normalise_lean("f   «a  b»   x") == "f «a  b» x"
+
+
+# --- Review round 2 (N1): a `«` only some reading opens hides nothing ---------
+#
+# Each module elaborates under Lean 4.35.0-rc3 and `#print axioms` reports the
+# holed theorem named here as resting on `sorryAx`. In `('«')` Lean reads a
+# char, and in `"{«"` a plain string; the other reading opens a name at the
+# `«` that runs to the next `»` -- in a comment, or a later real name -- and
+# the combined view used to read that whole stretch as one name.
+
+GUILLEMET_MODULES = [
+    ("theorem good : True := trivial\ndef c : Char := ('«')\ntheorem bad : False := sorry\n-- »\n",
+     ("good", "bad")),
+    ('theorem good : True := trivial\ndef s : String := "{«"\ntheorem bad : False := sorry\n-- »\n',
+     ("good", "bad")),
+    ("theorem x : True := trivial\ndef c : Char := ('«')\nnamespace Foo\ntheorem x : False := sorry\n"
+     "end Foo\ndef «y» := 1\n",
+     ("x", "Foo.x")),
+    ("theorem good : True := trivial\ndef c : Char := ('«')\n"
+     "def q : Lean.MacroM Lean.Syntax := `(x)\ntheorem bad : False := sorry\ndef «y» := (1)\n",
+     ("good", "bad")),
+]
+
+
+@pytest.mark.parametrize(("source", "names"), GUILLEMET_MODULES)
+def test_a_guillemet_only_some_reading_opens_hides_nothing(source, names):
+    assert syntax.declarations(source)["theorem"] == names
+    assert LeanTools.has_holes(source)
+    # And the file is reported: where the name ends is not something Hardy
+    # can say, so a gate naming declarations refuses rather than guesses.
+    assert any("«" in problem for problem in syntax.unreadable_structure(source))
+
+
+def test_a_guillemet_every_reading_opens_is_still_one_name():
+    source = "theorem «a theorem b» : True := trivial\ndef c := «sorry»\n"
+    assert syntax.declarations(source)["theorem"] == ("«a theorem b»",)
+    assert not LeanTools.has_holes(source)
+    assert syntax.unreadable_structure(source) == ()
+    assert syntax.lex(source).uncertain_names() == ()
+
+
+def test_a_delimiter_one_reading_uses_stays_visible_where_another_reads_code():
+    """N2: after `×`, `r#"` may open a raw string or be `r` and `#` in a token.
+    The combined view shows `r#` because one reading calls it code; the token
+    boundary the raw reading makes still reaches the tokenizer."""
+    source = 'def q := x ×r#"a"# theorem t : True := trivial\n'
+    text = syntax.strip_comments(source)
+    assert text.startswith("def q := x ×r#")
+    assert syntax.declarations(source)["theorem"] == ("t",)
+
+
+def test_a_boundary_one_reading_makes_splits_the_token_for_all():
+    """One reading's `'a'` literal ends right before `theorem`; the other reads
+    the identifier `a'theorem`. The keyword is found either way."""
+    source = "def q := x ×'a'theorem t : True := sorry\n"
+    assert "t" in syntax.declarations(source)["theorem"]
+    assert LeanTools.has_holes(source)

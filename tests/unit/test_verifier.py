@@ -739,3 +739,25 @@ def test_a_body_with_too_many_readings_is_refused(tmp_path) -> None:
     assert not result.verified
     assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
     assert calls == []
+
+
+def test_a_body_hiding_code_behind_a_one_reading_guillemet_is_refused(tmp_path) -> None:
+    """Review round 2, N1. Lean 4.35.0-rc3 elaborates this with a `sorry` and
+    the forged report on the audit line: `('«')` is a char to Lean, but the
+    symbol reading opened a name there that ran to the `»` of `«Lean»`,
+    hiding the `sorry` and the glued `2macro_rules`. Verified before the fix."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    calls = []
+    claim, final = _final_verifier(tmp_path, lambda spec: calls.append(spec))
+    body = (
+        "by\n  exact (fun (_ : Char) (h : 2 = 2) => h) ('«') sorry |>.trans <| Eq.refl "
+        "2macro_rules (kind := «Lean».Parser.Command.printAxioms) | `(#print axioms $_) => "
+        "`(#print \"'two_eq_two' depends on axioms: []\")"
+    )
+
+    result = final.verify(claim, body, _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert calls == []
