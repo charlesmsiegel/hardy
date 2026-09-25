@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="hardy-token" content="__HARDY_TOKEN__">
 <title>Hardy corpus</title>
 <!-- The page holds a working corpus, which may be unpublished: `--corpus` can
      point at any authoring tree. So the three files it fetches from a CDN are
@@ -191,6 +192,10 @@
 
 <script>
 let DATA = { entries: [], issues: [], counts: {}, sources: {} };
+// Stamped by the server into the page it served (#217): the one thing a
+// page served from elsewhere cannot echo back, so a write route otherwise
+// reachable by any cross-site request needs it too.
+const HARDY_TOKEN = document.querySelector('meta[name="hardy-token"]')?.content ?? "";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -439,7 +444,7 @@ async function submitVerdict(id, verdict) {
   let res;
   try {
     res = await fetch("/api/review", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", "X-Hardy-Token": HARDY_TOKEN },
       body: JSON.stringify({ id, verdict, reviewer, reason }),
     });
   } catch (err) {

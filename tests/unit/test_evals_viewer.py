@@ -7,6 +7,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from corpus_helpers import rebind_changelog, write_corpus
@@ -404,42 +405,146 @@ def reviewing(reviewable):
     server = serve(reviewable, port=0, report=lambda _: None, serve_forever=False)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield f"http://127.0.0.1:{server.server_port}", reviewable
+    yield f"http://127.0.0.1:{server.server_port}", reviewable, server.token
     server.shutdown()
     server.server_close()
 
 
-def _post(url: str, body: dict):
+def _post(url: str, body: dict, *, token: str):
+    origin = urlsplit(url)
     request = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"), method="POST",
-        headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json", "Origin": f"{origin.scheme}://{origin.netloc}",
+                 "X-Hardy-Token": token})
     return urllib.request.urlopen(request)
 
 
 def test_the_review_route_records_a_verdict_and_returns_the_updated_entry(reviewing):
-    url, root = reviewing
-    with _post(f"{url}/api/review", {"id": "alpha", "verdict": "faithful", "reviewer": "Ada Lovelace"}) as res:
+    url, root, token = reviewing
+    with _post(f"{url}/api/review", {"id": "alpha", "verdict": "faithful", "reviewer": "Ada Lovelace"},
+              token=token) as res:
         body = json.loads(res.read())
     assert body["status"] == "active" and body["review"]["reviewer"] == "Ada Lovelace"
     assert load_corpus(root).by_id("alpha").status == "active"
 
 
 def test_the_review_route_refuses_with_the_reason_and_writes_nothing(reviewing):
-    url, root = reviewing
+    url, root, token = reviewing
     for body in ({"id": "gamma", "verdict": "faithful", "reviewer": "Ada"},
                  {"id": "alpha", "verdict": "unfaithful", "reviewer": "Ada"},
                  {"id": "alpha", "verdict": "faithful", "reviewer": ""}):
         with pytest.raises(urllib.error.HTTPError) as raised:
-            _post(f"{url}/api/review", body)
+            _post(f"{url}/api/review", body, token=token)
         assert raised.value.code == 400
         assert "error" in json.loads(raised.value.read())
     with pytest.raises(urllib.error.HTTPError) as raised:
-        urllib.request.urlopen(urllib.request.Request(f"{url}/api/review", data=b"not json", method="POST"))
+        urllib.request.urlopen(urllib.request.Request(
+            f"{url}/api/review", data=b"not json", method="POST",
+            headers={"Content-Type": "application/json", "Origin": url, "X-Hardy-Token": token}))
     assert raised.value.code == 400
     with pytest.raises(urllib.error.HTTPError) as raised:
         urllib.request.urlopen(urllib.request.Request(f"{url}/api/corpus", data=b"{}", method="POST"))
     assert raised.value.code == 404, "POST exists for one route only"
     assert load_corpus(root).by_id("alpha").review is None
+
+
+# --- Request authentication: Host, Origin and the per-process token (#217) ---
+
+
+def test_a_cross_site_post_is_refused_and_the_shard_is_unchanged(reviewing):
+    """`Origin` not matching `Host` is an ordinary cross-site form post."""
+    url, root, token = reviewing
+    shard = root / "problems" / "13.json"
+    before = shard.read_bytes()
+    request = urllib.request.Request(
+        f"{url}/api/review",
+        data=json.dumps({"id": "alpha", "verdict": "faithful", "reviewer": "Ada"}).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": "https://evil.example",
+                 "X-Hardy-Token": token})
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(request)
+    assert raised.value.code == 403
+    assert shard.read_bytes() == before
+    assert load_corpus(root).by_id("alpha").review is None
+
+
+def test_a_get_with_a_foreign_host_is_refused(reviewing):
+    """A name an attacker's DNS resolved to this loopback address must not
+    be treated as this server -- otherwise DNS rebinding defeats every other
+    check, which all trust `Host`."""
+    url, _, _ = reviewing
+    request = urllib.request.Request(f"{url}/", headers={"Host": "evil.example:1"})
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(request)
+    assert raised.value.code == 403
+
+
+def test_a_post_with_no_token_is_refused(reviewing):
+    """Host and Origin alone are not enough: a page served from this very
+    origin by something else must not be able to drive it either."""
+    url, root, _ = reviewing
+    request = urllib.request.Request(
+        f"{url}/api/review",
+        data=json.dumps({"id": "alpha", "verdict": "faithful", "reviewer": "Ada"}).encode("utf-8"),
+        method="POST", headers={"Content-Type": "application/json", "Origin": url})
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(request)
+    assert raised.value.code == 403
+    assert load_corpus(root).by_id("alpha").review is None
+
+
+_TOKEN_META = re.compile(r'<meta name="hardy-token" content="([^"]+)">')
+
+
+def test_a_post_with_the_token_scraped_from_the_page_succeeds(reviewing):
+    url, root, _ = reviewing
+    with urllib.request.urlopen(f"{url}/") as page:
+        html = page.read().decode("utf-8")
+    scraped = _TOKEN_META.search(html)
+    assert scraped, "the page must stamp the token into a <meta> tag"
+    with _post(f"{url}/api/review", {"id": "alpha", "verdict": "faithful", "reviewer": "Ada"},
+              token=scraped.group(1)) as res:
+        body = json.loads(res.read())
+    assert body["status"] == "active"
+    assert load_corpus(root).by_id("alpha").status == "active"
+
+
+# --- Byte-exact writes (#237) ---
+
+
+def test_an_accepted_review_writes_no_carriage_return_even_if_write_text_would(monkeypatch, reviewable):
+    """`write_text` without `newline=` translates every `\\n` to the platform
+    default; the fix must not go through it for the shard at all, so forcing
+    that translation must not be able to reach the bytes on disk."""
+    real_write_text = Path.write_text
+
+    def _crlf_write_text(self, data, *args, **kwargs):
+        if "newline" not in kwargs and len(args) < 3:
+            kwargs["newline"] = "\r\n"
+        return real_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _crlf_write_text)
+    record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+    shard = (reviewable / "problems" / "13.json").read_bytes()
+    assert b"\r" not in shard
+
+
+def test_a_new_objection_reverts_the_shard_to_the_original_bytes(monkeypatch, reviewable):
+    """Any exception while checking the write -- not only a clean list of
+    objections -- must revert to the original bytes before propagating,
+    rather than leaving an unvalidated write on disk."""
+    import hardy.app.corpus_viewer as corpus_viewer
+
+    shard = reviewable / "problems" / "13.json"
+    original = shard.read_bytes()
+    calls = iter([[], ["x: a new objection"]])
+    monkeypatch.setattr(corpus_viewer, "check_issues", lambda root: next(calls))
+
+    with pytest.raises(ReviewRefused):
+        record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+
+    assert shard.read_bytes() == original
 
 
 # --- Citations: AMS alpha labels and the per-source locator conventions ---
@@ -511,7 +616,7 @@ def test_the_payload_carries_the_citation_beside_each_occurrence(tmp_path):
 
 
 def test_the_bibliography_page_is_served_and_lists_every_source(reviewing):
-    url, _ = reviewing
+    url, _, _ = reviewing
     with urllib.request.urlopen(f"{url}/bibliography") as page:
         assert page.headers["Content-Type"].startswith("text/html")
         assert b"Bibliography" in page.read()
