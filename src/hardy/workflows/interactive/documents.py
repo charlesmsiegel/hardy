@@ -145,6 +145,17 @@ class DocumentService:
                 # already says which path it refused and why.
                 raise WriteupNotSaved(f"{relative} could not be saved: {error}") from None
 
+        # Set by `published`, called from inside `check` only when
+        # `writeup.pdf` itself was replaced (#335). A compile can succeed, the
+        # source and the aux file can both be published, and the PDF can still
+        # be the one thing left stale because a viewer had it open -- and the
+        # stamp must not claim a PDF that is not the one on disk.
+        pdf_published = False
+
+        def _mark_published() -> None:
+            nonlocal pdf_published
+            pdf_published = True
+
         # Handed to `check` rather than run after it. `check` publishes
         # `writeup.pdf` and `.build/tex/writeup.aux` from the candidate, and
         # doing that first meant a write the guard refused left a committed PDF
@@ -162,18 +173,21 @@ class DocumentService:
                 commit=_write,
                 stamp=policy.stamp(),
                 vouched=policy.vouch,
+                published=_mark_published,
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
         if not result.ok:
             return result
-        # Stamped after the write, on a compile that succeeded, and only when
-        # what was compiled is the writeup itself. Saving a fragment the root
-        # does not include yet is checked through a probe document, which says
-        # the fragment is sound and nothing about the writeup -- stamping that
-        # would mark the tree established on the strength of a document nobody
-        # will read.
-        if compiles_document(self._tex_sources(), relative) and self._tex_tree_digest(
+        # Stamped after the write, on a compile that succeeded, only when what
+        # was compiled is the writeup itself, and only when the PDF was
+        # actually replaced. Saving a fragment the root does not include yet is
+        # checked through a probe document, which says the fragment is sound
+        # and nothing about the writeup -- stamping that would mark the tree
+        # established on the strength of a document nobody will read. A PDF
+        # locked by another program leaves the writeup reading as stale, which
+        # is the truth: the next successful save settles it.
+        if pdf_published and compiles_document(self._tex_sources(), relative) and self._tex_tree_digest(
             relative
         ) == compiled_tree:
             # Taken here, with the candidate now written: what the signature

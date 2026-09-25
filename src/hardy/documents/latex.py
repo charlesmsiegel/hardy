@@ -42,6 +42,7 @@ from hardy.documents.syntax import typeset as typeset
 from hardy.documents.syntax import uncommented as uncommented
 from hardy.documents.syntax import unfinished_definition as unfinished_definition
 from hardy.foundation.files import LayoutError, WriteGuard, files_under, guard_for, read_bytes
+from hardy.foundation.locking import FileInUse
 from hardy.foundation.process import GuardedResult, run_guarded
 from hardy.foundation.values import ToolResult
 
@@ -200,7 +201,7 @@ def _diagnostics(work: Path, outcome: GuardedResult) -> str:
     return text + outcome.stdout + outcome.stderr
 
 
-def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
+def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> bool:
     r"""Copy the compiled document out of the scratch tree, through a guard.
 
     Its own function, and not part of `check`, because of what the ratchet in
@@ -219,19 +220,20 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
     the user's shell profile on the first successful save. `write_bytes`
     refuses a symlinked leaf outright and replaces the target atomically
     instead of truncating it in place.
+
+    The aux file first, the PDF second, which is the opposite of the order
+    this function had until #335: on Windows a PDF viewer holds `writeup.pdf`
+    open without `FILE_SHARE_DELETE`, and `write_from` failed there every time
+    the file was open in one -- as `_publish` used to run PDF-first, that left
+    `writeup.aux` stale and unpublished for as long as the viewer was open,
+    although the source had already been committed and nothing was wrong with
+    it. The aux file is Hardy-internal (`.build/tex/`), essentially never held
+    open by a program the user chose, and it is what the completion gate
+    reads; publishing it first means a locked PDF costs the PDF and nothing
+    else. Returns whether `writeup.pdf` itself was replaced, which is what
+    `check` bases the stamp on: a compile that could not update the PDF must
+    not be recorded as though it had.
     """
-    guard = WriteGuard(output_dir, create=True)
-    # Streamed rather than read whole. A long document with embedded figures
-    # makes a legitimately enormous PDF, and nothing bounds it: the subprocess
-    # guard bounds the terminal, `MAX_LOG_BYTES` the log and `MAX_AUX_BYTES`
-    # the auxiliary files, and this was the one output left that a successful
-    # compile could use to end the session instead of returning a result.
-    #
-    # Streamed and not bounded, unlike the `.aux`: half an auxiliary file is a
-    # wrong answer about what was cited, while the PDF is copied rather than
-    # read, so a limit here would only refuse a document the compiler really
-    # made.
-    guard.write_from("writeup.pdf", work / "writeup.pdf")
     # The compiler's own record of the labels it created. What a caller needs
     # to know is which labels LaTeX *made*, not which ones appear in the text
     # -- a `\label` inside `\verb` or a discarded branch is written down but
@@ -254,6 +256,29 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
             # registered theorem's label. No record is the truth here: the
             # compiler created no labels.
             WriteGuard(aux_dir, create=True).unlink("writeup.aux", missing_ok=True)
+    guard = WriteGuard(output_dir, create=True)
+    # Streamed rather than read whole. A long document with embedded figures
+    # makes a legitimately enormous PDF, and nothing bounds it: the subprocess
+    # guard bounds the terminal, `MAX_LOG_BYTES` the log and `MAX_AUX_BYTES`
+    # the auxiliary files, and this was the one output left that a successful
+    # compile could use to end the session instead of returning a result.
+    #
+    # Streamed and not bounded, unlike the `.aux`: half an auxiliary file is a
+    # wrong answer about what was cited, while the PDF is copied rather than
+    # read, so a limit here would only refuse a document the compiler really
+    # made.
+    try:
+        guard.write_from("writeup.pdf", work / "writeup.pdf")
+    except FileInUse:
+        # Something else has the destination open -- a PDF viewer on Windows,
+        # ordinarily -- and `replace_with_retry` already waited out a
+        # transient hold before giving up. The aux file above is already
+        # published, so the labels and the completion gate describe the
+        # source that was just compiled; only the PDF a reader would open is
+        # stale, and `check` says so in words rather than raising past a
+        # commit that already succeeded.
+        return False
+    return True
 
 
 class LatexTools:
@@ -275,6 +300,7 @@ class LatexTools:
         commit: Callable[[], None] | None = None,
         stamp: str | None = None,
         vouched: Callable[[tuple[str, ...]], str] | None = None,
+        published: Callable[[], None] | None = None,
     ) -> ToolResult:
         r"""Compile a candidate against the documents already saved.
 
@@ -294,6 +320,15 @@ class LatexTools:
         compiled. Saving the source is the last thing that can fail, so it is
         made to happen before the outputs leave the scratch tree: if it raises,
         nothing is published and the workspace is exactly as it was.
+
+        `published`, in the same style as `commit`, is called only when
+        `writeup.pdf` itself was replaced -- never for a probe, and never when
+        `_publish` reports the PDF locked (#335). A caller that stamps the
+        writeup as current on a successful save passes this rather than
+        trusting `result.ok`: the compile can succeed, the aux file and the
+        source can both be published, and the PDF can still be the one thing
+        left stale because a viewer had it open, in which case `ok` is true
+        but nothing may be stamped.
         """
         started = time.monotonic()
         # Whether what gets compiled is the document itself. A probe carries the
@@ -409,9 +444,24 @@ class LatexTools:
             # became a page holding one fragment -- and its `.aux` was
             # handing the completion gate labels that the writeup does not
             # create, from a document nobody will ever read.
+            pdf_note = ""
             if actual and resolved and output_dir is not None and pdf.exists():
-                _publish(work, output_dir, aux_dir)
+                if _publish(work, output_dir, aux_dir):
+                    if published is not None:
+                        published()
+                else:
+                    # The aux file is published; only the PDF a reader would
+                    # open is stale. `ok` stays true -- the source is saved and
+                    # the labels are current -- and the model is told in words
+                    # rather than being handed an exception past a commit that
+                    # already succeeded.
+                    pdf_note = (
+                        f"{output_dir / 'writeup.pdf'} is open in another program and could "
+                        "not be replaced; close it and run check_latex/save again to refresh it"
+                    )
             report = broken or references.note(labels)
+            if pdf_note:
+                report = f"{report}\n{pdf_note}" if report else pdf_note
             # Bounded after the report is added, not only before. The
             # compiler's own output was cut to `output_limit` and then an
             # unbounded diagnostic appended -- and that diagnostic names every
