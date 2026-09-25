@@ -2,9 +2,13 @@
 
 One owner reserves expected spend for all conversations in a run. Reservations
 are estimates, never provider billing guarantees. Exact reported token fields
-settle them; missing reports retain liability, and overruns forbid later calls.
-The journal survives restarts without turning an unfinished call into a refund.
-An explicit immutable tariff derives cost; it does not manufacture an invoice.
+settle them. Admission never counts less than was spent: a call whose usage is
+missing or incomplete, and a reservation nobody settled (a crashed process, or
+another live one), stays charged at its quote -- or at what it did report, if
+that is more -- and later calls are admitted while the headroom covers them.
+Only a reported overrun forbids later calls outright. The journal survives
+restarts without turning an unfinished call into a refund. An explicit
+immutable tariff derives cost; it does not manufacture an invoice.
 """
 from __future__ import annotations
 
@@ -163,6 +167,23 @@ class SpendBudget:
         return {"id": identifier, "reported": reported, "tokens": sum(reported.values()) if complete else None,
                 "cost_usd": str(cost) if cost is not None else None}
 
+    def _charged(self, quoted: Mapping[str, Any], settled: Mapping[str, Any]) -> tuple[int, Decimal]:
+        """What admission counts for one settled call: never less than was spent.
+
+        A complete report is the spend. An incomplete or missing one is the
+        larger of the reservation's quote and what the counters that did
+        arrive already add up to -- the quote bounds a call the provider
+        stopped at `max_tokens`, and a partial report above it is spend that
+        was stated. Computed from the journal as it stands, so the schema is
+        unchanged and an old journal is charged the same way.
+        """
+        if settled["tokens"] is not None:
+            return settled["tokens"], Decimal(settled["cost_usd"] or "0")
+        reported = {key: value or 0 for key, value in settled["reported"].items()}
+        partial = sum(reported.values())
+        derived = self.policy.tariff.cost(reported) if self.policy.tariff else Decimal(0)
+        return max(quoted["tokens"], partial), max(Decimal(quoted["cost_usd"]), derived)
+
     def reserve(self, request: Mapping[str, Any]) -> str:
         if self._read_only:
             raise ValueError("provider budget reader cannot reserve")
@@ -180,17 +201,24 @@ class SpendBudget:
             events = self._read()
             reservations, settled, _ = self._state(events)
             pending = set(reservations) - set(settled)
-            actual_tokens = sum(value["tokens"] or 0 for value in settled.values())
-            actual_cost = sum((Decimal(value["cost_usd"] or "0") for value in settled.values()), Decimal(0))
+            charged = [self._charged(reservations[k], value) for k, value in settled.items()]
+            # Every pending reservation is liability at its quote, this owner's
+            # in-flight calls and anybody else's alike: one that is not ours
+            # may belong to a crashed process or another live one, and either
+            # way nothing has refunded it.
+            spent_tokens = sum(t for t, _ in charged) + sum(reservations[k]["tokens"] for k in pending)
+            spent_cost = sum((c for _, c in charged), Decimal(0)) + sum(
+                (Decimal(reservations[k]["cost_usd"]) for k in pending), Decimal(0))
             limit = None
-            if (pending - self._active or any(value["tokens"] is None for value in settled.values())):
-                limit = "unknown_usage"
-            elif self.policy.token_limit is not None and actual_tokens + sum(reservations[k]["tokens"] for k in pending) + tokens > self.policy.token_limit:
+            if self.policy.token_limit is not None and spent_tokens + tokens > self.policy.token_limit:
                 limit = "token_limit"
-            elif self.policy.cost_limit_usd is not None and actual_cost + sum(Decimal(reservations[k]["cost_usd"]) for k in pending) + cost > self.policy.cost_limit_usd:
+            elif self.policy.cost_limit_usd is not None and spent_cost + cost > self.policy.cost_limit_usd:
                 limit = "cost_limit"
-            elif any(value["tokens"] > reservations[k]["tokens"] or
-                     tariff and Decimal(value["cost_usd"]) > Decimal(reservations[k]["cost_usd"]) for k, value in settled.items()):
+            elif any(value["tokens"] is not None and (value["tokens"] > reservations[k]["tokens"] or
+                     tariff and Decimal(value["cost_usd"]) > Decimal(reservations[k]["cost_usd"]))
+                     for k, value in settled.items()):
+                # Only a reported overrun: an unknown settlement is charged
+                # above, and says nothing about whether the quote held.
                 limit = "reservation_overrun"
             if limit:
                 self._append(events, "deny", {"limit": limit})
