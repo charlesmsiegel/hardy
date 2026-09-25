@@ -204,11 +204,16 @@ class Usage:
         restarted = restarted or any(
             figure < self.baselines[field] for field, figure in stated.items() if field in self.baselines
         )
-        baselines, reports = dict(self.baselines), dict(self.reports)
+        # A restart invalidates every baseline, not just the ones this report
+        # restates: an omitted field left holding the old session's figure
+        # would make the next report that does state it -- necessarily smaller
+        # -- read as a second restart and be added whole.
+        baselines = {} if restarted else dict(self.baselines)
+        reports = dict(self.reports)
         totals = {field: getattr(self, field) for field in self.COUNTERS}
         spent = self.cost_usd
         for field, figure in stated.items():
-            base = None if restarted else baselines.get(field)
+            base = baselines.get(field)
             added = figure if base is None or figure < base else figure - base
             baselines[field] = figure
             reports[field] = reports.get(field, 0) + 1
