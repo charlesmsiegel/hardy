@@ -255,8 +255,6 @@ stopped Lean short of that line leaves no report at all, which fails.
 
 This is a list of recognised forms, and each residual below still gets past it:
 
-- The scanner does not read Lean's char literals, so `'"'` can hide a command
-  from it (issue #192; tracked in [the roadmap](../roadmap.md)).
 - A top-level `set_option` or `open` is not refused. Refusing it would break
   the ordinary `set_option ... in` and `open ... in` tactics, and neither
   command can add an axiom or answer Hardy's line-bound report.

@@ -347,10 +347,12 @@ def _blank_bounded_quotations(text: str) -> str:
     `` `(command| axiom bad : False) `` builds syntax a proof never runs, so the
     command inside it is not one the body issues. The end of a quotation is
     found by counting parentheses, and that count is exact only when nothing
-    in between can hold a parenthesis Lean does not count: comments and
-    strings are already blanked, but a char literal `'('` and a guillemet name
-    `«(»` are not. A quotation holding either is left visible, because
-    trusting the count there would blank whatever command follows it.
+    in between can hold a parenthesis Lean does not count: comments, strings
+    and char literals are already blanked, but a guillemet name `«(»` is not.
+    A quotation holding a guillemet is left visible, because trusting the
+    count there would blank whatever command follows it -- and so is one
+    holding any quote, which after blanking can only be a primed name, so
+    that a char literal the lexer failed to recognise still cannot bound one.
     """
     out = list(text)
     index = 0

@@ -177,9 +177,12 @@ def _blank_quotations(text: str) -> str:
     ever saw it, and recorded by `sketch_proof` as work that does not exist.
 
     Scanned by counting parentheses rather than matched by a pattern, because
-    a quotation nests and a regular expression cannot follow it. Strings and
-    comments are already gone by the time this runs, so a parenthesis here is
-    a parenthesis.
+    a quotation nests and a regular expression cannot follow it. Strings,
+    comments and char literals are already gone by the time this runs, so a
+    parenthesis here is a parenthesis. The char literals matter as much as the
+    strings: a `'('` counted as an opener ran a quotation on past a real
+    `sorry` after it and blanked that too. `strip_comments` owns the rule for
+    what a char literal is, so this does not restate it.
     """
     out = list(text)
     index = 0
