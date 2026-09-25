@@ -185,3 +185,126 @@ def test_two_processes_that_both_passed_grant_cannot_both_record_their_reservati
             store.append(id, "delegation.cancelled", {"reason": "reservation refused"})
             store.release(id)
     assert LeaseLedger(first.tree()).allocatable("root") == ResourceLease(official_checks=1)
+
+
+def _recover(store, id):
+    """A worker that was running when its process died: recovered as unknown, then released."""
+    store.append(id, "delegation.started", {})
+    store.append(id, "delegation.recovered", {"reason": "interrupted", "recovered_at": "t"})
+    store.release(id)
+
+
+def test_a_recovered_child_is_charged_its_lease_in_checks_and_seconds_not_the_parents_whole_remainder(tmp_path):
+    """Issue #196: a worker cannot spend more checks or seconds than its lease
+    allowed, so its unknown liability in those dimensions is that lease."""
+    store = DelegationStore(tmp_path)
+    _tree(store, ("root", None, {"official_checks": 20, "active_seconds": 3600.0}),
+          ("a", "root", {"official_checks": 1, "active_seconds": 60.0}))
+    _recover(store, "a")
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=19, active_seconds=3540.0)
+    assert ledger.exhausted("root") == ()
+    grant(store.tree(), "root", ResourceLease(official_checks=19, active_seconds=3540.0), requested_slots=0)
+
+
+def test_a_recovered_child_still_zeroes_a_dimension_its_lease_does_not_bound_the_spend_in(tmp_path):
+    """Tokens are not enforced by the worker the way checks and seconds are: unknown stays liability."""
+    store = DelegationStore(tmp_path)
+    _tree(store, ("root", None, {"official_checks": 20, "active_seconds": 3600.0, "tokens": 1000}),
+          ("a", "root", {"official_checks": 1, "active_seconds": 60.0, "tokens": 100}))
+    _recover(store, "a")
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=19, active_seconds=3540.0, tokens=0)
+    assert ledger.usage("root").unknown == ("cost_usd", "provider_calls", "tokens")
+
+
+def _reserve_root(store, lease, epoch=None):
+    store.append("root", "budget.reserved", {"lease": ResourceLease(**lease).model_dump(mode="json"), "slots": 1,
+                                             **({"epoch": epoch} if epoch else {})})
+
+
+def test_a_new_root_epoch_forgets_what_the_last_session_released_but_not_what_is_still_live(tmp_path):
+    """The root lease is a budget for one session. Children released before the
+    session's epoch began are the last session's spending; children still
+    holding a reservation, or released during this epoch, are this one's."""
+    store = DelegationStore(tmp_path)
+    ceiling = {"official_checks": 20, "active_seconds": 3600.0}
+    store.append("root", "delegation.created", {"spec": _spec(ceiling).model_dump(mode="json"),
+                                                "parent_id": None, "created_at": "t"})
+    _reserve_root(store, ceiling, epoch="e1")
+    _tree(store, ("spent", "root", {"official_checks": 4, "active_seconds": 600.0}),
+          ("lost", "root", {"official_checks": 1, "active_seconds": 60.0}),
+          ("queued", "root", {"official_checks": 2, "active_seconds": 120.0}),
+          ("late", "root", {"official_checks": 1, "active_seconds": 60.0}))
+    _finish(store, "spent", official_checks=4, active_seconds=600.0)
+    _recover(store, "lost")
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=12, active_seconds=2760.0)
+    _reserve_root(store, ceiling, epoch="e2")                  # the next session opens
+    ledger = LeaseLedger(store.tree())
+    # `queued` and `late` still hold their reservations; nothing released before e2 counts.
+    assert ledger.allocatable("root") == ResourceLease(official_checks=17, active_seconds=3420.0)
+    assert ledger.usage("root") == ResourceUsage()
+    assert ledger.exhausted("root") == ()
+    # Released during e2, `late` charges e2 what it used.
+    _finish(store, "late", official_checks=1, active_seconds=30.0)
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=17, active_seconds=3450.0)
+    assert ledger.usage("root") == ResourceUsage(official_checks=1, active_seconds=30.0)
+    # A ceiling that moves within the session keeps its epoch: nothing is forgotten.
+    _reserve_root(store, {"official_checks": 30, "active_seconds": 3600.0}, epoch="e2")
+    assert LeaseLedger(store.tree()).allocatable("root").official_checks == 27
+
+
+def test_a_journal_with_no_epoch_keeps_a_cumulative_root(tmp_path):
+    """Backward compatible: a reservation written before epochs existed starts none."""
+    store = DelegationStore(tmp_path)
+    _tree(store, ("root", None, {"official_checks": 4}), ("a", "root", {"official_checks": 1}))
+    _finish(store, "a", official_checks=1)
+    _reserve_root(store, {"official_checks": 4})
+    assert LeaseLedger(store.tree()).allocatable("root") == ResourceLease(official_checks=3)
+
+
+def _computation(store, id, seconds):
+    """A detached computation as `attach_computation` journals it, finished and released."""
+    from hardy.workflows.delegation.contracts import WorkerResult
+    nothing = {"cost_usd": Decimal(0), "tokens": 0, "provider_calls": 0, "official_checks": 0, "active_seconds": 0.0}
+    spec = _spec(nothing).model_copy(update={"task_mode": "compute"})
+    store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"), "parent_id": "root",
+                                            "created_at": "t"})
+    store.append(id, "budget.reserved", {"lease": ResourceLease(**nothing).model_dump(mode="json"), "slots": 0})
+    store.append(id, "delegation.started", {"owner": "0123456789abcdef", "compute": True})
+    usage = ResourceUsage(cost_usd=Decimal(0), tokens=0, active_seconds=seconds)
+    _use(store, id, cost_usd=Decimal(0), tokens=0, active_seconds=seconds)
+    result = WorkerResult(delegation_id=id, status=DelegationState.COMPLETED, synthesis="ok", usage=usage)
+    store.append(id, "delegation.completed", {"result": result.model_dump(mode="json")})
+    store.release(id)
+
+
+def test_detached_computations_draw_nothing_from_the_roots_budget(tmp_path):
+    """Issue #201: a computation reserves nothing and is bounded by its tool's
+    timeout, so its wall time is reported, not charged."""
+    store = DelegationStore(tmp_path)
+    _tree(store, ("root", None, {"official_checks": 4, "active_seconds": 600.0}))
+    for index in range(6):
+        _computation(store, f"c{index}", 100.0)
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=4, active_seconds=600.0)
+    assert ledger.exhausted("root") == ()
+    assert ledger.usage("root").active_seconds == 0.0
+    assert ledger.compute_usage("root").active_seconds == 600.0
+    assert ledger.usage("c0").active_seconds == 100.0               # its own record still says so
+
+
+def test_a_worker_asked_to_compute_is_still_charged(tmp_path):
+    """`compute` is also a worker's task mode; only an attached computation is exempt."""
+    store = DelegationStore(tmp_path)
+    worker = _spec({"official_checks": 1, "active_seconds": 100.0}).model_copy(update={"task_mode": "compute"})
+    _tree(store, ("root", None, {"official_checks": 4, "active_seconds": 600.0}))
+    store.append("w", "delegation.created", {"spec": worker.model_dump(mode="json"), "parent_id": "root",
+                                             "created_at": "t"})
+    store.append("w", "budget.reserved", {"lease": worker.lease.model_dump(mode="json"), "slots": 1})
+    _finish(store, "w", official_checks=1, active_seconds=100.0)
+    ledger = LeaseLedger(store.tree())
+    assert ledger.allocatable("root") == ResourceLease(official_checks=3, active_seconds=500.0)
+    assert ledger.compute_usage("root") == ResourceUsage()
