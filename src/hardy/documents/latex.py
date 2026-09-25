@@ -21,6 +21,7 @@ from hardy.documents.syntax import (
     OUTPUTS,
     ROOT_DOCUMENT,
     _executed,
+    declared_conditionals,
     reached_fragments,
     stamped,
     unreached_fragments,
@@ -634,7 +635,8 @@ class LatexTools:
         # labels are not labels this compile created.
         for orphan in unreached_fragments(sources):
             sources.pop(orphan, None)
-        executed = {path: _executed(text) for path, text in sources.items()}
+        declared = declared_conditionals(sources.values())
+        executed = {path: _executed(text, declared) for path, text in sources.items()}
         labels = references.unreferenced_labels(executed)
         findings = list(references.unresolved(log))
         if references.unconverged(log):

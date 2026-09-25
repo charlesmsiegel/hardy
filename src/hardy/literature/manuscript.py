@@ -16,6 +16,7 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
+from hardy.documents.syntax import declared_conditionals, opens_conditional
 from hardy.literature.statements import ALIASES, KINDS
 
 _SECTION_LEVELS = frozenset({"section", "subsection", "subsubsection", "paragraph", "subparagraph"})
@@ -135,7 +136,12 @@ def inventory(sources: Mapping[str, str]) -> Inventory:
         ordered.append((path, text, digest))
     ordered.sort(key=lambda item: item[0])
 
-    scanner_results = [_Scanner(path, text, digest).scan() for path, text, digest in ordered]
+    # Before any file is scanned, because a preamble usually declares with
+    # `\newif` the conditionals the body files use.
+    declared = declared_conditionals(text for _, text, _ in ordered)
+    scanner_results = [
+        _Scanner(path, text, digest, declared).scan() for path, text, digest in ordered
+    ]
     return Inventory(
         sources=tuple(Source(path, digest) for path, _, digest in ordered),
         sections=tuple(item for result in scanner_results for item in result.sections),
@@ -165,10 +171,14 @@ class _OpenEnvironment:
 
 
 class _Scanner:
-    def __init__(self, path: str, text: str, digest: str) -> None:
+    def __init__(
+        self, path: str, text: str, digest: str, declared: frozenset[str] = frozenset()
+    ) -> None:
         self.path = path
         self.text = text
         self.digest = digest
+        # The `\newif` conditionals every supplied source declares.
+        self.declared = declared
         self.result = _Result([], [], [], [], [])
         self.open_environments: list[_OpenEnvironment] = []
 
@@ -212,7 +222,11 @@ class _Scanner:
         if name == "newtheorem":
             self._finding("macro_declaration", "custom theorem declarations are not interpreted", start, end)
             return end
-        if name.startswith("if"):
+        if name == "newif":
+            return self._newif(end)
+        # Only a real conditional: `\iff` and `\ifthenelse` have no `\fi`, and
+        # read as openers they swallowed the rest of the file.
+        if opens_conditional(name, self.declared):
             return self._conditional(name, start, end)
         if name == "fi":
             self._finding("stray_conditional_end", "literal \\fi has no scanned conditional opener", start, end)
@@ -366,6 +380,23 @@ class _Scanner:
         self._finding("macro_definition", f"\\{name} body is stored, not expanded", start, position)
         return position
 
+    def _newif(self, end: int) -> int:
+        """Past `\\newif\\ifNAME`, whose second word names a conditional without opening it."""
+        position = self._skip_space_comments(end)
+        braced = position < len(self.text) and self.text[position] == "{"
+        if braced:
+            position = self._skip_space_comments(position + 1)
+        if position >= len(self.text) or self.text[position] != "\\":
+            return end
+        name, after = self._control_word(position)
+        if not name.startswith("if"):
+            return end
+        if braced:
+            closing = self._skip_space_comments(after)
+            if closing < len(self.text) and self.text[closing] == "}":
+                return closing + 1
+        return after
+
     def _conditional(self, name: str, start: int, end: int) -> int:
         depth = 1
         position = end
@@ -377,7 +408,10 @@ class _Scanner:
                 position += 1
                 continue
             nested, after = self._control_word(position)
-            if nested.startswith("if"):
+            if nested == "newif":
+                position = self._newif(after)
+                continue
+            if opens_conditional(nested, self.declared):
                 depth += 1
             elif nested == "fi":
                 depth -= 1

@@ -565,6 +565,32 @@ def test_a_conditional_nested_inside_a_false_branch_does_not_close_it_early() ->
     assert unreached_fragments(sources) == ["x.tex"]
 
 
+def test_iff_inside_a_false_branch_does_not_hide_the_rest_of_the_file() -> None:
+    """`\\iff` is a symbol with no `\\fi`. Counted as a conditional opener it
+    left the `\\iffalse` unclosed, and everything after it -- `\\input{a}`
+    here -- was read as dead text."""
+    sources = {
+        "writeup.tex": "\\iffalse $a\\iff b$\\fi\\input{a}",
+        "a.tex": "x",
+    }
+
+    assert unreached_fragments(sources) == []
+
+
+def test_a_newif_conditional_inside_a_false_branch_carries_its_own_fi() -> None:
+    """Declared in another file, as a preamble usually is. Not counted, its
+    `\\fi` closed the `\\iffalse` early and `\\input{y}` read as executed."""
+    sources = {
+        "writeup.tex": "\\input{defs}\\iffalse \\ifdraft \\input{x}\\fi \\input{y}\\fi\\input{a}",
+        "defs.tex": "\\newif\\ifdraft\n",
+        "a.tex": "x",
+        "x.tex": "never",
+        "y.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex", "y.tex"]
+
+
 def test_an_input_after_a_closed_iffalse_is_still_reached() -> None:
     """The false branch ends at its own matching `\\fi` -- ordinary text
     after that `\\fi` is executed normally, `\\input` included."""
