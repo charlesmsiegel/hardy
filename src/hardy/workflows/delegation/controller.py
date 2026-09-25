@@ -213,10 +213,13 @@ class DelegationController:
                              if e.delegation_id == delegation.id and e.kind == "delegation.recovered")
                 self._after_terminal(delegation.id, event)
             tree = self.tree()
+            others = self._foreign_live(tree)
             for delegation in tree.delegations.values():
                 # A cell exposed by its creation event but never started: it
-                # runs no worker, so nothing else would ever start it.
-                if delegation.state is DelegationState.QUEUED and delegation.spawn.can_spawn:
+                # runs no worker, so nothing else would ever start it -- unless
+                # a live session made it, and is about to.
+                if (delegation.state is DelegationState.QUEUED and delegation.spawn.can_spawn
+                        and delegation.id not in others):
                     self.store.append(delegation.id, "delegation.started", {"interior": True})
             tree = self.tree()
             ledger = LeaseLedger(tree)
@@ -241,9 +244,13 @@ class DelegationController:
                 self._ensure_root(tree.get(ROOT_ID).spec.scope)
                 tree = self.tree()
             ledger = LeaseLedger(tree)
+            # Queued work another live session made is that session's to run:
+            # relaunching it here would start the same worker twice, and
+            # retiring it would cancel work this session does not own.
+            others = self._foreign_live(tree)
             queued = [d for d in tree.delegations.values()
                       if d.state is DelegationState.QUEUED and d.parent_id is not None
-                      and d.id not in self._pending and d.id not in self._handles]
+                      and d.id not in self._pending and d.id not in self._handles and d.id not in others]
             # Ceilings that shrank: first whatever no longer fits its parent's
             # whole lease, then the rest measured against what remains, in turn.
             for delegation in queued:
@@ -347,9 +354,13 @@ class DelegationController:
         one is -- a second terminal, a browser tab, or a chat switch that
         builds its session before closing the last. Concurrent sessions on
         one project therefore share one budget, and none can forgive what
-        another live session spent. `LeaseLedger` stops charging the root for
-        children released before its epoch began. Later calls re-reserve only
-        when the ceilings moved, keeping the current epoch. The decision and
+        another live session spent. A join adopts the epoch's reservation,
+        so they share the first session's ceilings too, and nobody changes
+        them while more than one session of the epoch is live. `LeaseLedger`
+        stops charging the root for children released before its epoch
+        began. Later calls re-reserve only when this session's ceilings
+        differ from the epoch's and it is the epoch's only live session,
+        keeping the current epoch. The decision and
         the write happen under the journal's lock, so another process cannot
         open an epoch between them.
         """
@@ -369,13 +380,28 @@ class DelegationController:
             ledger = LeaseLedger(tree)
             payload: dict[str, Any] = {"lease": lease.model_dump(mode="json"), "slots": self.root.slots}
             current = ledger.epoch(ROOT_ID)
-            if opening:
-                live = current is not None and any(
+
+            def shared() -> bool:
+                return current is not None and any(
                     member != me and OwnerToken.alive(workspace, member) for member in ledger.epoch_members(ROOT_ID))
-                return {**payload, "epoch": current, "joined": me} if live else {**payload, "epoch": me}
+
+            if opening:
+                if shared():
+                    # A join adopts the epoch's reservation: work was admitted
+                    # under it, and this session's own ceilings, higher or
+                    # lower, do not rewrite a budget another session is using.
+                    return {"lease": ledger.reserved(ROOT_ID).model_dump(mode="json"),
+                            "slots": ledger.slots(ROOT_ID), "epoch": current, "joined": me}
+                return {**payload, "epoch": me}
             if ledger.reserved(ROOT_ID) == lease and ledger.slots(ROOT_ID) == self.root.slots:
                 return None
-            # Ceilings that moved mid-session; the root follows them in its epoch.
+            if shared():
+                # Frozen while shared: neither raised nor lowered until this is
+                # the epoch's last live session. Nothing is written, so a
+                # joined session does not re-reserve on every call.
+                return None
+            # Ceilings that differ from the epoch's -- a session left alone in
+            # an epoch it joined; the root follows its own, in its epoch.
             return {**payload, **({"epoch": current} if current is not None else {})}
 
         self.store.append_decided(ROOT_ID, "budget.reserved", decide)
@@ -433,7 +459,8 @@ class DelegationController:
             if not spec.spawn.can_spawn:
                 artifacts.write_text(PurePosixPath("prompt.md"), prompt)
             self.store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"),
-                                                         "parent_id": parent, "created_at": now})
+                                                         "parent_id": parent, "created_at": now,
+                                                         "owner": self._owner.id})
             try:
                 self.store.append(id, "budget.reserved", {"lease": lease.model_dump(mode="json"),
                                                           "slots": spec.concurrency.slots})
@@ -485,7 +512,8 @@ class DelegationController:
             id = f"d-{uuid4().hex[:10]}"
             now = self._clock().isoformat()
             self.store.append(id, "delegation.created", {"spec": spec.model_dump(mode="json"),
-                                                         "parent_id": ROOT_ID, "created_at": now})
+                                                         "parent_id": ROOT_ID, "created_at": now,
+                                                         "owner": self._owner.id})
             # No slot: a computation is one process, not a worker occupying a
             # place in the pool, and it must not keep a `/delegate` waiting.
             self.store.append(id, "budget.reserved", {"lease": spec.lease.model_dump(mode="json"), "slots": 0})
@@ -984,16 +1012,64 @@ class DelegationController:
                 self._settle_interior(node)
             return requested
 
+    def _owners(self, tree: DelegationTree) -> dict[str, str]:
+        """Who each node belongs to: the process that started it, else the one that created it.
+
+        A node journaled before creations named their owner, and never
+        started, belongs to nobody known.
+        """
+        owners = {event.delegation_id: str(event.payload["owner"]) for event in tree.events
+                  if event.kind == "delegation.created" and event.payload.get("owner")}
+        owners.update({id: d.owner for id, d in tree.delegations.items() if d.owner})
+        return owners
+
+    def _foreign_live(self, tree: DelegationTree) -> frozenset[str]:
+        """Live nodes that belong to another session still running: never this one's to cancel or relaunch.
+
+        Work this controller holds (pending or handed to its executor) is its
+        own whatever the journal says. Work whose owner has gone is nobody's,
+        and stays this session's to recover or cancel, as it always was.
+        """
+        alive: dict[str, bool] = {}
+        foreign = set()
+        for id, owner in self._owners(tree).items():
+            if owner == self._owner.id or id in self._pending or id in self._handles or tree.get(id).terminal:
+                continue
+            if owner not in alive:
+                alive[owner] = OwnerToken.alive(self.store.workspace, owner)
+            if alive[owner]:
+                foreign.add(id)
+        return frozenset(foreign)
+
     def cancel_all(self, *, reason: str) -> tuple[str, ...]:
-        """Request cancellation of every live delegation under the root; used when the session ends."""
+        """Request cancellation of this session's live delegations under the root; used when the session ends.
+
+        Owner-scoped. Concurrent sessions on one problem share the root, and
+        closing one must not cancel what another live session launched: a
+        subtree holding any such work is descended into rather than cancelled
+        whole, so only this session's nodes (and work nobody live owns) end.
+        An explicit `/cancel <id>` is not this: it names its target and
+        reaches it whoever runs it.
+        """
         requested: list[str] = []
         with self._lock:
             tree = self.tree()
             if ROOT_ID not in tree.delegations:
                 return ()
-            for child in tree.children(ROOT_ID):
-                if not tree.get(child).terminal:
-                    requested.extend(self.cancel(child, reason=reason))
+            foreign = self._foreign_live(tree)
+
+            def keeps_foreign(id: str) -> bool:
+                return id in foreign or any(node in foreign for node in tree.descendants(id))
+
+            pending = list(tree.children(ROOT_ID))
+            while pending:
+                child = pending.pop(0)
+                if tree.get(child).terminal or child in foreign:
+                    continue
+                if keeps_foreign(child):
+                    pending.extend(tree.children(child))
+                    continue
+                requested.extend(self.cancel(child, reason=reason))
         return tuple(requested)
 
     def wait(self, id: str, timeout: float | None = None) -> Delegation:
