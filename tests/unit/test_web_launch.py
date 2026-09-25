@@ -34,7 +34,9 @@ def home(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setattr(cli.search_tools, "build_runtime", lambda config: (None, "no search in this test"))
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (FakeCas(kwargs["cwd"]), "fake"))
     monkeypatch.setattr(cli, "MathematicsSession", lambda problem, *a, **k: FakeSession(problem, k.get("chat", "main")))
-    monkeypatch.setattr(cli, "runtime_factory", lambda *a, **k: object())
+    # What the launch builds its runtime through (`wiring.session_runtime`, as
+    # `cli` imports it); patching the re-exported `runtime_factory` reached nothing.
+    monkeypatch.setattr(cli, "session_runtime", lambda config: object())
     return home
 
 
