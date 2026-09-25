@@ -32,6 +32,7 @@ from hardy.formal.lean import LeanDiagnostic, elaborate, render_theorem, scannab
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
 from hardy.formal.syntax import (
+    Lexed,
     blank_bounded_quotations,
     identifier_tokens,
     lex,
@@ -365,9 +366,15 @@ def proof_body_violation(body: str) -> str | None:
     lexed = lex(body)
     if lexed.overflow is not None:
         return "Hardy cannot tell where the literals in the proof body end; simplify them"
+    if lexed.uncertain_names():
+        return (
+            "a `«` in the proof body opens a name in one reading and not in another, so "
+            "Hardy cannot tell where the name ends; write the char literal or name so it "
+            "stands alone"
+        )
     visible, _ = blank_bounded_quotations(lexed, refuse="'«»")
     found = COMMAND_IN_BODY.search(visible)
-    command = found.group(1) if found is not None else _glued_command(visible)
+    command = found.group(1) if found is not None else _glued_command(visible, lexed)
     if command is not None:
         return (
             f"the proof body issues a Lean command ({command}); only a term or "
@@ -378,9 +385,9 @@ def proof_body_violation(body: str) -> str | None:
     return None
 
 
-def _glued_command(text: str) -> str | None:
+def _glued_command(text: str, lexed: Lexed) -> str | None:
     """The first command in `text` glued to the token before it, or None."""
-    numerals = numeral_ends(text)
+    numerals = numeral_ends(text, lexed)
     for found in GLUED_COMMAND.finditer(text):
         word = found.group(1)
         if (
@@ -391,7 +398,7 @@ def _glued_command(text: str) -> str | None:
             continue
         return word
     words = frozenset(COMMAND_WORDS)
-    for start, end in sorted(identifier_tokens(text).items()):
+    for start, end in sorted(identifier_tokens(text, lexed).items()):
         word = text[start:end]
         if word in words:
             return word

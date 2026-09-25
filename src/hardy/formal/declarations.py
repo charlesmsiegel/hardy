@@ -127,7 +127,9 @@ _BODY = re.compile(r":=|\bwhere\b|\bderiving\b")
 # /3: `strip_comments` keeps every reading Lean's grammar leaves open (a quote
 # after a symbol token, interpolated strings, `//-`), and escaped names span
 # lines, so the text this index reads changed again.
-INDEX_ALGORITHM = "hardy-declaration-index/3"
+# /4: the view it reads shows every character any reading calls code, a
+# delimiter one reading uses included.
+INDEX_ALGORITHM = "hardy-declaration-index/4"
 
 # Root files that are not module sources; same reasoning as `modules.py`.
 _NOT_A_SOURCE = frozenset({"lakefile.lean"})

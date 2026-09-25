@@ -209,11 +209,28 @@ where it is not. The characters alone do not say where a symbol token ends
 (core's `]'` and `×'`, Mathlib's `∑'` and `//`, anything `notation` adds), so a
 `'` after a symbol may or may not open a char literal, and a `--` or `/-` there
 may or may not open a comment. They do not say whether a string is interpolated
-either (`s!"{'"'}"`). Hardy scans every such reading and reports what any of
-them shows, so a hole or a declaration only one reading contains is still
-found. The name a declaration gets cannot be taken from two readings at once,
-so a `namespace`, `section` or `end` that only some readings call code, or that
-sits in a syntax quotation whose end is uncertain, refuses the save instead.
+either (`s!"{'"'}"`). Hardy scans every such reading at once: a character any
+reading calls code is scanned as code, a token boundary any reading makes is a
+boundary, and a `«...»` name or a syntax quotation is treated as one unit only
+where every reading agrees on where it starts and ends. So a `sorry`, a
+`theorem` or `lemma` keyword, or a proof-body command that any one reading
+contains is found. The name a declaration gets cannot be taken from two
+readings at once, so a `namespace`, `section` or `end` that only some readings
+call code, one that sits in a syntax quotation whose end is uncertain, or a `«`
+that only some readings open, refuses the save instead; a proof body holding
+such a `«` is refused too. Past 32 simultaneous readings Hardy stops telling
+them apart and refuses the same way.
+
+That refuses some ordinary Lean, which is the price of never guessing. A file
+repeating `"{" ++ ...` about fifteen times (a plain string to Lean, but one
+whose interpolated reading never rejoins it) passes the reading bound. Code
+dense with char literals written straight after a bracket, such as `('\\')`
+throughout Lean core's `Init/Meta/Defs.lean`, can leave a later `end` in
+uncertain text. A namespace named `constant` makes its `namespace constant`
+and `end constant` lines read as axioms the assumption scan cannot read. In
+each case the save is refused naming the line, and the file can be rewritten
+to avoid it: a space before a char literal, a different name, a string built
+another way.
 
 A module with nothing auditable, one declaring only definitions or only
 private lemmas, records "not established" and the save goes through carrying
