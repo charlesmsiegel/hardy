@@ -28,6 +28,13 @@ def environment_digest_of_board(board: dict[str, Any]) -> str:
     return sweep.environment_digest_of(environment, host)
 
 
+#: Marks a finding only the board-level exposure check made. `evals pool`
+#: runs `scoreboard_self_issues` and not that check, so a board refused for
+#: this alone is one pool would accept; `evals todo` still counts none of it,
+#: since its exposure record does not authenticate.
+BOARD_EXPOSURE = "board-level exposure check: "
+
+
 def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> list[str]:
     """The label of every board under `scoreboards_root` whose condition and
     recorded environment together equal `key`, sorted.
@@ -93,7 +100,7 @@ def poolable_boards(scoreboards_root: Path, *, key: tuple[str | None, str], prob
                                                  baseline_path=baseline_path))
             if not issues:
                 board = json.loads((directory / "scoreboard.json").read_text(encoding="utf-8"))
-                issues = list(board_exposure_issues(directory, board))
+                issues = [BOARD_EXPOSURE + issue for issue in board_exposure_issues(directory, board)]
         except (OSError, ValueError, KeyError, TypeError) as error:
             issues = [f"the board's own audit could not run: {type(error).__name__}: {error}"]
         if issues:
@@ -111,7 +118,7 @@ def board_slots(scoreboards_root: Path, label: str) -> set[tuple[str, int]]:
 
 
 def conflicting_boards(scoreboards_root: Path, *, boards: list[str]
-                       ) -> tuple[list[str], dict[str, list[str]], set[str]]:
+                       ) -> tuple[list[str], dict[str, list[str]], set[str], dict[str, list[str]]]:
     """Split admitted `boards` into those `evals pool` accepts together and those it cannot.
 
     `evals pool` refuses a set of boards in which two claim the same
@@ -123,9 +130,10 @@ def conflicting_boards(scoreboards_root: Path, *, boards: list[str]
     rest share no slot pairwise, so `evals pool` accepts them together.
 
     Returns the boards still counted, sorted; each conflicting board with
-    the slots it shares and the boards it shares them with; and the entry
-    ids any conflicting board holds a slot of. A board that cannot be read
-    again here is set aside the same way, never counted.
+    the slots it shares and the boards it shares them with; the entry ids
+    any conflicting board holds a slot of; and each board that could not be
+    read again here, with why. That last is refused, not conflicting: it
+    conflicts with nothing anyone can name, and is never counted.
     """
     slots: dict[str, set[tuple[str, int]]] = {}
     unreadable: dict[str, list[str]] = {}
@@ -138,7 +146,7 @@ def conflicting_boards(scoreboards_root: Path, *, boards: list[str]
     for label in sorted(slots):
         for slot in slots[label]:
             claimed.setdefault(slot, []).append(label)
-    conflicts: dict[str, list[str]] = dict(unreadable)
+    conflicts: dict[str, list[str]] = {}
     for (id_, repeat), holders in sorted(claimed.items()):
         if len(holders) < 2:
             continue
@@ -148,7 +156,8 @@ def conflicting_boards(scoreboards_root: Path, *, boards: list[str]
                 f"{id_} repeat {repeat} is also claimed by {others}; `evals pool` refuses them together"
             )
     held = {id_ for label in conflicts for id_, _ in slots.get(label, ())}
-    return sorted(label for label in boards if label not in conflicts), conflicts, held
+    counted = sorted(label for label in boards if label not in conflicts and label not in unreadable)
+    return counted, conflicts, held, unreadable
 
 
 def evaluated_ids(scoreboards_root: Path, *, boards: list[str]) -> tuple[set[str], set[str]]:
@@ -270,7 +279,8 @@ def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tu
     """
     admitted, refused = poolable_boards(scoreboards_root, key=key, problems_path=problems_path,
                                         baseline_path=baseline_path)
-    counted, conflicting, held = conflicting_boards(scoreboards_root, boards=admitted)
+    counted, conflicting, held, unreadable = conflicting_boards(scoreboards_root, boards=admitted)
+    refused = {**refused, **unreadable}
     complete, partial = evaluated_ids(scoreboards_root, boards=counted)
     blocked = held - complete
     active = [e.id for e in problems.entries if e.status == "active"]

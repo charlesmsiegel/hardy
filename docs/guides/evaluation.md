@@ -251,7 +251,8 @@ boards it would accept together. `boards_counted` names the boards under
 this key that pass their own audit and share no `(id, repeat)` slot with
 another; `boards_refused` names those that match the key but fail the
 audit (a missing or altered exposure journal included), with its
-findings; and `boards_conflicting` names those that pass it but claim a
+findings, and also a board that passes it but fails the board-level
+exposure check, which `evals pool` does not run, or cannot be read again; and `boards_conflicting` names those that pass it but claim a
 slot another board also claims, with the slots. `evals pool` refuses two
 such boards together, so neither counts until you set one aside by moving
 its directory out of the scoreboards directory; rerunning the entries
