@@ -724,3 +724,54 @@ def test_a_let_to_a_rebound_harmless_target_still_counts() -> None:
 def test_a_csname_name_holding_a_control_sequence_is_still_unreadable() -> None:
     tex = document("\\expandafter\\let\\csname my\\x\\endcsname\\iftrue\n\\iffalse\nnot typeset\n\\fi\n" + LISTING)
     assert "conditional" in kinds(owed(tex))
+
+
+# --- Round 3 review leftovers ---------------------------------------------------
+
+
+def test_a_load_spelled_with_caret_notation_counts_every_file() -> None:
+    r"""`\input ^^64efs` reads `defs.tex`, whose name then appears nowhere."""
+    body = "\\input ^^64efs\n\\iffalse\n\\ifdraft x \\fi\n" + LISTING + "\\fi\n"
+    tex = {**document(body), "defs.tex": "\\newif\\ifdraft\n"}
+    assert "statement" in kinds(owed(tex)), kinds(owed(tex))
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "\\LetLtxMacro\\mycond\\iftrue\n",
+        "\\LetLtxMacro{\\mycond}{\\iftrue}\n",
+        "\\NewCommandCopy\\mycond\\iftrue\n",
+        "\\RenewCommandCopy{\\mycond}{\\iftrue}\n",
+        "\\DeclareCommandCopy\\mycond\\iftrue\n",
+        "\\cs_set_eq:NN \\mycond \\iftrue\n",
+        "\\cs_gset_eq:NN \\mycond \\iftrue\n",
+        "\\cs_new_eq:NN \\mycond \\iftrue\n",
+        "\\cs_set_eq:Nc \\mycond {iftrue}\n",
+        "\\cs_set_eq:cN {mycond} \\iftrue\n",
+        "\\cs_gset_eq:cc {mycond} {iftrue}\n",
+    ],
+)
+def test_every_listed_let_like_command_binds_an_ambiguous_name(binding: str) -> None:
+    found = kinds(owed(_skipped(binding, "\\mycond")))
+    assert "conditional" in found and "statement" in found, found
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "\\LetLtxMacro\\oldx\\relax\n",
+        "\\NewCommandCopy{\\oldx}{\\relax}\n",
+        "\\cs_set_eq:NN \\oldx \\relax\n",
+        "\\cs_set_eq:Nc \\oldx {relax}\n",
+        "\\cs_undefine:N \\oldx\n",
+    ],
+)
+def test_a_let_like_copy_of_a_harmless_target_refuses_nothing(binding: str) -> None:
+    body = binding + "\\iffalse\n\\oldx not typeset\n\\fi\n" + LISTING
+    assert owed(document(body)) == ()
+
+
+def test_a_harmless_target_rebound_by_a_copy_command_still_counts() -> None:
+    binding = "\\NewCommandCopy\\relax\\iftrue\n\\cs_set_eq:NN \\oldx \\relax\n"
+    assert "conditional" in kinds(owed(_skipped(binding, "\\oldx")))

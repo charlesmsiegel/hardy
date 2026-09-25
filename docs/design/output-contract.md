@@ -286,10 +286,13 @@ inside it (TeX's primitives and whatever the document declares with `\newif`;
 the root inputs the files, and only where it certainly runs. A file is taken
 as never read, and binding nothing, only when no other file of the writeup
 mentions its name outside comments and verbatim blocks and none loads a name
-built from a macro. A name
+built from a macro or spelled with TeX's `^^` notation. A name
 Hardy cannot place is not guessed at: any control word bound with `\let` or a
-`\let`-like command (`\futurelet`, etoolbox's `\cslet`, `\csletcs` and
-`\letcs`), whatever it is bound to, since a chain of them is not followed,
+`\let`-like command (`\futurelet`; etoolbox's `\cslet`, `\csletcs` and
+`\letcs`; `letltxmacro`'s `\LetLtxMacro`; the kernel's `\NewCommandCopy`,
+`\RenewCommandCopy` and `\DeclareCommandCopy`; expl3's `\cs_set_eq`,
+`\cs_gset_eq` and `\cs_new_eq` in their `:NN`, `:Nc`, `:cN` and `:cc` forms,
+and `\cs_undefine`), whatever it is bound to, since a chain of them is not followed,
 unless the name is written out, is not spelled `\if...`, and is bound to a
 character or to `\relax`, `\undefined`, `\empty` or a few such targets that
 nothing in the writeup rebinds; a name built with `\csname` counts when it is
@@ -299,12 +302,14 @@ when it holds a control sequence; one
 both declared and redefined; one declared inside a conditional or a macro; or
 one used before its declaration. Inside a false branch such a name
 refuses the writeup's compile check and owes an obligation, because nesting it
-may hide live text and not nesting it may credit hidden text. Macro definition bodies are removed
+may hide live text and not nesting it may credit hidden text. A binding made by
+a command not listed here is not seen, and inside a false branch it may credit
+text TeX skips. Macro definition bodies are removed
 rather than expanded, a listing configured to transform what it shows is not
 counted as a quotation, and `\input` is followed only where TeX would execute
 it. A document that reaches its listings or its assertions through macro
-expansion, or through a conditional this scanner does not model, is read as not
-carrying them and owes a plain listing or a plain sentence instead. Refusing in
+expansion is read as not carrying them and owes a plain listing or a plain
+sentence instead. Refusing in
 that direction is the safe one; the failure to avoid is crediting a quotation no
 reader was shown.
 

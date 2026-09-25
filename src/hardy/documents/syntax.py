@@ -197,6 +197,16 @@ _CSLET = re.compile(rf"\\cslet(?![a-zA-Z])\s*\{{([^{{}}]*)\}}\s*(?:({_CS})|(.))?
 _CSLETCS = re.compile(r"\\csletcs(?![a-zA-Z])\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
 _LETCS = re.compile(r"\\letcs(?![a-zA-Z])\s*\\([a-zA-Z@]+)\s*\{([^{}]*)\}")
 _NEWIF_CSNAME = re.compile(rf"\\newif\s*{_CSNAME}")
+#: The other commands that copy a control word's meaning, as `\let` does, with
+#: the kinds of their arguments: `N` a control word (braced or not), `c` the
+#: text of a `\csname`. `letltxmacro`'s `\LetLtxMacro`, the kernel's
+#: `\NewCommandCopy` family, and expl3's `\cs_set_eq` family; expl3's
+#: `\cs_undefine` binds its argument to `\undefined`.
+_COPY_COMMANDS = re.compile(
+    r"\\(LetLtxMacro|NewCommandCopy|RenewCommandCopy|DeclareCommandCopy"
+    r"|cs_(?:g?set|new)_eq:(?:NN|Nc|cN|cc)|cs_g?undefine:[Nc])(?![a-zA-Z_:@])"
+)
+_EXPL_NAME = re.compile(r"\\([a-zA-Z@_:]+|.)")
 #: Every control word a `\def`-like command defines, whatever it is called.
 _ANY_DEFINES = re.compile(
     r"\\(?:[gxe]?def|(?:re)?newcommand\*?|providecommand\*?|DeclareRobustCommand\*?)"
@@ -252,10 +262,48 @@ def _let_bindings(text: str) -> list[_Binding]:
         found.append(_Binding(_csname_text(match.group(1)), _csname_text(match.group(2)), None))
     for match in _LETCS.finditer(text):
         found.append(_Binding(match.group(1), _csname_text(match.group(2)), match.start(1) - 1))
+    for match in _COPY_COMMANDS.finditer(text):
+        command = match.group(1)
+        kinds = command.rsplit(":", 1)[1] if ":" in command else "NN"
+        arguments: list[tuple[str | None, int | None]] = []
+        position = match.end()
+        for kind in kinds:
+            value, at, position = _copy_argument(text, position, kind)
+            arguments.append((value, at))
+        name, at = arguments[0]
+        bound_to = arguments[1][0] if len(arguments) > 1 else "undefined"
+        found.append(_Binding(name, bound_to, at))
     return found
 
 
+def _copy_argument(text: str, position: int, kind: str) -> tuple[str | None, int | None, int]:
+    r"""One argument of a copy command at `position`: the control word's name
+    (`N`) or the `\csname` text (`c`) -- `None` when it cannot be read --
+    where a control word is written, and where the argument ends."""
+    while position < len(text) and text[position] in _TEX_SPACE:
+        position += 1
+    if position >= len(text):
+        return None, None, position
+    if text[position] == "{":
+        close = text.find("}", position)
+        if close < 0:
+            return None, None, len(text)
+        inner = text[position + 1 : close]
+        stripped = inner.strip()
+        if kind == "c":
+            return _csname_text(inner), None, close + 1
+        word = _EXPL_NAME.fullmatch(stripped)
+        at = position + 1 + inner.index(stripped) if word else None
+        return (word.group(1) if word else None), at, close + 1
+    word = _EXPL_NAME.match(text, position)
+    if word is not None:
+        return (word.group(1) if kind == "N" else None), position, word.end()
+    # A lone character: bound to a character, which is never a conditional.
+    return ("" if kind == "N" else text[position]), None, position + 1
+
+
 _LETTERS = re.compile(r"[a-zA-Z]+")
+_TEX_SPACE = frozenset(" \t\r\n")
 
 
 @dataclass(frozen=True)
@@ -493,7 +541,10 @@ def _resolver(paths: Collection[str]) -> Callable[[str], str | None]:
 #: file may be the one read.
 _BUILT_LOAD = re.compile(
     r"\\(?:@*input|include|InputIfFileExists|import|subimport|subfile|inputfrom|subinputfrom"
-    r"|includefrom|subincludefrom)(?![a-zA-Z])\s*(?:\\|(?:\{[^{}]*\}\s*)?\{[^{}]*\\)"
+    r"|includefrom|subincludefrom)(?![a-zA-Z])\s*(?:\\|(?:\{[^{}]*\}\s*)?\{[^{}]*\\"
+    # TeX's `^^` notation spells a character by its code, `\input ^^64efs` a
+    # name that is then written nowhere.
+    r"|[^\n]*?\^\^)"
 )
 
 
