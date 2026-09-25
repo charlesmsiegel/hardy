@@ -397,7 +397,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'api'", specifier = ">=0.40" },
-    { name = "claude-agent-sdk", specifier = ">=0.2" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.127" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.28,<2" },
     { name = "openai-codex", marker = "extra == 'codex'", specifier = ">=0.144" },

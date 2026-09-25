@@ -19,7 +19,7 @@ requires-python = ">=3.11"
 # Window.render_info), and only the resize guard has a test that would
 # notice one of those breaking underneath an upgrade.
 dependencies = [
-    "claude-agent-sdk>=0.2",
+    "claude-agent-sdk>=0.2.127",
     "pydantic>=2.9",
     # FastMCP is the v1 transport API; v2 removes that import.
     "mcp>=1.28,<2",
