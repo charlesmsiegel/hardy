@@ -21,9 +21,10 @@ from hardy.documents.syntax import (
     OUTPUTS,
     ROOT_DOCUMENT,
     _executed,
-    declared_conditionals,
     reached_fragments,
+    read_conditionals,
     stamped,
+    uncertain_conditionals,
     unreached_fragments,
 )
 from hardy.documents.syntax import BEGIN_DOCUMENT as BEGIN_DOCUMENT
@@ -635,9 +636,13 @@ class LatexTools:
         # labels are not labels this compile created.
         for orphan in unreached_fragments(sources):
             sources.pop(orphan, None)
-        declared = declared_conditionals(sources.values())
-        executed = {path: _executed(text, declared) for path, text in sources.items()}
+        conditionals = read_conditionals(sources)
+        executed = {path: _executed(text, conditionals) for path, text in sources.items()}
         labels = references.unreferenced_labels(executed)
+        # A false branch holding an `\if...` name Hardy cannot place has no
+        # known end: nested, it may hide a live `\input`; not nested, it may
+        # credit one TeX skips. Refused with the name, never guessed.
+        uncertain = uncertain_conditionals(sources)
         findings = list(references.unresolved(log))
         if references.unconverged(log):
             # Every pass has been spent and the compiler is still asking for
@@ -646,4 +651,14 @@ class LatexTools:
             # was reported *undefined* publishes exactly the wrong-number
             # document the log warned about.
             findings.append(references.Unresolved(kind="unconverged", name=str(MAX_PASSES)))
-        return references.report(tuple(findings), labels), labels
+        refusal = references.report(tuple(findings), labels)
+        if uncertain:
+            placed = ", ".join(f"\\{name} in {path}" for path, name in uncertain)
+            refusal = "\n".join(part for part in (refusal, (
+                f"a false branch (\\iffalse) holds {placed}, and Hardy cannot tell whether TeX "
+                "counts it as a conditional there -- it is bound with \\let, both declared and "
+                "redefined, declared where the declaration may not run, or used before its "
+                "\\newif -- so where the branch ends is not known. Declare it once with \\newif "
+                "before any use, outside any conditional or macro, and bind it no other way."
+            )) if part)
+        return refusal, labels

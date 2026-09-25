@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable, Mapping
+from collections import Counter
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 # Fragments are `\input` from one document, and that document is what a
@@ -161,26 +163,212 @@ _NEWIF = re.compile(r"\\newif\s*\{?\s*\\(if[a-zA-Z]+)(?![a-zA-Z])")
 _CONDITIONAL = re.compile(r"(\\newif\s*\{?\s*)?\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
 
 
-def declared_conditionals(sources: Iterable[str]) -> frozenset[str]:
-    r"""Every conditional a `\newif` in `sources` declares, outside comments.
-
-    Over every source at once, because a preamble usually declares what the
-    body files use.
-    """
-    return frozenset(
-        found.group(1) for text in sources for found in _NEWIF.finditer(uncommented(text))
-    )
-
-
 def opens_conditional(name: str, declared: Collection[str] = frozenset()) -> bool:
     r"""Whether the control word `\<name>` opens a conditional that needs a `\fi`.
 
     A TeX conditional primitive, or one the document declared with `\newif`
-    (`declared_conditionals`). Nothing else: an `\if...` macro from a package,
-    or one declared somewhere Hardy was not shown, is an ordinary control
-    word, and its `\fi`, if any, is then a stray one.
+    where Hardy is sure it runs first (`Conditionals.declared`). Nothing else:
+    an `\if...` macro from a package, or one declared somewhere Hardy was not
+    shown, is an ordinary control word, and its `\fi`, if any, is then a stray
+    one. A name the document binds in a way Hardy cannot place is neither, and
+    `Conditionals.ambiguous` says so.
     """
     return name in CONDITIONALS or name in declared
+
+
+#: An `\if...` name bound some other way than `\newif`. `\def\ifdraft{}` makes
+#: a macro, which TeX never counts while it skips; `\let\ifdraft\iftrue` makes
+#: a conditional it does, and what a `\let` binds is not read here.
+_DEFINES = re.compile(
+    r"\\(?:[gxe]?def|(?:re)?newcommand\*?|providecommand\*?|DeclareRobustCommand\*?)"
+    r"\s*\{?\s*\\(if[a-zA-Z]+)(?![a-zA-Z])"
+)
+_LETS = re.compile(r"\\(?:global\s*)?\\?let\s*\\(if[a-zA-Z]+)(?![a-zA-Z])")
+
+
+@dataclass(frozen=True)
+class Conditionals:
+    r"""What each `\if...` name in a writeup is, read in the order TeX meets it.
+
+    Only matters inside a skipped branch: there TeX counts a conditional's
+    `\fi` as its own, and a scan that counts a name TeX does not -- or misses
+    one TeX counts -- ends the branch somewhere else, hiding live text or
+    crediting dead text.
+
+    `declared` are the `\newif` names Hardy is sure of: every declaration of
+    the name runs (outside any conditional, macro body or verbatim block), no
+    other command binds it, and a declaration comes before every use in the
+    order TeX reads the files. `ambiguous` is every other name that may be a
+    conditional somewhere: one a `\let` binds, one both declared and
+    redefined with `\def` or `\newcommand`, one whose `\newif` may not run,
+    one used where Hardy cannot place a declaration before it. For those a
+    scan must not guess -- each reader reports a finding that fails its
+    check instead. A name nothing declares, or only `\def`/`\newcommand`
+    define, is a macro or undefined: an ordinary control word either way.
+    """
+
+    declared: frozenset[str] = frozenset()
+    ambiguous: frozenset[str] = frozenset()
+
+    def opens(self, name: str) -> bool:
+        """Whether `\\<name>` opens a conditional Hardy is sure of."""
+        return name not in self.ambiguous and opens_conditional(name, self.declared)
+
+
+#: No `\newif` of the document's own, and nothing ambiguous: primitives only.
+NO_CONDITIONALS = Conditionals()
+
+
+def read_conditionals(sources: Mapping[str, str], root: str | None = ROOT_DOCUMENT) -> Conditionals:
+    r"""Which `\if...` names of `sources` are conditionals, in reading order.
+
+    A `\newif` collected from the whole tree before anything is read took a
+    name as a conditional before TeX had declared it: `\def\ifdraft{}`, then
+    `\iffalse \ifdraft \fi` and live text, then `\newif\ifdraft` -- TeX meets
+    `\ifdraft` as a macro while skipping, the first `\fi` closes the false
+    branch, and the scan that nested it hid the live text after it.
+
+    Reading order across files is the order `root` inputs them in, through
+    `\input`s that certainly run (outside any conditional, macro body and
+    verbatim block) of files input exactly once. Without a root, or for a
+    file reached no such way, only order within one file is known, and a
+    declaration elsewhere cannot be placed before a use -- the name is
+    ambiguous.
+    """
+    texts = {path: typeset(text) for path, text in sources.items()}
+    defined: set[str] = set()
+    let: set[str] = set()
+    newif: set[str] = set()
+    for text in texts.values():
+        defined.update(found.group(1) for found in _DEFINES.finditer(text))
+        let.update(found.group(1) for found in _LETS.finditer(text))
+        newif.update(found.group(1) for found in _NEWIF.finditer(text))
+    rebound = let | (defined & (newif | CONDITIONALS))
+    # Counted as openers for "does this run": everything that might be one.
+    openers = CONDITIONALS | newif | let
+    events = {path: _conditional_events(text, openers) for path, text in texts.items()}
+    keys = _reading_keys(texts, events, root)
+
+    def before(first: tuple[str, int], second: tuple[str, int]) -> bool:
+        if first[0] == second[0]:
+            return first[1] < second[1]
+        if first[0] in keys and second[0] in keys:
+            return (*keys[first[0]], first[1]) < (*keys[second[0]], second[1])
+        return False
+
+    declared: set[str] = set()
+    ambiguous: set[str] = set(rebound)
+    for name in newif - rebound:
+        places = [(path, offset, runs) for path, found in events.items() for named, offset, runs in found.declarations if named == name]
+        uses = [(path, offset) for path, found in events.items() for named, offset in found.uses if named == name]
+        if all(runs for _, _, runs in places) and all(
+            any(before((path, offset), use) for path, offset, _ in places) for use in uses
+        ):
+            declared.add(name)
+        else:
+            ambiguous.add(name)
+    return Conditionals(frozenset(declared), frozenset(ambiguous))
+
+
+@dataclass(frozen=True)
+class _Events:
+    """One file's `\\newif`s (name, offset, whether it certainly runs), its
+    uses of `\\if...` names, and its `\\input`s (offset, argument, whether it
+    certainly runs), all over its `typeset` text."""
+
+    declarations: tuple[tuple[str, int, bool], ...]
+    uses: tuple[tuple[str, int], ...]
+    inputs: tuple[tuple[int, str, bool], ...]
+
+
+def _conditional_events(text: str, openers: Collection[str]) -> _Events:
+    bodies = _macro_bodies(text)
+
+    def in_body(index: int) -> bool:
+        return any(start <= index < end for start, end in bodies)
+
+    # The name a `\def` or `\let` binds is not a use of it.
+    targets = {found.start(1) - 1 for pattern in (_DEFINES, _LETS) for found in pattern.finditer(text)}
+    depth = 0
+    depths: list[tuple[int, int]] = [(0, 0)]
+    declarations: list[tuple[str, int, bool]] = []
+    uses: list[tuple[str, int]] = []
+    for found in _CONDITIONAL.finditer(text):
+        name = found.group(2)
+        body = in_body(found.start())
+        if found.group(1) is not None:
+            declarations.append((name, found.start(), depth == 0 and not body))
+            continue
+        if found.start(2) - 1 in targets:
+            continue
+        if name != "fi" and name not in CONDITIONALS:
+            uses.append((name, found.start()))
+        if body:
+            # A stored body runs where it is expanded, not here.
+            continue
+        if name == "fi":
+            depth = max(depth - 1, 0)
+        elif name in openers:
+            depth += 1
+        depths.append((found.end(), depth))
+
+    def runs(index: int) -> bool:
+        level = 0
+        for at, value in depths:
+            if at > index:
+                break
+            level = value
+        return level == 0 and not in_body(index)
+
+    inputs = tuple((found.start(), found.group(1), runs(found.start())) for found in INCLUSION.finditer(text))
+    return _Events(tuple(declarations), tuple(uses), inputs)
+
+
+def _resolver(paths: Collection[str]) -> Callable[[str], str | None]:
+    r"""What an `\input{...}` argument names among `paths`, with or without
+    `.tex`, with either separator and a leading `./`, as TeX reads it."""
+    by_stem: dict[str, str] = {}
+    for path in paths:
+        normal = path.replace("\\", "/")
+        by_stem[normal] = path
+        if normal.endswith(".tex"):
+            by_stem[normal[: -len(".tex")]] = path
+
+    def resolve(found: str) -> str | None:
+        key = _normalise_include(found)
+        target = by_stem.get(key)
+        if target is None and key.endswith(".tex"):
+            target = by_stem.get(key[: -len(".tex")])
+        elif target is None:
+            target = by_stem.get(f"{key}.tex")
+        return target
+
+    return resolve
+
+
+def _reading_keys(
+    texts: Mapping[str, str], events: Mapping[str, _Events], root: str | None
+) -> dict[str, tuple[int, ...]]:
+    """Where each file starts in reading order: the offsets of the `\\input`s
+    leading to it from `root`, compared as tuples. Only files input exactly
+    once, through inputs that certainly run, have one."""
+    if root is None or root not in texts:
+        return {}
+    resolve = _resolver(texts)
+    counts = Counter(resolve(argument) for found in events.values() for _, argument, _ in found.inputs)
+    keys: dict[str, tuple[int, ...]] = {root: ()}
+    frontier = [root]
+    while frontier:
+        current = frontier.pop()
+        for offset, argument, runs in events[current].inputs:
+            target = resolve(argument)
+            if target is None or not runs or counts[target] != 1 or target in keys:
+                continue
+            keys[target] = (*keys[current], offset)
+            frontier.append(target)
+    return keys
+
+
 # `\b` after an optional `*` never matches: `*` is a non-word character, so a
 # starred command followed by `{` or `\` -- both also non-word -- has no
 # word/non-word transition for `\b` to land on. `\newcommand*{\g}{...}` fell
@@ -244,12 +432,15 @@ def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
     return length
 
 
-def _drop_iffalse(text: str, declared: Collection[str] = frozenset()) -> str:
+def _drop_iffalse(text: str, conditionals: Conditionals = NO_CONDITIONALS) -> str:
     r"""`text` with every `\iffalse ... \fi` region removed.
 
-    Only a real conditional opens a nested region (`opens_conditional`, with
-    the `\newif` names in `declared`): `\iff` in a false branch has no `\fi`,
-    and counting it left the branch open to the end of the file.
+    Only a real conditional opens a nested region (`Conditionals.opens`):
+    `\iff` in a false branch has no `\fi`, and counting it left the branch
+    open to the end of the file. A name `conditionals` calls ambiguous is read
+    both ways, and text either reading skips is dropped: an `\input` there is
+    credited to neither, and `uncertain_conditionals` reports the name so the
+    check refuses rather than guesses.
 
     Depth-tracked rather than matched to the nearest `\fi`: a conditional
     written inside the false branch -- `\ifx\a\b ... \fi` guarding something
@@ -258,15 +449,31 @@ def _drop_iffalse(text: str, declared: Collection[str] = frozenset()) -> str:
     outer conditional early and leave everything after the inner one,
     `\input` included, looking executed when it is still inside dead code.
     """
+    spans = sorted(
+        _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False)
+    )
     out = []
+    index = 0
+    for start, end in spans:
+        if end <= index:
+            continue
+        out.append(text[index:max(start, index)])
+        index = end
+    out.append(text[index:])
+    return "".join(out)
+
+
+def _false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list[tuple[int, int]]:
+    r"""Each `\iffalse ... \fi` region of `text`, reading every name
+    `conditionals` calls ambiguous as a conditional when `nest` and as an
+    ordinary control word otherwise."""
+    regions = []
     index = 0
     length = len(text)
     while index < length:
         opened = _IFFALSE.search(text, index)
         if opened is None:
-            out.append(text[index:])
             break
-        out.append(text[index:opened.start()])
         depth = 1
         pos = opened.end()
         while depth > 0:
@@ -277,11 +484,42 @@ def _drop_iffalse(text: str, declared: Collection[str] = frozenset()) -> str:
             name = found.group(2)
             if name == "fi":
                 depth -= 1
-            elif found.group(1) is None and opens_conditional(name, declared):
+            elif found.group(1) is None and (
+                conditionals.opens(name) or (nest and name in conditionals.ambiguous)
+            ):
                 depth += 1
             pos = found.end()
+        regions.append((opened.start(), pos))
         index = pos
-    return "".join(out)
+    return regions
+
+
+def _uncertain_in(text: str, conditionals: Conditionals) -> list[str]:
+    r"""The ambiguous names `text` uses inside a false branch, in order."""
+    found: list[str] = []
+    for start, end in _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False):
+        for match in _CONDITIONAL.finditer(text, start, end):
+            name = match.group(2)
+            if match.group(1) is None and name in conditionals.ambiguous and name not in found:
+                found.append(name)
+    return found
+
+
+def uncertain_conditionals(sources: Mapping[str, str]) -> list[tuple[str, str]]:
+    r"""Every (file, name) where a false branch holds an `\if...` name Hardy
+    cannot place, so where the branch ends is not known.
+
+    The finding the writeup scan owes instead of a guess: nested, the name
+    hides whatever follows its `\fi`; not nested, it credits whatever the
+    branch still hides. `_drop_iffalse` drops what either reading skips, and
+    the compile check refuses the writeup over these.
+    """
+    conditionals = read_conditionals(sources)
+    return [
+        (path, name)
+        for path in sorted(sources)
+        for name in _uncertain_in(typeset(sources[path]), conditionals)
+    ]
 
 
 def _macro_bodies(text: str) -> list[tuple[int, int]]:
@@ -693,7 +931,7 @@ def typeset(source: str, *, carried: _MacroState | None = None) -> str:
     return "".join(kept)
 
 
-def _executed(source: str, declared: Collection[str] = frozenset()) -> str:
+def _executed(source: str, conditionals: Conditionals = NO_CONDITIONALS) -> str:
     r"""`source` with everything TeX would never actually run removed.
 
     `uncommented` drops what a human comment hides from TeX; this drops
@@ -711,7 +949,7 @@ def _executed(source: str, declared: Collection[str] = frozenset()) -> str:
     answered by what the writeup's `\input` chain names, not by which of
     those inputs would run.
     """
-    return _drop_macro_bodies(_drop_iffalse(typeset(source), declared))
+    return _drop_macro_bodies(_drop_iffalse(typeset(source), conditionals))
 
 
 def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
@@ -751,24 +989,14 @@ def reached_fragments(sources: Mapping[str, str]) -> set[str]:
     """
     if ROOT_DOCUMENT not in sources:
         return set()
-    by_stem = {}
-    for path in sources:
-        normal = path.replace("\\", "/")
-        by_stem[normal] = path
-        if normal.endswith(".tex"):
-            by_stem[normal[: -len(".tex")]] = path
+    resolve = _resolver(sources)
     reached = {ROOT_DOCUMENT}
     frontier = [ROOT_DOCUMENT]
-    declared = declared_conditionals(sources.values())
+    conditionals = read_conditionals(sources)
     while frontier:
         current = frontier.pop()
-        for found in INCLUSION.findall(_executed(sources[current], declared)):
-            key = _normalise_include(found)
-            target = by_stem.get(key)
-            if target is None and key.endswith(".tex"):
-                target = by_stem.get(key[: -len(".tex")])
-            elif target is None:
-                target = by_stem.get(f"{key}.tex")
+        for found in INCLUSION.findall(_executed(sources[current], conditionals)):
+            target = resolve(found)
             if target is not None and target not in reached:
                 reached.add(target)
                 frontier.append(target)

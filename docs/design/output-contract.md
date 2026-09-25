@@ -281,7 +281,13 @@ quotations.
 The reader of the writeup is a scanner, not a TeX engine. Comments are dropped,
 a literal `\iffalse` branch is skipped, with only real conditionals nesting
 inside it (TeX's primitives and whatever the document declares with `\newif`;
-`\iff` and `\ifthenelse` are not conditionals), macro definition bodies are removed
+`\iff` and `\ifthenelse` are not conditionals). A `\newif` counts from where
+TeX meets it, in the order the root inputs the files, and only where it
+certainly runs. A name Hardy cannot place is not guessed at: one bound with
+`\let`, one both declared and redefined, one declared inside a conditional or
+a macro, or one used before its declaration. Inside a false branch such a name
+refuses the writeup's compile check and owes an obligation, because nesting it
+may hide live text and not nesting it may credit hidden text. Macro definition bodies are removed
 rather than expanded, a listing configured to transform what it shows is not
 counted as a quotation, and `\input` is followed only where TeX would execute
 it. A document that reaches its listings or its assertions through macro

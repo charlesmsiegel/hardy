@@ -304,3 +304,56 @@ def test_engine_and_iftex_conditionals_are_conditionals(name) -> None:
     from hardy.documents.syntax import opens_conditional
 
     assert opens_conditional(name)
+
+
+# --- Codex on #393: a conditional counts from where TeX declares it ------------
+
+
+CODEX = "\\def\\ifdraft{} \\iffalse \\ifdraft \\fi \\label{live}\\cite{live} \\newif\\ifdraft"
+
+
+def _ambiguous(found) -> list[str]:
+    return [finding.detail for finding in found.findings if finding.kind == "ambiguous_conditional"]
+
+
+def test_a_conditional_declared_after_a_redefinition_is_a_finding() -> None:
+    """TeX meets `\\ifdraft` as the macro `\\def` made it, so the first `\\fi`
+    closes the false branch and the label and citation after it are live. The
+    global `\\newif` pre-scan nested it and dropped them without a word."""
+    found = inventory({"a.tex": CODEX})
+
+    assert _ambiguous(found), found.findings
+    assert "\\ifdraft" in _ambiguous(found)[0]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "\\iffalse \\ifdraft \\fi \\label{live} \\newif\\ifdraft",
+        "\\let\\ifdraft\\iftrue \\iffalse \\ifdraft \\fi \\label{live}",
+        "\\newcommand{\\setup}{\\newif\\ifdraft} \\iffalse \\ifdraft \\fi \\label{live}",
+        "\\iffalse\\newif\\ifdraft\\fi \\iffalse \\ifdraft \\fi \\label{live}",
+    ],
+    ids=["later", "let", "macro", "skipped"],
+)
+def test_every_uncertain_conditional_is_a_finding(source: str) -> None:
+    assert _ambiguous(inventory({"a.tex": source}))
+
+
+def test_a_newif_declared_first_is_still_a_conditional_without_a_finding() -> None:
+    found = inventory({"a.tex": "\\newif\\ifdraft \\iffalse \\ifdraft x\\fi \\label{hidden}\\fi \\label{z}"})
+
+    assert _labels(found) == ["z"]
+    assert not _ambiguous(found)
+
+
+def test_a_newif_in_the_file_that_inputs_the_user_is_certain() -> None:
+    """With one root (the file holding `\\begin{document}`), the order across
+    files is the order the root inputs them in."""
+    found = inventory({
+        "main.tex": "\\newif\\ifdraft\n\\begin{document}\n\\input{paper}\n\\end{document}\n",
+        "paper.tex": "\\iffalse \\ifdraft \\label{hidden}\\fi \\label{also}\\fi \\label{z}",
+    })
+
+    assert _labels(found) == ["z"]
+    assert not _ambiguous(found)

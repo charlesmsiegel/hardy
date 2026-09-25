@@ -16,7 +16,13 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from hardy.documents.syntax import declared_conditionals, opens_conditional
+from hardy.documents.syntax import (
+    BEGIN_DOCUMENT,
+    Conditionals,
+    opens_conditional,
+    read_conditionals,
+    typeset,
+)
 from hardy.literature.statements import ALIASES, KINDS
 
 _SECTION_LEVELS = frozenset({"section", "subsection", "subsubsection", "paragraph", "subparagraph"})
@@ -137,10 +143,17 @@ def inventory(sources: Mapping[str, str]) -> Inventory:
     ordered.sort(key=lambda item: item[0])
 
     # Before any file is scanned, because a preamble usually declares with
-    # `\newif` the conditionals the body files use.
-    declared = declared_conditionals(text for _, text, _ in ordered)
+    # `\newif` the conditionals the body files use -- in reading order, which
+    # across files is known only from a root: the one file that begins the
+    # document, if exactly one does. Without it a declaration in one file is
+    # not placed before a use in another, and such a name is reported rather
+    # than guessed at.
+    roots = [path for path, text, _ in ordered if BEGIN_DOCUMENT.search(typeset(text))]
+    conditionals = read_conditionals(
+        {path: text for path, text, _ in ordered}, roots[0] if len(roots) == 1 else None
+    )
     scanner_results = [
-        _Scanner(path, text, digest, declared).scan() for path, text, digest in ordered
+        _Scanner(path, text, digest, conditionals).scan() for path, text, digest in ordered
     ]
     return Inventory(
         sources=tuple(Source(path, digest) for path, _, digest in ordered),
@@ -172,13 +185,14 @@ class _OpenEnvironment:
 
 class _Scanner:
     def __init__(
-        self, path: str, text: str, digest: str, declared: frozenset[str] = frozenset()
+        self, path: str, text: str, digest: str, conditionals: Conditionals | None = None
     ) -> None:
         self.path = path
         self.text = text
         self.digest = digest
-        # The `\newif` conditionals every supplied source declares.
-        self.declared = declared
+        # Which `\if...` names are conditionals, read in the order TeX meets
+        # them, and which Hardy cannot place.
+        self.conditionals = conditionals if conditionals is not None else Conditionals()
         self.result = _Result([], [], [], [], [])
         self.open_environments: list[_OpenEnvironment] = []
 
@@ -225,8 +239,12 @@ class _Scanner:
         if name == "newif":
             return self._newif(end)
         # Only a real conditional: `\iff` and `\ifthenelse` have no `\fi`, and
-        # read as openers they swallowed the rest of the file.
-        if opens_conditional(name, self.declared):
+        # read as openers they swallowed the rest of the file. One Hardy cannot
+        # place is read as one, which a finding says.
+        if name in self.conditionals.ambiguous:
+            self._ambiguous(name, start, end)
+            return self._conditional(name, start, end)
+        if opens_conditional(name, self.conditionals.declared):
             return self._conditional(name, start, end)
         if name == "fi":
             self._finding("stray_conditional_end", "literal \\fi has no scanned conditional opener", start, end)
@@ -397,6 +415,16 @@ class _Scanner:
                 return closing + 1
         return after
 
+    def _ambiguous(self, name: str, start: int, end: int) -> None:
+        self._finding(
+            "ambiguous_conditional",
+            f"\\{name} may or may not be a conditional here -- it is bound with \\let, both "
+            "declared and redefined, declared where the declaration may not run, or used "
+            "where no \\newif can be placed before it -- so where its branch ends is not known",
+            start,
+            end,
+        )
+
     def _conditional(self, name: str, start: int, end: int) -> int:
         depth = 1
         position = end
@@ -411,7 +439,10 @@ class _Scanner:
             if nested == "newif":
                 position = self._newif(after)
                 continue
-            if opens_conditional(nested, self.declared):
+            if nested in self.conditionals.ambiguous:
+                self._ambiguous(nested, position, after)
+                depth += 1
+            elif opens_conditional(nested, self.conditionals.declared):
                 depth += 1
             elif nested == "fi":
                 depth -= 1
