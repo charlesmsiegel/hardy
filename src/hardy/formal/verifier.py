@@ -31,7 +31,13 @@ from hardy.formal.lean import LeanDiagnostic, elaborate, render_theorem, scannab
 # strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
-from hardy.formal.syntax import identifier_tokens, strip_comments
+from hardy.formal.syntax import (
+    blank_bounded_quotations,
+    identifier_tokens,
+    lex,
+    numeral_ends,
+    strip_comments,
+)
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.contracts import RunLimits, TerminalReason
@@ -77,8 +83,24 @@ COMMAND_IN_BODY = re.compile(
 # keyword, so `rfl#exit` and `Eq.refl 1macro_rules ...` issue their commands --
 # checked against Lean 4.35.0-rc3 -- while the lookbehind read each glued word
 # as the tail of the name before it. A `#` or `@[` can never continue a name,
-# so those are refused wherever they stand outside a comment or string.
+# so those are refused wherever they stand outside a comment or string -- with
+# one exception Lean itself makes: straight after a numeral, `#` is BitVec's
+# literal syntax (`0#w`, `1#(w+1)`), and Lean splits `0#exit` into the command
+# only because `#exit` is the longest token there. So after a numeral, only a
+# word that could be a `#` command's token is refused: one core names (below),
+# or anything longer than a short width variable, since Mathlib and the model's
+# imports add `#` commands no list here can enumerate.
 GLUED_COMMAND = re.compile(r"(#[A-Za-z_]\w*|@\[)")
+HASH_COMMANDS = frozenset({
+    # Every `#`-prefixed atom in Lean 4.35.0-rc3's `Init`, `Std` and `Lean`.
+    "#check", "#check_assertions", "#check_failure", "#check_simp", "#check_tactic",
+    "#check_tactic_failure", "#discr_tree_key", "#discr_tree_simp_key", "#dump_async_env_state",
+    "#eval", "#exit", "#grind_lint", "#guard", "#guard_expr", "#guard_msgs", "#guard_panic",
+    "#import_path", "#info_trees", "#lang", "#postprocess_traces", "#print", "#reduce",
+    "#show_deprecated_modules", "#synth", "#time", "#version", "#where", "#widget",
+    "#with_exporting",
+})
+_BITVEC_WIDTH = 2
 ESCAPED_HOLE = re.compile(r"«\s*sorryAx\s*»")
 UNAUTHORIZED_SIGNATURE_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_-￿])"
@@ -332,14 +354,20 @@ def proof_body_violation(body: str) -> str | None:
     accepts a body: this verifier, `submit_proof` in a batch run, the sketch
     assembly, and `hardy accept --recorded`.
 
-    `strip_comments` rather than `scannable`: comments and strings are blanked,
-    but guillemet names stay, so `«sorryAx»` -- which `scannable` blanks as a
-    name -- is seen here. Syntax quotations are data and are blanked too, but
-    only where their extent is certain (`_blank_bounded_quotations`).
+    Read over `syntax.lex`'s union of readings: where Lean's grammar leaves it
+    open whether text is code or a literal (`xs[0]'"'`, `s!"{'"'}"`), a
+    command any reading shows is refused. `strip_comments` rather than
+    `scannable`: guillemet names stay, so `«sorryAx»` -- which `scannable`
+    blanks as a name -- is seen here. Syntax quotations are data and are
+    blanked too, but only where their extent is certain, and never one holding
+    a quote or a guillemet.
     """
-    visible = _blank_bounded_quotations(strip_comments(body))
-    found = COMMAND_IN_BODY.search(visible) or GLUED_COMMAND.search(visible)
-    command = found.group(1) if found is not None else _command_token(visible)
+    lexed = lex(body)
+    if lexed.overflow is not None:
+        return "Hardy cannot tell where the literals in the proof body end; simplify them"
+    visible, _ = blank_bounded_quotations(lexed, refuse="'«»")
+    found = COMMAND_IN_BODY.search(visible)
+    command = found.group(1) if found is not None else _glued_command(visible)
     if command is not None:
         return (
             f"the proof body issues a Lean command ({command}); only a term or "
@@ -350,8 +378,18 @@ def proof_body_violation(body: str) -> str | None:
     return None
 
 
-def _command_token(text: str) -> str | None:
-    """The first command word in `text` that starts a Lean token, or None."""
+def _glued_command(text: str) -> str | None:
+    """The first command in `text` glued to the token before it, or None."""
+    numerals = numeral_ends(text)
+    for found in GLUED_COMMAND.finditer(text):
+        word = found.group(1)
+        if (
+            found.start() in numerals
+            and word not in HASH_COMMANDS
+            and len(word) - 1 <= _BITVEC_WIDTH
+        ):
+            continue
+        return word
     words = frozenset(COMMAND_WORDS)
     for start, end in sorted(identifier_tokens(text).items()):
         word = text[start:end]
@@ -360,43 +398,6 @@ def _command_token(text: str) -> str | None:
         if word == "eval" and text.startswith("%", end):
             return "eval%"
     return None
-
-
-def _blank_bounded_quotations(text: str) -> str:
-    """`text` with each syntax quotation whose end is certain blanked, offsets kept.
-
-    `` `(command| axiom bad : False) `` builds syntax a proof never runs, so the
-    command inside it is not one the body issues. The end of a quotation is
-    found by counting parentheses, and that count is exact only when nothing
-    in between can hold a parenthesis Lean does not count: comments, strings
-    and char literals are already blanked, but a guillemet name `«(»` is not.
-    A quotation holding a guillemet is left visible, because trusting the
-    count there would blank whatever command follows it -- and so is one
-    holding any quote, which after blanking can only be a primed name, so
-    that a char literal the lexer failed to recognise still cannot bound one.
-    """
-    out = list(text)
-    index = 0
-    while index < len(text) - 1:
-        if text.startswith("`(", index):
-            depth = 0
-            for position in range(index + 1, len(text)):
-                if text[position] == "(":
-                    depth += 1
-                elif text[position] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-            else:
-                # Unbalanced: nothing bounds it, so nothing after it is hidden.
-                break
-            if not any(mark in text[index : position + 1] for mark in "'«»"):
-                for blank in range(index, position + 1):
-                    if out[blank] != "\n":
-                        out[blank] = " "
-                index = position
-        index += 1
-    return "".join(out)
 
 
 def audit_line_messages(source: str, diagnostics: Sequence[LeanDiagnostic]) -> str:
