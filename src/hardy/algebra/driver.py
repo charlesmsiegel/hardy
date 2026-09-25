@@ -192,10 +192,20 @@ def clip(text: str, limit: int) -> tuple[str, bool]:
     instead let a cell of astral-plane text carry four times the budget past a
     reader sized for one. The cut lands on a UTF-8 boundary: a truncated
     trailing character is dropped rather than emitted as a replacement.
+
+    Encoded with `backslashreplace`, not plain `utf-8`. A lone UTF-16
+    surrogate (U+D800-U+DFFF) is not valid UTF-8 and cannot be encoded
+    strictly at all -- a `Symbol` with a badly decoded name, or an exception
+    message built from bad bytes, raised `UnicodeEncodeError` right here, with
+    nothing catching it, and took the whole kernel down (issue #195). The
+    escaped text is returned even when it already fit: a caller that trusted
+    this function's word that a string is safe to encode must actually get
+    one back, not the original that still carries the surrogate, which would
+    then fail exactly the same way one step later, at the reply serialiser.
     """
-    encoded = text.encode("utf-8")
+    encoded = text.encode("utf-8", "backslashreplace")
     if len(encoded) <= limit:
-        return text, False
+        return encoded.decode("utf-8"), False
     return encoded[:limit].decode("utf-8", errors="ignore"), True
 
 
@@ -212,16 +222,24 @@ def clip_jointly(fields: dict[str, str], limit: int) -> tuple[dict[str, str], bo
     of what is left, and whatever a small field does not use passes to the
     others. So a lone large value still gets nearly the whole budget, and three
     large ones each get a third instead of one starving the rest.
+
+    Sized with `backslashreplace`, like `clip` itself: a lone surrogate in any
+    field raised `UnicodeEncodeError` right here, sorting fields before a
+    single one of them had been clipped -- so the crash was not confined to
+    the final serialisation step, and catching only the last one would have
+    left this one standing.
     """
     truncated = False
     clipped: dict[str, str] = {}
     remaining = limit
-    ordered = sorted(fields.items(), key=lambda item: len(item[1].encode("utf-8")))
+    ordered = sorted(
+        fields.items(), key=lambda item: len(item[1].encode("utf-8", "backslashreplace"))
+    )
     for index, (name, text) in enumerate(ordered):
         share = remaining // (len(ordered) - index)
         clipped[name], cut = clip(text, share)
         truncated = truncated or cut
-        remaining -= len(clipped[name].encode("utf-8"))
+        remaining -= len(clipped[name].encode("utf-8", "backslashreplace"))
     return clipped, truncated
 
 
@@ -583,6 +601,21 @@ class _Capture:
         self.protocol_fd = os.dup(1)
         with contextlib.suppress(OSError, AttributeError):
             os.set_inheritable(self.protocol_fd, False)
+        # A fatal fault in the driver itself -- not a cell, the driver -- used
+        # to be undiagnosable: its traceback went to `sys.stderr`, backed by
+        # descriptor 2, which the loop below is about to redirect into this
+        # process's own private capture pipe. Written there, between cells,
+        # `_Stream.feed` discards it (nothing is armed to keep it) -- so the
+        # parent's `kernel_died` record carried an empty `stderr` and the
+        # death could not be explained (issue #311). Saved before the
+        # redirect, the same way `protocol_fd` is, so `main`'s last-resort
+        # handler has somewhere real to put a traceback: the parent's own
+        # stderr pipe, which is what `kernel.stderr_text()` reads. `os.dup` is
+        # already non-inheritable from 3.4 on; `set_inheritable` is belt and
+        # suspenders, as it is for `protocol_fd` above.
+        self.saved_stderr = os.dup(2)
+        with contextlib.suppress(OSError, AttributeError):
+            os.set_inheritable(self.saved_stderr, False)
         self._changed = threading.Condition()
         self.streams: dict[int, _Stream] = {}
         for fd in (1, 2):
@@ -933,10 +966,24 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     """Execute one cell against the persistent namespace and describe what happened."""
     try:
         parsed = ast.parse(source, filename=CELL_FILENAME)
-    except SyntaxError:
+    # Hardy asked for this one; handled below, together with every other
+    # interrupt this function can raise into.
+    except KeyboardInterrupt:
+        raise
+    # Not `except SyntaxError`. `ast.parse` raises far more than that against a
+    # cell Hardy did not write: a source deep enough that converting its AST
+    # exhausts the recursion limit raises `RecursionError`, not `SyntaxError`
+    # (issue #311), and only the latter was ever caught here -- so a flat sum
+    # of a few thousand terms, well under the cell's byte cap, killed the
+    # kernel and every value the session held. A cell is untrusted input the
+    # same way its execution below already treats it: every failure to parse
+    # it is this cell's error, never the driver's.
+    except BaseException:
         # Clipped like any other reply: a syntax error quotes the offending
-        # source back, and the source is allowed to be 64 KiB.
-        stderr, truncated = clip(traceback.format_exc(), limit)
+        # source back, and the source is allowed to be 64 KiB. `_describe_failure`
+        # rather than a bare `traceback.format_exc()`, so a failure to *format*
+        # this traceback is answered too rather than escaping in its place.
+        stderr, truncated = clip(_describe_failure(), limit)
         return {
             "status": "error",
             "stdout": "",
@@ -1047,6 +1094,25 @@ def main() -> None:
     global PENDING_INTERRUPT
     stdin = _protocol_input()
     redirect_console_breaks()
+    try:
+        _cell_loop(stdin, namespace, baseline, limit, capture)
+    # The very last resort. Everything a cell's own source can do is answered
+    # inside `_cell_loop` -- `run_cell` catches every `BaseException` from
+    # parsing or running it, and the frame loop below catches its own protocol
+    # errors deliberately. What lands here is a fault in the driver's own
+    # plumbing: `read_exact` itself failing is how the tests reach this, and a
+    # real one would be a bug in this file. There is no cell to answer and no
+    # namespace worth preserving, only a death to explain.
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.write(
+                capture.saved_stderr, _describe_failure().encode("utf-8", "backslashreplace")
+            )
+
+
+def _cell_loop(stdin, namespace: dict, baseline: dict, limit: int, capture: _Capture) -> None:
+    """Read frames and answer them, for as long as the parent keeps sending."""
+    global PENDING_INTERRUPT
     while True:
         # Deferred across the read, raised across the cell. The cell is the one
         # place a stop *should* interrupt Python directly -- that is what makes
@@ -1112,6 +1178,20 @@ def main() -> None:
                 reply = run_cell(str(request.get("source", "")), namespace, limit, capture)
         except KeyboardInterrupt:
             reply = _interrupted_reply()
+        # `run_cell` answers everything a cell's own source can raise. What
+        # can still land here is `SystemExit` from somewhere that is not a
+        # cell's `exec`/`eval` -- there is none today -- or a bug in this
+        # loop's own bookkeeping above. Either way it is reported as this
+        # cell's error rather than allowed to end the session over it: no
+        # path from a cell's source may cost the loop itself (issue #311).
+        except BaseException:
+            reply = {
+                "status": "error",
+                "stdout": "",
+                "stderr": _describe_failure(),
+                "value_repr": "",
+                "capture_truncated": False,
+            }
         finally:
             _handle_stops_by(_remember)
         # Taken after every cell, failed ones included: a cell that raised
@@ -1126,7 +1206,27 @@ def main() -> None:
             # session: an empty digest is the value that means "not compared",
             # which is what a backend with no digest at all reports.
             reply["state_digest"] = ""
-        capture.write_reply(json.dumps(reply, ensure_ascii=False).encode("utf-8"))
+        try:
+            payload_out = json.dumps(reply, ensure_ascii=False).encode("utf-8")
+        except BaseException:
+            # `clip`/`clip_jointly` already keep every field in `reply` free of
+            # anything strict UTF-8 cannot carry, so this is a defence against
+            # what they do not reach -- a cell that replaced `json` itself, for
+            # one. Not `json.dumps` again: that is exactly what a cell may have
+            # broken. A bare bytes literal, valid JSON and already ASCII, is
+            # answered instead, so the kernel survives whatever this was.
+            payload_out = _SERIALISATION_FAILED_REPLY
+        capture.write_reply(payload_out)
+
+
+# A framed reply that does not depend on `json` working, because the failure
+# it answers may be that a cell has monkeypatched it. Valid JSON, plain ASCII,
+# and every field `CellOutcome` requires.
+_SERIALISATION_FAILED_REPLY = (
+    b'{"status": "error", "stdout": "", '
+    b'"stderr": "Hardy could not serialise this cell\'s reply", '
+    b'"value_repr": "", "capture_truncated": true, "state_digest": ""}'
+)
 
 
 if __name__ == "__main__":

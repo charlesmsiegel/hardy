@@ -403,6 +403,70 @@ def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_sess
     assert sympy_session.execute("kept").value_repr == "x**4 + 4*x**3*y + 6*x**2*y**2 + 4*x*y**3 + y**4"
 
 
+def test_a_cell_the_parser_cannot_handle_is_an_error_not_a_dead_kernel(
+    sympy_session,
+) -> None:
+    """Issue #311: only `SyntaxError` was caught around `ast.parse`.
+
+    A flat sum of 3000 terms is small (well under the 64 KiB cell cap) but
+    deep enough that converting its AST raises `RecursionError`, not
+    `SyntaxError` -- and that used to escape `run_cell` entirely and kill the
+    kernel, discarding the whole live namespace over one cell.
+    """
+    sympy_session.execute("x = 41")
+    failed = sympy_session.execute("+".join(["x"] * 3000))
+    assert failed.status == "error"
+    assert "RecursionError" in failed.stderr
+    assert sympy_session.state == "live"
+    assert sympy_session.execute("x").value_repr == "41"
+
+
+def test_a_deeply_nested_unary_expression_is_also_just_an_error(sympy_session) -> None:
+    """The same parser depth failure, reached through unary minus instead of a
+    long sum -- confirming the fix is not narrowly tied to one AST shape."""
+    sympy_session.execute("x = 41")
+    failed = sympy_session.execute("-" * 5000 + "1")
+    assert failed.status == "error"
+    assert "RecursionError" in failed.stderr
+    assert sympy_session.state == "live"
+    assert sympy_session.execute("x").value_repr == "41"
+
+
+def test_a_lone_surrogate_in_an_exception_message_does_not_kill_the_kernel(
+    sympy_session,
+) -> None:
+    """Issue #195: a lone UTF-16 surrogate in any reply field raised
+    `UnicodeEncodeError` from strict UTF-8 encoding, with nothing catching it,
+    and the driver died with an empty stderr and the whole namespace lost."""
+    sympy_session.execute("x = 41")
+    failed = sympy_session.execute("raise ValueError(chr(0xd800))")
+    assert failed.status == "error"
+    assert "\\ud800" in failed.stderr
+    assert sympy_session.execute("x").value_repr == "41"
+
+
+def test_a_repr_returning_a_lone_surrogate_is_escaped_not_fatal(sympy_session) -> None:
+    """A `__repr__` that *returns* a surrogate still has to survive `clip`,
+    which is a separate path from the traceback-formatting one above."""
+    sympy_session.execute("x = 41")
+    record = sympy_session.execute(
+        "class A:\n"
+        "    def __repr__(self):\n"
+        "        return chr(0xdc80)\n"
+        "A()"
+    )
+    assert record.status == "ok"
+    assert record.value_repr == "\\udc80"
+    assert sympy_session.execute("x").value_repr == "41"
+
+
+def test_a_symbol_named_with_a_lone_surrogate_is_still_answered(sympy_session) -> None:
+    """A realistic path to the same defect: a `Symbol` whose name is a badly
+    decoded surrogate must not take the kernel down with it."""
+    record = sympy_session.execute("Symbol(chr(0xd800))")
+    assert record.status == "ok"
+
+
 def test_a_cell_printing_non_ascii_is_recorded_as_written(
     sympy_session, tmp_path, script_agreed
 ) -> None:
