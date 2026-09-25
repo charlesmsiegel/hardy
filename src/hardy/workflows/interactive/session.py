@@ -597,7 +597,9 @@ class MathematicsSession:
         # setting -- "always start fresh" would silently discard the
         # conversation on every launch. Everything else stays: the transcript
         # is the versioned record of the mathematics and keeps going, the
-        # ledger keeps counting (a new conversation is not a new budget), and
+        # spend ledger keeps counting (a new conversation is not a new spend
+        # total; the delegation root's per-session budget is a different
+        # thing, see `DelegationController._ensure_root`), and
         # nothing in the workspace is deleted. Only the thread id in
         # `.local/state.json`, machine-local and disposable by design, goes.
         self.fresh_thread_detail = self._discard_thread() if fresh_thread else ""

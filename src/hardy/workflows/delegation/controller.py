@@ -341,33 +341,44 @@ class DelegationController:
         """The root holds this session's ceilings, in this session's epoch.
 
         The root lease is a budget for one session, not for the project's
-        life: the first call in a controller re-reserves it under a new
-        `epoch` (the owner token's id), and `LeaseLedger` stops charging the
-        root for children released before that. Later calls re-reserve only
-        when the ceilings moved, keeping whichever epoch is current, so
-        nothing this session spent is forgotten mid-session.
+        life. The first call in a controller re-reserves it under an epoch:
+        a new one (named by this controller's owner token) when no session
+        of the current epoch is still live, or the current one, joined, when
+        one is -- a second terminal, a browser tab, or a chat switch that
+        builds its session before closing the last. Concurrent sessions on
+        one project therefore share one budget, and none can forgive what
+        another live session spent. `LeaseLedger` stops charging the root for
+        children released before its epoch began. Later calls re-reserve only
+        when the ceilings moved, keeping the current epoch. The decision and
+        the write happen under the journal's lock, so another process cannot
+        open an epoch between them.
         """
-        tree = self.tree()
         lease = ResourceLease.model_validate(self.root.lease.model_dump())
-        opening = not self._epoch_opened
-        if ROOT_ID not in tree.delegations:
+        if ROOT_ID not in self.tree().delegations:
             spec = DelegationSpec(objective="session root resources", project_refs=(), scope=scope,
                                   lease=lease, concurrency=ConcurrencyLease(slots=self.root.slots),
                                   created_by="session", notify_human=False)
             self.store.append(ROOT_ID, "delegation.created", {
                 "spec": spec.model_dump(mode="json"), "parent_id": None,
                 "created_at": self._clock().isoformat()})
-            self.store.append(ROOT_ID, "budget.reserved", {"lease": lease.model_dump(mode="json"),
-                                                          "slots": self.root.slots, "epoch": self._owner.id})
-            self._epoch_opened = True
-            return
-        ledger = LeaseLedger(tree)
-        epoch = self._owner.id if opening else ledger.epoch(ROOT_ID)
-        if opening or ledger.reserved(ROOT_ID) != lease or ledger.slots(ROOT_ID) != self.root.slots:
-            # A new session, or ceilings that moved; the root follows them.
-            self.store.append(ROOT_ID, "budget.reserved", {"lease": lease.model_dump(mode="json"),
-                                                          "slots": self.root.slots,
-                                                          **({"epoch": epoch} if epoch is not None else {})})
+        opening = not self._epoch_opened
+        workspace = self.store.workspace
+        me = self._owner.id
+
+        def decide(tree: DelegationTree) -> dict[str, Any] | None:
+            ledger = LeaseLedger(tree)
+            payload: dict[str, Any] = {"lease": lease.model_dump(mode="json"), "slots": self.root.slots}
+            current = ledger.epoch(ROOT_ID)
+            if opening:
+                live = current is not None and any(
+                    member != me and OwnerToken.alive(workspace, member) for member in ledger.epoch_members(ROOT_ID))
+                return {**payload, "epoch": current, "joined": me} if live else {**payload, "epoch": me}
+            if ledger.reserved(ROOT_ID) == lease and ledger.slots(ROOT_ID) == self.root.slots:
+                return None
+            # Ceilings that moved mid-session; the root follows them in its epoch.
+            return {**payload, **({"epoch": current} if current is not None else {})}
+
+        self.store.append_decided(ROOT_ID, "budget.reserved", decide)
         self._epoch_opened = True
 
     def delegate(self, spec: DelegationSpec, *, parent_id: str | None = None) -> Delegation:

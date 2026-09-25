@@ -47,6 +47,9 @@ class LeaseLedger:
     and no longer counts against it. A child still holding a reservation, or
     released since the epoch began, counts whenever it was created. A journal
     written before epochs existed names none, so its root stays cumulative.
+    A session that opens while the current epoch's sessions are live joins
+    it (`joined` on the reservation) instead of starting another, so
+    concurrent sessions on one project share one budget.
     """
 
     def __init__(self, tree: DelegationTree) -> None:
@@ -56,6 +59,7 @@ class LeaseLedger:
         self._released: dict[str, int] = {}
         self._epoch: dict[str, str] = {}
         self._epoch_start: dict[str, int] = {}
+        self._epoch_members: dict[str, list[str]] = {}
         self._compute: set[str] = set()
         for event in tree.events:
             id = event.delegation_id
@@ -65,8 +69,13 @@ class LeaseLedger:
                 epoch = event.payload.get("epoch")
                 if epoch is not None and str(epoch) != self._epoch.get(id):
                     # A new epoch starts here; the same one re-reserved (a
-                    # ceiling that moved mid-session) continues it.
+                    # ceiling that moved mid-session, or a session joining
+                    # it) continues it.
                     self._epoch[id], self._epoch_start[id] = str(epoch), event.sequence
+                    self._epoch_members[id] = [str(epoch)]
+                joined = event.payload.get("joined")
+                if epoch is not None and joined is not None and str(joined) not in self._epoch_members[id]:
+                    self._epoch_members[id].append(str(joined))
             elif event.kind == "budget.released":
                 self._released.setdefault(id, event.sequence)
             elif event.kind == "delegation.started" and event.payload.get("compute"):
@@ -85,6 +94,10 @@ class LeaseLedger:
         """The epoch the node's reservation is currently in, or None where none was named."""
         return self._epoch.get(id)
 
+    def epoch_members(self, id: str) -> tuple[str, ...]:
+        """The owner tokens of the sessions in the current epoch: the one that opened it, then those that joined."""
+        return tuple(self._epoch_members.get(id, ()))
+
     def is_computation(self, id: str) -> bool:
         return id in self._compute
 
@@ -95,9 +108,13 @@ class LeaseLedger:
         return start is None or released is None or released > start
 
     def _charged(self, child: str) -> ResourceUsage:
-        """What a released child costs its parent: its usage, with unknown checks and seconds bounded by its lease."""
+        """What a released child costs its parent: its usage, with unknown checks and seconds bounded by its lease.
+
+        Bounded, not replaced: what the child already reported stands where
+        it is more than the lease (a timer stops a worker a little late).
+        """
         used, lease = self.usage(child), self.reserved(child)
-        stated = {name: getattr(lease, name) for name in used.unknown
+        stated = {name: max(getattr(used, name) or 0, getattr(lease, name)) for name in used.unknown
                   if name in BOUNDED_BY_LEASE and getattr(lease, name) is not None}
         if not stated:
             return used

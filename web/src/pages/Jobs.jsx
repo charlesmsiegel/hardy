@@ -57,7 +57,10 @@
 // zero"), which is a fact about the root, not a gap in reporting -- so it is
 // drawn `Absent kind="na"`. `null`/`0` in a *usage* dimension is an ordinary
 // measurement (`official_checks`/`active_seconds` default to real `0`), so it
-// goes through `orAbsent` the same as everywhere else.
+// goes through `orAbsent` the same as everywhere else. `root.compute_usage`
+// is what detached computations (a Lean, LaTeX or CAS call that outlived the
+// turn's grace) used: reported, never charged to the root, so it is drawn
+// beside the ceilings rather than counted against them.
 
 import {useState} from 'react';
 import Absent, {orAbsent} from '../components/Absent.jsx';
@@ -212,6 +215,8 @@ export default function Jobs() {
             <Label>
               {'Tree · root ceilings '}
               {leaseValue(root, 'official_checks')} checks · {leaseValue(root, 'active_seconds')} active s
+              {' · computations '}
+              {orAbsent(root?.compute_usage?.active_seconds)} s
             </Label>
             <Table
               head={['node · objective', 'state']}

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -298,29 +298,50 @@ class DelegationStore:
                now: datetime | None = None) -> DelegationEvent:
         guard = self._guard(create=True)
         with self._lock(guard):
+            return self._append(guard, self._read(guard), delegation_id, kind, payload, now=now)
+
+    def append_decided(self, delegation_id: str, kind: str,
+                       decide: Callable[[DelegationTree], dict[str, Any] | None], *,
+                       now: datetime | None = None) -> DelegationEvent | None:
+        """Append what `decide` makes of the current tree, read and written under one lock.
+
+        For an event whose payload depends on the journal itself -- the root's
+        epoch -- so another process cannot append between the read and the
+        write. `decide` answering None appends nothing.
+        """
+        guard = self._guard(create=True)
+        with self._lock(guard):
             events = self._read(guard)
-            event = DelegationEvent(
-                sequence=len(events), previous=events[-1].digest if events else None,
-                delegation_id=delegation_id, kind=kind,
-                timestamp=(now or datetime.now(UTC)).isoformat(), payload=payload,
-            )
-            # Validated before it is written: the journal never holds an event
-            # its own replay would refuse.
-            before = _replay(events)
-            _replay((*events, event))
-            if kind == "budget.reserved":
-                # Re-checked here, under the journal's own lock: two processes
-                # that both passed `grant` on one stale balance cannot both record.
-                _refuse_overdraft(before, delegation_id, event)
-            if kind == "delegation.created":
-                _refuse_overspawn(before, event)
-            line = json.dumps({"event": event.model_dump(mode="json"), "digest": event.digest},
-                              ensure_ascii=False, allow_nan=False) + "\n"
-            with guard.open(JOURNAL, "a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line)
-                handle.flush()
-                os.fsync(handle.fileno())
-            return event
+            payload = decide(_replay(events))
+            if payload is None:
+                return None
+            return self._append(guard, events, delegation_id, kind, payload, now=now)
+
+    def _append(self, guard: WriteGuard, events: tuple[DelegationEvent, ...], delegation_id: str, kind: str,
+                payload: dict[str, Any], *, now: datetime | None) -> DelegationEvent:
+        """Validate and write one event after `events`; the caller holds the journal lock."""
+        event = DelegationEvent(
+            sequence=len(events), previous=events[-1].digest if events else None,
+            delegation_id=delegation_id, kind=kind,
+            timestamp=(now or datetime.now(UTC)).isoformat(), payload=payload,
+        )
+        # Validated before it is written: the journal never holds an event
+        # its own replay would refuse.
+        before = _replay(events)
+        _replay((*events, event))
+        if kind == "budget.reserved":
+            # Re-checked here, under the journal's own lock: two processes
+            # that both passed `grant` on one stale balance cannot both record.
+            _refuse_overdraft(before, delegation_id, event)
+        if kind == "delegation.created":
+            _refuse_overspawn(before, event)
+        line = json.dumps({"event": event.model_dump(mode="json"), "digest": event.digest},
+                          ensure_ascii=False, allow_nan=False) + "\n"
+        with guard.open(JOURNAL, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return event
 
     def artifacts(self, delegation_id: str) -> RunStore:
         """The per-delegation artifact store, created on first use.
