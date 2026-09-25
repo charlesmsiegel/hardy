@@ -451,6 +451,59 @@ def test_run_exclusive_refuses_while_a_turn_runs(tmp_path: Path) -> None:
         host.stop()
 
 
+class _Jobs:
+    """`session.jobs` as the host reads it: the ids of the detached jobs still running."""
+
+    def __init__(self, *ids: str) -> None:
+        self.ids = ids
+
+    def running(self) -> tuple[str, ...]:
+        return self.ids
+
+
+def test_an_editor_save_or_check_is_refused_while_a_detached_job_runs(tmp_path: Path) -> None:
+    """Issue #349: a detached job is neither a turn nor a command, but it holds the
+    tool gate and writes the Lean tree; the editor's save is refused (409) while it
+    runs, the way it is refused mid-turn."""
+    host = _host(tmp_path)
+    try:
+        host.session.jobs = _Jobs("d-1")
+        with pytest.raises(Busy, match="background job"):
+            host.save_file("lean/Main.lean", "x")
+        with pytest.raises(Busy, match="background job"):
+            host.check_file("lean/Main.lean", "x")
+        assert host.session.saved == [] and host.session.checked == []
+        assert host.state()["command_running"] is False
+        host.session.jobs = _Jobs()
+        assert host.save_file("lean/Main.lean", "x")["ok"] is True
+    finally:
+        host.stop()
+
+
+def test_a_job_that_finishes_during_exclusive_work_starts_its_turn_after_it(tmp_path: Path) -> None:
+    """The job's end looks for a turn to start while the exclusive work still holds
+    the session, and finds none; the work's end must look again, or the result
+    waits for whatever the user does next."""
+    host = _host(tmp_path)
+    try:
+        sub = host.subscribe()
+        session = host.session
+
+        def work() -> str:
+            session.owed = True
+            session.on_job_finished()
+            # Past the job's own look: `_call` queues behind it on the loop.
+            host._call(lambda: None)
+            assert session.sent == []
+            return "done"
+
+        assert host.run_exclusive(work) == "done"
+        _drain(sub, {"turn_end"})
+        assert session.sent == [CONTINUATION_TEXT] and session.authors == ["hardy"]
+    finally:
+        host.stop()
+
+
 class BlockingOpener(FakeOpener):
     """An opener that parks on the loop's behalf, the way a cold kernel probe does."""
 

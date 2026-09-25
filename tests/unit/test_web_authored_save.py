@@ -15,6 +15,8 @@ translation in both directions.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from hardy.foundation.values import ToolResult
@@ -30,6 +32,8 @@ class _Recorder:
     """
 
     def __init__(self) -> None:
+        #: The tool gate both methods take, as the real session's is.
+        self._gate = threading.Lock()
         self.saved: list[tuple[str, str]] = []
         self.checked: list[tuple[str, str]] = []
         self.notes: list[str] = []

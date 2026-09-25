@@ -5007,8 +5007,13 @@ class MathematicsSession:
         if inner is None:
             return ToolResult(False, f"only .lean and .tex files are saved through the editor: {path!r}")
         tree, relative = inner
-        result = (self._save_lean_unbraked(relative, source) if tree == LEAN_DIR
-                  else self._save_latex(relative, source))
+        # The tool gate, as every model tool call and `import_lean` take it: a
+        # detached job's thread holds it while it writes the same Lean tree,
+        # build cache and record, so the save waits for the job (issue #349).
+        # The note is written outside it; it touches none of those.
+        with self._gate:
+            result = (self._save_lean_unbraked(relative, source) if tree == LEAN_DIR
+                      else self._save_latex(relative, source))
         # The note names `path`, the tree-qualified name the Files page shows,
         # not the tree-relative one the workspace took. A reader picked the
         # file off that page; naming `relative` would describe a file the page
@@ -5030,8 +5035,11 @@ class MathematicsSession:
         if inner is None:
             return ToolResult(False, f"only .lean and .tex files are checked through the editor: {path!r}")
         tree, relative = inner
-        return (self._check_lean(relative, source) if tree == LEAN_DIR
-                else self._check_latex(relative, source))
+        # Under the tool gate for the reason `save_authored` is: a check
+        # builds through the same build cache a detached job may be writing.
+        with self._gate:
+            return (self._check_lean(relative, source) if tree == LEAN_DIR
+                    else self._check_latex(relative, source))
 
     def record_hardy_note(self, text: str) -> None:
         """Write one transcript line for something that happened to this

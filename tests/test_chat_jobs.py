@@ -258,3 +258,62 @@ def test_close_waits_for_a_detached_job_to_record_its_result(tmp_path: Path):
     assert [e["status"] for e in events(tmp_path) if e["type"] == "job"] == ["cancelled"]
     job_id = chat.runtime.results[0].output.split("background job ")[1].split(".")[0]
     assert chat.delegations.tree().get(job_id).state is DelegationState.CANCELLED
+
+
+def _detach_a_held_check(tmp_path: Path):
+    """A session whose tool gate a detached `check_lean` job holds until `tool.release` is set."""
+    runtime = FakeChatRuntime([call("check_lean", {"path": "Main.lean", "source": "x"}), "started"])
+    chat = session(tmp_path, runtime)
+    chat.jobs.detach_after = 0.2
+    tool = SlowTool(chat)
+    chat.send("check it")
+    assert chat.jobs.running() and chat._gate.locked()
+    return chat, tool
+
+
+def _run_behind_the_job(chat, tool, call_browser):
+    """Start `call_browser` while the job holds the gate; say what it saw and when."""
+    seen: dict = {}
+
+    def browser():
+        result = call_browser()
+        seen["running_at_return"] = chat.jobs.running()
+        seen["result"] = result
+
+    thread = threading.Thread(target=browser)
+    thread.start()
+    thread.join(0.5)
+    # Still waiting: the job has the gate, so the browser's work has not begun.
+    assert thread.is_alive() and chat.jobs.running()
+    tool.release.set()
+    thread.join(10)
+    assert not thread.is_alive()
+    return seen
+
+
+LEMMA = "import Mathlib\nlemma hardyOther : True := by exact True.intro\n"
+
+
+def test_a_browser_save_waits_behind_a_detached_job_for_the_tool_gate(tmp_path: Path):
+    """Issue #349: the editor's save writes the same Lean tree, build cache and
+    `session.json` a detached job is writing; it waits on the gate the job holds
+    rather than interleaving with it."""
+    chat, tool = _detach_a_held_check(tmp_path)
+    try:
+        seen = _run_behind_the_job(chat, tool, lambda: chat.save_authored("lean/Other.lean", LEMMA))
+        assert seen["running_at_return"] == ()
+        assert seen["result"].ok, seen["result"].output
+    finally:
+        tool.release.set()
+        chat.close()
+
+
+def test_a_browser_check_waits_behind_a_detached_job_for_the_tool_gate(tmp_path: Path):
+    chat, tool = _detach_a_held_check(tmp_path)
+    try:
+        seen = _run_behind_the_job(chat, tool, lambda: chat.check_authored("lean/Other.lean", LEMMA))
+        assert seen["running_at_return"] == ()
+        assert seen["result"].ok, seen["result"].output
+    finally:
+        tool.release.set()
+        chat.close()

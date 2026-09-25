@@ -75,7 +75,7 @@ A plain message typed while a turn or a command runs is not refused: it is queue
 - `/exit`
 - `/quit`
 
-A Lean check or save, a LaTeX check or save, or a computer algebra cell that runs longer than `compute_detach_seconds` ([configuration](configuration.md)) no longer holds the turn: it is detached into a background job listed by `/jobs` and cancellable with `/cancel`, the turn goes on without it, and its result reaches the model ahead of its next turn. When such a job ends with nothing else running, Hardy starts a turn of its own, drawn as Hardy's line, so the result is acted on; a line queued meanwhile goes first.
+A Lean check or save, a LaTeX check or save, or a computer algebra cell that runs longer than `compute_detach_seconds` ([configuration](configuration.md)) no longer holds the turn: it is detached into a background job listed by `/jobs` and cancellable with `/cancel`, the turn goes on without it, and its result reaches the model ahead of its next turn. While a job runs, the browser editor's save and check are refused, as they are during a turn, because the job is still writing the same Lean tree and build cache. When such a job ends with nothing else running, Hardy starts a turn of its own, drawn as Hardy's line, so the result is acted on; a line queued meanwhile goes first.
 
 ## Prompt shortcuts
 
