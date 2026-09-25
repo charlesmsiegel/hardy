@@ -474,6 +474,24 @@ in `\section` prose and an abstract owes the theorem gate nothing, so only the
 disclosure banner carries the truth. A document claiming a complete proof over zero
 saved theorems is still mechanically unremarkable to Hardy.
 
+## X10 — Command-scanner char-literal lexer gap — P2
+
+**Deps:** none
+
+**Status:** Not started. Tracked as issue #192.
+
+`COMMAND_IN_BODY` and the shared blanking pass it runs over (`hardy/formal/syntax.py`,
+`hardy/formal/verifier.py`) refuse a recognised command word in a proof body by
+scanning text with comments and ordinary strings blanked out first. That blanking
+pass does not know Lean's char-literal syntax, so a body holding `'"'` -- a
+one-character literal whose content happens to be a quote -- is read by the scanner
+as the start of an ordinary string instead, and the scanner's idea of what is and is
+not inside a string diverges from Lean's from there on. A body that opens with `'"'`
+can hide a real command from the refusal list this way. Closing it means teaching the
+blanking pass Lean's char-literal grammar (`'x'`, `'\n'`, `'\t'`, `'\\'`, `'\''`, and
+`'\uXXXX'`) as its own lexical class, the same way raw strings and guillemet names are
+already handled apart from ordinary strings.
+
 ---
 
 # Service-hardening lane S — independent until service readiness
