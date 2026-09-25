@@ -199,7 +199,7 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     lines = [_render_toml_line(key, value) for key, value in kept.items()]
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     temporary.chmod(0o600)
     replace_with_retry(temporary, destination)
     source.unlink()
@@ -756,6 +756,6 @@ def remove_setting(path: Path, key: str) -> None:
 def _rewrite(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     temporary.chmod(0o600)
     replace_with_retry(temporary, path)

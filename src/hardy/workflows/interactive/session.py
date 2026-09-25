@@ -57,6 +57,7 @@ from hardy.foundation.files import (
     WriteGuard,
     files_under,
     guard_for,
+    normalize_newlines,
     read_bytes,
     read_text,
 )
@@ -3014,8 +3015,7 @@ class MathematicsSession:
             operation the caller was told had failed.
             """
             guard.mkdir()
-            with guard.open(name, "w", encoding="utf-8") as handle:
-                handle.write(kept)
+            guard.write_text(name, kept)
 
         root = self.tex_root / ROOT_DOCUMENT
         if root.is_file():
@@ -3192,7 +3192,11 @@ class MathematicsSession:
                 rows.append(ingest.Triaged(str(relative), "", ingest.UNREADABLE, detail=str(error)))
                 continue
             try:
-                texts[relative] = (content, content.decode("utf-8"))
+                # Normalised here, not only at the eventual save: a pile file
+                # with CRLF line endings triages against the same text a save
+                # would compile, and a doubled `\r\r\n` would misclassify it
+                # before anything ever tried to write it (#365).
+                texts[relative] = (content, normalize_newlines(content.decode("utf-8")))
             except UnicodeDecodeError:
                 rows.append(ingest.Triaged(str(relative), ingest.digest(content), ingest.UNREADABLE, detail="not UTF-8 text"))
         if not texts:
@@ -3208,8 +3212,9 @@ class MathematicsSession:
                 # writes it -- the guard re-proves each component at the
                 # moment of the write, exactly as `stage` does for its shadow.
                 guard, name = guard_for(source_root, relative, create=True)
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(text)
+                # Not fsynced: every byte here lands in a scratch tree this
+                # triage pass deletes as soon as it is done with it.
+                guard.write_text(name, text, sync=False)
             build_root.mkdir()
 
             def compiling(module: str, src: Path, build: Path, source_file: Path) -> tuple[bool, str]:
@@ -3340,7 +3345,7 @@ class MathematicsSession:
                 rows.append(ingest.Triaged(posix, "", ingest.UNREADABLE, detail=str(error)))
                 continue
             try:
-                text = content.decode("utf-8")
+                text = normalize_newlines(content.decode("utf-8"))
             except UnicodeDecodeError:
                 rows.append(ingest.Triaged(posix, ingest.digest(content), ingest.UNREADABLE, detail="not UTF-8 text"))
                 continue
@@ -3423,8 +3428,7 @@ class MathematicsSession:
                 )
             try:
                 guard, name = guard_for(shared, relative, create=True)
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(text.rstrip() + "\n")
+                guard.write_text(name, text.rstrip() + "\n")
             except (LayoutError, OSError) as error:
                 return ToolResult(False, f"could not write into {shared}: {error}")
             # Compiled now rather than on the next Lean call, so the user is
@@ -3542,7 +3546,11 @@ class MathematicsSession:
                 "that arrived from outside. Authored work is edited with a save, not re-imported.",
             )
         try:
-            text = content.decode("utf-8")
+            # `content`, not `text`, is what the provenance digest is taken
+            # over below -- CRLF included -- so normalising here changes only
+            # what gets compiled and saved, never what the record claims
+            # arrived (#365).
+            text = normalize_newlines(content.decode("utf-8"))
         except UnicodeDecodeError:
             return ToolResult(False, f"{source_path} is not UTF-8 text; Hardy cannot ingest it")
         return origin, content, text

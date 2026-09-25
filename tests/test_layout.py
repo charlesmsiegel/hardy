@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from hardy.foundation.files import WriteGuard, normalize_newlines
 from hardy.workflows import layout
 
 # `Path.symlink_to` raises `OSError` on Windows unless Developer Mode (or an
@@ -1251,3 +1252,208 @@ def test_the_os_replace_allowlist_names_only_files_that_still_use_it():
         ):
             stale.append(relative)
     assert not stale, f"no longer calls os.replace; drop from the allowlist: {stale}"
+
+
+# --- #365/#366: project text is written LF-only, on every platform ----------
+#
+# A text-mode write with `newline=None` (the default) translates every `\n`
+# the caller wrote into `os.linesep` -- `\r\n` on Windows -- and does nothing
+# to a `\r` that was already in the string. Decoding a CRLF source with plain
+# `bytes.decode("utf-8")` keeps every `\r\n` in the text, so writing it back
+# out on Windows doubles every line ending into `\r\r\n`; on Linux the stray
+# `\r` survives instead. `normalize_newlines` collapses both before the text
+# is ever encoded, and `WriteGuard.write_text` writes the result as bytes, so
+# there is no text-mode translation left to reintroduce a platform's own line
+# ending.
+
+
+def test_normalize_newlines_collapses_crlf_and_bare_cr():
+    assert normalize_newlines("a\r\nb\rc\nd") == "a\nb\nc\nd"
+    assert normalize_newlines("no newlines here") == "no newlines here"
+
+
+def test_write_guard_write_text_writes_lf_only_bytes_from_a_crlf_string(tmp_path: Path):
+    guard = WriteGuard(tmp_path, create=True)
+    guard.write_text("mixed.txt", "one\r\ntwo\rthree\nfour")
+    saved = (tmp_path / "mixed.txt").read_bytes()
+    assert b"\r" not in saved
+    assert saved == b"one\ntwo\nthree\nfour"
+
+
+def test_write_guard_write_text_goes_through_the_same_retrying_replace_as_write_bytes(tmp_path: Path, monkeypatch):
+    """#332's retry has to cover this write too. The layout ratchet only sees
+    a bare `os.replace` outside `locking.py`; it says nothing about whether a
+    *new* method built on `write_bytes` still goes through the retry, so this
+    proves the wiring directly: `write_text` must call `replace_with_retry`,
+    not rename the temporary itself.
+    """
+    import hardy.foundation.files as files_module
+
+    calls: list[str] = []
+
+    def spy(source: Path, target: Path) -> None:
+        calls.append(Path(source).name)
+        os.replace(source, target)
+
+    monkeypatch.setattr(files_module, "replace_with_retry", spy)
+    guard = WriteGuard(tmp_path, create=True)
+    guard.write_text("note.txt", "hello\r\n")
+    assert calls, "write_text must go through replace_with_retry, not open the target directly"
+    assert (tmp_path / "note.txt").read_bytes() == b"hello\n"
+
+
+# --- #365/#366 ratchet: project text writes name their newline explicitly --
+#
+# Scoped to the modules #365 and #366 actually name, not all of `src/hardy`:
+# plenty of `open(..., "w")` elsewhere writes a log, a cache, or a file
+# nothing ever hashes or diffs across machines, where the platform's own line
+# ending is harmless -- forcing "\n" there would be churn with no bug behind
+# it. These are where a write with the wrong newline corrupts a file the
+# user, Lean, or an evidence check reads back.
+NEWLINE_WATCHED_MODULES = (
+    "workflows/interactive/session.py",
+    "workflows/interactive/documents.py",
+    "documents/latex.py",
+    "formal/workspace.py",
+    "formal/lakefile.py",
+    "workflows/shared/promotion.py",
+    "workflows/delegation/admission.py",
+    "workflows/batch.py",
+    "workflows/checkpoints.py",
+    "app/installers.py",
+    "app/setup.py",
+    "app/config.py",
+)
+
+#: File-mode characters this scan will look at. A literal outside this
+#: alphabet is never a mode argument the scan cares about, so it is left
+#: alone rather than mistaken for one.
+_MODE_CHARS = frozenset("rwaxb+")
+
+#: Text-mode write, append, or exclusive-create. A "b" anywhere in the mode
+#: ("wb", "ab", ...) writes exactly the bytes handed to it -- no platform
+#: translation exists to reintroduce -- so those calls are never flagged.
+_TEXT_WRITE_MODES = frozenset({"w", "a", "x", "w+", "a+", "x+", "r+"})
+
+
+def _literal_mode(node: ast.Call) -> str | None:
+    """The mode string an `open`/`.open` call passes, found the way this
+    narrow scan needs and no more generally: the one string-literal argument
+    that only uses mode characters. `WriteGuard.open(name, "w", ...)`,
+    `Path.open("a", ...)` and builtin `open(path, "w", ...)` each put the mode
+    in a different positional slot, so every positional argument is checked
+    rather than one fixed index.
+    """
+    for arg in node.args:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value and set(arg.value) <= _MODE_CHARS:
+            return arg.value
+    for kw in node.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+            return kw.value.value
+    return None
+
+
+def _has_lf_newline_keyword(node: ast.Call) -> bool:
+    return any(
+        kw.arg == "newline" and isinstance(kw.value, ast.Constant) and kw.value.value == "\n"
+        for kw in node.keywords
+    )
+
+
+def _newline_unsafe_writes(source: str):
+    """Every text-mode write/append/create in `source` that does not pin
+    `newline="\\n"` itself, paired with what it was called on.
+
+    `write_text` defaults to mode "w" -- there is no argument that would make
+    it a read -- so a call to it is always in scope once found.
+    """
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id == "open":
+            attr, receiver = "open", "<builtin>"
+        elif isinstance(node.func, ast.Attribute) and node.func.attr in {"open", "write_text"}:
+            attr, receiver = node.func.attr, ast.unparse(node.func.value)
+        else:
+            continue
+        if attr == "write_text":
+            mode = "w"
+        else:
+            mode = _literal_mode(node)
+            if mode is None or mode not in _TEXT_WRITE_MODES:
+                continue
+        if _has_lf_newline_keyword(node):
+            continue
+        # `WriteGuard.write_text` normalises to "\n" and writes bytes itself
+        # (see `test_write_guard_write_text_writes_lf_only_bytes_from_a_crlf_string`),
+        # so a call to it through a known guard binding needs no keyword of its
+        # own to prove it safe. `WriteGuard.open` is NOT covered by that: it is
+        # a raw text-mode `open` like any other, and a future write through it
+        # without `newline="\n"` is exactly what this scan exists to catch.
+        if attr == "write_text" and receiver in GUARD_BINDINGS:
+            continue
+        yield node.lineno, receiver, attr
+
+
+def test_every_project_text_write_names_its_newline():
+    """#365 (importing a CRLF file doubles it into `\\r\\r\\n`) and #366 (a
+    promoted module's recorded digest never matches its own bytes) are the
+    same root cause: a text-mode write that lets the platform choose the line
+    ending. Every write either or both issues name must instead say
+    `newline="\\n"` for itself, or go through `WriteGuard.write_text`, which
+    says it once for every caller.
+    """
+    offenders = {}
+    for module in NEWLINE_WATCHED_MODULES:
+        path = _SOURCE_ROOT / module
+        found = list(_newline_unsafe_writes(path.read_text(encoding="utf-8")))
+        if found:
+            offenders[module] = found
+    assert not offenders, (
+        "these text-mode writes pick a platform's own newline instead of naming "
+        f'"\\n" explicitly (or going through guard.write_text): {offenders}'
+    )
+
+
+def test_the_newline_ratchet_sees_the_shapes_it_watches():
+    """Fed synthetic source, so the scan's own blind spots are pinned rather
+    than trusted on faith: a bare builtin `open(..., "w")`, a receiver's
+    `.open("a", ...)`, a `Path.write_text` with no mode argument at all (it
+    still defaults to a write), a binary open that needs no keyword, a call
+    that already names `newline="\\n"`, an ordinary read, and a guarded
+    `write_text` that needs no keyword either.
+    """
+    source = """
+def writes_through_the_builtin(path, text):
+    with open(path, "w") as handle:
+        handle.write(text)
+
+def appends_to_the_users_own_file(path, stanza):
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(stanza)
+
+def write_text_defaults_to_a_write(path, text):
+    path.write_text(text, encoding="utf-8")
+
+def already_pins_lf(path, text):
+    with open(path, "w", newline="\\n") as handle:
+        handle.write(text)
+
+def binary_needs_no_keyword(path, content):
+    with open(path, "wb") as handle:
+        handle.write(content)
+
+def a_read_is_not_a_write(path):
+    with open(path) as handle:
+        return handle.read()
+
+def through_the_guard(guard, name, text):
+    guard.write_text(name, text)
+"""
+    found = {(receiver, call) for _, receiver, call in _newline_unsafe_writes(source)}
+    assert found == {
+        ("<builtin>", "open"),
+        ("path", "open"),
+        ("path", "write_text"),
+    }

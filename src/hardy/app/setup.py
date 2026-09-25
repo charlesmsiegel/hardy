@@ -277,7 +277,7 @@ def _smoke_mathlib(
         return False
     with tempfile.TemporaryDirectory(prefix="hardy-mathlib-") as temporary:
         smoke = Path(temporary) / "Main.lean"
-        smoke.write_text("import Mathlib\n#check Nat.add_comm\n", encoding="utf-8")
+        smoke.write_text("import Mathlib\n#check Nat.add_comm\n", encoding="utf-8", newline="\n")
         result = runner(
             ProcessSpec(
                 argv=(str(lake), "env", "lean", str(smoke)),

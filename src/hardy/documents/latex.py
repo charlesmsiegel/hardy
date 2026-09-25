@@ -342,7 +342,7 @@ class LatexTools:
                 _copy_tree(tree, work)
             candidate = work / path
             candidate.parent.mkdir(parents=True, exist_ok=True)
-            candidate.write_text(source, encoding="utf-8")
+            candidate.write_text(source, encoding="utf-8", newline="\n")
             # Listed BEFORE the compiler runs: these are the files it is
             # given, and anything `.tex` in the tree afterwards it wrote
             # itself. See `_references`.
@@ -355,7 +355,7 @@ class LatexTools:
                         f"there is no {ROOT_DOCUMENT} to compile {path} into; save the root document first",
                         source,
                     )
-                root.write_text(source, encoding="utf-8")
+                root.write_text(source, encoding="utf-8", newline="\n")
             elif path != ROOT_DOCUMENT and path not in _reached(work):
                 # The root does not pull this fragment in yet, which is exactly
                 # the fragment-first order a split writeup has to be built in.
@@ -363,7 +363,7 @@ class LatexTools:
                 # candidate, and malformed source would be saved as though it
                 # had been checked -- so it is compiled through a probe root
                 # carrying the real preamble.
-                root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8")
+                root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8", newline="\n")
                 actual = False
             # Only the compiler runs under this `try`. `commit` and `_publish`
             # used to sit inside it, where a `FileNotFoundError` out of either
@@ -378,7 +378,7 @@ class LatexTools:
             # a section published an unstamped PDF while saving the root
             # published a stamped one.
             if stamp:
-                root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8")
+                root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8", newline="\n")
             try:
                 outcome, terminal, log = self._passes(work, root)
             except subprocess.TimeoutExpired as error:

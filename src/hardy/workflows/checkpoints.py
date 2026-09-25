@@ -127,7 +127,7 @@ def save(paths: Layout, *, name: str = "", now: datetime | None = None) -> Check
         checkpoint = Checkpoint(id=id, slug=paths.slug, name=name.strip(), created=stamp.isoformat(timespec="seconds"),
                                 chat=paths.chat, files=files, bytes=size)
         (staging / MANIFEST).write_text(json.dumps(asdict(checkpoint), indent=2, sort_keys=True) + "\n",
-                                        encoding="utf-8")
+                                        encoding="utf-8", newline="\n")
         # The manifest is the last thing written and the rename the last
         # thing done: a checkpoint either exists whole or not at all.
         replace_with_retry(staging, home)

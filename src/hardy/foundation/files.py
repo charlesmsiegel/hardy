@@ -20,6 +20,23 @@ class LayoutError(ValueError):
     """A slug that is not a single safe directory beneath the root."""
 
 
+def normalize_newlines(text: str) -> str:
+    """`text`, with every line ending forced to a bare `\\n`.
+
+    A file Hardy reads from outside itself -- an imported `.lean` or `.tex`,
+    a Windows editor's save, a `core.autocrlf=true` checkout -- may carry
+    `\\r\\n` or a lone `\\r`. Decoding those bytes with plain
+    `bytes.decode("utf-8")` keeps every one of them: the text is correct, but
+    it is not LF-only, and a later text-mode write with `newline=None`
+    translates each surviving `\\n` into the platform's own line separator
+    while leaving an existing `\\r` untouched -- `\\r\\n` becomes `\\r\\r\\n`
+    on Windows, and the stray `\\r` is simply kept on Linux (#365). Applied
+    once here, before the text is written or read for anything that counts
+    lines, both are gone rather than merely hidden until the next platform.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def resolve_named_child(path: Path, parent: Path) -> Path:
     """`path`, proven to BE `parent`'s child of exactly that name.
 
@@ -275,9 +292,11 @@ class WriteGuard:
         `os.replace` renames over the link itself -- but it would silently
         delete something a user put there, and Hardy would rather say so.
 
-        Bytes, not `write_text`: that translates `\n` to `\r\n` on Windows, so
-        the same record would be one file on Linux and a different one there,
-        and any digest of it would disagree across a shared repository.
+        Bytes, not a text-mode `open`: a text write with `newline=None`
+        translates `\n` to `\r\n` on Windows, so the same record would be one
+        file on Linux and a different one there, and any digest of it would
+        disagree across a shared repository. `write_text` below is this
+        method under a name that takes a `str`, for exactly that reason.
         """
         target = self.reserve(name)
         temporary: str | None = None
@@ -293,6 +312,29 @@ class WriteGuard:
         finally:
             if temporary is not None:
                 Path(temporary).unlink(missing_ok=True)
+
+    def write_text(self, name: str, text: str, *, sync: bool = True) -> None:
+        """Replace `name` with `text`, encoded LF-only, whole or not at all.
+
+        Not a text-mode `open`: this is `write_bytes` under a name that takes
+        a `str`, which is what makes it correct on every platform rather than
+        merely correct on the one it is tested on. A text-mode write with
+        `newline=None` turns every `\\n` the caller wrote into `os.linesep` --
+        `\\r\\n` on Windows -- so the same project would carry different bytes
+        depending on where it opened, and a promoted module's digest, taken
+        over the `str`, would describe a file that exists on only one of
+        them (#365, #366). `normalize_newlines` also collapses whatever the
+        caller's string already held, so a decoded CRLF source is safe to
+        pass straight through rather than trusting every caller to have
+        normalised it first.
+
+        The write itself is `write_bytes`'s: through the same
+        temporary-and-replace, `NamedTemporaryFile` closing the same
+        symlink-at-the-target-name hole, `replace_with_retry` absorbing the
+        same Windows sharing violation. A second, bespoke temp-and-rename
+        here would be a second place for either fix to go stale.
+        """
+        self.write_bytes(name, normalize_newlines(text).encode("utf-8"), sync=sync)
 
     def write_from(self, name: str, source: Path, *, sync: bool = True) -> None:
         """Replace `name` with the contents of `source`, whole or not at all.

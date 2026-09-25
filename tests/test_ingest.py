@@ -36,6 +36,13 @@ THEOREM = "import Mathlib\n\ntheorem pileResult : True := by exact True.intro\n"
 FRAGMENT = "A section somebody wrote long ago.\n"
 DOCUMENT = "\\documentclass{article}\n\\begin{document}Old notes.\\end{document}\n"
 PLAIN_ROOT = "\\documentclass{article}\n\\begin{document}Hi.\\end{document}\n"
+# #365: a Windows editor, or a `core.autocrlf=true` checkout, hands Hardy
+# CRLF line endings as ordinary input, not an edge case. Multi-line, so a
+# trailing `rstrip()` at the save site cannot coincidentally remove every
+# `\r` in the fixture and hide a missed internal one.
+CLEAN_CRLF = CLEAN.replace("\n", "\r\n")
+FRAGMENT_MULTILINE = "A section somebody wrote long ago.\nWith a second line.\n"
+FRAGMENT_CRLF = FRAGMENT_MULTILINE.replace("\n", "\r\n")
 
 
 def make_session(problem: Path, root: Path | None = None) -> MathematicsSession:
@@ -364,6 +371,63 @@ def test_a_commented_documentclass_is_still_a_fragment(tmp_path: Path):
     assert chat.triage_pile(pile).ok
     recorded = [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
     assert recorded[0]["tex"][0]["verdict"] == ingest.FRAGMENT
+
+
+def test_import_lean_saves_lf_even_from_a_crlf_source(tmp_path: Path):
+    """#365: importing a CRLF `.lean` file must not write `\\r\\r\\n`.
+
+    The provenance digest is over the bytes that arrived -- CRLF included --
+    never over what landed on disk once normalised.
+    """
+    pile = pile_with(tmp_path, {"clean.lean": CLEAN_CRLF})
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    result = chat.import_lean(pile / "clean.lean", "Imported.lean")
+    assert result.ok, result.output
+    saved = (problem / "lean" / "Imported.lean").read_bytes()
+    assert b"\r" not in saved
+    assert saved == CLEAN.encode("utf-8")
+    entry = chat.state["imported"][0]
+    assert entry["sha256"] == hashlib.sha256(CLEAN_CRLF.encode("utf-8")).hexdigest()
+
+
+def test_import_reference_saves_lf_even_from_a_crlf_source(tmp_path: Path):
+    root = tmp_path / "root"
+    problem = root / "sylow"
+    pile = pile_with(tmp_path, {"CommAlg.lean": CLEAN_CRLF})
+    chat = make_session(problem, root=root)
+    result = chat.import_reference(pile / "CommAlg.lean")
+    assert result.ok, result.output
+    saved = (root / ".hardy" / "lean" / "CommAlg.lean").read_bytes()
+    assert b"\r" not in saved
+    assert saved == (CLEAN.rstrip() + "\n").encode("utf-8")
+
+
+def test_import_tex_saves_lf_even_from_a_crlf_source(tmp_path: Path):
+    pile = pile_with(tmp_path, {"section.tex": FRAGMENT_CRLF})
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert chat._save_latex("writeup.tex", PLAIN_ROOT).ok
+    result = chat.import_tex(pile / "section.tex", "old/section.tex")
+    assert result.ok, result.output
+    saved = (problem / "tex" / "old" / "section.tex").read_bytes()
+    assert b"\r" not in saved
+
+
+def test_triage_of_a_crlf_pile_records_the_digest_of_the_original_bytes(tmp_path: Path):
+    """Triage decodes CRLF sources to classify them; the recorded digest must
+    still describe the bytes that actually arrived, never the text normalised
+    for classification."""
+    pile = pile_with(tmp_path, {"clean.lean": CLEAN_CRLF, "old/section.tex": FRAGMENT_CRLF})
+    chat = make_session(tmp_path / "problem")
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    recorded = [event for event in events(tmp_path / "problem") if event.get("type") == "import_triage"]
+    lean_entry = recorded[0]["lean"][0]
+    assert lean_entry["verdict"] == ingest.CLEAN
+    assert lean_entry["sha256"] == hashlib.sha256(CLEAN_CRLF.encode("utf-8")).hexdigest()
+    tex_entry = recorded[0]["tex"][0]
+    assert tex_entry["verdict"] == ingest.FRAGMENT
 
 
 def test_a_stop_during_the_last_elaboration_records_nothing(tmp_path: Path, monkeypatch):
