@@ -112,6 +112,14 @@ class CasSession:
         # declined to wait for. Lifted by `resume`, at the start of the next
         # turn or command, exactly as that register is.
         self._stop_level = 0
+        # Whether Hardy itself killed the kernel during the cell in flight --
+        # the second press, in `escalate` or applied as the cell goes out.
+        # Hardy knows this; the stream cannot say it. A kill is not instant
+        # (`TerminateProcess` returns before the process is gone), and a
+        # driver told by the frame to stop answers the cell unrun at once, so
+        # its reply can be sitting in the buffer before the kill lands. Read
+        # from the stream alone, that cell looks answered by a live kernel.
+        self._killed = False
         self._records: list[CellRecord] = []
         self._lease: FileLock | None = None
         self._lease_identity: tuple[int, int] | None = None
@@ -620,6 +628,7 @@ class CasSession:
             # interrupt asked for while nothing was running would otherwise
             # stop the *next* cell, which nobody asked to stop.
             self._interrupted.clear()
+            self._killed = False
             stopping = self._stop_level > 0
             frame = self.backend.frame(source, nonce, stopping)
             self._sending.set()
@@ -653,6 +662,7 @@ class CasSession:
             if self._stop_level and sent:
                 self._interrupted.set()
                 if self._stop_level >= _INSISTED:
+                    self._killed = True
                     kernel.kill(immediate=True)
                 elif not (stopping and self.backend.framing == "length"):
                     kernel.interrupt()
@@ -693,6 +703,7 @@ class CasSession:
             # simply not accepted, which costs a rerun rather than correctness.
             with self._signal_lock:
                 signalled = self._interrupted.is_set()
+                killed = self._killed
                 self._in_flight.clear()
         if reply is INTERRUPTED:
             # Asked to stop and did not answer within the grace. Whatever it is
@@ -737,6 +748,14 @@ class CasSession:
             kernel.consume(consumed)
         if signalled:
             outcome = outcome.model_copy(update={"signalled": True})
+        if killed:
+            # A reply read, from a kernel Hardy then killed: the driver
+            # answered -- most often the cell unrun, on the frame's stop --
+            # before the kill landed. What it said still stands as the cell's
+            # result, but the kernel that said it is gone, and so is its
+            # namespace. Left `live`, the session would send the next cell to
+            # a dead process and record the toolchain as having fallen over.
+            outcome = outcome.model_copy(update={"kernel_lost": True})
         if not signalled and outcome.status == "interrupted":
             # The driver says it caught a `KeyboardInterrupt` and Hardy never
             # sent one, so the cell raised it itself -- `raise
@@ -828,6 +847,7 @@ class CasSession:
             if kernel is None:
                 return False
             self._interrupted.set()
+            self._killed = True
         # The reading thread sees both streams end, and -- because the flag is
         # set -- records the cell as interrupted with the kernel lost, which is
         # what happened. It drops the kernel itself when it gets there; nothing
