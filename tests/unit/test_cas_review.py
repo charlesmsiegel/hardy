@@ -21,7 +21,14 @@ import pytest
 
 from hardy.algebra import cas, scripts
 from hardy.algebra.cas import CasError, CasSession, backend_for
-from hardy.algebra.driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
+from hardy.algebra.driver import (
+    HEADER_BYTES,
+    _Stream,
+    bounded_repr,
+    clip,
+    clip_jointly,
+    state_digest,
+)
 from hardy.algebra.export import TRANSCRIPT_BEGIN, export_session
 from hardy.workflows.contracts import RunLimits
 
@@ -1636,3 +1643,93 @@ def test_an_artifact_changed_while_the_export_is_written_is_not_described_as_sou
     assert published.decode("utf-8").strip() != "# clobbered"
     manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
     assert manifest["files"]["session.py"] == hashlib.sha256(published).hexdigest()
+
+
+# --------------------------------------- #311 / #195: survive any parse or encoding failure
+
+
+def test_clip_escapes_a_surrogate_that_still_fits() -> None:
+    """`clip` used to return the *original* text once it fit under the limit,
+    surrogate and all -- so a caller that trusted the string it got back to be
+    safe to encode strictly (as the reply serialiser does) was handed exactly
+    the value that crashes it. It must hand back the escaped text instead."""
+    text, truncated = clip("before \ud800 after", 1_000)
+    assert truncated is False
+    assert text == "before \\ud800 after"
+    # And the result is unconditionally safe to encode strictly now.
+    text.encode("utf-8")
+
+
+def test_clip_still_truncates_on_a_utf8_boundary_after_escaping() -> None:
+    text, truncated = clip("a" * 10, 4)
+    assert truncated is True
+    assert text == "aaaa"
+
+
+def test_clip_jointly_sorts_and_counts_by_the_escaped_length() -> None:
+    """A lone surrogate used to break the byte count `clip_jointly` sorts and
+    shares by (`len(item[1].encode("utf-8"))`), before any clipping happened
+    at all -- so the crash was not confined to the final serialisation step."""
+    fields, truncated = clip_jointly(
+        {"stdout": "", "stderr": "\ud800", "value_repr": ""}, 1_000
+    )
+    assert truncated is False
+    assert fields["stderr"] == "\\ud800"
+    fields["stderr"].encode("utf-8")
+
+
+def _drive_driver(child, source: str) -> dict | None:
+    """One request/reply exchange with a driver subprocess, or None if it died."""
+    payload = json.dumps({"source": source, "stopping": False}).encode("utf-8")
+    child.stdin.write(f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload)
+    child.stdin.flush()
+    header = child.stdout.read(HEADER_BYTES)
+    if len(header) < HEADER_BYTES:
+        return None
+    return json.loads(child.stdout.read(int(header)).decode("utf-8"))
+
+
+def test_a_fault_in_the_driver_itself_is_diagnosable_not_silent(tmp_path) -> None:
+    """Issue #311's second defect: fd 2 is dup2'd into the driver's own private
+    capture pipe, so a fatal traceback written the ordinary way (`sys.stderr`,
+    or an uncaught exception's default printer) never reaches the parent --
+    the `kernel_died` record it produces carries an empty `stderr` and the
+    death cannot be explained.
+
+    `read_exact` is the hook broken here: `main` looks it up as a module
+    global on every call (`header = read_exact(stdin, HEADER_BYTES)`, not
+    through a locally bound alias), so replacing the module attribute reaches
+    every call `main` makes, exactly as reaching in and breaking any other
+    part of the driver's own plumbing would. The fault is deliberately outside
+    `run_cell` -- this is not a cell misbehaving, it is the driver itself.
+
+    This drives `driver.main()` directly, the same way the other low-level
+    tests in this file do, rather than through `CasSession`: the backend's
+    `argv()` always launches `-m hardy.cas_driver` and has no seam for
+    injecting a broken hook into that process. What is checked here -- that
+    the real OS-level stderr pipe (`subprocess.Popen(..., stderr=PIPE)`, the
+    same pipe `_Kernel.stderr_text()` drains) carries the traceback -- is
+    exactly the mechanism `session.py` already relies on to build a
+    `kernel_died` record's `stderr`, so this proves the fix end to end without
+    needing a seam into `session.py`, which issue #311 does not touch.
+    """
+    child = subprocess.Popen(
+        [
+            sys.executable, "-u", "-c",
+            "import hardy.algebra.driver as d\n"
+            "d.read_exact = lambda *a: 1 / 0\n"
+            "d.main()\n",
+            "4096",
+        ],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(tmp_path),
+    )
+    try:
+        reply = _drive_driver(child, "1 + 1")
+        assert reply is None, "the driver answered instead of dying, so read_exact was not hit"
+        child.wait(timeout=30)
+        stderr = child.stderr.read().decode("utf-8", errors="replace")
+        assert "ZeroDivisionError" in stderr, stderr
+    finally:
+        child.stdin.close()
+        child.kill()
+        child.wait(timeout=30)
