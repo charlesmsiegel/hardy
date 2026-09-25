@@ -804,12 +804,50 @@ class CasCommandSession(Streams):
         self.abandoned.append(reason)
 
 
-async def drive(settings, session, batches, *, timeout: float = 5.0, settle_before_exit: bool = False):
+async def _settle(built, *, timeout: float) -> None:
+    """Wait until no command is running, nothing is queued, and no turn is.
+
+    `drive`'s trailing Ctrl+C must land on an idle shell. A single press while
+    a turn runs only warns (Task 11's double-tap policy), and the turn a
+    queued line starts begins only after the command's result crosses back
+    from its executor thread -- after the Esc that released it has already
+    been observed. Pressing Ctrl+C in that window left the app running and
+    `drive` waiting on it for ever: the hang the Windows job hit in
+    `test_a_command_in_flight_queues_a_model_turn`, where the Win32 pipe
+    reader and the Proactor loop keep the window open far longer than the
+    10ms poll here usually does on Linux.
+    """
+    end = time.monotonic() + timeout
+    while time.monotonic() < end and (
+        built._commands_running or built._queued or built._state.turn_running
+    ):
+        await asyncio.sleep(0.01)
+    assert not built._commands_running, "command did not settle before exit"
+    assert not built._queued, "a queued line never ran before exit"
+    assert not built._state.turn_running, "turn did not settle before exit"
+
+
+async def drive(
+    settings,
+    session,
+    batches,
+    *,
+    timeout: float = 5.0,
+    ctrl_c_mid_command: bool = False,
+    exit_timeout: float = 30.0,
+):
     """Send key batches in stages, waiting between them.
 
     `blast` sends everything at once, which is right for testing what a single
     input batch resolves to. This is for the opposite: a press that must land
     while something started by an earlier press is genuinely in flight.
+
+    A `"\x03"` batch is held back until the shell is idle (`_settle`): these
+    callers test Esc, queueing and the like, not app-exit cancellation, and a
+    Ctrl+C that lands on a running turn only warns. The one caller that is
+    about Ctrl+C reaching a running cell passes `ctrl_c_mid_command=True`.
+    The app's exit is bounded by `exit_timeout`, so a regression fails the
+    test with a message instead of hanging the job.
     """
     buffer = StringIO()
     with create_pipe_input() as pipe:
@@ -821,14 +859,8 @@ async def drive(settings, session, batches, *, timeout: float = 5.0, settle_befo
             task = asyncio.ensure_future(built.run_async())
             await asyncio.sleep(0.05)
             for keys, wait_for in batches:
-                if settle_before_exit and keys == "\x03":
-                    # These callers test Esc, not app-exit cancellation. The
-                    # interrupt counter changes before the executor result is
-                    # delivered; exiting then can legitimately interrupt again.
-                    end = time.monotonic() + timeout
-                    while built._commands_running and time.monotonic() < end:
-                        await asyncio.sleep(0.01)
-                    assert not built._commands_running, "command did not settle before exit"
+                if keys == "\x03" and not ctrl_c_mid_command:
+                    await _settle(built, timeout=timeout)
                 pipe.send_text(keys)
                 if wait_for is not None:
                     end = time.monotonic() + timeout
@@ -837,7 +869,10 @@ async def drive(settings, session, batches, *, timeout: float = 5.0, settle_befo
                     assert wait_for(), f"never became true after {keys!r}"
                 else:
                     await asyncio.sleep(0.1)
-            code = await task
+            try:
+                code = await asyncio.wait_for(task, timeout=exit_timeout)
+            except TimeoutError:
+                pytest.fail(f"the shell did not exit within {exit_timeout}s of the last batch")
     return code, buffer.getvalue()
 
 
@@ -856,7 +891,6 @@ async def test_escape_interrupts_a_human_cas_cell(settings):
             ("\x1b ", lambda: session.interrupted == 1),
             ("\x03", None),
         ],
-        settle_before_exit=True,
     )
     assert session.interrupted == 1
     # No turn was cancelled, because none was running: a command is not a turn,
@@ -877,7 +911,6 @@ async def test_a_second_escape_during_a_command_escalates(settings):
             ("\x1b \x1b ", lambda: session.escalated == 1),
             ("\x03", None),
         ],
-        settle_before_exit=True,
     )
     assert session.interrupted == 1
     assert session.escalated == 1
@@ -917,6 +950,37 @@ async def test_a_command_in_flight_queues_a_model_turn(settings):
     )
     assert "queued behind the running command" in written
     assert "> prove something" in written          # sent once the cell ended
+
+
+class SlowQueuedTurn(CasCommandSession):
+    """The same fake, with a model turn that takes a moment to answer."""
+
+    def send(self, text: str) -> str:
+        time.sleep(0.4)
+        return "unused"
+
+
+async def test_drive_holds_its_ctrl_c_until_a_queued_turn_has_run(settings):
+    """The queued line's turn starts only after the released command's result
+    crosses back from its thread. A slow reply holds that turn open, so a
+    trailing Ctrl+C sent as soon as Esc is seen lands on a running turn, only
+    warns, and the app never exits: on Linux this reliably reproduced the
+    Windows job's hang in the test above until `drive` waited for the shell to
+    go idle first."""
+    session = SlowQueuedTurn()
+    _, written = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("prove something\r", None),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+        exit_timeout=10.0,
+    )
+    assert "queued behind the running command" in written
+    assert "> prove something" in written
 
 
 async def test_a_safe_command_does_not_steal_a_running_cells_ownership(settings):
@@ -990,6 +1054,7 @@ async def test_ctrl_c_during_a_cell_interrupts_the_worker(settings):
             ("/cas 1+1\r", session.running.is_set),
             ("\x03", lambda: session.interrupted == 1),
         ],
+        ctrl_c_mid_command=True,
     )
     assert session.interrupted == 1
 
@@ -1007,7 +1072,6 @@ async def test_escape_in_the_same_batch_as_the_command_is_not_erased(settings):
             ("/cas 1+1\r\x1b ", lambda: session.interrupted == 1),
             ("\x03", None),
         ],
-        settle_before_exit=True,
     )
     # The stop is lifted when the command is admitted, and the press lands
     # after it. The other order leaves the press with nothing to hold.
