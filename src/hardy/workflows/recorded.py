@@ -128,10 +128,9 @@ def _declaration_issues(manifest: RunManifest, main: Path, run_dir: Path) -> lis
         issues.append("the run assumed axioms nobody declared: " + ", ".join(undeclared))
     if not main.exists():
         return issues
-    try:
-        source = main.read_text(encoding="utf-8")
-    except OSError as error:
-        return [*issues, f"lean/Main.lean could not be read: {error}"]
+    source, error_issue = _exact_source(main, label="lean/Main.lean")
+    if error_issue is not None:
+        return [*issues, error_issue]
     # Byte for byte, in the rendering the verifier uses. Comparing loosely
     # would accept a source that states a weaker or stronger axiom under a
     # declared name, which is the whole thing the declaration is supposed to
@@ -145,6 +144,30 @@ def _declaration_issues(manifest: RunManifest, main: Path, run_dir: Path) -> lis
                 "was declared"
             )
     return issues
+
+
+def _exact_source(path: Path, *, label: str) -> tuple[str | None, str | None]:
+    """`path`'s bytes decoded as UTF-8, with no newline translation.
+
+    `Path.read_text` runs the platform's universal-newline translation before
+    handing back a string -- CRLF and lone CR both become LF -- so a source
+    hashed or compared byte for byte against that translated text is not the
+    source that was actually hashed or read. A `Main.lean` or `proof.lean`
+    with CRLF line endings whose evidence hashes those bytes would then read
+    as identical to the LF-only source the verifier renders, which is exactly
+    the source a byte-exact check exists to tell apart. Reading the raw bytes
+    and decoding them strictly keeps that comparison honest, and turns a
+    source that is not UTF-8 at all into a reported issue instead of a crash.
+
+    Returns `(text, None)` on success, or `(None, issue)` naming `label` when
+    the file cannot be read or decoded.
+    """
+    try:
+        return path.read_bytes().decode("utf-8"), None
+    except OSError as error:
+        return None, f"{label} could not be read: {error}"
+    except UnicodeDecodeError as error:
+        return None, f"{label} is not valid UTF-8: {error}"
 
 
 def _states_in_code(source: str, line: str) -> bool:
@@ -260,12 +283,18 @@ def _verified_run_issues(
     if not main.exists():
         issues.append("verified run has no lean/Main.lean")
         return issues
-    if hashlib.sha256(main.read_bytes()).hexdigest() != evidence.source_sha256:
+    main_bytes = main.read_bytes()
+    if hashlib.sha256(main_bytes).hexdigest() != evidence.source_sha256:
         issues.append("Lean source hash differs from verification")
     if claim is not None:
-        issues.extend(
-            _lean_source_issues(main.read_text(encoding="utf-8"), claim, _declared(run_dir) or ())
-        )
+        try:
+            main_source = main_bytes.decode("utf-8")
+        except UnicodeDecodeError as error:
+            issues.append(f"lean/Main.lean is not valid UTF-8: {error}")
+        else:
+            issues.extend(
+                _lean_source_issues(main_source, claim, _declared(run_dir) or ())
+            )
     return issues
 
 
@@ -1264,7 +1293,10 @@ def _verified_batch_issues(
     if not proof_path.exists():
         issues.append("a verified run has no proof.lean")
         return issues
-    source = proof_path.read_text(encoding="utf-8")
+    source, error_issue = _exact_source(proof_path, label="proof.lean")
+    if error_issue is not None:
+        issues.append(error_issue)
+        return issues
     if name is not None:
         try:
             tools = LeanTools(

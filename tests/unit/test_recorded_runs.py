@@ -1499,6 +1499,90 @@ def test_the_checked_in_prove_verified_run_still_validates() -> None:
     assert acceptance.validate_recorded_run(root) == ()
 
 
+def _crlf_prove_verified(tmp_path: Path) -> Path:
+    """A copy of the checked-in `prove-verified` run whose `Main.lean` has
+    CRLF line endings, with every hash that is taken over it -- the
+    evidence's `source_sha256`, the digest derived from that evidence, and
+    the manifest's own artifact hashes over the files that changed --
+    updated to match those exact bytes. Only the line endings differ from
+    the checked-in run; every cross-check that passes on the original has
+    something equally real to compare against here."""
+    import hashlib
+
+    contracts = importlib.import_module('hardy.workflows.contracts')
+    verifier = importlib.import_module('hardy.formal.verifier')
+
+    src_root = Path(__file__).resolve().parents[2] / 'acceptance' / 'recorded' / 'prove-verified'
+    nested = next(child for child in src_root.iterdir() if (child / 'manifest.json').exists())
+    dest = tmp_path / 'run'
+    shutil.copytree(nested, dest)
+
+    main_path = dest / 'lean' / 'Main.lean'
+    crlf_bytes = main_path.read_bytes().decode('utf-8').replace('\n', '\r\n').encode('utf-8')
+    main_path.write_bytes(crlf_bytes)
+    new_main_hash = hashlib.sha256(crlf_bytes).hexdigest()
+
+    verification_path = dest / 'lean' / 'verification.json'
+    verification = verifier.VerificationResult.model_validate_json(
+        verification_path.read_text(encoding='utf-8')
+    )
+    new_v_evidence = verification.evidence.model_copy(update={'source_sha256': new_main_hash})
+    new_verification = verification.model_copy(
+        update={
+            'source_sha256': new_main_hash,
+            'evidence': new_v_evidence,
+            'verification_sha256': new_v_evidence.digest,
+        }
+    )
+    verification_bytes = (new_verification.model_dump_json(indent=2) + '\n').encode('utf-8')
+    verification_path.write_bytes(verification_bytes)
+    new_verification_hash = hashlib.sha256(verification_bytes).hexdigest()
+
+    # The workflow's own terminal event names the same grades the manifest
+    # does (`grades_agree`); the recorded run kept those grades in its last
+    # trajectory line, so it moves too.
+    trajectory_path = dest / 'trajectory.jsonl'
+    lines = trajectory_path.read_text(encoding='utf-8').split('\n')
+    assert lines[-1] == '', 'trajectory.jsonl is expected to end with a newline'
+    terminal = json.loads(lines[-2])
+    terminal['payload']['grades']['verification_sha256'] = new_v_evidence.digest
+    terminal['payload']['grades']['verification_evidence']['source_sha256'] = new_main_hash
+    lines[-2] = json.dumps(terminal, separators=(',', ':'))
+    trajectory_bytes = '\n'.join(lines).encode('utf-8')
+    trajectory_path.write_bytes(trajectory_bytes)
+    new_trajectory_hash = hashlib.sha256(trajectory_bytes).hexdigest()
+
+    manifest_path = dest / 'manifest.json'
+    manifest = contracts.RunManifest.model_validate_json(manifest_path.read_text(encoding='utf-8'))
+    new_evidence = manifest.grades.verification_evidence.model_copy(update={'source_sha256': new_main_hash})
+    new_grades = manifest.grades.model_copy(
+        update={'verification_evidence': new_evidence, 'verification_sha256': new_evidence.digest}
+    )
+    new_artifacts = {
+        **manifest.artifacts,
+        'lean/Main.lean': new_main_hash,
+        'lean/verification.json': new_verification_hash,
+        'trajectory.jsonl': new_trajectory_hash,
+    }
+    new_manifest = manifest.model_copy(update={'grades': new_grades, 'artifacts': new_artifacts})
+    manifest_path.write_text(new_manifest.model_dump_json(indent=2) + '\n', encoding='utf-8')
+    return dest
+
+
+def test_a_crlf_main_lean_that_hashes_right_is_still_refused(tmp_path) -> None:
+    """The byte-exact rebuild check must compare the bytes the evidence
+    actually hashes, not a universal-newline-translated copy of them: a
+    `Main.lean` with CRLF line endings, hashed and recorded as such, is not
+    the LF-only source the verifier renders, and `read_text` silently erasing
+    that difference would accept a source the verifier never emitted (#237)."""
+    acceptance = importlib.import_module('hardy.workflows.acceptance')
+    dest = _crlf_prove_verified(tmp_path)
+
+    issues = acceptance.validate_recorded_run(dest)
+
+    assert any('Lean source' in issue for issue in issues), issues
+
+
 def test_a_batch_submission_that_issues_commands_never_reaches_lean(tmp_path) -> None:
     output = _batch(tmp_path, [('submit_proof', {'proof': 'by exact True.intro\n#exit'})])
 
