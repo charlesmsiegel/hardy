@@ -78,30 +78,30 @@ def _lean_rows(data: bytes, path: str, split: str, issues: list[str], limit: int
     # Keep character positions, including CRLF. The scope scanner counts LF
     # lines; replacing CR with a space preserves its offsets into the original.
     text = syntax.strip_comments(source).replace("\r", " ")
-    scanned = syntax._scan(text)
-    if sum(match.group(2) == "theorem" for match, _ in scanned) > limit:
+    scanned = syntax._scan(source)
+    if sum(head.kind == "theorem" for head, _ in scanned) > limit:
         issues.append(f"{path}: statement limit exceeded; original file retained without indexing")
         return []
     rows = []
     source_digest = _sha(data)
     char_cursor = byte_cursor = 0
     context_digest = hashlib.sha256()
-    for number, (match, prefix) in enumerate(scanned):
-        if match.group(2) != "theorem":
+    for number, (head, prefix) in enumerate(scanned):
+        if head.kind != "theorem":
             continue
-        bound = scanned[number + 1][0].start() if number + 1 < len(scanned) else len(text)
-        end = syntax._statement_end(text, match.end(), bound)
+        bound = scanned[number + 1][0].start if number + 1 < len(scanned) else len(text)
+        end = syntax._statement_end(text, head.end, bound)
         if text[end:end + 2] != ":=":
-            issues.append(f"{path}: {match.group(3)} has no supported := proof boundary")
+            issues.append(f"{path}: {head.name} has no supported := proof boundary")
             continue
-        start = match.start()  # attributes/modifiers and original indentation belong to the source
+        start = head.start  # attributes/modifiers and original indentation belong to the source
         context = source[char_cursor:start].encode()
         context_digest.update(context)
         byte_cursor += len(context)
         char_cursor = start
         statement = source[start:end].encode()
         byte_start, byte_end = byte_cursor, byte_cursor + len(statement)
-        rows.append({"id": syntax.declared_name(match.group(3), prefix), "path": path, "split": split,
+        rows.append({"id": syntax.declared_name(head.name, prefix), "path": path, "split": split,
             "identity_kind": "source-byte-slice", "byte_span": [byte_start, byte_end],
             "sha256": _sha(statement), "source_sha256": source_digest,
             "context_byte_span": [0, byte_start], "context_sha256": context_digest.hexdigest()})

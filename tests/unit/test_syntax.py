@@ -251,3 +251,163 @@ def test_an_axiom_after_other_tokens_is_refused_as_unreadable(source):
 def test_a_hex_numeral_that_swallows_the_keyword_declares_nothing():
     """`0x1Faxiom` is the numeral `0x1Fa` and then `xiom`, to Lean."""
     assert syntax.unreadable_assumptions("def a := 0x1Faxiom cheat : False\n") == ()
+
+
+# --- Review round 1: every reading Lean's grammar leaves open -----------------
+#
+# Each module source below was elaborated with Lean 4.35.0-rc3 (core only): it
+# elaborates, and `#print axioms` gives the qualified name asserted here and
+# `sorryAx` for the `bad`/`x` theorem. A symbol token may end in `'` (core's
+# `]'` and `×'`, Mathlib's `∑'`, anything `notation` adds), a string may be
+# interpolated or plain, and `//` may swallow the `/` of a `/-`; Hardy cannot
+# tell from characters alone, so it keeps every reading and a scan sees what
+# any of them shows.
+
+SYMBOL_QUOTE_MODULES = [
+    # C1: `×'` and `]'` are core tokens; after them `'"'` is not a char.
+    "theorem good : True := trivial\n"
+    "def q : Lean.MacroM Lean.Syntax := `(Nat ×'\"'\")\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+    "theorem good : True := trivial\n"
+    "def q : Lean.MacroM Lean.Syntax := `(xs[0]'\"'\")\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+    # C2: `'"'` inside an interpolation, and after `!`/`λ`, is a char.
+    "theorem good : True := trivial\ndef s : String := s!\"{'\"'}\"\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+    "theorem good : True := trivial\ndef q : Lean.MacroM Lean.Syntax := `(!'\"')\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+    "theorem good : True := trivial\ndef q : Lean.MacroM Lean.Syntax := `(λ'\"' => 0)\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+    # A brace inside an interpolated string's code is not the string's end.
+    "theorem good : True := trivial\ndef s : String := s!\"{\"}\"}\"\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+    # `//` is Lean's subtype token, so `//-1` is `// -1`, not a comment.
+    "theorem good : True := trivial\ndef p := {x : Int //-1 = x}\n"
+    "theorem bad : False := sorry\n/- -/\n",
+    # An escaped name runs to its `»` across a newline.
+    "theorem good : True := trivial\ndef «a\n\"» := 1\n"
+    "theorem bad : False := sorry\ndef t := \"x\"\n",
+]
+
+
+@pytest.mark.parametrize("source", SYMBOL_QUOTE_MODULES)
+def test_every_reading_of_an_ambiguous_quote_is_scanned(source):
+    assert syntax.declarations(source)["theorem"] == ("good", "bad")
+    assert LeanTools.has_holes(source)
+
+
+@pytest.mark.parametrize("prefix", ["Π", "Σ", "!", "λ", "×", "]", "∑", "⁻¹", "x.", "("])
+def test_a_quote_after_any_symbol_is_read_both_ways(prefix):
+    """Whatever token the symbol belongs to, a `sorry` behind `'"'` is seen.
+    `Π`, `Σ` and `λ` are Greek but not letter-like to Lean, so they are symbols."""
+    source = f"def q := f {prefix}'\"'\ntheorem bad : False := sorry\ndef t := \"x\"\n"
+    assert "bad" in syntax.declarations(source)["theorem"]
+    assert LeanTools.has_holes(source)
+
+
+@pytest.mark.parametrize("name", ["x", "x!", "x™", "é", "h₁"])
+def test_a_quote_after_an_identifier_continues_it(name):
+    """Lean's identifier characters include `!`, `?`, `'`, the letter-like
+    block (`™`) and Latin-1 letters, so `x™'` is one name and the `"` after it
+    opens a string -- in every reading, so nothing is uncertain."""
+    source = f"def q := {name}'\"a\"\ntheorem t : True := trivial\n"
+    assert not syntax.lex(source).uncertain()
+    assert syntax.declarations(source)["theorem"] == ("t",)
+
+
+def test_a_quote_after_a_numeral_starts_a_char():
+    """`2'"'` is the numeral 2 and the char `"` to Lean -- no ambiguity."""
+    source = "def g := f 2'\"'\ntheorem bad : False := sorry\n"
+    assert syntax.strip_comments(source).startswith("def g := f 2   \ntheorem bad")
+
+
+def test_an_ambiguous_quote_leaves_the_reading_uncertain_and_a_certain_one_does_not():
+    assert syntax.lex("def q := `(xs[0]'\"'\")\n").uncertain()
+    assert not syntax.lex("def q : Char := '\"'\ndef s := \"x\"\n").uncertain()
+    assert not syntax.lex("theorem t : f '' s = t := sorry\n").uncertain()
+
+
+# C3: the scope walk names what Lean names.
+
+@pytest.mark.parametrize(
+    ("source", "names"),
+    [
+        # (a) `constant` is not a Lean 4 keyword, so it is a namespace name.
+        ("theorem t : True := trivial\nnamespace constant\ntheorem t : False := sorry\nend constant\n",
+         ("t", "constant.t")),
+        ("theorem t : True := trivial\nnamespace alias\ntheorem t : False := sorry\nend alias\n",
+         ("t", "alias.t")),
+        # (b) a scope command in a syntax quotation is data.
+        ("theorem Bar.bad : True := trivial\nopen Lean in\n"
+         "def q : MacroM Syntax := `(command| namespace Bar)\ntheorem bad : False := sorry\n",
+         ("Bar.bad", "bad")),
+        ("theorem x : True := trivial\nnamespace Foo\nopen Lean in\n"
+         "def q : MacroM Syntax := `(command| end Foo)\ntheorem x : False := sorry\nend Foo\n",
+         ("x", "Foo.x")),
+        # (c) a keyword after a projection dot is a field name.
+        ("structure I where\n  «end» : Nat\ntheorem x : True := trivial\nnamespace Foo\n"
+         "def i : I := ⟨1⟩\ndef e : Nat := (i).end\ntheorem x : False := sorry\nend Foo\n",
+         ("x", "Foo.x")),
+    ],
+)
+def test_the_scope_walk_is_not_misled_by_names_quotations_or_fields(source, names):
+    assert syntax.declarations(source)["theorem"] == names
+    assert syntax.unreadable_structure(source) == ()
+
+
+def test_named_declarations_share_the_scope_walk():
+    source = (
+        "theorem Bar.bad : True := trivial\nopen Lean in\n"
+        "def q : MacroM Syntax := `(command| namespace Bar)\ntheorem bad : False := sorry\n"
+    )
+    assert syntax.named_declarations(source) == ("Bar.bad", "q", "bad")
+
+
+def test_a_scope_command_hardy_cannot_place_is_unreadable():
+    """Behind an ambiguous quote, `namespace Bar` is code in one reading and
+    string in another, and the names after it depend on which."""
+    source = "def q := `(xs[0]'\"'\nnamespace Bar \")\ntheorem bad : False := sorry\n"
+    assert syntax.unreadable_structure(source)
+    unbalanced = "def q := `(command| namespace Bar\ntheorem bad : False := sorry\n"
+    assert syntax.unreadable_structure(unbalanced)
+
+
+def test_a_theorem_inside_a_command_quotation_is_not_declared():
+    source = 'macro "mk" : command => `(theorem x : True := trivial)\ntheorem y : True := trivial\n'
+    assert syntax.declarations(source)["theorem"] == ("y",)
+
+
+# I1: a wrapper span cannot swallow a theorem.
+
+def test_a_theorem_inside_a_wrapper_before_its_in_is_found():
+    source = (
+        "theorem good : True := trivial\n"
+        "def a := 1 open Nat theorem hidden : False := sorry in theorem shown : True := trivial\n"
+    )
+    assert syntax.declarations(source)["theorem"] == ("good", "hidden", "shown")
+    column_zero = "open Nat theorem hidden : False := sorry in theorem shown : True := trivial\n"
+    assert syntax.declarations(column_zero)["theorem"] == ("hidden", "shown")
+
+
+def test_modifiers_are_read_back_from_the_keyword():
+    source = "@[simp] private noncomputable theorem p : True := trivial\nprotected lemma q : True := trivial\n"
+    found = syntax.declarations(source)
+    assert found["private"] == ("p",)
+    assert found["lemma"] == ("q",)
+
+
+def test_too_many_readings_fail_closed():
+    """Past a bound the lexer stops telling readings apart: everything after is
+    code in some reading, and the module is unreadable."""
+    source = 'def s := "{"\n' * 60 + "theorem t : True := trivial -- sorry\n"
+    lexed = syntax.lex(source)
+    assert lexed.overflow is not None
+    assert syntax.unreadable_structure(source)
+    assert LeanTools.has_holes(source)
+
+
+def test_normalise_lean_compares_ambiguous_text_verbatim():
+    """Where a reading calls whitespace part of a literal, it is not collapsed:
+    the comparison gets stricter, never looser."""
+    assert syntax.normalise_lean("f  `(xs[0]'\"'  a  \")") == "f `(xs[0]'\"'  a  \")"
+    assert syntax.normalise_lean("f   «a  b»   x") == "f «a  b» x"

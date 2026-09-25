@@ -68,6 +68,8 @@ DEFINED = re.compile(
     r"(?m)^\s*(?:(private|protected)\s+)?(?:def|abbrev|structure|instance)\s+(«[^»\n]+»|\S+)"
 )
 OLEAN_PREFIX = b"olean-fake\n"
+# One char literal: a character or a backslash escape between quotes.
+CHAR_LITERAL = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)|[^\\'])'")
 # An axiom or an opaque constant: a declaration with no body to elaborate.
 DECLARES_AXIOM = re.compile(r"^\s*(?:axiom|opaque|constant)\s")
 # The lines that only open or close a scope, which carry nothing to check.
@@ -109,7 +111,11 @@ def code_only(text: str) -> str:
     the branch below treats a hole as a successful elaboration.
 
     Newlines are kept so nothing shifts line for line. Block comments nest, as
-    they do in Lean. Applied only to the hole check -- the `-- axioms:` marker a
+    they do in Lean. A char literal is skipped where one plainly starts -- after
+    whitespace or an opening bracket -- so `'"'` does not open a string here;
+    the harness's own lexer (`hardy.formal.syntax.lex`) handles the ambiguous
+    positions, and a test of those needs the real toolchain, not this stand-in.
+    Applied only to the hole check -- the `-- axioms:` marker a
     test drives this with is itself a comment, and blanking it before `marked`
     reads it would leave every fixture reporting no axioms at all.
     """
@@ -136,6 +142,15 @@ def code_only(text: str) -> str:
             end = len(text) if end == -1 else end
             out.append(" " * (end - index))
             index = end
+        elif (
+            not in_string
+            and character == "'"
+            and (index == 0 or text[index - 1] in " \t\n([{,")
+            and CHAR_LITERAL.match(text, index)
+        ):
+            literal = CHAR_LITERAL.match(text, index).group()
+            out.append(" " * len(literal))
+            index += len(literal)
         elif character == '"':
             in_string = not in_string
             out.append('"')

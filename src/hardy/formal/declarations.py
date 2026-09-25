@@ -75,11 +75,11 @@ _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|ins
 # rest of Lean's same-line command scoping, for the same reason it matters
 # there: a declaration behind one is a declaration the sources really ship.
 # Multiline (`(?m)`, matched over the whole blanked source) for the reason
-# `workspace.DECLARATION`'s comment states: Lean allows a newline between the
+# `syntax.declarations` states: Lean allows a newline between the
 # keyword and the name, and a line-oriented match loses the declaration
 # entirely. The same crossing lets an attribute sit on its own line.
 #
-# Still anchored to a line start, unlike `workspace.DECLARATION`, which gave its
+# Still anchored to a line start, unlike `syntax.declarations`, which gave its
 # anchor up because a theorem it misses is one the axiom audit never asks
 # about. This index is a lead, not a gate: it offers names a model may search
 # for in installed packages, and a declaration it misses is only one fewer
@@ -124,7 +124,10 @@ _BODY = re.compile(r":=|\bwhere\b|\bderiving\b")
 # names are qualified, or how `search` orders its answers must bump this.
 # /2: `strip_comments` reads char literals (#192), so a Mathlib file holding
 # `'"'` no longer loses the declarations after it.
-INDEX_ALGORITHM = "hardy-declaration-index/2"
+# /3: `strip_comments` keeps every reading Lean's grammar leaves open (a quote
+# after a symbol token, interpolated strings, `//-`), and escaped names span
+# lines, so the text this index reads changed again.
+INDEX_ALGORITHM = "hardy-declaration-index/3"
 
 # Root files that are not module sources; same reasoning as `modules.py`.
 _NOT_A_SOURCE = frozenset({"lakefile.lean"})
@@ -364,7 +367,7 @@ class DeclarationIndex:
                     del scopes[max(0, len(scopes) - depth) :]
         # Second pass: declarations, over the whole blanked source rather than
         # line by line -- Lean allows a newline between the keyword and the
-        # name, and `workspace.DECLARATION`'s comment records losing exactly
+        # name, and `syntax.declarations` records losing exactly
         # those. The prefix is taken at the *keyword's* line, which is also
         # the line the record reports and the signature starts from.
         for head in DECLARATION.finditer(blanked_source):

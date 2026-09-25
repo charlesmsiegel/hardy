@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from hardy.formal.contracts import EnvironmentIdentity, FrozenClaim, Request
-from hardy.formal.syntax import QUALIFIED_NAME, declared_name, strip_comments
+from hardy.formal.syntax import QUALIFIED_NAME, blank_bounded_quotations, declared_name, lex
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.truncation import truncate
@@ -151,12 +151,20 @@ class LeanDiagnostic(FrozenModel):
 def scannable(source: str) -> str:
     """`source` with everything a hole cannot hide in blanked out, offsets kept.
 
-    Comments and string literals first, for the reason `has_holes` gives, and
-    then Lean's escaped identifiers: `«sorry»` is a name, and a proof entitled
-    to call a lemma so named was being told it had a hole it does not have --
-    which then kept a complete candidate in the record as an explicitly partial
-    one. Blanked rather than removed, because every position this feeds is
-    reported against the original text.
+    Comments and literals first (`strip_comments`, under every reading Lean's
+    grammar leaves open), and then Lean's escaped identifiers: `«sorry»` is a
+    name, and a proof entitled to call a lemma so named was being told it had a
+    hole it does not have -- which then kept a complete candidate in the record
+    as an explicitly partial one. Blanked rather than removed, because every
+    position this feeds is reported against the original text.
+
+    Syntax quotations go too, but only where their extent is certain: a
+    quotation is data, not execution -- `` `(tactic| sorry) `` builds a piece
+    of syntax that Lean never runs -- so a proof entitled to construct one was
+    being told it had a hole, refused by `submit_proof` before the kernel ever
+    saw it. A quotation whose end the parenthesis count cannot be sure of is
+    left visible, because trusting the count there would blank a real `sorry`
+    after it.
 
     Public because the three surfaces that scan Lean for a forbidden token
     have to agree about what counts as one. `hardy accept --recorded` and the
@@ -164,49 +172,8 @@ def scannable(source: str) -> str:
     a proof `submit_proof` was right to accept is not refused offline for a
     `sorry` that is a piece of quoted syntax or a declaration's own name.
     """
-    blanked = ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), strip_comments(source))
-    return _blank_quotations(blanked)
-
-
-def _blank_quotations(text: str) -> str:
-    """`text` with Lean's syntax quotations blanked, offsets kept.
-
-    A quotation is data, not execution: `` `(tactic| sorry) `` builds a piece
-    of syntax that Lean never runs, so a proof entitled to construct one was
-    being told it had a hole -- refused by `submit_proof` before the kernel
-    ever saw it, and recorded by `sketch_proof` as work that does not exist.
-
-    Scanned by counting parentheses rather than matched by a pattern, because
-    a quotation nests and a regular expression cannot follow it. Strings,
-    comments and char literals are already gone by the time this runs, so a
-    parenthesis here is a parenthesis. The char literals matter as much as the
-    strings: a `'('` counted as an opener ran a quotation on past a real
-    `sorry` after it and blanked that too. `strip_comments` owns the rule for
-    what a char literal is, so this does not restate it.
-    """
-    out = list(text)
-    index = 0
-    while index < len(out) - 1:
-        if text[index] == "`" and text[index + 1] == "(":
-            depth = 0
-            for position in range(index + 1, len(text)):
-                if text[position] == "(":
-                    depth += 1
-                elif text[position] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        for blank in range(index, position + 1):
-                            if out[blank] != "\n":
-                                out[blank] = " "
-                        index = position
-                        break
-            else:
-                # An unbalanced quotation is not something this can bound, and
-                # blanking to the end of the proof would hide a real hole after
-                # it. Left alone: Lean will refuse the body anyway.
-                break
-        index += 1
-    return "".join(out)
+    quoted, _ = blank_bounded_quotations(lex(source))
+    return ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), quoted)
 
 
 class Hole(FrozenModel):

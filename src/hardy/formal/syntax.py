@@ -5,10 +5,13 @@ or verify it. Workspace builds and document readers share this one grammar.
 """
 from __future__ import annotations
 
+import functools
+import heapq
 import re
 from bisect import bisect_right
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
+from typing import Any, NamedTuple
 
 # Lean identifiers are Unicode: `theorem α` and `theorem h₁` are ordinary, and
 # an ASCII-only pattern would not see them -- so a theorem could be saved that
@@ -40,19 +43,42 @@ HEADER_KEYWORDS = frozenset({"prelude", "module"})
 # asks about, and an unseen axiom is one whose statement is never compared
 # against what a human approved.
 WRAPPER = r"(?:(?:set_option|open|attribute|universe|variable|section)\b[^\n]*?\sin\s+)*"
-# Not anchored to the start of a line. Lean commands are whitespace-insensitive,
-# so `def a := 1 theorem sneaky : False := sorry` declares `sneaky` as surely as
-# a line of its own does, and so do `end Foo theorem t` and `include h in
-# theorem t`. A scan that looked only at line starts never asked the audit about
-# such a theorem, never reserved it to a registered result, and never counted
-# it towards the writeup ratchet. Where a match may start is decided instead by
-# Lean's own token boundaries (`identifier_tokens`), so `«a theorem b»`,
-# `mytheorem` and `Foo.theorem` are names while `1theorem` -- a numeral and
-# then a keyword, to Lean -- is a declaration. `theorem«name»` needs no space.
-DECLARATION = re.compile(
-    rf"{WRAPPER}(?:@\[[^\]]*\]\s*)*((?:(?:private|protected|nonrec|noncomputable)\s+)*)"
-    rf"(theorem|lemma)(?:\s+|(?=«))({QUALIFIED_NAME})"
-)
+# A declaration is found at its keyword, wherever that stands. Lean commands
+# are whitespace-insensitive, so `def a := 1 theorem sneaky : False := sorry`
+# declares `sneaky` as surely as a line of its own does, and so do `end Foo
+# theorem t`, `include h in theorem t`, and `def a := 1 open Nat theorem
+# hidden ... in theorem shown` -- `c1 in c2` is a command for any `c1`, so a
+# pattern that read a wrapper up to its `in` swallowed the first theorem whole.
+# A scan anchored to line starts, or to anything but the keyword itself, never
+# asked the audit about such a theorem, never reserved it to a registered
+# result, and never counted it towards the writeup ratchet. Keywords are Lean's
+# own tokens (`_code_tokens`): `«a theorem b»`, `mytheorem` and `(x).theorem`
+# are names, while `1theorem` -- a numeral and then a keyword -- declares one.
+# `theorem«name»` needs no space. The modifiers are the ones read backwards
+# from the keyword; attributes before them change nothing here.
+DECLARATION_KINDS = frozenset({"theorem", "lemma"})
+_DECLARATION_NAME = re.compile(rf"(?:\s+|(?=«))({QUALIFIED_NAME})")
+_HEAD_MODIFIERS = frozenset({"private", "protected", "nonrec", "noncomputable"})
+_LINE_PREFIX = re.compile(rf"[ \t]*{WRAPPER}")
+
+
+class _Head(NamedTuple):
+    """One `theorem` or `lemma`.
+
+    `keyword` is where the keyword starts and `end` where the name ends.
+    `start` is where the whole head starts: its modifiers and attributes, and
+    the start of its line when only indentation and `... in` wrappers precede
+    it there -- what a reader slicing the declaration out of its file takes.
+    """
+
+    start: int
+    keyword: int
+    end: int
+    modifiers: str
+    kind: str
+    name: str
+
+
 # `private` is the one modifier that changes who can name a declaration: Lean
 # mangles the name so no importing module can reach it. Anything that has to
 # address a declaration from outside its own file -- the axiom audit does --
@@ -67,7 +93,7 @@ SCOPE_KEYWORDS = frozenset({"namespace", "section", "end", "mutual"})
 # this is the list a Hardy workspace or Mathlib puts after a scope command.
 NOT_A_SCOPE_NAME = frozenset({
     "abbrev", "add_decl_doc", "alias", "assert_not_exists", "attribute", "axiom", "class",
-    "constant", "declare_syntax_cat", "def", "deriving", "elab", "elab_rules", "end", "example",
+    "declare_syntax_cat", "def", "deriving", "elab", "elab_rules", "end", "example",
     "export", "import", "include", "inductive", "infix", "infixl", "infixr", "initialize",
     "instance", "irreducible_def", "lemma", "library_note", "local", "macro", "macro_rules",
     "meta", "mutual", "namespace", "noncomputable", "nonrec", "notation", "omit", "opaque",
@@ -143,6 +169,503 @@ def declared_name(name: str, prefix: tuple[str, ...] = ()) -> str:
     return ".".join((*prefix, name)) if prefix else name
 
 
+# --- Lean's lexical grammar, read so that an ambiguity fails closed -------------
+#
+# Every scan in this module -- declarations, holes, assumptions, the proof-body
+# command gate -- reads Lean after its comments and literals are blanked, so
+# what the lexer calls a literal is what every gate cannot see. Where Lean's own
+# reading is certain the lexer follows it exactly (Lean 4.35.0-rc3,
+# `Lean/Parser/Basic.lean`); where it is not, the lexer keeps every reading
+# that could be Lean's and a character is code when it is code in *any* of
+# them. A gate then refuses what one reading shows even if another hides it.
+# A false refusal is the price; a hidden `sorry`, axiom or command is not one
+# this module may pay.
+#
+# What Lean cannot settle from characters alone is where a symbol token ends.
+# The token table is extensible: core has `]'` (`xs[i]'h`) and `×'`, Mathlib
+# `∑'`, `⁻¹'` and `//`, and a module may add its own with `notation`. So after a
+# symbol character, a `'` may be a char literal or the end of that token, and
+# `--` or `/-` may start a comment or continue one (`{x : Int //-1 = x}` is a
+# subtype, not a comment -- checked against Lean). Both are read. A string may
+# be interpolated (`s!"{'"'}"`, `throwError "..."`, any `interpolatedStr`
+# syntax) or plain, and nothing lexical says which, so every string is read
+# both ways too.
+
+# Lean's identifier characters (`Init/Meta/Defs.lean`). Python's `isalpha` is
+# both wider and narrower than these, and the difference is exactly where a
+# quote after a character does or does not continue a name.
+_LETTER_LIKE = (
+    "α-κμ-ω"  # lower Greek, but lambda
+    "Α-ΟΡ΢Τ-Ω"  # upper Greek, but Pi and Sigma
+    "ϊ-ϻ"  # Coptic
+    "ἀ-῾"  # polytonic Greek
+    "℀-⅏"  # letter-like block
+    "\U0001d49c-\U0001d59f"  # script, double-struck, Fraktur
+    "À-ÖØ-öø-ÿ"  # Latin-1 letters, but × and ÷
+    "Ā-ſ"  # Latin Extended-A
+)
+_SUBSCRIPTS = "₀-₉ₐ-ₜᵢ-ᵪⱼ"
+_ID_PART = re.compile(f"[A-Za-z_{_LETTER_LIKE}][A-Za-z0-9_'!?{_LETTER_LIKE}{_SUBSCRIPTS}]*")
+# `Char.isWhitespace`: nothing else separates tokens.
+_LEAN_SPACE = frozenset(" \t\r\n")
+# What may follow a backslash in a char literal besides `x` with two hex digits
+# and `u` with four (`isQuotableCharDefault`). Lean refuses anything else.
+_SIMPLE_ESCAPES = frozenset("\\\"'nrt")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_STRING_STOP = re.compile(r'[\\"{]')
+_COMMENT_MARK = re.compile(r"/-|-/")
+# More readings than this at once, or interpolation nested deeper, and the lexer
+# stops distinguishing: everything from there on is code in some reading.
+_MAX_READINGS = 32
+_MAX_NESTING = 16
+
+
+class _Overflow(Exception):
+    """Too many simultaneous readings to keep apart."""
+
+
+class Lexed:
+    """One source, lexed under every reading that could be Lean's.
+
+    Per character: whether any reading reads it as code, as part of a literal,
+    as a comment, as a literal's delimiter, or as part of a `«...»` name.
+    `uncertain` is code in one reading and not in another.
+    """
+
+    def __init__(self, source: str) -> None:
+        self.source = source
+        length = len(source)
+        self.code = bytearray(length)
+        self.literal = bytearray(length)
+        self.comment = bytearray(length)
+        self.delimiter = bytearray(length)
+        self.name = bytearray(length)
+        self.overflow: int | None = None
+        _run(self)
+        prefix = [0]
+        total = 0
+        for index in range(length):
+            if self.code[index] and (self.literal[index] or self.comment[index]):
+                total += 1
+            prefix.append(total)
+        self._uncertain = prefix
+
+    def uncertain(self, start: int = 0, end: int | None = None) -> bool:
+        """Whether any character in `[start, end)` is code in only some readings."""
+        end = len(self.source) if end is None else end
+        return self._uncertain[end] - self._uncertain[start] > 0
+
+    def _render(self, keep: Callable[[int], bool]) -> str:
+        return "".join(
+            character if keep(index) else ("\n" if character == "\n" else " ")
+            for index, character in enumerate(self.source)
+        )
+
+    @functools.cached_property
+    def text(self) -> str:
+        """Code in any reading; literals, comments and delimiters blanked."""
+        code, delimiter = self.code, self.delimiter
+        return self._render(lambda index: code[index] and not delimiter[index])
+
+    @functools.cached_property
+    def kept(self) -> str:
+        """Code and literals in any reading; only what every reading calls a comment blanked."""
+        code, literal = self.code, self.literal
+        return self._render(lambda index: code[index] or literal[index])
+
+    @functools.cached_property
+    def certain(self) -> str:
+        """Code in every reading, and nothing else."""
+        code, literal, comment, delimiter = self.code, self.literal, self.comment, self.delimiter
+        return self._render(
+            lambda index: code[index]
+            and not (literal[index] or comment[index] or delimiter[index])
+        )
+
+
+@functools.lru_cache(maxsize=64)
+def lex(source: str) -> Lexed:
+    """`source` lexed under every reading that could be Lean's. Cached: one
+    save runs half a dozen scans over the same text."""
+    return Lexed(source)
+
+
+def _ones(count: int) -> bytes:
+    return b"\x01" * count
+
+
+def _run(lexed: Lexed) -> None:
+    source = lexed.source
+    length = len(source)
+    pending: dict[int, set[tuple[Any, ...]]] = {0: {("code", True, ())}}
+    queue = [0]
+    while queue:
+        position = heapq.heappop(queue)
+        states = pending.pop(position, None)
+        if not states:
+            continue
+        try:
+            if len(states) > _MAX_READINGS:
+                raise _Overflow
+            for state in states:
+                for following, successor in _step(lexed, position, state):
+                    if following >= length:
+                        continue
+                    bucket = pending.get(following)
+                    if bucket is None:
+                        pending[following] = {successor}
+                        heapq.heappush(queue, following)
+                    else:
+                        bucket.add(successor)
+        except _Overflow:
+            # Fail closed: from here on every character is code in some
+            # reading and not code in another, so every scan sees all of it
+            # and every caller that asks is told the reading is uncertain.
+            lexed.overflow = position
+            lexed.code[position:] = _ones(length - position)
+            lexed.literal[position:] = _ones(length - position)
+            return
+
+
+def _step(lexed: Lexed, index: int, state: tuple[Any, ...]) -> list[tuple[int, tuple[Any, ...]]]:
+    kind = state[0]
+    source = lexed.source
+    if kind == "code":
+        return _code(lexed, index, state[1], state[2])
+    if kind == "string":
+        return _string(lexed, index, state[1], state[2])
+    if kind == "raw":
+        return _raw(lexed, index, state[1], state[2])
+    if kind == "block":
+        return _block(lexed, index, state[1], state[2])
+    # The forced readings of one ambiguous position.
+    if kind == "symbol":
+        lexed.code[index] = 1
+        return [(index + 1, ("code", False, state[1]))]
+    if kind == "char":
+        _mark_char(lexed, index, state[1])
+        return [(state[1], ("code", True, state[2]))]
+    if kind == "line":
+        end = source.find("\n", index)
+        end = len(source) if end == -1 else end
+        lexed.comment[index:end] = _ones(end - index)
+        return [(end, ("code", True, state[1]))]
+    if kind == "open-block":
+        lexed.comment[index : index + 2] = _ones(2)
+        return [(index + 2, ("block", 1, state[1]))]
+    if kind == "open-raw":
+        width = 2 + state[1]
+        lexed.literal[index : index + width] = _ones(width)
+        lexed.delimiter[index : index + width] = _ones(width)
+        return [(index + width, ("raw", state[1], state[2]))]
+    raise AssertionError(kind)
+
+
+def _code(lexed: Lexed, index: int, boundary: bool, context: tuple[int, ...]) -> list[tuple[int, tuple[Any, ...]]]:
+    """Code until the next literal, comment or ambiguity.
+
+    `boundary` says a token certainly starts here: at the start, after
+    whitespace, a literal, a comment or an identifier. After a symbol
+    character it may not, because the symbol's token may run on.
+    `context` holds the brace depth of each interpolation this code sits in.
+    """
+    source, code = lexed.source, lexed.code
+    length = len(source)
+    while index < length:
+        character = source[index]
+        if character in _LEAN_SPACE:
+            end = index + 1
+            while end < length and source[end] in _LEAN_SPACE:
+                end += 1
+            code[index:end] = _ones(end - index)
+            index, boundary = end, True
+            continue
+        if context and character in "{}":
+            depth = context[-1]
+            if character == "}" and depth == 0:
+                lexed.literal[index] = lexed.delimiter[index] = 1
+                return [(index + 1, ("string", True, context[:-1]))]
+            context = context[:-1] + (depth + (1 if character == "{" else -1),)
+            code[index] = 1
+            index, boundary = index + 1, False
+            continue
+        if character == '"':
+            lexed.literal[index] = lexed.delimiter[index] = 1
+            if len(context) >= _MAX_NESTING:
+                raise _Overflow
+            return [(index + 1, ("string", False, context)), (index + 1, ("string", True, context))]
+        if character == "'":
+            end = _char_end(source, index)
+            if boundary and source.startswith("''", index):
+                # Lean never starts a char literal at `''` (Mathlib's `f '' s`).
+                code[index : index + 2] = _ones(2)
+                index, boundary = index + 2, False
+                continue
+            if end is not None and boundary:
+                _mark_char(lexed, index, end)
+                index, boundary = end, True
+                continue
+            if end is not None:
+                return [(index, ("char", end, context)), (index, ("symbol", context))]
+            code[index] = 1
+            index, boundary = index + 1, False
+            continue
+        if source.startswith("--", index):
+            if not boundary:
+                return [(index, ("line", context)), (index, ("symbol", context))]
+            end = source.find("\n", index)
+            end = length if end == -1 else end
+            lexed.comment[index:end] = _ones(end - index)
+            index, boundary = end, True
+            continue
+        if source.startswith("/-", index):
+            if not boundary:
+                return [(index, ("open-block", context)), (index, ("symbol", context))]
+            lexed.comment[index : index + 2] = _ones(2)
+            return [(index + 2, ("block", 1, context))]
+        if character == "r":
+            hashes = _raw_hashes(source, index)
+            if hashes is not None:
+                opened = (index, ("open-raw", hashes, context))
+                return [opened] if boundary else [opened, (index, ("symbol", context))]
+        if character == "«":
+            # An escaped name runs to the next `»`, newlines and all
+            # (`identFnAux` takes until the closer).
+            close = source.find("»", index + 1)
+            if close != -1:
+                code[index : close + 1] = _ones(close + 1 - index)
+                lexed.name[index : close + 1] = _ones(close + 1 - index)
+                index, boundary = close + 1, True
+                continue
+        identifier = _ID_PART.match(source, index)
+        if identifier is not None:
+            end = identifier.end()
+            code[index:end] = _ones(end - index)
+            index, boundary = end, True
+            continue
+        if "0" <= character <= "9":
+            # A numeral leaves `boundary` as it found it: `ℝ≥0` is one Mathlib
+            # token, so a digit after a symbol may still be inside it.
+            end = _number_end(source, index)
+            code[index:end] = _ones(end - index)
+            index = end
+            continue
+        code[index] = 1
+        index, boundary = index + 1, False
+    return []
+
+
+def _string(lexed: Lexed, index: int, interpolated: bool, context: tuple[int, ...]) -> list[tuple[int, tuple[Any, ...]]]:
+    """The rest of a string; with `interpolated`, `{` opens code (`interpolatedStrFn`)."""
+    source = lexed.source
+    length = len(source)
+    start = index
+    while True:
+        found = _STRING_STOP.search(source, index)
+        if found is None:
+            lexed.literal[start:length] = _ones(length - start)
+            return []
+        index = found.start()
+        character = source[index]
+        if character == "\\":
+            index += 2
+            continue
+        if character == "{" and not interpolated:
+            index += 1
+            continue
+        end = index + 1
+        lexed.literal[start:end] = _ones(end - start)
+        lexed.delimiter[index] = 1
+        if character == '"':
+            return [(end, ("code", True, context))]
+        if len(context) >= _MAX_NESTING:
+            raise _Overflow
+        return [(end, ("code", True, context + (0,)))]
+
+
+def _raw(lexed: Lexed, index: int, hashes: int, context: tuple[int, ...]) -> list[tuple[int, tuple[Any, ...]]]:
+    """The rest of a raw string: a backslash is ordinary, and only `"` and the same hashes close it."""
+    source = lexed.source
+    closer = '"' + "#" * hashes
+    found = source.find(closer, index)
+    end = len(source) if found == -1 else found + len(closer)
+    lexed.literal[index:end] = _ones(end - index)
+    if found != -1:
+        lexed.delimiter[found:end] = _ones(end - found)
+        return [(end, ("code", True, context))]
+    return []
+
+
+def _block(lexed: Lexed, index: int, depth: int, context: tuple[int, ...]) -> list[tuple[int, tuple[Any, ...]]]:
+    """The rest of a block comment, which nests (`finishCommentBlock`)."""
+    source = lexed.source
+    start = index
+    while depth:
+        found = _COMMENT_MARK.search(source, index)
+        if found is None:
+            lexed.comment[start:] = _ones(len(source) - start)
+            return []
+        depth += 1 if found.group() == "/-" else -1
+        index = found.end()
+    lexed.comment[start:index] = _ones(index - start)
+    return [(index, ("code", True, context))]
+
+
+def _mark_char(lexed: Lexed, start: int, end: int) -> None:
+    lexed.literal[start:end] = _ones(end - start)
+    lexed.delimiter[start] = lexed.delimiter[end - 1] = 1
+
+
+def _char_end(source: str, index: int) -> int | None:
+    """Where a char literal opening at `index` would end, or None if none can.
+
+    `charLitFnAux`: one code point, or a backslash escape Lean accepts (`\\\\`
+    `\\"` `\\'` `\\n` `\\r` `\\t`, `\\x` with two hex digits, `\\u` with four),
+    then the closing quote. `''` never opens one.
+    """
+    length = len(source)
+    body = index + 1
+    if body >= length or source[body] == "'":
+        return None
+    if source[body] != "\\":
+        close = body + 1
+    else:
+        escape = source[body + 1 : body + 2]
+        digits = {"x": 2, "u": 4}.get(escape)
+        if digits is not None:
+            hexadecimal = source[body + 2 : body + 2 + digits]
+            if len(hexadecimal) != digits or not set(hexadecimal) <= _HEX_DIGITS:
+                return None
+            close = body + 2 + digits
+        elif escape and escape in _SIMPLE_ESCAPES:
+            close = body + 2
+        else:
+            return None
+    if close < length and source[close] == "'":
+        return close + 1
+    return None
+
+
+def _raw_hashes(source: str, index: int) -> int | None:
+    """The hash count of a raw-string opener `r#*"` at `index`, or None."""
+    if source[index] != "r":
+        return None
+    hashes = 0
+    while index + 1 + hashes < len(source) and source[index + 1 + hashes] == "#":
+        hashes += 1
+    if index + 1 + hashes >= len(source) or source[index + 1 + hashes] != '"':
+        return None
+    return hashes
+
+
+def strip_comments(source: str, *, keep_strings: bool = False) -> str:
+    """`source` with its comments blanked out, line structure preserved.
+
+    One pass serves every scan, because each was getting comments wrong in its
+    own way: a trailing `--` hid an import, a nested `/- /- -/ -/` closed
+    early, and `/-- doc -/ theorem foo` hid a declaration behind a leading
+    comment. Lean treats all of that as whitespace, so the honest fix is to do
+    the same once, rather than teach every regex about comments separately.
+
+    Comments are replaced by spaces rather than removed so that line and
+    column positions still line up with the source a reader has open.
+
+    String and char literals are blanked too, for the same reason and in the
+    other direction: a `--` inside one must not start a comment, and a line
+    reading `theorem fake : True` inside a multiline string must not be
+    reported as a declaration.
+
+    Where Lean's reading is ambiguous (see `lex`), a character is kept when
+    any reading calls it code, so a scan of this text finds what any reading
+    would. That can make it report something Lean does not -- a refusal the
+    model can fix by adding a space -- and never the other way round.
+
+    `keep_strings` copies literals through instead, for the caller that has to
+    *compare* two pieces of Lean rather than scan one: with strings blanked,
+    `"a" = "a"` and `"b" = "b"` are the same run of spaces, so a writeup could
+    quote a proposition about different values and pass for quoting this one.
+    That caller (`statements`) never scans with it -- it finds declarations on
+    the blanked text and only reads their extent with strings intact, so a
+    `theorem` inside a string still cannot invent a declaration.
+    """
+    lexed = lex(source)
+    return lexed.kept if keep_strings else lexed.text
+
+
+def normalise_lean(text: str) -> str:
+    """Lean with its whitespace collapsed -- outside literals.
+
+    Two pieces of Lean that differ only in how they were wrapped are the same
+    Lean, which is what lets a paper break a long statement across lines. Two
+    that differ *inside* a literal are not: `"a  b"` and `"a b"` are different
+    strings, and collapsing both to the second let a writeup quote a
+    proposition about one and match a theorem about the other -- the same
+    mistake as blanking the literal, one layer further in.
+
+    So whitespace is collapsed only where every reading of `lex` calls it
+    code; anything a reading calls a literal, a comment, or part of a `«...»`
+    name (`«a  b»` and `«a b»` are two names) is copied verbatim. Where the
+    readings disagree that compares more strictly, never less.
+    """
+    lexed = lex(text)
+    code, literal, comment, name = lexed.code, lexed.literal, lexed.comment, lexed.name
+    out: list[str] = []
+    gap = False
+    for index, character in enumerate(text):
+        if character.isspace() and code[index] and not (literal[index] or comment[index] or name[index]):
+            gap = bool(out)
+            continue
+        if gap:
+            out.append(" ")
+            gap = False
+        out.append(character)
+    return "".join(out).strip()
+
+
+def blank_bounded_quotations(lexed: Lexed, refuse: str = "") -> tuple[str, tuple[tuple[int, int], ...]]:
+    """`lexed.text` with each syntax quotation whose extent is certain blanked.
+
+    A quotation is data: `` `(tactic| sorry) `` and `` `(command| namespace
+    Bar) `` build syntax a proof never runs, so neither is a hole or a scope.
+    Its end is found by counting parentheses, and that count is exact only
+    where every reading agrees what is code: parentheses inside literals and
+    comments are already blank, and those inside a `«...»` name are skipped.
+    A quotation holding an uncertain character, or any of `refuse`, is left
+    visible and returned in the second element with every unbalanced one, so
+    a caller can say it could not read it rather than guess.
+    """
+    text = lexed.text
+    out = list(text)
+    unbounded: list[tuple[int, int]] = []
+    index = 0
+    while (index := text.find("`(", index)) != -1:
+        depth = 0
+        end = None
+        for position in range(index + 1, len(text)):
+            if lexed.name[position]:
+                continue
+            if text[position] == "(":
+                depth += 1
+            elif text[position] == ")":
+                depth -= 1
+                if depth == 0:
+                    end = position + 1
+                    break
+        if end is None:
+            # Unbalanced: nothing bounds it, so nothing after it is hidden.
+            unbounded.append((index, len(text)))
+            break
+        if lexed.uncertain(index, end) or any(mark in text[index:end] for mark in refuse):
+            unbounded.append((index, end))
+            index += 2
+            continue
+        for position in range(index, end):
+            if out[position] != "\n":
+                out[position] = " "
+        index = end
+    return "".join(out), tuple(unbounded)
+
+
 def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, ...]]]:
     """The namespace prefix in force from each offset of an already-stripped source on.
 
@@ -151,6 +674,9 @@ def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, 
     closes `Foo` before `t` is declared, and a walk that recognised a scope
     command only when it filled its line qualified `t` as `Foo.t` -- a name Lean
     never gave anything, so the audit asked about the wrong declaration.
+    Callers blank bounded syntax quotations first, so `` `(command| namespace
+    Bar) `` is data rather than a scope; a projection (`(i).end`) is never a
+    token here at all.
 
     Every kind of scope, because a bare `end` closes whichever is innermost and
     only a namespace contributes to a name. Tracking namespaces alone would let
@@ -159,9 +685,11 @@ def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, 
     A.B` opens one scope per component, as Lean does: `end B` then closes only
     the inner one and `end A.B` both.
 
-    An `end` or a `section` takes the identifier after it as its name when it
-    is on the same line, or on a later one indented past the keyword (Lean's
-    `checkColGt`); a keyword is never a name.
+    `namespace` always takes the identifier after it: Lean requires one, and
+    `namespace constant` is ordinary Lean. An `end` or a `section` takes the
+    identifier after it when it is on the same line, or on a later one indented
+    past the keyword (Lean's `checkColGt`); an `end` takes it whenever it names
+    a scope that is open, and otherwise only when it is not a command keyword.
 
     One copy, shared by the declaration scan and the assumption scan. They had
     a walk each, and the pair drifted twice: the second defined its own
@@ -186,10 +714,13 @@ def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, 
             following = starts[position]
             candidate = text[following : tokens[following]]
             gap = text[after:following]
-            if (
-                not gap.strip()
-                and candidate not in NOT_A_SCOPE_NAME
-                and ("\n" not in gap or _column(text, following) > _column(text, start))
+            adjacent = not gap.strip() and (
+                "\n" not in gap or _column(text, following) > _column(text, start)
+            )
+            if adjacent and (
+                word == "namespace"
+                or (word == "end" and _names_open_scope(scope, candidate))
+                or candidate not in NOT_A_SCOPE_NAME
             ):
                 name = candidate
                 after = tokens[following]
@@ -206,6 +737,12 @@ def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, 
             _close(scope, name)
         marks.append((after, tuple(item for kind, item in scope if kind == "namespace" and item)))
     return marks
+
+
+def _names_open_scope(scope: list[tuple[str, str | None]], name: str) -> bool:
+    parts = _components(name)
+    names = [item for _, item in scope]
+    return any(names[index : index + len(parts)] == parts for index in range(len(names)))
 
 
 def _close(scope: list[tuple[str, str | None]], name: str) -> None:
@@ -239,9 +776,9 @@ def _number_end(text: str, index: int) -> int:
     """Where the numeral starting at `index` ends, by Lean 4.35's grammar.
 
     `0x`, `0b` and `0o` literals, and decimals with `_` separators, a fraction
-    and an exponent. The end matters because a keyword may follow a numeral
-    directly -- `1theorem x` declares `x` -- while `0xdef` is one hex numeral
-    and declares nothing.
+    and an exponent (`numberFnAux`). The end matters because a keyword may
+    follow a numeral directly -- `1theorem x` declares `x` -- while `0xdef` is
+    one hex numeral and declares nothing.
     """
     length = len(text)
     radix = {"0x": "0123456789abcdefABCDEF_", "0b": "01_", "0o": "01234567_"}.get(
@@ -253,10 +790,10 @@ def _number_end(text: str, index: int) -> int:
             end += 1
         return end
     end = _digits_end(text, index)
-    if end < length and text[end] == "." and (
-        _is_digit(text, end + 1) or _exponent_end(text, end + 1) is not None
-    ):
+    if end < length and text[end] == "." and not text.startswith("..", end):
         end = _digits_end(text, end + 1)
+        exponent = _exponent_end(text, end)
+        return end if exponent is None else exponent
     exponent = _exponent_end(text, end)
     return end if exponent is None else exponent
 
@@ -282,37 +819,32 @@ def _exponent_end(text: str, index: int) -> int | None:
 
 def _component_end(text: str, index: int) -> int | None:
     """Where the name component starting at `index` ends, or None if none does."""
-    character = text[index]
-    if character == "«":
+    if text[index] == "«":
         closing = text.find("»", index + 1)
-        newline = text.find("\n", index + 1)
-        if closing > index + 1 and (newline == -1 or closing < newline):
-            return closing + 1
-        return None
-    if not (character.isalpha() or character == "_"):
-        return None
-    end = index + 1
-    while end < len(text) and (text[end].isalnum() or text[end] in "_'!?"):
-        end += 1
-    return end
+        return closing + 1 if closing > index + 1 else None
+    found = _ID_PART.match(text, index)
+    return None if found is None else found.end()
 
 
-def identifier_tokens(text: str) -> dict[int, int]:
-    """Start -> end of every identifier or keyword token in already-stripped text.
+def _code_tokens(text: str) -> tuple[dict[int, int], frozenset[int]]:
+    """Identifier tokens (start -> end) and numeral ends in already-stripped text.
 
     A small forward tokenizer rather than a lookbehind, because whether a
     keyword starts a token depends on what came before it in a way no
     fixed-width assertion sees: `x1theorem` is one identifier, `1theorem` is a
     numeral and then `theorem`, `0xdef` is a numeral, and `Foo.theorem` is a
-    dotted name. Strings, comments and char literals are already blank, and
-    `«...»` components are part of the name they sit in.
+    dotted name. A name straight after a `.` that no identifier precedes --
+    `(i).end`, `xs[0].def`, `.theorem` -- is a field or a dot-identifier, which
+    Lean reads with `rawIdent`, so it is never a keyword and is left out.
     """
     tokens: dict[int, int] = {}
+    numerals: set[int] = set()
     index = 0
     length = len(text)
     while index < length:
         if _is_digit(text, index):
             index = _number_end(text, index)
+            numerals.add(index)
             continue
         end = _component_end(text, index)
         if end is None:
@@ -324,9 +856,20 @@ def identifier_tokens(text: str) -> dict[int, int]:
             if following is None:
                 break
             end = following
-        tokens[start] = end
+        if not (start and text[start - 1] == "."):
+            tokens[start] = end
         index = end
-    return tokens
+    return tokens, frozenset(numerals)
+
+
+def identifier_tokens(text: str) -> dict[int, int]:
+    """Start -> end of every identifier or keyword token in already-stripped text."""
+    return _code_tokens(text)[0]
+
+
+def numeral_ends(text: str) -> frozenset[int]:
+    """Where each numeral in already-stripped text ends."""
+    return _code_tokens(text)[1]
 
 
 def _keyword_matches(
@@ -349,291 +892,6 @@ def _keyword_matches(
         else:
             position = start + 1
     return found
-
-
-def _continues_identifier(character: str) -> bool:
-    """Whether `character`, just before a token, would make it part of a name.
-
-    `for"` is the identifier `for` and then a string, not a raw-string opener,
-    and `x'` is the identifier `x'`, not `x` and then a char literal.
-    """
-    return character.isalnum() or character in "_'!?."
-
-
-def _raw_string_opener(source: str, index: int) -> int | None:
-    """The hash count of a raw-string opener at `index`, or None.
-
-    Lean writes raw strings `r"..."`, `r#"..."#`, `r##"..."##`. The `r` must be
-    a token of its own -- `for"` is not an opener -- so the character before it
-    may not continue an identifier.
-    """
-    if source[index] != "r":
-        return None
-    if index and _continues_identifier(source[index - 1]):
-        return None
-    hashes = 0
-    while index + 1 + hashes < len(source) and source[index + 1 + hashes] == "#":
-        hashes += 1
-    if index + 1 + hashes >= len(source) or source[index + 1 + hashes] != '"':
-        return None
-    return hashes
-
-
-# What may follow a backslash in a Lean char literal, besides `x` with two hex
-# digits and `u` with four. Lean 4.35 refuses anything else (`'\0'`,
-# `'\u{41}'`), and a literal Lean refuses is not one this lexer may blank.
-_SIMPLE_ESCAPES = frozenset("\\\"'nrt")
-_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
-
-
-def _char_literal_end(source: str, index: int) -> int | None:
-    """Where the char literal opening at `index` ends (exclusive), or None.
-
-    `'"'` is one `Char`. A lexer that knew only strings read its `"` as an
-    opener and blanked everything to the next `"` in the file -- a theorem, an
-    axiom and a `sorry` all vanished from every scan built on this one.
-
-    Only what Lean itself reads as a character is recognised, checked against
-    Lean 4.35.0-rc3. The quote must start a token, by the rule
-    `_raw_string_opener` uses: after an identifier character it continues the
-    name (`x'`, `f''`, `add_comm'`). It may not be followed by another quote
-    (`''` is not a literal; Mathlib's `f '' s` is an image). Then exactly one
-    code point, or one backslash escape, and the closing quote. Anything else
-    is left alone: recognising a literal Lean does not see would blank text
-    that Lean reads as code.
-    """
-    length = len(source)
-    if source[index] != "'" or (index and _continues_identifier(source[index - 1])):
-        return None
-    body = index + 1
-    if body >= length or source[body] == "'":
-        return None
-    if source[body] != "\\":
-        close = body + 1
-    else:
-        escape = source[body + 1 : body + 2]
-        digits = {"x": 2, "u": 4}.get(escape)
-        if digits is not None:
-            code = source[body + 2 : body + 2 + digits]
-            if len(code) != digits or not set(code) <= _HEX_DIGITS:
-                return None
-            close = body + 2 + digits
-        elif escape and escape in _SIMPLE_ESCAPES:
-            close = body + 2
-        else:
-            return None
-    if close < length and source[close] == "'":
-        return close + 1
-    return None
-
-
-def strip_comments(source: str, *, keep_strings: bool = False) -> str:
-    """`source` with its comments blanked out, line structure preserved.
-
-    One pass serves both the import scan and the declaration scan, because
-    both were getting comments wrong in their own way: a trailing `--` hid an
-    import, a nested `/- /- -/ -/` closed early, and `/-- doc -/ theorem foo`
-    hid a declaration behind a leading comment. Lean treats all of that as
-    whitespace, so the honest fix is to do the same once, rather than teach
-    every regex about comments separately.
-
-    Comments are replaced by spaces rather than removed so that line and
-    column positions still line up with the source a reader has open.
-
-    String literals are blanked rather than merely skipped, for the same reason
-    and in the other direction: a `--` inside one must not start a comment, and
-    a line reading `theorem fake : True` inside a multiline string must not be
-    reported as a declaration. It is not one, and a caller that has to *name*
-    every declaration -- the axiom audit does -- would ask Lean about something
-    that does not exist and refuse the file forever.
-
-    `keep_strings` copies literals through instead, for the caller that has to
-    *compare* two pieces of Lean rather than scan one: with strings blanked,
-    `"a" = "a"` and `"b" = "b"` are the same run of spaces, so a writeup could
-    quote a proposition about different values and pass for quoting this one.
-    That caller (`statements`) never scans with it -- it finds declarations on
-    the blanked text and only reads their extent with strings intact, so a
-    `theorem` inside a string still cannot invent a declaration.
-    """
-    out = list(source)
-    index = 0
-    depth = 0
-    length = len(source)
-    while index < length:
-        character = source[index]
-        if depth:
-            if source.startswith("/-", index):
-                depth += 1
-                out[index] = out[index + 1] = " "
-                index += 2
-                continue
-            if source.startswith("-/", index):
-                depth -= 1
-                out[index] = out[index + 1] = " "
-                index += 2
-                continue
-            if character != "\n":
-                out[index] = " "
-            index += 1
-            continue
-        if character == "«":
-            # A guillemet-quoted identifier is one token, and `--` inside it is
-            # part of the name. Blanking from there left `theorem «result` and
-            # no declaration at all, so the module recorded "not established"
-            # and saved anyway -- an ordinary literal theorem slipping past both
-            # the audit and the writeup ratchet. Copied through rather than
-            # blanked, because unlike a string this *is* the name the scan needs.
-            closing = source.find("»", index + 1)
-            newline = source.find("\n", index + 1)
-            if closing != -1 and (newline == -1 or closing < newline):
-                index = closing + 1
-                continue
-        raw = _raw_string_opener(source, index)
-        if raw is not None and keep_strings:
-            closer = '"' + "#" * raw
-            found = source.find(closer, index + 1 + raw + 1)
-            index = length if found == -1 else found + len(closer)
-            continue
-        if raw is not None:
-            # `r"..."`, `r#"..."#`, `r##"..."##`. A backslash is an ordinary
-            # character here, and the literal ends only at a quote followed by
-            # the same run of hashes -- so a bare `"` inside `r#"..."#` does not
-            # end it, and a trailing `\` does not escape the one that does.
-            closer = '"' + "#" * raw
-            for offset in range(1 + raw + 1):
-                out[index + offset] = " "
-            index += 1 + raw + 1
-            while index < length and not source.startswith(closer, index):
-                if source[index] != "\n":
-                    out[index] = " "
-                index += 1
-            for offset in range(len(closer)):
-                if index + offset < length:
-                    out[index + offset] = " "
-            index = min(index + len(closer), length)
-            continue
-        literal = _char_literal_end(source, index)
-        if literal is not None:
-            # A char literal is a literal like a string: blanked, or copied
-            # through, by the same rule. Its newline -- `'` newline `'` is a
-            # character -- stays a newline so no line moves.
-            if not keep_strings:
-                for position in range(index, literal):
-                    if source[position] != "\n":
-                        out[position] = " "
-            index = literal
-            continue
-        if character == '"' and keep_strings:
-            index = _string_end(source, index)
-            continue
-        if character == '"':
-            out[index] = " "
-            index += 1
-            while index < length:
-                if source[index] == "\\":
-                    # The escape and whatever it escapes, both blanked -- but a
-                    # newline stays a newline, or every position after a
-                    # line-continuation would shift.
-                    for offset in (0, 1):
-                        if index + offset < length and source[index + offset] != "\n":
-                            out[index + offset] = " "
-                    index += 2
-                    continue
-                if source[index] == '"':
-                    out[index] = " "
-                    index += 1
-                    break
-                if source[index] != "\n":
-                    out[index] = " "
-                index += 1
-            continue
-        if source.startswith("/-", index):
-            depth = 1
-            out[index] = out[index + 1] = " "
-            index += 2
-            continue
-        if source.startswith("--", index):
-            while index < length and source[index] != "\n":
-                out[index] = " "
-                index += 1
-            continue
-        index += 1
-    return "".join(out)
-
-
-def _string_end(text: str, start: int) -> int:
-    """Scan past an ordinary quoted Lean string, including escaped quotes.
-
-    An unterminated escape may step one character past EOF, as both callers
-    historically did; slicing still preserves all available source text.
-    """
-    index = start + 1
-    while index < len(text):
-        if text[index] == "\\":
-            index += 2
-            continue
-        if text[index] == '"':
-            return index + 1
-        index += 1
-    return index
-
-
-def normalise_lean(text: str) -> str:
-    """Lean with its whitespace collapsed -- outside string literals.
-
-    Two pieces of Lean that differ only in how they were wrapped are the same
-    Lean, which is what lets a paper break a long statement across lines. Two
-    that differ *inside* a literal are not: `"a  b"` and `"a b"` are different
-    strings, and collapsing both to the second let a writeup quote a
-    proposition about one and match a theorem about the other -- the same
-    mistake as blanking the literal, one layer further in.
-
-    Raw strings are copied whole for the same reason, and because a backslash
-    in one is an ordinary character. So are guillemet-quoted identifiers:
-    `«a  b»` and `«a b»` are two different names, and Lean is as literal inside
-    those as it is inside a string.
-    """
-    out: list[str] = []
-    index = 0
-    length = len(text)
-    while index < length:
-        character = text[index]
-        raw = _raw_string_opener(text, index)
-        if raw is not None:
-            closer = '"' + "#" * raw
-            found = text.find(closer, index + 1 + raw + 1)
-            end = length if found == -1 else found + len(closer)
-            out.append(text[index:end])
-            index = end
-            continue
-        if character == "«":
-            found = text.find("»", index + 1)
-            end = length if found == -1 else found + 1
-            out.append(text[index:end])
-            index = end
-            continue
-        literal = _char_literal_end(text, index)
-        if literal is not None:
-            # `' '` is a character, not whitespace to collapse, and `'"'` is
-            # not a string opener: read as one, the phantom string's end
-            # would open another over real code, whose whitespace -- and
-            # whose string literals' -- would then be treated backwards.
-            out.append(text[index:literal])
-            index = literal
-            continue
-        if character == '"':
-            start = index
-            index = _string_end(text, index)
-            out.append(text[start:index])
-            continue
-        if character.isspace():
-            if out and out[-1] != " ":
-                out.append(" ")
-            index += 1
-            continue
-        out.append(character)
-        index += 1
-    return "".join(out).strip()
 
 
 # `opaque` belongs here beside `axiom` and `constant`: all three put a
@@ -683,8 +941,8 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     """
     text = strip_comments(source)
     lines = text.splitlines()
-    marks = _scopes(text, identifier_tokens(text))
-    starts = _line_starts(lines)
+    marks = _structure(source).marks
+    starts = _line_starts(text)
     found: list[tuple[str, str]] = []
     index = 0
     while index < len(lines):
@@ -734,7 +992,7 @@ def unreadable_assumptions(source: str) -> tuple[str, ...]:
     # By token as well as by pattern: `def a := 1axiom cheat : False` declares
     # `cheat`, and `AXIOM_KEYWORD`'s lookbehind reads the `1` as the start of a
     # name. Either finding is enough to refuse.
-    starts = _line_starts(lines)
+    starts = _line_starts(stripped)
     keyworded = {
         bisect_right(starts, start) - 1
         for start, end in identifier_tokens(stripped).items()
@@ -807,11 +1065,10 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     # Comments first: Lean reads `/-- explanation -/ theorem result ...` as a
     # declaration, and a scanner that saw the leading slash would miss it --
     # so the theorem would never be recorded and never owe a writeup.
-    for match, prefix in _scan(strip_comments(source)):
-        modifiers, kind, name = match.group(1), match.group(2), match.group(3)
-        qualified = declared_name(name, prefix)
-        found[kind].append(qualified)
-        if PRIVATE.search(modifiers):
+    for head, prefix in _scan(source):
+        qualified = declared_name(head.name, prefix)
+        found[head.kind].append(qualified)
+        if PRIVATE.search(head.modifiers):
             found["private"].append(qualified)
     return {kind: tuple(names) for kind, names in found.items()}
 
@@ -819,6 +1076,9 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
 # Every kind of top-level declaration that has a name Lean will report, for a
 # reader that needs to know what a source *declares* rather than what the audit
 # must ask about: a ledger item may cite a definition or an axiom by name.
+# Still anchored to a line start, unlike `declarations`: this answers whether a
+# cited name exists, and matching mid-line would add names (`deriving instance
+# Repr for X` would declare `Repr`), which is the loose direction for it.
 ANY_DECLARATION = re.compile(
     rf"(?m)^[ \t]*{WRAPPER}(?:@\[[^\]]*\]\s*)*"
     rf"((?:(?:private|protected|nonrec|noncomputable|partial|unsafe|local|scoped)\s+)*)"
@@ -832,19 +1092,117 @@ def named_declarations(source: str) -> tuple[str, ...]:
 
     Broader than `declarations`, which reports what the audit asks about; this
     answers whether a name a ledger item cites is declared at all. Comments are
-    stripped first, and a name is qualified by the namespace open at its line,
-    exactly as `declarations` qualifies a theorem.
+    stripped first, and a name is qualified by the namespace open where it is
+    declared, exactly as `declarations` qualifies a theorem.
     """
-    return tuple(declared_name(match.group(3), prefix)
-                 for match, prefix in _scan(strip_comments(source), ANY_DECLARATION))
+    structure = _structure(source)
+    return tuple(
+        declared_name(match.group(3), _prefix_at(structure.marks, match.start(2)))
+        for match in _keyword_matches(structure.text, ANY_DECLARATION, structure.tokens)
+    )
 
 
-def _scan(text: str, pattern: re.Pattern[str] = DECLARATION) -> list[tuple[re.Match[str], tuple[str, ...]]]:
-    """Every declaration in an already-stripped source, with its namespace.
+class _Structure(NamedTuple):
+    """What the declaration and scope scans read, computed once per source."""
 
-    Declarations are matched over the whole text so a name on the line after
-    its keyword is still found, then attributed to the scope open where the
-    keyword sits -- which may be partway along a line, after an `end`.
+    text: str
+    tokens: dict[int, int]
+    marks: list[tuple[int, tuple[str, ...]]]
+    heads: tuple[_Head, ...]
+    problems: tuple[str, ...]
+
+
+@functools.lru_cache(maxsize=64)
+def _structure(source: str) -> _Structure:
+    """Declarations, scopes, and what about them could not be read.
+
+    Over `strip_comments`' text with bounded syntax quotations blanked, so
+    `` `(command| namespace Bar) `` moves no scope and `` `(theorem x : True
+    := trivial) `` declares nothing. A scope command Hardy cannot place --
+    inside a quotation whose extent is uncertain, or at a character only some
+    readings call code -- is a problem, and `unreadable_structure` reports it.
+    """
+    lexed = lex(source)
+    text, unbounded = blank_bounded_quotations(lexed)
+    tokens = identifier_tokens(text)
+    marks = _scopes(text, tokens)
+    heads: list[_Head] = []
+    ends = {end: start for start, end in tokens.items()}
+    problems: list[str] = []
+    if lexed.overflow is not None:
+        problems.append(
+            f"line {source.count(chr(10), 0, lexed.overflow) + 1}: Hardy cannot tell where "
+            "the strings and comments from here on end"
+        )
+    for start in sorted(tokens):
+        end = tokens[start]
+        word = text[start:end]
+        if word in SCOPE_KEYWORDS and (
+            lexed.uncertain(start, end) or any(low <= start < high for low, high in unbounded)
+        ):
+            problems.append(
+                f"line {source.count(chr(10), 0, start) + 1}: `{word}` sits where Hardy cannot "
+                "tell code from a literal or a syntax quotation, so the names declared after "
+                "it cannot be qualified"
+            )
+        if word not in DECLARATION_KINDS:
+            continue
+        named = _DECLARATION_NAME.match(text, end)
+        if named is None:
+            continue
+        modifiers: list[str] = []
+        cursor = start
+        while True:
+            before = cursor
+            while before and text[before - 1] in _LEAN_SPACE:
+                before -= 1
+            previous = ends.get(before)
+            if previous is None or text[previous:before] not in _HEAD_MODIFIERS:
+                break
+            modifiers.append(text[previous:before])
+            cursor = previous
+        heads.append(
+            _Head(_head_start(text, cursor), start, named.end(), " ".join(reversed(modifiers)), word, named.group(1))
+        )
+    return _Structure(text, tokens, marks, tuple(heads), tuple(problems))
+
+
+def _head_start(text: str, cursor: int) -> int:
+    """Back from a head's first modifier over its `@[...]` attributes, then to
+    its line's start if only indentation and wrappers stand before it there."""
+    while True:
+        before = cursor
+        while before and text[before - 1] in _LEAN_SPACE:
+            before -= 1
+        if not before or text[before - 1] != "]":
+            break
+        opened = text.rfind("@[", 0, before)
+        if opened == -1 or "]" in text[opened + 2 : before - 1]:
+            break
+        cursor = opened
+    line = text.rfind("\n", 0, cursor) + 1
+    return line if _LINE_PREFIX.fullmatch(text, line, cursor) else cursor
+
+
+def unreadable_structure(source: str) -> tuple[str, ...]:
+    """Why the declarations in `source` cannot be named with confidence, if they cannot.
+
+    Where Lean's reading is ambiguous the scans take every reading, which is
+    enough for what a source declares or leaves open -- a `theorem` any
+    reading shows is reported. It is not enough for *what a declaration is
+    called*: a `namespace` only one reading shows qualifies every name after
+    it one way or the other, and picking either could hand the audit a clean
+    twin to ask about. So a caller that names declarations for a gate refuses
+    these instead of guessing.
+    """
+    return _structure(source).problems
+
+
+def _scan(source: str) -> list[tuple[_Head, tuple[str, ...]]]:
+    """Every `theorem` and `lemma` in a source, with its namespace.
+
+    Each is attributed to the scope open where its keyword sits -- which may be
+    partway along a line, after an `end`.
 
     One walk, shared by `declarations` and `statements`. They must agree about
     what a declaration is called: a theorem the first names `Hardy.one` and the
@@ -852,17 +1210,17 @@ def _scan(text: str, pattern: re.Pattern[str] = DECLARATION) -> list[tuple[re.Ma
     the ratchet, and the statement the document was checked against would not
     be the statement anyone had to write up.
     """
-    tokens = identifier_tokens(text)
-    marks = _scopes(text, tokens)
-    return [(match, _prefix_at(marks, match.start(2))) for match in _keyword_matches(text, pattern, tokens)]
+    structure = _structure(source)
+    return [(head, _prefix_at(structure.marks, head.keyword)) for head in structure.heads]
 
 
-def _line_starts(lines: list[str]) -> list[int]:
+def _line_starts(text: str) -> list[int]:
+    """Where each of `text.splitlines()` starts, whatever ends the line."""
     starts = []
     offset = 0
-    for line in lines:
+    for line in text.splitlines(keepends=True):
         starts.append(offset)
-        offset += len(line) + 1
+        offset += len(line)
     return starts
 
 
@@ -900,19 +1258,23 @@ def statements(source: str) -> dict[str, str]:
     proposition is compared character for character.
     """
     text = strip_comments(source)
-    scanned = _scan(text)
+    scanned = _scan(source)
+    # The extent is read over what every reading calls code, so a `:=` only
+    # some reading shows cannot end a statement early: over-reading refuses a
+    # save that should have passed, under-reading lets a truncated one pass.
+    certain = lex(source).certain
     found: dict[str, str] = {}
-    for position, (match, prefix) in enumerate(scanned):
-        bound = scanned[position + 1][0].start() if position + 1 < len(scanned) else len(text)
-        start, end = match.start(2), _statement_end(text, match.end(), bound)
+    for position, (head, prefix) in enumerate(scanned):
+        bound = scanned[position + 1][0].start if position + 1 < len(scanned) else len(text)
+        start, end = head.keyword, _statement_end(certain, head.end, bound)
         # Found on the blanked text, read off the original. `strip_comments`
         # preserves every position, so the extent a scan established over text
         # that cannot lie about declarations can be sliced out of the source
         # that still has its string literals -- and a proposition about `"a"`
         # stays a proposition about `"a"` rather than about two spaces. Its own
         # comments still go, with the strings kept this time.
-        head = strip_comments(source[start:end], keep_strings=True)
-        found[declared_name(match.group(3), prefix)] = normalise_lean(head)
+        stated = strip_comments(source[start:end], keep_strings=True)
+        found[declared_name(head.name, prefix)] = normalise_lean(stated)
     return found
 
 
