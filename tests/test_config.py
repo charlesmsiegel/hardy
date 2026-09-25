@@ -811,6 +811,105 @@ def test_a_control_character_in_a_command_setting_is_refused(tmp_path: Path):
     assert "control character" in str(excinfo.value)
 
 
+def test_a_control_character_in_the_root_setting_is_refused(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = write(tmp_path / "config.toml", 'root = "C:\\temp\\new"\n')
+    with pytest.raises(ValueError, match="root") as excinfo:
+        config.load(path)
+    assert "control character" in str(excinfo.value)
+    assert str(path) in str(excinfo.value)
+
+
+def test_a_control_character_in_provider_budget_is_refused(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'backend = "api"\nprovider_budget = "C:\\budgets\\tight.json"\n')
+    with pytest.raises(ValueError, match="provider_budget") as excinfo:
+        config.load(path)
+    assert "control character" in str(excinfo.value)
+
+
+def test_a_control_character_in_a_command_array_element_is_refused(tmp_path: Path):
+    """An array element in double quotes reads `\\t` as TAB exactly as a string does."""
+    path = write(tmp_path / "config.toml", 'lean_command = ["C:/tools\\tlean.exe"]\n')
+    with pytest.raises(ValueError, match="lean_command") as excinfo:
+        config.load(path)
+    assert "control character" in str(excinfo.value)
+    assert str(path) in str(excinfo.value)
+
+
+def test_a_control_character_from_the_environment_names_the_variable_not_the_file(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("HARDY_LEAN_PROJECT", "C:/work\tlean")
+    with pytest.raises(ValueError, match="HARDY_LEAN_PROJECT") as excinfo:
+        config.load(path)
+    message = str(excinfo.value)
+    assert "control character" in message
+    assert str(path) not in message
+    assert "TOML" not in message
+
+
+def test_a_control_character_in_the_root_from_the_environment_names_the_variable(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HARDY_ROOT", "C:/work\tproblems")
+    with pytest.raises(ValueError, match="HARDY_ROOT") as excinfo:
+        config.load(tmp_path / "config.toml")
+    assert "TOML" not in str(excinfo.value)
+
+
+def test_a_control_character_from_a_flag_names_the_command_line(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "config.toml"
+    with pytest.raises(ValueError, match="command line") as excinfo:
+        config.load(path, lean_project="C:/work\tlean")
+    message = str(excinfo.value)
+    assert "lean_project" in message
+    assert str(path) not in message
+    assert "TOML" not in message
+    with pytest.raises(ValueError, match="root.*command line"):
+        config.load(path, root=Path("C:/work\tproblems"))
+
+
+def test_an_unbalanced_quote_in_a_command_names_the_setting_and_file(tmp_path: Path):
+    path = write(tmp_path / "config.toml", "lean_command = 'lake \"env lean'\n")
+    with pytest.raises(ValueError, match="lean_command") as excinfo:
+        config.load(path)
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert "quot" in message
+
+
+def test_an_unbalanced_quote_from_the_environment_names_the_variable(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HARDY_LATEX_COMMAND", 'tectonic "-X')
+    with pytest.raises(ValueError, match="HARDY_LATEX_COMMAND"):
+        config.load(tmp_path / "config.toml")
+
+
+@pytest.mark.parametrize("written", ["[]", '[""]', "['  ', '-v']"])
+def test_an_empty_command_is_refused_when_the_config_is_read(tmp_path: Path, written: str):
+    """An empty argv used to load and fail only at the first Lean call, with
+    an `IndexError` or `OSError` that named no setting. (A blank *string* in
+    the file is not here: `read_file` reads a blank value as unset.)"""
+    path = write(tmp_path / "config.toml", f"lean_command = {written}\n")
+    with pytest.raises(ValueError, match="lean_command") as excinfo:
+        config.load(path)
+    assert "empty" in str(excinfo.value)
+    assert str(path) in str(excinfo.value)
+
+
+@pytest.mark.parametrize("given", ["", "   "])
+def test_an_empty_command_given_on_the_command_line_is_refused(tmp_path: Path, monkeypatch, given: str):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="latex_command given on the command line is empty"):
+        config.load(tmp_path / "config.toml", latex_command=given)
+
+
+@pytest.mark.parametrize("value", [[], [""], "", "   ", '""'])
+def test_split_command_refuses_an_empty_command(value):
+    with pytest.raises(ValueError, match="latex_command.*empty"):
+        config.split_command(value, setting="latex_command")
+
+
 def test_migrate_global_round_trips_a_command_list(tmp_path: Path):
     legacy = tmp_path / "legacy" / "config.toml"
     legacy.parent.mkdir(parents=True)
