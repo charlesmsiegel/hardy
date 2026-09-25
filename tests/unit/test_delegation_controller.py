@@ -1228,3 +1228,129 @@ def test_concurrent_sessions_on_one_project_share_one_budget(tmp_path):
         for controller in (first, second, third, fourth):
             if controller is not None:
                 controller.shutdown()
+
+
+def _live_session(tmp_path, open_worker, *, checks=4, slots=1):
+    """A controller opened the way a session opens one: constructed, then recovered."""
+    controller = DelegationController(
+        DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(max(slots, 1)),
+        open_worker=open_worker, root=RootResources(lease=ResourceLease(official_checks=checks), slots=slots),
+        notify=lambda text: None)
+    controller.recover()
+    return controller
+
+
+def test_closing_one_concurrent_session_leaves_the_other_sessions_workers_running(tmp_path):
+    """Codex P1-a: a session's close cancels only the work it launched. A live
+    session's running worker, and the work it has queued, are its own; the
+    joining session neither cancels them on close nor relaunches the queued
+    one at open."""
+    from concurrent.futures import Future
+
+    from hardy.agents.executor import CancelToken, JobHandle
+
+    seed_lemma(tmp_path)
+    started, release = threading.Event(), threading.Event()
+    first = _live_session(tmp_path, _open([FINISH], gate=(started, release)))
+    second = None
+    try:
+        running = first.delegate(_spec(tmp_path))
+        assert started.wait(5)
+        queued = first.delegate(_spec(tmp_path))              # the one slot is taken: it waits in `first`
+        assert first.tree().get(queued.id).state is DelegationState.QUEUED
+        second = _live_session(tmp_path, _open([FINISH]))
+        future = Future()
+        own = second.attach_computation(objective="lake build", handle=JobHandle("lake", CancelToken(), future))
+        assert set(second.cancel_all(reason="session closed")) == {own.id}
+        second.finish_computation(own.id, output="stopped", ok=False, seconds=0.1, cancelled=True)
+        future.set_result(None)
+        second.shutdown()
+        tree = first.tree()
+        assert tree.get(running.id).state is DelegationState.ACTIVE and not tree.cancel_requested(running.id)
+        assert tree.get(queued.id).state is DelegationState.QUEUED and not tree.cancel_requested(queued.id)
+        release.set()
+        assert first.wait(running.id, timeout=10).state is DelegationState.COMPLETED
+        assert first.wait(queued.id, timeout=10).state is DelegationState.COMPLETED
+        starts = [e for e in first.store.events() if e.delegation_id == queued.id and e.kind == "delegation.started"]
+        assert len(starts) == 1, "the joining session relaunched work the live one had queued"
+    finally:
+        release.set()
+        if second is not None:
+            second.shutdown()
+        first.shutdown()
+
+
+def test_a_session_closes_its_own_work_and_work_nobody_live_owns(tmp_path):
+    """Work whose owner is gone is still the closing session's to cancel, as before."""
+    seed_lemma(tmp_path)
+    controller = _live_session(tmp_path, _open([FINISH]))
+    try:
+        orphan = controller.delegate(_spec(tmp_path, checks=1))
+        controller.wait(orphan.id, timeout=10)
+        store = controller.store
+        store.append("d-dead", "delegation.created", {"spec": _spec(tmp_path).model_dump(mode="json"),
+                                                      "parent_id": ROOT_ID, "created_at": "t",
+                                                      "owner": "0123456789abcdef"})
+        store.append("d-dead", "budget.reserved", {"lease": ResourceLease(official_checks=1).model_dump(mode="json"),
+                                                   "slots": 1})
+        assert controller.cancel_all(reason="session closed") == ("d-dead",)
+        assert controller.tree().get("d-dead").state is DelegationState.CANCELLED
+    finally:
+        controller.shutdown()
+
+
+def _root_reservations(controller):
+    return [e for e in controller.store.events() if e.delegation_id == ROOT_ID and e.kind == "budget.reserved"]
+
+
+def test_a_joining_session_adopts_the_shared_ceiling_and_never_raises_it(tmp_path):
+    """Codex P1-b: a join writes the epoch's reservation, not its own; a
+    session configured for more cannot widen the budget work was admitted
+    under, and it does not re-reserve on every call trying to."""
+    seed_lemma(tmp_path)
+    first = _live_session(tmp_path, _open([FINISH]), checks=4, slots=1)
+    second = None
+    try:
+        first.wait(first.delegate(_spec(tmp_path, checks=1)).id, timeout=10)     # the root and its epoch
+        second = _live_session(tmp_path, _open([FINISH]), checks=8, slots=3)
+        with pytest.raises(LeaseRefused, match="official_checks"):
+            second.delegate(_spec(tmp_path, checks=5))                           # joins, then is refused
+        joined = _root_reservations(second)[-1].payload
+        assert joined["joined"] and joined["slots"] == 1
+        assert ResourceLease.model_validate(joined["lease"]) == ResourceLease(official_checks=4)
+        ledger = LeaseLedger(second.tree())
+        assert ledger.reserved(ROOT_ID) == ResourceLease(official_checks=4) and ledger.slots(ROOT_ID) == 1
+        before = len(_root_reservations(second))
+        with pytest.raises(LeaseRefused, match="official_checks"):
+            second.delegate(_spec(tmp_path, checks=5))
+        done = second.delegate(_spec(tmp_path, checks=1))
+        second.wait(done.id, timeout=10)
+        assert len(_root_reservations(second)) == before, "the joined session re-reserved the shared root"
+    finally:
+        if second is not None:
+            second.shutdown()
+        first.shutdown()
+
+
+def test_a_joining_session_cannot_lower_the_shared_ceiling_until_it_is_alone(tmp_path):
+    """A live member's own ceilings, lower or higher, apply to the root only
+    once no other session of the epoch is live; until then the epoch's
+    reservation stands."""
+    seed_lemma(tmp_path)
+    first = _live_session(tmp_path, _open([FINISH]), checks=4, slots=1)
+    first.wait(first.delegate(_spec(tmp_path, checks=1)).id, timeout=10)         # the root and its epoch
+    second = _live_session(tmp_path, _open([FINISH]), checks=2, slots=1)
+    try:
+        second.wait(second.delegate(_spec(tmp_path, checks=1)).id, timeout=10)
+        assert LeaseLedger(second.tree()).reserved(ROOT_ID).official_checks == 4
+        epoch = LeaseLedger(second.tree()).epoch(ROOT_ID)
+        first.shutdown()
+        second.wait(second.delegate(_spec(tmp_path, checks=1)).id, timeout=10)
+        ledger = LeaseLedger(second.tree())
+        assert ledger.reserved(ROOT_ID).official_checks == 2 and ledger.epoch(ROOT_ID) == epoch
+        before = len(_root_reservations(second))
+        second.wait(second.delegate(_spec(tmp_path, checks=1)).id, timeout=10)
+        assert len(_root_reservations(second)) == before
+    finally:
+        second.shutdown()
+        first.shutdown()

@@ -804,7 +804,9 @@ class MathematicsSession:
 
         A worker cannot outlive the process that reads its results, so what
         is still running is journaled cancelled with this reason rather than
-        left to be found unknown at the next start.
+        left to be found unknown at the next start. Only this session's
+        workers: another live session on the same problem shares the
+        delegation root, and its work is its own (`cancel_all`).
         """
         if self._closed:
             return
