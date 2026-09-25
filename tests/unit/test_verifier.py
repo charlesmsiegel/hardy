@@ -582,3 +582,29 @@ def test_ordinary_bodies_still_pass(tmp_path, body) -> None:
     result = final.verify(claim, body, _store(storage, tmp_path))
 
     assert result.verified, result.diagnostics
+
+
+def test_a_report_after_an_exit_is_not_graded(tmp_path) -> None:
+    """Even with a report on the audit line, a run `#exit` interrupted is not
+    one Hardy's own `#print axioms` finished in. The body gate refuses `#exit`
+    before Lean runs; this is the check behind it, so a spelling the gate does
+    not know still cannot produce a verified result."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    process = importlib.import_module('hardy.foundation.process')
+    storage = importlib.import_module('hardy.workflows.storage')
+
+    def runner(spec):
+        source = Path(spec.argv[-1]).read_text(encoding='utf-8')
+        lines = (
+            {'severity': 'warning', 'pos': {'line': 2, 'column': 0},
+             'data': "using 'exit' to interrupt Lean"},
+            {'severity': 'information', 'pos': {'line': source.count('\n'), 'column': 0},
+             'data': "'two_eq_two' does not depend on any axioms"},
+        )
+        return _process_result(process, spec, stdout='\n'.join(json.dumps(item) for item in lines))
+
+    claim, final = _final_verifier(tmp_path, runner)
+    result = final.verify(claim, 'by trivial', _store(storage, tmp_path))
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.LEAN_ELABORATION_FAILURE

@@ -232,11 +232,9 @@ class FinalVerifier:
                 "Fresh Lean verification timed out or exceeded its output limit",
                 diagnostics,
             )
-        if (
-            process.returncode != 0
-            or elaboration.open_goals
-            or any(item.severity == "error" for item in diagnostics)
-        ):
+        # `success` rather than its parts restated, so the verifier also
+        # refuses a run `#exit` cut short with nothing worse than a warning.
+        if not elaboration.success:
             return _failure(
                 store,
                 source,
