@@ -1416,7 +1416,9 @@ def _assumed_run(tmp_path: Path, source: str):
         encoding='utf-8',
     )
     main = tmp_path / 'Main.lean'
-    main.write_text(source, encoding='utf-8')
+    # Bytes, not `write_text`: on Windows that writes CRLF, and the source
+    # under test would then differ by platform.
+    main.write_bytes(source.encode('utf-8'))
     manifest = SimpleNamespace(
         grades=SimpleNamespace(assumed=('foo',), formal=SimpleNamespace(value='verified_modulo'))
     )
@@ -1454,6 +1456,36 @@ def test_a_declaration_in_code_is_stated(tmp_path) -> None:
     )
 
     assert recorded._declaration_issues(manifest, main, tmp_path) == []
+
+
+def test_a_declaration_on_a_crlf_line_is_stated(tmp_path) -> None:
+    """Lean reads `\\r\\n` as `\\n`, so a CRLF source states the declaration
+    the kernel read -- what a Windows `write_text` or editor produces. Windows
+    CI caught this reading as undeclared. The byte-exact rebuild still refuses
+    such a source (`test_a_crlf_main_lean_that_hashes_right_is_still_refused`);
+    this is only the question of what was declared."""
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    manifest, main = _assumed_run(
+        tmp_path, 'import Mathlib\r\n\r\naxiom foo : True\r\n\r\ntheorem t : True :=\r\nfoo\r\n'
+    )
+    assert b'\r\n' in main.read_bytes()
+
+    assert recorded._declaration_issues(manifest, main, tmp_path) == []
+
+
+def test_a_declaration_behind_a_lone_carriage_return_in_a_comment_is_not_stated(tmp_path) -> None:
+    """A lone `\\r` does not end a Lean line comment, so everything after it
+    on that line is comment, and the `axiom foo : False` below is the only
+    `foo` the kernel read. Treating the `\\r` as a line break would find the
+    declared `foo : True` in code where there is none."""
+    recorded = importlib.import_module('hardy.workflows.recorded')
+    manifest, main = _assumed_run(
+        tmp_path, '-- note\raxiom foo : True\naxiom foo : False\ntheorem t : 1 = 2 := (foo).elim\n'
+    )
+
+    issues = recorded._declaration_issues(manifest, main, tmp_path)
+
+    assert any("does not state the declared assumption 'foo'" in issue for issue in issues)
 
 
 def test_a_signature_present_only_in_a_comment_differs_from_the_frozen_claim() -> None:
