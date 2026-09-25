@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from hardy.documents.latex import LatexTools, reached_fragments, unreached_fragments
+from hardy.documents.latex import (
+    LatexTools,
+    reached_fragments,
+    uncertain_conditionals,
+    unreached_fragments,
+)
 from hardy.workflows import layout
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
@@ -704,3 +709,48 @@ def test_a_newenvironment_body_does_not_reach_a_fragment():
     assert "a.tex" in reached
     assert "part.tex" not in reached
     assert "other.tex" not in reached
+
+
+# --- Codex on #393: a conditional counts from where TeX declares it ------------
+
+
+def test_an_input_after_a_redefined_conditional_is_not_credited_either_way() -> None:
+    r"""`\def\ifdraft{}` first, `\newif\ifdraft` last: inside `\iffalse`, TeX
+    meets `\ifdraft` as a macro and the first `\fi` closes the branch, so
+    `\input{x}` runs. Neither reading is credited: the fragment is reached
+    only where every reading reaches it, and the tree carries a finding."""
+    sources = {
+        "writeup.tex": "\\def\\ifdraft{}\\iffalse \\ifdraft \\fi \\input{x}\\fi\\input{a}\\newif\\ifdraft",
+        "a.tex": "x",
+        "x.tex": "maybe",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex"]
+    assert uncertain_conditionals(sources) == [("writeup.tex", "ifdraft")]
+
+
+def test_a_newif_input_before_its_use_stays_certain() -> None:
+    sources = {
+        "writeup.tex": "\\input{defs}\\iffalse \\ifdraft \\input{x}\\fi \\input{y}\\fi\\input{a}",
+        "defs.tex": "\\newif\\ifdraft\n",
+        "a.tex": "x",
+        "x.tex": "never",
+        "y.tex": "never",
+    }
+
+    assert uncertain_conditionals(sources) == []
+
+
+def test_a_conditional_bound_by_let_is_not_read_as_plain() -> None:
+    r"""`\let\ifdraft\iftrue` makes `\ifdraft` a conditional TeX counts while
+    it skips, so its `\fi` closes it and `\input{x}` stays inside the false
+    branch. Only `\newif` names were counted, so the first `\fi` closed the
+    branch here and a fragment nothing typesets was credited as reached."""
+    sources = {
+        "writeup.tex": "\\let\\ifdraft\\iftrue\\iffalse \\ifdraft \\fi \\input{x}\\fi\\input{a}",
+        "a.tex": "x",
+        "x.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex"]
+    assert uncertain_conditionals(sources) == [("writeup.tex", "ifdraft")]

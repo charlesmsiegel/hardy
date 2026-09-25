@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
 completion = importlib.import_module("hardy.documents.completion")
 
 STATEMENT = "theorem hardyOne : (n : Nat) -> n = n"
@@ -532,3 +534,62 @@ def test_an_assumptions_entry_never_answers_for_a_theorem_of_the_same_name() -> 
     # unguarded resolution reports nothing owed at all.
     assert "label" in kinds(obligations), obligations
     assert any("thm:t" in item.detail for item in obligations), obligations
+
+
+# --- Codex on #393: a conditional counts from where TeX declares it ------------
+#
+# `\def\ifdraft{}` makes `\ifdraft` a macro. Inside `\iffalse` TeX meets it as
+# one, so the first `\fi` closes the false branch and what follows is typeset.
+# The `\newif\ifdraft` at the end had been collected before the scan began,
+# so `\ifdraft` nested, and the live remainder -- an unbacked theorem here --
+# was read as hidden and never judged.
+
+THEOREM_STYLE = "\\newtheorem{theorem}{Theorem}\n"
+UNBACKED = "\\begin{theorem}\nGroups of prime order are abelian.\n\\end{theorem}\n"
+
+
+def _codex(before: str = "\\def\\ifdraft{}\n", after: str = "\\newif\\ifdraft\n") -> dict[str, str]:
+    body = (
+        before + "\\iffalse\n\\ifdraft\n\\fi\n" + UNBACKED
+        + "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n" + after
+    )
+    return {"writeup.tex": THEOREM_STYLE + "\\begin{document}\n" + body + "\\end{document}\n"}
+
+
+def test_a_conditional_declared_after_a_redefinition_is_not_guessed() -> None:
+    """Neither reading may pass: nesting hid the live theorem, not nesting
+    would credit a listing a different order hides. So it is a finding."""
+    found = owed(_codex())
+    assert "conditional" in kinds(found), found
+    detail = next(item.detail for item in found if item.kind == "conditional")
+    assert "\\ifdraft" in detail
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        # Used before any declaration: TeX has no conditional there yet.
+        ("", "\\newif\\ifdraft\n"),
+        # Bound by `\let`, which may or may not make it a conditional.
+        ("\\let\\ifdraft\\iftrue\n", ""),
+        # Declared inside a macro body, which runs only when expanded.
+        ("\\newcommand{\\setup}{\\newif\\ifdraft}\n", ""),
+        # Declared inside a false branch, where TeX never runs it.
+        ("\\iffalse\\newif\\ifdraft\\fi\n", ""),
+    ],
+    ids=["later", "let", "macro", "skipped"],
+)
+def test_every_uncertain_conditional_fails_the_check(before: str, after: str) -> None:
+    assert "conditional" in kinds(owed(_codex(before, after)))
+
+
+def test_a_conditional_declared_first_still_nests_without_a_finding() -> None:
+    """The earlier cases still hold: declared before use, in the same file or
+    in the preamble of the file that inputs the one using it."""
+    hidden = "\\iffalse\n\\ifdraft x \\fi\n\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n\\fi\n"
+    assert kinds(owed(document("\\newif\\ifdraft\n" + hidden))) == ["statement"]
+    tex = {
+        "writeup.tex": "\\newif\\ifdraft\n\\begin{document}\n\\input{body}\n\\end{document}\n",
+        "body.tex": hidden,
+    }
+    assert kinds(owed(tex)) == ["statement"]

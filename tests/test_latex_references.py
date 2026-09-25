@@ -555,3 +555,26 @@ def test_a_tex_file_the_compiler_wrote_is_not_read_back(tmp_path: Path, monkeypa
     # out of the scan rather than about it never existing.
     assert "wrote generated.tex" in result.output
     assert "generated.tex" not in read, read
+
+
+def test_a_false_branch_with_an_unplaceable_conditional_fails_the_compile(tmp_path: Path):
+    """Codex on #393. `\\def\\ifdraft{}` first and `\\newif\\ifdraft` last: TeX
+    meets `\\ifdraft` as a macro inside `\\iffalse`, and the scan cannot be
+    sure of that order, so where the branch ends is unknown. The check refuses
+    naming it rather than guessing which `\\input`s and labels are live."""
+    source = (
+        PREAMBLE + "\\def\\ifdraft{}\n\\iffalse \\ifdraft \\fi Live.\\fi\n\\newif\\ifdraft\n" + END
+    )
+    result = LatexTools(COMMAND).check(source, tree=_tree(tmp_path))
+    assert not result.ok
+    assert "\\ifdraft in writeup.tex" in result.output
+
+
+def test_a_redefined_iff_in_a_false_branch_is_no_finding(tmp_path: Path):
+    """A `\\newcommand` makes a macro, which TeX never counts while it skips:
+    nothing about it is uncertain, so nothing is refused."""
+    source = (
+        PREAMBLE + "\\renewcommand{\\iff}{\\Leftrightarrow}\n\\iffalse $a \\iff b$ \\fi Live.\n" + END
+    )
+    result = LatexTools(COMMAND).check(source, tree=_tree(tmp_path))
+    assert result.ok, result.output

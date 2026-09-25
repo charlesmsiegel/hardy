@@ -29,8 +29,8 @@ from hardy.documents.syntax import (
     _CONDITIONAL,
     INCLUSION,
     ROOT_DOCUMENT,
-    declared_conditionals,
-    opens_conditional,
+    Conditionals,
+    read_conditionals,
     uncommented,
 )
 from hardy.formal.syntax import COMMAND, normalise_lean, strip_comments
@@ -48,8 +48,9 @@ ENVIRONMENTS = frozenset(
 # A branch TeX compiles without typesetting. Bounded to the literal spelling:
 # this is a scanner, not a TeX engine, and the general conditional is a limit
 # stated in docs/design/output-contract.md rather than a case pretended to be handled.
-# Inside one, only a real conditional nests (`documents.syntax.opens_conditional`),
-# the same rule `_drop_iffalse` keeps for the reachability walk.
+# Inside one, only a real conditional nests (`documents.syntax.Conditionals`),
+# the same rule `_drop_iffalse` keeps for the reachability walk, and a name
+# Hardy cannot place is a finding rather than a guess.
 FALSE_BRANCH = re.compile(r"\\iffalse(?![A-Za-z])")
 # An environment opening, with whatever optional arguments it carries:
 # `\begin{Verbatim}[fontsize=\small]`, `\begin{minted}{lean}`.
@@ -93,7 +94,7 @@ PROOF = ":="
 #: `theorem` sits third: a document asserting a claim nothing backs is worse
 #: than one that backs its claims imprecisely, and not as bad as having no Lean
 #: at all.
-KINDS = ("open", "lean", "theorem", "statement", "record", "label", "appendix", "assumption")
+KINDS = ("open", "lean", "conditional", "theorem", "statement", "record", "label", "appendix", "assumption")
 # `\newtheorem{theorem}{Theorem}` declares an environment; the last group is the
 # word printed in front of the number. Matched on that word rather than on the
 # environment name, because the name is the author's private choice while the
@@ -147,9 +148,13 @@ class Displayed:
 
     executed: str
     quoted: tuple[tuple[int, str], ...]
+    # The `\if...` names met inside a false branch that Hardy cannot place
+    # (`Conditionals.ambiguous`): where the branch ends is unknown there, so
+    # neither `executed` nor `quoted` can be trusted past them.
+    uncertain: tuple[str, ...] = ()
 
 
-def displayed(source: str, declared: Collection[str] | None = None) -> Displayed:
+def displayed(source: str, conditionals: Conditionals | None = None) -> Displayed:
     r"""What one TeX file runs and what it displays, in one scan.
 
     Scanned line by line rather than matched with one regex, because the two
@@ -167,11 +172,15 @@ def displayed(source: str, declared: Collection[str] | None = None) -> Displayed
 
     A false branch nests the conditionals written inside it: the `\fi` of an
     `\ifx` there closes the `\ifx`, and stopping at it credited a listing TeX
-    never typeset as one shown to the reader. `declared` names the `\newif`
-    conditionals that nest too; by default, the ones `source` itself declares.
+    never typeset as one shown to the reader. `conditionals` says which
+    `\newif` names nest too, read in the order TeX meets them; by default,
+    `source`'s own. A name it calls ambiguous is nested and recorded in
+    `uncertain`, which `outstanding` turns into an obligation: nested, it may
+    hide live text; not nested, it may credit hidden text; so neither is taken.
     """
-    if declared is None:
-        declared = declared_conditionals((source,))
+    if conditionals is None:
+        conditionals = read_conditionals({ROOT_DOCUMENT: source})
+    uncertain: list[str] = []
     blocks: list[tuple[int, str]] = []
     ran: list[str] = []
     position = 0
@@ -212,7 +221,11 @@ def displayed(source: str, declared: Collection[str] | None = None) -> Displayed
                     cursor = found.end()
                     if found.group(2) == "fi":
                         skipping -= 1
-                    elif found.group(1) is None and opens_conditional(found.group(2), declared):
+                    elif found.group(1) is None and found.group(2) in conditionals.ambiguous:
+                        if found.group(2) not in uncertain:
+                            uncertain.append(found.group(2))
+                        skipping += 1
+                    elif found.group(1) is None and conditionals.opens(found.group(2)):
                         skipping += 1
                 if skipping:
                     break
@@ -258,7 +271,7 @@ def displayed(source: str, declared: Collection[str] | None = None) -> Displayed
             closing = f"\\end{{{opening.group(1)}}}"
             line = line[opening.end() :]
         emit("\n")
-    return Displayed("".join(ran), tuple(blocks))
+    return Displayed("".join(ran), tuple(blocks), tuple(uncertain))
 
 
 def target(name: str, tex: Mapping[str, str]) -> str:
@@ -289,16 +302,19 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
     not typeset, and a statement quoted there is in front of nobody.
     """
     seen: set[str] = set()
-    # Over every file at once: a preamble usually declares what the body uses.
-    declared = declared_conditionals(tex.values())
+    # Over every file, in the order the root inputs them: a preamble usually
+    # declares what the body uses, and a declaration counts from where TeX
+    # meets it, not from wherever in the tree it happens to be written.
+    conditionals = read_conditionals(tex)
 
     def walk(path: str) -> Displayed:
         if not path or path in seen or path not in tex:
             return Displayed("", ())
         seen.add(path)
-        page = displayed(tex[path], declared)
+        page = displayed(tex[path], conditionals)
         parts: list[str] = []
         quoted: list[tuple[int, str]] = []
+        uncertain: list[str] = list(page.uncertain)
         length = 0
         consumed = 0
         for match in INCLUSION.finditer(page.executed):
@@ -313,6 +329,7 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
             child = walk(target(match.group(1), tex))
             parts.append(child.executed)
             quoted.extend((length + offset, block) for offset, block in child.quoted)
+            uncertain.extend(name for name in child.uncertain if name not in uncertain)
             length += len(child.executed)
             consumed = match.end()
         tail = page.executed[consumed:]
@@ -322,7 +339,7 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
             for offset, block in page.quoted
             if offset >= consumed
         )
-        return Displayed("".join(parts), tuple(quoted))
+        return Displayed("".join(parts), tuple(quoted), tuple(uncertain))
 
     return walk(ROOT_DOCUMENT)
 
@@ -620,6 +637,23 @@ def outstanding(
                     _statement_detail(statement, written),
                 )
             )
+    # Ahead of what is read off the document: past an `\if...` Hardy cannot
+    # place inside a false branch, what the reader is shown is not known, so
+    # nothing below can be taken as settled -- a theorem the scan hid may be
+    # typeset, a listing it shows may not be.
+    owed.extend(
+        Obligation(
+            "conditional",
+            "",
+            f"a false branch (\\iffalse) holds \\{name}, and Hardy cannot tell whether TeX counts "
+            "it as a conditional there -- it is bound with \\let, both declared and redefined, "
+            "declared where the declaration may not run, or used before its \\newif -- so "
+            "where the branch ends, and what the reader is shown, is not known. Declare it once "
+            "with \\newif before any use, outside any conditional or macro, and bind it no "
+            "other way.",
+        )
+        for name in document.uncertain
+    )
     owed.extend(_theorem_obligations(document, known, registry, labels, assumptions))
     owed.extend(_assumption_obligations(assumptions, used, labels, document))
     return tuple(sorted(owed, key=lambda item: (KINDS.index(item.kind), item.subject)))
