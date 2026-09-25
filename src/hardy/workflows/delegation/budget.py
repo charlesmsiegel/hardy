@@ -19,6 +19,12 @@ from hardy.workflows.delegation.contracts import (
 )
 from hardy.workflows.delegation.store import DelegationTree
 
+#: Dimensions a worker cannot overrun: its timer stops it at `active_seconds`
+#: and its `CheckBudget` at `official_checks`. Where its usage there is
+#: unknown -- interrupted work -- it is charged its whole lease, which bounds
+#: what it could have spent, rather than its parent's whole remainder.
+BOUNDED_BY_LEASE = ("official_checks", "active_seconds")
+
 #: States in which a child holds its parent's worker slots. Queued work holds
 #: none: there may be more runnable leaves than slots, and which of them run
 #: is scheduling, not reservation.
@@ -30,19 +36,41 @@ class LeaseRefused(ValueError):
 
 
 class LeaseLedger:
-    """Read-only lease arithmetic over one replayed tree."""
+    """Read-only lease arithmetic over one replayed tree.
+
+    Two kinds of child are left out of what a parent is charged. A detached
+    computation (`delegation.started` with `compute`) reserves nothing and is
+    bounded by its tool's own timeout: its usage is its own record's and
+    `compute_usage`'s, never its parent's spend. And where a node's
+    reservation names an `epoch` -- the root's does, one per session -- a
+    child released before that epoch began was an earlier session's spending
+    and no longer counts against it. A child still holding a reservation, or
+    released since the epoch began, counts whenever it was created. A journal
+    written before epochs existed names none, so its root stays cumulative.
+    """
 
     def __init__(self, tree: DelegationTree) -> None:
         self.tree = tree
         self._reserved: dict[str, ResourceLease] = {}
         self._slots: dict[str, int] = {}
-        self._released: set[str] = set()
+        self._released: dict[str, int] = {}
+        self._epoch: dict[str, str] = {}
+        self._epoch_start: dict[str, int] = {}
+        self._compute: set[str] = set()
         for event in tree.events:
+            id = event.delegation_id
             if event.kind == "budget.reserved":
-                self._reserved[event.delegation_id] = ResourceLease.model_validate(event.payload["lease"])
-                self._slots[event.delegation_id] = int(event.payload.get("slots", 0))
+                self._reserved[id] = ResourceLease.model_validate(event.payload["lease"])
+                self._slots[id] = int(event.payload.get("slots", 0))
+                epoch = event.payload.get("epoch")
+                if epoch is not None and str(epoch) != self._epoch.get(id):
+                    # A new epoch starts here; the same one re-reserved (a
+                    # ceiling that moved mid-session) continues it.
+                    self._epoch[id], self._epoch_start[id] = str(epoch), event.sequence
             elif event.kind == "budget.released":
-                self._released.add(event.delegation_id)
+                self._released.setdefault(id, event.sequence)
+            elif event.kind == "delegation.started" and event.payload.get("compute"):
+                self._compute.add(id)
 
     def reserved(self, id: str) -> ResourceLease:
         return self._reserved.get(id, self.tree.get(id).spec.lease)
@@ -53,11 +81,52 @@ class LeaseLedger:
     def released(self, id: str) -> bool:
         return id in self._released
 
+    def epoch(self, id: str) -> str | None:
+        """The epoch the node's reservation is currently in, or None where none was named."""
+        return self._epoch.get(id)
+
+    def is_computation(self, id: str) -> bool:
+        return id in self._compute
+
+    def _in_epoch(self, parent: str, child: str) -> bool:
+        """Whether `child` belongs to `parent`'s current epoch: not released before it began."""
+        start = self._epoch_start.get(parent)
+        released = self._released.get(child)
+        return start is None or released is None or released > start
+
+    def _charged(self, child: str) -> ResourceUsage:
+        """What a released child costs its parent: its usage, with unknown checks and seconds bounded by its lease."""
+        used, lease = self.usage(child), self.reserved(child)
+        stated = {name: getattr(lease, name) for name in used.unknown
+                  if name in BOUNDED_BY_LEASE and getattr(lease, name) is not None}
+        if not stated:
+            return used
+        return used.model_copy(update={**stated,
+                                       "unknown": tuple(name for name in used.unknown if name not in stated)})
+
+    def _charges(self, id: str) -> tuple[str, ...]:
+        """The children whose usage is `id`'s spend: in its epoch and not computations."""
+        return tuple(child for child in self.tree.children(id)
+                     if child not in self._compute and self._in_epoch(id, child))
+
     def usage(self, id: str) -> ResourceUsage:
-        """Own reported usage plus every descendant's; unknown propagates upward."""
+        """Own reported usage plus every charged descendant's; unknown propagates upward.
+
+        A released child contributes what it is charged (`_charged`); a
+        computation and a child released before the current epoch contribute
+        nothing here (see the class docstring).
+        """
         total = self.tree.usage_reported.get(id, ResourceUsage())
+        for child in self._charges(id):
+            total = total + (self._charged(child) if child in self._released else self.usage(child))
+        return total
+
+    def compute_usage(self, id: str) -> ResourceUsage:
+        """What the node's detached computations in its current epoch used, for reporting only."""
+        total = ResourceUsage()
         for child in self.tree.children(id):
-            total = total + self.usage(child)
+            if child in self._compute and self._in_epoch(id, child):
+                total = total + self.usage(child)
         return total
 
     def child_reservations(self, id: str, *, excluding: str | None = None) -> ResourceLease:
@@ -76,7 +145,10 @@ class LeaseLedger:
         never the part that was used. A dimension that usage cannot state,
         here or in a released child, is unknown liability, so nothing further
         is promised in it: the whole remainder is treated as spent rather
-        than as available.
+        than as available. The exception is a released child's checks and
+        seconds, which its lease bounds (`BOUNDED_BY_LEASE`): unknown there,
+        it is charged that lease. Computations and children released before
+        the node's current epoch are not spent at all.
         """
         return self._allocatable(id, excluding=None)
 
@@ -91,9 +163,9 @@ class LeaseLedger:
 
     def _allocatable(self, id: str, *, excluding: str | None) -> ResourceLease:
         spent = self.tree.usage_reported.get(id, ResourceUsage())
-        for child in self.tree.children(id):
+        for child in self._charges(id):
             if child in self._released:
-                spent = spent + self.usage(child)
+                spent = spent + self._charged(child)
         remaining = self.reserved(id) - self.child_reservations(id, excluding=excluding)
         values: dict[str, Any] = {}
         for name in DIMENSIONS:

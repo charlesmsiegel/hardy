@@ -19,6 +19,7 @@ from hardy.workflows.delegation.contracts import (
     DelegationSpec,
     DelegationState,
     ResourceLease,
+    ResourceUsage,
 )
 from hardy.workflows.delegation.controller import ROOT_ID, DelegationController, RootResources
 from hardy.workflows.delegation.store import DelegationStore
@@ -976,3 +977,164 @@ def test_cancelling_a_computation_reaches_its_token_and_the_end_is_journaled_can
         assert done.state is DelegationState.CANCELLED and done.terminal_reason == "user"
     finally:
         controller.shutdown()
+
+
+class _HeldHandle:
+    def __init__(self, name):
+        self.name = name
+
+    def done(self):
+        return False
+
+    def result(self, timeout=None):
+        raise TimeoutError
+
+    def cancel(self):
+        pass
+
+    def add_done_callback(self, fn):
+        pass
+
+
+class _HeldExecutor:
+    """Accepts work and never runs it, so a test can leave a worker `active` for a process to die under."""
+
+    slots = 2
+
+    def submit(self, job):
+        return _HeldHandle(job.name)
+
+    def active(self):
+        return 0
+
+    def shutdown(self, wait):
+        pass
+
+
+def _session_spec(tmp_path):
+    snapshot = LedgerStore(tmp_path).read()
+    return DelegationSpec(objective="prove L17", project_refs=(snapshot.head("L17").ref,),
+                          scope=snapshot.head("scope").ref,
+                          lease=ResourceLease(official_checks=1, active_seconds=60.0),
+                          concurrency=ConcurrencyLease(slots=1), created_by="human")
+
+
+def test_an_interrupted_worker_does_not_stop_the_next_session_delegating(tmp_path):
+    """Issue #196: the recovered worker is the last session's spending, and the
+    next session's root budget is its own."""
+    seed_lemma(tmp_path)
+
+    def session(executor):
+        return DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=executor,
+                                    open_worker=_open([FINISH]),
+                                    root=RootResources(lease=ResourceLease(official_checks=20, active_seconds=3600.0),
+                                                       slots=2),
+                                    notify=lambda text: None)
+
+    first = session(_HeldExecutor())
+    lost = first.delegate(_session_spec(tmp_path))
+    first.store.append(lost.id, "delegation.started", {"owner": "0123456789abcdef"})   # then the process dies
+    second = session(LocalExecutor(2))
+    try:
+        assert [d.id for d in second.recover()] == [lost.id]
+        assert second.tree().get(lost.id).state is DelegationState.UNKNOWN
+        ledger = LeaseLedger(second.tree())
+        assert ledger.allocatable(ROOT_ID) == ResourceLease(official_checks=20, active_seconds=3600.0)
+        assert ledger.exhausted(ROOT_ID) == ()
+        worker = second.delegate(_session_spec(tmp_path))
+        assert second.wait(worker.id, timeout=10).state is DelegationState.COMPLETED
+    finally:
+        second.shutdown()
+        first.shutdown()
+
+
+def test_each_session_opens_its_own_root_epoch_and_keeps_it(tmp_path):
+    """What one session's workers spent is not the next session's to lose; a
+    session's own spending stays charged for as long as it runs."""
+    seed_lemma(tmp_path)
+
+    def session():
+        return DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+                                    open_worker=_open([FINISH], report={"cost_usd": 0.5, "usage": {}}),
+                                    root=RootResources(lease=ResourceLease(cost_usd=Decimal("1"), official_checks=4),
+                                                       slots=1),
+                                    notify=lambda text: None)
+
+    def spec():
+        return _spec(tmp_path).model_copy(update={"lease": ResourceLease(cost_usd=Decimal("0.5"), official_checks=1)})
+
+    first = session()
+    try:
+        first.recover()
+        done = first.delegate(spec())
+        first.wait(done.id, timeout=10)
+        assert LeaseLedger(first.tree()).allocatable(ROOT_ID).cost_usd == Decimal("0.5")
+        # Another call within the session does not start a new epoch.
+        first.attach_computation(objective="lake build", handle=_HeldHandle(None))
+        assert LeaseLedger(first.tree()).allocatable(ROOT_ID).cost_usd == Decimal("0.5")
+        epoch = LeaseLedger(first.tree()).epoch(ROOT_ID)
+        assert epoch is not None
+    finally:
+        first.shutdown()
+    second = session()
+    try:
+        second.recover()
+        ledger = LeaseLedger(second.tree())
+        assert ledger.epoch(ROOT_ID) not in {None, epoch}
+        assert ledger.allocatable(ROOT_ID).cost_usd == Decimal("1")
+        assert second.status()["root"]["usage"] == ResourceUsage().model_dump(mode="json")
+    finally:
+        second.shutdown()
+
+
+class _ComputationHandle:
+    name = None
+
+    def done(self):
+        return False
+
+    def result(self, timeout=None):
+        return None
+
+    def cancel(self):
+        pass
+
+    def add_done_callback(self, fn):
+        self.fn = fn
+
+
+def test_detached_computations_leave_the_roots_seconds_whole_and_are_reported_apart(tmp_path):
+    """Issue #201: six 100 s computations under a 600 s root draw nothing from it."""
+    seed_lemma(tmp_path)
+
+    def session():
+        return DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(2),
+                                    open_worker=_open([FINISH]),
+                                    root=RootResources(lease=ResourceLease(official_checks=4, active_seconds=600.0),
+                                                       slots=2),
+                                    notify=lambda text: None)
+
+    first = session()
+    try:
+        for index in range(6):
+            handle = _ComputationHandle()
+            job = first.attach_computation(objective=f"lake build {index}", handle=handle)
+            first.finish_computation(job.id, output="ok", ok=True, seconds=100.0)
+            handle.fn(handle)
+        ledger = LeaseLedger(first.tree())
+        assert ledger.allocatable(ROOT_ID).active_seconds == 600.0
+        assert ledger.exhausted(ROOT_ID) == ()
+        root = first.status()["root"]
+        assert root["compute_usage"]["active_seconds"] == 600.0
+        assert root["usage"]["active_seconds"] == 0.0
+        worker = first.delegate(_session_spec(tmp_path))
+        assert first.wait(worker.id, timeout=10).state is DelegationState.COMPLETED
+    finally:
+        first.shutdown()
+    second = session()
+    try:
+        second.recover()
+        worker = second.delegate(_session_spec(tmp_path))
+        assert second.wait(worker.id, timeout=10).state is DelegationState.COMPLETED
+    finally:
+        second.shutdown()

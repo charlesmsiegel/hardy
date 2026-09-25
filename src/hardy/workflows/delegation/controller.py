@@ -143,6 +143,9 @@ class DelegationController:
         self._handles: dict[str, WorkerHandle] = {}
         #: This process's claim on the workers it starts, for as long as it lives.
         self._owner = OwnerToken.hold(store.workspace)
+        #: Whether this controller has opened its root epoch: the root lease is
+        #: a budget for one session, named by the owner token's id.
+        self._epoch_opened = False
         #: Live check budgets by delegation id, so a granted tranche reaches a running worker.
         self._budgets: dict[str, CheckBudget] = {}
         #: Computations attached on threads of their own: handles that hold no pool slot.
@@ -170,6 +173,7 @@ class DelegationController:
             root = {
                 "lease": ledger.reserved(ROOT_ID).model_dump(mode="json"),
                 "usage": ledger.usage(ROOT_ID).model_dump(mode="json"),
+                "compute_usage": ledger.compute_usage(ROOT_ID).model_dump(mode="json"),
                 "allocatable": ledger.allocatable(ROOT_ID).model_dump(mode="json"),
                 "slots": ledger.slots(ROOT_ID), "slots_in_use": ledger.slots_in_use(ROOT_ID),
             }
@@ -209,11 +213,6 @@ class DelegationController:
                              if e.delegation_id == delegation.id and e.kind == "delegation.recovered")
                 self._after_terminal(delegation.id, event)
             tree = self.tree()
-            if ROOT_ID in tree.delegations:
-                # This session's ceilings, not the last one's: the root follows
-                # them before any queued work is measured against it.
-                self._ensure_root(tree.get(ROOT_ID).spec.scope)
-                tree = self.tree()
             for delegation in tree.delegations.values():
                 # A cell exposed by its creation event but never started: it
                 # runs no worker, so nothing else would ever start it.
@@ -233,6 +232,14 @@ class DelegationController:
                     if terminal is not None and terminal.sequence not in derived:
                         self._route(delegation.id, terminal)
             tree = self.tree()
+            if ROOT_ID in tree.delegations:
+                # This session's ceilings, not the last one's: the root follows
+                # them before any queued work is measured against it. After the
+                # releases above, so the work the last session ended -- the
+                # interrupted work included -- is released before this
+                # session's epoch begins, and stays the last session's.
+                self._ensure_root(tree.get(ROOT_ID).spec.scope)
+                tree = self.tree()
             ledger = LeaseLedger(tree)
             queued = [d for d in tree.delegations.values()
                       if d.state is DelegationState.QUEUED and d.parent_id is not None
@@ -331,8 +338,18 @@ class DelegationController:
                                                                phase=RunPhase.PROVING))
 
     def _ensure_root(self, scope: VersionRef | None) -> None:
+        """The root holds this session's ceilings, in this session's epoch.
+
+        The root lease is a budget for one session, not for the project's
+        life: the first call in a controller re-reserves it under a new
+        `epoch` (the owner token's id), and `LeaseLedger` stops charging the
+        root for children released before that. Later calls re-reserve only
+        when the ceilings moved, keeping whichever epoch is current, so
+        nothing this session spent is forgotten mid-session.
+        """
         tree = self.tree()
         lease = ResourceLease.model_validate(self.root.lease.model_dump())
+        opening = not self._epoch_opened
         if ROOT_ID not in tree.delegations:
             spec = DelegationSpec(objective="session root resources", project_refs=(), scope=scope,
                                   lease=lease, concurrency=ConcurrencyLease(slots=self.root.slots),
@@ -341,13 +358,17 @@ class DelegationController:
                 "spec": spec.model_dump(mode="json"), "parent_id": None,
                 "created_at": self._clock().isoformat()})
             self.store.append(ROOT_ID, "budget.reserved", {"lease": lease.model_dump(mode="json"),
-                                                          "slots": self.root.slots})
+                                                          "slots": self.root.slots, "epoch": self._owner.id})
+            self._epoch_opened = True
             return
         ledger = LeaseLedger(tree)
-        if ledger.reserved(ROOT_ID) != lease or ledger.slots(ROOT_ID) != self.root.slots:
-            # The session's ceilings moved between runs; the root follows them.
+        epoch = self._owner.id if opening else ledger.epoch(ROOT_ID)
+        if opening or ledger.reserved(ROOT_ID) != lease or ledger.slots(ROOT_ID) != self.root.slots:
+            # A new session, or ceilings that moved; the root follows them.
             self.store.append(ROOT_ID, "budget.reserved", {"lease": lease.model_dump(mode="json"),
-                                                          "slots": self.root.slots})
+                                                          "slots": self.root.slots,
+                                                          **({"epoch": epoch} if epoch is not None else {})})
+        self._epoch_opened = True
 
     def delegate(self, spec: DelegationSpec, *, parent_id: str | None = None) -> Delegation:
         spec = DelegationSpec.model_validate(spec.model_dump())

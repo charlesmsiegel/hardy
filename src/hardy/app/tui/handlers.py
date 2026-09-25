@@ -1357,6 +1357,9 @@ def _jobs_overview(ui: Ui, delegations: Any) -> None:
     if root:
         ui.write(f"  root lease: {root['lease']}")
         ui.write(f"  root usage: {root['usage']}")
+        if root.get("compute_usage"):
+            # Reported, never charged: a computation is bounded by its tool's timeout.
+            ui.write(f"  computations: {root['compute_usage']}")
         ui.write(f"  allocatable: {root['allocatable']}; slots {root['slots_in_use']}/{root['slots']} in use")
     for delegation in delegations.tree().delegations.values():
         if delegation.id == "root":

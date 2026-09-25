@@ -92,7 +92,7 @@ def _delegation_scope(session: Any) -> dict[str, Any]:
     return {
         "id": "delegations",
         "label": "delegations",
-        "note": "the root lease ledger, which is a different measurement from the session's own",
+        "note": "the root lease ledger in this session's epoch, which is a different measurement from the session's own",
         "measured": True,
         "figures": {name: usage.get(name) for name in FIGURES},
         "coverage": None,

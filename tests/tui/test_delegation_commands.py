@@ -28,6 +28,7 @@ class _Delegations:
     def status(self):
         return {"counts": {"active": 1, "completed": 1},
                 "root": {"lease": {"official_checks": 4}, "usage": {"official_checks": 1, "unknown": ["cost_usd"]},
+                         "compute_usage": {"active_seconds": 42.5},
                          "allocatable": {"official_checks": 2}, "slots": 2, "slots_in_use": 1},
                 "attention": {"human": 1, "main_agent": 1}}
 
@@ -150,6 +151,8 @@ async def test_jobs_lists_delegations_budget_and_pending_attention(ui, settings)
     assert "session root resources" not in ui.text          # the synthetic root is budget, not a job
     assert "official_checks" in ui.text and "unknown" in ui.text
     assert "d-0 (prove L16) completed" in ui.text
+    # Detached computations' time is reported apart from what the root was charged.
+    assert "computations: {'active_seconds': 42.5}" in ui.text
 
 
 async def test_cancel_requests_cancellation_and_names_what_it_reached(ui, settings):
