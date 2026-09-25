@@ -456,6 +456,34 @@ def test_update_source_survives_autocrlf_diff_warnings(tmp_path: Path):
     assert "NativeCommandError" not in (result.stdout + result.stderr)
 
 
+def fake_hardy_exe(venv: Path) -> None:
+    """Stand in for `<venv>/Scripts/hardy.exe` by copying the running
+    interpreter, for a test that needs a real executable a shim can launch --
+    a batch file merely named `.exe` fails at `CreateProcess` outright.
+
+    On Windows, `sys.executable` inside a venv (uv's included) is itself a
+    venv *launcher*: at startup it reads a `pyvenv.cfg` next to its own parent
+    directory to find the real interpreter, and exits 1 with "No pyvenv.cfg
+    file" without one. `sys._base_executable` is the real interpreter either
+    way (identical to `sys.executable` outside a venv), so writing a
+    `pyvenv.cfg` pointing `home` at its directory is what the copied launcher
+    needs to run as a stand-alone `hardy.exe`. Outside a venv, no launcher
+    means no `pyvenv.cfg` is needed at all.
+    """
+    scripts = venv / "Scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copy(sys.executable, scripts / "hardy.exe")
+    base = Path(sys._base_executable).resolve()
+    if base != Path(sys.executable).resolve():
+        version = "{}.{}.{}".format(*sys.version_info[:3])
+        (venv / "pyvenv.cfg").write_text(
+            f"home = {base.parent}\n"
+            "include-system-site-packages = false\n"
+            f"version = {version}\n",
+            encoding="utf-8",
+        )
+
+
 @windows_only
 def test_get_shim_content_runs_under_a_hostile_path(tmp_path: Path):
     """#305: a shim written under a non-ASCII, space- and `%`-containing path
@@ -470,8 +498,7 @@ def test_get_shim_content_runs_under_a_hostile_path(tmp_path: Path):
     echo_args.write_text("import sys\nprint(' '.join(sys.argv[1:]))\n", encoding="utf-8")
 
     def shim_case(bin_dir: Path, venv: Path, extra_preamble: str = "") -> subprocess.CompletedProcess:
-        (venv / "Scripts").mkdir(parents=True)
-        shutil.copy(sys.executable, venv / "Scripts" / "hardy.exe")
+        fake_hardy_exe(venv)
         bin_dir.mkdir(parents=True)
         shim = bin_dir / "hardy.cmd"
         body = (
