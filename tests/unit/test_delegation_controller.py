@@ -1438,9 +1438,11 @@ def test_a_worker_is_started_once_even_when_two_sessions_hold_its_launch(tmp_pat
         first.shutdown()
 
 
-def test_resuming_another_live_sessions_queued_work_leaves_its_launch_where_it_is(tmp_path):
-    """Re-review M-B: a pause and resume from a second session does not give it
-    a launch of its own; the session that queued the work runs it, once."""
+def test_resuming_another_live_sessions_paused_work_runs_it_once_even_while_that_session_idles(tmp_path):
+    """Review N-1: the session that queued the work may never act again, so a
+    resume from another session relaunches it there. Two launches cannot both
+    start it -- the start is decided under the journal lock -- so whichever
+    session dispatches first runs it, once."""
     seed_lemma(tmp_path)
     held, free = threading.Event(), threading.Event()
     first = _live_session(tmp_path, _open([FINISH], gate=(held, free)), checks=4, slots=1)
@@ -1449,21 +1451,40 @@ def test_resuming_another_live_sessions_queued_work_leaves_its_launch_where_it_i
         running = first.delegate(_spec(tmp_path))
         assert held.wait(5)
         queued = first.delegate(_spec(tmp_path))
-        second = _live_session(tmp_path, _open([FINISH]), checks=4, slots=2)
-        second.pause(queued.id, by="human")
-        note = second.resume(queued.id, by="human")
-        assert note and "another open session" in note
-        assert queued.id not in second._pending and queued.id not in second._handles
+        first.pause(queued.id, by="human")
         free.set()
-        assert first.wait(running.id, timeout=10).state is DelegationState.COMPLETED
-        assert first.wait(queued.id, timeout=10).state is DelegationState.COMPLETED
-        starts = [e for e in first.store.events() if e.delegation_id == queued.id and e.kind == "delegation.started"]
-        assert len(starts) == 1
+        assert first.wait(running.id, timeout=10).state is DelegationState.COMPLETED      # `first` is idle now
+        second = _live_session(tmp_path, _open([FINISH]), checks=4, slots=1)
+        assert second.resume(queued.id, by="human") is None
+        assert second.wait(queued.id, timeout=10).state is DelegationState.COMPLETED
+        starts = [e for e in second.store.events() if e.delegation_id == queued.id and e.kind == "delegation.started"]
+        assert [e.payload["owner"] for e in starts] == [second._owner.id]
     finally:
         free.set()
         if second is not None:
             second.shutdown()
         first.shutdown()
+
+
+def test_cancel_names_active_work_no_open_session_runs(tmp_path):
+    """Review N-2: a crashed session's worker, not yet recovered, runs nowhere;
+    a cancel request cannot stop it and the caller is told what happens instead."""
+    seed_lemma(tmp_path)
+    controller = _live_session(tmp_path, _open([FINISH]))
+    try:
+        controller.delegate(_spec(tmp_path, checks=1))                     # the root
+        store = controller.store
+        store.append("d-crashed", "delegation.created", {"spec": _spec(tmp_path).model_dump(mode="json"),
+                                                         "parent_id": ROOT_ID, "created_at": "t",
+                                                         "owner": "0123456789abcdef"})
+        store.append("d-crashed", "budget.reserved",
+                     {"lease": ResourceLease(official_checks=1).model_dump(mode="json"), "slots": 1})
+        store.append("d-crashed", "delegation.started", {"owner": "0123456789abcdef"})
+        assert controller.cancel("d-crashed", reason="user") == ("d-crashed",)
+        assert controller.stranded(("d-crashed",)) == ("d-crashed",)
+        assert controller.running_elsewhere(("d-crashed",)) == ()
+    finally:
+        controller.shutdown()
 
 
 def test_cancel_says_which_targets_only_another_session_can_stop(tmp_path):

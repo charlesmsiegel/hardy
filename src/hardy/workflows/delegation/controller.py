@@ -637,25 +637,22 @@ class DelegationController:
                 raise ValueError(f"{id} is already handed to the executor; cancel it instead of pausing")
             self.store.append(id, "delegation.paused", {"by": by})
 
-    def resume(self, id: str, *, by: str) -> str | None:
-        """Return paused work to the queue; a note when another session will be the one to run it."""
+    def resume(self, id: str, *, by: str) -> None:
         with self._lock:
             node = self.tree().get(id)
             if node.state is not DelegationState.PAUSED:
                 raise ValueError(f"{id} is not paused")
             self.store.append(id, "delegation.resumed", {"by": by})
-            note = None
-            if id in self._foreign_live(self.tree()):
-                # Another live session queued it and still holds its launch;
-                # a second launch here could only race it.
-                note = f"{id} was queued by another open session on this problem; that session runs it."
-            elif id not in self._pending and id not in self._handles:
-                # Paused before this process started: relaunch from the persisted package.
+            if id not in self._pending and id not in self._handles:
+                # Paused before this process started, or queued by another
+                # session that may never act again: relaunch from the persisted
+                # package. Another session may hold a launch too; the start is
+                # decided under the journal lock, so whichever dispatches first
+                # runs it and the other's launch is refused and dropped.
                 launch = self._relaunch(self.tree().get(id), LeaseLedger(self.tree()).reserved(id))
                 if launch is not None:
                     self._pending[id] = launch
             self._dispatch()
-            return note
 
     def set_lane(self, id: str, lane: Lane, *, by: str) -> None:
         with self._lock:
@@ -1125,6 +1122,25 @@ class DelegationController:
             # An interior cell runs nothing: whoever cancels it settles it once its children end.
             return tuple(id for id in ids if id in foreign and tree.get(id).state in HOLDING_SLOTS
                          and not tree.get(id).interior)
+
+    def stranded(self, ids: tuple[str, ...]) -> tuple[str, ...]:
+        """Which of `ids` are journaled running but run in no open session: their owner has gone.
+
+        A crashed session's worker, not yet recovered. A cancel request
+        reaches nothing; the next start marks it interrupted (`recover`).
+        """
+        with self._lock:
+            tree = self.tree()
+            stranded = []
+            for id in ids:
+                node = tree.get(id)
+                if node.state not in HOLDING_SLOTS or node.interior or id in self._handles:
+                    continue
+                if node.owner == self._owner.id:
+                    continue
+                if node.owner is None or not OwnerToken.alive(self.store.workspace, node.owner):
+                    stranded.append(id)
+            return tuple(stranded)
 
     def wait(self, id: str, timeout: float | None = None) -> Delegation:
         """Block until the journal shows a terminal state. For tests and command-line callers."""
