@@ -1091,7 +1091,6 @@ def main() -> None:
 
     capture = _Capture(limit)
 
-    global PENDING_INTERRUPT
     stdin = _protocol_input()
     redirect_console_breaks()
     try:
@@ -1108,6 +1107,12 @@ def main() -> None:
             os.write(
                 capture.saved_stderr, _describe_failure().encode("utf-8", "backslashreplace")
             )
+        # Writing the traceback and returning left this exit 0: a supervisor
+        # watching the exit code, not just the pipe, saw a clean shutdown and
+        # never learned the kernel died mid-session. `raise` would let a
+        # `finally` elsewhere swallow it; `SystemExit` here cannot be mistaken
+        # for a cell's own and is the last thing this function does.
+        raise SystemExit(1) from None
 
 
 def _cell_loop(stdin, namespace: dict, baseline: dict, limit: int, capture: _Capture) -> None:
@@ -1185,12 +1190,13 @@ def _cell_loop(stdin, namespace: dict, baseline: dict, limit: int, capture: _Cap
         # cell's error rather than allowed to end the session over it: no
         # path from a cell's source may cost the loop itself (issue #311).
         except BaseException:
+            stderr, truncated = clip(_describe_failure(), limit)
             reply = {
                 "status": "error",
                 "stdout": "",
-                "stderr": _describe_failure(),
+                "stderr": stderr,
                 "value_repr": "",
-                "capture_truncated": False,
+                "capture_truncated": truncated,
             }
         finally:
             _handle_stops_by(_remember)
