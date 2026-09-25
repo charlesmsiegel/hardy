@@ -22,7 +22,8 @@ from hardy.app import doctor
 from hardy.app.project_registry import Entry, ProjectRegistry
 from hardy.app.projects import ProjectOpener, offer_registration, prepare_layout
 from hardy.app.terminal import ConsoleTerminal
-from hardy.app.wiring import build_prove_workflow, runtime_factory
+from hardy.app.wiring import build_prove_workflow, session_runtime
+from hardy.app.wiring import runtime_factory as runtime_factory  # re-export
 from hardy.formal import latency
 from hardy.formal import search as search_tools
 from hardy.formal.closers import CLOSERS
@@ -194,7 +195,7 @@ def _launch(
         try:
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget),
+                session_runtime(config),
                 config.lean_command,
                 config.latex_command,
                 confirm,
@@ -574,7 +575,7 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
             f"which is the longest this platform can wait for, not {args.wall_seconds:g}"
         )
     closers = _closer_ladder(args.closers)
-    result = run(request, runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
+    result = run(request, session_runtime(config), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
 
