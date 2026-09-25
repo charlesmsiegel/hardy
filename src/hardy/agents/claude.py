@@ -140,6 +140,37 @@ def _counts(usage: Any) -> dict[str, Any] | None:
     return {str(key): value for key, value in usage.items()}
 
 
+#: The provider's token counters `_note` sums across an exchange's messages.
+_TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+
+def _tokens(usage: Any) -> dict[str, int]:
+    """The integer token counters in one usage report, and nothing else."""
+    if not isinstance(usage, Mapping):
+        return {}
+    return {
+        key: value
+        for key in _TOKEN_KEYS
+        if isinstance(value := usage.get(key), int) and not isinstance(value, bool) and value >= 0
+    }
+
+
+def _cumulative(reported: dict[str, Any] | None, own: dict[str, int]) -> bool | None:
+    """Whether a result report may carry more than its own exchange.
+
+    False when, in every counter it states, it states no more than the
+    exchange's own messages moved: then it holds no earlier exchange, however
+    the CLI accumulates. True when it states more somewhere -- a restored
+    session-to-date total, most likely, which `Usage.record` checks further.
+    None when there is nothing to compare: no message stated usage, or the
+    report stated none.
+    """
+    stated = _tokens(reported)
+    if not own or not stated:
+        return None
+    return any(figure > own.get(key, 0) for key, figure in stated.items())
+
+
 def load_sdk():
     try:
         import claude_agent_sdk
@@ -242,6 +273,14 @@ class ClaudeAgentRuntime:
         # the other per-turn state in `stream`, so it cannot grow across a long
         # session; an id-less refusal is never deduplicated, only ever added.
         self._refused_tool_use_ids: set[str] = set()
+        # API message id -> the largest of each token counter any assistant
+        # message under that id stated, for the exchange in flight. The CLI
+        # streams one assistant message per content block, each repeating its
+        # API message's usage, so keying by id is what stops a three-block
+        # answer counting three times; the largest, because output counts can
+        # lag in the earlier blocks. Summed into the `result` event, and reset
+        # with each exchange.
+        self._message_usage: dict[str, dict[str, int]] = {}
         # One entry per streamed text block that has not completed yet, oldest
         # first, and the block index the last delta belonged to. A completed
         # block consumes its own entry; whatever is left at the end of the turn
@@ -403,6 +442,7 @@ class ClaudeAgentRuntime:
         self._loop, self._client, self._called = None, None, {}
         self._drawn, self._drawing = [], None
         self._refused_tool_use_ids = set()
+        self._message_usage = {}
         # The interval is counted from here, not from the first delta: the
         # first checkpoint of a turn lands one interval in, like every other.
         self._checkpointed_at = time.monotonic()
@@ -725,6 +765,16 @@ class ClaudeAgentRuntime:
         session = getattr(message, "session_id", None)
         if session:
             self.session_id = session
+        if type(message).__name__ == "AssistantMessage":
+            counted = _tokens(getattr(message, "usage", None))
+            if counted:
+                # An id-less message cannot be matched to its repeats, so it is
+                # kept under its own key: counted once more than it should be
+                # rather than dropped, which would lower the floor below spend.
+                key = getattr(message, "message_id", None) or f"#{len(self._message_usage)}"
+                held = self._message_usage.setdefault(str(key), {})
+                for name, figure in counted.items():
+                    held[name] = max(held.get(name, 0), figure)
         delta = _delta(message)
         if delta is not None:
             index, text = delta
@@ -793,6 +843,12 @@ class ClaudeAgentRuntime:
             self.turns = getattr(message, "num_turns", None)
             if getattr(message, "is_error", False):
                 self.failure = getattr(message, "subtype", None) or getattr(message, "result", None) or "unknown"
+            reported = _counts(getattr(message, "usage", None))
+            own: dict[str, int] = {}
+            for held in self._message_usage.values():
+                for name, figure in held.items():
+                    own[name] = own.get(name, 0) + figure
+            self._message_usage = {}
             self._observe({
                 "type": "result",
                 "session_id": self.session_id,
@@ -802,9 +858,16 @@ class ClaudeAgentRuntime:
                 # left absent when it reported none. `{}` would be read
                 # downstream as a measured zero, which is the one thing a spend
                 # meter must not say about a backend that measured nothing.
-                # This is the exchange's usage and not the thread's: `_ask`
-                # opens a fresh client per turn, so these accumulate rather
-                # than superseding each other.
-                "usage": _counts(getattr(message, "usage", None)),
+                # Session-to-date, not this exchange's alone, when the CLI
+                # restored a resumed session's running totals: a fresh client
+                # per turn still resumes the same session (`_options`), and
+                # `Usage.record` differences the reports for that reason.
+                "usage": reported,
                 "is_error": getattr(message, "is_error", None),
+                # What this exchange's own messages moved, and whether the
+                # report above states more than that. Together they let the
+                # ledger tell a restored running total from a report that
+                # restarted, without trusting either reading of the CLI.
+                "exchange_usage": own or None,
+                "cumulative": _cumulative(reported, own),
             })

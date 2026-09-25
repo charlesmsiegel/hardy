@@ -64,7 +64,65 @@ def test_the_result_event_carries_what_the_exchange_cost():
         "cost_usd": 0.25,
         "usage": counts,
         "is_error": False,
+        # No assistant message stated usage, so there is nothing to tell a
+        # session-to-date report from one exchange's by.
+        "exchange_usage": None,
+        "cumulative": None,
     }]
+
+
+class AssistantMessage:
+    def __init__(self, message_id, usage):
+        self.content, self.session_id = [], "thread-9"
+        self.message_id, self.usage = message_id, usage
+
+
+def _exchange(live, *messages, result):
+    for message in (*messages, result):
+        list(live._note(message, []))
+
+
+def test_a_report_that_is_only_this_exchange_is_marked_not_cumulative():
+    """The CLI streams one assistant message per content block, each carrying
+    that API message's usage, so they are deduplicated by message id; output
+    counts can lag within a message, so the largest is kept. A report stating
+    no more than those messages moved carries no earlier exchange (#197)."""
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    _exchange(
+        live,
+        AssistantMessage("m1", {"input_tokens": 10, "output_tokens": 1, "cache_read_input_tokens": 400}),
+        AssistantMessage("m1", {"input_tokens": 10, "output_tokens": 30, "cache_read_input_tokens": 400}),
+        AssistantMessage("m2", {"input_tokens": 5, "output_tokens": 7, "cache_read_input_tokens": 450}),
+        result=ResultMessage(usage={"input_tokens": 15, "output_tokens": 37, "cache_read_input_tokens": 850}),
+    )
+    result = next(event for event in seen if event["type"] == "result")
+    assert result["exchange_usage"] == {"input_tokens": 15, "output_tokens": 37, "cache_read_input_tokens": 850}
+    assert result["cumulative"] is False
+
+
+def test_a_report_stating_more_than_its_exchange_may_be_session_to_date():
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    _exchange(
+        live,
+        AssistantMessage("m1", {"input_tokens": 10, "output_tokens": 30}),
+        result=ResultMessage(usage={"input_tokens": 25, "output_tokens": 60}),
+    )
+    result = next(event for event in seen if event["type"] == "result")
+    assert result["exchange_usage"] == {"input_tokens": 10, "output_tokens": 30}
+    assert result["cumulative"] is True
+
+
+def test_each_exchange_sums_only_its_own_messages():
+    """The sum is the exchange's, so the next exchange starts from nothing."""
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    _exchange(live, AssistantMessage("m1", {"input_tokens": 10}), result=ResultMessage(usage={"input_tokens": 10}))
+    _exchange(live, AssistantMessage("m2", {"input_tokens": 4}), result=ResultMessage(usage={"input_tokens": 14}))
+    second = [event for event in seen if event["type"] == "result"][1]
+    assert second["exchange_usage"] == {"input_tokens": 4}
+    assert second["cumulative"] is True
 
 
 def test_a_provider_that_reports_no_usage_reports_none_and_not_zero():
@@ -196,3 +254,56 @@ def test_asking_the_live_model_to_call_a_builtin_gets_no_result(tmp_path):
     assert not completed, "a Claude Code built-in must never complete as a tool call"
     refused = [event for event in seen if event["type"] == "refused_tool" and event["name"] == "TaskCreate"]
     assert refused, "the refusal must be on the record"
+
+
+@pytest.mark.live
+def test_resumed_usage_reports_are_never_undercounted_by_the_ledger(tmp_path):
+    """Issue #197: what the CLI reports across resumed exchanges, and that the
+    ledger never counts less than an exchange's own messages moved, whichever
+    way it reports.
+
+    Thread A asks twice back to back (the CLI's last-seen session, which the
+    CLI source says it restores), thread B asks in the same directory, then A
+    asks again (not the last-seen session, which it says it does not). Each
+    report is kept per session in its own `Usage`, as the staged runtime does.
+    `-s` prints what the CLI actually did, for the decision record. Off by
+    default -- needs a logged-in CLI and spends four real turns -- set
+    HARDY_CLAUDE_LIVE=1 to run it."""
+    if not os.environ.get("HARDY_CLAUDE_LIVE"):
+        pytest.skip("set HARDY_CLAUDE_LIVE=1 to run real Claude Code turns")
+    from hardy.agents.usage import Usage
+
+    seen: list[dict] = []
+
+    def thread() -> claude_runtime.ClaudeAgentRuntime:
+        return claude_runtime.ClaudeAgentRuntime(
+            "claude-haiku-4-5", system_prompt="Reply with one short word.", specs=[],
+            dispatch=lambda name, args: ToolResult(True, ""), cwd=tmp_path,
+            observe=seen.append, max_turns=2, wall_seconds=120,
+        )
+
+    first, second = thread(), thread()
+    for live in (first, first, second, first):
+        live.ask("Say a colour.")
+    results = [event for event in seen if event["type"] == "result"]
+    assert len(results) == 4
+    assert results[0]["session_id"] == results[1]["session_id"] == results[3]["session_id"]
+    assert results[2]["session_id"] != results[0]["session_id"]
+
+    ledgers: dict[str, Usage] = {}
+    for step, event in enumerate(results):
+        own = event["exchange_usage"] or {}
+        print(f"exchange {step}: session={event['session_id'][:8]} cost={event['cost_usd']} "
+              f"usage={event['usage']} own={own} cumulative={event['cumulative']}")
+        before = ledgers.get(event["session_id"], Usage())
+        after = before.record(event)
+        ledgers[event["session_id"]] = after
+        # Whatever the CLI's semantics, an exchange is charged at least what
+        # its own messages moved, and never more than the report stated whole.
+        for key, field in (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
+                           ("cache_creation_input_tokens", "cache_write_tokens"),
+                           ("cache_read_input_tokens", "cache_read_tokens")):
+            added = getattr(after, field) - getattr(before, field)
+            reported = (event["usage"] or {}).get(key)
+            if isinstance(reported, int):
+                assert own.get(key, 0) <= added <= max(reported, own.get(key, 0)), (step, field)

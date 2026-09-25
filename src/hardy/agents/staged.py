@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from hardy.agents.claude import ClaudeAgentRuntime
 from hardy.agents.contracts import final_text
 from hardy.agents.parsing import json_object
-from hardy.agents.usage import Usage
+from hardy.agents.usage import Usage, combined
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -177,8 +177,12 @@ class ClaudeStagedRuntime:
         # What the provider said the run cost, folded by the same ledger the
         # batch runner and the interactive session use, so a staged manifest
         # cannot disagree with a batch record about what "unreported" means.
-        # Rebound under `_records`, never mutated: `Usage` is frozen.
-        self._spend = Usage()
+        # One ledger per provider session, keyed by the CLI's own session id.
+        # Staged threads interleave -- formalizer, reader, prover, prover
+        # again -- and a single ledger would read every change of thread as a
+        # restart and count the next report on an old thread whole. Entries
+        # are rebound under `_records`, never mutated: `Usage` is frozen.
+        self._spend: dict[str, Usage] = {}
         # Exchanges Hardy sent, counted when they are sent. A stage that times
         # out, is cancelled, or fails before the provider reports on it was
         # still sent and may still have been billed; the batch runner counts
@@ -210,10 +214,9 @@ class ClaudeStagedRuntime:
         with every figure left unstated, rather than left out of the ledger.
         """
         with self._records:
-            spend = self._spend
-            for _ in range(max(0, self._asked - spend.turns)):
-                spend = spend.record({})
-            return spend.summary()
+            spend = combined([ledger.summary() for ledger in self._spend.values()])
+            spend["exchanges"] = max(self._asked, spend["exchanges"])
+            return spend
 
     def start(
         self,
@@ -290,18 +293,19 @@ class ClaudeStagedRuntime:
             if self._sealed:
                 return
             if event.get("type") == "result":
-                # One report per exchange, each stated for that exchange
-                # alone: `ClaudeAgentRuntime._ask` opens a fresh client per
-                # turn, so its reports do not accumulate the way a resumed
-                # interactive session's do (see `claude_runtime._blocks`). The
-                # ledger's differencing exists for running totals, and applied
-                # here it read the second of two exchanges as the increment
-                # over the first -- the recorded staged run's manifest stated
-                # $0.68 for five reports that sum to $0.78. Each report is
-                # therefore folded under its own key, so every figure counts
-                # whole.
-                exchange = {**event, "session_id": f"{event.get('session_id')}#{self._spend.turns + 1}"}
-                self._spend = self._spend.record(exchange)
+                # A resumed thread reports session-to-date figures (see
+                # `Usage.record`): `_ask` opens a fresh client per turn, but
+                # `_options` resumes the thread's session, and the CLI restores
+                # its running totals when it does. So each report is folded
+                # into its own session's ledger and differenced there, and the
+                # sessions are only added in `usage`. The $0.68-for-$0.78
+                # manifest that once made this key every report apart came from
+                # threads that all took one inherited session id; each thread
+                # now opens under an id of its own, and a report that did not
+                # restore is marked `cumulative: False` and counted whole.
+                session = str(event.get("session_id") or "")
+                ledger = self._spend.get(session, Usage())
+                self._spend[session] = ledger.record(event)
             self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
 
     def _seal(self, phase: RunPhase = RunPhase.PROVING) -> None:

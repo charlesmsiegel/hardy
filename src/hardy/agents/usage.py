@@ -176,6 +176,13 @@ class Usage:
         stale one is *expected* to be smaller, and reading it as a restart
         would add spend already counted. `MathematicsSession._observed` is
         where stale reports are kept away from here.
+
+        That reading of the CLI comes from its source, not from a run; the
+        live test in `tests/test_claude_runtime.py` is what checks it. Nothing
+        here depends on it being right: where the runtime says what the
+        exchange's own messages moved (`exchange_usage`, `cumulative`), a
+        report that did not climb by at least that much is taken as a restart
+        and counted whole, so a per-exchange report is never differenced away.
         """
         if event.get("provider_unasked") is True:
             return self
@@ -192,6 +199,16 @@ class Usage:
             counted = _count(counts.get(key))
             if counted is not None:
                 stated[field] = counted
+        # What this exchange's own messages moved, where the runtime could sum
+        # them (`ClaudeAgentRuntime._note`): a floor under the exchange's real
+        # spend that does not depend on how the CLI accumulates its report.
+        own = event.get("exchange_usage")
+        own = own if isinstance(own, Mapping) else {}
+        floors = {
+            field: counted
+            for key, field in _COUNTERS.items()
+            if field in stated and (counted := _count(own.get(key))) is not None
+        }
 
         # A restart is a property of the report, not of one field: `z$r` writes
         # every restored counter back at once, so they go to zero together. One
@@ -201,8 +218,23 @@ class Usage:
         # a cheap session is easy. The token counters are what usually give it
         # away: a new exchange's cache reads start in the thousands where an
         # accumulated baseline is in the hundreds of thousands.
-        restarted = restarted or any(
-            figure < self.baselines[field] for field, figure in stated.items() if field in self.baselines
+        #
+        # The exchange's own messages sharpen the same test, and are what keep
+        # it from undercounting whichever way the CLI turns out to report. A
+        # report that restored the running total states at least the old total
+        # plus what this exchange's messages moved; one short of that in any
+        # counter did not restore, and is this exchange alone even where every
+        # figure happens to climb -- which is what an unrelated session in the
+        # same directory leaves behind. `cumulative: False` is the runtime
+        # saying outright that the report states no more than those messages.
+        restarted = (
+            restarted
+            or event.get("cumulative") is False
+            or any(
+                figure < self.baselines[field] + floors.get(field, 0)
+                for field, figure in stated.items()
+                if field in self.baselines
+            )
         )
         # A restart invalidates every baseline, not just the ones this report
         # restates: an omitted field left holding the old session's figure
@@ -215,6 +247,8 @@ class Usage:
         for field, figure in stated.items():
             base = baselines.get(field)
             added = figure if base is None or figure < base else figure - base
+            # Never less than the exchange's own messages moved.
+            added = max(added, floors.get(field, 0))
             baselines[field] = figure
             reports[field] = reports.get(field, 0) + 1
             if field == "cost_usd":
@@ -410,3 +444,26 @@ class Usage:
             provider_session=session,
             reports={field: covered for field, covered in reports.items() if covered},
         )
+
+
+def combined(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Several ledgers' `Usage.summary()`s as one, in the same shape.
+
+    For a run whose exchanges belong to more than one provider session: each
+    session is differenced against its own running total, and only then are
+    the sessions added. Figure by figure, a sum over the ledgers that stated
+    it, and None where none did -- a summed 0 over silence is the lie
+    `summary` exists to avoid.
+    """
+    if not summaries:
+        return Usage().summary()
+    fields = ("cost_usd", *Usage.COUNTERS, "total_tokens")
+    merged: dict[str, Any] = {"exchanges": sum(summary["exchanges"] for summary in summaries)}
+    for field in fields:
+        stated = [summary[field] for summary in summaries if summary.get(field) is not None]
+        merged[field] = sum(stated) if stated else None
+    merged["reported"] = {
+        field: sum(summary["reported"].get(field, 0) for summary in summaries)
+        for field in ("cost_usd", *Usage.COUNTERS)
+    }
+    return merged
