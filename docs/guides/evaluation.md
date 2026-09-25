@@ -105,13 +105,28 @@ a property of the theorem; see [the evaluation design](../design/evaluation.md)
 for the full table and the reasoning behind it. Rows are carried forward
 from an existing tier file rather than re-swept, but only where the
 environment, the procedure, and that entry's own statement digest all still
-agree; a corrected statement re-sweeps only that entry.
+agree; a corrected statement re-sweeps only that entry. Rows are never
+restamped: a carried row keeps the statement digest it was measured
+against, and a tier file swept under another environment or procedure
+digest lends no row to a new one.
 
 With no `--only`, `--only-file`, or `--status`, the sweep defaults to active
-entries that do not yet have a baseline row, not the whole corpus; if every
-active entry already has one, it refuses with exit `2` rather than
-resweeping anything, and names `--only` as the way to force a resweep. Name
-entries explicitly with those three flags to select anything else.
+entries with no usable baseline row, not the whole corpus: an entry with no
+row at all, one whose statement changed since its row was measured, or a
+twin whose row has no negation sweep. When the tier file was swept under
+another environment or procedure digest (a Mathlib upgrade, another
+machine, or an edit to one of the six deciding sources), the default is
+instead every entry the file holds plus the active entries it does not,
+and the command says why on stderr. If there is nothing to sweep, it
+refuses with exit `2` and names `--only` as the way to force a resweep.
+
+Name entries explicitly with those three flags to select anything else. A
+named entry is always re-swept, even when its identity has not moved; that
+is how to force a resweep. An entry left unnamed keeps its row only while
+the tier file's environment and procedure digests match this checkout's.
+Otherwise the command refuses with exit `2` rather than carry rows under
+digests they were not measured under; run it with no selection to re-sweep
+every row the file holds.
 `--problems` defaults to `corpus`, never `corpus/problems`, and `--out`
 defaults to `evals/baseline.json`. `--acknowledge-unsafe-execution` is
 required, because the sweep elaborates Lean built from the problem file's

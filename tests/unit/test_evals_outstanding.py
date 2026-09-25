@@ -83,3 +83,21 @@ def test_outstanding_lists_active_work_only(tmp_path):
     result = outstanding.outstanding(_problems(), _baseline(), tmp_path, key=("r", "e"))
     assert result["unevaluated_active"] == ["u"]      # `t` and `f` are candidates
     assert result["unbaselined_active"] == ["u"]
+
+
+def _row() -> sweep.EntryBaseline:
+    return sweep.EntryBaseline(tier=3, elaborates=False, attempts={}, closed_by=())
+
+
+def test_an_active_entry_whose_row_would_not_be_carried_counts_as_unbaselined():
+    """What `evals baseline`'s default sweeps: no row at all, or a row the
+    sweep would not carry today because the statement moved since it was
+    measured -- the entry `staleness` tells the operator to re-sweep."""
+    problems = _problems()
+    u = problems.by_id("u")
+    fresh = _baseline().model_copy(update={"entries": {"u": _row()}, "statement_digests": {"u": u.statement_digest()}})
+    assert outstanding.unbaselined_active(problems, fresh) == []
+    moved = fresh.model_copy(update={"statement_digests": {"u": "x" * 64}})
+    assert outstanding.unbaselined_active(problems, moved) == ["u"]
+    unidentified = fresh.model_copy(update={"statement_digests": {}})
+    assert outstanding.unbaselined_active(problems, unidentified) == ["u"]

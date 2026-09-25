@@ -313,3 +313,103 @@ def test_baseline_default_refuses_when_no_active_entry_is_outstanding(tmp_path, 
     assert code == 2
     assert "every active entry already has a baseline row" in capsys.readouterr().err
     assert not out.exists()
+
+
+# --- A moved identity is re-swept, never carried or restamped (#202) ---
+
+
+def _active_corpus(tmp_path):
+    """`t` (a candidate) and `u` (active), so a default run has something to
+    decide about and a named run has something to leave out."""
+    from corpus_helpers import write_corpus
+
+    return write_corpus(tmp_path / "corpus", tuple(e for e in _problems().entries if e.id in ("t", "u")))
+
+
+def _baselined_then_moved(tmp_path) -> tuple[Path, Path]:
+    """A tier file over `t` and `u`, then edited to name another procedure
+    digest -- what the file on disk looks like after a deciding source moved."""
+    problems = _active_corpus(tmp_path)
+    out = tmp_path / "baseline.json"
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="t,u")
+    assert commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 1, tzinfo=UTC)) == 0
+    written = json.loads(out.read_text(encoding="utf-8"))
+    written["procedure_digest"] = "q" * 64
+    out.write_text(json.dumps(written), encoding="utf-8")
+    return problems, out
+
+
+def test_baseline_default_resweeps_every_row_when_the_prior_procedure_moved(tmp_path, capsys):
+    """The documented repair after a deciding source moved: with no selection
+    the default used to be the unbaselined active entries only, which either
+    refused outright or swept those few and restamped every other row with the
+    new digest. It now re-sweeps every row the old file holds, and says why.
+    """
+    from hardy.evals import sweep
+
+    problems, out = _baselined_then_moved(tmp_path)
+    capsys.readouterr()
+    swept: list[str] = []
+
+    def counting(source: str):
+        swept.append(source)
+        return _always_closes(source)
+
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    code = commands.run_baseline(args, config=None, elaborate=counting, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 2, tzinfo=UTC))
+    assert code == 0
+    assert any("theorem T " in s for s in swept) and any("theorem U " in s for s in swept), "every prior row is re-swept"
+    assert "procedure digest" in capsys.readouterr().err
+    rewritten = sweep.Baseline.model_validate_json(out.read_text(encoding="utf-8"))
+    assert rewritten.procedure_digest == sweep.procedure_digest_of(sweep.WALL_BACKSTOP_FLOOR)
+    assert set(rewritten.entries) == {"t", "u"}
+
+
+def test_baseline_only_refuses_to_carry_rows_across_a_moved_procedure(tmp_path, capsys):
+    """Naming `u` alone would leave `t`'s row to be carried under a digest it
+    was never measured under. Refused with exit 2, and the file is untouched."""
+    problems, out = _baselined_then_moved(tmp_path)
+    before = out.read_text(encoding="utf-8")
+    capsys.readouterr()
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="u")
+    code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 2, tzinfo=UTC))
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "Refused:" in err and "never restamped" in err
+    assert out.read_text(encoding="utf-8") == before
+
+
+def test_baseline_default_resweeps_a_corrected_statement_and_nothing_else(tmp_path, capsys):
+    """`staleness` answers a corrected statement with "re-run `hardy evals
+    baseline`". Carrying that entry's row with the digest it was measured
+    against (#202) keeps the drift visible, so the default has to pick it up
+    too, or the advice would refuse with "every active entry already has a
+    baseline row" -- and it must leave the rows that still agree alone.
+    """
+    from hardy.evals import sweep
+
+    problems = _active_corpus(tmp_path)
+    out = tmp_path / "baseline.json"
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="t,u")
+    assert commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 1, tzinfo=UTC)) == 0
+    written = json.loads(out.read_text(encoding="utf-8"))
+    measured = written["statement_digests"]["u"]
+    written["statement_digests"]["u"] = "x" * 64   # as if `u` had been corrected since
+    out.write_text(json.dumps(written), encoding="utf-8")
+    swept: list[str] = []
+
+    def counting(source: str):
+        swept.append(source)
+        return _always_closes(source)
+
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    assert commands.run_baseline(args, config=None, elaborate=counting, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 2, tzinfo=UTC)) == 0
+    assert any("theorem U " in s for s in swept) and not any("theorem T " in s for s in swept)
+    rewritten = sweep.Baseline.model_validate_json(out.read_text(encoding="utf-8"))
+    assert rewritten.statement_digests["u"] == measured
+    assert rewritten.entries["t"].model_dump(mode="json") == written["entries"]["t"]

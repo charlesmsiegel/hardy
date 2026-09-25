@@ -267,6 +267,21 @@ def _identity(config: Any) -> EnvironmentIdentity:
     return environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
 
 
+def _moved_identity(prior: Baseline | None, *, environment_digest: str, procedure_digest: str) -> str | None:
+    """Why `prior`'s rows cannot be carried into a sweep made today, or
+    `None` when they can (or there is no prior file at all)."""
+    if prior is None or sweep.reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest):
+        return None
+    reasons = []
+    if prior.environment_digest != environment_digest:
+        reasons.append("its environment digest is not this toolchain and machine's")
+    if prior.procedure_digest != procedure_digest:
+        reasons.append("its procedure digest is not this build's")
+    if not prior.statement_digests:
+        reasons.append("it records no statement digests")
+    return "; ".join(reasons)
+
+
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
     from hardy.workflows.batch import WARNING
@@ -323,6 +338,9 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
             prior = sweep.Baseline.model_validate_json(args.out.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             prior = None   # unreadable prior: sweep everything, say nothing
+    wall_backstop_seconds = (max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None
+                             else sweep.WALL_BACKSTOP_FLOOR)
+    host = host_info()
     if ids is None:
         # Nobody named entries: default to the active entries the tier file
         # does not yet cover, not the whole corpus's candidates and retirees
@@ -331,6 +349,20 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         from hardy.evals.outstanding import unbaselined_active
 
         default = unbaselined_active(problems, prior)
+        moved = _moved_identity(prior, environment_digest=sweep.environment_digest_of(identity, host),
+                                procedure_digest=sweep.procedure_digest_of(wall_backstop_seconds))
+        if moved is not None:
+            # None of the prior rows may be carried, and none may be
+            # restamped, so the only honest default is to measure every row
+            # the old file holds again, plus whatever it never covered.
+            held = [e.id for e in problems.entries if e.id in prior.entries]
+            default = held + [id_ for id_ in default if id_ not in prior.entries]
+            print(
+                f"{args.out}: {moved}. None of its rows can be carried forward and none are restamped, "
+                f"so this re-sweeps all {len(held)} entries it holds"
+                + (f" and {len(default) - len(held)} active entries it does not" if len(default) > len(held) else ""),
+                file=sys.stderr,
+            )
         if not default:
             print(
                 "Refused: every active entry already has a baseline row; "
@@ -369,16 +401,20 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         write(partial)
         print(f"  checkpoint: {swept} rows written to {args.out}", file=sys.stderr)
 
-    baseline = sweep.sweep(
-        problems, problems_sha256=manifest_digest(args.problems), environment=identity, elaborate=elaborate, now=now,
-        prior=prior,
-        host=host_info(), import_seconds=import_seconds,
-        wall_backstop_seconds=max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR,
-        report=lambda line: print(line, file=sys.stderr),
-        only=tuple(ids),
-        workers=workers,
-        checkpoint=checkpoint,
-    )
+    try:
+        baseline = sweep.sweep(
+            problems, problems_sha256=manifest_digest(args.problems), environment=identity, elaborate=elaborate, now=now,
+            prior=prior,
+            host=host, import_seconds=import_seconds,
+            wall_backstop_seconds=wall_backstop_seconds,
+            report=lambda line: print(line, file=sys.stderr),
+            only=tuple(ids),
+            workers=workers,
+            checkpoint=checkpoint,
+        )
+    except sweep.SweepRefused as refused:
+        print(f"Refused: {refused}", file=sys.stderr)
+        return 2
     write(baseline)
     for problem in baseline.problems:
         print("PROBLEM: " + problem, file=sys.stderr)

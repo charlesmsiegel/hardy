@@ -156,6 +156,17 @@ with the list. Any of them is a refusal, not a warning. Staleness is per entry
 rather than per file, so a correction to one statement invalidates that entry's
 measurement and leaves the rest good ([the corpus page](corpus.md)).
 
+The gate is only as honest as the digests the tier file carries, so the sweep
+never writes a digest a row was not measured under. A row that a selective
+sweep (`--only`) leaves unnamed keeps the statement digest it was measured
+against, so a correction made since still reads as drift. A file has one
+environment digest and one procedure digest, so once either moves, no prior row
+can share a file with rows measured today. A selective sweep then refuses, and
+the default sweep re-measures every row the file holds. Dropping the unnamed
+rows would also have been honest, but it would shrink the file as a side effect
+of naming one entry. Keeping them under the new digests is the failure the gate
+exists to prevent: it would restamp old evidence to regain reuse.
+
 That is deliberately unlike `hardy doctor`'s toolchain pin check, which reports
 and lets the caller proceed. The whole point of the tier file is that a Mathlib
 upgrade can turn a tier-3 problem into an `exact?` one-liner overnight, so a run

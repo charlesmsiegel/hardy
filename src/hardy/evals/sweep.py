@@ -465,6 +465,10 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
                          negation=negation, witness=witness_verdict(entry, elaborate))
 
 
+class SweepRefused(RuntimeError):
+    """A sweep that could only be completed by restamping rows it did not measure."""
+
+
 def reusable(prior: Baseline | None, *, environment_digest: str, procedure_digest: str) -> bool:
     """Whether `prior`'s rows may be carried forward at all.
 
@@ -478,6 +482,28 @@ def reusable(prior: Baseline | None, *, environment_digest: str, procedure_diges
         and prior.environment_digest == environment_digest
         and prior.procedure_digest == procedure_digest
         and bool(prior.statement_digests)
+    )
+
+
+def row_carries(prior: Baseline, entry: Entry, statement_digest: str | None) -> bool:
+    """Whether `prior`'s row for `entry` may stand for it today, once the
+    prior file as a whole is `reusable`.
+
+    The row must exist, must have been measured against this statement (a
+    missing digest is not agreement), and must have the *shape* the entry now
+    needs. `statement_digest` excludes `expected`, so relabelling a true entry
+    as a twin left a row with `negation=None` that `staleness` refuses -- and
+    reusing it meant `hardy evals baseline`, the documented repair, wrote
+    another refused baseline forever. Shared by the sweep's reuse and by
+    `outstanding.unbaselined_active`, so the default selection sweeps exactly
+    the entries reuse would not carry.
+    """
+    row = prior.entries.get(entry.id)
+    return (
+        row is not None
+        and statement_digest is not None
+        and prior.statement_digests.get(entry.id) == statement_digest
+        and (entry.expected != "false" or row.negation is not None)
     )
 
 
@@ -499,12 +525,23 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     caller can pass digests computed under a fixture; it defaults to the
     entries' own.
 
-    `only`, when given, restricts which entries this call may sweep. An
-    excluded entry is never touched -- not re-elaborated, and not put through
-    the identity-based reuse check either -- it simply keeps whatever row the
-    prior baseline already held (or gets none, if it never had one). Without
-    this, naming a handful of entries to sweep would drop every other row from
-    the baseline, forcing a full re-sweep the moment anyone used `--only`.
+    `only`, when given, names the entries this call sweeps, and it sweeps
+    every one of them: a named entry is re-elaborated even when its identity
+    did not move, because naming it is how an operator forces a resweep. An
+    excluded entry is never re-elaborated. It keeps the row the prior
+    baseline already held (or gets none, if it never had one), together with
+    the statement digest that row was measured against -- never today's, or a
+    corrected statement would stop showing as drifted in `staleness`. Without
+    the carry, naming a handful of entries to sweep would drop every other row
+    from the baseline, forcing a full re-sweep the moment anyone used
+    `--only`.
+
+    A carried row keeps its statement digest, but a baseline has only one
+    environment digest and one procedure digest. So a prior file swept under
+    another environment or procedure cannot lend any row to this one: the
+    sweep raises `SweepRefused` before any Lean runs, rather than stamp a row
+    measured on other code or another machine with this sweep's digests.
+    Rows are never restamped.
 
     `checkpoint`, when given, is handed a complete `Baseline` over the rows
     swept *so far*, every `checkpoint_every` completions. A full corpus sweep
@@ -512,10 +549,12 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     crash or a machine reboot discarded every row: one interrupted sweep here
     lost 98 entries with nothing on disk to show for it. The snapshot is not
     a lesser artifact -- each row is either fully swept or absent, never
-    half-written -- so it is simply a smaller baseline, and rerunning the same
-    command resumes from it: `reusable` matches the environment and procedure
-    digests it was stamped with and carries every completed row forward, so
-    only the remainder is elaborated again.
+    half-written -- so it is simply a smaller baseline, and a sweep that is not
+    told to re-sweep those rows resumes from it: `reusable` matches the
+    environment and procedure digests it was stamped with and carries every
+    completed row forward, so only the remainder is elaborated again. (A named
+    entry is always re-swept, so resuming means leaving the finished ones
+    unnamed, as `hardy evals baseline`'s unbaselined default does.)
 
     That also means nothing needs to mark a snapshot as partial. A baseline
     missing rows is caught where it matters by `baseline_entries_mismatch`,
@@ -538,6 +577,10 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     carry = reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest)
 
     entries: dict[str, EntryBaseline] = {}
+    # The statement digest each row was measured against: today's for a row
+    # this sweep produces or reuses, the prior file's for a row carried only
+    # because `only` excluded it.
+    recorded = dict(current)
     to_sweep: list[Entry] = []
     reused = 0
 
@@ -547,7 +590,7 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
         differently. `rows` is copied: the caller's dict keeps mutating."""
         return Baseline(
             created_at=now(), problems_sha256=problems_sha256,
-            statement_digests=current,
+            statement_digests=dict(recorded),
             environment_digest=environment_digest,
             procedure_digest=procedure_digest,
             environment=environment,
@@ -558,21 +601,26 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
         )
 
     for entry in problems.entries:
+        prior_row = prior.entries.get(entry.id) if prior is not None else None
         if only is not None and entry.id not in only:
-            prior_row = prior.entries.get(entry.id) if prior is not None else None
             if prior_row is None:
                 continue   # never selected, never baselined: no row to carry
+            if not carry:
+                raise SweepRefused(
+                    f"the prior tier file was swept under another environment or procedure digest, so its "
+                    f"row for {entry.id} (and any other entry not named) cannot be carried into this one; "
+                    "rows are never restamped: re-run `hardy evals baseline` with no --only, --only-file or "
+                    "--status to re-sweep every row it holds"
+                )
             entries[entry.id] = prior_row
+            if (digest := prior.statement_digests.get(entry.id)) is None:
+                recorded.pop(entry.id, None)
+            else:
+                recorded[entry.id] = digest
+        elif only is not None:
+            to_sweep.append(entry)   # named: always swept, never reused
         else:
-            # The prior row must also have the *shape* this entry now needs.
-            # `statement_digest` excludes `expected`, so relabelling a true entry
-            # as a twin left a row with `negation=None` that `staleness` refuses
-            # -- and reusing it here meant `hardy evals baseline`, the documented
-            # repair, wrote another refused baseline forever.
-            prior_row = prior.entries.get(entry.id) if prior is not None else None
-            shaped = prior_row is not None and (entry.expected != "false" or prior_row.negation is not None)
-            if (carry and prior is not None and shaped
-                    and prior.statement_digests.get(entry.id) == current.get(entry.id)):
+            if carry and prior is not None and row_carries(prior, entry, current.get(entry.id)):
                 entries[entry.id] = prior.entries[entry.id]
                 reused += 1
             else:
