@@ -125,6 +125,16 @@ warning. If the whole process hits the wall backstop, the sweep falls back to
 one process per tactic for that entry, so one runaway tactic cannot mark the
 rest unknown.
 
+An error outside every tactic block, such as a header failure, an internal panic
+or an out-of-memory message on line 1, says nothing about any tactic, so every
+attempt in that process is recorded `not_run`. That is not a measurement. If
+any attempt for the entry or for its A3 negation is `not_run`, the sweep files
+no row for it and records `<id>: stage A did not run: <message>` among the
+baseline's problems instead. The rest of the sweep carries on, and the next
+sweep measures that entry again. Attempts that all come back `timed_out` after
+the per-tactic fallback are different: those tactics ran and hit the wall
+backstop, which is a measurement of this machine and is recorded as one.
+
 Stage B takes each candidate alone, as a named `theorem`, followed by
 `#print axioms`. It is closed when elaboration succeeds and the printed axioms
 are within `audit.STANDARD`. A candidate that fails confirmation is recorded
@@ -144,6 +154,15 @@ would still satisfy the check that a tier follows its closers, because the two
 empty sets agree and `tier_of(())` is 3. A statement nobody measured would pass
 as one every configured tactic was tried against and failed, which is exactly
 the entry a headline count of tier-3 problems is made of.
+
+A complete set of attempt names is still not proof that the attempts ran. A row
+whose attempts, or whose negation's attempts, include one recorded `not_run` is
+refused as well. That check is not in the validator: `hardy evals baseline`
+reads a prior file that fails validation as no prior at all, so a rule there
+would silently discard every good row beside the bad one. It is re-derived by
+`staleness` at every run instead, the same way the twin and witness guards are,
+so clearing the top-level `problems` list cannot hide it. The sweep never reuses
+such a row, and `hardy evals baseline` with no selection re-sweeps it.
 
 ## The environment gate is not advisory
 
