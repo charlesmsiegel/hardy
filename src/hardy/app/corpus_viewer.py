@@ -602,6 +602,15 @@ class _HTTPServerV6(HTTPServer):
     address_family = socket.AF_INET6
 
 
+def _server_class(host: str) -> type[HTTPServer]:
+    """Which `HTTPServer` subclass binds `host` -- `AF_INET6` for an IPv6
+    literal (including the wildcard `::`), `HTTPServer` (`AF_INET`)
+    otherwise. Factored out of `serve()` so the selection is checkable
+    without actually binding a socket, IPv6-capable host or not.
+    """
+    return _HTTPServerV6 if ":" in host else HTTPServer
+
+
 def _announce_host(host: str) -> str:
     """The host `serve()` prints its URL with -- always one it admits.
 
@@ -611,11 +620,13 @@ def _announce_host(host: str) -> str:
     the URL `serve()` had just printed 403'd. Loopback is what every bind --
     wildcard or not -- always answers on and always admits, so it is what
     gets printed instead. A specific host is admitted as itself and is
-    printed as itself, bracketed if it is an IPv6 literal.
+    printed as itself, bracketed if it is an IPv6 literal -- lowercased the
+    same way `_allowed_hosts` admits it, or the two would name different
+    hosts for one that mixes case.
     """
     if host in _WILDCARD_HOSTS:
         return "[::1]" if host == "::" else "127.0.0.1"
-    return _bracket(host)
+    return _bracket(host.lower())
 
 
 def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Path | None = None,
@@ -626,8 +637,7 @@ def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Pa
     on every request like the corpus is, so a sweep running alongside this
     server fills the filters in as its checkpoints land.
     """
-    server_cls = _HTTPServerV6 if ":" in host else HTTPServer
-    server = server_cls((host, port), partial(Handler, root=root, baseline=baseline))
+    server = _server_class(host)((host, port), partial(Handler, root=root, baseline=baseline))
     server.token = secrets.token_urlsafe(32)
     # A request naming any other `Host` is refused before it is routed at
     # all (#217); see `_allowed_hosts` for exactly which values that is.

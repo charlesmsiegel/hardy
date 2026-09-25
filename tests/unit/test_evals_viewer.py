@@ -9,6 +9,7 @@ import stat
 import threading
 import urllib.error
 import urllib.request
+from http.server import HTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -20,6 +21,8 @@ from hardy.app.corpus_viewer import (
     ReviewRefused,
     _allowed_hosts,
     _announce_host,
+    _HTTPServerV6,
+    _server_class,
     payload,
     record_review,
     serve,
@@ -594,6 +597,31 @@ def test_wildcard_hosts_announce_a_url_that_is_actually_admitted():
 def test_a_specific_hosts_announced_url_is_itself_bracketed_if_ipv6():
     assert _announce_host("192.168.1.5") == "192.168.1.5"
     assert _announce_host("2001:db8::1") == "[2001:db8::1]"
+
+
+def test_a_mixed_case_hosts_announced_url_is_lowercase():
+    """`_allowed_hosts` admits a specific host lowercased; the announced URL
+    must name that same lowercase host, or the two would disagree about what
+    this server answers to and the printed link would 403 itself."""
+    host = "MyBox.Local"
+    assert _announce_host(host) == "mybox.local"
+    assert f"{_announce_host(host)}:9" in _allowed_hosts(host, 9)
+
+
+def test_the_af_inet6_server_class_is_bound_to_af_inet6():
+    assert _HTTPServerV6.address_family == socket.AF_INET6
+    assert issubclass(_HTTPServerV6, HTTPServer)
+
+
+def test_server_class_selection_needs_no_real_ipv6_stack():
+    """`serve()`'s choice of server class is a pure function of the bind
+    string -- checkable without ever opening a socket, IPv6-capable host or
+    not, unlike the actual bind exercised by the (possibly skipped) live test
+    below."""
+    for host in ("::", "::1", "2001:db8::1", ""):
+        assert _server_class(host) is (_HTTPServerV6 if ":" in host else HTTPServer)
+    for host in ("127.0.0.1", "0.0.0.0", "localhost", "mybox"):
+        assert _server_class(host) is HTTPServer
 
 
 def test_a_wildcard_binds_report_line_names_an_admitted_host(tmp_path):
