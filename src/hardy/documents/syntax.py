@@ -1,6 +1,7 @@
 """Pure TeX scanning and source-tree reachability, without compilation."""
 from __future__ import annotations
 
+import functools
 import re
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping
@@ -184,6 +185,17 @@ _DEFINES = re.compile(
     r"\s*\{?\s*\\(if[a-zA-Z]+)(?![a-zA-Z])"
 )
 _LETS = re.compile(r"\\(?:global\s*)?\\?let\s*\\(if[a-zA-Z]+)(?![a-zA-Z])")
+#: `\let\mycond\iftrue`: a control word of any name bound by `\let` to a
+#: conditional (or to `\fi`) is one TeX counts while it skips.
+_LETS_TO_CONDITIONAL = re.compile(
+    r"\\(?:global\s*)?\\?let\s*\\([a-zA-Z]+)\s*=?\s*\\(?:if[a-zA-Z]*|fi)(?![a-zA-Z])"
+)
+#: `ifthen`'s `\newboolean{draft}` and `\provideboolean{draft}` declare `\ifdraft`.
+_BOOLEAN = re.compile(r"\\(?:new|provide)boolean\s*\{\s*([a-zA-Z]+)\s*\}")
+#: `\expandafter\newif\csname ifdraft\endcsname`, `\expandafter\let\csname x\endcsname`:
+#: a conditional whose name is built rather than written.
+_CSNAME_BINDING = re.compile(r"\\(?:newif|let)\s*\\csname(?![a-zA-Z])([^{}]*?)\\endcsname")
+_LETTERS = re.compile(r"[a-zA-Z]+")
 
 
 @dataclass(frozen=True)
@@ -209,10 +221,23 @@ class Conditionals:
 
     declared: frozenset[str] = frozenset()
     ambiguous: frozenset[str] = frozenset()
+    # A `\csname`-built binding whose name Hardy cannot read: any control word
+    # may be a conditional, so every false branch is uncertain.
+    opaque: bool = False
 
     def opens(self, name: str) -> bool:
         """Whether `\\<name>` opens a conditional Hardy is sure of."""
         return name not in self.ambiguous and opens_conditional(name, self.declared)
+
+    @functools.cached_property
+    def pattern(self) -> re.Pattern[str]:
+        r"""`_CONDITIONAL`, widened to the ambiguous names not spelled `\if...`
+        (`\let\mycond\iftrue`), so a scan meets them where they stand."""
+        extra = sorted((name for name in self.ambiguous if not name.startswith("if")), key=len, reverse=True)
+        if not extra:
+            return _CONDITIONAL
+        names = "|".join(re.escape(name) for name in extra)
+        return re.compile(rf"(\\newif\s*\{{?\s*)?\\(if[a-zA-Z]*|fi|{names})(?![a-zA-Z])")
 
 
 #: No `\newif` of the document's own, and nothing ambiguous: primitives only.
@@ -254,13 +279,23 @@ def read_conditionals(
     defined: set[str] = set()
     let: set[str] = set()
     newif: set[str] = set()
+    built: set[str] = set()
+    opaque = False
     for text in texts.values():
         defined.update(found.group(1) for found in _DEFINES.finditer(text))
         let.update(found.group(1) for found in _LETS.finditer(text))
+        let.update(found.group(1) for found in _LETS_TO_CONDITIONAL.finditer(text))
         newif.update(found.group(1) for found in _NEWIF.finditer(text))
-    rebound = let | (defined & (newif | CONDITIONALS))
+        newif.update(f"if{found.group(1)}" for found in _BOOLEAN.finditer(text))
+        for found in _CSNAME_BINDING.finditer(text):
+            name = found.group(1).strip()
+            if _LETTERS.fullmatch(name):
+                built.add(name)
+            else:
+                opaque = True
+    rebound = let | built | (defined & (newif | CONDITIONALS))
     # Counted as openers for "does this run": everything that might be one.
-    openers = CONDITIONALS | newif | let
+    openers = CONDITIONALS | newif | let | built
     events = {path: _conditional_events(text, openers) for path, text in texts.items()}
     keys = _reading_keys(texts, events, root)
 
@@ -282,7 +317,7 @@ def read_conditionals(
             declared.add(name)
         else:
             ambiguous.add(name)
-    return Conditionals(frozenset(declared), frozenset(ambiguous))
+    return Conditionals(frozenset(declared), frozenset(ambiguous), opaque)
 
 
 @dataclass(frozen=True)
@@ -303,12 +338,20 @@ def _conditional_events(text: str, openers: Collection[str]) -> _Events:
         return any(start <= index < end for start, end in bodies)
 
     # The name a `\def` or `\let` binds is not a use of it.
-    targets = {found.start(1) - 1 for pattern in (_DEFINES, _LETS) for found in pattern.finditer(text)}
+    targets = {
+        found.start(1) - 1
+        for pattern in (_DEFINES, _LETS, _LETS_TO_CONDITIONAL)
+        for found in pattern.finditer(text)
+    }
     depth = 0
     depths: list[tuple[int, int]] = [(0, 0)]
     declarations: list[tuple[str, int, bool]] = []
     uses: list[tuple[str, int]] = []
-    for found in _CONDITIONAL.finditer(text):
+    other = sorted((name for name in openers if not name.startswith("if")), key=len, reverse=True)
+    scan = _CONDITIONAL if not other else re.compile(
+        r"(\\newif\s*\{?\s*)?\\(if[a-zA-Z]*|fi|" + "|".join(re.escape(name) for name in other) + r")(?![a-zA-Z])"
+    )
+    for found in scan.finditer(text):
         name = found.group(2)
         body = in_body(found.start())
         if found.group(1) is not None:
@@ -335,6 +378,7 @@ def _conditional_events(text: str, openers: Collection[str]) -> _Events:
             level = value
         return level == 0 and not in_body(index)
 
+    declarations.extend((f"if{found.group(1)}", found.start(), runs(found.start())) for found in _BOOLEAN.finditer(text))
     inputs = tuple((found.start(), found.group(1), runs(found.start())) for found in INCLUSION.finditer(text))
     return _Events(tuple(declarations), tuple(uses), inputs)
 
@@ -509,7 +553,7 @@ def _false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list
         depth = 1
         pos = opened.end()
         while depth > 0:
-            found = _CONDITIONAL.search(text, pos)
+            found = conditionals.pattern.search(text, pos)
             if found is None:
                 pos = length
                 break
@@ -529,8 +573,13 @@ def _false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list
 def _uncertain_in(text: str, conditionals: Conditionals) -> list[str]:
     r"""The ambiguous names `text` uses inside a false branch, in order."""
     found: list[str] = []
-    for start, end in _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False):
-        for match in _CONDITIONAL.finditer(text, start, end):
+    regions = _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False)
+    if conditionals.opaque and regions:
+        # A conditional whose `\csname`-built name Hardy cannot read may be
+        # any control word in any false branch.
+        found.append("csname")
+    for start, end in regions:
+        for match in conditionals.pattern.finditer(text, start, end):
             name = match.group(2)
             if match.group(1) is None and name in conditionals.ambiguous and name not in found:
                 found.append(name)

@@ -613,3 +613,43 @@ def test_a_binding_in_a_file_some_reading_reaches_still_counts() -> None:
     body = "\\newif\\ifdraft\n\\ifx a b \\input{maybe} \\fi\n\\iffalse\n\\ifdraft x \\fi\nlive\n\\fi\n"
     tex = {**document(body), "maybe.tex": "\\let\\ifdraft\\iftrue\n"}
     assert "conditional" in kinds(owed(tex))
+
+
+# --- Review C1: other spellings of a conditional -------------------------------
+#
+# Each makes `\X` a conditional TeX counts while it skips, so the `\fi` after it
+# is its own and the listing stays inside the false branch. Missed, the first
+# `\fi` closed the branch and the listing was credited as shown.
+
+LISTING = "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+
+
+def _skipped(binding: str, use: str) -> dict[str, str]:
+    return document(binding + "\\iffalse\n" + use + " x \\fi\n" + LISTING + "\\fi\n")
+
+
+@pytest.mark.parametrize(
+    ("binding", "use"),
+    [
+        ("\\let\\mycond\\iftrue\n", "\\mycond"),
+        ("\\global\\let\\mycond=\\iffalse\n", "\\mycond"),
+        ("\\expandafter\\newif\\csname ifdraft\\endcsname\n", "\\ifdraft"),
+        ("\\expandafter\\let\\csname mycond\\endcsname\\iftrue\n", "\\mycond"),
+    ],
+    ids=["let", "global-let", "csname-newif", "csname-let"],
+)
+def test_a_conditional_bound_another_way_is_not_credited(binding: str, use: str) -> None:
+    found = kinds(owed(_skipped(binding, use)))
+    assert "conditional" in found and "statement" in found, found
+
+
+@pytest.mark.parametrize("command", ["newboolean", "provideboolean"])
+def test_a_boolean_declares_its_conditional(command: str) -> None:
+    r"""`\newboolean{draft}` is `ifthen`'s `\newif\ifdraft`: declared first, it
+    nests like one, and nothing is uncertain."""
+    assert kinds(owed(_skipped(f"\\{command}{{draft}}\n", "\\ifdraft"))) == ["statement"]
+
+
+def test_a_csname_name_hardy_cannot_read_makes_every_false_branch_a_finding() -> None:
+    tex = document("\\expandafter\\newif\\csname if\\x\\endcsname\n\\iffalse\nnot typeset\n\\fi\n" + LISTING)
+    assert "conditional" in kinds(owed(tex))

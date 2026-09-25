@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from hardy.documents.syntax import (
-    _CONDITIONAL,
     INCLUSION,
     ROOT_DOCUMENT,
     Conditionals,
@@ -217,7 +216,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
                 # `% \fi` while it skips.
                 visible = uncommented(line)
                 cursor = 0
-                while skipping and (found := _CONDITIONAL.search(visible, cursor)) is not None:
+                while skipping and (found := conditionals.pattern.search(visible, cursor)) is not None:
                     cursor = found.end()
                     if found.group(2) == "fi":
                         skipping -= 1
@@ -256,6 +255,10 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
             if skipped is not None and (opening is None or skipped.start() < opening.start()):
                 emit(visible[: skipped.start()])
                 skipping = 1
+                if conditionals.opaque and "csname" not in uncertain:
+                    # A conditional whose `\csname`-built name Hardy cannot
+                    # read may be any control word in this branch.
+                    uncertain.append("csname")
                 line = line[skipped.end() :]
                 continue
             if opening is None:
@@ -646,8 +649,9 @@ def outstanding(
             "conditional",
             "",
             f"a false branch (\\iffalse) holds \\{name}, and Hardy cannot tell whether TeX counts "
-            "it as a conditional there -- it is bound with \\let, both declared and redefined, "
-            "declared where the declaration may not run, or used before its \\newif -- so "
+            "it as a conditional there -- it is bound with \\let or built with \\csname, both "
+            "declared and redefined, declared where the declaration may not run, or used before "
+            "its \\newif -- so "
             "where the branch ends, and what the reader is shown, is not known. Declare it once "
             "with \\newif before any use, outside any conditional or macro, and bind it no "
             "other way.",

@@ -419,14 +419,18 @@ class _Scanner:
     def _ambiguous(self, name: str, start: int, end: int) -> None:
         self._finding(
             "ambiguous_conditional",
-            f"\\{name} may or may not be a conditional here -- it is bound with \\let, both "
-            "declared and redefined, declared where the declaration may not run, or used "
+            f"\\{name} may or may not be a conditional here -- it is bound with \\let or built "
+            "with \\csname, both declared and redefined, declared where the declaration may not run, or used "
             "where no \\newif can be placed before it -- so where its branch ends is not known",
             start,
             end,
         )
 
     def _conditional(self, name: str, start: int, end: int) -> int:
+        if self.conditionals.opaque:
+            # A `\csname`-built conditional whose name Hardy cannot read may be
+            # any control word inside this region.
+            self._ambiguous("csname", start, end)
         depth = 1
         position = end
         while position < len(self.text) and depth:

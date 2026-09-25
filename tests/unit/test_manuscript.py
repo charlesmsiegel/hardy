@@ -357,3 +357,23 @@ def test_a_newif_in_the_file_that_inputs_the_user_is_certain() -> None:
 
     assert _labels(found) == ["z"]
     assert not _ambiguous(found)
+
+
+def test_a_let_bound_conditional_of_any_name_is_a_finding() -> None:
+    found = inventory({"a.tex": "\\let\\mycond\\iftrue \\iffalse \\mycond \\fi \\label{hidden}\\fi \\label{z}"})
+
+    assert _ambiguous(found)
+    assert "hidden" not in _labels(found)
+
+
+def test_a_newboolean_declares_a_conditional() -> None:
+    found = inventory({"a.tex": "\\newboolean{draft} \\iffalse \\ifdraft \\fi \\label{hidden}\\fi \\label{z}"})
+
+    assert _labels(found) == ["z"]
+    assert not _ambiguous(found)
+
+
+def test_a_csname_newif_is_a_finding() -> None:
+    found = inventory({"a.tex": "\\expandafter\\newif\\csname ifdraft\\endcsname \\iffalse \\ifdraft \\fi x\\fi"})
+
+    assert _ambiguous(found)
