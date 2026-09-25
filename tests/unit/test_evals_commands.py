@@ -440,7 +440,7 @@ def test_baseline_exits_one_when_an_entrys_stage_a_did_not_run(tmp_path, capsys)
 # --- Review round 1: preflight refusal, unmeasured non-active rows ---
 
 
-def test_a_refused_baseline_starts_no_lean_process(tmp_path, capsys):
+def test_a_refused_baseline_elaborates_nothing(tmp_path, capsys):
     """With a config the command probes `import Mathlib` before sweeping. A
     selection that would carry rows across a moved digest is refused before
     that probe, so the refusal costs no elaboration at all."""

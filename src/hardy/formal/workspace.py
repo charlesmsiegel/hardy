@@ -47,9 +47,7 @@ from hardy.formal.syntax import (
 )
 from hardy.formal.syntax import ImportCycle as ImportCycle
 from hardy.formal.syntax import WorkspacePathError as WorkspacePathError
-from hardy.formal.syntax import _raw_hashes as _raw_hashes
 from hardy.formal.syntax import _scan as _scan
-from hardy.formal.syntax import _scopes as _scopes
 from hardy.formal.syntax import _statement_end as _statement_end
 from hardy.formal.syntax import _word_at as _word_at
 from hardy.formal.syntax import assumptions as assumptions

@@ -165,7 +165,9 @@ def scannable(source: str) -> str:
     being told it had a hole, refused by `submit_proof` before the kernel ever
     saw it. A quotation whose end the parenthesis count cannot be sure of is
     left visible, because trusting the count there would blank a real `sorry`
-    after it.
+    after it. And a source that declares tokens of its own (`declares_tokens`:
+    `notation`, `syntax`, `macro`, ...) keeps every quotation visible, since
+    one of its tokens can end a quotation where no parenthesis count says.
 
     Public because the three surfaces that scan Lean for a forbidden token
     have to agree about what counts as one. `hardy accept --recorded` and the
