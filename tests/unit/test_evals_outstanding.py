@@ -101,3 +101,15 @@ def test_an_active_entry_whose_row_would_not_be_carried_counts_as_unbaselined():
     assert outstanding.unbaselined_active(problems, moved) == ["u"]
     unidentified = fresh.model_copy(update={"statement_digests": {}})
     assert outstanding.unbaselined_active(problems, unidentified) == ["u"]
+
+
+def test_an_active_entry_whose_row_never_ran_counts_as_unbaselined():
+    """A row whose stage A did not run is no measurement (#362), so the
+    default `evals baseline` re-sweeps it rather than refusing with "every
+    active entry already has a baseline row"."""
+    problems = _problems()
+    u = problems.by_id("u")
+    never = {name: sweep.Attempt(status="not_run", message="panic") for name in (*sweep.SINGLES, *sweep.CHAINS)}
+    row = sweep.EntryBaseline(tier=3, elaborates=True, attempts=never, closed_by=())
+    baseline = _baseline().model_copy(update={"entries": {"u": row}, "statement_digests": {"u": u.statement_digest()}})
+    assert outstanding.unbaselined_active(problems, baseline) == ["u"]

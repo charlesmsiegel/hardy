@@ -441,7 +441,37 @@ def sweep_proposition(binders: str, conclusion: str, imports: tuple[str, ...], e
     return attempts, tuple(closed)
 
 
+class SweepIncomplete(RuntimeError):
+    """An entry whose stage A did not run, so the sweep has no tier to file for it."""
+
+
+def _not_run(attempts: dict[str, Attempt]) -> Attempt | None:
+    return next((attempt for attempt in attempts.values() if attempt.status == "not_run"), None)
+
+
+def never_ran(row: EntryBaseline) -> bool:
+    """Whether any attempt in `row`, or in its negation, is `not_run`.
+
+    `read_stage_a` records `not_run` when stage A's Lean reported an error
+    outside every tactic block (a header failure, a panic, an out-of-memory
+    message), so the tactics were never tried at all. `tier_of` cannot tell
+    that from "tried and failed", and would file the entry as tier 3. A row
+    whose attempts all `timed_out` is different: those tactics ran and hit
+    the wall backstop, which is a documented measurement.
+    """
+    return row.elaborates and (
+        _not_run(row.attempts) is not None
+        or (row.negation is not None and _not_run(row.negation.attempts) is not None)
+    )
+
+
+def _stage_a_did_not_run(attempt: Attempt, what: str = "") -> SweepIncomplete:
+    return SweepIncomplete((attempt.message or "an error outside every tactic block") + what)
+
+
 def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> EntryBaseline:
+    """One entry's row, or `SweepIncomplete` when any of its stage-A attempts,
+    or its negation's, did not run: an entry nobody measured is not tier 3."""
     if not elaborate(sorry_source(confirm_name, entry.binders, entry.conclusion, entry.imports)).success:
         return EntryBaseline(tier=3, elaborates=False, attempts={}, closed_by=())
 
@@ -449,6 +479,8 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
         return read_stage_b(elaborate(stage_b_source(confirm_name, entry.binders, entry.conclusion, tactic, entry.imports)), confirm_name)
 
     attempts, closed = sweep_proposition(entry.binders, entry.conclusion, entry.imports, elaborate, confirm=confirm)
+    if (stuck := _not_run(attempts)) is not None:
+        raise _stage_a_did_not_run(stuck)
     negation = None
     if entry.expected == "false":
         neg_name = f"{confirm_name}Negation"
@@ -460,6 +492,8 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
         # already `¬ (∀ binders, conclusion)` or `¬ conclusion`, a closed
         # statement with nothing left to bind.
         n_attempts, n_closed = sweep_proposition("", entry.negation(), entry.imports, elaborate, confirm=confirm_negation)
+        if (stuck := _not_run(n_attempts)) is not None:
+            raise _stage_a_did_not_run(stuck, " (on the A3 negation)")
         negation = NegationBaseline(attempts=n_attempts, closed_by=n_closed)
     return EntryBaseline(tier=tier_of(closed), elaborates=True, attempts=attempts, closed_by=closed,
                          negation=negation, witness=witness_verdict(entry, elaborate))
@@ -494,9 +528,10 @@ def row_carries(prior: Baseline, entry: Entry, statement_digest: str | None) -> 
     needs. `statement_digest` excludes `expected`, so relabelling a true entry
     as a twin left a row with `negation=None` that `staleness` refuses -- and
     reusing it meant `hardy evals baseline`, the documented repair, wrote
-    another refused baseline forever. Shared by the sweep's reuse and by
-    `outstanding.unbaselined_active`, so the default selection sweeps exactly
-    the entries reuse would not carry.
+    another refused baseline forever. A row with an attempt that never ran
+    (`never_ran`) is no measurement, so it is not carried either. Shared by
+    the sweep's reuse and by `outstanding.unbaselined_active`, so the default
+    selection sweeps exactly the entries reuse would not carry.
     """
     row = prior.entries.get(entry.id)
     return (
@@ -504,6 +539,7 @@ def row_carries(prior: Baseline, entry: Entry, statement_digest: str | None) -> 
         and statement_digest is not None
         and prior.statement_digests.get(entry.id) == statement_digest
         and (entry.expected != "false" or row.negation is not None)
+        and not never_ran(row)
     )
 
 
@@ -577,6 +613,8 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     carry = reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest)
 
     entries: dict[str, EntryBaseline] = {}
+    # Entries whose stage A did not run: no row, and a finding instead.
+    incomplete: dict[str, str] = {}
     # The statement digest each row was measured against: today's for a row
     # this sweep produces or reuses, the prior file's for a row carried only
     # because `only` excluded it.
@@ -597,7 +635,7 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
             heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds,
             import_seconds=import_seconds,
             singles=SINGLES, chains=CHAINS, host=host,
-            problems=tuple(_findings(problems, rows)), entries=dict(rows),
+            problems=tuple(_findings(problems, rows, incomplete)), entries=dict(rows),
         )
 
     for entry in problems.entries:
@@ -661,6 +699,11 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
                     entry = in_flight.pop(future)
                     try:
                         entries[entry.id] = future.result()
+                    except SweepIncomplete as did_not_run:
+                        # Not a failure of the sweep: this entry gets a
+                        # finding instead of a row, and the rest go on.
+                        incomplete[entry.id] = str(did_not_run)
+                        report(f"  {entry.id}: stage A did not run: {did_not_run}")
                     except BaseException as error:  # noqa: BLE001 - re-raised below, not swallowed
                         if first_error is None:
                             first_error = error
@@ -684,18 +727,23 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     return built(entries)
 
 
-def _findings(problems: ProblemSet, entries: dict[str, EntryBaseline]) -> list[str]:
+def _findings(problems: ProblemSet, entries: dict[str, EntryBaseline], incomplete: dict[str, str] | None = None) -> list[str]:
     """What a swept row says is wrong with its entry, in `problems.entries` order.
 
     Split out of `sweep` so a checkpoint's findings are computed the same way
     the final baseline's are, over whichever rows exist at the time. An entry
     with no row -- excluded by `only`, or not swept yet -- contributes
-    nothing, exactly as before: it is not part of this baseline at all.
+    nothing: it is not part of this baseline at all. The exception is an
+    entry in `incomplete`, whose stage A did not run: it has no row because
+    there was nothing to measure, and that is a problem with the sweep, which
+    `staleness` and `evals baseline`'s exit status must both see.
     """
     findings: list[str] = []
     for entry in problems.entries:
         result = entries.get(entry.id)
         if result is None:
+            if incomplete and entry.id in incomplete:
+                findings.append(f"{entry.id}: stage A did not run: {incomplete[entry.id]}")
             continue
         if not result.elaborates:
             findings.append(f"{entry.id}: the canonical statement does not elaborate")
@@ -765,6 +813,21 @@ def _truth_label_issues(baseline: Baseline, expectations: dict[str, str]) -> lis
                 f"{id}: the stored witness does not typecheck, so A6 cannot rule out vacuity"
             )
     return issues
+
+
+def _unmeasured_issues(baseline: Baseline) -> list[str]:
+    """Refuse a row whose attempts never ran, whatever `problems` says.
+
+    The sweep files no row for such an entry, so one in a tier file was
+    written by an older sweep or by hand. Re-derived here, like the twin and
+    witness guards, because `problems` is an editable top-level list; and not
+    in `Baseline`'s validator, because a prior that fails validation is read
+    as no prior at all and would silently discard every good row beside it.
+    """
+    return [
+        f"{id}: stage A did not run, so its row records no tactic as tried; re-run `hardy evals baseline`"
+        for id, row in sorted(baseline.entries.items()) if never_ran(row)
+    ]
 
 
 def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environment: EnvironmentIdentity,
@@ -844,6 +907,7 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
     if baseline.problems:
         issues.append("the baseline records problems with the list: " + "; ".join(baseline.problems))
     issues.extend(_truth_label_issues(baseline, expectations))
+    issues.extend(_unmeasured_issues(baseline))
     mismatch = baseline_entries_mismatch(baseline, problem_ids)
     if mismatch is not None:
         issues.append(mismatch)

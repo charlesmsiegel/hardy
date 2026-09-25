@@ -133,7 +133,10 @@ required, because the sweep elaborates Lean built from the problem file's
 own imports, binders, and conclusion with no sandbox. `--workers` (default
 `1`) is the one thing free to raise, since the sweep is CPU-bound on Lean
 elaboration rather than waiting on a provider. The command exits `1` if the
-sweep found problems with the corpus.
+sweep found problems with the corpus, including an entry whose stage A did
+not run at all (a Lean error outside every tactic block). Such an entry gets
+no tier, since none of its tactics was tried; it is named among the
+problems, and the next `hardy evals baseline` sweeps it again.
 
 A full sweep touches every canonical statement, the same thing a bare
 `pytest` does by accident on a machine with Lean configured; see

@@ -917,3 +917,88 @@ def test_an_interrupted_sweep_resumes_from_its_last_checkpoint():
         assert finished.entries[id] == row, f"{id} was re-swept though the checkpoint had it"
     for id in partial.entries:
         assert not any(f"theorem {_problems().by_id(id).name} " in s for s in reswept), f"{id} re-elaborated"
+
+
+# --- A stage A that did not run is not a measurement (#362) ---
+
+
+def _stray(fallback):
+    """A Lean whose stage A dies on line 1 -- a header failure, a panic, an
+    out-of-memory message -- while everything else answers as `fallback`."""
+    def elaborate(source: str) -> Elaboration:
+        if "example :" in source:
+            return _elaboration([_msg(1, "error", "INTERNAL PANIC: out of memory")], returncode=1)
+        return fallback(source)
+    return elaborate
+
+
+def test_a_stage_a_that_did_not_run_is_a_problem_and_leaves_no_row():
+    """`read_stage_a` marks every attempt `not_run` for an error outside every
+    block, and `tier_of(())` is 3, so the sweep used to file a statement
+    nobody measured as one the whole ladder failed on -- the entry a headline
+    tier-3 count is made of -- with no finding, and reuse kept it forever.
+    """
+    one = ProblemSet(entries=_problems().entries[:1])
+    digests = {"easy": one.entries[0].statement_digest()}
+    b = sweep.sweep(one, problems_sha256="p" * 64, environment=IDENTITY, elaborate=_stray(_scripted({"P": {"simp"}})),
+                    now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    assert "easy" not in b.entries, "no tier is filed for an entry whose stage A did not run"
+    assert any(p.startswith("easy: stage A did not run: ") and "INTERNAL PANIC" in p for p in b.problems), b.problems
+    issues = sweep.staleness(b, statement_digests=digests, environment=IDENTITY, problem_ids=["easy"],
+                             host=HOST, expectations={"easy": "true"})
+    assert issues, "a run must refuse this tier file"
+
+    again = sweep.sweep(one, problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({"P": {"simp"}}),
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST, prior=b)
+    assert again.entries["easy"].tier == 0 and again.problems == (), "the next sweep measures it"
+
+
+def test_a_negation_whose_stage_a_did_not_run_leaves_the_twin_unmeasured():
+    """Any `not_run` attempt is enough, the A3 negation's included: a twin
+    whose negation was never tried has no A3 evidence, however its own
+    stage A went."""
+    scripted = _scripted({})
+
+    def negation_dies(source: str) -> Elaboration:
+        if "example : ¬ (¬ S)" in source:
+            return _elaboration([_msg(1, "error", "INTERNAL PANIC: out of memory")], returncode=1)
+        return scripted(source)
+
+    b = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=negation_dies,
+                    now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    assert "twin" not in b.entries
+    assert any(p.startswith("twin: stage A did not run: ") for p in b.problems), b.problems
+    assert {"easy", "lib", "chain", "hard"} <= set(b.entries), "the rest of the sweep carries on"
+
+
+def _unmeasured(baseline: sweep.Baseline, id: str, *, negation: bool = False) -> sweep.Baseline:
+    """`baseline` with `id`'s row hand-edited to attempts that never ran."""
+    row = baseline.entries[id]
+    never = {name: sweep.Attempt(status="not_run", message="edited") for name in (*sweep.SINGLES, *sweep.CHAINS)}
+    if negation:
+        row = row.model_copy(update={"negation": sweep.NegationBaseline(attempts=never, closed_by=())})
+    else:
+        row = row.model_copy(update={"attempts": never, "closed_by": (), "tier": 3})
+    return baseline.model_copy(update={"entries": {**baseline.entries, id: row}, "problems": ()})
+
+
+def test_a_row_whose_attempts_never_ran_is_refused_even_with_no_recorded_problem():
+    """Re-derived at every run, like the twin and witness guards: `problems`
+    is an editable top-level list, and the `Baseline` validator cannot hold
+    the rule because an invalid prior silently becomes no prior at all."""
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    for tampered, id in ((_unmeasured(baseline, "easy"), "easy"), (_unmeasured(baseline, "twin", negation=True), "twin")):
+        issues = sweep.staleness(tampered, statement_digests=DIGESTS, environment=IDENTITY,
+                                 problem_ids=PROBLEM_IDS, host=HOST, expectations=EXPECTED)
+        assert any(i.startswith(f"{id}: ") and "did not run" in i for i in issues), issues
+
+
+def test_a_row_whose_attempts_never_ran_is_reswept_not_reused():
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    tampered = _unmeasured(baseline, "easy")
+    again = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({"P": {"simp"}}),
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST, prior=tampered)
+    assert again.entries["easy"].tier == 0
+    assert again.entries["hard"] == baseline.entries["hard"], "and nothing else is re-swept"

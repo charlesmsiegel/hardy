@@ -413,3 +413,25 @@ def test_baseline_default_resweeps_a_corrected_statement_and_nothing_else(tmp_pa
     rewritten = sweep.Baseline.model_validate_json(out.read_text(encoding="utf-8"))
     assert rewritten.statement_digests["u"] == measured
     assert rewritten.entries["t"].model_dump(mode="json") == written["entries"]["t"]
+
+
+# --- A stage A that did not run exits 1 and files no tier (#362) ---
+
+
+def test_baseline_exits_one_when_an_entrys_stage_a_did_not_run(tmp_path, capsys):
+    problems = _corpus(tmp_path)
+    out = tmp_path / "baseline.json"
+    from test_evals_sweep import _elaboration, _msg
+
+    def stray(source: str):
+        if "example :" in source:
+            return _elaboration([_msg(1, "error", "INTERNAL PANIC: out of memory")], returncode=1)
+        return _always_closes(source)
+
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="t")
+    code = commands.run_baseline(args, config=None, elaborate=stray, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
+    assert code == 1
+    assert "PROBLEM: t: stage A did not run: INTERNAL PANIC" in capsys.readouterr().err
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert "t" not in written["entries"]
