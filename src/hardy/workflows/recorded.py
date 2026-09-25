@@ -131,6 +131,18 @@ def _declaration_issues(manifest: RunManifest, main: Path, run_dir: Path) -> lis
     source, error_issue = _exact_source(main, label="lean/Main.lean")
     if error_issue is not None:
         return [*issues, error_issue]
+    # CRLF read as LF, because Lean reads it that way: its frontend turns
+    # `\r\n` into `\n` before parsing, so a CRLF line stating `axiom foo :
+    # True` is the declaration the kernel read, and a `\r` left in place would
+    # make that line compare unequal to the rendering below (a `write_text`
+    # on Windows is enough to produce one). Only the pair: a lone `\r` is not
+    # a line break to Lean -- `--` runs to the next `\n` -- so treating one as
+    # a break here would read `-- note\raxiom foo : True` as a declaration in
+    # code when Lean read all of it as a comment. None of this touches the
+    # hash over `Main.lean`'s bytes or the byte-exact rebuild in
+    # `_lean_source_issues`, which keep refusing a source the verifier did
+    # not write; this asks only what the kernel was given to stand on.
+    source = source.replace("\r\n", "\n")
     # Byte for byte, in the rendering the verifier uses. Comparing loosely
     # would accept a source that states a weaker or stronger axiom under a
     # declared name, which is the whole thing the declaration is supposed to
