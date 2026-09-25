@@ -155,6 +155,21 @@ async def test_jobs_lists_delegations_budget_and_pending_attention(ui, settings)
     assert "computations: {'active_seconds': 42.5}" in ui.text
 
 
+async def test_jobs_leaves_out_computations_when_nothing_was_computed(ui, settings):
+    """`compute_usage` is a dumped model -- a non-empty dict even when every
+    dimension is zero -- so testing the dict itself printed the line on every
+    `/jobs`. It is shown only when something was really computed."""
+    from hardy.workflows.delegation.contracts import ResourceUsage
+
+    session = _Session()
+    status = session.delegations.status()
+    status["root"]["compute_usage"] = ResourceUsage().model_dump(mode="json")
+    session.delegations.status = lambda: status
+    await handlers.handle_jobs(ui, "", State(config=settings, session=session))
+    assert "root usage" in ui.text
+    assert "computations" not in ui.text
+
+
 async def test_cancel_requests_cancellation_and_names_what_it_reached(ui, settings):
     session = _Session()
     await handlers.handle_cancel(ui, "d-1", State(config=settings, session=session))
