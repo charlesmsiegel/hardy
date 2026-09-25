@@ -110,23 +110,38 @@ restamped: a carried row keeps the statement digest it was measured
 against, and a tier file swept under another environment or procedure
 digest lends no row to a new one.
 
-With no `--only`, `--only-file`, or `--status`, the sweep defaults to active
-entries with no usable baseline row, not the whole corpus: an entry with no
-row at all, one whose statement changed since its row was measured, or a
-twin whose row has no negation sweep. When the tier file was swept under
-another environment or procedure digest (a Mathlib upgrade, another
-machine, or an edit to one of the six deciding sources), the default is
-instead every entry the file holds plus the active entries it does not,
-and the command says why on stderr. If there is nothing to sweep, it
-refuses with exit `2` and names `--only` as the way to force a resweep.
+With no `--only`, `--only-file`, or `--status`, the sweep defaults to what
+the tier file does not yet cover usably, not the whole corpus. That is
+every active entry with no row at all, with a row that records no
+statement digest, with a row measured against a statement that has since
+changed, or (for a twin) with a row that has no negation sweep. It also
+includes any entry, active or not, whose row has an attempt recorded
+`not_run`, because a run refuses such a row wherever it sits in the file.
+When the tier file was swept under another environment or procedure
+digest (a Mathlib upgrade, another machine, or an edit to one of the six
+deciding sources), the default is instead every entry the file holds plus
+the active entries it does not, and the command says why on stderr. If
+there is nothing to sweep, it refuses with exit `2` and names `--only` as
+the way to force a resweep. [`hardy evals todo`](#what-is-left) reports
+this same selection before anything runs.
+
+Back up the tier file before that post-move re-sweep: the first checkpoint
+replaces it with the rows measured so far, and the old file's sha256 is
+what says which scoreboards were bound to it. If the sweep is interrupted,
+resume it by running the same bare command again. A named rerun re-sweeps
+every name, and the bare default resumes active entries only, so any
+non-active entry the old file held that the new one lacks has to be named
+with `--only`.
 
 Name entries explicitly with those three flags to select anything else. A
 named entry is always re-swept, even when its identity has not moved; that
 is how to force a resweep. An entry left unnamed keeps its row only while
 the tier file's environment and procedure digests match this checkout's.
-Otherwise the command refuses with exit `2` rather than carry rows under
-digests they were not measured under; run it with no selection to re-sweep
-every row the file holds.
+Otherwise the command refuses with exit `2`, before any elaboration, rather
+than carry rows under digests they were not measured under. Run it with no
+selection to re-sweep every row the file holds; `--status active` is not
+enough when the file also holds rows for candidates or retired entries.
+
 `--problems` defaults to `corpus`, never `corpus/problems`, and `--out`
 defaults to `evals/baseline.json`. `--acknowledge-unsafe-execution` is
 required, because the sweep elaborates Lean built from the problem file's
@@ -136,7 +151,8 @@ elaboration rather than waiting on a provider. The command exits `1` if the
 sweep found problems with the corpus, including an entry whose stage A did
 not run at all (a Lean error outside every tactic block). Such an entry gets
 no tier, since none of its tactics was tried; it is named among the
-problems, and the next `hardy evals baseline` sweeps it again.
+problems. If it is active, the next bare `hardy evals baseline` sweeps it
+again; if it is not, name it with `--only`.
 
 A full sweep touches every canonical statement, the same thing a bare
 `pytest` does by accident on a machine with Lean configured; see
@@ -161,7 +177,10 @@ accept counts as already run: a board that fails its own audit counts for
 nothing, and neither does an `invalid` row. An entry holding some of its
 `--repeats` but not all, as an interrupted board leaves it, is named on
 stderr and not selected, because a new board repeating those slots would
-not pool with the one that holds them. If every active entry has already
+not pool with the one that holds them. To complete such an entry, set the
+interrupted board aside (it will not be pooled) and rerun the default, or
+run the entry with `--only` on a board you will not pool with the
+interrupted one. If every active entry has already
 been run under that condition, the command refuses with exit `2` and names
 `--only` as the way to force a rerun.
 
@@ -232,7 +251,10 @@ names the boards under this key that pass their own audit, and
 `boards_refused` names those that match the key but fail it, with the
 audit's findings. `unevaluated_active` lists the active entries with no
 valid sample on a counted board, and `partially_evaluated_active` lists
-those holding some of their repeats but not all.
+those holding some of their repeats but not all. `baseline_sweeps` is
+exactly what a bare `hardy evals baseline` would sweep now, including
+every held row after an environment or procedure digest move, which
+`baseline_moved` then explains; `unbaselined_active` is its active part.
 
 ## Pooling
 

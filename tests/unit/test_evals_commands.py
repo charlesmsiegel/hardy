@@ -435,3 +435,58 @@ def test_baseline_exits_one_when_an_entrys_stage_a_did_not_run(tmp_path, capsys)
     assert "PROBLEM: t: stage A did not run: INTERNAL PANIC" in capsys.readouterr().err
     written = json.loads(out.read_text(encoding="utf-8"))
     assert "t" not in written["entries"]
+
+
+# --- Review round 1: preflight refusal, unmeasured non-active rows ---
+
+
+def test_a_refused_baseline_starts_no_lean_process(tmp_path, capsys):
+    """With a config the command probes `import Mathlib` before sweeping. A
+    selection that would carry rows across a moved digest is refused before
+    that probe, so the refusal costs no elaboration at all."""
+    from types import SimpleNamespace
+
+    problems, out = _baselined_then_moved(tmp_path)
+    before = out.read_text(encoding="utf-8")
+    elaborated: list[str] = []
+
+    def counting(source: str):
+        elaborated.append(source)
+        return _always_closes(source)
+
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="u")
+    code = commands.run_baseline(args, config=SimpleNamespace(lean_timeout=180.0), elaborate=counting,
+                                 identity=IDENTITY, now=lambda: datetime(2026, 9, 2, tzinfo=UTC))
+    assert code == 2 and "Refused:" in capsys.readouterr().err
+    assert elaborated == [], "no Lean process before the refusal, not even the import probe"
+    assert out.read_text(encoding="utf-8") == before
+
+
+def test_baseline_default_resweeps_an_unmeasured_row_whatever_its_status(tmp_path):
+    """`staleness` refuses a row with a `not_run` attempt file-wide, so a
+    candidate's unmeasured row blocks every run. The default must clear it,
+    or the advice it gives ("re-run `hardy evals baseline`") would refuse."""
+    from hardy.evals import sweep
+
+    problems = _active_corpus(tmp_path)
+    out = tmp_path / "baseline.json"
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="t,u")
+    assert commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 1, tzinfo=UTC)) == 0
+    written = json.loads(out.read_text(encoding="utf-8"))
+    row = written["entries"]["t"]   # `t` is a candidate
+    row["attempts"] = {name: {"status": "not_run", "message": "panic"} for name in row["attempts"]}
+    row["closed_by"], row["tier"] = [], 3
+    out.write_text(json.dumps(written), encoding="utf-8")
+    swept: list[str] = []
+
+    def counting(source: str):
+        swept.append(source)
+        return _always_closes(source)
+
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    assert commands.run_baseline(args, config=None, elaborate=counting, identity=IDENTITY,
+                                 now=lambda: datetime(2026, 9, 2, tzinfo=UTC)) == 0
+    assert any("theorem T " in s for s in swept) and not any("theorem U " in s for s in swept)
+    rewritten = sweep.Baseline.model_validate_json(out.read_text(encoding="utf-8"))
+    assert not sweep.never_ran(rewritten.entries["t"])
