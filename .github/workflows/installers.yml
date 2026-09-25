@@ -292,10 +292,16 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $stub = Join-Path $env:RUNNER_TEMP 'stub-lake'
           New-Item -ItemType Directory -Force -Path $stub | Out-Null
-          # The stdout line matters as much as the stderr one: it is what a
-          # regression that leaks lake --version's own output into
-          # Test-LeanProject's return value (a two-element array, always
-          # truthy) would need present to be caught at all.
+          # The stdout line matches what real `lake --version` prints, for
+          # realism -- not because this step's own check depends on it: it
+          # only exercises #301 (a redirected native command's stderr must
+          # not abort the probe) through Test-LeanProject's exit-code-derived
+          # boolean, and `if (-not (Test-LeanProject))` would not catch a
+          # return-value-pollution regression either, since a truthy
+          # two-element array still satisfies it. That regression (C1) is
+          # what tests/test_install_scripts.py's
+          # test_test_lean_project_returns_a_bool_not_an_array asserts
+          # against directly, by checking the return type.
           Set-Content -Encoding ASCII -Path (Join-Path $stub 'lake.cmd') -Value @(
             '@echo off',
             'echo Lake version stub',

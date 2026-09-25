@@ -532,7 +532,17 @@ function Get-RelativeShimPath($BinDir, $Target) {
     # A PowerShell range where the end is before the start counts DOWN
     # instead of returning empty ($targetParts[3..2] is @(3, 2), not @()), so
     # the no-segments-left case is guarded rather than left to the range.
-    $downParts = if ($common -lt $targetParts.Count) { @($targetParts[$common..($targetParts.Count - 1)]) } else { @() }
+    #
+    # The leading `,` on each branch matters: `$x = if (...) { @(...) }`
+    # still unwraps the branch's array through the if-expression's own
+    # pipeline capture -- a one-element array becomes a bare scalar, and an
+    # empty one becomes $null, not @(). `, @(...)` emits the array as a
+    # single pipeline object instead, so the if-expression captures the
+    # array itself either way. Without this, `@('..') * $upCount + $null`
+    # (from the empty case) appends a stray $null element rather than
+    # nothing, and `$segments.Count -eq 0` could never be true for the
+    # same-directory case below.
+    $downParts = if ($common -lt $targetParts.Count) { , @($targetParts[$common..($targetParts.Count - 1)]) } else { , @() }
     $segments = @('..') * $upCount + $downParts
     if ($segments.Count -eq 0) { return '.' }
     return ($segments -join '\')
@@ -573,17 +583,22 @@ function Get-ShimContent($BinDir, $Venv) {
     $prefix = Split-Path -Parent $Venv
     $ascii = New-Object System.Text.ASCIIEncoding
 
-    # %~dp0 is cmd.exe's own guarantee of "the directory this batch file was
-    # actually invoked from", and it holds however the file was found -- PATH
-    # search, an explicit relative or absolute path, or a UNC share (with
-    # pushd). Some other %~dp0 pitfalls are worked around by wrapping the body
-    # in `call :run %*` to force re-resolution; that trick is deliberately not
-    # used here, because it adds a second pass of %-expansion over the
-    # forwarded arguments, which would double-unescape the `%%` this file's
-    # own literal segments rely on to carry a real `%` through cmd's parser.
-    # hardy.cmd is always a plain local file, never invoked over UNC or from
-    # inside another batch file's `call`, so that trade would cost real
-    # correctness for a case that does not arise here.
+    # %~dp0 resolves correctly for the cases hardy.cmd is actually reached
+    # by: an unquoted bare name found via PATH search (`hardy --help`, the
+    # ordinary case), or an explicit relative, absolute, or UNC path. The one
+    # real, documented pitfall is a *quoted* bare name still resolved via
+    # PATH search (`"hardy" --help`) -- cmd.exe then reports %~dp0 as the
+    # caller's own current directory, not this file's. The usual fix is a
+    # `call`-to-a-label indirection that captures %~dp0 inside the called
+    # label before %* is ever touched. It is deliberately not used here:
+    # neither that indirection nor its own use of %~dp0 can be exercised
+    # without a real Windows machine to confirm it against, and a mistake in
+    # it would break the default, by far most common, install path for
+    # everyone -- not just the narrow quoted-bare-name case it would fix.
+    # Nothing this installer controls ever invokes hardy.cmd that way:
+    # Test-Installation runs it by a fully quoted absolute path, which
+    # %~dp0 always resolves correctly for regardless of quoting. The gap is
+    # left open rather than risking the common path to close an edge one.
     if (Test-SamePath (Split-Path -Parent $BinDir) $prefix) {
         return [pscustomobject]@{
             Text     = "@echo off`r`n`"%~dp0..\venv\Scripts\hardy.exe`" %*`r`n"

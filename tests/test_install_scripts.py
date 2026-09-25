@@ -384,6 +384,28 @@ def run_installer_functions(
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs real Windows PowerShell 5.1 and cmd.exe semantics")
 
 
+def parse_tagged_lines(stdout: str) -> dict[str, str]:
+    """Pull `KEY=value` lines out of PowerShell output that may also carry
+    other text mixed into the same captured stdout.
+
+    `Out-Host` (and `Write-Host`) write straight to the host, which in a
+    non-interactive `powershell -Command` process is this same stdout --
+    there is no separate stream to redirect them away from here, the way
+    `Invoke-Native` redirects a *native* command's stderr. A function under
+    test that legitimately prints something visible (`Test-LeanProject`'s own
+    `lake --version`) must not be compared against with a bare
+    `result.stdout.strip() == ...`, since that text becomes part of it. A
+    tagged line is instead the one whose *value* the assertion means to
+    check, tolerant of whatever the host also wrote around it.
+    """
+    tags: dict[str, str] = {}
+    for line in stdout.splitlines():
+        match = re.match(r"^([A-Z_]+)=(.*)$", line)
+        if match:
+            tags[match.group(1)] = match.group(2)
+    return tags
+
+
 def write_stub_lake_cmd(path: Path, exit_code: int) -> None:
     """A `lake.cmd` that prints a version line to stdout (as real `lake
     --version` does) and a download-progress line to stderr (as real `lake
@@ -410,10 +432,15 @@ def test_stub_lake_stderr_does_not_abort_the_probe_under_ps51(tmp_path: Path, ex
     stderr on a project's first `lake` invocation. Under Windows PowerShell
     5.1 with `$ErrorActionPreference = 'Stop'`, that must never be fatal by
     itself -- only the stub's exit code may decide `Test-LeanProject`'s
-    answer. The stub also prints a version line to stdout, the way real
-    `lake --version` does, so a regression that leaks that line into
-    `Test-LeanProject`'s return value (C1: a two-element array is always
-    truthy) fails this comparison outright rather than passing by accident.
+    answer.
+
+    The stub also prints a version line to stdout, the way real
+    `lake --version` does. `Test-LeanProject` shows that line to the host
+    directly (`Out-Host`, so it is not part of the function's own return
+    value -- see C1's own test below), but in a non-interactive
+    `powershell -Command` process the host *is* this process's stdout, so
+    `RESULT_VALUE=...` is read off its own tagged line rather than the whole
+    captured stdout being compared as one string.
     """
     bin_dir = tmp_path / "stub-bin"
     bin_dir.mkdir()
@@ -423,11 +450,13 @@ def test_stub_lake_stderr_does_not_abort_the_probe_under_ps51(tmp_path: Path, ex
     body = (
         f"$LeanProject = '{project}'; "
         f"$env:Path = '{bin_dir}' + ';' + $env:Path; "
-        "Write-Output (Test-LeanProject)"
+        "$r = Test-LeanProject; "
+        "\"RESULT_VALUE=$r\""
     )
     result = run_installer_functions(body, require_ps51=True)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == expected, result.stdout + result.stderr
+    tags = parse_tagged_lines(result.stdout)
+    assert tags.get("RESULT_VALUE") == expected, result.stdout + result.stderr
 
 
 @windows_only
@@ -438,11 +467,20 @@ def test_test_lean_project_returns_a_bool_not_an_array(tmp_path: Path, exit_code
     before the probe. A PowerShell function's return value is everything its
     body writes to the output stream, from any statement, not just the one
     after `return`, so a leaked `Lake version ...` line would make this
-    `@('Lake version ...', $true_or_false)`: a two-element array, which is
-    always truthy in a boolean context regardless of the stub's exit code --
-    exactly the bug that let `Install-LeanProject` report success on every
-    real Windows install without ever running `lake update` / `cache get` /
-    `build`.
+    `@('Lake version ...', $true_or_false)`: a two-element array (`.GetType()`
+    `System.Object[]`, not `System.Boolean`), which is always truthy in a
+    boolean context regardless of the stub's exit code -- exactly the bug
+    that let `Install-LeanProject` report success on every real Windows
+    install without ever running `lake update` / `cache get` / `build`.
+
+    The result is read from tagged lines, not the whole captured stdout:
+    `Test-LeanProject` shows `lake --version`'s own output to the host
+    (`Out-Host`) so a first-ever toolchain download's progress stays
+    visible, and in a non-interactive `powershell -Command` process that
+    lands in the same stdout this test captures. With the old, buggy bare
+    `& lake --version`, this same tagged-line approach would still have
+    caught the regression: RESULT_TYPE would read `System.Object[]`, never
+    `System.Boolean`, regardless of what text happened to precede it.
     """
     bin_dir = tmp_path / "stub-bin"
     bin_dir.mkdir()
@@ -452,15 +490,17 @@ def test_test_lean_project_returns_a_bool_not_an_array(tmp_path: Path, exit_code
     body = (
         f"$LeanProject = '{project}'; "
         f"$env:Path = '{bin_dir}' + ';' + $env:Path; "
-        "$result = Test-LeanProject; "
-        "Write-Output ($result -is [bool]); "
-        "Write-Output $result"
+        "$r = Test-LeanProject; "
+        "\"RESULT_TYPE=$($r.GetType().FullName)\"; "
+        "\"RESULT_VALUE=$r\""
     )
     result = run_installer_functions(body, require_ps51=True)
     assert result.returncode == 0, result.stdout + result.stderr
-    lines = result.stdout.strip().splitlines()
-    assert lines[0] == "True", f"Test-LeanProject did not return a [bool]: {result.stdout}"
-    assert lines[1] == expected, result.stdout + result.stderr
+    tags = parse_tagged_lines(result.stdout)
+    assert tags.get("RESULT_TYPE") == "System.Boolean", (
+        f"Test-LeanProject did not return a [bool]: {result.stdout}"
+    )
+    assert tags.get("RESULT_VALUE") == expected, result.stdout + result.stderr
 
 
 @windows_only
@@ -551,14 +591,22 @@ def fake_hardy_exe(venv: Path) -> None:
         )
 
 
+@windows_only
 def test_get_relative_shim_path_computes_a_pure_dot_dot_path():
     """Factored out of `Get-ShimContent` so the up/down segment arithmetic can
     be checked directly, against plain strings, without cmd.exe or a real
     filesystem. PowerShell 5.1 has no `[IO.Path]::GetRelativePath`: this is
     hand-rolled instead -- strip the common prefix of the two full, normalised
     paths, one `..` per `$BinDir` segment left over, then the target's own
-    remaining segments. Pure string logic, so it runs under whichever
-    PowerShell is available rather than needing real Windows.
+    remaining segments.
+
+    Windows-only despite being pure string logic: `[IO.Path]::GetFullPath`
+    and `GetPathRoot` only recognise `C:\\...` as rooted, and drive letters as
+    roots, on Windows. On .NET on Linux, `GetFullPath('C:\\bin')` treats it as
+    a relative path and resolves it under the current directory, and
+    `GetPathRoot` returns `/` for it -- so the different-drives case below
+    would compute an (wrong) relative path instead of finding no shared root
+    at all.
     """
     body = (
         "Write-Output (Get-RelativeShimPath 'C:\\a\\b\\bin' 'C:\\a\\c\\venv\\Scripts\\hardy.exe'); "
