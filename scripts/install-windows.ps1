@@ -505,25 +505,85 @@ function Test-SamePath($a, $b) {
     ([System.IO.Path]::GetFullPath($a)).TrimEnd('\') -ieq ([System.IO.Path]::GetFullPath($b)).TrimEnd('\')
 }
 
+# Pure: the "..\.." path from $BinDir to $Target, PowerShell 5.1 has no
+# [IO.Path]::GetRelativePath. Strips the common prefix of the two full,
+# normalised paths (case-insensitively) and emits one `..` per remaining
+# $BinDir segment, then $Target's own remaining segments. $null when the two
+# do not share a root at all (different drives, or a drive versus a UNC
+# share) -- there is no relative path across that boundary.
+function Get-RelativeShimPath($BinDir, $Target) {
+    $binFull = [System.IO.Path]::GetFullPath($BinDir)
+    $targetFull = [System.IO.Path]::GetFullPath($Target)
+    $binRoot = [System.IO.Path]::GetPathRoot($binFull)
+    $targetRoot = [System.IO.Path]::GetPathRoot($targetFull)
+    if (-not $binRoot -or -not $targetRoot -or $binRoot -ine $targetRoot) { return $null }
+    # The root is trimmed off, not the whole path, before TrimEnd: $BinDir
+    # given as the root itself (say "C:\") is otherwise one character shorter
+    # than its own root once trailing-backslash-trimmed, and Substring throws
+    # rather than returning empty.
+    $binParts = @($binFull.Substring($binRoot.Length).TrimEnd('\') -split '\\' | Where-Object { $_ })
+    $targetParts = @($targetFull.Substring($targetRoot.Length) -split '\\' | Where-Object { $_ })
+    $common = 0
+    while ($common -lt $binParts.Count -and $common -lt $targetParts.Count -and
+        $binParts[$common] -ieq $targetParts[$common]) {
+        $common++
+    }
+    $upCount = $binParts.Count - $common
+    # A PowerShell range where the end is before the start counts DOWN
+    # instead of returning empty ($targetParts[3..2] is @(3, 2), not @()), so
+    # the no-segments-left case is guarded rather than left to the range.
+    $downParts = if ($common -lt $targetParts.Count) { @($targetParts[$common..($targetParts.Count - 1)]) } else { @() }
+    $segments = @('..') * $upCount + $downParts
+    if ($segments.Count -eq 0) { return '.' }
+    return ($segments -join '\')
+}
+
 # Pure: computes the text and encoding for hardy.cmd without touching PATH or
-# disk, so it can be exercised directly. cmd.exe reads a .cmd file in the
-# console's OEM code page, so a non-ASCII byte written any other way -- or a
-# raw UTF-8/UTF-16 path embedded in one -- reads back as garbage or a `?`.
-# (#305) Three layouts, in order:
+# disk, so it can be exercised directly. cmd.exe decodes a .cmd file using the
+# console's *current* code page (chcp / GetConsoleCP), not a fixed system
+# value, so there is no code page this function could pick that is reliably
+# right -- a byte written to be correct for one console reads back wrong in
+# another. The only path that is safe under every code page is one made of
+# nothing but ASCII bytes, so hardy.cmd is always written as pure ASCII;
+# `chcp 65001` is not used to work around this, since it would change the
+# whole console's encoding for whatever the user runs next in it. (#305)
+#
+# In order:
 #  1. The default layout (`$BinDir` beside `$Venv`'s parent): the shim finds
-#     the venv relative to itself and never encodes a path at all.
-#  2. A custom `-BinDir`, but the venv sits under %LOCALAPPDATA% or
-#     %USERPROFILE%: written relative to that variable, which cmd.exe expands
-#     to the real, Unicode-correct value at run time no matter what is in it.
-#  3. Anywhere else: the literal path, in the system's OEM code page, refusing
-#     rather than writing a path that would not round-trip through it.
+#     the venv relative to itself via `%~dp0` and never encodes a path at all.
+#  2. A custom `-BinDir` on the same drive as the venv, whose relative path to
+#     it is itself pure ASCII: also `%~dp0`-relative, just computed rather
+#     than the fixed literal above.
+#  3. A custom `-BinDir` elsewhere, but the venv sits under %LOCALAPPDATA% or
+#     %USERPROFILE% and the remainder past that is pure ASCII: written
+#     relative to that variable, which cmd.exe expands to the real value at
+#     run time, whatever is in it.
+#  4. The target's own 8.3 short path, if the volume still generates one (many
+#     images no longer do) and it happens to be pure ASCII -- 8.3 names are
+#     restricted to a small character set that normally never needs this
+#     check, but nothing here assumes that without verifying it.
+#  5. Otherwise, refuse rather than write a path that would read back wrong.
 # `%` is escaped as `%%` wherever a path is interpolated into the batch line,
-# since cmd.exe treats an unescaped `%x` as a batch variable reference.
+# since cmd.exe treats an unescaped `%x` as a batch variable reference. Every
+# ASCII round-trip check below uses `-cne` (case-sensitive): the default
+# `-ne` in PowerShell ignores case, so it would call an encoding correct even
+# where it substituted, say, an accented capital for its lowercase form.
 function Get-ShimContent($BinDir, $Venv) {
     $target = Join-Path $Venv 'Scripts\hardy.exe'
     $prefix = Split-Path -Parent $Venv
     $ascii = New-Object System.Text.ASCIIEncoding
 
+    # %~dp0 is cmd.exe's own guarantee of "the directory this batch file was
+    # actually invoked from", and it holds however the file was found -- PATH
+    # search, an explicit relative or absolute path, or a UNC share (with
+    # pushd). Some other %~dp0 pitfalls are worked around by wrapping the body
+    # in `call :run %*` to force re-resolution; that trick is deliberately not
+    # used here, because it adds a second pass of %-expansion over the
+    # forwarded arguments, which would double-unescape the `%%` this file's
+    # own literal segments rely on to carry a real `%` through cmd's parser.
+    # hardy.cmd is always a plain local file, never invoked over UNC or from
+    # inside another batch file's `call`, so that trade would cost real
+    # correctness for a case that does not arise here.
     if (Test-SamePath (Split-Path -Parent $BinDir) $prefix) {
         return [pscustomobject]@{
             Text     = "@echo off`r`n`"%~dp0..\venv\Scripts\hardy.exe`" %*`r`n"
@@ -531,31 +591,56 @@ function Get-ShimContent($BinDir, $Venv) {
         }
     }
 
+    $relative = Get-RelativeShimPath $BinDir $target
+    if ($null -ne $relative) {
+        $escapedRelative = $relative -replace '%', '%%'
+        if ($ascii.GetString($ascii.GetBytes($escapedRelative)) -ceq $escapedRelative) {
+            return [pscustomobject]@{
+                Text     = "@echo off`r`n`"%~dp0$escapedRelative`" %*`r`n"
+                Encoding = $ascii
+            }
+        }
+    }
+
     foreach ($variable in @('LOCALAPPDATA', 'USERPROFILE')) {
-        $root = [Environment]::GetEnvironmentVariable($variable)
-        if (-not $root -or -not $target.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $root = ([Environment]::GetEnvironmentVariable($variable))
+        if (-not $root) { continue }
+        $root = $root.TrimEnd('\')
+        if (-not $target.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        # A boundary check, not just a prefix one: "...\AppData\Local" must
+        # not match a target under "...\AppData\LocalLow\..." merely because
+        # the text happens to start the same way.
+        if ($target.Length -ne $root.Length -and $target[$root.Length] -ne '\') { continue }
         $relative = ($target.Substring($root.Length).TrimStart('\')) -replace '%', '%%'
-        # A custom -Prefix can still put non-ASCII text into the part of the
-        # path beyond the profile root; written as ASCII that would fail the
-        # same way -Encoding ASCII did. Fall through to the OEM branch rather
-        # than write it wrong.
-        if ($ascii.GetString($ascii.GetBytes($relative)) -ne $relative) { continue }
+        if ($ascii.GetString($ascii.GetBytes($relative)) -cne $relative) { continue }
         return [pscustomobject]@{
             Text     = "@echo off`r`n`"%$variable%\$relative`" %*`r`n"
             Encoding = $ascii
         }
     }
 
-    $codePage = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage').OEMCP
-    $oem = [System.Text.Encoding]::GetEncoding([int]$codePage)
-    if ($oem.GetString($oem.GetBytes($target)) -ne $target) {
-        throw "$target cannot be written into a .cmd file on this machine's OEM code page ($codePage); use -BinDir inside $prefix"
+    $shortPath = $null
+    try {
+        $fso = New-Object -ComObject Scripting.FileSystemObject
+        $shortPath = $fso.GetFile($target).ShortPath
     }
-    $escaped = $target -replace '%', '%%'
-    return [pscustomobject]@{
-        Text     = "@echo off`r`n`"$escaped`" %*`r`n"
-        Encoding = $oem
+    catch {
+        # No 8.3 name to have: the file is missing, or (increasingly common)
+        # the volume has short-name generation turned off. Either way, there
+        # is nothing usable here, not an error to report.
+        $shortPath = $null
     }
+    if ($shortPath) {
+        $escapedShort = $shortPath -replace '%', '%%'
+        if ($ascii.GetString($ascii.GetBytes($escapedShort)) -ceq $escapedShort) {
+            return [pscustomobject]@{
+                Text     = "@echo off`r`n`"$escapedShort`" %*`r`n"
+                Encoding = $ascii
+            }
+        }
+    }
+
+    throw "$target cannot be written into a .cmd file reliably; install with -BinDir inside $prefix"
 }
 
 function Add-Shim {
@@ -650,10 +735,17 @@ function Test-LeanProject {
     Write-Utf8File $probe "import Mathlib`n`nexample : 2 + 2 = 4 := by norm_num`n"
     try {
         Push-Location $LeanProject
-        # Run once with nothing redirected, so a first-ever `lake` invocation's
-        # toolchain download and Mathlib clone show their progress instead of
-        # happening silently behind the probe below.
-        & lake --version
+        # A PowerShell function's return value is everything its body writes
+        # to the output stream, from any statement, not just the one after
+        # `return` -- so a bare `& lake --version` here would make this
+        # function return @('Lake version ...', $true_or_false), a
+        # two-element array that is always truthy regardless of which. Piped
+        # to Out-Host instead: still visible, still under Invoke-Native's
+        # Continue (elan's toolchain download is what actually happens on a
+        # first-ever `lake` invocation and needs to show its progress; the
+        # Mathlib clone itself happens inside the probe below, silenced), but
+        # consumed there rather than added to what this function returns.
+        Invoke-Native lake @('--version') | Out-Host
         Invoke-Native lake @('env', 'lean', $probe) -Quiet
         return ($LASTEXITCODE -eq 0)
     }
@@ -828,6 +920,11 @@ function Test-Installation {
     Write-Step 'Verifying the installation'
     $hardy = Join-Path $Venv 'Scripts\hardy.exe'
     $shim = Join-Path $BinDir 'hardy.cmd'
+    # Checked before anything else, and reported on its own: a failure past
+    # this point is specific to the shim, not to Hardy itself, only because
+    # this already established that hardy.exe on its own works.
+    & $hardy --help | Out-Null
+    if ($LASTEXITCODE -ne 0) { Stop-Install "$hardy did not run; the installation itself is broken. Re-run the installer." }
     $env:HARDY_CONFIG = $ConfigPath
     $hasModel = $ConfiguredModel -or $env:HARDY_MODEL -or
         ((Test-Path $ConfigPath) -and (Select-String -Path $ConfigPath -Pattern '^\s*model' -Quiet))
@@ -840,9 +937,10 @@ function Test-Installation {
         if (-not $hasModel) { Write-Warn "no model configured yet: add one to $ConfigPath or set HARDY_MODEL" }
         Write-Warn 'some checks did not pass; see what was skipped below'
     }
-    # hardy.exe passing proves the venv; it says nothing about the shim on
-    # PATH, which is the command the summary tells the user to run and where
-    # #305 actually broke (Test-Installation used to run hardy.exe directly).
+    # hardy.exe is already known-good (the --help check above), so a failure
+    # here implicates the shim specifically -- the command the summary tells
+    # the user to run, and where #305 actually broke (Test-Installation used
+    # to run hardy.exe directly and never noticed a broken hardy.cmd).
     cmd /c "`"$shim`" --help" | Out-Null
     if ($LASTEXITCODE -ne 0) { Stop-Install "$shim did not run; re-run the installer" }
 }

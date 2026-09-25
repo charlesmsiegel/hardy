@@ -263,8 +263,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $prefix = Join-Path $env:RUNNER_TEMP "Hardy Jos$([char]0xE9)"
           $bin = Join-Path $prefix 'bin'
+          # -NoLauncher: this prefix is thrown away with $env:RUNNER_TEMP at
+          # the end of the job, but the Desktop/Start Menu shortcuts are not
+          # -- without it, this step would overwrite the real installation's
+          # Hardy.lnk to point at a venv this job is about to discard.
           & powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 `
-            -Yes -SkipMathlib -SkipLatex -FromSource -Prefix $prefix -BinDir $bin
+            -Yes -SkipMathlib -SkipLatex -NoLauncher -FromSource -Prefix $prefix -BinDir $bin
           if ($LASTEXITCODE -ne 0) { throw "the installer exited $LASTEXITCODE for a non-ASCII prefix" }
           $shim = Join-Path $bin 'hardy.cmd'
           if (-not (Test-Path $shim)) { throw "$shim was not written" }
@@ -288,8 +292,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $stub = Join-Path $env:RUNNER_TEMP 'stub-lake'
           New-Item -ItemType Directory -Force -Path $stub | Out-Null
+          # The stdout line matters as much as the stderr one: it is what a
+          # regression that leaks lake --version's own output into
+          # Test-LeanProject's return value (a two-element array, always
+          # truthy) would need present to be caught at all.
           Set-Content -Encoding ASCII -Path (Join-Path $stub 'lake.cmd') -Value @(
             '@echo off',
+            'echo Lake version stub',
             'echo info: downloading component ''lean'' 1>&2',
             'exit /b 0'
           )

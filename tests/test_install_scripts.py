@@ -125,7 +125,7 @@ def test_powershell_installer_parses(script: Path):
 
 # Tools the scripts drive, which need not be installed on whatever machine is
 # running the tests. Everything else a script calls must resolve.
-EXTERNAL_TOOLS = ["winget", "elan", "lake", "npm", "claude", "pdflatex", "initexmf", "tar", "git", "powershell"]
+EXTERNAL_TOOLS = ["winget", "elan", "lake", "npm", "claude", "pdflatex", "initexmf", "tar", "git", "powershell", "cmd"]
 
 
 @pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
@@ -384,6 +384,25 @@ def run_installer_functions(
 windows_only = pytest.mark.skipif(os.name != "nt", reason="needs real Windows PowerShell 5.1 and cmd.exe semantics")
 
 
+def write_stub_lake_cmd(path: Path, exit_code: int) -> None:
+    """A `lake.cmd` that prints a version line to stdout (as real `lake
+    --version` does) and a download-progress line to stderr (as real `lake
+    env lean` does on a project's first run), then exits with `exit_code`.
+
+    Written with `write_bytes`, not `write_text`: on Windows, `write_text`
+    translates every `\\n` to `\\r\\n`, which would turn the `\\r\\n` already in
+    this content into `\\r\\r\\n`.
+    """
+    path.write_bytes(
+        (
+            "@echo off\r\n"
+            "echo Lake version stub\r\n"
+            "echo info: downloading component 'lean' 1>&2\r\n"
+            f"exit /b {exit_code}\r\n"
+        ).encode("ascii")
+    )
+
+
 @windows_only
 @pytest.mark.parametrize("exit_code, expected", [(0, "True"), (1, "False")])
 def test_stub_lake_stderr_does_not_abort_the_probe_under_ps51(tmp_path: Path, exit_code: int, expected: str):
@@ -391,16 +410,14 @@ def test_stub_lake_stderr_does_not_abort_the_probe_under_ps51(tmp_path: Path, ex
     stderr on a project's first `lake` invocation. Under Windows PowerShell
     5.1 with `$ErrorActionPreference = 'Stop'`, that must never be fatal by
     itself -- only the stub's exit code may decide `Test-LeanProject`'s
-    answer.
+    answer. The stub also prints a version line to stdout, the way real
+    `lake --version` does, so a regression that leaks that line into
+    `Test-LeanProject`'s return value (C1: a two-element array is always
+    truthy) fails this comparison outright rather than passing by accident.
     """
     bin_dir = tmp_path / "stub-bin"
     bin_dir.mkdir()
-    (bin_dir / "lake.cmd").write_text(
-        "@echo off\r\n"
-        "echo info: downloading component 'lean' 1>&2\r\n"
-        f"exit /b {exit_code}\r\n",
-        encoding="utf-8",
-    )
+    write_stub_lake_cmd(bin_dir / "lake.cmd", exit_code)
     project = tmp_path / "project"
     project.mkdir()
     body = (
@@ -411,6 +428,39 @@ def test_stub_lake_stderr_does_not_abort_the_probe_under_ps51(tmp_path: Path, ex
     result = run_installer_functions(body, require_ps51=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == expected, result.stdout + result.stderr
+
+
+@windows_only
+@pytest.mark.parametrize("exit_code, expected", [(0, "True"), (1, "False")])
+def test_test_lean_project_returns_a_bool_not_an_array(tmp_path: Path, exit_code: int, expected: str):
+    """C1: `Test-LeanProject` must return exactly `$true`/`$false` -- a
+    `[bool]`, never an array -- even though its body runs `lake --version`
+    before the probe. A PowerShell function's return value is everything its
+    body writes to the output stream, from any statement, not just the one
+    after `return`, so a leaked `Lake version ...` line would make this
+    `@('Lake version ...', $true_or_false)`: a two-element array, which is
+    always truthy in a boolean context regardless of the stub's exit code --
+    exactly the bug that let `Install-LeanProject` report success on every
+    real Windows install without ever running `lake update` / `cache get` /
+    `build`.
+    """
+    bin_dir = tmp_path / "stub-bin"
+    bin_dir.mkdir()
+    write_stub_lake_cmd(bin_dir / "lake.cmd", exit_code)
+    project = tmp_path / "project"
+    project.mkdir()
+    body = (
+        f"$LeanProject = '{project}'; "
+        f"$env:Path = '{bin_dir}' + ';' + $env:Path; "
+        "$result = Test-LeanProject; "
+        "Write-Output ($result -is [bool]); "
+        "Write-Output $result"
+    )
+    result = run_installer_functions(body, require_ps51=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert lines[0] == "True", f"Test-LeanProject did not return a [bool]: {result.stdout}"
+    assert lines[1] == expected, result.stdout + result.stderr
 
 
 @windows_only
@@ -430,7 +480,12 @@ def test_update_source_survives_autocrlf_diff_warnings(tmp_path: Path):
     run(["git", "init", "-q", "--bare", str(origin)])
     seed = tmp_path / "seed"
     run(["git", "clone", "-q", str(origin), str(seed)])
-    (seed / "f.txt").write_text("a\nb\n", encoding="utf-8")
+    # write_bytes, not write_text: on Windows, write_text translates \n to
+    # \r\n, and a file that already has CRLF endings is exactly what makes
+    # core.autocrlf=true have nothing to warn about -- the precondition this
+    # test exists to exercise would silently vanish on the one platform it
+    # runs on.
+    (seed / "f.txt").write_bytes(b"a\nb\n")
     run(["git", "-C", str(seed), "add", "f.txt"])
     run([
         "git", "-C", str(seed), "-c", "user.email=t@example.com", "-c", "user.name=t",
@@ -445,7 +500,19 @@ def test_update_source_survives_autocrlf_diff_warnings(tmp_path: Path):
     run(["git", "-C", str(tree), "config", "core.autocrlf", "true"])
     # An uncommitted change to a tracked file: exactly what an editor leaves
     # behind, and what makes `git diff --quiet` both warn and return 1.
-    (tree / "f.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    (tree / "f.txt").write_bytes(b"a\nb\nc\n")
+
+    # The precondition this test depends on, checked directly: if this ever
+    # stops producing a warning (a git version change, a config default
+    # change), the test must fail loudly here rather than silently stop
+    # exercising #301 while still reporting green.
+    precondition = subprocess.run(
+        ["git", "-C", str(tree), "diff", "--quiet"], capture_output=True, text=True
+    )
+    assert precondition.stderr.strip(), (
+        "git diff --quiet produced no stderr warning; the autocrlf precondition "
+        f"this test depends on is gone: {precondition.stdout!r} {precondition.stderr!r}"
+    )
 
     # $Yes stands in for the switch parameter Confirm-Step reads from its
     # caller's scope; set here so the "uncommitted changes" prompt does not
@@ -484,13 +551,42 @@ def fake_hardy_exe(venv: Path) -> None:
         )
 
 
+def test_get_relative_shim_path_computes_a_pure_dot_dot_path():
+    """Factored out of `Get-ShimContent` so the up/down segment arithmetic can
+    be checked directly, against plain strings, without cmd.exe or a real
+    filesystem. PowerShell 5.1 has no `[IO.Path]::GetRelativePath`: this is
+    hand-rolled instead -- strip the common prefix of the two full, normalised
+    paths, one `..` per `$BinDir` segment left over, then the target's own
+    remaining segments. Pure string logic, so it runs under whichever
+    PowerShell is available rather than needing real Windows.
+    """
+    body = (
+        "Write-Output (Get-RelativeShimPath 'C:\\a\\b\\bin' 'C:\\a\\c\\venv\\Scripts\\hardy.exe'); "
+        "Write-Output (Get-RelativeShimPath 'C:\\a\\bin' 'C:\\a\\venv\\Scripts\\hardy.exe'); "
+        "Write-Output ([string]::IsNullOrEmpty((Get-RelativeShimPath 'C:\\bin' 'D:\\venv\\Scripts\\hardy.exe')))"
+    )
+    result = run_installer_functions(body)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert lines[0] == "..\\..\\c\\venv\\Scripts\\hardy.exe", result.stdout
+    assert lines[1] == "..\\venv\\Scripts\\hardy.exe", result.stdout
+    assert lines[2] == "True", "different drives must have no relative path at all"
+
+
 @windows_only
 def test_get_shim_content_runs_under_a_hostile_path(tmp_path: Path):
     """#305: a shim written under a non-ASCII, space- and `%`-containing path
-    must still run and pass arguments through -- in both the default-layout
-    branch (pure ASCII, `%~dp0`-relative) and the OEM-code-page branch
-    `Get-ShimContent` falls back to outside the default layout and outside
-    `%LOCALAPPDATA%`/`%USERPROFILE%`.
+    must still run and pass arguments through, and `hardy.cmd` must never
+    contain a non-ASCII byte -- cmd.exe decodes a batch file using the
+    console's *current* code page (`chcp`/`GetConsoleCP`), not a fixed system
+    value, so there is no encoding `Get-ShimContent` could choose that is
+    reliably right for a literal non-ASCII path. Three layouts:
+    the default one (pure ASCII, `%~dp0`-relative); a custom `-BinDir` still
+    on the venv's own drive, whose relative path to it happens to be ASCII
+    (also `%~dp0`-relative, just computed); and a custom `-BinDir` whose
+    relative path to the venv is itself non-ASCII, which must either use the
+    target's 8.3 short path or refuse outright -- and must not write a
+    non-ASCII byte to `hardy.cmd` either way.
     """
     hostile = tmp_path / "Hardy Jos\u00e9 100%x"
     echo_args = hostile / "echo_args.py"
@@ -509,25 +605,53 @@ def test_get_shim_content_runs_under_a_hostile_path(tmp_path: Path):
         )
         return run_installer_functions(body, require_ps51=True)
 
+    def assert_no_non_ascii_byte(shim: Path) -> None:
+        if not shim.exists():
+            return
+        offenders = [b for b in shim.read_bytes() if b > 0x7F]
+        assert not offenders, f"{shim} contains a non-ASCII byte: {offenders}"
+
     # Default layout: BinDir and Venv are siblings under the same prefix, so
     # Get-ShimContent never encodes a path at all.
     prefix = hostile / "prefix"
-    default = shim_case(prefix / "bin", prefix / "venv")
+    default_bin = prefix / "bin"
+    default = shim_case(default_bin, prefix / "venv")
     assert default.returncode == 0, default.stdout + default.stderr
     assert "alpha beta" in default.stdout, default.stdout + default.stderr
+    assert_no_non_ascii_byte(default_bin / "hardy.cmd")
 
-    # Outside the default layout, and (via the sentinel overrides below)
-    # outside %LOCALAPPDATA%/%USERPROFILE% too, whatever tmp_path really sits
-    # under: the OEM-code-page branch.
+    # A custom BinDir outside the default layout, sharing "hostile" (the
+    # non-ASCII part) as a common ancestor with the venv: the relative path
+    # between them never needs to mention it at all, so this lands on the
+    # relative-path branch and must succeed.
     sentinel = (
         "$env:LOCALAPPDATA = 'C:\\Hardy-Test-Sentinel-Local'; "
         "$env:USERPROFILE = 'C:\\Hardy-Test-Sentinel-Profile'; "
     )
-    oem = shim_case(hostile / "elsewhere" / "bin", hostile / "somewhere-else" / "venv", sentinel)
-    if oem.returncode != 0 and "code page" in (oem.stdout + oem.stderr):
-        pytest.skip(f"this machine's OEM code page cannot represent {hostile}: {oem.stdout}{oem.stderr}")
-    assert oem.returncode == 0, oem.stdout + oem.stderr
-    assert "alpha beta" in oem.stdout, oem.stdout + oem.stderr
+    sibling_bin = hostile / "elsewhere" / "bin"
+    relative = shim_case(sibling_bin, hostile / "somewhere-else" / "venv", sentinel)
+    assert relative.returncode == 0, relative.stdout + relative.stderr
+    assert "alpha beta" in relative.stdout, relative.stdout + relative.stderr
+    assert_no_non_ascii_byte(sibling_bin / "hardy.cmd")
+
+    # A custom BinDir whose common ancestor with the venv is plain ASCII, but
+    # whose venv sits one non-ASCII directory below that ancestor: the
+    # relative path itself (".." out of "a", then down through "jos\u00e9")
+    # is not representable in ASCII, so this must take the 8.3-short-path
+    # branch (if the volume still generates one) or refuse outright -- never
+    # silently write the non-ASCII text.
+    plain = tmp_path / "plain"
+    hostile_bin = plain / "a" / "bin"
+    hostile_venv = plain / "jos\u00e9" / "venv"
+    hostile_shim = hostile_bin / "hardy.cmd"
+    forced = shim_case(hostile_bin, hostile_venv, sentinel)
+    if forced.returncode == 0:
+        assert "alpha beta" in forced.stdout, forced.stdout + forced.stderr
+    else:
+        assert "cannot be written into a .cmd file reliably" in (forced.stdout + forced.stderr), (
+            forced.stdout + forced.stderr
+        )
+    assert_no_non_ascii_byte(hostile_shim)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the shortcut is made through the Windows shell's own COM object")

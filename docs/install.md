@@ -158,13 +158,17 @@ installer is cheap and safe.
 | Config file | `~/.hardy/config.toml` | `%USERPROFILE%\.hardy\config.toml` |
 | Lean toolchain | `~/.elan` | `%USERPROFILE%\.elan` |
 
-`hardy.cmd` finds `hardy.exe` in the venv relative to itself (`%~dp0..\venv\...`)
-rather than embedding your profile path, so it works for any account name --
+`hardy.cmd` locates the venv relative to itself (`%~dp0..\venv\...`) rather
+than embedding your profile path, so it works for any account name --
 Windows profile folders take the account name verbatim, accented letters and
-all. A `-BinDir` outside the default `bin` folder writes the venv's path
-relative to `%LOCALAPPDATA%`/`%USERPROFILE%` when it can, or in your system's
-own code page otherwise, and refuses rather than write a path that would come
-out wrong.
+all. A `-BinDir` outside the default `bin` folder still resolves relative to
+itself when it can, or relative to `%LOCALAPPDATA%`/`%USERPROFILE%`
+otherwise; an unusual `-BinDir` whose path to the venv can only be written
+with a non-ASCII character is refused outright, with instructions to install
+with `-BinDir` inside the prefix instead. `hardy.cmd` is always plain ASCII:
+cmd.exe reads a batch file in whatever code page the console is currently
+using, not a fixed one, so there is no encoding a fixed choice would be
+reliably right in.
 
 Nothing is installed system-wide except distribution packages (Python, git,
 curl, TeX), which are the only steps that use `sudo`.
