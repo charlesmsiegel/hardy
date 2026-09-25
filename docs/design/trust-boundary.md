@@ -488,7 +488,9 @@ narrower than what was asked for.
 - **An approved name is checked against its approved statement by Lean.** The
   declared-axiom gate in `_final_gates` compares an `axiom` the model writes
   against the approved `lean_statement`, as text, and refuses a mismatch
-  before Lean runs. That is the fast first refusal and no longer the only
+  before Lean runs. Whitespace is collapsed only where every reading calls it
+  code, so a string or character literal in the statement must be the
+  approved one, character for character. That is the fast first refusal and no longer the only
   one: a scan sees only what is written as an `axiom`, and
   `run_cmd ... addDecl (.axiomDecl ...)` declares a real one with no keyword
   at all. So once `#print axioms` has answered, every approved name a report

@@ -989,11 +989,15 @@ def test_a_guillemet_name_without_a_dot_is_still_allowed(sourced) -> None:
 
 
 def test_a_statement_the_probe_cannot_collapse_is_a_refusal_not_a_crash(sourced) -> None:
-    """`_assumption_shape` rejects `\\n` and `\\r`; `probe_source` rejects six
-    line terminators. A separator that survives `normalise_lean` inside a
+    """`_assumption_shape` rejected only `\\n` and `\\r`; `probe_source` rejects
+    six line terminators. A separator that survives `normalise_lean` inside a
     string literal raised `ValueError` out of the tool -- no
     `assumption_prompt` recorded, and the search evidence spent by the
-    `finally`. `_refutation_probe`'s docstring opens "and never crash"."""
+    `finally`. `_refutation_probe`'s docstring opens "and never crash".
+
+    The shape gate now refuses all six, since the save gate compares literals
+    character for character; `test_admission_policy` keeps the probe's own
+    guard covered."""
     result = _assume(sourced, lean_statement='True ∨ ("a b" = "a b")')
 
     assert not result.ok

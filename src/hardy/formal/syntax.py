@@ -1056,30 +1056,46 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     against the one a human approved was skipped entirely, and the axiom passed
     on its name alone. A wrapped statement fared no better: it was truncated at
     the first newline and then failed a comparison it should have passed.
+
+    The declaration is found on the blanked text, so a string cannot declare
+    one, and its statement is read off the same positions with the literals
+    left in, the way `statements` reads a theorem's. Read off the blanked text,
+    `c = 'a'` came back as `c =` followed by spaces, and an approved statement
+    about a character or a string could never be declared as approved. It is
+    returned `normalise_lean`-ed, which collapses whitespace only where every
+    reading calls it code: a literal is compared character for character.
     """
     text = strip_comments(source)
+    # The same positions with the literals left in: what the statement says.
+    kept = strip_comments(source, keep_strings=True)
     lines = text.splitlines()
     marks = _structure(source).marks
     starts = _line_starts(text)
     found: list[tuple[str, str]] = []
     index = 0
     while index < len(lines):
-        declared = ASSUMPTION.match(lines[index].strip())
+        line = lines[index]
+        indent = len(line) - len(line.lstrip())
+        declared = ASSUMPTION.match(line[indent:])
         if declared is None:
             index += 1
             continue
-        line = lines[index]
-        prefix = _prefix_at(marks, starts[index] + len(line) - len(line.lstrip()))
-        name, parts = declared.group(1), [declared.group(2).strip()]
+        prefix = _prefix_at(marks, starts[index] + indent)
+        name, begin = declared.group(1), starts[index] + indent + declared.start(2)
+        end = starts[index] + len(line)
         index += 1
         while index < len(lines):
-            following = lines[index].strip()
-            if not following or COMMAND.match(following):
+            following = lines[index]
+            # Blank only if blank with its literals in: a line holding nothing
+            # but a string is still part of the statement, and reading it in
+            # can only make the comparison stricter.
+            if not kept[starts[index] : starts[index] + len(following)].strip():
                 break
-            parts.append(following)
+            if COMMAND.match(following.strip()):
+                break
+            end = starts[index] + len(following)
             index += 1
-        statement = " ".join(part for part in parts if part)
-        found.append((declared_name(name, prefix), statement))
+        found.append((declared_name(name, prefix), normalise_lean(kept[begin:end])))
     return tuple(found)
 
 
