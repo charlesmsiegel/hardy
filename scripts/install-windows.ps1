@@ -95,6 +95,38 @@ function Write-Warn($message) { Write-Warning $message }
 function Stop-Install($message) { Write-Host "error: $message" -ForegroundColor Red; exit 1 }
 function Test-Command($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
+# Under Windows PowerShell 5.1 (and 7.0/7.1), redirecting a native command's
+# error stream turns each line it writes there into a terminating
+# NativeCommandError when $ErrorActionPreference = 'Stop', regardless of the
+# command's exit code, and regardless of what the redirect sends the text to.
+# PowerShell 7.2 fixed this (PSNotApplyErrorActionToStderr), but 5.1 is the
+# documented entry point (`powershell -ExecutionPolicy Bypass -File ...`), so
+# every native call whose stderr this script wants to ignore or capture goes
+# through here instead of a bare redirect. Only $LASTEXITCODE decides success;
+# stderr is never fatal by itself. (#301)
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory)][string]$File,
+        [string[]]$Arguments = @(),
+        $InputObject,
+        [switch]$Quiet,
+        [switch]$DropErrors
+    )
+    $ErrorActionPreference = 'Continue'
+    if ($Quiet) {
+        if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments *> $null }
+        else { & $File @Arguments *> $null }
+    }
+    elseif ($DropErrors) {
+        if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments 2> $null }
+        else { & $File @Arguments 2> $null }
+    }
+    else {
+        if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments }
+        else { & $File @Arguments }
+    }
+}
+
 # Windows PowerShell's `-Encoding UTF8` prepends a byte-order mark, and the two
 # readers of these files both choke on one: Lean reports "expected token" before
 # `import`, and tomllib "Invalid statement" before the first key. Everything
@@ -145,7 +177,7 @@ function Get-Python {
         $command = Get-Command $candidate -ErrorAction SilentlyContinue
         if (-not $command) { continue }
         # The Windows Store alias is a stub that exits without running Python.
-        & $command.Source -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' *> $null
+        Invoke-Native $command.Source @('-c', 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)') -Quiet
         if ($LASTEXITCODE -eq 0) { return $command.Source }
     }
     return $null
@@ -465,14 +497,77 @@ function New-Environment {
     if (-not (Test-Path (Join-Path $Venv 'Scripts\hardy.exe'))) { Stop-Install "the hardy command was not installed into $Venv" }
 }
 
+# Two paths are the same directory once relative segments, casing, and a
+# trailing separator are normalised away -- the comparison `Add-Shim` needs to
+# tell the default layout (`<Prefix>\bin` beside `<Prefix>\venv`) from a
+# `-BinDir` pointed somewhere else entirely.
+function Test-SamePath($a, $b) {
+    ([System.IO.Path]::GetFullPath($a)).TrimEnd('\') -ieq ([System.IO.Path]::GetFullPath($b)).TrimEnd('\')
+}
+
+# Pure: computes the text and encoding for hardy.cmd without touching PATH or
+# disk, so it can be exercised directly. cmd.exe reads a .cmd file in the
+# console's OEM code page, so a non-ASCII byte written any other way -- or a
+# raw UTF-8/UTF-16 path embedded in one -- reads back as garbage or a `?`.
+# (#305) Three layouts, in order:
+#  1. The default layout (`$BinDir` beside `$Venv`'s parent): the shim finds
+#     the venv relative to itself and never encodes a path at all.
+#  2. A custom `-BinDir`, but the venv sits under %LOCALAPPDATA% or
+#     %USERPROFILE%: written relative to that variable, which cmd.exe expands
+#     to the real, Unicode-correct value at run time no matter what is in it.
+#  3. Anywhere else: the literal path, in the system's OEM code page, refusing
+#     rather than writing a path that would not round-trip through it.
+# `%` is escaped as `%%` wherever a path is interpolated into the batch line,
+# since cmd.exe treats an unescaped `%x` as a batch variable reference.
+function Get-ShimContent($BinDir, $Venv) {
+    $target = Join-Path $Venv 'Scripts\hardy.exe'
+    $prefix = Split-Path -Parent $Venv
+    $ascii = New-Object System.Text.ASCIIEncoding
+
+    if (Test-SamePath (Split-Path -Parent $BinDir) $prefix) {
+        return [pscustomobject]@{
+            Text     = "@echo off`r`n`"%~dp0..\venv\Scripts\hardy.exe`" %*`r`n"
+            Encoding = $ascii
+        }
+    }
+
+    foreach ($variable in @('LOCALAPPDATA', 'USERPROFILE')) {
+        $root = [Environment]::GetEnvironmentVariable($variable)
+        if (-not $root -or -not $target.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $relative = ($target.Substring($root.Length).TrimStart('\')) -replace '%', '%%'
+        # A custom -Prefix can still put non-ASCII text into the part of the
+        # path beyond the profile root; written as ASCII that would fail the
+        # same way -Encoding ASCII did. Fall through to the OEM branch rather
+        # than write it wrong.
+        if ($ascii.GetString($ascii.GetBytes($relative)) -ne $relative) { continue }
+        return [pscustomobject]@{
+            Text     = "@echo off`r`n`"%$variable%\$relative`" %*`r`n"
+            Encoding = $ascii
+        }
+    }
+
+    $codePage = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage').OEMCP
+    $oem = [System.Text.Encoding]::GetEncoding([int]$codePage)
+    if ($oem.GetString($oem.GetBytes($target)) -ne $target) {
+        throw "$target cannot be written into a .cmd file on this machine's OEM code page ($codePage); use -BinDir inside $prefix"
+    }
+    $escaped = $target -replace '%', '%%'
+    return [pscustomobject]@{
+        Text     = "@echo off`r`n`"$escaped`" %*`r`n"
+        Encoding = $oem
+    }
+}
+
 function Add-Shim {
     Write-Step "Linking the hardy command into $BinDir"
     New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-    $target = Join-Path $Venv 'Scripts\hardy.exe'
-    Set-Content -Path (Join-Path $BinDir 'hardy.cmd') -Encoding ASCII -Value @"
-@echo off
-"$target" %*
-"@
+    try {
+        $shim = Get-ShimContent $BinDir $Venv
+    }
+    catch {
+        Stop-Install $_.Exception.Message
+    }
+    [System.IO.File]::WriteAllText((Join-Path $BinDir 'hardy.cmd'), $shim.Text, $shim.Encoding)
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     if ($userPath -notlike "*$BinDir*") {
         [Environment]::SetEnvironmentVariable('Path', "$BinDir;$userPath", 'User')
@@ -555,7 +650,11 @@ function Test-LeanProject {
     Write-Utf8File $probe "import Mathlib`n`nexample : 2 + 2 = 4 := by norm_num`n"
     try {
         Push-Location $LeanProject
-        & lake env lean $probe *> $null
+        # Run once with nothing redirected, so a first-ever `lake` invocation's
+        # toolchain download and Mathlib clone show their progress instead of
+        # happening silently behind the probe below.
+        & lake --version
+        Invoke-Native lake @('env', 'lean', $probe) -Quiet
         return ($LASTEXITCODE -eq 0)
     }
     finally {
@@ -641,7 +740,7 @@ function Install-Latex {
         # MiKTeX is the small option: it fetches LaTeX packages on demand.
         Install-WithWinget 'MiKTeX.MiKTeX' 'MiKTeX'
         if (Test-Command 'initexmf') {
-            & initexmf --set-config-value '[MPM]AutoInstall=1' 2>$null
+            Invoke-Native initexmf @('--set-config-value', '[MPM]AutoInstall=1') -DropErrors
         }
     }
     Update-SessionPath
@@ -665,7 +764,7 @@ function Move-LegacyConfig {
     $venvPython = Join-Path $Venv 'Scripts\python.exe'
     if (-not (Test-Path $venvPython)) { return }
     $program = 'import sys; from pathlib import Path; from hardy.app.config import migrate_global; sys.exit(0 if migrate_global(destination=Path(sys.argv[1])) else 1)'
-    & $venvPython -c $program $ConfigPath 2>$null
+    Invoke-Native $venvPython @('-c', $program, $ConfigPath) -DropErrors
     if ($LASTEXITCODE -eq 0) {
         Write-Detail "moved your settings from the older config location into $ConfigPath"
     }
@@ -712,7 +811,7 @@ function Install-ClaudeCli {
         Write-Detail 'claude already installed'
     } elseif (Get-Command npm -ErrorAction SilentlyContinue) {
         Write-Detail 'installing @anthropic-ai/claude-code'
-        npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
+        Invoke-Native npm @('install', '-g', '@anthropic-ai/claude-code') -Quiet
         if ($LASTEXITCODE -ne 0) { Write-Warn "npm could not install @anthropic-ai/claude-code; install it yourself" }
     } else {
         # Node is not Hardy's to install, and guessing a package manager here
@@ -720,7 +819,7 @@ function Install-ClaudeCli {
         Write-Warn "Node.js/npm not found: install Node, then 'npm install -g @anthropic-ai/claude-code'"
     }
     if (Get-Command claude -ErrorAction SilentlyContinue) {
-        $status = (claude auth status 2>$null) -join ''
+        $status = (Invoke-Native claude @('auth', 'status') -DropErrors) -join ''
         if ($status -notmatch '"loggedIn"\s*:\s*true') { Write-Detail "run 'claude login' to sign in with your subscription" }
     }
 }
@@ -728,6 +827,7 @@ function Install-ClaudeCli {
 function Test-Installation {
     Write-Step 'Verifying the installation'
     $hardy = Join-Path $Venv 'Scripts\hardy.exe'
+    $shim = Join-Path $BinDir 'hardy.cmd'
     $env:HARDY_CONFIG = $ConfigPath
     $hasModel = $ConfiguredModel -or $env:HARDY_MODEL -or
         ((Test-Path $ConfigPath) -and (Select-String -Path $ConfigPath -Pattern '^\s*model' -Quiet))
@@ -740,6 +840,11 @@ function Test-Installation {
         if (-not $hasModel) { Write-Warn "no model configured yet: add one to $ConfigPath or set HARDY_MODEL" }
         Write-Warn 'some checks did not pass; see what was skipped below'
     }
+    # hardy.exe passing proves the venv; it says nothing about the shim on
+    # PATH, which is the command the summary tells the user to run and where
+    # #305 actually broke (Test-Installation used to run hardy.exe directly).
+    cmd /c "`"$shim`" --help" | Out-Null
+    if ($LASTEXITCODE -ne 0) { Stop-Install "$shim did not run; re-run the installer" }
 }
 
 function Write-Summary {
