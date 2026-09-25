@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import tempfile
 from datetime import UTC, datetime
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -42,6 +44,13 @@ from hardy.evals.sweep import witness_source
 
 PAGE = Path(__file__).resolve().parent / "viewer.html"
 BIBLIOGRAPHY = Path(__file__).resolve().parent / "bibliography.html"
+#: Stamped into the served HTML in place of the per-process token (spec §12,
+#: #217): the one thing a page served from elsewhere cannot echo back.
+TOKEN_PLACEHOLDER = "__HARDY_TOKEN__"
+#: A review is an id, a verdict and a short human-written reason -- never
+#: this large. Bounding it before `read` means a request that lies about its
+#: own length cannot hold a handler thread reading forever.
+MAX_REVIEW_BODY = 1 << 16
 
 
 def _classified(entry: Any, root: Path, sources: dict[str, dict] | None = None) -> dict[str, Any]:
@@ -218,11 +227,18 @@ def record_review(root: Path, id: str, *, verdict: str, reviewer: str,
     shard["entries"] = [updated.model_dump(mode="json") if row.get("id") == id else row
                         for row in shard["entries"]]
     before = check_issues(root)
-    _write_atomically(path, json.dumps(shard, indent=2, ensure_ascii=False) + "\n")
-    new = [i for i in check_issues(root) if i not in before and "manifest" not in i]
-    if new:
-        _write_atomically(path, original.decode("utf-8"))
-        raise ReviewRefused("; ".join(new))
+    _write_atomically(path, (json.dumps(shard, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+    try:
+        new = [i for i in check_issues(root) if i not in before and "manifest" not in i]
+        if new:
+            raise ReviewRefused("; ".join(new))
+    except BaseException:
+        # Any failure past this point -- a fresh objection, or `check_issues`
+        # itself blowing up -- must not leave the unvalidated write in place.
+        # The original bytes, not a re-encoding of them: #237 was exactly a
+        # revert that went through `str` and lost byte-exactness on the way.
+        _write_atomically(path, original)
+        raise
     return _classified(updated, root)
 
 
@@ -230,12 +246,19 @@ def _one_line(error: ValidationError) -> str:
     return "; ".join(e.get("msg", str(e)) for e in error.errors())
 
 
-def _write_atomically(path: Path, text: str) -> None:
+def _write_atomically(path: Path, data: bytes) -> None:
     """A crash mid-write must not leave a half-written shard: the whole corpus
-    fails to load on one truncated file."""
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    fails to load on one truncated file.
+
+    Bytes through a binary temp file, not `str` through `write_text` (#237):
+    `write_text` without `newline=` translates every `\\n` in the JSON to the
+    platform default, so a shard written this way on Windows would show as
+    changed on every line to a diff that expects `\\n`. A binary file never
+    translates anything, so the bytes written are exactly the bytes given.
+    """
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+        tmp.write(data)
+    os.replace(tmp.name, path)
 
 
 def _tiers(baseline_path: Path | None) -> dict[str, dict[str, Any]]:
@@ -331,31 +354,48 @@ class Handler(BaseHTTPRequestHandler):
         super().__init__(*args, **kw)
 
     def do_GET(self) -> None:  # noqa: N802 -- BaseHTTPRequestHandler's own name
+        if not self._allowed(write=False):
+            return
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
-            self._send(PAGE.read_bytes(), "text/html; charset=utf-8")
+            self._send(self._stamped(PAGE), "text/html; charset=utf-8")
         elif path == "/bibliography":
-            self._send(BIBLIOGRAPHY.read_bytes(), "text/html; charset=utf-8")
+            self._send(self._stamped(BIBLIOGRAPHY), "text/html; charset=utf-8")
         elif path == "/api/corpus":
             body = json.dumps(payload(self.root, self.baseline), ensure_ascii=False).encode("utf-8")
             self._send(body, "application/json; charset=utf-8")
         else:
             self.send_error(404)
 
+    def _stamped(self, page: Path) -> bytes:
+        """The page as served, with the per-process token in place of the
+        placeholder. Stamped on every serve, not once at build time: the
+        token is per process, and a bundle carrying yesterday's token is a
+        page that can read the corpus but never act on it.
+        """
+        return page.read_text(encoding="utf-8").replace(TOKEN_PLACEHOLDER, self.server.token).encode("utf-8")
+
     def do_POST(self) -> None:  # noqa: N802 -- BaseHTTPRequestHandler's own name
         """One write route: a human's verdict on one entry (spec §12).
 
         The body names the entry, the verdict, the reviewer and a reason; the
         digests the review binds are computed server-side from the entry on
-        disk, never taken from the page. Every refusal is a 400 carrying the
-        same message the CLI would give, so the editor never accepts a
-        corpus that `corpus check` rejects.
+        disk, never taken from the page. Every refusal from a well-formed but
+        unacceptable review is a 400 carrying the same message the CLI would
+        give, so the editor never accepts a corpus that `corpus check`
+        rejects. A request that has not proven it may act at all -- wrong
+        `Host`, cross-site `Origin`, or no valid token (#217) -- is refused
+        before any of that, with a 403 instead.
         """
         if self.path.split("?", 1)[0] != "/api/review":
             self.send_error(404)
             return
+        if not self._allowed(write=True):
+            return
         try:
             length = int(self.headers.get("Content-Length") or 0)
+            if not 0 <= length <= MAX_REVIEW_BODY:
+                raise ValueError(f"the request body is larger than {MAX_REVIEW_BODY} bytes")
             body = json.loads(self.rfile.read(length).decode("utf-8"))
             if not isinstance(body, dict):
                 raise ValueError("the request body must be a JSON object")
@@ -370,6 +410,49 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(json.dumps(result, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8")
+
+    def _allowed(self, *, write: bool) -> bool:
+        """Whether this request may be answered at all, and writes at all.
+
+        Mirrors `app/web/server.py`'s `_allowed` (#217): `Host` matching an
+        address this server actually listens on defeats DNS rebinding, where
+        a name the attacker controls resolves to this address after the page
+        has loaded. `Sec-Fetch-Site` and a same-origin `Origin` defeat an
+        ordinary cross-site form post. The token defeats the case both of
+        those still allow -- a page served from this very origin by
+        something else -- and is the one check a write cannot pass without
+        having read the page Hardy served.
+        """
+        host = self.headers.get("Host", "")
+        ok = host in self.server.allowed_hosts and self.headers.get("Sec-Fetch-Site") != "cross-site"
+        if write:
+            token = self.headers.get("X-Hardy-Token", "")
+            ok = (ok and self.headers.get("Origin") == f"http://{host}"
+                  and self.headers.get("Content-Type", "").startswith("application/json")
+                  # `isascii` first: `compare_digest` raises `TypeError` on a
+                  # str holding a codepoint above 127, and a header is
+                  # whatever the client sent.
+                  and token.isascii() and secrets.compare_digest(token, self.server.token))
+        if not ok:
+            self._discard_body()
+            body = json.dumps({"error": "Open this action from the local Hardy page."}).encode("utf-8")
+            self._send(body, "application/json; charset=utf-8", status=403)
+        return ok
+
+    def _discard_body(self) -> None:
+        """Read and drop a refused request's body.
+
+        Not politeness: closing a connection whose peer is still writing
+        resets it rather than ending it, and the client is then told the
+        connection failed instead of being handed the 403 that says what was
+        actually wrong.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return
+        if length > 0:
+            self.rfile.read(min(length, MAX_REVIEW_BODY))
 
     def _send(self, body: bytes, content_type: str, status: int = 200) -> None:
         self.send_response(status)
@@ -394,6 +477,15 @@ def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Pa
     server fills the filters in as its checkpoints land.
     """
     server = HTTPServer((host, port), partial(Handler, root=root, baseline=baseline))
+    server.token = secrets.token_urlsafe(32)
+    # `Host` values this process actually answers to: the address it was
+    # bound with, plus the loopback aliases a browser or `curl` reaching a
+    # loopback bind is likely to use for it. A request naming anything else
+    # is refused before it is routed at all (#217).
+    server.allowed_hosts = {f"{host}:{server.server_port}"}
+    if host in ("127.0.0.1", "localhost", "0.0.0.0", "::", "::1"):
+        server.allowed_hosts |= {f"127.0.0.1:{server.server_port}", f"localhost:{server.server_port}"}
+    Handler.timeout = 10
     report(f"Corpus viewer on http://{host}:{server.server_port}/  (Ctrl-C to stop)")
     report(f"Serving {root.resolve()} -- edit a shard and refresh to see it.")
     if serve_forever:
