@@ -672,21 +672,39 @@ def normalise_lean(text: str) -> str:
 
 
 def blank_bounded_quotations(lexed: Lexed, refuse: str = "") -> tuple[str, tuple[tuple[int, int], ...]]:
-    """`lexed.text` with each syntax quotation whose extent is certain blanked.
+    """`lexed.text` with each syntax quotation whose extent Hardy can count blanked.
 
-    A quotation is data: `` `(tactic| sorry) `` and `` `(command| namespace
-    Bar) `` build syntax a proof never runs, so neither is a hole or a scope.
-    Its end is found by counting parentheses, and that count is exact only
-    where every reading agrees what is code: parentheses inside literals and
-    comments are already blank, and those inside a `«...»` name every reading
-    opens are skipped. One only some reading opens is counted through, since
-    another reading's parentheses may be inside it.
-    A quotation holding an uncertain character, or any of `refuse`, is left
-    visible and returned in the second element with every unbalanced one, so
-    a caller can say it could not read it rather than guess.
+    A quotation is data: `` `(tactic| sorry) `` builds syntax a proof never
+    runs, so it is not a hole. Its end is found by counting parentheses, and
+    that count is exact only where every reading agrees what is code:
+    parentheses inside literals and comments are already blank, and those
+    inside a `«...»` name every reading opens are skipped. One only some
+    reading opens is counted through, since another reading's parentheses may
+    be inside it. A quotation holding an uncertain character, or any of
+    `refuse`, is left visible and returned in the second element with every
+    unbalanced one, so a caller can say it could not read it rather than guess.
+
+    Even a certain count is Lean's only for Lean's tokens: a source that
+    declares its own (`notation "⟪(" x => x`) can end a quotation somewhere
+    else, and the blanked stretch then holds real code. Callers whose gate
+    turns on what is hidden check `declares_tokens` first, and the declaration
+    scans never let this remove a declaration or scope keyword.
     """
+    blanked, unbounded = _quotation_spans(lexed, refuse)
+    out = list(lexed.text)
+    for low, high in blanked:
+        for position in range(low, high):
+            if out[position] != "\n":
+                out[position] = " "
+    return "".join(out), unbounded
+
+
+def _quotation_spans(
+    lexed: Lexed, refuse: str = ""
+) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[int, int], ...]]:
+    """The quotations `blank_bounded_quotations` blanks, and the ones it cannot bound."""
     text = lexed.text
-    out = list(text)
+    blanked: list[tuple[int, int]] = []
     unbounded: list[tuple[int, int]] = []
     index = 0
     while (index := text.find("`(", index)) != -1:
@@ -710,11 +728,27 @@ def blank_bounded_quotations(lexed: Lexed, refuse: str = "") -> tuple[str, tuple
             unbounded.append((index, end))
             index += 2
             continue
-        for position in range(index, end):
-            if out[position] != "\n":
-                out[position] = " "
+        blanked.append((index, end))
         index = end
-    return "".join(out), tuple(unbounded)
+    return tuple(blanked), tuple(unbounded)
+
+
+# The commands that add tokens to Lean's table. A module declaring one can
+# move where a quotation ends (`notation "⟪(" x => x` swallows a `(`), so a
+# parenthesis count over its quotations is no longer Lean's.
+TOKEN_COMMANDS = frozenset({
+    "notation", "notation3", "syntax", "infix", "infixl", "infixr", "prefix", "postfix",
+    "macro", "elab", "binder_predicate",
+})
+
+
+def declares_tokens(lexed: Lexed) -> bool:
+    """Whether the source may add tokens of its own to Lean's table."""
+    text = lexed.text
+    return any(
+        text[start:end] in TOKEN_COMMANDS
+        for start, end in identifier_tokens(text, lexed).items()
+    )
 
 
 def _scopes(text: str, tokens: Mapping[int, int]) -> list[tuple[int, tuple[str, ...]]]:
@@ -1200,18 +1234,27 @@ class _Structure(NamedTuple):
 def _structure(source: str) -> _Structure:
     """Declarations, scopes, and what about them could not be read.
 
-    Over `strip_comments`' text with bounded syntax quotations blanked, so
-    `` `(command| namespace Bar) `` moves no scope and `` `(theorem x : True
-    := trivial) `` declares nothing. A scope command Hardy cannot place --
-    inside a quotation whose extent is uncertain, or at a character only some
-    readings call code -- is a problem, and `unreadable_structure` reports it.
+    Every `theorem` and `lemma` token in `strip_comments`' text is a
+    declaration, syntax quotations included: where a quotation ends depends on
+    Lean's token table, which a module extends with `notation`, so blanking
+    one by counting parentheses could hide a real declaration after it (a
+    `theorem` a macro quotes is reported instead, and the audit, asking Lean
+    about a name nobody declared, refuses the save). Scopes are walked with
+    bounded quotations blanked, so `` `(command| namespace Bar) `` moves no
+    scope -- but a scope command inside any quotation, one whose extent is
+    uncertain, or one at a character only some readings call code is a
+    problem, and `unreadable_structure` reports it, because the names after
+    it depend on whether it is code.
     """
     lexed = lex(source)
     text, unbounded = blank_bounded_quotations(lexed)
+    blanked, _ = _quotation_spans(lexed)
     tokens = identifier_tokens(text, lexed)
     marks = _scopes(text, tokens)
+    full = lexed.text
+    every = identifier_tokens(full, lexed)
     heads: list[_Head] = []
-    ends = {end: start for start, end in tokens.items()}
+    ends = {end: start for start, end in every.items()}
     problems: list[str] = []
     if lexed.overflow is not None:
         problems.append(
@@ -1223,11 +1266,12 @@ def _structure(source: str) -> _Structure:
             f"line {source.count(chr(10), 0, index) + 1}: a `«` opens a name in one reading "
             "of this file and not in another, so Hardy cannot tell where the name ends"
         )
-    for start in sorted(tokens):
-        end = tokens[start]
-        word = text[start:end]
+    for start in sorted(every):
+        end = every[start]
+        word = full[start:end]
         if word in SCOPE_KEYWORDS and (
-            lexed.uncertain(start, end) or any(low <= start < high for low, high in unbounded)
+            lexed.uncertain(start, end)
+            or any(low <= start < high for low, high in (*unbounded, *blanked))
         ):
             problems.append(
                 f"line {source.count(chr(10), 0, start) + 1}: `{word}` sits where Hardy cannot "
@@ -1236,22 +1280,22 @@ def _structure(source: str) -> _Structure:
             )
         if word not in DECLARATION_KINDS:
             continue
-        named = _DECLARATION_NAME.match(text, end)
+        named = _DECLARATION_NAME.match(full, end)
         if named is None:
             continue
         modifiers: list[str] = []
         cursor = start
         while True:
             before = cursor
-            while before and text[before - 1] in _LEAN_SPACE:
+            while before and full[before - 1] in _LEAN_SPACE:
                 before -= 1
             previous = ends.get(before)
-            if previous is None or text[previous:before] not in _HEAD_MODIFIERS:
+            if previous is None or full[previous:before] not in _HEAD_MODIFIERS:
                 break
-            modifiers.append(text[previous:before])
+            modifiers.append(full[previous:before])
             cursor = previous
         heads.append(
-            _Head(_head_start(text, cursor), start, named.end(), " ".join(reversed(modifiers)), word, named.group(1))
+            _Head(_head_start(full, cursor), start, named.end(), " ".join(reversed(modifiers)), word, named.group(1))
         )
     return _Structure(text, tokens, marks, tuple(heads), tuple(problems))
 

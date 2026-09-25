@@ -1323,3 +1323,39 @@ def test_a_registered_theorem_behind_a_one_reading_guillemet_still_refuses(tmp_p
     assert not refusal["ok"]
     assert "«" in refusal["output"]
     assert not saved(tmp_path).exists()
+
+
+NOTATION_QUOTATION = (
+    "import Mathlib\n\n"
+    'notation "⟪(" x => x\nnotation:max x "⸨)" => x\n'
+    "lemma good : True := by exact True.intro\n"
+    "def q : True := (fun _ => trivial) `(⟪( 1)\n"
+    "theorem bad : True := sorry\n"
+    "def r : True := trivial ⸨)\n"
+)
+
+
+def test_a_theorem_inside_a_quotation_a_notation_extends_is_not_hidden(tmp_path: Path):
+    """Review round 3, N4. The module's own tokens end the quotation at `⸨)`,
+    so `bad` is real Lean; counting parentheses blanked it, and the save went
+    through recorded `clean` over `good` alone."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": NOTATION_QUOTATION}, "lean")]))
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "bad" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_a_registered_theorem_inside_such_a_quotation_is_audited(tmp_path: Path):
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": NOTATION_QUOTATION}, "lean")]),
+        registered=(*RESULTS, "bad"),
+    )
+    chat.send("Save it.")
+    outcome = results(tmp_path, "save_lean")[-1]
+    assert outcome["ok"], outcome["output"]
+    record = state(tmp_path)["audit"]["Main"]
+    assert record["status"] == "open"
+    assert "bad" in str(record["declarations"])
