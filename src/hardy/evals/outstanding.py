@@ -77,15 +77,23 @@ def evaluated_ids(scoreboards_root: Path, *, key: tuple[str | None, str]) -> set
 
 
 def unbaselined_active(problems: Any, baseline: Any | None) -> list[str]:
-    """Active entries with no baseline row -- what `evals baseline`'s default resweeps.
+    """Active entries with no usable baseline row -- what `evals baseline`'s default resweeps.
+
+    Usable is `sweep.row_carries`: a row measured against another statement
+    (or recording no statement digest), or a twin's row with no negation
+    sweep, is one `staleness` refuses and the sweep would not reuse, so it
+    counts as unbaselined here too. Otherwise the repair `staleness` names --
+    re-running `hardy evals baseline` -- would find nothing to do.
 
     Needs no run digest: a baseline sweep is Lean-only, gated by the corpus
     and the toolchain, not by which model, mode or limits a run would use.
     `baseline=None` (no tier file written yet) means every active entry is
     unbaselined.
     """
-    entries = baseline.entries if baseline is not None else {}
-    return [e.id for e in problems.entries if e.status == "active" and e.id not in entries]
+    return [
+        e.id for e in problems.entries
+        if e.status == "active" and (baseline is None or not sweep.row_carries(baseline, e, e.statement_digest()))
+    ]
 
 
 def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tuple[str | None, str]) -> dict[str, list[str]]:

@@ -665,10 +665,12 @@ def test_a_sweep_reuses_nothing_when_the_procedure_or_environment_moved():
 
 def test_only_sweeps_the_named_entries_and_still_carries_the_rest_forward():
     """Selecting a subset must not delete every other baseline row: that is
-    what makes incremental growth possible at all. `only` restricts what gets
-    re-swept, but an id it excludes keeps its prior row regardless -- even
-    across an environment change that would otherwise force a full re-sweep,
-    because this run was never asked to touch it.
+    what makes incremental growth possible at all. `only` names what gets
+    re-swept -- always, even when that entry's identity has not moved, since
+    naming it is how an operator forces a resweep -- and an id it excludes
+    keeps its prior row, but only under the environment and procedure that
+    row was measured under. On another machine the same call refuses rather
+    than stamp the old rows with the new host's digest (#202).
     """
     first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
                         now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
@@ -679,15 +681,86 @@ def test_only_sweeps_the_named_entries_and_still_carries_the_rest_forward():
         swept.append(source)
         return _elaboration([])
 
-    elsewhere = {**HOST, "machine": "aarch64", "cpu_count": 96}
     again = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=counting,
-                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=elsewhere,
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST,
                         prior=first, prior_statement_digests=DIGESTS, only=("easy",))
-    assert swept, "the selected entry is re-swept even though its digest did not move"
+    assert swept, "the named entry is re-swept even though its identity did not move"
     assert all("Easy" in s or "example :" in s for s in swept), swept
     for id in ("lib", "chain", "hard", "twin"):
         assert again.entries[id] == first.entries[id], f"{id} must survive carry-forward though unselected"
     assert set(again.entries) == set(first.entries), "no entry is dropped from the baseline"
+    assert sweep.staleness(again, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS,
+                           host=HOST, expectations=EXPECTED) == ()
+
+    swept.clear()
+    elsewhere = {**HOST, "machine": "aarch64", "cpu_count": 96}
+    with pytest.raises(sweep.SweepRefused, match="never restamped"):
+        sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=counting,
+                    now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=elsewhere,
+                    prior=first, prior_statement_digests=DIGESTS, only=("easy",))
+    assert swept == [], "the refusal comes before any Lean runs"
+
+
+def test_only_refuses_to_carry_rows_across_an_environment_change():
+    """The repro from #202: an `only`-restricted sweep on a new host, or after
+    the sweep code moved, used to carry every unselected row forward and then
+    stamp the whole file with today's environment and procedure digests, so
+    `staleness` passed rows measured on other code and another machine.
+    A baseline has one environment and one procedure digest, so rows from
+    another identity cannot coexist with this one's: the sweep refuses.
+    """
+    first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    elsewhere = {**HOST, "machine": "aarch64", "cpu_count": 96}
+    moved_procedure = first.model_copy(update={"procedure_digest": "q" * 64})
+
+    def refused_first(source: str) -> Elaboration:
+        raise AssertionError("the refusal comes before any Lean runs")
+
+    for prior, host in ((first, elsewhere), (moved_procedure, HOST)):
+        with pytest.raises(sweep.SweepRefused):
+            sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=refused_first,
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=host,
+                        prior=prior, prior_statement_digests=DIGESTS, only=("easy",))
+
+    # Naming every entry that holds a row leaves nothing to carry, so the
+    # same moved identity is simply a full re-sweep.
+    again = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=elsewhere,
+                        prior=first, prior_statement_digests=DIGESTS, only=tuple(PROBLEM_IDS))
+    assert sweep.staleness(again, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS,
+                           host=elsewhere, expectations=EXPECTED) == ()
+
+
+def test_an_excluded_row_keeps_its_own_statement_digest():
+    """The second half of #202: `hard`'s statement moved, but only `easy` was
+    named. `hard`'s row is carried, and so is the digest it was measured
+    against -- stamping it with today's digest would hide the drift from
+    `staleness`, which is the one thing that digest exists to show.
+    """
+    first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    drift = {**DIGESTS, "hard": "h" * 64}
+    third = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 3, tzinfo=UTC), host=HOST,
+                        prior=first, prior_statement_digests=drift, only=("easy",))
+    assert third.entries["hard"] == first.entries["hard"]
+    assert third.statement_digests["hard"] == first.statement_digests["hard"]
+    assert third.statement_digests["easy"] == drift["easy"]
+    issues = sweep.staleness(third, statement_digests=drift, environment=IDENTITY, problem_ids=PROBLEM_IDS,
+                             host=HOST, expectations=EXPECTED)
+    assert any("changed since the baseline was swept" in i and "hard" in i for i in issues), issues
+
+    # A carried row the prior file recorded no digest for gets none here
+    # either, rather than today's.
+    forgotten = first.model_copy(update={"statement_digests": {k: v for k, v in first.statement_digests.items() if k != "hard"}})
+    fourth = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                         now=lambda: datetime(2026, 9, 3, tzinfo=UTC), host=HOST,
+                         prior=forgotten, prior_statement_digests=DIGESTS, only=("easy",))
+    assert "hard" in fourth.entries and "hard" not in fourth.statement_digests
+    issues = sweep.staleness(fourth, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS,
+                             host=HOST, expectations=EXPECTED)
+    assert any("no statement digest" in i and "hard" in i for i in issues), issues
 
 
 def test_a_relabelled_twin_is_reswept_rather_than_carried_forward():
