@@ -266,9 +266,10 @@ def read_conditionals(
     inputs never runs, and counting it made the root's correctly declared
     `\ifdraft` ambiguous and blocked a valid report. Which files TeX reads
     depends on the conditionals being read here, so the set is taken without
-    them (`may_reach`): every file some `\input` from `root` names, in a
-    skipped branch or a macro body too. That can only include more files,
-    which keeps a binding that might run counted. With no `root` among the
+    them (`may_reach`): every file another file mentions by name, however it
+    is loaded, or every file at all when one loads a name built from a macro.
+    That can only include more files, which keeps a binding that might run
+    counted. With no `root` among the
     sources, or `every_file` (a caller that scans every file as though it were
     read), every file counts.
     """
@@ -405,20 +406,40 @@ def _resolver(paths: Collection[str]) -> Callable[[str], str | None]:
     return resolve
 
 
+#: A load whose file name is built from a macro, or a loader followed straight
+#: by a control sequence (`\input\name`): the name is not in the text, so any
+#: file may be the one read.
+_BUILT_LOAD = re.compile(
+    r"\\(?:@*input|include|InputIfFileExists|import|subimport|subfile|inputfrom|subinputfrom"
+    r"|includefrom|subincludefrom)(?![a-zA-Z])\s*(?:\\|(?:\{[^{}]*\}\s*)?\{[^{}]*\\)"
+)
+
+
 def may_reach(texts: Mapping[str, str], root: str) -> set[str]:
-    r"""Every file TeX might read from `root`: the closure over every `\input`
-    in `texts` (already `typeset`, so comments and verbatim are gone), whether
-    or not a conditional or a macro body stands around it. Needs no reading of
-    the conditionals, so it can decide which files' conditionals to read."""
-    resolve = _resolver(texts)
+    r"""Every file TeX might read when it runs `root`, over-approximated.
+
+    Which files TeX reads depends on the conditionals this module reads, so
+    the set is taken without them -- and without trying to know every way a
+    file is loaded: `\input defs`, `\InputIfFileExists{defs}{}{}`,
+    `\import{./}{defs}` and `\def\d{defs}\input{\d}` all read `defs.tex`, and
+    following `\input{...}` alone dropped it and the `\newif` in it. So a file
+    is left out only when nothing in any other file's `typeset` text mentions
+    it -- its path, its path without `.tex`, or its base name either way --
+    and no file loads a name built from a macro, which could be any file.
+    `texts` are already `typeset`: a mention in a comment or a verbatim block
+    loads nothing.
+    """
+    if any(_BUILT_LOAD.search(text) for text in texts.values()):
+        return set(texts)
     reached = {root}
-    frontier = [root]
-    while frontier:
-        for found in INCLUSION.finditer(texts[frontier.pop()]):
-            target = resolve(found.group(1))
-            if target is not None and target not in reached:
-                reached.add(target)
-                frontier.append(target)
+    for path in texts:
+        if path == root:
+            continue
+        normal = path.replace("\\", "/")
+        base = normal.rsplit("/", 1)[-1]
+        names = {normal, normal.removesuffix(".tex"), base, base.removesuffix(".tex")} - {""}
+        if any(name in text for other, text in texts.items() if other != path for name in names):
+            reached.add(path)
     return reached
 
 

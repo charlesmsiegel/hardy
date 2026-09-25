@@ -653,3 +653,27 @@ def test_a_boolean_declares_its_conditional(command: str) -> None:
 def test_a_csname_name_hardy_cannot_read_makes_every_false_branch_a_finding() -> None:
     tex = document("\\expandafter\\newif\\csname if\\x\\endcsname\n\\iffalse\nnot typeset\n\\fi\n" + LISTING)
     assert "conditional" in kinds(owed(tex))
+
+
+# --- Round 2 review, B1: a file TeX reads however it is loaded ------------------
+
+
+@pytest.mark.parametrize(
+    "load",
+    [
+        "\\input{defs}",
+        "\\input defs ",
+        "\\InputIfFileExists{defs}{}{}",
+        "\\import{./}{defs}",
+        "\\def\\d{defs}\\input{\\d}",
+        "\\def\\a{de}\\def\\b{fs}\\input{\\a\\b}",
+    ],
+    ids=["braced", "plain", "if-exists", "import", "macro", "macro-built"],
+)
+def test_a_declaration_in_a_file_loaded_any_way_still_counts(load: str) -> None:
+    r"""`defs.tex` declares `\ifdraft`, so the listing stays inside the false
+    branch. Only `\input{...}` was followed, and loaded any other way the file
+    dropped out with its `\newif`, and the hidden listing was credited."""
+    body = load + "\n\\iffalse\n\\ifdraft x \\fi\n" + LISTING + "\\fi\n"
+    tex = {**document(body), "defs.tex": "\\newif\\ifdraft\n"}
+    assert "statement" in kinds(owed(tex)), kinds(owed(tex))

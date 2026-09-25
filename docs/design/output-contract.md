@@ -283,8 +283,10 @@ a literal `\iffalse` branch is skipped, with only real conditionals nesting
 inside it (TeX's primitives and whatever the document declares with `\newif`;
 `\iff` and `\ifthenelse` are not conditionals). A `\newif`, or an `ifthen`
 `\newboolean`/`\provideboolean`, counts from where TeX meets it, in the order
-the root inputs the files, and only where it certainly runs; a file no `\input`
-from the root names, in any branch, is never read and binds nothing. A name
+the root inputs the files, and only where it certainly runs. A file is taken
+as never read, and binding nothing, only when no other file of the writeup
+mentions its name outside comments and verbatim blocks and none loads a name
+built from a macro. A name
 Hardy cannot place is not guessed at: any control word bound with `\let` to a
 conditional, whatever it is called; any `\newif` or `\let` whose name is built
 with `\csname` (and, when that name cannot be read, every false branch); one
