@@ -308,3 +308,29 @@ def test_a_worker_asked_to_compute_is_still_charged(tmp_path):
     ledger = LeaseLedger(store.tree())
     assert ledger.allocatable("root") == ResourceLease(official_checks=3, active_seconds=500.0)
     assert ledger.compute_usage("root") == ResourceUsage()
+
+
+def test_a_recovered_child_that_reported_an_overrun_is_charged_the_overrun_not_its_lease(tmp_path):
+    """The lease bounds what is unknown; it does not forgive what was already reported."""
+    store = DelegationStore(tmp_path)
+    _tree(store, ("root", None, {"official_checks": 20, "active_seconds": 3600.0}),
+          ("a", "root", {"official_checks": 1, "active_seconds": 60.0}))
+    store.append("a", "delegation.started", {})
+    _use(store, "a", active_seconds=75.0)
+    store.append("a", "delegation.recovered", {"reason": "interrupted", "recovered_at": "t"})
+    store.release("a")
+    assert LeaseLedger(store.tree()).allocatable("root") == ResourceLease(official_checks=19, active_seconds=3525.0)
+
+
+def test_an_epoch_names_every_session_that_joined_it(tmp_path):
+    store = DelegationStore(tmp_path)
+    ceiling = {"official_checks": 4}
+    _tree(store, ("root", None, ceiling))
+    assert LeaseLedger(store.tree()).epoch_members("root") == ()
+    _reserve_root(store, ceiling, epoch="e1")
+    store.append("root", "budget.reserved", {"lease": ResourceLease(**ceiling).model_dump(mode="json"), "slots": 1,
+                                             "epoch": "e1", "joined": "s2"})
+    ledger = LeaseLedger(store.tree())
+    assert ledger.epoch("root") == "e1" and ledger.epoch_members("root") == ("e1", "s2")
+    _reserve_root(store, ceiling, epoch="e3")
+    assert LeaseLedger(store.tree()).epoch_members("root") == ("e3",)

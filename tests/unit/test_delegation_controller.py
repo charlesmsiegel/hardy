@@ -1033,7 +1033,8 @@ def test_an_interrupted_worker_does_not_stop_the_next_session_delegating(tmp_pat
 
     first = session(_HeldExecutor())
     lost = first.delegate(_session_spec(tmp_path))
-    first.store.append(lost.id, "delegation.started", {"owner": "0123456789abcdef"})   # then the process dies
+    first.store.append(lost.id, "delegation.started", {"owner": "0123456789abcdef"})
+    first.shutdown()                                          # then the process dies
     second = session(LocalExecutor(2))
     try:
         assert [d.id for d in second.recover()] == [lost.id]
@@ -1138,3 +1139,53 @@ def test_detached_computations_leave_the_roots_seconds_whole_and_are_reported_ap
         assert second.wait(worker.id, timeout=10).state is DelegationState.COMPLETED
     finally:
         second.shutdown()
+
+
+def test_concurrent_sessions_on_one_project_share_one_budget(tmp_path):
+    """A session that opens while another on the same project is live joins its
+    epoch rather than forgiving what that session already spent (review I-1).
+    The epoch ends, and the next session's budget is fresh, only once every
+    session in it has gone. The same holds within one process -- a browser
+    chat switch builds the new session before closing the old one -- since a
+    live controller's owner token is held either way."""
+    seed_lemma(tmp_path)
+
+    def session():
+        controller = DelegationController(
+            DelegationStore(tmp_path), LedgerStore(tmp_path), executor=LocalExecutor(1),
+            open_worker=_open([FINISH], report={"cost_usd": 0.5, "usage": {}}),
+            root=RootResources(lease=ResourceLease(cost_usd=Decimal("1"), official_checks=4), slots=1),
+            notify=lambda text: None)
+        controller.recover()
+        return controller
+
+    def spec():
+        return _spec(tmp_path).model_copy(update={"lease": ResourceLease(cost_usd=Decimal("0.5"), official_checks=1)})
+
+    first = session()
+    second = third = fourth = None
+    try:
+        for _ in range(2):
+            first.wait(first.delegate(spec()).id, timeout=10)
+        with pytest.raises(LeaseRefused, match="cost_usd"):
+            first.delegate(spec())
+        second = session()                                   # opens while `first` is live
+        with pytest.raises(LeaseRefused, match="cost_usd"):
+            first.delegate(spec())
+        with pytest.raises(LeaseRefused, match="cost_usd"):
+            second.delegate(spec())
+        epoch = LeaseLedger(second.tree()).epoch(ROOT_ID)
+        first.shutdown()
+        third = session()                                    # `first` gone, `second` still in the epoch
+        assert LeaseLedger(third.tree()).epoch(ROOT_ID) == epoch
+        with pytest.raises(LeaseRefused, match="cost_usd"):
+            third.delegate(spec())
+        second.shutdown()
+        third.shutdown()
+        fourth = session()                                   # nobody left in it: a fresh budget
+        assert LeaseLedger(fourth.tree()).epoch(ROOT_ID) != epoch
+        assert fourth.wait(fourth.delegate(spec()).id, timeout=10).state is DelegationState.COMPLETED
+    finally:
+        for controller in (first, second, third, fourth):
+            if controller is not None:
+                controller.shutdown()

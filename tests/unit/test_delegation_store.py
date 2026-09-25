@@ -221,3 +221,19 @@ def test_recovery_leaves_work_alone_while_its_owning_process_is_alive(tmp_path):
         assert store.tree().get("mine").state is DelegationState.ACTIVE
     recovered = DelegationStore(tmp_path).recover(now="t2")          # the first process died: now unknown
     assert [d.id for d in recovered] == ["mine"]
+
+
+def test_append_decided_reads_and_writes_under_one_lock_and_may_write_nothing(tmp_path):
+    """`decide` sees the journal as it stands inside the lock; None appends nothing."""
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    seen = []
+
+    def decide(tree):
+        seen.append(tree.revision)
+        return None if len(seen) == 1 else {"reason": f"at {tree.revision}"}
+
+    assert store.append_decided("root", "delegation.paused", decide) is None
+    assert store.tree().revision == seen[0]
+    event = store.append_decided("root", "delegation.paused", decide)
+    assert event is not None and event.sequence == seen[1] and event.payload == {"reason": f"at {seen[1]}"}
