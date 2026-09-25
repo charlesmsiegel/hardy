@@ -23,10 +23,88 @@ def atomic_write_bytes(target: Path, content: bytes) -> None:
             temporary.write(content)
             temporary.flush()
             os.fsync(temporary.fileno())
-        os.replace(temporary_name, target)
+        replace_with_retry(Path(temporary_name), target)
     finally:
         if temporary_name is not None:
             Path(temporary_name).unlink(missing_ok=True)
+
+
+#: Whether a bare `os.replace` onto an open destination needs retrying at all.
+#: Only Windows' `MoveFileExW` fails while another handle holds the target
+#: without `FILE_SHARE_DELETE`; a rename over an open file always succeeds on
+#: POSIX, so `replace_with_retry` is a plain `os.replace` everywhere else. A
+#: module-level flag rather than reading `sys.platform` on every call, and
+#: reassignable so a test can simulate Windows semantics on the Linux runner
+#: that actually runs it.
+_SHARING_RETRY = sys.platform == "win32"
+
+#: The sleep `replace_with_retry`'s backoff calls between attempts. A test
+#: replaces this with a no-op so a simulated 1.5s retry window costs nothing.
+_sleep: Callable[[float], None] = time.sleep
+
+#: `winerror` values Windows reports for "something else has this file open",
+#: as opposed to a genuinely unwritable destination: `ERROR_ACCESS_DENIED` (5),
+#: `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33). A
+#: `PermissionError` built without a `winerror` -- which is every one this
+#: process constructs, and every one a test builds to simulate Windows on
+#: Linux -- has no such attribute at all, and `getattr(..., 5)` below reads
+#: that absence as `ERROR_ACCESS_DENIED` rather than as "not a sharing
+#: violation": on real Windows a `PermissionError` out of `os.replace` always
+#: carries one of these codes, so treating "no attribute" as the most common
+#: of them retries what a real failure would be, and lets a test written
+#: without Windows to hand exercise the same branch a real one takes.
+_SHARING_ERRORS = frozenset({5, 32, 33})
+
+
+class FileInUse(PermissionError):
+    """A replace that a sharing violation defeated for the whole retry window.
+
+    Named for what a user can act on -- something else has the file open --
+    rather than repeating the raw `PermissionError` a reader would have to
+    decode. A `PermissionError` subclass, not a new exception family: every
+    caller that already catches `PermissionError` around a replace keeps
+    catching this without change, and gets the clearer message besides.
+    """
+
+
+def replace_with_retry(source: Path, target: Path) -> None:
+    r"""`os.replace(source, target)`, retried through a transient Windows lock.
+
+    On POSIX this is exactly `os.replace`: a rename over an open file always
+    succeeds there, so there is nothing to retry and no reason to pay for a
+    backoff loop on the common path.
+
+    On Windows, `os.replace` is `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`,
+    which fails with a sharing violation while ANY other handle to `target` is
+    open without `FILE_SHARE_DELETE` -- which is what `open()`, `Path.read_
+    bytes()` and most ordinary Windows readers (Explorer's preview pane, the
+    Search indexer, OneDrive, Defender's real-time scan) ask for. Hardy's own
+    web record panel is such a reader: it reads `session.json` on a server
+    thread while the interactive session writes it on another. A transient
+    hold like that clears on its own in milliseconds, the way an editor or a
+    build tool retries a save on Windows, so this backs off from 5ms and
+    doubles up to 250ms, for a total wait of about 1.5s, before giving up.
+
+    A `winerror` outside `_SHARING_ERRORS`, or one still failing after the
+    whole window, is not a queue this can wait out -- a read-only destination
+    reports `ERROR_ACCESS_DENIED` too, and no amount of retrying opens it --
+    so it becomes `FileInUse`, naming the file rather than repeating Windows'
+    own sentence about it.
+    """
+    if not _SHARING_RETRY:
+        os.replace(source, target)
+        return
+    delay, waited = 0.005, 0.0
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as error:
+            if getattr(error, "winerror", 5) not in _SHARING_ERRORS or waited >= 1.5:
+                raise FileInUse(f"{target} is open in another program") from error
+        _sleep(delay)
+        waited += delay
+        delay = min(delay * 2, 0.25)
 
 
 #: What the platform says when the lock is simply somebody else's. Anything

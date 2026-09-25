@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -1159,3 +1160,94 @@ def test_a_file_is_published_without_being_held_in_memory(
     assert not [child for child in destination.iterdir() if child.name != "writeup.pdf"], (
         "a temporary was left behind"
     )
+
+
+# --- #332 ratchet: `os.replace` is confined to `foundation/locking.py` -------
+#
+# An AST scan, not `grep`: a bare regex over the text would also flag every
+# mention of `os.replace` inside a comment or a docstring -- and this module
+# has several, explaining exactly why the call beside them is guarded -- so a
+# textual search would either miss real call sites hiding behind a line break
+# or refuse itself over its own prose. Walking the parsed tree for a `Call`
+# whose function is the attribute `replace` off a name `os` catches the call
+# and nothing else.
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "src" / "hardy"
+
+# Every remaining `os.replace` outside `locking.py`, and why retrying it
+# through `replace_with_retry` was left for later rather than folded into
+# #332/#335. Each entry covers a whole file: a new call site added to one of
+# these later still has to be to the same kind of rename, and the reason is
+# read at the file, not the line, so a reviewer moving code within it does not
+# have to re-justify an unrelated line number.
+_OS_REPLACE_ALLOWLIST = {
+    "literature/library.py": (
+        "renames a staged admission directory onto its target; a concurrent "
+        "-admit OSError race between two Hardy processes, not a reader "
+        "holding a live target open"
+    ),
+    "literature/sources/artifacts.py": (
+        "same staged-directory admit race as literature/library.py"
+    ),
+    "literature/sources/representations.py": (
+        "same staged-directory admit race as literature/library.py"
+    ),
+    "literature/sources/export.py": (
+        "renames a verified staged journal import (as a directory, or file by "
+        "file into an existing owner directory) that nothing else has open yet"
+    ),
+    "workflows/checkpoints.py": (
+        "directory swap-and-rollback around problem restore and the "
+        "checkpoint's own staging directory; not a single user-visible file "
+        "a reader locks"
+    ),
+}
+
+
+def _os_replace_call_lines(tree: ast.AST) -> list[int]:
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+    ]
+
+
+def test_os_replace_is_confined_to_locking_and_an_explicit_allowlist():
+    """#332: every other atomic rename goes through `replace_with_retry`.
+
+    Windows retries a sharing violation there; a bare `os.replace` anywhere
+    else in `src/hardy` silently reintroduces the failure the retry helper
+    exists to fix, for whichever file it is added to next.
+    """
+    offenders = {}
+    for path in sorted(_SOURCE_ROOT.rglob("*.py")):
+        relative = path.relative_to(_SOURCE_ROOT).as_posix()
+        if relative == "foundation/locking.py":
+            continue
+        lines = _os_replace_call_lines(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        if not lines:
+            continue
+        if relative in _OS_REPLACE_ALLOWLIST:
+            continue
+        offenders[relative] = lines
+    assert not offenders, (
+        "os.replace outside foundation/locking.py must go through "
+        f"foundation.locking.replace_with_retry, or be added to the allowlist "
+        f"with a reason: {offenders}"
+    )
+
+
+def test_the_os_replace_allowlist_names_only_files_that_still_use_it():
+    """The other half of the ratchet: an entry nobody needs any more is noise
+    that hides the next file that genuinely does."""
+    stale = []
+    for relative in _OS_REPLACE_ALLOWLIST:
+        path = _SOURCE_ROOT / relative
+        if not path.is_file() or not _os_replace_call_lines(
+            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        ):
+            stale.append(relative)
+    assert not stale, f"no longer calls os.replace; drop from the allowlist: {stale}"

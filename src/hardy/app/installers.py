@@ -10,7 +10,6 @@ macOS, and neither requires WSL.
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import tempfile
 import urllib.request
@@ -18,6 +17,7 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+from hardy.foundation.locking import replace_with_retry
 from hardy.foundation.process import ProcessResult, ProcessSpec
 from hardy.foundation.values import FrozenModel
 
@@ -225,7 +225,7 @@ def install_tectonic(
             with bundle.open(info) as source, staged_executable.open("wb") as target:
                 shutil.copyfileobj(source, target)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staged_executable, destination)
+        replace_with_retry(staged_executable, destination)
         return InstallOutcome(
             status="installed",
             manual_instructions="Tectonic installed; `hardy setup` will now run smoke tests.",

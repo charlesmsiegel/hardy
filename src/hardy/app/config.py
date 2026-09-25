@@ -11,6 +11,7 @@ from typing import Any
 
 from hardy.agents import compaction
 from hardy.agents.spend_budget import SpendPolicy
+from hardy.foundation.locking import replace_with_retry
 from hardy.workflows import layout
 from hardy.workflows.contracts import RunLimits
 
@@ -200,7 +201,7 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     temporary.chmod(0o600)
-    os.replace(temporary, destination)
+    replace_with_retry(temporary, destination)
     source.unlink()
     return True
 
@@ -757,4 +758,4 @@ def _rewrite(path: Path, lines: list[str]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     temporary.chmod(0o600)
-    os.replace(temporary, path)
+    replace_with_retry(temporary, path)
