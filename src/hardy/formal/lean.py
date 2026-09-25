@@ -403,6 +403,11 @@ def _render_diagnostic(item: LeanDiagnostic) -> str:
     return f"{location}: {item.severity}: {item.message}"
 
 
+# What Lean 4.35 says when `#exit` stops it: a warning, and exit 0. Nothing
+# after that command ran -- a caller's own `#print axioms` included.
+EXITED = "using 'exit' to interrupt Lean"
+
+
 class Elaboration(FrozenModel):
     """One run of Lean over one source file."""
 
@@ -419,6 +424,22 @@ class Elaboration(FrozenModel):
             and not self.process.output_overflow
             and not self.open_goals
             and not any(item.severity == "error" for item in self.diagnostics)
+            and not self.exited_early
+        )
+
+    @property
+    def exited_early(self) -> bool:
+        """Whether `#exit` stopped Lean before the end of the file.
+
+        Lean treats that as a warning, so without this a file whose tail never
+        elaborated counted as one that did. The proof-body gate refuses `#exit`
+        before Lean runs; this is the check behind it. Read from the raw output
+        as well as the parsed diagnostics, so a message the parser did not
+        attribute still counts -- and a source that merely prints the sentence
+        is refused too, which is the direction to be wrong in.
+        """
+        return any(EXITED in item.message for item in self.diagnostics) or any(
+            EXITED in stream for stream in (self.process.stdout, self.process.stderr)
         )
 
 

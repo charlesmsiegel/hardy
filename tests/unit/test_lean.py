@@ -447,3 +447,33 @@ def test_a_batch_audit_reads_only_the_line_hardy_asked_on(line, graded) -> None:
     assert audited.ok is graded
     assert (verdict is not None and verdict.status == 'clean') is graded
     assert (record is None) is graded
+
+
+def _warned(lean, process_module, message: str):
+    """A run Lean finished with exit 0 and one warning, as `#exit` leaves it."""
+    return lean.Elaboration(
+        process=process_module.ProcessResult(
+            argv=('lake', 'env', 'lean'),
+            cwd=Path('.'),
+            returncode=0,
+            stdout=json.dumps({'severity': 'warning', 'pos': {'line': 3, 'column': 0}, 'data': message}),
+            stderr='',
+            timed_out=False,
+            output_overflow=False,
+            duration_ms=4,
+        ),
+        diagnostics=(lean.LeanDiagnostic(severity='warning', message=message, line=3, column=0),),
+        open_goals=(),
+        source_sha256='c' * 64,
+    )
+
+
+def test_an_elaboration_interrupted_by_exit_is_not_a_success() -> None:
+    """`#exit` stops Lean with a warning and exit 0, so everything after it --
+    Hardy's own `#print axioms` included -- never ran. Checked against Lean
+    4.35.0-rc3, whose warning is exactly this sentence. A belt-and-braces
+    check behind the proof-body gate that refuses the command itself."""
+    lean = importlib.import_module('hardy.formal.lean')
+    process_module = importlib.import_module('hardy.foundation.process')
+    assert not _warned(lean, process_module, "using 'exit' to interrupt Lean").success
+    assert _warned(lean, process_module, "declaration uses 'sorry'").success

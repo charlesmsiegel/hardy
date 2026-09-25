@@ -251,7 +251,9 @@ the verified source byte for byte from the frozen claim and its declarations,
 and holds the body between them to the same rule. The report is also bound to
 its line: only what Lean says at Hardy's own `#print axioms`, the file's last
 line, is graded. A report printed anywhere else is ignored, and a body that
-stopped Lean short of that line leaves no report at all, which fails.
+stopped Lean short of that line leaves no report at all, which fails. Behind
+both, an elaboration Lean reports as interrupted by `#exit` is not a successful
+one on any path, whatever else it printed.
 
 This is a list of recognised forms, and each residual below still gets past it:
 
