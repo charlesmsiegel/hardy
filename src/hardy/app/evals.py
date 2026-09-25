@@ -435,6 +435,22 @@ def _report_uncounted(left: dict[str, Any]) -> None:
     for label, issues in sorted(left["boards_refused"].items()):
         print(f"not counted: board {label} fails its own audit, so `evals pool` would refuse it: "
               + "; ".join(issues), file=sys.stderr)
+    for label, findings in sorted(left["boards_conflicting"].items()):
+        print(f"not counted: board {label} passes its own audit, but `evals pool` refuses it beside "
+              "another board under this key: " + "; ".join(findings), file=sys.stderr)
+    if left["boards_conflicting"]:
+        print(
+            "To count them, set aside the boards you do not want pooled (move their directories out of "
+            "the scoreboards directory) until no two claim the same slot; the rest then count. A rerun "
+            "is not the remedy: it would claim a slot a conflicting board still holds.",
+            file=sys.stderr,
+        )
+    if left["conflicted_active"]:
+        print(
+            "not selected: these active entries are held by boards `evals pool` refuses together, "
+            "and a rerun would conflict with them again: " + ", ".join(left["conflicted_active"]),
+            file=sys.stderr,
+        )
     if left["partially_evaluated_active"]:
         print(
             "not selected: these active entries hold only some of their repeats under this condition, "
@@ -773,7 +789,8 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         # Nobody named entries: default to what this exact model, mode and
         # limits have no poolable sample of against this environment (a board
         # its own audit refuses, or an `invalid` row, is no sample; an entry
-        # holding some repeats but not all is named, not rerun) -- not the whole
+        # holding some repeats but not all, or held by boards `evals pool`
+        # refuses together, is named, not rerun) -- not the whole
         # corpus, which would also spend on candidates and retirees no human
         # has checked. Recorded into `selection["only"]` below rather than
         # left as `None`, so the scoreboard states exactly what ran and
@@ -788,6 +805,15 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         _report_uncounted(left)
         only = left["unevaluated_active"]
         if not only:
+            if left["conflicted_active"]:
+                # Not "already run": no counted board holds them, and naming
+                # them with --only would write a board that conflicts again.
+                print(
+                    "Refused: every active entry not yet run is held by boards `evals pool` refuses "
+                    "together (named above); set one of each conflicting pair aside, then run again",
+                    file=sys.stderr,
+                )
+                return 2
             print(
                 "Refused: every active entry has already been run under this condition"
                 + (", some of them only in part (named above)" if left["partially_evaluated_active"] else "")
