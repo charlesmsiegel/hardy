@@ -593,3 +593,23 @@ def test_a_conditional_declared_first_still_nests_without_a_finding() -> None:
         "body.tex": hidden,
     }
     assert kinds(owed(tex)) == ["statement"]
+
+
+# --- Codex on #393, round 2: a file TeX never reads binds nothing --------------
+
+
+def test_a_binding_in_an_orphan_file_does_not_make_a_conditional_ambiguous() -> None:
+    """`\\def\\ifdraft{}` in a `.tex` nothing inputs is never read by TeX, so the
+    root's own `\\newif\\ifdraft`, declared before use, stays certain and the
+    report is not blocked."""
+    hidden = "\\iffalse\n\\ifdraft x \\fi\n\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n\\fi\n"
+    tex = {**document("\\newif\\ifdraft\n" + hidden), "old-notes.tex": "\\def\\ifdraft{}\n"}
+    assert kinds(owed(tex)) == ["statement"]
+
+
+def test_a_binding_in_a_file_some_reading_reaches_still_counts() -> None:
+    """Input only inside a conditional, `maybe.tex` may be read, so its `\\let`
+    still makes `\\ifdraft` one Hardy cannot place."""
+    body = "\\newif\\ifdraft\n\\ifx a b \\input{maybe} \\fi\n\\iffalse\n\\ifdraft x \\fi\nlive\n\\fi\n"
+    tex = {**document(body), "maybe.tex": "\\let\\ifdraft\\iftrue\n"}
+    assert "conditional" in kinds(owed(tex))

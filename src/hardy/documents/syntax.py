@@ -219,7 +219,9 @@ class Conditionals:
 NO_CONDITIONALS = Conditionals()
 
 
-def read_conditionals(sources: Mapping[str, str], root: str | None = ROOT_DOCUMENT) -> Conditionals:
+def read_conditionals(
+    sources: Mapping[str, str], root: str | None = ROOT_DOCUMENT, *, every_file: bool = False
+) -> Conditionals:
     r"""Which `\if...` names of `sources` are conditionals, in reading order.
 
     A `\newif` collected from the whole tree before anything is read took a
@@ -234,8 +236,21 @@ def read_conditionals(sources: Mapping[str, str], root: str | None = ROOT_DOCUME
     file reached no such way, only order within one file is known, and a
     declaration elsewhere cannot be placed before a use -- the name is
     ambiguous.
+
+    Only files TeX may read count: a `\def\ifdraft{}` in a `.tex` nothing
+    inputs never runs, and counting it made the root's correctly declared
+    `\ifdraft` ambiguous and blocked a valid report. Which files TeX reads
+    depends on the conditionals being read here, so the set is taken without
+    them (`may_reach`): every file some `\input` from `root` names, in a
+    skipped branch or a macro body too. That can only include more files,
+    which keeps a binding that might run counted. With no `root` among the
+    sources, or `every_file` (a caller that scans every file as though it were
+    read), every file counts.
     """
     texts = {path: typeset(text) for path, text in sources.items()}
+    if not every_file and root is not None and root in texts:
+        read = may_reach(texts, root)
+        texts = {path: text for path, text in texts.items() if path in read}
     defined: set[str] = set()
     let: set[str] = set()
     newif: set[str] = set()
@@ -344,6 +359,23 @@ def _resolver(paths: Collection[str]) -> Callable[[str], str | None]:
         return target
 
     return resolve
+
+
+def may_reach(texts: Mapping[str, str], root: str) -> set[str]:
+    r"""Every file TeX might read from `root`: the closure over every `\input`
+    in `texts` (already `typeset`, so comments and verbatim are gone), whether
+    or not a conditional or a macro body stands around it. Needs no reading of
+    the conditionals, so it can decide which files' conditionals to read."""
+    resolve = _resolver(texts)
+    reached = {root}
+    frontier = [root]
+    while frontier:
+        for found in INCLUSION.finditer(texts[frontier.pop()]):
+            target = resolve(found.group(1))
+            if target is not None and target not in reached:
+                reached.add(target)
+                frontier.append(target)
+    return reached
 
 
 def _reading_keys(
@@ -515,10 +547,12 @@ def uncertain_conditionals(sources: Mapping[str, str]) -> list[tuple[str, str]]:
     the compile check refuses the writeup over these.
     """
     conditionals = read_conditionals(sources)
+    texts = {path: typeset(text) for path, text in sources.items()}
+    read = may_reach(texts, ROOT_DOCUMENT) if ROOT_DOCUMENT in texts else set(texts)
     return [
         (path, name)
-        for path in sorted(sources)
-        for name in _uncertain_in(typeset(sources[path]), conditionals)
+        for path in sorted(read)
+        for name in _uncertain_in(texts[path], conditionals)
     ]
 
 

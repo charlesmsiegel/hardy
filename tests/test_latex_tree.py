@@ -754,3 +754,26 @@ def test_a_conditional_bound_by_let_is_not_read_as_plain() -> None:
 
     assert unreached_fragments(sources) == ["x.tex"]
     assert uncertain_conditionals(sources) == [("writeup.tex", "ifdraft")]
+
+
+def test_a_binding_in_an_orphan_is_no_finding() -> None:
+    sources = {
+        "writeup.tex": "\\newif\\ifdraft\\iffalse \\ifdraft \\input{x}\\fi \\fi\\input{a}",
+        "a.tex": "x",
+        "x.tex": "never",
+        "scratch.tex": "\\let\\ifdraft\\iftrue",
+    }
+
+    assert uncertain_conditionals(sources) == []
+    assert unreached_fragments(sources) == ["scratch.tex", "x.tex"]
+
+
+def test_a_binding_in_a_file_only_a_dead_branch_inputs_still_counts() -> None:
+    """Reached in no reading this scan settles on, but some reading may read it."""
+    sources = {
+        "writeup.tex": "\\newif\\ifdraft\\iffalse \\input{maybe} \\fi\\iffalse \\ifdraft \\fi \\fi\\input{a}",
+        "a.tex": "x",
+        "maybe.tex": "\\let\\ifdraft\\iftrue",
+    }
+
+    assert uncertain_conditionals(sources) == [("writeup.tex", "ifdraft")]
