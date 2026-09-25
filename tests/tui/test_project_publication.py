@@ -141,7 +141,7 @@ async def test_publication_keeps_same_batch_escape_level_from_shell_admission(se
     await drive(settings, chat, [
         ("/project publish Main --scope scope --output draft\r" + "\x1b " * presses, checked.is_set),
         ("\x03", None),
-    ], settle_before_exit=True)
+    ])
     assert observed == [presses]
 
 
