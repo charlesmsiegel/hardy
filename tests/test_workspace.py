@@ -406,6 +406,19 @@ def test_a_wrapped_assumption_is_gathered_rather_than_truncated():
     assert assumptions(source) == (("trusted", "∀ n : Nat, n = n"),)
 
 
+def test_an_assumption_is_read_with_its_literals():
+    """Found on the blanked text, read with the literals in: a statement about
+    `'a'` is not a statement about two spaces, a line holding only a string
+    still belongs to the statement, and a string holding `axiom` declares
+    nothing."""
+    assert assumptions("axiom t : ∀ c : Char, c = 'a' → c.toNat = 97\n") == (
+        ("t", "∀ c : Char, c = 'a' → c.toNat = 97"),
+    )
+    assert assumptions('axiom t : f\n  "x"\n  = 1\n') == (("t", 'f "x" = 1'),)
+    assert assumptions('axiom t : "a  b" = s -- "c"\n') == (("t", '"a  b" = s'),)
+    assert assumptions('axiom t : P "\naxiom u : False\n"\n') == (("t", 'P "\naxiom u : False\n"'),)
+
+
 def test_gathering_an_assumption_stops_at_the_next_declaration():
     """Over-reading would append a theorem to the statement and refuse a save
     that should have passed."""

@@ -151,6 +151,25 @@ def test_refutation_header_ownership_and_refuted_disposition(policy_module, impo
     assert captured[0].startswith("import Mathlib") is imported
 
 
+def test_a_refutation_probe_that_cannot_be_built_is_a_caveat(policy_module):
+    """A line separator `normalise_lean` keeps inside a literal cannot go on a
+    probe line. The shape gate now refuses such a statement first, but the
+    probe still answers with a caveat rather than raising out of the tool."""
+    ran = []
+    verdict = policy_module.refutation_probe('"a\u2028b" = "a\u2028b"', run_source=ran.append)
+    assert not verdict.checked
+    assert "could not run" in verdict.caveat
+    assert ran == []
+
+
+@pytest.mark.parametrize("mark", ["\n", "\r", "\x0b", "\x0c", "\u2028", "\u2029"])
+def test_a_statement_is_one_line_inside_its_literals_too(policy_module, mark):
+    """The save gate compares a literal character for character, so a line
+    separator inside one would be declared as approved, and no check of the
+    constant's type could then be written on one line."""
+    assert "one line" in policy_module.assumption_shape("trusted", f'"a{mark}b" = "a{mark}b"')
+
+
 def test_inconclusive_refutation_is_a_gap_not_a_refusal(policy_module):
     decision = policy_module.AdmissionPolicy().refutation(refute.Verdict(False, caveat="timed out"))
     assert decision.refusal is None

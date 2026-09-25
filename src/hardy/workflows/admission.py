@@ -595,7 +595,11 @@ def assumption_shape( formal_name: str, lean_statement: str) -> str | None:
     declarations and `ASSUMPTION` reads both happily, so without this the
     request round-trips and an approval granted for the first carries the
     second. Approved statements are stored whitespace-collapsed anyway, so
-    refusing a newline costs nothing a caller needed.
+    refusing a newline costs nothing a caller needed. Every line terminator
+    counts, inside a literal too: the save gate compares a literal character
+    for character, so `"a\\u2028b"` could be declared as approved, and then no
+    check of its type could be written on one line and nothing resting on it
+    could ever be saved.
 
     Not sufficient, and not meant to be. A binder-only statement --
     `(G : Type*) : True` -- matches neither check, because
@@ -605,7 +609,7 @@ def assumption_shape( formal_name: str, lean_statement: str) -> str | None:
     keyword `COMMAND` does not list, land there too.
     """
     statement = lean_statement.strip()
-    if "\n" in statement or "\r" in statement:
+    if any(mark in statement for mark in ("\n", "\r", "\x0b", "\x0c", "\u2028", "\u2029")):
         return (
             "a statement is one line and one type. More than one line can carry a "
             "second declaration, which an approval of the first would not cover. "

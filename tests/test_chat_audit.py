@@ -1239,11 +1239,11 @@ METAPROGRAMMED = (
 )
 
 
-def _approve_then_save(tmp_path: Path, source: str):
+def _approve_then_save(tmp_path: Path, source: str, statement: str = "True"):
     chat = session(
         tmp_path,
         FakeChatRuntime([
-            call("request_assumption", dict(TRUSTED), "ask"),
+            call("request_assumption", dict(TRUSTED, lean_statement=statement), "ask"),
             call("save_lean", {"source": source}, "lean"),
         ]),
         approvals=[True],
@@ -1272,6 +1272,84 @@ def test_an_approved_axiom_declared_verbatim_still_grades_modulo(tmp_path: Path)
 
     assert result["ok"], result["output"]
     assert state(tmp_path)["audit"]["Main"]["status"] == "modulo"
+
+
+CHARACTER = "∀ c : Char, c = 'a' → c.toNat = 97"
+STRING = '"ab".length = 2'
+
+
+def _declaring(statement: str) -> str:
+    return (
+        f"import Mathlib\n\naxiom trusted : {statement}\n\n"
+        "theorem HardyTarget : True := by exact True.intro -- axioms: trusted\n"
+    )
+
+
+def test_an_approved_statement_about_a_character_is_declared_as_approved(tmp_path: Path):
+    """The textual gate read the statement with its literals blanked, so the
+    `'a'` came back as spaces and the verbatim declaration was refused as
+    altered. The literal is part of what was approved."""
+    result = _approve_then_save(tmp_path, _declaring(CHARACTER), CHARACTER)
+
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["Main"]["status"] == "modulo"
+
+
+def test_an_approved_statement_about_a_string_is_declared_as_approved(tmp_path: Path):
+    result = _approve_then_save(tmp_path, _declaring(STRING), STRING)
+
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["Main"]["status"] == "modulo"
+
+
+def test_an_approved_statement_with_its_literal_changed_is_refused(tmp_path: Path):
+    refusal = _approve_then_save(tmp_path, _declaring(CHARACTER.replace("'a'", "'b'")), CHARACTER)
+
+    assert not refusal["ok"]
+    assert "unapproved or altered assumption `trusted`" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def _gate(declared: str, approved: str):
+    """The textual gate alone, with `trusted` approved as `approved`."""
+    from types import SimpleNamespace
+
+    from hardy.workflows.interactive.formal import FormalWorkspaceService
+
+    formal = FormalWorkspaceService(SimpleNamespace(has_holes=lambda source: False), None)
+    record = {"assumptions": [{"formal_name": "trusted", "lean_statement": approved}]}
+    return formal._final_gates(f"axiom trusted : {declared}\n", record)
+
+
+def test_the_textual_gate_compares_literals_and_nothing_a_comment_holds():
+    """Reading the literals back in opens nothing else. What some reading
+    calls a literal is compared verbatim, whitespace included, and what every
+    reading calls a comment is still not part of the statement."""
+    # Accepted: declared exactly as approved, or rewrapped where it is code.
+    assert _gate(CHARACTER, CHARACTER) is None
+    assert _gate(STRING, STRING) is None
+    assert _gate("∀ c : Char,\n  c = 'a' → c.toNat = 97", CHARACTER) is None
+    assert _gate(STRING + " /- a note -/", STRING) is None
+    refused = [
+        # A literal is the approved one, character for character.
+        (CHARACTER.replace("'a'", "'b'"), CHARACTER),
+        ('"a  b".length = 4', '"a b".length = 4'),
+        ('"ba".length = 2', STRING),
+        # A literal hidden in a comment is not a literal of the statement.
+        ('/- "ab" -/ .length = 2', STRING),
+        (".length = 2 -- \"ab\"", STRING),
+        # Approving a comment approves nothing a declaration can match.
+        ("True", 'True -- "ab"'),
+        # Where the readings disagree (`'"'` is a character in one and opens
+        # a string in another) whitespace is compared verbatim, not collapsed.
+        ("('\"')  = '\"' ∧ True", "('\"') = '\"' ∧ True"),
+    ]
+    for declared, approved in refused:
+        refusal = _gate(declared, approved)
+        assert refusal is not None and not refusal.ok, (declared, approved)
+        assert "unapproved or altered assumption `trusted`" in refusal.output
+    # The uncertain statement itself, declared verbatim, is what was approved.
+    assert _gate("('\"') = '\"' ∧ True", "('\"') = '\"' ∧ True") is None
 
 
 def test_a_statement_check_without_an_answer_is_not_established(tmp_path: Path):

@@ -509,12 +509,16 @@ class FormalWorkspaceService:
                     "Restate it through assume_statement; it cannot be declared by hand.",
                     source,
                 )
-        approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in state["assumptions"]}
+        # Both sides `normalise_lean`-ed (`assumptions` returns its statements
+        # that way): whitespace is collapsed only where every reading calls it
+        # code, so a literal must match character for character. Splitting on
+        # whitespace instead would read `"a  b"` and `"a b"` as one string.
+        approved = {item["formal_name"]: normalise_lean(item["lean_statement"]) for item in state["assumptions"]}
         # Qualified by the namespace they sit in, so this gate and the audit
         # ask about the same name. A flat scan called it `bar` while Lean
         # reported `Foo.bar`, and no single approval could satisfy both.
         for name, statement in assumptions(source):
-            if approved.get(name) != " ".join(statement.split()):
+            if approved.get(name) != statement:
                 return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
         # An axiom the scan could not read is refused rather than skipped. It
         # cannot be compared against an approval -- the type Lean gives
