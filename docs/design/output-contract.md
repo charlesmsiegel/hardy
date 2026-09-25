@@ -287,9 +287,11 @@ the root inputs the files, and only where it certainly runs. A file is taken
 as never read, and binding nothing, only when no other file of the writeup
 mentions its name outside comments and verbatim blocks and none loads a name
 built from a macro. A name
-Hardy cannot place is not guessed at: any control word bound with `\let` to a
-conditional, whatever it is called; any `\newif` or `\let` whose name is built
-with `\csname` (and, when that name cannot be read, every false branch); one
+Hardy cannot place is not guessed at: any control word bound with `\let` or a
+`\let`-like command (`\futurelet`, etoolbox's `\cslet`, `\csletcs` and
+`\letcs`), whatever it is bound to, since a chain of them is not followed;
+any `\newif` whose name is built with `\csname` (and, when a built name cannot
+be read, every false branch); one
 both declared and redefined; one declared inside a conditional or a macro; or
 one used before its declaration. Inside a false branch such a name
 refuses the writeup's compile check and owes an obligation, because nesting it
