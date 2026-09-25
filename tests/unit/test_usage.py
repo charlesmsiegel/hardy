@@ -207,13 +207,139 @@ def test_a_restored_total_is_still_differenced_when_the_messages_agree():
     spent = (
         Usage()
         .record({"session_id": "t1", "cost_usd": 0.10,
-                 "usage": {"input_tokens": 100, "cache_read_input_tokens": 5_000}})
+                 "usage": {"input_tokens": 100, "cache_read_input_tokens": 5_000},
+                 "model_usage": {"input_tokens": 100, "cache_read_input_tokens": 5_000}})
         .record({"session_id": "t1", "cost_usd": 0.25,
                  "usage": {"input_tokens": 260, "cache_read_input_tokens": 9_000}, "cumulative": True,
-                 "exchange_usage": {"input_tokens": 160, "cache_read_input_tokens": 4_000}})
+                 "exchange_usage": {"input_tokens": 160, "cache_read_input_tokens": 4_000},
+                 "model_usage": {"input_tokens": 260, "cache_read_input_tokens": 9_000}})
     )
     assert spent.cost_usd == pytest.approx(0.25)
     assert (spent.input_tokens, spent.cache_read_tokens) == (260, 9_000)
+
+
+def _guarded(session, cost, usage, own, model=None, **extra):
+    """A report as `ClaudeAgentRuntime._note` writes one: the CLI's figures,
+    the exchange's own streamed messages, and `modelUsage` summed."""
+    return {"type": "result", "session_id": session, "cost_usd": cost, "usage": usage,
+            "exchange_usage": own, "model_usage": model, **extra}
+
+
+def _tokens(input_tokens, output_tokens):
+    return {"input_tokens": input_tokens, "output_tokens": output_tokens}
+
+
+def _fold(*events) -> Usage:
+    spent = Usage()
+    for event in events:
+        spent = spent.record(event)
+    return spent
+
+
+def test_the_documented_cli_counts_cost_once_and_per_turn_tokens_whole():
+    """Claude Code 2.1.282 documents `total_cost_usd` and `modelUsage` as the
+    resumed session's running total, and `usage` as possibly one turn's. Three
+    $0.50 exchanges of 1000/100 tokens then report 0.50, 1.00, 1.50 beside
+    per-turn usage -- $1.50 and 3000 tokens, not $3.00 (#197 review, I1)."""
+    spent = _fold(*(
+        _guarded("t", 0.5 * n, _tokens(1000, 100), _tokens(1000, 100), _tokens(1000 * n, 100 * n))
+        for n in (1, 2, 3)
+    ))
+    assert spent.cost_usd == pytest.approx(1.5)
+    assert (spent.input_tokens, spent.output_tokens) == (3000, 300)
+
+
+def test_a_cli_that_resumes_from_zero_counts_every_report_whole():
+    """Before 2.1.277 a headless resume started cost and usage at zero: every
+    report is that exchange alone, and differencing any of them undercounts."""
+    spent = _fold(*(_guarded("t", 0.5, _tokens(1000, 100), _tokens(1000, 100), _tokens(1000, 100)) for _ in range(3)))
+    assert spent.cost_usd == pytest.approx(1.5)
+    assert (spent.input_tokens, spent.output_tokens) == (3000, 300)
+
+
+def test_a_cli_that_reports_every_figure_as_a_running_total_is_differenced_throughout():
+    """What the interactive and batch ledgers already got right before the
+    guard: every figure a running total, each exchange its own messages."""
+    spent = _fold(*(
+        _guarded("t", 0.5 * n, _tokens(1000 * n, 100 * n), _tokens(1000, 100), _tokens(1000 * n, 100 * n))
+        for n in (1, 2, 3)
+    ))
+    assert spent.cost_usd == pytest.approx(1.5)
+    assert (spent.input_tokens, spent.output_tokens) == (3000, 300)
+
+
+def test_calls_the_cli_never_streamed_make_a_running_total_count_whole():
+    """Compaction runs through the query pipeline and into `modelUsage`
+    without streaming a message, so a running total climbs by more than the
+    exchange's own. That is indistinguishable from a per-exchange report with
+    such calls, and the ledger overcounts rather than risk the other reading:
+    never less than the $1.00 spent, here $1.60."""
+    spent = _fold(
+        _guarded("t", 0.6, _tokens(1000, 100), _tokens(1000, 100), _tokens(1000, 100)),
+        # 1000/100 streamed, plus a compaction call of 3000/400 that was not.
+        _guarded("t", 1.0, _tokens(1000, 100), _tokens(1000, 100), _tokens(5000, 600)),
+    )
+    assert spent.cost_usd == pytest.approx(1.6)
+    assert spent.cost_usd >= 1.0
+
+
+def test_unstreamed_calls_larger_than_the_last_total_are_not_differenced_away():
+    """#197 review M3: a per-exchange report of 40/20 whose exchange streamed
+    20/10, after a session total of 10/5. Differencing gives 30/15 and loses
+    the 20/10 of calls nobody streamed; the climb is not the exchange's own,
+    so it counts whole."""
+    spent = _fold(
+        _guarded("t", 0.1, _tokens(10, 5), _tokens(10, 5), _tokens(10, 5)),
+        _guarded("t", 0.4, _tokens(40, 20), _tokens(20, 10), _tokens(40, 20)),
+    )
+    assert (spent.input_tokens, spent.output_tokens) == (50, 25)
+    assert spent.cost_usd == pytest.approx(0.5)
+
+
+def test_a_cost_with_no_model_usage_to_weigh_it_against_counts_whole():
+    """Without `modelUsage` nothing shares the cost's lifecycle, and a cost
+    that merely climbed may still be one exchange's own."""
+    spent = _fold(
+        _guarded("t", 0.1, _tokens(100, 10), _tokens(100, 10)),
+        _guarded("t", 0.3, _tokens(100, 10), _tokens(100, 10)),
+    )
+    assert spent.cost_usd == pytest.approx(0.4)
+
+
+def test_a_guarded_report_with_no_floor_counts_whole():
+    """#197 review M2: the runtime ran its guard, but no streamed message
+    stated usage, so a climb cannot be told from an exchange of its own."""
+    spent = _fold(
+        _guarded("t", 0.1, _tokens(100, 10), _tokens(100, 10), _tokens(100, 10)),
+        _guarded("t", 0.3, _tokens(300, 30), None, _tokens(300, 30)),
+    )
+    assert spent.cost_usd == pytest.approx(0.4)
+    assert (spent.input_tokens, spent.output_tokens) == (400, 40)
+
+
+def test_a_guarded_cost_with_no_token_counters_counts_whole():
+    """#197 review M2: a report stating a cost and no tokens has nothing to
+    prove the cost a running total by."""
+    spent = _fold(
+        _guarded("t", 0.1, _tokens(100, 10), _tokens(100, 10), _tokens(100, 10)),
+        _guarded("t", 0.3, None, _tokens(100, 10), _tokens(200, 20)),
+    )
+    assert spent.cost_usd == pytest.approx(0.4)
+
+
+def test_a_restart_in_one_family_keeps_the_others_baselines():
+    """Cost proven a running total while tokens restarted: the cost baseline
+    carries on, and the next report is still differenced against it."""
+    spent = _fold(*(
+        _guarded("t", 0.5 * n, _tokens(1000, 100), _tokens(1000, 100), _tokens(1000 * n, 100 * n))
+        for n in (1, 2)
+    ))
+    assert spent.baselines["cost_usd"] == 1.0
+    assert spent.baselines["model_usage.input_tokens"] == 2000
+    reopened = Usage.from_dict(spent.as_dict())
+    assert reopened is not None
+    after = reopened.record(_guarded("t", 1.5, _tokens(1000, 100), _tokens(1000, 100), _tokens(3000, 300)))
+    assert after.cost_usd == pytest.approx(1.5)
 
 
 def test_ledgers_combine_figure_by_figure_keeping_silence_silent():

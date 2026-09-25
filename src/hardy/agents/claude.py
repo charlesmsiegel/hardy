@@ -155,6 +155,37 @@ def _tokens(usage: Any) -> dict[str, int]:
     }
 
 
+#: `modelUsage`'s camelCase counters, under the names `usage` uses.
+_MODEL_KEYS = {
+    "inputTokens": "input_tokens",
+    "outputTokens": "output_tokens",
+    "cacheCreationInputTokens": "cache_creation_input_tokens",
+    "cacheReadInputTokens": "cache_read_input_tokens",
+}
+
+
+def _model_tokens(model_usage: Any) -> dict[str, int] | None:
+    """`ResultMessage.model_usage`'s token counters, summed over its models.
+
+    The CLI documents `modelUsage` as sharing `total_cost_usd`'s lifecycle --
+    both carry a resumed session's saved running total -- so it is the
+    evidence `Usage.record` weighs a cost against, rather than `usage`, which
+    may be one turn's figure while the cost is the session's. None when the
+    CLI sent none.
+    """
+    if not isinstance(model_usage, Mapping):
+        return None
+    summed: dict[str, int] = {}
+    for counters in model_usage.values():
+        if not isinstance(counters, Mapping):
+            continue
+        for camel, key in _MODEL_KEYS.items():
+            value = counters.get(camel)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                summed[key] = summed.get(key, 0) + value
+    return summed or None
+
+
 def _cumulative(reported: dict[str, Any] | None, own: dict[str, int]) -> bool | None:
     """Whether a result report may carry more than its own exchange.
 
@@ -858,16 +889,18 @@ class ClaudeAgentRuntime:
                 # left absent when it reported none. `{}` would be read
                 # downstream as a measured zero, which is the one thing a spend
                 # meter must not say about a backend that measured nothing.
-                # Session-to-date, not this exchange's alone, when the CLI
-                # restored a resumed session's running totals: a fresh client
-                # per turn still resumes the same session (`_options`), and
-                # `Usage.record` differences the reports for that reason.
+                # Either the session's running total or this turn's alone,
+                # depending on the CLI (see `Usage.record`): a fresh client per
+                # turn still resumes the same session (`_options`).
                 "usage": reported,
                 "is_error": getattr(message, "is_error", None),
-                # What this exchange's own messages moved, and whether the
-                # report above states more than that. Together they let the
-                # ledger tell a restored running total from a report that
-                # restarted, without trusting either reading of the CLI.
+                # What this exchange's own messages moved, whether the report
+                # above states more than that, and the `modelUsage` counters
+                # that share the cost's lifecycle. Together they let the ledger
+                # decide, for tokens and for cost separately, whether a report
+                # is a restored running total, without trusting either reading
+                # of the CLI.
                 "exchange_usage": own or None,
                 "cumulative": _cumulative(reported, own),
+                "model_usage": _model_tokens(getattr(message, "model_usage", None)),
             })

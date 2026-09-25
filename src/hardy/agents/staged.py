@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from hardy.agents.claude import ClaudeAgentRuntime
 from hardy.agents.contracts import final_text
 from hardy.agents.parsing import json_object
-from hardy.agents.usage import Usage, combined
+from hardy.agents.usage import Usage, combined, fold_by_session
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -177,11 +177,8 @@ class ClaudeStagedRuntime:
         # What the provider said the run cost, folded by the same ledger the
         # batch runner and the interactive session use, so a staged manifest
         # cannot disagree with a batch record about what "unreported" means.
-        # One ledger per provider session, keyed by the CLI's own session id.
-        # Staged threads interleave -- formalizer, reader, prover, prover
-        # again -- and a single ledger would read every change of thread as a
-        # restart and count the next report on an old thread whole. Entries
-        # are rebound under `_records`, never mutated: `Usage` is frozen.
+        # One ledger per provider session (`fold_by_session`), rebound under
+        # `_records`, never mutated.
         self._spend: dict[str, Usage] = {}
         # Exchanges Hardy sent, counted when they are sent. A stage that times
         # out, is cancelled, or fails before the provider reports on it was
@@ -293,19 +290,16 @@ class ClaudeStagedRuntime:
             if self._sealed:
                 return
             if event.get("type") == "result":
-                # A resumed thread reports session-to-date figures (see
-                # `Usage.record`): `_ask` opens a fresh client per turn, but
-                # `_options` resumes the thread's session, and the CLI restores
-                # its running totals when it does. So each report is folded
-                # into its own session's ledger and differenced there, and the
+                # A resumed thread's reports may carry the session's running
+                # total: `_ask` opens a fresh client per turn, but `_options`
+                # resumes the thread's session. So each report is folded into
+                # its own session's ledger, where `Usage.record` decides for
+                # cost and for tokens whether to difference it, and the
                 # sessions are only added in `usage`. The $0.68-for-$0.78
                 # manifest that once made this key every report apart came from
                 # threads that all took one inherited session id; each thread
-                # now opens under an id of its own, and a report that did not
-                # restore is marked `cumulative: False` and counted whole.
-                session = str(event.get("session_id") or "")
-                ledger = self._spend.get(session, Usage())
-                self._spend[session] = ledger.record(event)
+                # now opens under an id of its own.
+                self._spend = fold_by_session(self._spend, event)
             self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
 
     def _seal(self, phase: RunPhase = RunPhase.PROVING) -> None:

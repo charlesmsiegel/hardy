@@ -12,7 +12,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from hardy.agents.usage import Usage
+from hardy.agents.usage import Usage, combined, fold_by_session
 from hardy.evals.contracts import Condition, Row, Scoreboard
 from hardy.evals.exposure import COHORTS, read_exposure
 from hardy.evals.outstanding import environment_digest_of_board
@@ -62,7 +62,8 @@ def _review_usage(row_dir: Path) -> dict[str, Any]:
     before a result. Values are therefore lower bounds with partial coverage.
     """
     path = row_dir / "canonical-trajectory.jsonl"
-    usage = Usage()
+    # Per session, exactly as the staged manifest folds the same reports.
+    ledgers: dict[str, Usage] = {}
     if path.is_file():
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
@@ -70,8 +71,8 @@ def _review_usage(row_dir: Path) -> dict[str, Any]:
             except ValueError:
                 continue
             if isinstance(event, dict) and event.get("kind") == "claude.result" and isinstance(event.get("payload"), dict):
-                usage = usage.record(event["payload"])
-    result = usage_measurements(usage.summary())
+                ledgers = fold_by_session(ledgers, event["payload"])
+    result = usage_measurements(combined([ledger.summary() for ledger in ledgers.values()]))
     for field in USAGE_FIELDS:
         if result[field]["value"] is not None:
             result[field]["coverage"] = "partial"

@@ -382,6 +382,26 @@ def test_a_report_the_runtime_marks_not_cumulative_counts_in_full(tmp_path) -> N
     assert usage['input_tokens'] == 2500
 
 
+def test_the_documented_cli_gives_the_staged_and_batch_ledgers_one_answer(tmp_path) -> None:
+    """Per-turn `usage` beside a running-total cost and `modelUsage`, which
+    is what Claude Code 2.1.282 documents: $1.50 for three $0.50 exchanges on
+    one resumed thread, not $3.00 (#197 review I1)."""
+    _, _, runtime = _staged(tmp_path)
+
+    for n in (1, 2, 3):
+        runtime._asked += 1
+        runtime._observe({
+            'type': 'result', 'session_id': 'S', 'cost_usd': 0.5 * n,
+            'usage': {'input_tokens': 1000, 'output_tokens': 100},
+            'exchange_usage': {'input_tokens': 1000, 'output_tokens': 100}, 'cumulative': False,
+            'model_usage': {'input_tokens': 1000 * n, 'output_tokens': 100 * n},
+        })
+
+    usage = runtime.usage
+    assert abs(usage['cost_usd'] - 1.5) < 1e-9
+    assert usage['input_tokens'] == 3000 and usage['output_tokens'] == 300
+
+
 def test_unreported_exchanges_pad_the_count_across_sessions(tmp_path) -> None:
     """An exchange sent and never reported on is counted with nothing stated,
     whichever sessions the reported ones came from."""
