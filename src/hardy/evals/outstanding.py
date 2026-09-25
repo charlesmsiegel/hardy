@@ -32,9 +32,9 @@ def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> l
     """The label of every board under `scoreboards_root` whose condition and
     recorded environment together equal `key`, sorted.
 
-    Shared by `evaluated_ids` (which rows may be claimed as evidence) and
-    `evals todo` (which boards it is telling the truth about), so the two
-    never drift on what counts as a match.
+    The cheap half of what `evals pool` asks of a board. `poolable_boards`
+    adds the other half, the board's own audit, before any row is claimed as
+    evidence or any board is counted.
 
     A board carrying no `run_procedure_digest` matches nothing: it was
     written before this gate existed, so nothing establishes which code
@@ -64,16 +64,63 @@ def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> l
     return sorted(matched)
 
 
-def evaluated_ids(scoreboards_root: Path, *, key: tuple[str | None, str]) -> set[str]:
-    """Every entry id already run under this exact pooling key."""
-    found: set[str] = set()
+def poolable_boards(scoreboards_root: Path, *, key: tuple[str | None, str], problems_path: Path,
+                    baseline_path: Path) -> tuple[list[str], dict[str, list[str]]]:
+    """The boards `evals pool` would admit under `key`, and those it would refuse.
+
+    Returns the admitted labels, sorted, and each refused label with the
+    findings its own audit (`scoreboard_self_issues`, the check `pool.pool`
+    applies) reported. A board that fails that audit can never be pooled, so
+    none of its rows is evidence that an entry was run, and `evals todo`
+    must not count it: that would drop the entry from every default run
+    while nothing poolable exists for it.
+
+    The audit re-derives every row from its run directory and reads the
+    corpus and tier file, so it costs more than the key match; it runs only
+    on the boards that already match.
+    """
+    from hardy.evals.scoreboard import scoreboard_self_issues
+
+    admitted: list[str] = []
+    refused: dict[str, list[str]] = {}
     for label in matching_boards(scoreboards_root, key=key):
         try:
+            issues = list(scoreboard_self_issues(scoreboards_root / label, problems_path=problems_path,
+                                                 baseline_path=baseline_path))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            issues = [f"the board's own audit could not run: {type(error).__name__}: {error}"]
+        if issues:
+            refused[label] = issues
+        else:
+            admitted.append(label)
+    return admitted, refused
+
+
+def evaluated_ids(scoreboards_root: Path, *, boards: list[str]) -> tuple[set[str], set[str]]:
+    """The entry ids `boards` fully cover, and those they cover only in part.
+
+    `boards` are labels `poolable_boards` admitted. An id is complete when
+    its rows across them, leaving out `invalid` ones, fill every repeat slot
+    `range(condition.repeats)`; `repeats` is in the pooling key, so every
+    admitted board shares it. An id with some slots but not all is partial:
+    an interrupted board holds `(X, 0)` of three, say. Counting it done would
+    pool one sample beside other entries' three, the unbalanced design the
+    key keeps `repeats` in to prevent.
+    """
+    slots: dict[str, set[int]] = {}
+    repeats = 1
+    for label in boards:
+        try:
             board = json.loads((scoreboards_root / label / "scoreboard.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            repeats = max(repeats, int((board.get("condition") or {}).get("repeats") or 1))
+            for row in board.get("rows") or []:
+                if row.get("outcome") == "invalid":
+                    continue   # recorded, but not a sample of anything
+                slots.setdefault(str(row.get("id")), set()).add(int(row.get("repeat") or 0))
+        except (OSError, ValueError, TypeError, AttributeError):
             continue      # an unreadable board is not evidence of anything
-        found.update(str(row.get("id")) for row in board.get("rows") or [])
-    return found
+    complete = {id_ for id_, have in slots.items() if set(range(repeats)) <= have}
+    return complete, set(slots) - complete
 
 
 def unbaselined_active(problems: Any, baseline: Any | None) -> list[str]:
@@ -96,15 +143,30 @@ def unbaselined_active(problems: Any, baseline: Any | None) -> list[str]:
     ]
 
 
-def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tuple[str | None, str]) -> dict[str, list[str]]:
-    """The active entries with no baseline row, and those with no row under `key`.
+def outstanding(problems: Any, baseline: Any, scoreboards_root: Path, *, key: tuple[str | None, str],
+                problems_path: Path, baseline_path: Path) -> dict[str, Any]:
+    """What is left under `key`, judged by the boards `evals pool` would admit.
+
+    - `boards_counted`: the boards admitted as evidence; `boards_refused`:
+      those matching `key` that fail their own audit, with its findings.
+    - `unbaselined_active`: active entries with no usable baseline row.
+    - `unevaluated_active`: active entries with no valid sample on an
+      admitted board -- what the default `evals run` selects.
+    - `partially_evaluated_active`: active entries holding some of their
+      repeats but not all. The default run leaves them out, because a fresh
+      board repeating their slots would not pool with the one holding them.
 
     Only `active` entries: a `candidate` has not been checked by a human yet,
     and spending model time on one would benchmark a draft.
     """
+    admitted, refused = poolable_boards(scoreboards_root, key=key, problems_path=problems_path,
+                                        baseline_path=baseline_path)
+    complete, partial = evaluated_ids(scoreboards_root, boards=admitted)
     active = [e.id for e in problems.entries if e.status == "active"]
-    done = evaluated_ids(scoreboards_root, key=key)
     return {
+        "boards_counted": admitted,
+        "boards_refused": refused,
         "unbaselined_active": unbaselined_active(problems, baseline),
-        "unevaluated_active": [id_ for id_ in active if id_ not in done],
+        "unevaluated_active": [id_ for id_ in active if id_ not in complete and id_ not in partial],
+        "partially_evaluated_active": [id_ for id_ in active if id_ in partial],
     }

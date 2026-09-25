@@ -435,6 +435,21 @@ def _refuse_staged_budget_overrides(args: argparse.Namespace) -> bool:
     return False
 
 
+def _report_uncounted(left: dict[str, Any]) -> None:
+    """Say on stderr what `outstanding` left out of the evidence, and why."""
+    for label, issues in sorted(left["boards_refused"].items()):
+        print(f"not counted: board {label} fails its own audit, so `evals pool` would refuse it: "
+              + "; ".join(issues), file=sys.stderr)
+    if left["partially_evaluated_active"]:
+        print(
+            "not selected: these active entries hold only some of their repeats under this condition, "
+            "and a new board repeating those slots would not pool with the one holding them: "
+            + ", ".join(left["partially_evaluated_active"])
+            + ". Set the interrupted board aside to run them afresh, or name them with --only.",
+            file=sys.stderr,
+        )
+
+
 def run_todo(args: argparse.Namespace, config: Any) -> int:
     """`evals todo`: free, before anything is spent -- what a `baseline` or a
     `run` launched right now, with these flags, would still have left to do.
@@ -442,7 +457,6 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     JSON on stdout and nothing else there, so a control agent can parse it
     without combing prose off the same stream; commentary goes to stderr.
     """
-    from hardy.evals.outstanding import matching_boards
     from hardy.evals.outstanding import outstanding as compute_outstanding
 
     if getattr(config, "provider_budget", None) is not None:
@@ -478,10 +492,12 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
                                          reviewer_model=reviewer, **treatment)
     environment_digest = sweep.environment_digest_of(identity, host_info())
     key = (run_digest, environment_digest)
+    left = compute_outstanding(problems, baseline, args.scoreboards, key=key,
+                               problems_path=args.problems, baseline_path=args.baseline)
+    _report_uncounted(left)
     print(json.dumps({
         "pooling_key": {"run_procedure_digest": run_digest, "environment_digest": environment_digest},
-        "boards_counted": matching_boards(args.scoreboards, key=key),
-        **compute_outstanding(problems, baseline, args.scoreboards, key=key),
+        **left,
     }, indent=2))
     return 0
 
@@ -755,7 +771,9 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         return 2
     if only is None:
         # Nobody named entries: default to what this exact model, mode and
-        # limits have not yet run against this environment -- not the whole
+        # limits have no poolable sample of against this environment (a board
+        # its own audit refuses, or an `invalid` row, is no sample; an entry
+        # holding some repeats but not all is named, not rerun) -- not the whole
         # corpus, which would also spend on candidates and retirees no human
         # has checked. Recorded into `selection["only"]` below rather than
         # left as `None`, so the scoreboard states exactly what ran and
@@ -764,11 +782,15 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
 
         default_baseline = Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
         default_key = (run_digest, environment_digest_of(environment, host_info()))
-        only = compute_outstanding(problems, default_baseline, args.scoreboards, key=default_key)["unevaluated_active"]
+        left = compute_outstanding(problems, default_baseline, args.scoreboards, key=default_key,
+                                   problems_path=args.problems, baseline_path=args.baseline)
+        _report_uncounted(left)
+        only = left["unevaluated_active"]
         if not only:
             print(
-                "Refused: every active entry has already been run under this condition; "
-                "name entries with --only to re-run them",
+                "Refused: every active entry has already been run under this condition"
+                + (", some of them only in part (named above)" if left["partially_evaluated_active"] else "")
+                + "; name entries with --only to re-run them",
                 file=sys.stderr,
             )
             return 2
