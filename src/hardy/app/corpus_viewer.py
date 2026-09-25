@@ -21,7 +21,9 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import socket
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -468,6 +470,75 @@ class Handler(BaseHTTPRequestHandler):
         """Silent: the useful output is the URL, printed once by `serve`."""
 
 
+#: A wildcard bind has no address of its own; these are the strings `--host`
+#: takes to mean one.
+_WILDCARD_HOSTS = ("0.0.0.0", "::", "")
+_LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1", "[::1]")
+
+
+def _resolve_names() -> tuple[str, str, list[str]]:
+    """The machine's own names, and every address either resolves to.
+
+    Read only for a wildcard bind: a server listening on every interface has
+    no single address of its own, so the `Host` values it should still
+    answer to come from the machine, not from the bind string. Any failure
+    here is the caller's to swallow -- a machine with no DNS or a sandboxed
+    hostname must still serve loopback.
+    """
+    hostname = socket.gethostname()
+    fqdn = socket.getfqdn()
+    addresses: list[str] = []
+    for name in {n for n in (hostname, fqdn) if n}:
+        try:
+            addresses.extend(info[4][0] for info in socket.getaddrinfo(name, None))
+        except OSError:
+            continue
+    return hostname, fqdn, addresses
+
+
+def _bracket(address: str) -> str:
+    """An IPv6 literal in the `[addr]:port` form a `Host` header uses."""
+    return address if address.startswith("[") or ":" not in address else f"[{address}]"
+
+
+def _allowed_hosts(host: str, port: int, *,
+                    resolve: Callable[[], tuple[str, str, list[str]]] = _resolve_names) -> set[str]:
+    """`Host` header values this server, bound to `host:port`, should answer to.
+
+    Every one of these defeats DNS rebinding by construction: a name the
+    attacker controls can resolve to this machine's loopback or real address,
+    but it cannot become one of *these* strings unless it already is this
+    machine's own hostname, FQDN, or an address that name resolves to.
+
+    A specific `--host` is unambiguous: only it (bracketed if IPv6), plus the
+    loopback aliases when it is itself loopback -- `localhost` and
+    `127.0.0.1`/`::1` are used interchangeably for a loopback bind and
+    treating only one of them as legitimate would refuse the other for no
+    security reason. A wildcard bind (`0.0.0.0`, `::`, or unset) has no
+    address of its own to compare against, so the admitted set instead comes
+    from the machine's own hostname, its FQDN, and every address either
+    resolves to (`resolve`, injected so this is testable without a live
+    resolver) -- plus loopback, since a wildcard bind still answers on it.
+    A LAN client whose address is not among those -- reached by a bare IP a
+    reverse-DNS lookup does not name -- is refused; `--host <that address>`
+    admits it exactly.
+    """
+    loopback = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    if host in _WILDCARD_HOSTS:
+        allowed = set(loopback)
+        try:
+            hostname, fqdn, addresses = resolve()
+        except OSError:
+            return allowed
+        allowed |= {f"{name}:{port}" for name in (hostname, fqdn) if name}
+        allowed |= {f"{_bracket(address)}:{port}" for address in addresses}
+        return allowed
+    allowed = {f"{_bracket(host)}:{port}"}
+    if host in _LOOPBACK_NAMES:
+        allowed |= loopback
+    return allowed
+
+
 def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Path | None = None,
           report: Any = print, serve_forever: bool = True) -> HTTPServer:
     """Bound to loopback: the corpus is a working file, not a published site.
@@ -478,13 +549,9 @@ def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Pa
     """
     server = HTTPServer((host, port), partial(Handler, root=root, baseline=baseline))
     server.token = secrets.token_urlsafe(32)
-    # `Host` values this process actually answers to: the address it was
-    # bound with, plus the loopback aliases a browser or `curl` reaching a
-    # loopback bind is likely to use for it. A request naming anything else
-    # is refused before it is routed at all (#217).
-    server.allowed_hosts = {f"{host}:{server.server_port}"}
-    if host in ("127.0.0.1", "localhost", "0.0.0.0", "::", "::1"):
-        server.allowed_hosts |= {f"127.0.0.1:{server.server_port}", f"localhost:{server.server_port}"}
+    # A request naming any other `Host` is refused before it is routed at
+    # all (#217); see `_allowed_hosts` for exactly which values that is.
+    server.allowed_hosts = _allowed_hosts(host, server.server_port)
     Handler.timeout = 10
     report(f"Corpus viewer on http://{host}:{server.server_port}/  (Ctrl-C to stop)")
     report(f"Serving {root.resolve()} -- edit a shard and refresh to see it.")

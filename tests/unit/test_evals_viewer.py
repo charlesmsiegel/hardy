@@ -12,7 +12,14 @@ from urllib.parse import urlsplit
 import pytest
 from corpus_helpers import rebind_changelog, write_corpus
 
-from hardy.app.corpus_viewer import PAGE, ReviewRefused, payload, record_review, serve
+from hardy.app.corpus_viewer import (
+    PAGE,
+    ReviewRefused,
+    _allowed_hosts,
+    payload,
+    record_review,
+    serve,
+)
 from hardy.corpus.catalog import load_corpus
 from hardy.corpus.problems import Entry
 
@@ -449,6 +456,44 @@ def test_the_review_route_refuses_with_the_reason_and_writes_nothing(reviewing):
 
 
 # --- Request authentication: Host, Origin and the per-process token (#217) ---
+
+
+def test_a_wildcard_bind_admits_the_resolved_hostname_address_and_loopback():
+    """`--host 0.0.0.0` has no address of its own: the admitted `Host` values
+    come from the machine's own name and what it resolves to, not the bind
+    string, plus loopback -- never an arbitrary name an attacker's DNS
+    points here."""
+    hosts = _allowed_hosts("0.0.0.0", 9, resolve=lambda: ("mybox", "mybox.local", ["10.0.0.5"]))
+    assert hosts == {"mybox:9", "mybox.local:9", "10.0.0.5:9",
+                     "127.0.0.1:9", "localhost:9", "[::1]:9"}
+    assert "evil.example:9" not in hosts
+
+
+def test_a_resolver_failure_on_a_wildcard_bind_still_yields_loopback():
+    """A machine with no DNS or a sandboxed hostname lookup must not stop the
+    server from answering on loopback at all."""
+    def _boom() -> tuple[str, str, list[str]]:
+        raise OSError("no resolver here")
+
+    assert _allowed_hosts("0.0.0.0", 9, resolve=_boom) == {"127.0.0.1:9", "localhost:9", "[::1]:9"}
+
+
+def test_a_specific_host_admits_only_itself():
+    """`--host 192.168.1.5` names one address; nothing else -- not even
+    loopback, which is not how a client would reach this bind -- is it."""
+    assert _allowed_hosts("192.168.1.5", 9) == {"192.168.1.5:9"}
+
+
+def test_a_specific_loopback_host_admits_the_usual_aliases_too():
+    """`localhost` and `127.0.0.1`/`::1` are used interchangeably for a
+    loopback bind; admitting only the one spelled on the command line would
+    refuse the others for no security reason."""
+    assert _allowed_hosts("127.0.0.1", 9) == {"127.0.0.1:9", "localhost:9", "[::1]:9"}
+    assert _allowed_hosts("localhost", 9) == {"127.0.0.1:9", "localhost:9", "[::1]:9"}
+
+
+def test_an_ipv6_host_is_admitted_bracketed():
+    assert _allowed_hosts("2001:db8::1", 9) == {"[2001:db8::1]:9"}
 
 
 def test_a_cross_site_post_is_refused_and_the_shard_is_unchanged(reviewing):
