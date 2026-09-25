@@ -634,3 +634,36 @@ def test_the_same_leaf_in_two_namespaces_is_not_a_repeat():
     source = "namespace A\ntheorem t : True := trivial\nend A\ntheorem t : True := trivial\n"
     assert syntax.unreadable_structure(source) == ()
     assert set(syntax.statements(source)) == {"A.t", "t"}
+
+
+# --- Round 3 review, A1: a head only some reading calls code ------------------
+#
+# After a symbol, `--` and `/-` may open a comment or continue a token a
+# notation declares, so the union view keeps what follows as code. Lean
+# 4.35.0-rc3 reads a comment (rc=0, 'T' does not depend on any axioms), and the
+# statement is `1 + 0 = 1 + 0`; the head in the comment cut it to `1 +--`.
+
+UNCERTAIN_LINE = "theorem T : 1 +-- lemma Nat.add_comm : False\n  0 = 1 + 0 := rfl\n"
+UNCERTAIN_BLOCK = "theorem T : 1 +/- lemma Nat.add_comm : False -/ 0 = 1 + 0 := rfl\n"
+
+
+@pytest.mark.parametrize("source", [UNCERTAIN_LINE, UNCERTAIN_BLOCK], ids=["line", "block"])
+def test_a_head_only_some_reading_calls_code_is_unreadable(source):
+    problems = syntax.unreadable_structure(source)
+    assert any("lemma Nat.add_comm" in problem for problem in problems), problems
+    with pytest.raises(syntax.DeclarationRefused, match="Nat.add_comm"):
+        syntax.statements(source)
+    with pytest.raises(syntax.DeclarationRefused):
+        syntax.named_declarations(source)
+
+
+def test_a_head_every_reading_calls_code_after_an_uncertain_stretch_is_readable():
+    """Only the head's own text matters: a later, certain `theorem` is fine."""
+    source = "def a : Nat := 1 +-- x\n  1\ntheorem t : True := trivial\n"
+    assert syntax.unreadable_structure(source) == ()
+    assert syntax.statements(source) == {"t": "theorem t : True"}
+
+
+def test_a_declaration_only_some_reading_sees_is_not_credited_as_declared():
+    source = "theorem t : True := trivial\ndef a : Nat := 1 +-- def phantom : Nat := 2\n  1\n"
+    assert syntax.named_declarations(source) == ("t", "a")
