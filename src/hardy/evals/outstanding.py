@@ -32,9 +32,12 @@ def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> l
     """The label of every board under `scoreboards_root` whose condition and
     recorded environment together equal `key`, sorted.
 
-    The cheap half of what `evals pool` asks of a board. `poolable_boards`
-    adds the other half, the board's own audit, before any row is claimed as
-    evidence or any board is counted.
+    The cheap half of what `evals pool` asks of a board, and nothing more:
+    the pooling key. `poolable_boards` adds the other half, the board's own
+    audit, before any row is claimed as evidence or any board is counted. A
+    board is not filtered here for anything that audit judges -- its exposure
+    artifacts included -- because a board dropped here never reaches
+    `boards_refused`, and its entries were selected again with nothing said.
 
     A board carrying no `run_procedure_digest` matches nothing: it was
     written before this gate existed, so nothing establishes which code
@@ -55,9 +58,6 @@ def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> l
                 continue
             if (run_digest, environment_digest_of_board(board)) != key:
                 continue
-            from hardy.evals.exposure import board_exposure_issues
-            if board_exposure_issues(board_path.parent, board):
-                continue
         except (OSError, ValueError, KeyError, TypeError):
             continue
         matched.append(board_path.parent.name)
@@ -77,16 +77,23 @@ def poolable_boards(scoreboards_root: Path, *, key: tuple[str | None, str], prob
 
     The audit re-derives every row from its run directory and reads the
     corpus and tier file, so it costs more than the key match; it runs only
-    on the boards that already match.
+    on the boards that already match. It reads each row's exposure journal
+    too; the board-level exposure check (`board_exposure_issues`) is asked as
+    well, and whatever either finds refuses the board with the finding.
     """
+    from hardy.evals.exposure import board_exposure_issues
     from hardy.evals.scoreboard import scoreboard_self_issues
 
     admitted: list[str] = []
     refused: dict[str, list[str]] = {}
     for label in matching_boards(scoreboards_root, key=key):
+        directory = scoreboards_root / label
         try:
-            issues = list(scoreboard_self_issues(scoreboards_root / label, problems_path=problems_path,
+            issues = list(scoreboard_self_issues(directory, problems_path=problems_path,
                                                  baseline_path=baseline_path))
+            if not issues:
+                board = json.loads((directory / "scoreboard.json").read_text(encoding="utf-8"))
+                issues = list(board_exposure_issues(directory, board))
         except (OSError, ValueError, KeyError, TypeError) as error:
             issues = [f"the board's own audit could not run: {type(error).__name__}: {error}"]
         if issues:

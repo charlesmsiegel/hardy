@@ -129,6 +129,17 @@ def test_incomplete_exposure_cannot_establish_heldout(tmp_path, monkeypatch, exp
     assert all(row["exposure"]["reasons"] for row in result["rows"]["left"])
 
 
+def assert_refused_for_exposure(path, key, kwargs) -> None:
+    """The board reaches the self-audit and is refused with an exposure
+    finding. Dropping it before the audit (Codex on #393) left it out of
+    `boards_refused`, and `evals todo` then selected its entries again with
+    nothing said."""
+    assert outstanding.matching_boards(path.parent, key=key) == [path.name]
+    admitted, refused = outstanding.poolable_boards(path.parent, key=key, **kwargs)
+    assert admitted == []
+    assert any("exposure" in issue for issue in refused[path.name]), refused
+
+
 @pytest.mark.parametrize("attack", ["missing", "truncated", "tampered", "delivery"])
 def test_reader_rejects_damaged_exposure_and_todo_does_not_count_it(tmp_path, monkeypatch, exposure, source, attack):
     path, kwargs = run_board(tmp_path, monkeypatch, exposure, source, plan(exposure, source))
@@ -145,7 +156,7 @@ def test_reader_rejects_damaged_exposure_and_todo_does_not_count_it(tmp_path, mo
         next(row_dir.glob("exposure-input-*.txt")).write_text("A different provider input")
     assert any("exposure" in issue for issue in scoreboard.scoreboard_self_issues(path, **kwargs))
     key = (board.condition.run_procedure_digest, outstanding.environment_digest_of_board(board.model_dump(mode="json")))
-    assert outstanding.matching_boards(path.parent, key=key) == []
+    assert_refused_for_exposure(path, key, kwargs)
     result = compare.compare(path, path, varying=(), **kwargs)
     assert all(row["exposure"]["cohort"] == "unknown" for row in result["rows"]["left"])
 
@@ -194,11 +205,11 @@ def test_run_identity_cannot_be_relabelled_for_pooling(tmp_path, monkeypatch, ex
     board_path.write_text(json.dumps(board), encoding="utf-8")
     assert any("exposure" in issue for issue in scoreboard.scoreboard_self_issues(path, **kwargs))
     key = ("f" * 64, outstanding.environment_digest_of_board(board))
-    assert outstanding.matching_boards(path.parent, key=key) == []
+    assert_refused_for_exposure(path, key, kwargs)
 
 
 def test_removed_exposure_identity_does_not_hide_existing_journal_from_todo(tmp_path, monkeypatch, exposure, source):
-    path, _ = run_board(tmp_path, monkeypatch, exposure, source, plan(exposure, source))
+    path, kwargs = run_board(tmp_path, monkeypatch, exposure, source, plan(exposure, source))
     board_path = path / "scoreboard.json"
     board = json.loads(board_path.read_text())
     board["condition"].pop("exposure")
@@ -206,7 +217,7 @@ def test_removed_exposure_identity_does_not_hide_existing_journal_from_todo(tmp_
         row.pop("exposure_sha256")
     board_path.write_text(json.dumps(board), encoding="utf-8")
     key = (board["condition"]["run_procedure_digest"], outstanding.environment_digest_of_board(board))
-    assert outstanding.matching_boards(path.parent, key=key) == []
+    assert_refused_for_exposure(path, key, kwargs)
 
 
 def test_split_cannot_claim_prior_relationship_to_unindexed_record(exposure, source):
