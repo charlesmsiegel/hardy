@@ -14,6 +14,7 @@ from hardy.foundation.process import (
     INTERRUPT_GRACE_SECONDS,
     child_creation,
     child_environment,
+    contain,
     kill_group,
     signal_interrupt,
     terminate_group,
@@ -57,6 +58,13 @@ class _Kernel:
             stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
             **child_creation(),
         )
+        # And, on Windows, in a job of its own, which is that platform's
+        # process group: without one `kill()` reached the interpreter and
+        # nothing a cell had started. Not registered with `tracked`, because
+        # the session owns this child rather than the turn that started it
+        # (see `interrupt_children`). The driver starts nothing before it
+        # reads its first frame, so `contain`'s race has nothing to lose here.
+        contain(self.process)
         for pipe, destination in ((self.process.stdout, self.out), (self.process.stderr, self.err)):
             if pipe is not None:
                 threading.Thread(target=self._drain, args=(pipe, destination), daemon=True).start()

@@ -592,11 +592,12 @@ def _verify_script(
         # Not "it left one" but "nobody could look". Same position and the
         # same reason: everything comparable agreed, and what is left is a
         # claim Hardy is not in a position to make -- a delayed child can
-        # rewrite the artifact after the readback, and there is no group to
-        # account for it or to stop it.
+        # rewrite the artifact after the readback, and no process group or
+        # job object held the run to account for it or to stop it.
         return "unverified", (
-            "this platform cannot account for what a script starts, so a process "
-            "left running by it could still change the published file"
+            "Hardy cannot account for what a script starts on this run (nothing held "
+            "its process tree), so a process left running by it could still change "
+            "the published file"
         )
     if run.left_processes:
         # Last, because a concrete disagreement is worth more than this. What a

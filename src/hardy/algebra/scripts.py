@@ -2,14 +2,20 @@
 from __future__ import annotations
 
 import contextlib
-import os
 import subprocess
 import threading
 from pathlib import Path
 from typing import Any
 
 from hardy.algebra.contracts import CasError
-from hardy.foundation.process import child_creation, child_environment, kill_group
+from hardy.foundation.process import (
+    can_contain,
+    child_creation,
+    child_environment,
+    contain,
+    kill_group,
+    tree_has_members,
+)
 from hardy.foundation.values import FrozenModel
 
 
@@ -32,11 +38,12 @@ class ScriptRun(FrozenModel):
     # race is closed; this says the run had one, which is not something a
     # verdict can be drawn over.
     left_processes: bool = False
-    # Nobody looked, as opposed to nobody was there. On a platform with no
-    # process groups Hardy can neither account for what a script started nor
-    # stop it, so the artifact-rewriting race above is open for every run --
-    # and a verdict of `verified` would be a claim about a file that something
-    # the run started is still free to change.
+    # Nobody looked, as opposed to nobody was there. Where Hardy could not
+    # hold the script's tree -- no job object on Windows, or a query that
+    # failed -- it can neither account for what the script started nor stop
+    # it, so the artifact-rewriting race above is open for that run, and a
+    # verdict of `verified` would be a claim about a file that something the
+    # run started is still free to change.
     descendants_unknown: bool = False
 
 
@@ -111,6 +118,7 @@ def run_exported_script(
     out, err = bytearray(), bytearray()
     overflowed = [False]
     left_behind = [False]
+    unknown = [True]
     environment = dict(getattr(backend, "environment", {}))
     # The capture is decoded as UTF-8 below, so a Python child is told to
     # write it. On Windows its stdout would otherwise be encoded with the
@@ -141,6 +149,9 @@ def run_exported_script(
         raise CasError(
             f"could not run the exported script ({' '.join(argv)}): {error}"
         ) from None
+    # Its tree, held as one before anything else happens: a process group on
+    # POSIX already, a job object on Windows from here.
+    contain(process)
 
     workers = [
         threading.Thread(target=_drain_capped, args=(pipe, buffer, cap, overflowed), daemon=True)
@@ -196,12 +207,15 @@ def run_exported_script(
         # Probed before it is killed, because a group with members after the
         # leader has been reaped is the evidence, and killing it destroys the
         # evidence. What this cannot see is a descendant that left the group
-        # with `setsid`. Where the platform has no groups at all the sweep is
-        # not attempted and `descendants_unknown` says so, rather than a
-        # probe reporting "nothing left behind" because nobody looked.
+        # with `setsid` (or, on Windows, one created to break away from the
+        # job). Where nothing held the tree the probe answers None, and
+        # `descendants_unknown` says so, rather than a probe reporting
+        # "nothing left behind" because nobody looked.
         if can_sweep_descendants():
-            left_behind[0] = _group_has_members(process)
-            kill_group(process)
+            members = tree_has_members(process)
+            left_behind[0] = bool(members)
+            unknown[0] = members is None
+        kill_group(process)
         # And each stream is closed only once its own worker has actually let
         # go of it. A drain thread blocked in `pipe.read1` -- because, say, a
         # grandchild the child spawned inherited the handle and is still
@@ -232,39 +246,24 @@ def run_exported_script(
         timed_out=timed_out,
         capture_truncated=overflowed[0],
         left_processes=left_behind[0],
-        descendants_unknown=not can_sweep_descendants(),
+        descendants_unknown=unknown[0],
     )
 
 
 def can_sweep_descendants() -> bool:
-    """Whether this platform lets Hardy account for and stop a script's children.
+    """Whether this host can account for and stop a script's children at all.
 
-    POSIX puts the tree in a process group, which can be asked about and
-    signalled as one. Windows has neither here: killing a tree there needs a
-    job object, which nothing sets up, so `kill_group` reaches the leader --
-    which has already exited -- and there is nothing to ask about the rest.
+    POSIX puts the tree in a process group; Windows puts it in a job object
+    (`contain`), whose active processes can be counted and terminated as one.
+    A capability, not a verdict on one run: a job the host refused to assign
+    leaves that run's `tree_has_members` answering None, and the run is then
+    `descendants_unknown` on the evidence, not on the platform.
 
     Not a detail of the sweep but of what a verdict may claim. Reporting
-    `False` from the probe on Windows would have said "nothing was left
-    behind" where the truth is "nobody looked", and the check would then call
-    an artifact verified that a delayed child was still free to rewrite.
+    "nothing left behind" where nobody looked would call an artifact verified
+    that a delayed child was still free to rewrite.
     """
-    return os.name != "nt"
-
-
-def _group_has_members(child: subprocess.Popen) -> bool:
-    """Whether anything is still running in the child's process group.
-
-    Signal 0 is the existence check: it delivers nothing and reports whether
-    there was anyone to deliver to. The leader has been waited on by the time
-    this is asked, so it is no longer a member of its own group and a positive
-    answer means the script left something behind.
-    """
-    try:
-        os.killpg(child.pid, 0)
-    except (OSError, ValueError):
-        return False
-    return True
+    return can_contain()
 
 
 def _decode(raw: bytes | str | None) -> str:

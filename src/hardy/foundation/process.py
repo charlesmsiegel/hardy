@@ -172,9 +172,9 @@ def terminate_group(child: subprocess.Popen) -> None:
 
     Windows has no SIGTERM: `terminate` and `kill` are both `TerminateProcess`,
     and a console group cannot be terminated as one. The tree is reached through
-    the job object `tracked` put the child in, which its descendants inherit;
-    a child nobody tracked has no job, and there the leader is all that can be
-    reached, as before.
+    the job object `tracked` (or `contain`) put the child in, which its
+    descendants inherit; a child given neither has no job, and there the
+    leader is all that can be reached, as before.
     """
     if os.name != "nt":
         try:
@@ -230,6 +230,10 @@ def _kernel32():
         api.TerminateJobObject.restype = bool_
         api.CloseHandle.argtypes = (handle,)
         api.CloseHandle.restype = bool_
+        api.QueryInformationJobObject.argtypes = (
+            handle, ctypes.c_int, ctypes.c_void_p, dword, ctypes.POINTER(dword)
+        )
+        api.QueryInformationJobObject.restype = bool_
         _KERNEL32 = api
     return _KERNEL32
 
@@ -262,6 +266,96 @@ def _assign_job(child: subprocess.Popen) -> None:
         return
     _JOBS[child] = job
     weakref.finalize(child, api.CloseHandle, job)
+
+
+def contain(child: subprocess.Popen) -> None:
+    """Hold a child Hardy does not run through `tracked` the way `tracked` would.
+
+    For a child whose lifetime is not one call: the persistent CAS kernel,
+    which a session owns rather than the turn (see `interrupt_children`), and
+    the exported-script run, which sweeps its own tree. On POSIX
+    `child_creation` already made the child a group leader and there is
+    nothing to add; on Windows it is put in a job object, so `terminate_group`
+    and `kill_group` reach whatever it starts and `tree_has_members` can
+    count it. Called right after `Popen`, with `_assign_job`'s race: a
+    grandchild spawned before this line escapes the job.
+    """
+    _assign_job(child)
+
+
+def can_contain() -> bool:
+    """Whether this host can hold a child's tree at all.
+
+    A capability, not a promise about one child: on Windows the job API has
+    to be reachable, and even then an assignment can be refused, which
+    `tree_has_members` reports for that child as unknown.
+    """
+    if os.name != "nt":
+        return True
+    try:
+        _kernel32()
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
+class _BasicAccounting(ctypes.Structure):
+    """`JOBOBJECT_BASIC_ACCOUNTING_INFORMATION`: four LARGE_INTEGERs, four DWORDs."""
+
+    _fields_ = (
+        ("TotalUserTime", ctypes.c_int64),
+        ("TotalKernelTime", ctypes.c_int64),
+        ("ThisPeriodTotalUserTime", ctypes.c_int64),
+        ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+        ("TotalPageFaultCount", ctypes.c_uint32),
+        ("TotalProcesses", ctypes.c_uint32),
+        ("ActiveProcesses", ctypes.c_uint32),
+        ("TotalTerminatedProcesses", ctypes.c_uint32),
+    )
+
+
+_JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+
+
+def tree_has_members(child: subprocess.Popen) -> bool | None:
+    """Whether anything the child started is still running, or None if unknown.
+
+    POSIX: signal 0 to the child's process group, which delivers nothing and
+    reports whether there was anyone to deliver to. Asked after the leader has
+    been reaped, so a member is something it left behind; a member Hardy may
+    not signal still exists.
+
+    Windows: the job's count of active processes, less the leader while it is
+    still alive. Queried before the leader is polled, so a leader that exits
+    in between is counted and not subtracted -- an over-count, which reads as
+    something left behind, never an under-count that would read as nothing.
+
+    None when nobody can say: no job was assigned (the host refused it, or
+    Hardy already runs in a job that forbids nesting), or the query failed.
+    A caller must read that as "unknown", never as "nothing left behind".
+    """
+    if os.name != "nt":
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except (OSError, ValueError):
+            return None
+        return True
+    job = _JOBS.get(child)
+    if job is None:
+        return None
+    info = _BasicAccounting()
+    if not _kernel32().QueryInformationJobObject(
+        job, _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION, ctypes.byref(info), ctypes.sizeof(info), None
+    ):
+        return None
+    active = int(info.ActiveProcesses)
+    if child.poll() is None:
+        active -= 1
+    return active > 0
 
 
 def _terminate_job(child: subprocess.Popen) -> None:

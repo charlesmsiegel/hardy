@@ -31,8 +31,8 @@ from hardy.algebra.scripts import ScriptRun as ScriptRun
 from hardy.algebra.scripts import _decode as _decode
 from hardy.algebra.scripts import _drain_capped as _drain_capped
 from hardy.algebra.scripts import _feed as _feed
-from hardy.algebra.scripts import _group_has_members as _group_has_members
 from hardy.algebra.scripts import can_sweep_descendants as can_sweep_descendants
 from hardy.algebra.scripts import run_exported_script as run_exported_script
+from hardy.algebra.scripts import tree_has_members as tree_has_members
 from hardy.algebra.session import CasSession as CasSession
 

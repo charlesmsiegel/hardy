@@ -72,12 +72,13 @@ def cas_session(tmp_path):
 def _script_agreed(report) -> bool:
     """Whether the exported script ran and printed what the session recorded.
 
-    `verified` where Hardy can sweep a script's descendants. On Windows it
-    cannot (`can_sweep_descendants`), and no script is ever `verified` there:
-    the honest verdict is the `unverified` that names that limit, which is
-    what a matching transcript looks like on that platform. Anything else --
+    `verified` where Hardy can sweep a script's descendants: a process group
+    on POSIX, a job object on Windows. A host that can hold neither
+    (`can_sweep_descendants`) never verifies a script, and there the honest
+    verdict is the `unverified` that names that limit, which is what a
+    matching transcript looks like on such a host. Anything else --
     `diverged`, `failed`, or an `unverified` for some other reason -- is a
-    real disagreement on every platform.
+    real disagreement everywhere.
     """
     if can_sweep_descendants():
         return report.script_verdict == "verified"
