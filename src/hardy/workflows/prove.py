@@ -23,6 +23,7 @@ import json
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
@@ -163,6 +164,42 @@ class _RunState:
             {"from": previous.value, "to": target.value},
             phase=target,
         )
+
+
+@dataclass
+class _InFlight:
+    """What one run carries from stage to stage, and what its exits read.
+
+    The stages below were one method, and these were its locals: the
+    cancellation and failure handlers read whichever grades, claim, runtime
+    and thread were current when the run stopped, and the closures inside
+    the proof search rebound the thread. Held here instead, each stage
+    updates the run in the same place it updated the local, and a handler
+    reads what was last written, as before. Nothing outside one `_run`
+    holds one, and nothing in it is shared between runs.
+    """
+
+    request: ProveRequest
+    terminal: Terminal
+    store: RunStore
+    state: _RunState
+    created_at: datetime
+    active_started: float
+    user_wait: float = 0.0
+    grades: Grades = field(default_factory=Grades)
+    approved_claim: FrozenClaim | None = None
+    runtime: Any | None = None
+    active_thread: Any | None = None
+
+
+@dataclass(frozen=True)
+class _Approved:
+    """What the approval stage hands the proof search: the review that let it
+    start, the refutation probes' unsettled gaps, and the runtime's budget hook."""
+
+    verdict: FaithfulnessVerdict | None
+    assumption_gaps: tuple[str, ...]
+    bind_budget: Any
 
 
 class ProveWorkflow:
@@ -337,8 +374,7 @@ class ProveWorkflow:
         if evaluation := current_attempt():
             store.write_json(PurePosixPath("evaluation-attempt.json"), evaluation)
             store.append("workflow.evaluation_attempt", evaluation, phase=state.phase)
-        active_started = self._monotonic()
-        user_wait = 0.0
+        run = _InFlight(request, terminal, store, state, created_at, self._monotonic())
         store.write_text(PurePosixPath("request.md"), request.text.rstrip() + "\n")
         if request.assumptions:
             # What was ALLOWED, beside the manifest's record of what was used.
@@ -358,648 +394,12 @@ class ProveWorkflow:
             },
             phase=state.phase,
         )
-        approved_claim: FrozenClaim | None = None
-        approved_verdict: FaithfulnessVerdict | None = None
-        # What the refutation probes could not settle. Carried into the final
-        # grades rather than dropped: "no counterexample was found" and "the
-        # search could not be run" are different facts about the same axiom.
-        assumption_gaps: tuple[str, ...] = ()
-        runtime: Any | None = None
-        active_thread: Any | None = None
-        verification: VerificationResult | None = None
-        terminal_reason: TerminalReason | None = None
-        grades = Grades()
         try:
-            # The rule for everything below, learned one site at a time and
-            # written here so the next stage does not have to learn it again:
-            # every call that BLOCKS -- a provider turn, a Lean or Tectonic
-            # run, a question put to the user -- gets a cancellation check
-            # after it returns and before its result is recorded, displayed or
-            # interpreted. A press lands inside such a call, and the call's own
-            # failure mode is then indistinguishable from the interruption: an
-            # interrupted probe reads as a broken toolchain, an interrupted
-            # reader as an unreachable one, an abandoned selector as a refusal,
-            # a killed Tectonic as a compilation failure. Each of those would
-            # go in the manifest as a claim about the machine or the model for
-            # something the user did.
-            #
-            # Before anything is asked of the user or the provider: a run
-            # cancelled between being built and being started must not open a
-            # thread. Inside the `try`, and after the store exists, so it takes
-            # the ordinary cancellation path and leaves a run directory saying
-            # what happened rather than vanishing.
-            self._refuse_if_cancelled()
-            wait_started = self._monotonic()
-            acknowledged = terminal.acknowledge_unsafe_execution()
-            user_wait += self._monotonic() - wait_started
-            # A press can land while the warning is printing, before the
-            # nested prompt exists to consume it: the flag is set, the key is
-            # gone, and the prompt then waits for an answer nobody is there to
-            # give -- or gets one, and the run walks on into the doctor probes
-            # with cancellation already set. The rule at the top of this
-            # function: after a call that blocks, before its answer is read.
-            self._refuse_if_cancelled()
-            if not acknowledged:
-                return self._finalize(
-                    request,
-                    terminal,
-                    store,
-                    state,
-                    created_at,
-                    active_started,
-                    user_wait,
-                    grades,
-                    TerminalReason.USER_CANCELLATION,
-                    approved_claim,
-                )
-            report = self._doctor(self._config)
-            # Before the report is interpreted. The doctor probes Lean and
-            # Tectonic as tracked children, so a press reaches them and an
-            # interrupted probe comes back unhealthy -- which the branch below
-            # would read as a broken installation and finalize as
-            # SETUP_FAILURE, blaming the machine for something the user did.
-            self._refuse_if_cancelled()
-            if not report.healthy:
-                # Why, in the record: a setup failure with no reason beside it
-                # sends the reader to rerun `hardy doctor` to learn what this
-                # run already knew.
-                store.append(
-                    "workflow.setup",
-                    {"healthy": False, "detail": getattr(report, "detail", None)},
-                    phase=state.phase,
-                )
-                setup_reason = (
-                    TerminalReason.AUTHENTICATION_FAILURE
-                    if getattr(report, "authenticated", True) is False
-                    else TerminalReason.SETUP_FAILURE
-                )
-                return self._finalize(
-                    request,
-                    terminal,
-                    store,
-                    state,
-                    created_at,
-                    active_started,
-                    user_wait,
-                    grades,
-                    setup_reason,
-                    approved_claim,
-                )
-            state.transition(RunPhase.FORMALIZING)
-            runtime = self._runtime_factory(store)
-            self._runtime_in_flight = runtime
-            bind_budget = getattr(runtime, "bind_proof_budget", None)
-            selection = _strategy_record(request, shared_tool_budget=callable(bind_budget))
-            store.write_json(PurePosixPath("strategy.json"), selection)
-            store.append("workflow.strategy", selection, phase=state.phase)
-            if request.strategy == "best-first" and not callable(bind_budget):
-                raise RuntimeError("best-first requires a runtime with a shared proof-tool budget")
-            # `active_thread` too, not only once proving starts: it is the handle
-            # the cancellation path below reaches for, and a Ctrl+C while
-            # formalizing has just as much running behind it. Without this the
-            # staged runtime never hears about that phase, so its provider thread
-            # is still live -- and can still append -- while `_finalize` hashes
-            # the run directory.
-            active_thread = formal_thread = self._track(
-                runtime.start(model=request.model, run_dir=store.path, claim=None)
-            )
-            revision = ""
-            for proposal_number in range(self._config.limits.formalization_proposals):
-                self._refuse_if_cancelled()
-                active_elapsed = self._monotonic() - active_started - user_wait
-                if active_elapsed >= self._config.limits.active_seconds:
-                    terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
-                    break
-                formalization_input = StandaloneFormalizationInput(text=request.text)
-                prompt = formalization_prompt(formalization_input, revision)
-                try:
-                    proposal = runtime.run_structured(
-                        formal_thread,
-                        "formalization",
-                        prompt,
-                        proposal_type(formalization_input),
-                    )
-                except ValueError as error:
-                    # An interrupted exchange comes back empty, and an empty
-                    # answer is exactly what "no structured response" means --
-                    # so a press during this turn arrives here looking like the
-                    # model returning nonsense. `continue` reaches the check at
-                    # the top of the loop, but only if there is another
-                    # proposal left: on the last one the loop ended and the run
-                    # was graded MALFORMED_MODEL_OUTPUT, blaming the model for
-                    # the interruption.
-                    self._refuse_if_cancelled()
-                    store.append(
-                        "formalization.malformed",
-                        {"proposal": proposal_number, "message": str(error)},
-                        phase=state.phase,
-                    )
-                    revision = "Return a valid structured formalization."
-                    continue
-                if self._environment is None:
-                    raise RuntimeError("no Lean environment identity to freeze a claim under")
-                # A statement that does not elaborate is not a statement, so it
-                # is never put in front of the user for approval.
-                # With the declared set in scope: a claim whose statement
-                # mentions an assumed constant would otherwise fail to
-                # elaborate here and be refused as a bad formalization.
-                prepared = prepare_candidate(
-                    formalization_input, proposal, self._environment, self._now(),
-                    lean=self._lean, assumptions=request.assumptions,
-                )
-                assert isinstance(prepared, PreparedCandidate)  # standalone has no semantic blockers
-                elaboration = prepared.elaboration
-                # Elaboration runs Lean, so a press lands inside it and the
-                # child is interrupted. Without this the run either walked on
-                # into the approval selector and waited for an answer nobody
-                # was there to give, or -- on the last proposal, where the
-                # interrupted elaboration fails -- was graded as malformed
-                # model output, blaming the model for the interruption.
-                self._refuse_if_cancelled()
-                terminal.show_formalization(proposal, elaboration)
-                # And again after the display. Unlike the faithfulness verdict
-                # below, nothing here is lost by honouring a press that lands
-                # in this window and everything is lost by ignoring it: the
-                # selector would open on a run the user has already abandoned
-                # and ask them to answer a second time, having swallowed the
-                # first Esc. The check after `choose_approval` still classifies
-                # the answer, but it cannot un-ask the question. The revision
-                # `continue` below is covered by the same call: a press here
-                # must not buy another provider turn either.
-                self._refuse_if_cancelled()
-                if not elaboration.success:
-                    store.append(
-                        "formalization.rejected",
-                        {"proposal": proposal_number, "reason": "statement did not elaborate"},
-                        phase=state.phase,
-                    )
-                    revision = "The proposed Lean signature did not elaborate. Repair it."
-                    continue
-                state.transition(RunPhase.AWAITING_APPROVAL)
-                wait_started = self._monotonic()
-                choice = terminal.choose_approval()
-                user_wait += self._monotonic() - wait_started
-                # Before the answer is recorded or read. An abandoned selector
-                # answers "cancel" -- and so does a user who read the
-                # formalization and refused it. Those are different facts, and
-                # the manifest keeps them apart (USER_REJECTION against
-                # USER_CANCELLATION) precisely because automation reading
-                # `terminal_reason` acts on them differently. A press that
-                # stopped the run is not a judgement on the statement, and
-                # recording one would put words in the user's mouth.
-                self._refuse_if_cancelled()
-                store.append("user.approval", {"choice": choice}, phase=state.phase)
-                if choice == "cancel":
-                    state.transition(RunPhase.CANCELLED)
-                    return self._finalize(
-                        request,
-                        terminal,
-                        store,
-                        state,
-                        created_at,
-                        active_started,
-                        user_wait,
-                        grades,
-                        TerminalReason.USER_REJECTION,
-                        approved_claim,
-                    )
-                if choice == "revise":
-                    wait_started = self._monotonic()
-                    revision = terminal.revision_text()
-                    user_wait += self._monotonic() - wait_started
-                    state.transition(RunPhase.FORMALIZING)
-                    continue
-                approved_claim = freeze_claim(
-                    request.text, proposal, self._environment, self._now()
-                )
-                store.write_json(PurePosixPath("formalization.json"), approved_claim)
-                # Read back what was actually persisted: the claim the proof is
-                # judged against must be the one on disk, not the one in memory.
-                approved_claim = FrozenClaim.model_validate_json(
-                    (store.path / "formalization.json").read_text(encoding="utf-8")
-                )
-                expected = freeze_claim(
-                    approved_claim.original_text,
-                    approved_claim.proposal,
-                    approved_claim.environment,
-                    approved_claim.approved_at,
-                    semantic_context=approved_claim.semantic_context,
-                )
-                if expected.content_hash != approved_claim.content_hash:
-                    raise RuntimeError("persisted Frozen Claim hash mismatch")
-                # The gate, before any proof search: an independent reader that
-                # never saw the conversation which wrote this formalization is
-                # asked whether the frozen Lean says what the user said. Run on
-                # the claim as persisted, so what was read is byte-identical to
-                # what will be proved.
-                # Asked before the reader is launched, not clamped afterwards.
-                # The budget check at the top of this loop happens before the
-                # formalization turn and the elaboration, either of which can
-                # begin inside the budget and finish outside it -- so by here
-                # the run may already have spent everything it declared. A
-                # `max(1.0, ...)` floor would have bought a second of provider
-                # time the run does not have, and reported the result as a
-                # translation nobody read rather than as the budget running
-                # out, which is what actually happened.
-                remaining = self._config.limits.active_seconds - (
-                    self._monotonic() - active_started - user_wait
-                )
-                if remaining <= 0:
-                    grades = Grades(
-                        known_gaps=(
-                            "The active budget expired before the translation could be "
-                            "independently read.",
-                        ),
-                    )
-                    state.transition(RunPhase.CANCELLED)
-                    return self._finalize(
-                        request,
-                        terminal,
-                        store,
-                        state,
-                        created_at,
-                        active_started,
-                        user_wait,
-                        grades,
-                        TerminalReason.TIMEOUT_BUDGET_EXHAUSTED,
-                        approved_claim,
-                    )
-
-                def track_reader(thread: Any) -> None:
-                    # Same reason `active_thread` follows the formalizing
-                    # thread above: a Ctrl+C during the read has a live
-                    # provider thread behind it, and cancelling the wrong one
-                    # leaves it appending after the manifest is hashed.
-                    nonlocal active_thread
-                    active_thread = self._track(thread)
-
-                # The reader is a billable provider turn, so it is a stage, and
-                # "cancellation starts no further stage" has to cover this
-                # window too. The approval check above is not enough: freezing
-                # and persisting the claim happens between the two, and a press
-                # landing there arms the workflow's flag inline while the
-                # runtime is armed on a teardown thread -- so this thread could
-                # open and bill the read before that thread caught up.
-                self._refuse_if_cancelled()
-                verdict = review_translation(
-                    approved_claim,
-                    runtime=runtime,
-                    model=self._config.faithfulness_model or request.model,
-                    store=store,
-                    phase=state.phase,
-                    # What is left of the run's active budget, established
-                    # above to be positive. The gate is the one stage with no
-                    # loop to re-check it, so the bound travels with the call.
-                    wall_seconds=remaining,
-                    on_thread=track_reader,
-                )
-                # Graded before it is shown, not after. `review_translation`
-                # has already written `faithfulness.json` and the trajectory
-                # event by now, so a `show_faithfulness` that raises -- or a
-                # Ctrl+C landing in it -- would finalize a manifest recording
-                # no review beside a run directory that plainly holds one,
-                # which is the inconsistency the release audit exists to
-                # report. Assigning here keeps the two halves of the record
-                # from ever disagreeing.
-                grades = (
-                    Grades(
-                        faithfulness=FaithfulnessStatus.USER_APPROVED,
-                        faithfulness_review=verdict,
-                    )
-                    if verdict.agreed
-                    else Grades(
-                        known_gaps=dispute_gaps(verdict),
-                        faithfulness_review=verdict,
-                    )
-                )
-                # After the verdict is in `grades` and before it is read. The
-                # reader is a provider turn, so a press lands in it, and the
-                # runtime completes an interrupted exchange with an empty
-                # reply -- which parses as UNAVAILABLE. Read without this
-                # check, that finalized the run as "nobody could read the
-                # translation", which is a claim about the reader rather than
-                # what happened. Placed after the assignment above for the
-                # reason that assignment gives: the review is already on disk,
-                # and a manifest recording none beside it is the inconsistency
-                # the release audit exists to report.
-                self._refuse_if_cancelled()
-                # And deliberately NOT again after the display below. A press
-                # while the verdict is being shown does not un-dispute it: the
-                # reader answered before the display began, so `verdict` is
-                # already final and truthful either way. Re-checking there
-                # would finalize a disputed translation as USER_CANCELLATION
-                # and lose the fact that the faithfulness gate fired -- which
-                # is the safety-relevant half, and the half automation reads
-                # `terminal_reason` for. The check belongs above, where a press
-                # DOES change the answer: it lands in the reader's own provider
-                # turn, the runtime completes an interrupted exchange with an
-                # empty reply, and that parses as UNAVAILABLE.
-                terminal.show_faithfulness(verdict)
-                if not verdict.agreed:
-                    # Fail-closed, and terminal. Proceeding past a disputed
-                    # translation is the one outcome this gate exists to
-                    # prevent: it would spend the whole proving budget, and
-                    # every downstream signal would read green, on a statement
-                    # nobody established the user asked for.
-                    state.transition(RunPhase.CANCELLED)
-                    return self._finalize(
-                        request,
-                        terminal,
-                        store,
-                        state,
-                        created_at,
-                        active_started,
-                        user_wait,
-                        grades,
-                        # Which of the two it was. A run nobody read is not a
-                        # run whose translation was refused, and automation
-                        # reading `terminal_reason` acts on them differently.
-                        (
-                            TerminalReason.FAITHFULNESS_UNAVAILABLE
-                            if verdict.outcome is FaithfulnessOutcome.UNAVAILABLE
-                            else TerminalReason.FAITHFULNESS_DISPUTED
-                        ),
-                        approved_claim,
-                    )
-                # Cheap refutation, before the proving budget is spent. An
-                # assumption whose negation Lean proves makes everything
-                # provable, so a run standing on one would come back green
-                # with every downstream signal agreeing and mean nothing.
-                refuted, unchecked = self._refute(request.assumptions, store, state.phase)
-                if refuted is not None:
-                    grades = Grades(
-                        faithfulness=FaithfulnessStatus.USER_APPROVED,
-                        faithfulness_review=verdict,
-                        known_gaps=(refuted,),
-                    )
-                    state.transition(RunPhase.CANCELLED)
-                    return self._finalize(
-                        request,
-                        terminal,
-                        store,
-                        state,
-                        created_at,
-                        active_started,
-                        user_wait,
-                        grades,
-                        TerminalReason.REFUTED_ASSUMPTION,
-                        approved_claim,
-                    )
-                assumption_gaps = unchecked
-                # Kept for the final grades. The running `grades` above
-                # already carries it, so a run cancelled mid-proof still
-                # reports that its translation was read and by what.
-                approved_verdict = verdict
-                state.transition(RunPhase.PROVING)
-                break
-            if approved_claim is None:
-                grades = Grades(
-                    formal=FormalStatus.NOT_FORMALIZED,
-                    known_gaps=("formalization proposal budget exhausted",),
-                )
-                terminal_reason = terminal_reason or TerminalReason.MALFORMED_MODEL_OUTPUT
-                return self._finalize(
-                    request,
-                    terminal,
-                    store,
-                    state,
-                    created_at,
-                    active_started,
-                    user_wait,
-                    grades,
-                    terminal_reason,
-                    approved_claim,
-                )
-
-            def active_elapsed() -> float:
-                return self._monotonic() - active_started - user_wait
-
-            budget = CheckBudget(
-                official_checks=self._config.limits.official_checks,
-                active_seconds=self._config.limits.active_seconds,
-                proof_seconds=self._config.limits.proof_seconds,
-                active_elapsed=active_elapsed,
-                monotonic=self._monotonic,
-            )
-            if callable(bind_budget):
-                bind_budget(budget.reserved(checks=1))
-            def open_proof_thread() -> None:
-                nonlocal active_thread
-                self._refuse_if_cancelled()
-                active_thread = self._track(
-                    runtime.start(
-                        model=request.model,
-                        run_dir=store.path,
-                        claim=approved_claim,
-                        # Tools and final verification must see the same explicit
-                        # assumptions, including when replay opens a fresh context.
-                        allowed=request.assumptions,
-                    )
-                )
-                self._refuse_if_cancelled()
-
-            open_proof_thread()
-            def verify(task, submission, _candidate_store=None):
-                # A candidate's check belongs to this canonical run. The frontier
-                # retains a separate source/result copy, while recorded acceptance
-                # continues reading lean/Main.lean and lean/verification.json.
-                nonlocal verification
-                if request.strategy == "best-first":
-                    state.transition(RunPhase.FINAL_VERIFICATION)
-                store.append("workflow.verifier_call", {
-                    "claim_sha256": task.claim.content_hash,
-                    "official_check_number": budget.checks,
-                }, phase=state.phase)
-                verification = self._verifier.verify(
-                    task.claim, submission.proof_body, store,
-                    allowed=task.declared_assumptions,
-                )
-                self._refuse_if_cancelled()
-                if request.strategy == "best-first" and not verification.verified:
-                    state.transition(RunPhase.PROVING)
-                return verification
-
-            def propose_candidates(task: ProofTask, parent: CandidateObservation | None):
-                prompt = proof_prompt(task.claim) + declared_note(task.declared_assumptions)
-                prompt += (
-                    "\nPropose up to eight distinct complete proof candidates for this exact "
-                    "Frozen Claim. Give each a finite priority; smaller is tried first. "
-                    "Priorities are heuristic, not verification evidence. Do not repeat "
-                    "previous candidates. Return an empty list if no useful candidate remains."
-                )
-                if request.history_mode != "full":
-                    # Both replay treatments use fresh conversations and the same
-                    # authenticated failed attempts. Only their rendered history
-                    # differs. The native full-history mode retains its thread.
-                    replay = replay_history(
-                        store, task,
-                        mode="compact" if request.history_mode == "compact" else "full",
-                    )
-                    self._refuse_if_cancelled()
-                    record_replay(store, replay)
-                    self._refuse_if_cancelled()
-                    budget.ensure()
-                    if parent is not None:
-                        # run_structured drains the prior provider turn before it
-                        # returns. Cancelling here would cancel the whole run and
-                        # its shared tools, rather than just discard conversation.
-                        open_proof_thread()
-                    prompt += "\n" + replay.text
-                elif parent is not None:
-                    prompt += "\nThe last independently checked candidate and Lean feedback:\n"
-                    prompt += json.dumps(parent.model_dump(mode="json"), sort_keys=True)
-                # Opening a fresh context and authenticating replay can consume
-                # the remaining deadline before any provider request is sent.
-                budget.ensure()
-                return runtime.run_structured(
-                    active_thread, "proof-candidates", prompt, _CandidateBatch,
-                ).candidates
-
-            if request.strategy == "best-first":
-                strategy = BestFirstStrategy(
-                    propose=propose_candidates, verify=verify, store=store,
-                    check_cancelled=self._refuse_if_cancelled,
-                    active_elapsed=active_elapsed, monotonic=self._monotonic, budget=budget,
-                )
-            else:
-                strategy = IterativeStrategy(
-                    propose=lambda prompt: runtime.run_proof(active_thread, prompt),
-                    verify=verify, transition=state.transition,
-                    check_cancelled=self._refuse_if_cancelled,
-                    active_elapsed=active_elapsed, monotonic=self._monotonic, budget=budget,
-                )
-            outcome = run_strategy(strategy, ProofTask(
-                claim=approved_claim,
-                declared_assumptions=request.assumptions,
-                limits=self._config.limits,
-            ))
-            last_submission = outcome.submission
-            if outcome.status == "cancelled":
-                raise KeyboardInterrupt
-            self._refuse_if_cancelled()
-            # The iterative adapter owns its historical transitions; the frontier
-            # adapter closes an empty or exhausted search through the same stages.
-            if state.phase is RunPhase.PROVING:
-                state.transition(RunPhase.FINAL_VERIFICATION)
-            if state.phase is RunPhase.FINAL_VERIFICATION:
-                state.transition(RunPhase.WRITEUP)
-            if outcome.status == "exhausted":
-                terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
-            verified = verification is not None and verification.verified
-            used = verification.assumed if verified and verification is not None else ()
-            gaps = (
-                assumption_gaps
-                if verified
-                else (*assumption_gaps, "No proof passed the independent FinalVerifier.")
-            )
-            grades = Grades(
-                formal=(
-                    (
-                        FormalStatus.VERIFIED_MODULO
-                        if used
-                        else FormalStatus.KERNEL_VERIFIED
-                    )
-                    if verified
-                    else FormalStatus.PARTIAL
-                ),
-                # Exactly what Lean reported the proof depends on, out of what
-                # was declared. Never the declared list: a run that did not
-                # need an assumption must not be recorded as resting on it.
-                assumed=used,
-                faithfulness=FaithfulnessStatus.USER_APPROVED,
-                faithfulness_review=approved_verdict,
-                informal=(
-                    InformalStatus.NOT_INDEPENDENTLY_ASSESSED
-                    if verified
-                    else InformalStatus.KNOWN_GAPS
-                ),
-                known_gaps=gaps,
-                verification_sha256=(verification.verification_sha256 if verified else None),
-                verification_evidence=(verification.evidence if verified else None),
-            )
-            # A stage, so the same guarantee covers it as covers the reader:
-            # `stop` sets the workflow's flag inline and arms the runtime on a
-            # teardown thread, and `run_structured` reads the runtime's flag --
-            # so without this the writeup exchange could be opened and billed
-            # in the gap between the two.
-            self._refuse_if_cancelled()
-            try:
-                content = runtime.run_structured(
-                    active_thread,
-                    "writeup",
-                    writeup_prompt(verified=verified),
-                    WriteupContent,
-                )
-            except (ValueError, RuntimeError):
-                # A failed writeup turn must not lose the run: the document is
-                # built from what is already known instead.
-                informal = last_submission.informal_proof if last_submission else ""
-                content = WriteupContent(
-                    title=approved_claim.proposal.restatement,
-                    theorem_text=approved_claim.proposal.restatement,
-                    proof_text=informal or "No complete informal proof was produced.",
-                    known_gaps=gaps,
-                )
-            # Before Tectonic, because a cancelled run has no reason to
-            # compile anything -- and because the writeup fallback just above
-            # catches `RuntimeError`, which is exactly what the staged runtime
-            # raises when it refuses a turn on a cancelled run. Without this,
-            # a press during the writeup turn was swallowed by that fallback
-            # and the run went on to build a document for a run nobody wanted.
-            self._refuse_if_cancelled()
-            document = self._writeup_builder(
-                approved_claim,
-                content,
-                grades,
-                verification if verified else None,
-                self._identities_factory(run_id, request.model),
-                store,
-                limits=self._config.limits,
-                # So the document can state what was assumed rather than only
-                # naming it: a reader deciding whether to believe an assumed
-                # theorem needs the statement and its source, and the grade
-                # carries neither.
-                declared=request.assumptions,
-            )
-            grades = grades.model_copy(update={"document": document.status})
-            # And after it. Tectonic is a tracked child, so a press reaches it
-            # and the build comes back TEX_FAILED -- which without this check
-            # became the terminal reason, and the abandoned run was recorded
-            # as a completed experiment whose document failed to compile. It
-            # did fail to compile, and the grade below says so; the reason the
-            # run ended is still the user. Kept after the grade so the
-            # manifest carries both facts rather than losing the first.
-            self._refuse_if_cancelled()
-            if document.status is DocumentStatus.TEX_FAILED:
-                terminal_reason = TerminalReason.TEX_COMPILATION_FAILURE
-            state.transition(RunPhase.COMPLETED)
-            return self._finalize(
-                request,
-                terminal,
-                store,
-                state,
-                created_at,
-                active_started,
-                user_wait,
-                grades,
-                terminal_reason,
-                approved_claim,
-            )
+            return self._stages(run, run_id)
         except KeyboardInterrupt:
-            if runtime is not None and active_thread is not None:
-                runtime.cancel(active_thread)
-            return self._finalize(
-                request,
-                terminal,
-                store,
-                state,
-                created_at,
-                active_started,
-                user_wait,
-                grades,
-                TerminalReason.USER_CANCELLATION,
-                approved_claim,
-            )
+            if run.runtime is not None and run.active_thread is not None:
+                run.runtime.cancel(run.active_thread)
+            return self._finalize(run, TerminalReason.USER_CANCELLATION)
         except Exception as error:
             if self._cancelled.is_set():
                 # A stage that was in flight when `cancel` reached the runtime
@@ -1013,40 +413,604 @@ class ProveWorkflow:
                     {"type": type(error).__name__, "message": str(error)},
                     phase=state.phase,
                 )
-                if runtime is not None and active_thread is not None:
-                    runtime.cancel(active_thread)
-                return self._finalize(
-                    request,
-                    terminal,
-                    store,
-                    state,
-                    created_at,
-                    active_started,
-                    user_wait,
-                    grades,
-                    TerminalReason.USER_CANCELLATION,
-                    approved_claim,
-                )
+                if run.runtime is not None and run.active_thread is not None:
+                    run.runtime.cancel(run.active_thread)
+                return self._finalize(run, TerminalReason.USER_CANCELLATION)
             store.append(
                 "workflow.error",
                 {"type": type(error).__name__, "message": str(error)},
                 phase=state.phase,
             )
-            return self._finalize(
-                request,
-                terminal,
-                store,
-                state,
-                created_at,
-                active_started,
-                user_wait,
-                grades,
-                TerminalReason.AGENT_RUNTIME_FAILURE,
-                approved_claim,
-            )
+            return self._finalize(run, TerminalReason.AGENT_RUNTIME_FAILURE)
         finally:
-            if runtime is not None and hasattr(runtime, "close"):
-                runtime.close()
+            if run.runtime is not None and hasattr(run.runtime, "close"):
+                run.runtime.close()
+
+    def _stages(self, run: _InFlight, run_id: UUID) -> RunManifest:
+        """Setup, then formalization and approval, then proof search, then the writeup.
+
+        Each stage either hands the next what it needs or names the reason the
+        run ends, and every ending goes through `_finalize` with the grades the
+        stages last recorded. Exceptions, cancellation included, are handled
+        once, by `_run`.
+
+        The rule for every stage, learned one site at a time and written here
+        so the next stage does not have to learn it again: every call that
+        BLOCKS -- a provider turn, a Lean or Tectonic run, a question put to
+        the user -- gets a cancellation check after it returns and before its
+        result is recorded, displayed or interpreted. A press lands inside such
+        a call, and the call's own failure mode is then indistinguishable from
+        the interruption: an interrupted probe reads as a broken toolchain, an
+        interrupted reader as an unreachable one, an abandoned selector as a
+        refusal, a killed Tectonic as a compilation failure. Each of those
+        would go in the manifest as a claim about the machine or the model for
+        something the user did.
+        """
+        reason = self._setup(run)
+        if reason is not None:
+            return self._finalize(run, reason)
+        approved = self._approve(run)
+        if isinstance(approved, TerminalReason):
+            return self._finalize(run, approved)
+        outcome, verification = self._prove(run, approved)
+        return self._write_up(run, run_id, approved, outcome, verification)
+
+    def _ask_user(self, run: _InFlight, ask: Callable[[], Any]) -> Any:
+        """`ask()`, with the time spent waiting on the user kept out of the active budget."""
+        wait_started = self._monotonic()
+        answer = ask()
+        run.user_wait += self._monotonic() - wait_started
+        return answer
+
+    def _active_elapsed(self, run: _InFlight) -> float:
+        return self._monotonic() - run.active_started - run.user_wait
+
+    def _setup(self, run: _InFlight) -> TerminalReason | None:
+        """The unsafe-execution acknowledgement and the doctor; a reason to stop, or None."""
+        # Before anything is asked of the user or the provider: a run
+        # cancelled between being built and being started must not open a
+        # thread. Inside `_run`'s `try`, and after the store exists, so it takes
+        # the ordinary cancellation path and leaves a run directory saying
+        # what happened rather than vanishing.
+        self._refuse_if_cancelled()
+        acknowledged = self._ask_user(run, run.terminal.acknowledge_unsafe_execution)
+        # A press can land while the warning is printing, before the
+        # nested prompt exists to consume it: the flag is set, the key is
+        # gone, and the prompt then waits for an answer nobody is there to
+        # give -- or gets one, and the run walks on into the doctor probes
+        # with cancellation already set. The rule in `_stages`: after a call
+        # that blocks, before its answer is read.
+        self._refuse_if_cancelled()
+        if not acknowledged:
+            return TerminalReason.USER_CANCELLATION
+        report = self._doctor(self._config)
+        # Before the report is interpreted. The doctor probes Lean and
+        # Tectonic as tracked children, so a press reaches them and an
+        # interrupted probe comes back unhealthy -- which the branch below
+        # would read as a broken installation and finalize as
+        # SETUP_FAILURE, blaming the machine for something the user did.
+        self._refuse_if_cancelled()
+        if not report.healthy:
+            # Why, in the record: a setup failure with no reason beside it
+            # sends the reader to rerun `hardy doctor` to learn what this
+            # run already knew.
+            run.store.append(
+                "workflow.setup",
+                {"healthy": False, "detail": getattr(report, "detail", None)},
+                phase=run.state.phase,
+            )
+            return (
+                TerminalReason.AUTHENTICATION_FAILURE
+                if getattr(report, "authenticated", True) is False
+                else TerminalReason.SETUP_FAILURE
+            )
+        return None
+
+    def _approve(self, run: _InFlight) -> _Approved | TerminalReason:
+        """Open the runtime, then formalize until a claim is approved, read and probed.
+
+        Returns what the proof search needs, or the reason the run ends here
+        with `run.grades` already recording why.
+        """
+        request, store, state, terminal = run.request, run.store, run.state, run.terminal
+        state.transition(RunPhase.FORMALIZING)
+        runtime = run.runtime = self._runtime_factory(store)
+        self._runtime_in_flight = runtime
+        bind_budget = getattr(runtime, "bind_proof_budget", None)
+        selection = _strategy_record(request, shared_tool_budget=callable(bind_budget))
+        store.write_json(PurePosixPath("strategy.json"), selection)
+        store.append("workflow.strategy", selection, phase=state.phase)
+        if request.strategy == "best-first" and not callable(bind_budget):
+            raise RuntimeError("best-first requires a runtime with a shared proof-tool budget")
+        # `active_thread` too, not only once proving starts: it is the handle
+        # the cancellation path in `_run` reaches for, and a Ctrl+C while
+        # formalizing has just as much running behind it. Without this the
+        # staged runtime never hears about that phase, so its provider thread
+        # is still live -- and can still append -- while `_finalize` hashes
+        # the run directory.
+        run.active_thread = formal_thread = self._track(
+            runtime.start(model=request.model, run_dir=store.path, claim=None)
+        )
+        terminal_reason: TerminalReason | None = None
+        approved_verdict: FaithfulnessVerdict | None = None
+        # What the refutation probes could not settle. Carried into the final
+        # grades rather than dropped: "no counterexample was found" and "the
+        # search could not be run" are different facts about the same axiom.
+        assumption_gaps: tuple[str, ...] = ()
+        revision = ""
+        for proposal_number in range(self._config.limits.formalization_proposals):
+            self._refuse_if_cancelled()
+            active_elapsed = self._active_elapsed(run)
+            if active_elapsed >= self._config.limits.active_seconds:
+                terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+                break
+            formalization_input = StandaloneFormalizationInput(text=request.text)
+            prompt = formalization_prompt(formalization_input, revision)
+            try:
+                proposal = runtime.run_structured(
+                    formal_thread,
+                    "formalization",
+                    prompt,
+                    proposal_type(formalization_input),
+                )
+            except ValueError as error:
+                # An interrupted exchange comes back empty, and an empty
+                # answer is exactly what "no structured response" means --
+                # so a press during this turn arrives here looking like the
+                # model returning nonsense. `continue` reaches the check at
+                # the top of the loop, but only if there is another
+                # proposal left: on the last one the loop ended and the run
+                # was graded MALFORMED_MODEL_OUTPUT, blaming the model for
+                # the interruption.
+                self._refuse_if_cancelled()
+                store.append(
+                    "formalization.malformed",
+                    {"proposal": proposal_number, "message": str(error)},
+                    phase=state.phase,
+                )
+                revision = "Return a valid structured formalization."
+                continue
+            if self._environment is None:
+                raise RuntimeError("no Lean environment identity to freeze a claim under")
+            # A statement that does not elaborate is not a statement, so it
+            # is never put in front of the user for approval.
+            # With the declared set in scope: a claim whose statement
+            # mentions an assumed constant would otherwise fail to
+            # elaborate here and be refused as a bad formalization.
+            prepared = prepare_candidate(
+                formalization_input, proposal, self._environment, self._now(),
+                lean=self._lean, assumptions=request.assumptions,
+            )
+            assert isinstance(prepared, PreparedCandidate)  # standalone has no semantic blockers
+            elaboration = prepared.elaboration
+            # Elaboration runs Lean, so a press lands inside it and the
+            # child is interrupted. Without this the run either walked on
+            # into the approval selector and waited for an answer nobody
+            # was there to give, or -- on the last proposal, where the
+            # interrupted elaboration fails -- was graded as malformed
+            # model output, blaming the model for the interruption.
+            self._refuse_if_cancelled()
+            terminal.show_formalization(proposal, elaboration)
+            # And again after the display. Unlike the faithfulness verdict
+            # below, nothing here is lost by honouring a press that lands
+            # in this window and everything is lost by ignoring it: the
+            # selector would open on a run the user has already abandoned
+            # and ask them to answer a second time, having swallowed the
+            # first Esc. The check after `choose_approval` still classifies
+            # the answer, but it cannot un-ask the question. The revision
+            # `continue` below is covered by the same call: a press here
+            # must not buy another provider turn either.
+            self._refuse_if_cancelled()
+            if not elaboration.success:
+                store.append(
+                    "formalization.rejected",
+                    {"proposal": proposal_number, "reason": "statement did not elaborate"},
+                    phase=state.phase,
+                )
+                revision = "The proposed Lean signature did not elaborate. Repair it."
+                continue
+            state.transition(RunPhase.AWAITING_APPROVAL)
+            choice = self._ask_user(run, terminal.choose_approval)
+            # Before the answer is recorded or read. An abandoned selector
+            # answers "cancel" -- and so does a user who read the
+            # formalization and refused it. Those are different facts, and
+            # the manifest keeps them apart (USER_REJECTION against
+            # USER_CANCELLATION) precisely because automation reading
+            # `terminal_reason` acts on them differently. A press that
+            # stopped the run is not a judgement on the statement, and
+            # recording one would put words in the user's mouth.
+            self._refuse_if_cancelled()
+            store.append("user.approval", {"choice": choice}, phase=state.phase)
+            if choice == "cancel":
+                state.transition(RunPhase.CANCELLED)
+                return TerminalReason.USER_REJECTION
+            if choice == "revise":
+                revision = self._ask_user(run, terminal.revision_text)
+                state.transition(RunPhase.FORMALIZING)
+                continue
+            run.approved_claim = freeze_claim(
+                request.text, proposal, self._environment, self._now()
+            )
+            store.write_json(PurePosixPath("formalization.json"), run.approved_claim)
+            # Read back what was actually persisted: the claim the proof is
+            # judged against must be the one on disk, not the one in memory.
+            approved_claim = run.approved_claim = FrozenClaim.model_validate_json(
+                (store.path / "formalization.json").read_text(encoding="utf-8")
+            )
+            expected = freeze_claim(
+                approved_claim.original_text,
+                approved_claim.proposal,
+                approved_claim.environment,
+                approved_claim.approved_at,
+                semantic_context=approved_claim.semantic_context,
+            )
+            if expected.content_hash != approved_claim.content_hash:
+                raise RuntimeError("persisted Frozen Claim hash mismatch")
+            # The gate, before any proof search: an independent reader that
+            # never saw the conversation which wrote this formalization is
+            # asked whether the frozen Lean says what the user said. Run on
+            # the claim as persisted, so what was read is byte-identical to
+            # what will be proved.
+            # Asked before the reader is launched, not clamped afterwards.
+            # The budget check at the top of this loop happens before the
+            # formalization turn and the elaboration, either of which can
+            # begin inside the budget and finish outside it -- so by here
+            # the run may already have spent everything it declared. A
+            # `max(1.0, ...)` floor would have bought a second of provider
+            # time the run does not have, and reported the result as a
+            # translation nobody read rather than as the budget running
+            # out, which is what actually happened.
+            remaining = self._config.limits.active_seconds - self._active_elapsed(run)
+            if remaining <= 0:
+                run.grades = Grades(
+                    known_gaps=(
+                        "The active budget expired before the translation could be "
+                        "independently read.",
+                    ),
+                )
+                state.transition(RunPhase.CANCELLED)
+                return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+
+            def track_reader(thread: Any) -> None:
+                # Same reason `active_thread` follows the formalizing
+                # thread above: a Ctrl+C during the read has a live
+                # provider thread behind it, and cancelling the wrong one
+                # leaves it appending after the manifest is hashed.
+                run.active_thread = self._track(thread)
+
+            # The reader is a billable provider turn, so it is a stage, and
+            # "cancellation starts no further stage" has to cover this
+            # window too. The approval check above is not enough: freezing
+            # and persisting the claim happens between the two, and a press
+            # landing there arms the workflow's flag inline while the
+            # runtime is armed on a teardown thread -- so this thread could
+            # open and bill the read before that thread caught up.
+            self._refuse_if_cancelled()
+            verdict = review_translation(
+                approved_claim,
+                runtime=runtime,
+                model=self._config.faithfulness_model or request.model,
+                store=store,
+                phase=state.phase,
+                # What is left of the run's active budget, established
+                # above to be positive. The gate is the one stage with no
+                # loop to re-check it, so the bound travels with the call.
+                wall_seconds=remaining,
+                on_thread=track_reader,
+            )
+            # Graded before it is shown, not after. `review_translation`
+            # has already written `faithfulness.json` and the trajectory
+            # event by now, so a `show_faithfulness` that raises -- or a
+            # Ctrl+C landing in it -- would finalize a manifest recording
+            # no review beside a run directory that plainly holds one,
+            # which is the inconsistency the release audit exists to
+            # report. Assigning here keeps the two halves of the record
+            # from ever disagreeing.
+            run.grades = (
+                Grades(
+                    faithfulness=FaithfulnessStatus.USER_APPROVED,
+                    faithfulness_review=verdict,
+                )
+                if verdict.agreed
+                else Grades(
+                    known_gaps=dispute_gaps(verdict),
+                    faithfulness_review=verdict,
+                )
+            )
+            # After the verdict is in `grades` and before it is read. The
+            # reader is a provider turn, so a press lands in it, and the
+            # runtime completes an interrupted exchange with an empty
+            # reply -- which parses as UNAVAILABLE. Read without this
+            # check, that finalized the run as "nobody could read the
+            # translation", which is a claim about the reader rather than
+            # what happened. Placed after the assignment above for the
+            # reason that assignment gives: the review is already on disk,
+            # and a manifest recording none beside it is the inconsistency
+            # the release audit exists to report.
+            self._refuse_if_cancelled()
+            # And deliberately NOT again after the display below. A press
+            # while the verdict is being shown does not un-dispute it: the
+            # reader answered before the display began, so `verdict` is
+            # already final and truthful either way. Re-checking there
+            # would finalize a disputed translation as USER_CANCELLATION
+            # and lose the fact that the faithfulness gate fired -- which
+            # is the safety-relevant half, and the half automation reads
+            # `terminal_reason` for. The check belongs above, where a press
+            # DOES change the answer: it lands in the reader's own provider
+            # turn, the runtime completes an interrupted exchange with an
+            # empty reply, and that parses as UNAVAILABLE.
+            terminal.show_faithfulness(verdict)
+            if not verdict.agreed:
+                # Fail-closed, and terminal. Proceeding past a disputed
+                # translation is the one outcome this gate exists to
+                # prevent: it would spend the whole proving budget, and
+                # every downstream signal would read green, on a statement
+                # nobody established the user asked for.
+                state.transition(RunPhase.CANCELLED)
+                # Which of the two it was. A run nobody read is not a
+                # run whose translation was refused, and automation
+                # reading `terminal_reason` acts on them differently.
+                return (
+                    TerminalReason.FAITHFULNESS_UNAVAILABLE
+                    if verdict.outcome is FaithfulnessOutcome.UNAVAILABLE
+                    else TerminalReason.FAITHFULNESS_DISPUTED
+                )
+            # Cheap refutation, before the proving budget is spent. An
+            # assumption whose negation Lean proves makes everything
+            # provable, so a run standing on one would come back green
+            # with every downstream signal agreeing and mean nothing.
+            refuted, unchecked = self._refute(request.assumptions, store, state.phase)
+            if refuted is not None:
+                run.grades = Grades(
+                    faithfulness=FaithfulnessStatus.USER_APPROVED,
+                    faithfulness_review=verdict,
+                    known_gaps=(refuted,),
+                )
+                state.transition(RunPhase.CANCELLED)
+                return TerminalReason.REFUTED_ASSUMPTION
+            assumption_gaps = unchecked
+            # Kept for the final grades. The running `grades` above
+            # already carries it, so a run cancelled mid-proof still
+            # reports that its translation was read and by what.
+            approved_verdict = verdict
+            state.transition(RunPhase.PROVING)
+            break
+        if run.approved_claim is None:
+            run.grades = Grades(
+                formal=FormalStatus.NOT_FORMALIZED,
+                known_gaps=("formalization proposal budget exhausted",),
+            )
+            return terminal_reason or TerminalReason.MALFORMED_MODEL_OUTPUT
+        return _Approved(approved_verdict, assumption_gaps, bind_budget)
+
+    def _prove(
+        self, run: _InFlight, approved: _Approved
+    ) -> tuple[Any, VerificationResult | None]:
+        """Search for a proof of the approved claim under the selected strategy.
+
+        Returns the strategy's outcome and the last verification, with the
+        run moved on to the writeup phase.
+        """
+        request, store, state, runtime = run.request, run.store, run.state, run.runtime
+        approved_claim = run.approved_claim
+        verification: VerificationResult | None = None
+
+        def active_elapsed() -> float:
+            return self._active_elapsed(run)
+
+        budget = CheckBudget(
+            official_checks=self._config.limits.official_checks,
+            active_seconds=self._config.limits.active_seconds,
+            proof_seconds=self._config.limits.proof_seconds,
+            active_elapsed=active_elapsed,
+            monotonic=self._monotonic,
+        )
+        if callable(approved.bind_budget):
+            approved.bind_budget(budget.reserved(checks=1))
+        def open_proof_thread() -> None:
+            self._refuse_if_cancelled()
+            run.active_thread = self._track(
+                runtime.start(
+                    model=request.model,
+                    run_dir=store.path,
+                    claim=approved_claim,
+                    # Tools and final verification must see the same explicit
+                    # assumptions, including when replay opens a fresh context.
+                    allowed=request.assumptions,
+                )
+            )
+            self._refuse_if_cancelled()
+
+        open_proof_thread()
+        def verify(task, submission, _candidate_store=None):
+            # A candidate's check belongs to this canonical run. The frontier
+            # retains a separate source/result copy, while recorded acceptance
+            # continues reading lean/Main.lean and lean/verification.json.
+            nonlocal verification
+            if request.strategy == "best-first":
+                state.transition(RunPhase.FINAL_VERIFICATION)
+            store.append("workflow.verifier_call", {
+                "claim_sha256": task.claim.content_hash,
+                "official_check_number": budget.checks,
+            }, phase=state.phase)
+            verification = self._verifier.verify(
+                task.claim, submission.proof_body, store,
+                allowed=task.declared_assumptions,
+            )
+            self._refuse_if_cancelled()
+            if request.strategy == "best-first" and not verification.verified:
+                state.transition(RunPhase.PROVING)
+            return verification
+
+        def propose_candidates(task: ProofTask, parent: CandidateObservation | None):
+            prompt = proof_prompt(task.claim) + declared_note(task.declared_assumptions)
+            prompt += (
+                "\nPropose up to eight distinct complete proof candidates for this exact "
+                "Frozen Claim. Give each a finite priority; smaller is tried first. "
+                "Priorities are heuristic, not verification evidence. Do not repeat "
+                "previous candidates. Return an empty list if no useful candidate remains."
+            )
+            if request.history_mode != "full":
+                # Both replay treatments use fresh conversations and the same
+                # authenticated failed attempts. Only their rendered history
+                # differs. The native full-history mode retains its thread.
+                replay = replay_history(
+                    store, task,
+                    mode="compact" if request.history_mode == "compact" else "full",
+                )
+                self._refuse_if_cancelled()
+                record_replay(store, replay)
+                self._refuse_if_cancelled()
+                budget.ensure()
+                if parent is not None:
+                    # run_structured drains the prior provider turn before it
+                    # returns. Cancelling here would cancel the whole run and
+                    # its shared tools, rather than just discard conversation.
+                    open_proof_thread()
+                prompt += "\n" + replay.text
+            elif parent is not None:
+                prompt += "\nThe last independently checked candidate and Lean feedback:\n"
+                prompt += json.dumps(parent.model_dump(mode="json"), sort_keys=True)
+            # Opening a fresh context and authenticating replay can consume
+            # the remaining deadline before any provider request is sent.
+            budget.ensure()
+            return runtime.run_structured(
+                run.active_thread, "proof-candidates", prompt, _CandidateBatch,
+            ).candidates
+
+        if request.strategy == "best-first":
+            strategy = BestFirstStrategy(
+                propose=propose_candidates, verify=verify, store=store,
+                check_cancelled=self._refuse_if_cancelled,
+                active_elapsed=active_elapsed, monotonic=self._monotonic, budget=budget,
+            )
+        else:
+            strategy = IterativeStrategy(
+                propose=lambda prompt: runtime.run_proof(run.active_thread, prompt),
+                verify=verify, transition=state.transition,
+                check_cancelled=self._refuse_if_cancelled,
+                active_elapsed=active_elapsed, monotonic=self._monotonic, budget=budget,
+            )
+        outcome = run_strategy(strategy, ProofTask(
+            claim=approved_claim,
+            declared_assumptions=request.assumptions,
+            limits=self._config.limits,
+        ))
+        if outcome.status == "cancelled":
+            raise KeyboardInterrupt
+        self._refuse_if_cancelled()
+        # The iterative adapter owns its historical transitions; the frontier
+        # adapter closes an empty or exhausted search through the same stages.
+        if state.phase is RunPhase.PROVING:
+            state.transition(RunPhase.FINAL_VERIFICATION)
+        if state.phase is RunPhase.FINAL_VERIFICATION:
+            state.transition(RunPhase.WRITEUP)
+        return outcome, verification
+
+    def _write_up(
+        self,
+        run: _InFlight,
+        run_id: UUID,
+        approved: _Approved,
+        outcome: Any,
+        verification: VerificationResult | None,
+    ) -> RunManifest:
+        """Grade what the search established, write it up, compile it and finalize."""
+        request, store, state, runtime = run.request, run.store, run.state, run.runtime
+        approved_claim = run.approved_claim
+        last_submission = outcome.submission
+        terminal_reason: TerminalReason | None = None
+        if outcome.status == "exhausted":
+            terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+        verified = verification is not None and verification.verified
+        used = verification.assumed if verified and verification is not None else ()
+        gaps = (
+            approved.assumption_gaps
+            if verified
+            else (*approved.assumption_gaps, "No proof passed the independent FinalVerifier.")
+        )
+        run.grades = Grades(
+            formal=(
+                (
+                    FormalStatus.VERIFIED_MODULO
+                    if used
+                    else FormalStatus.KERNEL_VERIFIED
+                )
+                if verified
+                else FormalStatus.PARTIAL
+            ),
+            # Exactly what Lean reported the proof depends on, out of what
+            # was declared. Never the declared list: a run that did not
+            # need an assumption must not be recorded as resting on it.
+            assumed=used,
+            faithfulness=FaithfulnessStatus.USER_APPROVED,
+            faithfulness_review=approved.verdict,
+            informal=(
+                InformalStatus.NOT_INDEPENDENTLY_ASSESSED
+                if verified
+                else InformalStatus.KNOWN_GAPS
+            ),
+            known_gaps=gaps,
+            verification_sha256=(verification.verification_sha256 if verified else None),
+            verification_evidence=(verification.evidence if verified else None),
+        )
+        # A stage, so the same guarantee covers it as covers the reader:
+        # `stop` sets the workflow's flag inline and arms the runtime on a
+        # teardown thread, and `run_structured` reads the runtime's flag --
+        # so without this the writeup exchange could be opened and billed
+        # in the gap between the two.
+        self._refuse_if_cancelled()
+        try:
+            content = runtime.run_structured(
+                run.active_thread,
+                "writeup",
+                writeup_prompt(verified=verified),
+                WriteupContent,
+            )
+        except (ValueError, RuntimeError):
+            # A failed writeup turn must not lose the run: the document is
+            # built from what is already known instead.
+            informal = last_submission.informal_proof if last_submission else ""
+            content = WriteupContent(
+                title=approved_claim.proposal.restatement,
+                theorem_text=approved_claim.proposal.restatement,
+                proof_text=informal or "No complete informal proof was produced.",
+                known_gaps=gaps,
+            )
+        # Before Tectonic, because a cancelled run has no reason to
+        # compile anything -- and because the writeup fallback just above
+        # catches `RuntimeError`, which is exactly what the staged runtime
+        # raises when it refuses a turn on a cancelled run. Without this,
+        # a press during the writeup turn was swallowed by that fallback
+        # and the run went on to build a document for a run nobody wanted.
+        self._refuse_if_cancelled()
+        document = self._writeup_builder(
+            approved_claim,
+            content,
+            run.grades,
+            verification if verified else None,
+            self._identities_factory(run_id, request.model),
+            store,
+            limits=self._config.limits,
+            # So the document can state what was assumed rather than only
+            # naming it: a reader deciding whether to believe an assumed
+            # theorem needs the statement and its source, and the grade
+            # carries neither.
+            declared=request.assumptions,
+        )
+        run.grades = run.grades.model_copy(update={"document": document.status})
+        # And after it. Tectonic is a tracked child, so a press reaches it
+        # and the build comes back TEX_FAILED -- which without this check
+        # became the terminal reason, and the abandoned run was recorded
+        # as a completed experiment whose document failed to compile. It
+        # did fail to compile, and the grade below says so; the reason the
+        # run ended is still the user. Kept after the grade so the
+        # manifest carries both facts rather than losing the first.
+        self._refuse_if_cancelled()
+        if document.status is DocumentStatus.TEX_FAILED:
+            terminal_reason = TerminalReason.TEX_COMPILATION_FAILURE
+        state.transition(RunPhase.COMPLETED)
+        return self._finalize(run, terminal_reason)
 
     def _refute(
         self, assumptions: tuple[DeclaredAssumption, ...], store: RunStore, phase: RunPhase
@@ -1095,19 +1059,10 @@ class ProveWorkflow:
                 )
         return None, tuple(unchecked)
 
-    def _finalize(
-        self,
-        request: ProveRequest,
-        terminal: Terminal,
-        store: RunStore,
-        state: _RunState,
-        created_at: datetime,
-        active_started: float,
-        user_wait: float,
-        grades: Grades,
-        reason: TerminalReason | None,
-        claim: FrozenClaim | None,
-    ) -> RunManifest:
+    def _finalize(self, run: _InFlight, reason: TerminalReason | None) -> RunManifest:
+        request, terminal, store, state = run.request, run.terminal, run.store, run.state
+        grades, claim, created_at = run.grades, run.approved_claim, run.created_at
+        active_started, user_wait = run.active_started, run.user_wait
         active_ms = max(0, round((self._monotonic() - active_started - user_wait) * 1_000))
         store.append(
             "workflow.terminal",
