@@ -1,0 +1,4023 @@
+{
+ "best-first-cancel-quietly-faithfulness": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.terminal",
+    "awaiting_approval",
+    {
+     "phase": "awaiting_approval",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness"
+  ],
+  "threads": 2,
+  "claims_on_threads": [
+   false,
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "awaiting_approval",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 5000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "best-first-repaired": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "best_first.candidate",
+    "proving"
+   ],
+   [
+    "best_first.candidate",
+    "proving"
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "best_first.check",
+    "proving"
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 2
+    }
+   ],
+   [
+    "best_first.check",
+    "proving"
+   ],
+   [
+    "best_first.outcome",
+    "proving"
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": null
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof-candidates",
+   "proof-candidates",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 2,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": null,
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 20000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "best_first/candidates/1/candidate.json",
+    "best_first/candidates/1/result.json",
+    "best_first/candidates/1/source.lean",
+    "best_first/candidates/1/submission.json",
+    "best_first/candidates/2/candidate.json",
+    "best_first/candidates/2/result.json",
+    "best_first/candidates/2/source.lean",
+    "best_first/candidates/2/submission.json",
+    "best_first/outcome.json",
+    "best_first/task.json",
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/last-attempt.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "best-first-replay": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "strategy.history_replay",
+    "proving"
+   ],
+   [
+    "best_first.candidate",
+    "proving"
+   ],
+   [
+    "best_first.candidate",
+    "proving"
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "best_first.check",
+    "proving"
+   ],
+   [
+    "strategy.history_replay",
+    "proving"
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 2
+    }
+   ],
+   [
+    "best_first.check",
+    "proving"
+   ],
+   [
+    "best_first.outcome",
+    "proving"
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": null
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof-candidates",
+   "proof-candidates",
+   "writeup"
+  ],
+  "threads": 4,
+  "claims_on_threads": [
+   false,
+   false,
+   true,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 2,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": null,
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 24000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "best_first/candidates/1/candidate.json",
+    "best_first/candidates/1/result.json",
+    "best_first/candidates/1/source.lean",
+    "best_first/candidates/1/submission.json",
+    "best_first/candidates/2/candidate.json",
+    "best_first/candidates/2/result.json",
+    "best_first/candidates/2/source.lean",
+    "best_first/candidates/2/submission.json",
+    "best_first/outcome.json",
+    "best_first/task.json",
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/last-attempt.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "strategy_history/replays/<id>.json",
+    "strategy_history/replays/<id>.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "cancel-faithfulness": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.terminal",
+    "awaiting_approval",
+    {
+     "phase": "awaiting_approval",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness"
+  ],
+  "threads": 2,
+  "claims_on_threads": [
+   false,
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "awaiting_approval",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [
+    "The independent faithfulness review could not be obtained: RuntimeError: the provider client was interrupted"
+   ],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 5000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-formalization": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.cancelled",
+    "formalizing",
+    {
+     "type": "RuntimeError",
+     "message": "the provider client was interrupted"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "formalizing",
+    {
+     "phase": "formalizing",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization"
+  ],
+  "threads": 1,
+  "claims_on_threads": [
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "formalizing",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 3000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-proof": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.cancelled",
+    "proving",
+    {
+     "type": "RuntimeError",
+     "message": "the provider client was interrupted"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "proving",
+    {
+     "phase": "proving",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": 2,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "proving",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 8000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-quietly-faithfulness": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.terminal",
+    "awaiting_approval",
+    {
+     "phase": "awaiting_approval",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness"
+  ],
+  "threads": 2,
+  "claims_on_threads": [
+   false,
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "awaiting_approval",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 5000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-quietly-formalization": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.terminal",
+    "formalizing",
+    {
+     "phase": "formalizing",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization"
+  ],
+  "threads": 1,
+  "claims_on_threads": [
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "formalizing",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 3000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-quietly-proof": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "proving",
+    {
+     "phase": "proving",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": 2,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "proving",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 8000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-quietly-writeup": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "writeup",
+    {
+     "phase": "writeup",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": 2,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "writeup",
+   "terminal_reason": "user_cancellation",
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 10000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "cancel-writeup": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "writeup",
+    {
+     "phase": "writeup",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": 2,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "writeup",
+   "terminal_reason": "user_cancellation",
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 10000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "disputed": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "cancelled",
+    {
+     "from": "awaiting_approval",
+     "to": "cancelled"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "cancelled",
+    {
+     "phase": "cancelled",
+     "terminal_reason": "faithfulness_disputed"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness"
+  ],
+  "threads": 2,
+  "claims_on_threads": [
+   false,
+   false
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "cancelled",
+   "terminal_reason": "faithfulness_disputed",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [
+    "The independent faithfulness review disputed the translation: weaker"
+   ],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 5000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "elaboration-repaired": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "formalization.rejected",
+    "formalizing",
+    {
+     "proposal": 0,
+     "reason": "statement did not elaborate"
+    }
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": null
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 2,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": null,
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 11000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "interrupt-faithfulness": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "awaiting_approval",
+    {
+     "phase": "awaiting_approval",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness"
+  ],
+  "threads": 2,
+  "claims_on_threads": [
+   false,
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "awaiting_approval",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 5000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "interrupt-formalization": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.terminal",
+    "formalizing",
+    {
+     "phase": "formalizing",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization"
+  ],
+  "threads": 1,
+  "claims_on_threads": [
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "formalizing",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 3000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "interrupt-proof": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "proving",
+    {
+     "phase": "proving",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": 2,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "proving",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 8000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "interrupt-writeup": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "writeup",
+    {
+     "phase": "writeup",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": 2,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "writeup",
+   "terminal_reason": "user_cancellation",
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 10000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "malformed-exhausts": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "formalization.malformed",
+    "formalizing",
+    {
+     "proposal": 0
+    }
+   ],
+   [
+    "formalization.malformed",
+    "formalizing",
+    {
+     "proposal": 1
+    }
+   ],
+   [
+    "formalization.malformed",
+    "formalizing",
+    {
+     "proposal": 2
+    }
+   ],
+   [
+    "formalization.malformed",
+    "formalizing",
+    {
+     "proposal": 3
+    }
+   ],
+   [
+    "formalization.malformed",
+    "formalizing",
+    {
+     "proposal": 4
+    }
+   ],
+   [
+    "workflow.terminal",
+    "formalizing",
+    {
+     "phase": "formalizing",
+     "terminal_reason": "malformed_model_output"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "formalization",
+   "formalization",
+   "formalization",
+   "formalization"
+  ],
+  "threads": 1,
+  "claims_on_threads": [
+   false
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "formalizing",
+   "terminal_reason": "malformed_model_output",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [
+    "formalization proposal budget exhausted"
+   ],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 7000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "not-acknowledged": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.terminal",
+    "setup",
+    {
+     "phase": "setup",
+     "terminal_reason": "user_cancellation"
+    }
+   ]
+  ],
+  "exchanges": [],
+  "threads": 0,
+  "claims_on_threads": [],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "setup",
+   "terminal_reason": "user_cancellation",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 2000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "proof-never-verifies": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 2
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 3
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 4
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 5
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 6
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 7
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 8
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 9
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 10
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 11
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 12
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 13
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 14
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 15
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 16
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 17
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 18
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 19
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 20
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 21
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 22
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 23
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 24
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 25
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 26
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 27
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 28
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 29
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 30
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 31
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 32
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 33
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 34
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 35
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 36
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 37
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 38
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 39
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 40
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": "timeout_budget_exhausted"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 40,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": "timeout_budget_exhausted",
+   "formal": "partial",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "known_gaps",
+   "known_gaps": [
+    "No proof passed the independent FinalVerifier."
+   ],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 166000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/last-attempt.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "proof-repaired": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "final_verification",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 2
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": null
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 2,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": null,
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 14000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/last-attempt.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "reader-unreachable": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "cancelled",
+    {
+     "from": "awaiting_approval",
+     "to": "cancelled"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "cancelled",
+    {
+     "phase": "cancelled",
+     "terminal_reason": "faithfulness_unavailable"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness"
+  ],
+  "threads": 2,
+  "claims_on_threads": [
+   false,
+   false
+  ],
+  "cancelled_thread": 0,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "cancelled",
+   "terminal_reason": "faithfulness_unavailable",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [
+    "The independent faithfulness review could not be obtained: RuntimeError: reader unreachable"
+   ],
+   "reviewed": true,
+   "verified_evidence": false,
+   "claim": true,
+   "timings_ms": {
+    "active": 5000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "rejected": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "cancel"
+    }
+   ],
+   [
+    "workflow.transition",
+    "cancelled",
+    {
+     "from": "awaiting_approval",
+     "to": "cancelled"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "cancelled",
+    {
+     "phase": "cancelled",
+     "terminal_reason": "user_rejection"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization"
+  ],
+  "threads": 1,
+  "claims_on_threads": [
+   false
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "cancelled",
+   "terminal_reason": "user_rejection",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 4000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "revise-then-approve": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "revise"
+    }
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "awaiting_approval",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": null
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 2,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": null,
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 13000,
+    "user_wait_excluded": 4000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "runtime-error": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.error",
+    "formalizing",
+    {
+     "type": "RuntimeError",
+     "message": "runtime fixture failure"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "formalizing",
+    {
+     "phase": "formalizing",
+     "terminal_reason": "agent_runtime_failure"
+    }
+   ]
+  ],
+  "exchanges": [],
+  "threads": 0,
+  "claims_on_threads": [],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "formalizing",
+   "terminal_reason": "agent_runtime_failure",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 2000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "tex-failed": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": "tex_compilation_failure"
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": "tex_compilation_failure",
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_failed",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 10000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.tex"
+   ]
+  }
+ },
+ "unauthenticated": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.setup",
+    "setup",
+    {
+     "healthy": false
+    }
+   ],
+   [
+    "workflow.terminal",
+    "setup",
+    {
+     "phase": "setup",
+     "terminal_reason": "authentication_failure"
+    }
+   ]
+  ],
+  "exchanges": [],
+  "threads": 0,
+  "claims_on_threads": [],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "setup",
+   "terminal_reason": "authentication_failure",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 2000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "unhealthy": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.setup",
+    "setup",
+    {
+     "healthy": false
+    }
+   ],
+   [
+    "workflow.terminal",
+    "setup",
+    {
+     "phase": "setup",
+     "terminal_reason": "setup_failure"
+    }
+   ]
+  ],
+  "exchanges": [],
+  "threads": 0,
+  "claims_on_threads": [],
+  "cancelled_thread": null,
+  "verifier_calls": 0,
+  "shown": {
+   "formalizations": 0,
+   "verdicts": 0,
+   "result": true
+  },
+  "manifest": {
+   "phase": "setup",
+   "terminal_reason": "setup_failure",
+   "formal": "not_formalized",
+   "faithfulness": "not_approved",
+   "document": "not_attempted",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": false,
+   "verified_evidence": false,
+   "claim": false,
+   "timings_ms": {
+    "active": 2000,
+    "user_wait_excluded": 1000
+   },
+   "artifacts": [
+    "request.md",
+    "trajectory.jsonl"
+   ]
+  }
+ },
+ "verified": {
+  "events": [
+   [
+    "workflow.warning",
+    "setup"
+   ],
+   [
+    "workflow.transition",
+    "formalizing",
+    {
+     "from": "setup",
+     "to": "formalizing"
+    }
+   ],
+   [
+    "workflow.strategy",
+    "formalizing"
+   ],
+   [
+    "workflow.transition",
+    "awaiting_approval",
+    {
+     "from": "formalizing",
+     "to": "awaiting_approval"
+    }
+   ],
+   [
+    "user.approval",
+    "awaiting_approval",
+    {
+     "choice": "approve"
+    }
+   ],
+   [
+    "faithfulness.verdict",
+    "awaiting_approval"
+   ],
+   [
+    "workflow.transition",
+    "proving",
+    {
+     "from": "awaiting_approval",
+     "to": "proving"
+    }
+   ],
+   [
+    "workflow.transition",
+    "final_verification",
+    {
+     "from": "proving",
+     "to": "final_verification"
+    }
+   ],
+   [
+    "workflow.verifier_call",
+    "final_verification",
+    {
+     "official_check_number": 1
+    }
+   ],
+   [
+    "workflow.transition",
+    "writeup",
+    {
+     "from": "final_verification",
+     "to": "writeup"
+    }
+   ],
+   [
+    "workflow.transition",
+    "completed",
+    {
+     "from": "writeup",
+     "to": "completed"
+    }
+   ],
+   [
+    "workflow.terminal",
+    "completed",
+    {
+     "phase": "completed",
+     "terminal_reason": null
+    }
+   ]
+  ],
+  "exchanges": [
+   "formalization",
+   "faithfulness",
+   "proof",
+   "writeup"
+  ],
+  "threads": 3,
+  "claims_on_threads": [
+   false,
+   false,
+   true
+  ],
+  "cancelled_thread": null,
+  "verifier_calls": 1,
+  "shown": {
+   "formalizations": 1,
+   "verdicts": 1,
+   "result": true
+  },
+  "manifest": {
+   "phase": "completed",
+   "terminal_reason": null,
+   "formal": "kernel_verified",
+   "faithfulness": "user_approved",
+   "document": "tex_compiled",
+   "informal": "not_independently_assessed",
+   "known_gaps": [],
+   "reviewed": true,
+   "verified_evidence": true,
+   "claim": true,
+   "timings_ms": {
+    "active": 10000,
+    "user_wait_excluded": 2000
+   },
+   "artifacts": [
+    "faithfulness-prompt.md",
+    "faithfulness-schema.json",
+    "faithfulness.json",
+    "formalization.json",
+    "lean/Main.lean",
+    "lean/verification.json",
+    "request.md",
+    "strategy.json",
+    "trajectory.jsonl",
+    "writeup/compile.log",
+    "writeup/paper.pdf",
+    "writeup/paper.tex"
+   ]
+  }
+ }
+}
