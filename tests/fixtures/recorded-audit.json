@@ -1,0 +1,359 @@
+{
+ "prove-verified": {
+  "recorded": []
+ },
+ "prove-verified/altered-hash": {
+  "recorded": [
+   "hash mismatch: lean/Main.lean"
+  ]
+ },
+ "prove-verified/edited-source": {
+  "recorded": [
+   "hash mismatch: lean/Main.lean",
+   "Lean source hash differs from verification",
+   "Lean source does not end with the axiom report the evidence records"
+  ]
+ },
+ "prove-verified/edited-source-rehashed": {
+  "recorded": [
+   "Lean source hash differs from verification",
+   "Lean source does not end with the axiom report the evidence records"
+  ]
+ },
+ "prove-verified/wrong-signature": {
+  "recorded": [
+   "Lean source hash differs from verification",
+   "Lean source signature differs from Frozen Claim",
+   "Lean source does not end with the axiom report the evidence records"
+  ]
+ },
+ "prove-verified/absent-verification": {
+  "recorded": [
+   "missing artifact: lean/verification.json",
+   "verified run has no lean/verification.json"
+  ]
+ },
+ "prove-verified/unauthorized-axiom": {
+  "recorded": [
+   "lean/verification.json is not a self-consistent verification record"
+  ]
+ },
+ "prove-verified/manifest-unauthorized-axiom": {
+  "recorded": [
+   "manifest.json does not validate: 1 error(s)"
+  ]
+ },
+ "prove-verified/undeclared-assumption": {
+  "recorded": []
+ },
+ "prove-verified/forged-formal-grade": {
+  "recorded": [
+   "manifest.json does not validate: 1 error(s)"
+  ]
+ },
+ "prove-verified/forged-faithfulness": {
+  "recorded": [
+   "manifest.json does not validate: 1 error(s)"
+  ]
+ },
+ "prove-verified/missing-pdf": {
+  "recorded": [
+   "missing artifact: writeup/paper.pdf",
+   "compiled document has no valid PDF artifact"
+  ]
+ },
+ "prove-verified/malformed-trajectory": {
+  "recorded": [
+   "raised JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+  ]
+ },
+ "prove-verified/truncated-trajectory": {
+  "recorded": [
+   "trajectory has no final terminal event"
+  ]
+ },
+ "prove-verified/manifest-not-json": {
+  "recorded": [
+   "manifest.json does not validate: 1 error(s)"
+  ]
+ },
+ "prove-verified/non-utf8-source": {
+  "recorded": [
+   "Lean source hash differs from verification",
+   "lean/Main.lean is not valid UTF-8: 'utf-8' codec can't decode byte 0xff in position 881: invalid start byte"
+  ]
+ },
+ "batch-verified": {
+  "recorded": [],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/forged-grade": {
+  "recorded": [
+   "a verified run is not graded kernel verified"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/edited-proof": {
+  "recorded": [
+   "proof.lean is not the request's declaration, the result's proof, and the audit line",
+   "proof.lean does not end with the axiom report the verdict rests on",
+   "the trajectory keeps no axiom report from Lean over proof.lean's own bytes"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/deleted-proof": {
+  "recorded": [
+   "a verified run has no proof.lean"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/trajectory-not-json": {
+  "recorded": [
+   "a batch record is not readable JSON: Expecting ',' delimiter: line 1 column 6 (char 5)"
+  ],
+  "refusal": [
+   "trajectory.json is not valid JSON"
+  ]
+ },
+ "batch-verified/trajectory-not-object": {
+  "recorded": [
+   "a batch record is valid JSON but not an object"
+  ],
+  "refusal": [
+   "trajectory.json is not a JSON object"
+  ]
+ },
+ "batch-verified/dropped-event": {
+  "recorded": [],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/inconsistent-turns": {
+  "recorded": [],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/usage-field-absent": {
+  "recorded": [
+   "result usage does not state exchanges (absent is not null)",
+   "usage differs between result.json and trajectory.json"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/unauthorized-axiom": {
+  "recorded": [
+   "the axiom audit does not report exactly the target declaration"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/toolchain-absent": {
+  "recorded": [
+   "toolchain identity differs between result.json and trajectory.json"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/relabelled-reason": {
+  "recorded": [
+   "terminal reason differs between result.json and trajectory.json",
+   "a run that did not verify is graded as formalized",
+   "a run that did not verify names a proof",
+   "a run that did not verify left a proof.lean",
+   "writeup.md does not say the run produced no artifact and why",
+   "an accepted submission was recorded but the run is not verified",
+   "a run that did not verify carries a clean axiom audit"
+  ],
+  "refusal": [
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-verified/writeup-removed": {
+  "recorded": [
+   "writeup.md is missing"
+  ],
+  "refusal": [
+   "terminal reason 'verified' is not a refusal (axioms_rejected, no_proof_submitted)",
+   "a check_proof Lean accepted carried no hole",
+   "a submit_proof was accepted"
+  ]
+ },
+ "batch-false-statement": {
+  "recorded": [],
+  "refusal": []
+ },
+ "batch-false-statement/forged-grade": {
+  "recorded": [
+   "a run that did not verify is graded as formalized"
+  ],
+  "refusal": []
+ },
+ "batch-false-statement/trajectory-not-json": {
+  "recorded": [
+   "a batch record is not readable JSON: Expecting ',' delimiter: line 1 column 6 (char 5)"
+  ],
+  "refusal": [
+   "trajectory.json is not valid JSON"
+  ]
+ },
+ "batch-false-statement/trajectory-not-object": {
+  "recorded": [
+   "a batch record is valid JSON but not an object"
+  ],
+  "refusal": [
+   "trajectory.json is not a JSON object"
+  ]
+ },
+ "batch-false-statement/dropped-event": {
+  "recorded": [],
+  "refusal": []
+ },
+ "batch-false-statement/inconsistent-turns": {
+  "recorded": [],
+  "refusal": []
+ },
+ "batch-false-statement/usage-field-absent": {
+  "recorded": [
+   "result usage does not state exchanges (absent is not null)",
+   "usage differs between result.json and trajectory.json"
+  ],
+  "refusal": []
+ },
+ "batch-false-statement/unauthorized-axiom": {
+  "recorded": [],
+  "refusal": []
+ },
+ "batch-false-statement/toolchain-absent": {
+  "recorded": [
+   "toolchain identity differs between result.json and trajectory.json"
+  ],
+  "refusal": []
+ },
+ "batch-false-statement/relabelled-reason": {
+  "recorded": [],
+  "refusal": []
+ },
+ "batch-false-statement/writeup-removed": {
+  "recorded": [
+   "writeup.md is missing"
+  ],
+  "refusal": []
+ },
+ "batch-starved": {
+  "recorded": [],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/forged-grade": {
+  "recorded": [
+   "a run that did not verify is graded as formalized"
+  ],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/trajectory-not-json": {
+  "recorded": [
+   "a batch record is not readable JSON: Expecting ',' delimiter: line 1 column 6 (char 5)"
+  ],
+  "refusal": [
+   "trajectory.json is not valid JSON"
+  ]
+ },
+ "batch-starved/trajectory-not-object": {
+  "recorded": [
+   "a batch record is valid JSON but not an object"
+  ],
+  "refusal": [
+   "trajectory.json is not a JSON object"
+  ]
+ },
+ "batch-starved/dropped-event": {
+  "recorded": [
+   "a wall_clock_limit run records no TimeoutError event or wall_seconds limit"
+  ],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/inconsistent-turns": {
+  "recorded": [
+   "a wall-clock-cancelled run reports a turn count the provider never delivered"
+  ],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/usage-field-absent": {
+  "recorded": [
+   "result usage does not state exchanges (absent is not null)",
+   "usage differs between result.json and trajectory.json"
+  ],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/unauthorized-axiom": {
+  "recorded": [],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/toolchain-absent": {
+  "recorded": [
+   "toolchain identity differs between result.json and trajectory.json"
+  ],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ },
+ "batch-starved/relabelled-reason": {
+  "recorded": [
+   "terminal reason differs between result.json and trajectory.json",
+   "writeup.md does not say the run produced no artifact and why"
+  ],
+  "refusal": []
+ },
+ "batch-starved/writeup-removed": {
+  "recorded": [
+   "writeup.md is missing"
+  ],
+  "refusal": [
+   "terminal reason 'wall_clock_limit' is not a refusal (axioms_rejected, no_proof_submitted)"
+  ]
+ }
+}

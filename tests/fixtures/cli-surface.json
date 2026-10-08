@@ -1,0 +1,2956 @@
+{
+ "hardy": {
+  "description": "Hardy interactive mathematical research agent",
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--config"
+    ],
+    "dest": "config",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "settings file (default <default-config>)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--model"
+    ],
+    "dest": "model",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "model identity (or set model in the config file, or HARDY_MODEL)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--lean-command"
+    ],
+    "dest": "lean_command",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "command that elaborates a Lean file (default <default-lean-command>)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--lean-project"
+    ],
+    "dest": "lean_project",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "Lake project whose imports Lean should resolve",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--latex-command"
+    ],
+    "dest": "latex_command",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "command that compiles a LaTeX file (default <default-latex-command>)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--plain"
+    ],
+    "dest": "plain",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "use the line-based session with no terminal control",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--no-project-context"
+    ],
+    "dest": "no_project_context",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "do not read the project's AGENTS.md or HARDY.md (or set project_context = false, or HARDY_PROJECT_CONTEXT=0)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--fresh-thread"
+    ],
+    "dest": "fresh_thread",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "start this session on a new provider conversation; the workspace, its record and the spend ledger continue unchanged",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {},
+  "subcommands": {
+   "chat": "start or resume an interactive session",
+   "web": "serve the browser client on 127.0.0.1",
+   "doctor": "check that Lean, LaTeX, and the model are usable",
+   "check": "check a root's problem ledgers against each other, the files, and the status rules",
+   "latency": "measure the fixed Lean import cost a warm pool would recover (issue #54)",
+   "prove": "stage one claim from statement to document",
+   "accept": "run the checked-in acceptance problems",
+   "setup": "discover, install, and record the pinned toolchain",
+   "batch": "run the earlier one-shot proof experiment",
+   "evals": "the fixed problem set: baseline sweep, set runs, scoreboard checks",
+   "library": "import, inspect and seed literature sources in the personal library"
+  },
+  "subcommand_dest": "command"
+ },
+ "hardy chat": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--root"
+    ],
+    "dest": "root",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "project root (default: the current directory)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--project"
+    ],
+    "dest": "project",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "which problem to open (default: the active one, or main)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--chat"
+    ],
+    "dest": "chat",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "which chat of the problem to open (default main); the browser creates others",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--register-lakefile"
+    ],
+    "dest": "register_lakefile",
+    "nargs": "0",
+    "const": "True",
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "add this problem to the host lakefile.toml as a lean_lib",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreFalseAction",
+    "options": [
+     "--no-register-lakefile"
+    ],
+    "dest": "register_lakefile",
+    "nargs": "0",
+    "const": "False",
+    "default": "True",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "never touch the host lakefile.toml",
+    "metavar": null
+   }
+  ],
+  "groups": [
+   [
+    "register_lakefile",
+    "register_lakefile"
+   ]
+  ],
+  "defaults": {}
+ },
+ "hardy web": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--project"
+    ],
+    "dest": "project",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "a registered project to open first, by name or path (default: the last one opened in the browser)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--chat"
+    ],
+    "dest": "chat",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "which chat of that project to open first (default main)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--port"
+    ],
+    "dest": "port",
+    "nargs": null,
+    "const": null,
+    "default": "0",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "port to listen on (default: an ephemeral one)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--open"
+    ],
+    "dest": "open",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "open the page in the default browser",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy doctor": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--deep"
+    ],
+    "dest": "deep",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "also compile a Mathlib probe file, which can take minutes",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy check": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--root"
+    ],
+    "dest": "root",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "the root to check (default: the configured root, else the current directory)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--mermaid"
+    ],
+    "dest": "mermaid",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "also print each problem's dependency graph as a Mermaid flowchart",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy latency": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--import"
+    ],
+    "dest": "imports",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "module to import in the probe (repeatable; default Mathlib)",
+    "metavar": "MODULE"
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--repeats"
+    ],
+    "dest": "repeats",
+    "nargs": null,
+    "const": null,
+    "default": "3",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "probes to time (default 3)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--calls"
+    ],
+    "dest": "calls",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "Lean calls in an observed run that imported the probed set, for a verdict",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--total-seconds"
+    ],
+    "dest": "total_seconds",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "float",
+    "choices": null,
+    "required": false,
+    "help": "wall time of that observed run, for a verdict",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--workers"
+    ],
+    "dest": "workers",
+    "nargs": null,
+    "const": null,
+    "default": "1",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "warm processes the hypothetical pool would hold (default 1)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--threshold"
+    ],
+    "dest": "threshold",
+    "nargs": null,
+    "const": null,
+    "default": "0.25",
+    "type": "float",
+    "choices": null,
+    "required": false,
+    "help": "recoverable share that warrants a pool (default 0.25)",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--timeout"
+    ],
+    "dest": "timeout",
+    "nargs": null,
+    "const": null,
+    "default": "300.0",
+    "type": "float",
+    "choices": null,
+    "required": false,
+    "help": "seconds one probe may take (default 300)",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy prove": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "claim",
+    "nargs": "?",
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "the claim in ordinary language",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--backend"
+    ],
+    "dest": "backend",
+    "nargs": null,
+    "const": null,
+    "default": "claude",
+    "type": null,
+    "choices": [
+     "claude",
+     "codex"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--strategy"
+    ],
+    "dest": "strategy",
+    "nargs": null,
+    "const": null,
+    "default": "iterative",
+    "type": null,
+    "choices": [
+     "iterative",
+     "best-first"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--history-mode"
+    ],
+    "dest": "history_mode",
+    "nargs": null,
+    "const": null,
+    "default": "full",
+    "type": null,
+    "choices": [
+     "full",
+     "replay-full",
+     "compact"
+    ],
+    "required": false,
+    "help": "native full history, or authenticated full/compact replay in fresh proof contexts",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--assume"
+    ],
+    "dest": "assume",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "JSON file declaring the axioms this run may stand on: {\"assumptions\": [{\"name\": ..., \"statement\": ..., \"source\": ...}]}. A proof using them is graded verified_modulo and the manifest names exactly the ones it used. The run writes its own assumptions.json as a bare list of the same entries, which is what the release audit reads back.",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--model"
+    ],
+    "dest": "model",
+    "nargs": null,
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--faithfulness-model"
+    ],
+    "dest": "faithfulness_model",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "who reads the translation back; defaults to the run's own model",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy accept": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--backend"
+    ],
+    "dest": "backend",
+    "nargs": null,
+    "const": null,
+    "default": "claude",
+    "type": null,
+    "choices": [
+     "claude",
+     "codex"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--model"
+    ],
+    "dest": "model",
+    "nargs": null,
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--faithfulness-model"
+    ],
+    "dest": "faithfulness_model",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "who reads the translation back; defaults to the run's own model",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--force-budget-exhaustion-test"
+    ],
+    "dest": "force_budget_exhaustion_test",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "run the deterministic no-model path instead, and check its artifacts",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--recorded"
+    ],
+    "dest": "recorded",
+    "nargs": "+",
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "cross-check these recorded run directories (batch or staged) and run nothing",
+    "metavar": "RUN_DIR"
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy setup": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy batch": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "request",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--output"
+    ],
+    "dest": "output",
+    "nargs": null,
+    "const": null,
+    "default": "Path('hardy-output')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--max-turns"
+    ],
+    "dest": "max_turns",
+    "nargs": null,
+    "const": null,
+    "default": "8",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--wall-seconds"
+    ],
+    "dest": "wall_seconds",
+    "nargs": null,
+    "const": null,
+    "default": "300",
+    "type": "float",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--closers"
+    ],
+    "dest": "closers",
+    "nargs": "?",
+    "const": "\u0000default",
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "try this Lean tactic against the statement before spending a model turn; repeat the flag for more (bare flag means rfl, trivial, simp, omega, decide, aesop, exact?). One tactic per flag, never a comma-separated list: `simp [Nat.add_comm, Nat.add_left_comm]` is one tactic and splitting it would submit two invalid ones. Off by default: a result a tactic ladder reached and a result a model reached are not the same experiment, and the trajectory records which it was either way.",
+    "metavar": "TACTIC"
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {},
+  "subcommands": {
+   "baseline": "sweep the tactic set over every canonical statement and write the tier file",
+   "run": "run every entry through batch or staged and write a scoreboard",
+   "corpus": "the corpus directory: mechanical checks and coverage",
+   "check": "re-derive a committed scoreboard from its run directories",
+   "todo": "what's left to sweep or run under the pooling key this checkout would produce, as JSON on stdout",
+   "pool": "combine scoreboards sharing one pooling key into one derived, recomputable score",
+   "compare": "read two scoreboards with explicit treatment differences; JSON on stdout",
+   "import-benchmark": "preserve a pinned upstream archive; no execution or corpus adoption",
+   "history": "read chronological scoreboard observations without pooling; JSON on stdout",
+   "summary": "write a Markdown report over every scoreboard, one row per model (read-only)"
+  },
+  "subcommand_dest": "evals_command"
+ },
+ "hardy evals baseline": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--problems"
+    ],
+    "dest": "problems",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--out"
+    ],
+    "dest": "out",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--only"
+    ],
+    "dest": "only",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "comma-separated entry ids",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--only-file"
+    ],
+    "dest": "only_file",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "a file of entry ids, one per line; '-' reads stdin",
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--status"
+    ],
+    "dest": "status",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "select by corpus status, e.g. --status active; repeatable",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--acknowledge-unsafe-execution"
+    ],
+    "dest": "acknowledge_unsafe_execution",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--workers"
+    ],
+    "dest": "workers",
+    "nargs": null,
+    "const": null,
+    "default": "1",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "concurrent Lean elaborations (default 1)",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals run": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--label"
+    ],
+    "dest": "label",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--mode"
+    ],
+    "dest": "mode",
+    "nargs": null,
+    "const": null,
+    "default": "batch",
+    "type": null,
+    "choices": [
+     "batch",
+     "staged"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--strategy"
+    ],
+    "dest": "strategy",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": [
+     "iterative",
+     "best-first"
+    ],
+    "required": false,
+    "help": "staged only; default iterative",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--history-mode"
+    ],
+    "dest": "history_mode",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": [
+     "full",
+     "replay-full",
+     "compact"
+    ],
+    "required": false,
+    "help": "staged only; nonfull requires best-first",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--backend"
+    ],
+    "dest": "backend",
+    "nargs": null,
+    "const": null,
+    "default": "claude",
+    "type": null,
+    "choices": [
+     "claude",
+     "codex"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--model"
+    ],
+    "dest": "model",
+    "nargs": null,
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--repeats"
+    ],
+    "dest": "repeats",
+    "nargs": null,
+    "const": null,
+    "default": "1",
+    "type": "_positive_repeats",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--only"
+    ],
+    "dest": "only",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "comma-separated entry ids",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--only-file"
+    ],
+    "dest": "only_file",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "a file of entry ids, one per line; '-' reads stdin",
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--status"
+    ],
+    "dest": "status",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "select by corpus status, e.g. --status active; repeatable",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--tiers"
+    ],
+    "dest": "tiers",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "comma-separated tiers, e.g. 2,3",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--no-twins"
+    ],
+    "dest": "no_twins",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--max-turns"
+    ],
+    "dest": "max_turns",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "_positive_max_turns",
+    "choices": null,
+    "required": false,
+    "help": "batch mode default: 60. Refused under --mode staged.",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--wall-seconds"
+    ],
+    "dest": "wall_seconds",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "_positive_wall_seconds",
+    "choices": null,
+    "required": false,
+    "help": "batch mode default: 1800.0. Refused under --mode staged.",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--problems"
+    ],
+    "dest": "problems",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--scoreboards"
+    ],
+    "dest": "scoreboards",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/scoreboards')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--acknowledge-unsafe-execution"
+    ],
+    "dest": "acknowledge_unsafe_execution",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--workers"
+    ],
+    "dest": "workers",
+    "nargs": null,
+    "const": null,
+    "default": "1",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "concurrent rows (default 1)",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals corpus": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {},
+  "subcommands": {
+   "check": "report every mechanical objection to the corpus on disk",
+   "report": "coverage by group, status, difficulty and source",
+   "serve": "browse the corpus in a local page, re-read on every refresh",
+   "release": "bump every shard and write the changelog head it binds"
+  },
+  "subcommand_dest": "corpus_verb"
+ },
+ "hardy evals corpus check": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--corpus"
+    ],
+    "dest": "corpus",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--since-registry"
+    ],
+    "dest": "since_registry",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "the previous release's tombstones.json; the registry is append-only, which only a comparison can establish. CI passes the merge base's copy.",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--since"
+    ],
+    "dest": "since",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "the previous release's CHANGELOG.md (its head carries the version and the manifest digest it bound); refuses content that moved under a version already released. CI passes the merge base's copy.",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals corpus report": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--corpus"
+    ],
+    "dest": "corpus",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals corpus serve": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--corpus"
+    ],
+    "dest": "corpus",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--port"
+    ],
+    "dest": "port",
+    "nargs": null,
+    "const": null,
+    "default": "8765",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--host"
+    ],
+    "dest": "host",
+    "nargs": null,
+    "const": null,
+    "default": "127.0.0.1",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals corpus release": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--corpus"
+    ],
+    "dest": "corpus",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--version"
+    ],
+    "dest": "version",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "three numbers, greater than the last",
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--note"
+    ],
+    "dest": "note",
+    "nargs": null,
+    "const": null,
+    "default": "[]",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "a changelog bullet citing the ids that moved; repeatable",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals check": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "scoreboard",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--problems"
+    ],
+    "dest": "problems",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals todo": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--problems"
+    ],
+    "dest": "problems",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--scoreboards"
+    ],
+    "dest": "scoreboards",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/scoreboards')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--model"
+    ],
+    "dest": "model",
+    "nargs": null,
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--mode"
+    ],
+    "dest": "mode",
+    "nargs": null,
+    "const": null,
+    "default": "batch",
+    "type": null,
+    "choices": [
+     "batch",
+     "staged"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--strategy"
+    ],
+    "dest": "strategy",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": [
+     "iterative",
+     "best-first"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--history-mode"
+    ],
+    "dest": "history_mode",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": [
+     "full",
+     "replay-full",
+     "compact"
+    ],
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--max-turns"
+    ],
+    "dest": "max_turns",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "_positive_max_turns",
+    "choices": null,
+    "required": false,
+    "help": "batch mode default: 60. Refused under --mode staged.",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--wall-seconds"
+    ],
+    "dest": "wall_seconds",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "_positive_wall_seconds",
+    "choices": null,
+    "required": false,
+    "help": "batch mode default: 1800.0. Refused under --mode staged.",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--repeats"
+    ],
+    "dest": "repeats",
+    "nargs": null,
+    "const": null,
+    "default": "1",
+    "type": "_positive_repeats",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals pool": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "labels",
+    "nargs": "+",
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "scoreboard labels, resolved against --scoreboards",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--scoreboards"
+    ],
+    "dest": "scoreboards",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/scoreboards')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--corpus"
+    ],
+    "dest": "corpus",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--out"
+    ],
+    "dest": "out",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "default: evals/pools/<first label>/pool.json",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals compare": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "left",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "right",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--vary"
+    ],
+    "dest": "vary",
+    "nargs": null,
+    "const": null,
+    "default": "[]",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "Condition field intended to vary; repeat for each field",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--problems"
+    ],
+    "dest": "problems",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--right-baseline"
+    ],
+    "dest": "right_baseline",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals import-benchmark": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "benchmark",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": [
+     "minif2f",
+     "putnambench",
+     "proofnet"
+    ],
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--archive"
+    ],
+    "dest": "archive",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": "Local upstream tar or tar.gz archive",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--revision"
+    ],
+    "dest": "revision",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "Full upstream commit SHA, not a branch or tag",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--sha256"
+    ],
+    "dest": "sha256",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "Expected SHA-256 of the archive bytes",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--output"
+    ],
+    "dest": "output",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": "New local output directory; existing paths are refused",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals history": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "boards",
+    "nargs": "+",
+    "const": null,
+    "default": null,
+    "type": "Path",
+    "choices": null,
+    "required": true,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--vary"
+    ],
+    "dest": "vary",
+    "nargs": null,
+    "const": null,
+    "default": "[]",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "Control intended to vary; does not establish causality",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--problems"
+    ],
+    "dest": "problems",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_AppendAction",
+    "options": [
+     "--board-baseline"
+    ],
+    "dest": "board_baseline",
+    "nargs": "2",
+    "const": null,
+    "default": "[]",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": "Explicit baseline override for one selected board; repeatable",
+    "metavar": "('BOARD', 'BASELINE')"
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy evals summary": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--scoreboards"
+    ],
+    "dest": "scoreboards",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/scoreboards')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--corpus"
+    ],
+    "dest": "corpus",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--baseline"
+    ],
+    "dest": "baseline",
+    "nargs": null,
+    "const": null,
+    "default": "Path('evals/baseline.json')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--out"
+    ],
+    "dest": "out",
+    "nargs": null,
+    "const": null,
+    "default": "Path('corpus/EVALS.md')",
+    "type": "Path",
+    "choices": null,
+    "required": false,
+    "help": null,
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {},
+  "subcommands": {
+   "import": "copy a scholarly file into the managed library and extract it",
+   "list": "list the artifacts held in the library",
+   "show": "print one artifact's record, provenance, representations, trees and identity proposals",
+   "tree": "build and admit a deterministic source tree for one artifact",
+   "map": "print the structural map of one artifact's preferred tree",
+   "confirm": "record a human confirmation that an artifact is a copy of an edition",
+   "seed": "seed the active problem with one artifact so the session may read it",
+   "unseed": "withdraw a seed from the active problem",
+   "seeds": "list the active problem's seeds",
+   "report": "print evaluation counts derived from the library's records, per dimension"
+  },
+  "subcommand_dest": "library_command"
+ },
+ "hardy library import": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "path",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "the file to import; the original is never read again after admission",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--access"
+    ],
+    "dest": "access",
+    "nargs": null,
+    "const": null,
+    "default": "private_local",
+    "type": null,
+    "choices": [
+     "private_local",
+     "redistributable",
+     "public_provider_retrievable",
+     "unknown_restricted"
+    ],
+    "required": false,
+    "help": "access policy recorded on the artifact",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--title"
+    ],
+    "dest": "title",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "a title to propose the bibliographic identity from, when the file carries none",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--author"
+    ],
+    "dest": "author",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "an author to record beside the title",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreTrueAction",
+    "options": [
+     "--no-extract"
+    ],
+    "dest": "no_extract",
+    "nargs": "0",
+    "const": "True",
+    "default": "False",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "admit the bytes without running the format adapter",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library list": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library show": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "artifact",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "artifact digest or a unique prefix of it",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library tree": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "artifact",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "artifact digest or a unique prefix of it",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library map": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "artifact",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "artifact digest or a unique prefix of it",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--depth"
+    ],
+    "dest": "depth",
+    "nargs": null,
+    "const": null,
+    "default": "2",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "container depth to expand",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library confirm": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "artifact",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "artifact digest or a unique prefix of it",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "edition",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "the edition id from `hardy library show`",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--reason"
+    ],
+    "dest": "reason",
+    "nargs": null,
+    "const": null,
+    "default": "confirmed by the user",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "why the user is sure",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library seed": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "artifact",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "artifact digest or a unique prefix of it",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--priority"
+    ],
+    "dest": "priority",
+    "nargs": null,
+    "const": null,
+    "default": "0",
+    "type": "int",
+    "choices": null,
+    "required": false,
+    "help": "retrieval priority among seeds; higher first",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [
+     "--intent"
+    ],
+    "dest": "intent",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "what the problem wants from this source",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library unseed": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   },
+   {
+    "kind": "_StoreAction",
+    "options": [],
+    "dest": "seed",
+    "nargs": null,
+    "const": null,
+    "default": null,
+    "type": null,
+    "choices": null,
+    "required": true,
+    "help": "the seed id from `hardy library seeds`",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library seeds": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ },
+ "hardy library report": {
+  "description": null,
+  "epilog": null,
+  "actions": [
+   {
+    "kind": "_HelpAction",
+    "options": [
+     "-h",
+     "--help"
+    ],
+    "dest": "help",
+    "nargs": "0",
+    "const": null,
+    "default": "==SUPPRESS==",
+    "type": null,
+    "choices": null,
+    "required": false,
+    "help": "show this help message and exit",
+    "metavar": null
+   }
+  ],
+  "groups": [],
+  "defaults": {}
+ }
+}
