@@ -53,3 +53,6 @@ hardy-output/
 # local config. A session's own working state, not source. Left bare rather
 # than rooted, because a workspace is created wherever a session is run.
 .hardy/
+
+# Editor workspace files are per-developer settings, not source.
+*.code-workspace
