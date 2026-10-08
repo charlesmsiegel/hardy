@@ -23,8 +23,7 @@
  "prove-verified/wrong-signature": {
   "recorded": [
    "Lean source hash differs from verification",
-   "Lean source signature differs from Frozen Claim",
-   "Lean source does not end with the axiom report the evidence records"
+   "Lean source signature differs from Frozen Claim"
   ]
  },
  "prove-verified/absent-verification": {
