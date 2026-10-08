@@ -214,6 +214,94 @@ def test_run_identity_keeps_relocated_owners_and_excludes_unreachable_cli(import
     assert not (_reachable(import_graph, 'hardy.evals.runner') & {'hardy.app.cli', 'hardy.cli'})
 
 
+def _explicit_graph():
+    """The import graph without the implied parent-package edges."""
+    paths = {}
+    for path in SOURCE.rglob('*.py'):
+        parts = list(path.relative_to(SOURCE.parent).with_suffix('').parts)
+        if parts[-1] == '__init__':
+            parts.pop()
+        paths['.'.join(parts)] = path
+    return {name: _imports(name, ast.parse(path.read_text(encoding='utf-8')), paths,
+                           package=path.name == '__init__.py')
+            for name, path in paths.items()}
+
+
+def _cycles(graph):
+    """Each strongly connected set of two or more modules, sorted."""
+    index, low, stack, on_stack, found = {}, {}, [], set(), []
+
+    def visit(module):
+        index[module] = low[module] = len(index)
+        stack.append(module)
+        on_stack.add(module)
+        for following in sorted(graph[module]):
+            if following not in index:
+                visit(following)
+                low[module] = min(low[module], low[following])
+            elif following in on_stack:
+                low[module] = min(low[module], index[following])
+        if low[module] == index[module]:
+            component = []
+            while True:
+                member = stack.pop()
+                on_stack.discard(member)
+                component.append(member)
+                if member == module:
+                    break
+            if len(component) > 1:
+                found.append(tuple(sorted(component)))
+
+    for module in sorted(graph):
+        if module not in index:
+            visit(module)
+    return set(found)
+
+
+# Import cycles that predate the check. Each is inside one package and goes
+# through function-local imports; none crosses a layer. A new one fails here.
+KNOWN_CYCLES = {
+    ('hardy.workflows.delegation.budget', 'hardy.workflows.delegation.store'),
+    ('hardy.literature.sources.adapters', 'hardy.literature.sources.epub', 'hardy.literature.sources.pdf',
+     'hardy.literature.sources.tex', 'hardy.literature.sources.text'),
+    ('hardy.app.tui', 'hardy.app.tui.handlers', 'hardy.app.tui.plain', 'hardy.app.tui.shell',
+     'hardy.app.tui.stream'),
+    ('hardy.app.web.panels', 'hardy.app.web.panels.record', 'hardy.app.web.panels.runs',
+     'hardy.app.web.panels.workspace'),
+}
+
+
+def test_no_import_cycle_beyond_the_known_ones():
+    assert _cycles(_explicit_graph()) <= KNOWN_CYCLES
+
+
+def test_a_module_never_imports_its_own_package_facade():
+    """A package's `__init__` re-exports for callers outside it. A module inside
+    the package that imported a name from there would make the facade an
+    owner and tie every sibling to the order the facade imports them in."""
+    violations = []
+    for path in SOURCE.rglob('*.py'):
+        if path.name == '__init__.py':
+            continue
+        parts = list(path.relative_to(SOURCE.parent).with_suffix('').parts)
+        package = parts[:-1]
+        if len(package) < 2:
+            continue
+        directory = SOURCE.parent.joinpath(*package)
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            if isinstance(node, ast.ImportFrom):
+                base = (parts[:len(parts) - node.level] + ([node.module] if node.module else [])
+                        if node.level else node.module.split('.'))
+                if base == package and any(
+                    not ((directory / f'{alias.name}.py').is_file() or (directory / alias.name).is_dir())
+                    for alias in node.names
+                ):
+                    violations.append((path.relative_to(SOURCE).as_posix(), node.lineno))
+            elif isinstance(node, ast.Import) and any(alias.name.split('.') == package for alias in node.names):
+                violations.append((path.relative_to(SOURCE).as_posix(), node.lineno))
+    assert not violations, violations
+
+
 def test_known_dynamic_launch_modules_still_exist():
     launches = set()
     for path in SOURCE.rglob('*.py'):
