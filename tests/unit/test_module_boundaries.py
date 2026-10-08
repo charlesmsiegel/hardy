@@ -180,7 +180,10 @@ def test_full_tree_dependency_directions(import_graph):
                  'hardy.agents.staged', 'hardy.agents.loop'}
     launchers = {'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp'}
     controllers = {'hardy.workflows.interactive.session', 'hardy.workflows.prove', 'hardy.workflows.batch', 'hardy.evals.runner'}
-    readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'}
+    readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'} | {
+        name for name in import_graph if name.startswith('hardy.workflows.recorded.')
+    }
+    assert {'hardy.workflows.recorded.staged', 'hardy.workflows.recorded.batch'} <= readers
     capabilities = {name for name in import_graph if name.startswith(
         ('hardy.formal.', 'hardy.documents.', 'hardy.algebra.', 'hardy.literature.', 'hardy.corpus.')
     )} | {'hardy.algebra.tools', 'hardy.algebra.export', 'hardy.literature.tools'}
@@ -323,6 +326,8 @@ def test_known_dynamic_launch_modules_still_exist():
     ("workflows.admission", ("workflows.interactive.session", "workflows.prove", "agents.claude", "agents.codex", "agents.api", "app.cli")),
     ("documents.completion", ("formal.workspace", "documents.latex")),
     ("workflows.recorded", ("workflows.prove", "workflows.batch", "agents.staged", "agents.claude")),
+    *((f"workflows.recorded.{part}", ("workflows.prove", "workflows.batch", "agents.staged", "agents.claude"))
+      for part in ("common", "staged", "batch", "directory")),
     ("evals.scoreboard", ("evals.runner", "evals.commands", "evals.staged", "workflows.prove")),
     ("evals.pool", ("evals.runner", "evals.commands", "evals.staged", "workflows.prove")),
 ])
