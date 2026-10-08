@@ -110,10 +110,11 @@ evidence; `hardy evals baseline` and `hardy evals run` regenerate it, as
 Two digests decide whether earlier measurements can be reused, and a rebase is
 exactly when the edits that move them land:
 
-- Editing any of the six deciding sources named in `src/hardy/evals/sweep.py`
-  (the sweep itself, `formal/audit.py`, `formal/lean.py`, `formal/syntax.py`,
-  `corpus/problems.py`, `corpus/identity.py`) moves `procedure_digest` and makes
-  the whole tier file non-reusable; the next sweep re-elaborates every entry.
+- Editing any of the deciding sources named in `src/hardy/evals/sweep.py`
+  (the sweep itself, `formal/audit.py`, `formal/lean.py`, every module in
+  `formal/syntax/`, `corpus/problems.py`, `corpus/identity.py`) moves
+  `procedure_digest` and makes the whole tier file non-reusable; the next sweep
+  re-elaborates every entry.
 - Editing anything under `src/hardy/` not excluded by the denylist in
   `src/hardy/evals/identity.py` moves `run_procedure_digest` and orphans every
   scoreboard on disk, so boards stop pooling and `hardy evals todo` reports

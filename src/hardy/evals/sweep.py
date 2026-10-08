@@ -253,7 +253,11 @@ DECIDING_SOURCES = (
     str(Path(__file__).resolve()),
     str(Path(__file__).resolve().parents[1] / "formal" / "audit.py"),
     str(Path(__file__).resolve().parents[1] / "formal" / "lean.py"),
-    str(Path(__file__).resolve().parents[1] / "formal" / "syntax.py"),
+    # The Lean grammar is a package, and every module in it decides: a scan
+    # that reads a statement differently changes what elaborates. Globbed
+    # rather than listed, so a module added to it counts without anyone
+    # remembering to name it here.
+    *sorted(str(path) for path in (Path(__file__).resolve().parents[1] / "formal" / "syntax").glob("*.py")),
     # `sweep_entry` builds stage A, stage B and the A3 negation out of
     # `Entry.declaration/proposition/negation`. A correction to that assembly
     # moves neither the corpus fields nor the fixed package version, so

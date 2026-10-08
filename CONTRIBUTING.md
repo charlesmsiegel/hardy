@@ -124,10 +124,10 @@ A rebase from `main` onto `corpus/curation` is exactly when a costly edit
 lands, so batch these rather than trickle them, and never make one while a
 sweep or a run is in flight.
 
-Editing any of six deciding sources moves `procedure_digest` and makes the
+Editing any of the deciding sources moves `procedure_digest` and makes the
 entire tier file non-reusable, so the next sweep re-elaborates every entry:
 the sweep itself (`src/hardy/evals/sweep.py`), `formal/audit.py`,
-`formal/lean.py`, `formal/syntax.py`, `corpus/problems.py`, and
+`formal/lean.py`, every module in `formal/syntax/`, `corpus/problems.py`, and
 `corpus/identity.py`.
 
 Editing anything under `src/hardy/` that is not covered by the denylist in

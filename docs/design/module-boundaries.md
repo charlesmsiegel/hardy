@@ -19,7 +19,7 @@ Paths are relative to `src/hardy/`.
 | Boundary | Responsibility |
 | --- | --- |
 | `agents/` | Provider adapters, conversation events, runtime interface, stream assembly, provenance, loop policy, compaction and usage. Providers receive tool definitions and a dispatch callback, never an interactive session. |
-| `formal/` | Lean syntax and dependency analysis, environment identity, execution and builds, retrieval, axiom policy and final verification. `formal/tools.py` supplies one bounded runtime to both the in-process tools and MCP. |
+| `formal/` | Lean syntax and dependency analysis, environment identity, execution and builds, retrieval, axiom policy and final verification. `formal/syntax/` is the one Lean grammar: `names`, `lexer`, `scopes`, `scans` (declarations, assumptions, statements), `imports` and `dependencies`, each importing its owner rather than the package facade. `formal/tools.py` supplies one bounded runtime to both the in-process tools and MCP. |
 | `documents/` | Pure TeX syntax, completion checks, compilation, controlled writeups and export rendering. Templates live in `documents/templates/` and export styling in `documents/export.css`. |
 | `algebra/` | Backend differences, kernel protocol, persistent session state, fresh replay and exported-script execution. `driver.py` implements the helper process; `tools.py` and `export.py` expose the capability operations. |
 | `literature/` | Metadata, guarded paper libraries, acquisition clients, archive admission, statement inventory, canonical bibliography and bounded paper tools. |
@@ -195,8 +195,9 @@ one of them is conservative.
 
 - The sweep's `procedure_digest` covers the deciding sources named in
   `DECIDING_SOURCES` in `evals/sweep.py`: the sweep itself, `formal/audit.py`,
-  `formal/lean.py`, `formal/syntax.py`, `corpus/problems.py` and
-  `corpus/identity.py`. That is an allowlist of six entries, extended by hand.
+  `formal/lean.py`, every module in `formal/syntax/`, `corpus/problems.py` and
+  `corpus/identity.py`. That is an allowlist extended by hand; only the
+  syntax package is counted whole, by directory.
   A module that starts deciding what a sweep outcome means is not covered until
   someone adds it there, which is the failure the run digest was deliberately
   shaped to avoid: an allowlist drawn from the obvious imports once left out
