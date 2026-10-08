@@ -231,10 +231,14 @@ def test_every_copy_of_the_deciding_sources_names_them_all() -> None:
     }
     for page in ("AGENTS.md", "CONTRIBUTING.md", "docs/design/module-boundaries.md"):
         text = (ROOT / page).read_text(encoding="utf-8")
-        # A page may spell the sweep either way round.
+        # A page may spell the sweep either way round. A module of a package
+        # the sweep counts whole (`formal/syntax/`) is named by its directory.
+        def spellings(name: str) -> tuple[str, ...]:
+            package = name.rsplit("/", 1)[0] + "/"
+            whole = (package,) if package.count("/") >= 2 else ()
+            return (name, f"src/hardy/{name}", *whole)
+
         missing = sorted(
-            name
-            for name in names
-            if name not in text and f"src/hardy/{name}" not in text
+            name for name in names if not any(spelling in text for spelling in spellings(name))
         )
         assert not missing, f"{page} omits deciding sources {missing}"
