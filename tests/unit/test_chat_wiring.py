@@ -19,6 +19,8 @@ import pytest
 
 from hardy.app import cli
 from hardy.app import config as configuration
+from hardy.app.commands import chat as chat_command
+from hardy.app.commands import launch as launch_command
 
 
 def settings(tmp_path):
@@ -123,9 +125,9 @@ def test_chat_calls_prepare_layout_before_building_the_cas_runtime(tmp_path, mon
         order.append("build_runtime")
         return FakeCasRuntime(), "fakecas 1.0"
 
-    monkeypatch.setattr(cli, "prepare_layout", spy_prepare_layout)
+    monkeypatch.setattr(chat_command, "prepare_layout", spy_prepare_layout)
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
 
     FakeMathematicsSession.instances = []
@@ -148,7 +150,7 @@ def test_chat_hands_the_fresh_thread_flag_to_the_session(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
 
     FakeMathematicsSession.instances = []
@@ -183,7 +185,7 @@ def test_the_fallback_rebuild_does_not_discard_the_fresh_conversation_again(tmp_
         return 0
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     monkeypatch.setattr(hardy.app.tui, "run_session", fallback_run_session)
 
     FakeMathematicsSession.instances = []
@@ -220,7 +222,7 @@ def test_a_build_that_raised_leaves_the_fresh_ask_pending(tmp_path, monkeypatch)
         return 0
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
-    monkeypatch.setattr(cli, "MathematicsSession", ExplodingOnce)
+    monkeypatch.setattr(launch_command, "MathematicsSession", ExplodingOnce)
     monkeypatch.setattr(hardy.app.tui, "run_session", fallback_run_session)
 
     FakeMathematicsSession.instances = []
@@ -249,7 +251,7 @@ def test_chat_wraps_a_schema_error_through_the_given_parser(tmp_path, monkeypatc
         return FakeCasRuntime(), "fakecas 1.0"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    monkeypatch.setattr(launch_command, "MathematicsSession", explode)
     parser = cli.build_parser()
 
     with pytest.raises(SystemExit) as excinfo:
@@ -271,7 +273,7 @@ def test_chat_without_a_parser_lets_a_schema_error_propagate(tmp_path, monkeypat
         return FakeCasRuntime(), "fakecas 1.0"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    monkeypatch.setattr(launch_command, "MathematicsSession", explode)
 
     with pytest.raises(cli.SchemaError):
         cli._chat(settings(tmp_path), plain=True)
@@ -316,7 +318,7 @@ def test_chat_wraps_a_write_guard_refusal_through_the_given_parser(tmp_path, mon
         return FakeCasRuntime(), "fakecas 1.0"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    monkeypatch.setattr(launch_command, "MathematicsSession", explode)
     parser = cli.build_parser()
 
     with pytest.raises(SystemExit) as excinfo:
@@ -351,7 +353,7 @@ def test_chat_wires_cas_into_the_session_and_closes_it_once(tmp_path, monkeypatc
         return fake_runtime, "fakecas 1.0"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     # The plain path: no real terminal needed, and `--plain` is not the
     # question this test is about -- only whether `cas` reaches the session
     # and gets closed, which happens identically on both paths since `cas`
@@ -381,7 +383,7 @@ def test_chat_closes_cas_even_when_the_session_factory_raises(tmp_path, monkeypa
         raise RuntimeError("boom")
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    monkeypatch.setattr(launch_command, "MathematicsSession", explode)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
 
     with contextlib.suppress(RuntimeError):
@@ -394,7 +396,7 @@ def test_chat_never_calls_close_when_no_backend_was_discovered(tmp_path, monkeyp
         return None, "sympy raised ImportError"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
 
     FakeMathematicsSession.instances = []
@@ -413,7 +415,7 @@ def test_chat_hands_the_worker_pool_and_a_per_worker_cas_factory_to_the_session(
         return FakeCasRuntime(), "fakecas 1.0"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
     FakeMathematicsSession.instances = []
     config = dataclasses.replace(settings(tmp_path), delegation_workers=7)
@@ -429,7 +431,7 @@ def test_chat_hands_the_worker_pool_and_a_per_worker_cas_factory_to_the_session(
 def test_chat_closes_the_session_it_built_when_the_loop_ends(tmp_path, monkeypatch):
     """Background workers must not outlive the session: the pool is stopped on the way out."""
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (FakeCasRuntime(), "fakecas 1.0"))
-    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(launch_command, "MathematicsSession", FakeMathematicsSession)
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
     FakeMathematicsSession.instances = []
     assert cli._chat(settings(tmp_path), plain=True) == 0
@@ -449,7 +451,7 @@ def test_web_reports_a_schema_refusal_through_the_parser(tmp_path, monkeypatch, 
         return FakeCasRuntime(), "fakecas 1.0"
 
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
-    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    monkeypatch.setattr(launch_command, "MathematicsSession", explode)
     parser = cli.build_parser()
 
     from hardy.app.project_registry import Entry, ProjectRegistry

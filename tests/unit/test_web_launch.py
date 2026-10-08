@@ -9,6 +9,7 @@ import pytest
 from web_fakes import FakeSession, make_problem
 
 from hardy.app import cli, project_registry
+from hardy.app.commands import launch as launch_command
 from hardy.app.project_registry import ProjectRegistry
 from hardy.foundation import paths
 
@@ -33,10 +34,10 @@ def home(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.delenv("HARDY_PROJECT", raising=False)
     monkeypatch.setattr(cli.search_tools, "build_runtime", lambda config: (None, "no search in this test"))
     monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (FakeCas(kwargs["cwd"]), "fake"))
-    monkeypatch.setattr(cli, "MathematicsSession", lambda problem, *a, **k: FakeSession(problem, k.get("chat", "main")))
+    monkeypatch.setattr(launch_command, "MathematicsSession", lambda problem, *a, **k: FakeSession(problem, k.get("chat", "main")))
     # What the launch builds its runtime through (`wiring.session_runtime`, as
     # `cli` imports it); patching the re-exported `runtime_factory` reached nothing.
-    monkeypatch.setattr(cli, "session_runtime", lambda config: object())
+    monkeypatch.setattr(launch_command, "session_runtime", lambda config: object())
     return home
 
 

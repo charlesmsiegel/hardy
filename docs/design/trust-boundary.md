@@ -273,7 +273,7 @@ during the run, so it widens the trust base only from a human-authored
 `--assume` file, a declaration made before the run starts; a proof the kernel
 reports as using one of those axioms is graded `verified_modulo`, and the
 manifest names exactly the ones it used rather than everything the file
-offered (`app/cli.py`, `workflows/prove.py`). A `hardy batch` run cannot widen
+offered (`app/commands/prove.py`, `workflows/prove.py`). A `hardy batch` run cannot widen
 it at all: there is no declaration file and nobody to approve one, so anything
 beyond the standard axioms refuses the proof rather than being recorded and
 shipped (`workflows/batch.py`).

@@ -178,7 +178,9 @@ def deferred():
 def test_full_tree_dependency_directions(import_graph):
     providers = {'hardy.agents.claude', 'hardy.agents.api', 'hardy.agents.codex',
                  'hardy.agents.staged', 'hardy.agents.loop'}
-    launchers = {'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp'}
+    launchers = {'hardy.cli', 'hardy.app.cli', 'hardy.mcp_server', 'hardy.app.mcp'} | {
+        name for name in import_graph if name.startswith('hardy.app.commands')
+    }
     controllers = {'hardy.workflows.interactive.session', 'hardy.workflows.prove', 'hardy.workflows.batch', 'hardy.evals.runner'}
     readers = {'hardy.workflows.recorded', 'hardy.evals.scoreboard', 'hardy.evals.pool'} | {
         name for name in import_graph if name.startswith('hardy.workflows.recorded.')
@@ -197,6 +199,8 @@ def test_full_tree_dependency_directions(import_graph):
     for module in import_graph:
         if module.startswith('hardy.app.tui.') or module in {'hardy.app.projects', 'hardy.app.terminal'}:
             assert not (_reachable(import_graph, module) & {'hardy.cli', 'hardy.app.cli'}), module
+            assert not {name for name in _reachable(import_graph, module)
+                        if name.startswith('hardy.app.commands')}, module
 
 
 def test_evaluation_and_cli_cycles_are_removed(import_graph):
@@ -214,7 +218,24 @@ def test_run_identity_keeps_relocated_owners_and_excludes_unreachable_cli(import
             assert path.relative_to(SOURCE).as_posix() in included
     assert 'cas_driver.py' in included
     assert 'app/cli.py' not in included
+    assert not {name for name in included if name.startswith('app/commands/')}
+    assert (SOURCE / 'app' / 'commands' / 'prove.py').is_file()
     assert not (_reachable(import_graph, 'hardy.evals.runner') & {'hardy.app.cli', 'hardy.cli'})
+    commands = {name for name in import_graph if name.startswith('hardy.app.commands')}
+    digested = set()
+    for relative in included:
+        parts = list(Path(relative).with_suffix('').parts)
+        if parts[-1] == '__init__':
+            parts.pop()
+        digested.add('.'.join(['hardy', *parts]))
+    assert 'hardy.workflows.prove' in digested and 'hardy.app.cli' not in digested
+    assert not _boundary_violations(import_graph, digested, commands)
+
+
+def test_command_adapters_do_not_import_the_parser_module(import_graph):
+    commands = {name for name in import_graph if name.startswith('hardy.app.commands')}
+    assert {'hardy.app.commands.chat', 'hardy.app.commands.prove'} <= commands
+    assert not _boundary_violations(import_graph, commands, {'hardy.app.cli', 'hardy.cli'})
 
 
 def _explicit_graph():
