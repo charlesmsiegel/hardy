@@ -27,7 +27,7 @@ Paths are relative to `src/hardy/`.
 | `workflows/` | Staged proving in `prove.py`, batch execution in `batch.py`, approval and faithfulness, run storage and layout, and acceptance execution. `recorded/` validates saved artifacts without launching a run: `staged` and `batch` own the checks for each surface, `common` what both owe, and `directory` which kind a directory holds. |
 | `workflows/interactive/` | `session.py` coordinates `SessionRecord` for guarded persistence and detached snapshots, `FormalWorkspaceService` for checked saves and audit freshness, `AssumptionAdmission` for evidence and approval or quarantine, `DocumentService` for compilation and publication state, and `TurnCoordinator` for serialized dispatch, cancellation, spend and compaction. |
 | `evals/` | Experimental contracts, selection and source identity below execution; sweeps, run execution, scoreboard validation and pooling. Validation and pooling import neither the runner nor the command adapters. |
-| `app/` | CLI and MCP entry points, `tui/`, configuration, project construction, terminal approval, installation and doctor checks. `evals.py` adapts evaluation commands and `corpus_viewer.py` serves the packaged viewer. |
+| `app/` | CLI and MCP entry points, `tui/`, configuration, project construction, terminal approval, installation and doctor checks. `cli.py` builds the parser, resolves configuration and dispatches; `commands/` holds one adapter per command (`chat`, `web`, `prove`, `accept`, `batch`, `setup`, `latency`, with `launch` shared by `chat` and `web`), and none of them imports `cli.py`. `evals.py` adapts evaluation commands and `corpus_viewer.py` serves the packaged viewer. |
 | `foundation/` | `values.py` supplies strict value primitives and tool results; `files.py`, `locking.py` and `paths.py` supply guarded filesystem operations and shared tooling paths. Process control and truncation live here too, with no capability dependencies. |
 | `prompts/` | Prompt rendering, prompt identity and packaged templates. Project-authored command templates stay inputs under each project's `.hardy/prompts/`. |
 
@@ -56,12 +56,13 @@ themselves.
   compaction defaults in configuration. It assembles text and starts no
   session, so it is permitted by name.
 - **Nothing below the entry points imports them.** Providers, capabilities and
-  evidence readers may not reach `cli.py`, `app/cli.py`, `mcp_server.py`,
-  `app/mcp.py`, or the controllers `workflows/interactive/session.py`,
+  evidence readers may not reach `cli.py`, `app/cli.py`, the command adapters
+  under `app/commands/`, `mcp_server.py`, `app/mcp.py`, or the controllers `workflows/interactive/session.py`,
   `workflows/prove.py`, `workflows/batch.py` and `evals/runner.py`. Terminal
   code under `app/tui/`, plus `app/projects.py` and `app/terminal.py`, may not
-  reach the command entry point either: the interface is a caller of
-  construction, not a peer of argument parsing.
+  reach the command entry point or its adapters either: the interface is a
+  caller of construction, not a peer of argument parsing. The adapters in turn
+  never import `app/cli.py`.
 - **Evidence readers construct no runtime.** Every module of `workflows/recorded/`,
   `evals/scoreboard.py` and `evals/pool.py` additionally may not reach any
   provider, `app/evals.py` or `evals/staged.py`. Checking a saved artifact must
@@ -223,7 +224,8 @@ run path reaches it, rather than because its name sounds ancillary.
 The test asserts that the run digest still covers every relocated owner,
 `foundation/`, `agents/`, `formal/`, `documents/`, `algebra/`, `literature/`,
 `corpus/` and `workflows/` in full, plus the CAS driver at the root, and that
-it excludes `app/cli.py`, which no run path reaches.
+it excludes `app/cli.py` and the adapters under `app/commands/`, which no run
+path reaches: no module the digest covers imports one.
 
 Neither digest is a reason not to make a change. They are a reason to batch
 such edits rather than trickle them, and never to make one while a sweep or a

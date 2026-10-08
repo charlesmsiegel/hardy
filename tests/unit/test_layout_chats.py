@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from hardy.app.commands import chat as chat_command
+from hardy.app.commands import web as web_command
 from hardy.foundation.files import LayoutError
 from hardy.workflows import layout
 
@@ -111,7 +113,7 @@ def test_chat_flag_refuses_a_chat_the_browser_never_made(tmp_path: Path, monkeyp
     def reached(_config):
         raise RuntimeError("reached prepare_layout")
 
-    monkeypatch.setattr(cli, "prepare_layout", reached)
+    monkeypatch.setattr(chat_command, "prepare_layout", reached)
     with pytest.raises(layout.LayoutError) as excinfo:
         cli._chat(_cli_config(tmp_path), plain=True, args=SimpleNamespace(chat="missing"))
     assert "missing" in str(excinfo.value) and "hardy web" in str(excinfo.value)
@@ -128,7 +130,7 @@ def test_web_refuses_the_same_chat_through_the_parser(tmp_path: Path, capsys, mo
 
     from hardy.app.project_registry import Entry, ProjectRegistry
 
-    monkeypatch.setattr(cli, "prepare_layout", reached)
+    monkeypatch.setattr(web_command, "prepare_layout", reached)
     parser = cli.build_parser()
     config = _cli_config(tmp_path)
     registry = ProjectRegistry(tmp_path / "registry.json", default_root=tmp_path / "projects")
@@ -152,7 +154,7 @@ def test_an_existing_chat_is_accepted_by_the_flag(tmp_path: Path, monkeypatch) -
     def reached(_config):
         raise RuntimeError("reached prepare_layout")
 
-    monkeypatch.setattr(cli, "prepare_layout", reached)
+    monkeypatch.setattr(chat_command, "prepare_layout", reached)
     made = chats.create_chat(tmp_path / "sylow", "Lean proof")
     with pytest.raises(RuntimeError, match="reached prepare_layout"):
         cli._chat(_cli_config(tmp_path), plain=True, args=SimpleNamespace(chat=made.id))

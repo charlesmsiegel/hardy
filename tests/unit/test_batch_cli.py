@@ -53,7 +53,8 @@ def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None
             importlib.import_module('hardy.agents.usage').Usage().summary(),
         )
 
-    monkeypatch.setattr(cli, 'run', fake_run)
+    batch_command = importlib.import_module('hardy.app.commands.batch')
+    monkeypatch.setattr(batch_command, 'run', fake_run)
     parser = cli.build_parser()
     args = parser.parse_args(['batch', str(_request(tmp_path, 'theorem HardyTarget : True'))])
 
@@ -140,7 +141,8 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
             importlib.import_module('hardy.agents.usage').Usage().summary(),
         )
 
-    monkeypatch.setattr(cli, 'run', fake_run)
+    batch_command = importlib.import_module('hardy.app.commands.batch')
+    monkeypatch.setattr(batch_command, 'run', fake_run)
     args = parser.parse_args([
         'batch', str(_request(tmp_path, 'theorem T : True')), '--wall-seconds', '30'
     ])

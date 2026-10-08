@@ -35,7 +35,10 @@ RUN_SOURCE_EXCLUDED_FILES = frozenset({
     "evals/compare.py",   # reads paired finished boards; cannot reach a run
     "evals/history.py",   # orders audited finished boards; cannot reach a run
 })
-RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/",)
+# `app/commands/` holds the command adapters `app/cli.py` dispatches to, moved
+# out of it whole: excluded for the reason `app/cli.py` is, and checked the
+# same way -- no module the digest covers may import one.
+RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/", "app/commands/")
 
 
 def run_source_paths() -> tuple[Path, ...]:
