@@ -75,8 +75,7 @@ def _edited_source_rehashed(run: Path) -> None:
 
 def _wrong_signature(run: Path) -> None:
     main = run / "lean" / "Main.lean"
-    text = main.read_text(encoding="utf-8")
-    main.write_text(text.replace("Irrational", "Transcendental", 1), encoding="utf-8")
+    main.write_bytes(main.read_bytes().replace(b"Irrational", b"Transcendental", 1))
     _rehash(run, "lean/Main.lean")
 
 
@@ -164,7 +163,7 @@ def _forged_batch_grade(run: Path) -> None:
 
 def _edited_proof(run: Path) -> None:
     path = run / "proof.lean"
-    path.write_text(path.read_text(encoding="utf-8") + "\n-- edited\n", encoding="utf-8")
+    path.write_bytes(path.read_bytes() + b"\n-- edited\n")
 
 
 def _deleted_proof(run: Path) -> None:
