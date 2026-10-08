@@ -526,6 +526,44 @@ number of modules, because one project root is not one subsystem.
 
 Cost: whether a new thing is a package is a judgement each time, not a rule.
 
+### A large module is split where its callers already divide it
+
+We chose to split `formal/syntax.py` into `formal/syntax/`, the recorded-run
+reader into `workflows/recorded/` by the surface each check reads, and the
+command adapters out of `app/cli.py` into `app/commands/`, and to give
+`ProveWorkflow._run` one method per stage inside `prove.py`, over splitting
+every long module, because a split pays only where its parts already have
+separate callers, and a stage moved out of `prove.py` would leave the
+prospective strategy identity, which hashes that file, blind to it. Each moved
+package keeps a facade exporting every name it exported before, and no module
+inside a package imports its own facade.
+
+Cost: three facades to keep in step with their owners; tests that patched a
+name bound in `app/cli.py` patch the command module that uses it; moving the
+grammar moved both evaluation digests, so evidence recorded before the move no
+longer pools with evidence after it.
+
+### Configuration, Lean execution, retrieval and the agent loop stay whole
+
+We chose to keep `app/config.py`, `formal/lean.py`, `formal/retrieval.py` and
+`agents/loop.py` single modules, over the splits their size invites, because
+none showed an owner its callers use apart from the rest:
+
+- `config.py` is one settings file. `load` is a single function reading nearly
+  everything else, the writers must render what that one parser reads, and
+  `_POSIX` is a seam tests patch on this module by design.
+- Every importer of `lean.py`'s environment identity also imports `LeanTools`
+  or `elaborate`, tests patch `environment_identity` on this module, and it is
+  a deciding source named by path.
+- `retrieval.py` is one fusion owner: callers take the composed retriever or
+  its ranking, so separating the sources from the ranking moves no import.
+- `loop.py` imports only value modules, and its turn settlement, cancellation,
+  budget refusal and tool-call order all read and reset the same per-turn
+  state in `AgentLoop`; its message helpers are already pure functions that
+  compaction and the interactive turn import directly.
+
+Revisit when: a caller needs one of these parts without the rest.
+
 ### A protocol where a consumer needs substitution
 
 We chose to add a protocol only where a consumer needs substitution or a
