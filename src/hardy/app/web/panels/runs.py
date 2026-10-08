@@ -200,7 +200,7 @@ def _statement(claim: FrozenClaim) -> str:
     """The frozen claim as one Lean signature, exactly as the verifier states it.
 
     The same rendering `formal/lean.py`'s `render_source` builds (minus the
-    trailing `:=` that opens the proof) and `workflows/recorded.py` requires
+    trailing `:=` that opens the proof) and `workflows/recorded/staged.py` requires
     a paper to quote verbatim: `theorem <name> <binders> : <proposition>`,
     with no binder slot at all when the proposal has no binders. Restated
     here rather than imported because `lean.py` renders a whole source file,
@@ -235,7 +235,7 @@ def _frozen_claim(run_dir: Path, manifest: RunManifest) -> tuple[dict[str, Any] 
       first catches a file from another run; the second catches a statement
       edited under a hash it no longer earns, including a field the hash
       never covered. `validate_run_consistency`
-      (`workflows/recorded.py`) makes the first check for `hardy accept
+      (`workflows/recorded/staged.py`) makes the first check for `hardy accept
       --recorded`; the second is the one a browser-facing read owes on top.
     """
     if manifest.claim_sha256 is None:

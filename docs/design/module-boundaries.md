@@ -24,7 +24,7 @@ Paths are relative to `src/hardy/`.
 | `algebra/` | Backend differences, kernel protocol, persistent session state, fresh replay and exported-script execution. `driver.py` implements the helper process; `tools.py` and `export.py` expose the capability operations. |
 | `literature/` | Metadata, guarded paper libraries, acquisition clients, archive admission, statement inventory, canonical bibliography and bounded paper tools. |
 | `corpus/` | Statement schema, taxonomy, content identity, loading, mechanical checks and releases. This is application code; the repository's mathematical content follows the separate curation branch policy. |
-| `workflows/` | Staged proving in `prove.py`, batch execution in `batch.py`, approval and faithfulness, run storage and layout, and acceptance execution. `recorded.py` validates saved artifacts without launching a run. |
+| `workflows/` | Staged proving in `prove.py`, batch execution in `batch.py`, approval and faithfulness, run storage and layout, and acceptance execution. `recorded/` validates saved artifacts without launching a run: `staged` and `batch` own the checks for each surface, `common` what both owe, and `directory` which kind a directory holds. |
 | `workflows/interactive/` | `session.py` coordinates `SessionRecord` for guarded persistence and detached snapshots, `FormalWorkspaceService` for checked saves and audit freshness, `AssumptionAdmission` for evidence and approval or quarantine, `DocumentService` for compilation and publication state, and `TurnCoordinator` for serialized dispatch, cancellation, spend and compaction. |
 | `evals/` | Experimental contracts, selection and source identity below execution; sweeps, run execution, scoreboard validation and pooling. Validation and pooling import neither the runner nor the command adapters. |
 | `app/` | CLI and MCP entry points, `tui/`, configuration, project construction, terminal approval, installation and doctor checks. `evals.py` adapts evaluation commands and `corpus_viewer.py` serves the packaged viewer. |
@@ -62,7 +62,7 @@ themselves.
   code under `app/tui/`, plus `app/projects.py` and `app/terminal.py`, may not
   reach the command entry point either: the interface is a caller of
   construction, not a peer of argument parsing.
-- **Evidence readers construct no runtime.** `workflows/recorded.py`,
+- **Evidence readers construct no runtime.** Every module of `workflows/recorded/`,
   `evals/scoreboard.py` and `evals/pool.py` additionally may not reach any
   provider, `app/evals.py` or `evals/staged.py`. Checking a saved artifact must
   not be able to launch the thing that produced it, or a validation pass could
