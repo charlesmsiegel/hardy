@@ -78,8 +78,8 @@ function Verdict({verdict}) {
   );
 }
 
-export default function Editor({path, kind, text, sha256, missing = false, truncated, verdict, onSaved, onName}) {
-  const [draft, setDraft] = useState({path, buffer: text, loadedText: text, loadedHash: sha256,
+export default function Editor({path, project, kind, text, sha256, missing = false, truncated, verdict, onSaved, onName}) {
+  const [draft, setDraft] = useState({path, project, buffer: text, loadedText: text, loadedHash: sha256,
     disk: {text, sha256, missing}, conflict: false});
   const current = useRef(draft);
   const update = (change) => {
@@ -97,8 +97,8 @@ export default function Editor({path, kind, text, sha256, missing = false, trunc
   useEffect(() => {
     const disk = {text, sha256, missing};
     update((state) => {
-      if (state.path !== path || (state.buffer === state.loadedText && !missing)) {
-        return {path, buffer: text, loadedText: text, loadedHash: sha256, disk, conflict: false};
+      if (state.path !== path || state.project !== project || (state.buffer === state.loadedText && !missing)) {
+        return {path, project, buffer: text, loadedText: text, loadedHash: sha256, disk, conflict: false};
       }
       // A reload of our own saved source acknowledges the submitted text,
       // while a newer edit typed during that request remains the user's.
@@ -107,7 +107,7 @@ export default function Editor({path, kind, text, sha256, missing = false, trunc
       return {...state, disk, ...(acknowledged ? {loadedText: text, loadedHash: sha256} : {}),
         conflict: missing || (!acknowledged && (text !== state.loadedText || sha256 !== state.loadedHash))};
     });
-  }, [path, text, sha256, missing]);
+  }, [path, project, text, sha256, missing]);
 
   // The result is cleared when a DIFFERENT file is opened, and not when this
   // one's text changes. A save reloads the file it just wrote, so clearing on
@@ -119,7 +119,7 @@ export default function Editor({path, kind, text, sha256, missing = false, trunc
     generation.current += 1;
     setResult(null);
     setBusy('');
-  }, [path]);
+  }, [path, project]);
 
   const dirty = buffer !== draft.loadedText;
   const notSaved = dirty || draft.conflict || missing;
@@ -139,7 +139,10 @@ export default function Editor({path, kind, text, sha256, missing = false, trunc
     const requestGeneration = generation.current;
     const source = current.current.buffer;
     const base = overwrite ? current.current.disk.sha256 : current.current.loadedHash;
-    const body = what === 'save' ? {path, source, base_sha256: base} : {path, source};
+    // Scope the action to the document that supplied these bytes, even if
+    // another window changes the live session before HTTP delivery.
+    const identity = {path: current.current.path, project: current.current.project};
+    const body = what === 'save' ? {...identity, source, base_sha256: base} : {...identity, source};
     // Measured on the ENCODED body, not on the buffer. `/api/file` serves a
     // file up to 1 MiB and the viewer presents it as complete and editable;
     // the same text as JSON is larger, because the envelope and the escaping
