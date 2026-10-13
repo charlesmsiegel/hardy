@@ -125,7 +125,10 @@ class DocumentService:
         # is the one file this save is about to change.
         compiled_tree = self._tex_tree_digest(relative)
 
+        provenance_error: str | None = None
+
         def _write() -> None:
+            nonlocal provenance_error
             # `guard_for`, not a bare write to `target`. `_tex_path` proves the
             # NAME is a relative, dot-free, colon-free path; it does not and
             # cannot say where the directories of that name lead.
@@ -146,6 +149,13 @@ class DocumentService:
                 # compiler failure. A `LayoutError` needs no wrapper: it
                 # already says which path it refused and why.
                 raise WriteupNotSaved(f"{relative} could not be saved: {error}") from None
+            # Authored bytes have replaced the import even if later PDF/aux
+            # publication raises. A bookkeeping failure cannot undo this write
+            # or escape as a source refusal (which publication may roll back).
+            try:
+                policy.committed(relative)
+            except (OSError, ValueError) as error:
+                provenance_error = str(error)
 
         # Set by `published`, called from inside `check` only when
         # `writeup.pdf` itself was replaced (#335). A compile can succeed, the
@@ -179,9 +189,13 @@ class DocumentService:
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
+        if provenance_error is not None:
+            return ToolResult(
+                False, f"source was saved but provenance could not be updated: {provenance_error}; "
+                "the publication stamp was not refreshed", source,
+            )
         if not result.ok:
             return result
-        policy.committed(relative)
         # Stamped after the write, on a compile that succeeded, only when what
         # was compiled is the writeup itself, and only when the PDF was
         # actually replaced. Saving a fragment the root does not include yet is

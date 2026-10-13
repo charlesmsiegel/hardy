@@ -723,3 +723,102 @@ def test_refused_tex_authored_save_preserves_import_provenance(tmp_path):
     failed = chat.save_authored("tex/writeup.tex", "\\documentclass{article}\n\\begin{document}\\input{missing}\\end{document}\n")
     assert not failed.ok
     assert chat.state["imported"] == before["imported"]
+
+
+@pytest.mark.parametrize("failure", ["pdf_symlink", "pdf_io"])
+def test_committed_tex_source_retires_import_before_late_publication_failure(tmp_path, monkeypatch, failure):
+    from hardy.documents import latex
+    from hardy.foundation.files import LayoutError
+    pile = pile_with(tmp_path, {"writeup.tex": DOCUMENT})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_tex(pile / "writeup.tex").ok
+    prior_stamp = chat.state["tex_signature"]
+    if failure == "pdf_symlink":
+        pdf = chat.workspace / "writeup.pdf"
+        pdf.unlink()
+        outside = tmp_path / "outside.pdf"
+        outside.write_bytes(b"outside PDF")
+        try:
+            pdf.symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        expected = LayoutError
+    else:
+        original = latex.WriteGuard.write_from
+        def fail_pdf(self, name, *args, **kwargs):
+            if str(name) == "writeup.pdf":
+                raise OSError("PDF publication refused after source commit")
+            return original(self, name, *args, **kwargs)
+        monkeypatch.setattr(latex.WriteGuard, "write_from", fail_pdf)
+        expected = OSError
+    with pytest.raises(expected):
+        chat.save_authored("tex/writeup.tex", PLAIN_ROOT)
+    assert (chat.workspace / "tex" / "writeup.tex").read_text() == PLAIN_ROOT
+    assert not chat.state.get("imported")
+    assert not json.loads((chat.workspace / "session.json").read_text()).get("imported")
+    assert not make_session(chat.workspace).state.get("imported")
+    assert chat.state["tex_signature"] == prior_stamp
+    assert chat._stale_writeup()
+    assert any(event.get("reason") == "superseded" for event in events(chat.workspace))
+
+
+def test_tex_provenance_bookkeeping_failure_reports_committed_source_without_stamp(tmp_path, monkeypatch):
+    pile = pile_with(tmp_path, {"writeup.tex": DOCUMENT})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_tex(pile / "writeup.tex").ok
+    before = chat.state["tex_signature"]
+    def cannot_persist():
+        raise PermissionError("record unavailable after source committed")
+    monkeypatch.setattr(chat, "_save_state", cannot_persist)
+    result = chat.save_authored("tex/writeup.tex", PLAIN_ROOT)
+    assert not result.ok
+    assert "source was saved" in result.output
+    assert "provenance" in result.output
+    assert (chat.workspace / "tex" / "writeup.tex").read_text() == PLAIN_ROOT
+    assert chat.state["tex_signature"] == before
+    assert chat._stale_writeup()
+
+
+def test_refused_tex_source_write_preserves_prior_import_provenance(tmp_path, monkeypatch):
+    from hardy.workflows.interactive import documents
+    pile = pile_with(tmp_path, {"writeup.tex": DOCUMENT})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_tex(pile / "writeup.tex").ok
+    before = chat.record.snapshot_of("imported")
+    original = documents.guard_for
+    def refused_guard(tree, relative, **kwargs):
+        guard, name = original(tree, relative, **kwargs)
+        if tree == chat.tex_root:
+            def refused_write(*args, **kwargs):
+                raise PermissionError("authored source is held")
+            monkeypatch.setattr(guard, "write_text", refused_write)
+        return guard, name
+    monkeypatch.setattr(documents, "guard_for", refused_guard)
+    result = chat.save_authored("tex/writeup.tex", PLAIN_ROOT)
+    assert not result.ok
+    assert "could not be saved" in result.output
+    assert (chat.workspace / "tex" / "writeup.tex").read_text() == DOCUMENT
+    assert chat.state["imported"] == before["imported"]
+    assert json.loads((chat.workspace / "session.json").read_text())["imported"] == before["imported"]
+    assert not any(event.get("reason") == "superseded" for event in events(chat.workspace))
+
+
+def test_tex_provenance_event_failure_preserves_committed_record_and_stale_stamp(tmp_path, monkeypatch):
+    pile = pile_with(tmp_path, {"writeup.tex": DOCUMENT})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_tex(pile / "writeup.tex").ok
+    before = chat.state["tex_signature"]
+    original = chat._record
+    def refused_event(event):
+        if event.get("reason") == "superseded":
+            raise PermissionError("transcript held")
+        return original(event)
+    monkeypatch.setattr(chat, "_record", refused_event)
+    result = chat.save_authored("tex/writeup.tex", PLAIN_ROOT)
+    assert not result.ok
+    assert "source was saved" in result.output and "transcript held" in result.output
+    assert (chat.workspace / "tex" / "writeup.tex").read_text() == PLAIN_ROOT
+    assert not chat.state.get("imported")
+    assert not json.loads((chat.workspace / "session.json").read_text()).get("imported")
+    assert chat.state["tex_signature"] == before
+    assert chat._stale_writeup()
