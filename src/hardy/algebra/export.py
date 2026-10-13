@@ -49,6 +49,7 @@ from hardy.algebra.cas import (
     unobservable,
 )
 from hardy.algebra.contracts import MERGED_CAPTURE_NOTE
+from hardy.algebra.operations import OperationControl
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.layout import CAS_SCRATCH
@@ -425,6 +426,7 @@ def _verify_script(
     script: Path,
     directory: Path,
     completion: str = "",
+    *, control: OperationControl | None = None,
 ) -> tuple[Verdict, str]:
     """Run the published file and say whether it reproduced the session.
 
@@ -473,11 +475,14 @@ def _verify_script(
             cwd=run_directory,
             timeout=remaining,
             max_output_bytes=session.limits.cas_output_bytes,
+            control=control,
         )
     except CasError as error:
         session.charge(time.monotonic() - started)
         return "failed", str(error)
     session.charge(time.monotonic() - started)
+    if control is not None:
+        control.check()
 
     # The file is read back, and put back if it moved. A verdict is a claim
     # about the bytes a reader will keep, so a run that rewrote them leaves no
@@ -783,7 +788,8 @@ def render_notebook(
     return json.dumps(notebook, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
 
 
-def export_session(session: CasSession, directory: Path) -> ExportReport:
+def export_session(session: CasSession, directory: Path, *,
+                   control: OperationControl | None = None) -> ExportReport:
     """Render, replay, compare, and publish the pair under one manifest.
 
     Under the session's own hold from the first read of the log to the last
@@ -793,10 +799,13 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
     still being appended to.
     """
     with session.hold():
-        return _export_held(session, directory)
+        if control is not None:
+            control.check()
+        return _export_held(session, directory, control=control)
 
 
-def _export_held(session: CasSession, directory: Path) -> ExportReport:
+def _export_held(session: CasSession, directory: Path, *,
+                 control: OperationControl | None = None) -> ExportReport:
     cells = session.accepted()
     if not cells:
         raise CasError("nothing to export: the session has no accepted cells")
@@ -825,7 +834,10 @@ def _export_held(session: CasSession, directory: Path) -> ExportReport:
         # what `docs/.../interactive-cas-design.md` already promised.
         budget_seconds=session.remaining_seconds,
         charge=session.charge,
+        control=control,
     )
+    if control is not None:
+        control.check()
     verdicts = _verdicts(cells, outcomes, session.backend)
 
     script_path = directory / f"session{session.backend.script_suffix}"
@@ -837,7 +849,7 @@ def _export_held(session: CasSession, directory: Path) -> ExportReport:
     # has to be the thing published: these exact bytes are what gets run.
     guard.write_bytes(script_path.name, script)
     try:
-        script_verdict = _verify_script(session, cells, script_path, directory, completion)
+        script_verdict = _verify_script(session, cells, script_path, directory, completion, control=control)
     except Exception as error:  # noqa: BLE001 - see below
         # Deliberately everything. `docs/design/output-contract.md` requires a
         # partial export to be written and marked rather than withheld, and the
@@ -927,4 +939,6 @@ def _export_held(session: CasSession, directory: Path) -> ExportReport:
         "export.json",
         (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
     )
+    if control is not None:
+        control.check()
     return report

@@ -4,6 +4,8 @@ import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from hardy.agents.usage import Usage
 from hardy.algebra.cas import CasError
 from hardy.app import doctor
@@ -226,7 +228,7 @@ class FakeCas:
     """
 
     def __init__(self, run_result: FakeCasResult | None = None, run_error: Exception | None = None):
-        self.session = object()
+        self.session = SimpleNamespace(interrupt=lambda: False, escalate=lambda: False)
         self.reset_calls: list[str] = []
         self.run_calls: list[tuple[str, str]] = []
         self._run_result = run_result or FakeCasResult(stdout="4\n", value_repr="4")
@@ -285,7 +287,7 @@ async def test_cas_export_reports_the_written_paths_and_replay_counts(ui, settin
     )
     captured: list[tuple] = []
 
-    def fake_export_session(session, directory):
+    def fake_export_session(session, directory, *, control=None):
         captured.append((session, directory))
         return report
 
@@ -476,3 +478,75 @@ async def test_the_model_picker_names_which_credentials_it_will_spend(settings):
     await handlers._chosen_identity(Picker(), "", dataclasses.replace(settings, backend="api"))
     assert "Anthropic API key (metered)" in seen["subtitle"]
     assert "subscription" not in seen["subtitle"]
+
+
+async def test_cas_reset_keeps_the_loop_live_and_drains_the_worker_on_cancel(ui, settings, tmp_path):
+    import asyncio
+    import threading
+
+    started = threading.Event()
+    released = threading.Event()
+    finished = threading.Event()
+    fake = FakeCas()
+    fake.session = SimpleNamespace(interrupt=lambda: released.set() or True)
+
+    def reset(*, author):
+        started.set()
+        try:
+            assert released.wait(2), "reset worker was not interrupted"
+        finally:
+            finished.set()
+
+    fake.reset = reset
+    task = asyncio.create_task(handlers.handle_cas(ui, "reset", cas_state(fake, settings, tmp_path)))
+    try:
+        async def wait_started():
+            while not started.is_set():
+                await asyncio.sleep(0)
+        await asyncio.wait_for(wait_started(), 1)
+        await asyncio.wait_for(asyncio.sleep(0), 0.5)
+        assert not finished.is_set(), "reset blocked the loop until its worker finished"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert finished.is_set(), "cancel must drain the worker before releasing the command"
+    finally:
+        released.set()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 1)
+
+
+async def test_cas_export_stop_reaches_its_own_worker_and_drains_on_task_cancel(ui, settings, tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    started = threading.Event()
+    released = threading.Event()
+    finished = threading.Event()
+
+    def export(session, directory, *, control=None):
+        started.set()
+        try:
+            with control.bind(lambda: released.set() or True, lambda: released.set() or True):
+                assert released.wait(2)
+                control.check()
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(handlers, "export_session", export)
+    task = asyncio.create_task(handlers.handle_cas(ui, "export", cas_state(FakeCas(), settings, tmp_path)))
+    try:
+        async def wait_started():
+            while not started.is_set():
+                await asyncio.sleep(0)
+        await asyncio.wait_for(wait_started(), 1)
+        await asyncio.wait_for(asyncio.sleep(0), 0.5)
+        assert not finished.is_set()
+        assert ui.stopper()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert finished.is_set()
+        assert ui.stopper is None
+    finally:
+        released.set()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 1)

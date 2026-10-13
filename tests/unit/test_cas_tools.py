@@ -316,3 +316,33 @@ def test_typed_cells_take_the_next_free_number(cas_session) -> None:
     runtime.run(runtime.typed_path(), "a", author="human")
     assert runtime.typed_path() == "typed/0002.py"
     assert runtime.listing() == (PurePosixPath("typed/0001.py"),)
+
+
+@pytest.mark.parametrize("character", [chr(n) for n in range(32)] + ["\x7f", "\x85", "\u2028", "\u2029"])
+def test_cell_paths_refuse_control_characters_before_writing(cas_session, character):
+    runtime = make_runtime(cas_session(), {})
+    with pytest.raises(CasError, match="control"):
+        runtime.run(f"cells/a{character}b.py", "1")
+    assert runtime.listing() == ()
+
+
+def test_long_state_retains_the_same_suffix_with_logarithmic_serializations(cas_session, monkeypatch):
+    from hardy.algebra.contracts import CellRecord
+
+    session = cas_session()
+    records = tuple(CellRecord(seq=n, segment=0, author="model", source='é " \\ ' * 20,
+                               path=f"cells/{n}.py", status="ok", accepted=True) for n in range(1000))
+    monkeypatch.setattr(session, "accepted", lambda: records)
+    runtime = make_runtime(session, {}, observation_bytes=4096)
+    whole = make_runtime(session, {}, observation_bytes=1_000_000).state()
+    expected = whole
+    omitted = 0
+    while runtime._size(expected) > 4096:
+        omitted += 1
+        expected = whole.model_copy(update={"accepted": whole.accepted[omitted:], "omitted": omitted,
+            "note": f"{omitted} earlier accepted cell(s) omitted to fit the observation budget; they are still part of the session state."})
+    calls = []
+    original = runtime._size
+    monkeypatch.setattr(runtime, "_size", lambda result: calls.append(1) or original(result))
+    assert runtime.state() == expected
+    assert len(calls) <= 12

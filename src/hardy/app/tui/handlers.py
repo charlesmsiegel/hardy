@@ -19,6 +19,7 @@ from typing import Any
 
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
+from hardy.algebra.operations import OperationControl
 from hardy.app import catalog, doctor
 from hardy.app import config as configuration
 from hardy.app.config import DEFAULT_BACKEND, authentication
@@ -379,6 +380,39 @@ def _cas_target(argument: str) -> tuple[str | None, Any]:
     return None, argument if argument else _BLOCK
 
 
+async def _cas_worker(ui: Ui, operation: Any, *args: Any,
+                      operation_control: OperationControl, **kwargs: Any) -> Any:
+    """Keep command ownership until its interrupted worker has unwound."""
+    stopping = getattr(ui, "stopping", None)
+    if stopping is not None:
+        stopping(operation_control.stop)
+
+    def run() -> Any:
+        operation_control.check()
+        return operation(*args, **kwargs)
+
+    worker = asyncio.create_task(asyncio.to_thread(run))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        operation_control.stop()
+        # Releasing command ownership while the worker still holds the CAS
+        # lock permits a project switch to race the operation's final writes.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                operation_control.stop()
+            except Exception:  # noqa: BLE001 - preserve the task cancellation
+                break
+        if worker.done() and not worker.cancelled():
+            worker.exception()
+        raise
+    finally:
+        if stopping is not None:
+            stopping(None)
+
+
 async def handle_cas(ui: Ui, argument: str, state: State) -> State:
     """The human's own way into the same kernel the model is using.
 
@@ -409,7 +443,9 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
                 ui.write(f"  {line}")
             return state
         if argument == "reset":
-            cas.reset(author="human")
+            control = OperationControl()
+            with control.bind(cas.session.interrupt, getattr(cas.session, "escalate", cas.session.interrupt)):
+                await _cas_worker(ui, cas.reset, author="human", operation_control=control)
             ui.write("CAS session reset; the next cell starts a clean kernel.")
             return state
         if argument == "export":
@@ -417,7 +453,11 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
             # the same directory today, but only the layout module owns that
             # decision -- spelling it out here again is how the two paths
             # drift apart the moment one of them changes.
-            report = export_session(cas.session, state.config.layout.cas)
+            control = OperationControl()
+            report = await _cas_worker(
+                ui, export_session, cas.session, state.config.layout.cas,
+                operation_control=control, control=control,
+            )
             ui.write(f"Wrote {report.script_path} and {report.notebook_path}")
             ui.write(
                 f"Replay: {report.verified} verified, {report.diverged} diverged, "

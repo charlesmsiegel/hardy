@@ -801,3 +801,58 @@ def test_create_refuses_a_forgotten_project_rather_than_calling_it_foreign(tmp_p
         assert host.opener.calls == []
     finally:
         host.stop()
+
+
+@pytest.mark.parametrize("operation", ["reset", "export"])
+def test_cas_commands_keep_requests_live_and_hold_project_ownership_until_worker_finishes(tmp_path, monkeypatch, operation):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from hardy.app.tui import handlers
+    from hardy.app.web import chats
+
+    host = _host(tmp_path)
+    target_chat = chats.create_chat(tmp_path / "sylow", "other").id
+    entered = threading.Event()
+    stopped = threading.Event()
+    release = threading.Event()
+
+    def block(*args, control=None, **kwargs):
+        entered.set()
+        if control is None:
+            assert release.wait(3)
+        else:
+            with control.bind(lambda: stopped.set() or True, lambda: stopped.set() or True):
+                assert release.wait(3)
+                control.check()
+
+    cas = SimpleNamespace(
+        session=SimpleNamespace(interrupt=lambda: stopped.set() or True,
+                                escalate=lambda: stopped.set() or True),
+        reset=block,
+    )
+    host.session.cas = cas
+    monkeypatch.setattr(handlers, "export_session", block)
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        sub = host.subscribe()
+        host.submit(f"/cas {operation}")
+        assert entered.wait(2)
+        # A distinct request must get an answer while the CAS worker is held.
+        assert pool.submit(host.state).result(timeout=1)["command_running"] is True
+        assert host.cancel()["stopped"] == 1
+        assert stopped.is_set()
+        assert host.submit("queued while stopping")["kind"] == "queued"
+        with pytest.raises(Busy):
+            host.open_project(_sylow(tmp_path), target_chat)
+        assert host.session.cas is cas
+        release.set()
+        _drain(sub, {"changed"})
+        # The operation is now finished, so replacing its session is allowed.
+        _drain(sub, {"turn_end"})
+        host.open_project(_sylow(tmp_path), target_chat)
+        assert getattr(host.session, "cas", None) is not cas
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+        host.stop()
