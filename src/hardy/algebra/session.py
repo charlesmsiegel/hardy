@@ -941,7 +941,10 @@ class CasSession:
                 f"{self.backend.name} is configured. Reset the session to start a "
                 "clean segment, or restore the original cas_backend setting."
             )
-        if self.remaining_seconds < min(0.1, self.limits.cas_cell_seconds / 10):
+        if (
+            self.remaining_seconds <= 0
+            or self.remaining_seconds < min(0.1, self.limits.cas_cell_seconds / 10)
+        ):
             raise CasError("CAS session budget exhausted")
 
     def execute(self, source: str, *, author: str = "model", path: str = "") -> CellRecord:
