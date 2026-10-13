@@ -836,3 +836,61 @@ def test_retrieval_meters_are_per_problem_path_not_per_slug(opener, live, tmp_pa
     assert str(root / "main") in keys and str(tmp_path / "other" / "main") in keys
     assert opener._search_for[str(root / "main")] is not opener._search_for[str(tmp_path / "other" / "main")]
 
+
+
+def test_open_existing_missing_record_refuses_before_scaffolding(opener, live, root):
+    from hardy.workflows.interactive.record import SchemaError
+    target = root / "missing"
+    with pytest.raises(SchemaError, match="missing"):
+        opener("missing", _decline, live, require_existing=True)
+    assert not target.exists()
+    assert opener.built == []
+
+
+def test_open_existing_record_deleted_during_cas_probe_preserves_previous(opener, live, root, monkeypatch):
+    from hardy.workflows.interactive.record import SchemaError, SessionRecord
+    target = root / "burnside"
+    target.mkdir()
+    record = target / layout.RECORD
+    record.write_text('{"schema_version": 2, "names": [], "assumptions": []}')
+    previous = opener.cas
+    created = []
+    def deleting_probe(**kwargs):
+        record.unlink()
+        cas = FakeCas(kwargs["cwd"])
+        created.append(cas)
+        return cas, "fake"
+    def load_record(workspace, *args, **kwargs):
+        state = SessionRecord(workspace, require_existing=kwargs["require_existing"])
+        state.load()
+        return object()
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", deleting_probe)
+    monkeypatch.setattr(cli, "MathematicsSession", load_record)
+    with pytest.raises(SchemaError, match="missing"):
+        opener("burnside", _decline, live, require_existing=True)
+    assert opener.cas is previous
+    assert not previous.session.closed
+    assert created[0].session.closed
+    assert not record.exists()
+
+
+def test_launch_existing_builder_refuses_record_removed_after_runtime_setup(live, monkeypatch):
+    from hardy.app.commands import launch
+    from hardy.workflows.interactive.record import SchemaError, SessionRecord
+    live.layout.record.write_text('{"schema_version": 2, "names": [], "assumptions": []}')
+    monkeypatch.setattr(launch.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
+    monkeypatch.setattr(launch.search_tools, "build_runtime", lambda config: (None, ""))
+    monkeypatch.setattr(launch, "session_runtime", lambda config: object())
+    def load_record(workspace, *args, **kwargs):
+        record = SessionRecord(workspace, require_existing=kwargs["require_existing"])
+        record.load()
+        return object()
+    monkeypatch.setattr(launch, "MathematicsSession", load_record)
+    _, build, close = launch._launch(live)
+    live.layout.record.unlink()
+    try:
+        with pytest.raises(SchemaError, match="missing"):
+            build(_decline, require_existing=True)
+    finally:
+        close()
+    assert not live.layout.record.exists()

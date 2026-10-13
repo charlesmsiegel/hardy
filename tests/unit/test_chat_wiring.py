@@ -459,6 +459,8 @@ def test_web_reports_a_schema_refusal_through_the_parser(tmp_path, monkeypatch, 
     config = settings(tmp_path)
     registry = ProjectRegistry(tmp_path / "registry.json", default_root=tmp_path / "projects")
     entry = Entry(path=config.layout.problem, added=0.0, last_opened=None)
+    config.layout.problem.mkdir(parents=True, exist_ok=True)
+    config.layout.record.write_text(' {"schema_version": 1} ')
     with pytest.raises(SystemExit) as excinfo:
         cli._web(config, parser=parser, args=SimpleNamespace(chat=None, port=0, open=False),
                  registry=registry, entry=entry)

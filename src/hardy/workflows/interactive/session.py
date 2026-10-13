@@ -378,7 +378,7 @@ class _ConversationTurn(Iterator[TurnEvent]):
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None, chat: str = DEFAULT_CHAT, detach_after: float = 10.0):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW, delegation_slots: int = 4, cas_factory: Callable[[Path], CasToolRuntime | None] | None = None, admission: AdmissionOwners | None = None, chat: str = DEFAULT_CHAT, detach_after: float = 10.0, require_existing: bool = False):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -460,7 +460,7 @@ class MathematicsSession:
         # thread and the spend ledger describe this machine and this account,
         # and a clone of the project must not inherit either.
         self.local_path = paths.local_state
-        self.record = SessionRecord(workspace, self._workspace_guard, chat=chat)
+        self.record = SessionRecord(workspace, self._workspace_guard, chat=chat, require_existing=require_existing)
         self._local_guard = self.record._local_guard
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
@@ -1786,7 +1786,7 @@ class MathematicsSession:
     def _streak_refusal(self, path: str, source: str) -> ToolResult | None:
         return self.formal._streak_refusal(path, source)
 
-    def _formal_save_policy(self) -> SavePolicy:
+    def _formal_save_policy(self, verify_commit: Callable[[], None] | None = None) -> SavePolicy:
         return SavePolicy(
             generated_refusal=self._generated_module_refusal,
             result_gate=self._result_gate,
@@ -1803,15 +1803,17 @@ class MathematicsSession:
             persist=self._save_state,
             owed_note=self._owed_note,
             committed=lambda path: self._supersede_import(f"lean/{path}"),
+            verify_commit=verify_commit or (lambda: None),
         )
 
     def _save_lean(self, path: str, source: str) -> ToolResult:
         return self.formal._save_lean(path, source, self._save_lean_unbraked)
 
     def _save_lean_unbraked(
-        self, path: str, source: str, *, ratchet: bool = True, generated: bool = False
+        self, path: str, source: str, *, ratchet: bool = True, generated: bool = False,
+        verify_commit: Callable[[], None] | None = None,
     ) -> ToolResult:
-        return self.formal._save_lean_unbraked(path, source, policy=self._formal_save_policy(), ratchet=ratchet, generated=generated)
+        return self.formal._save_lean_unbraked(path, source, policy=self._formal_save_policy(verify_commit), ratchet=ratchet, generated=generated)
 
     def _record_saved_results(self, audited: dict[str, str], records: dict[str, Any]) -> str:
         """The save's ledger half: what the audit graded, recorded; what it verified, resolved.
@@ -2792,7 +2794,7 @@ class MathematicsSession:
             "requirement, so state scaffolding as a lemma."
         )
 
-    def _document_policy(self) -> DocumentPolicy:
+    def _document_policy(self, verify_commit: Callable[[], None] | None = None) -> DocumentPolicy:
         return DocumentPolicy(
             bibliography_refusal=self._bibliography_refusal,
             stamp=self._stamp,
@@ -2801,13 +2803,14 @@ class MathematicsSession:
             registry=lambda: self.record.snapshot_of("names")["names"],
             owed_note=self._owed_note,
             committed=lambda path: self._supersede_import(f"tex/{path}"),
+            verify_commit=verify_commit or (lambda: None),
         )
 
     def _check_latex(self, path: str, source: str) -> ToolResult:
         return self.documents._check_latex(path, source, policy=self._document_policy())
 
-    def _save_latex(self, path: str, source: str) -> ToolResult:
-        return self.documents._save_latex(path, source, policy=self._document_policy())
+    def _save_latex(self, path: str, source: str, *, verify_commit: Callable[[], None] | None = None) -> ToolResult:
+        return self.documents._save_latex(path, source, policy=self._document_policy(verify_commit))
 
     def _tex_root_source(self) -> str:
         return self.documents._tex_root_source()
@@ -5115,7 +5118,7 @@ class MathematicsSession:
     def record_abandonment(self, reason: str) -> None:
         return self.turns.record_abandonment(reason, self._turn_persistence())
 
-    def save_authored(self, path: str, source: str) -> ToolResult:
+    def save_authored(self, path: str, source: str, *, verify_commit: Callable[[], None] | None = None) -> ToolResult:
         """Save one workspace file a person wrote, on the model's own terms.
 
         Same check, same shadow build of every file that imports it, same
@@ -5148,8 +5151,9 @@ class MathematicsSession:
         # build cache and record, so the save waits for the job (issue #349).
         # The note is written outside it; it touches none of those.
         with self._gate:
-            result = (self._save_lean_unbraked(relative, source) if tree == LEAN_DIR
-                      else self._save_latex(relative, source))
+            options = {"verify_commit": verify_commit} if verify_commit is not None else {}
+            result = (self._save_lean_unbraked(relative, source, **options) if tree == LEAN_DIR
+                      else self._save_latex(relative, source, **options))
         # The note names `path`, the tree-qualified name the Files page shows,
         # not the tree-relative one the workspace took. A reader picked the
         # file off that page; naming `relative` would describe a file the page

@@ -822,3 +822,41 @@ def test_tex_provenance_event_failure_preserves_committed_record_and_stale_stamp
     assert not json.loads((chat.workspace / "session.json").read_text()).get("imported")
     assert chat.state["tex_signature"] == before
     assert chat._stale_writeup()
+
+
+@pytest.mark.parametrize("kind,filename,original,replacement", [
+    ("lean", "Original.lean", CLEAN, CLEAN.replace("pileFact", "authoredFact")),
+    ("tex", "writeup.tex", DOCUMENT, PLAIN_ROOT),
+])
+def test_authored_commit_rechecks_base_after_compiler_external_edit(tmp_path, monkeypatch, kind, filename, original, replacement):
+    chat = make_session(tmp_path / "problem")
+    target = chat.workspace / kind / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(original)
+    external = "external editor wrote this\n"
+    compiler = chat.lean if kind == "lean" else chat.latex
+    method = "compile_module" if kind == "lean" else "check"
+    compile_original = getattr(compiler, method)
+    def racing(*args, **kwargs):
+        target.write_text(external)
+        return compile_original(*args, **kwargs)
+    monkeypatch.setattr(compiler, method, racing)
+    def verify_commit():
+        if target.read_text() != original:
+            raise ValueError("source changed during verification")
+    with pytest.raises(ValueError, match="source changed during verification"):
+        chat.save_authored(f"{kind}/{filename}", replacement, verify_commit=verify_commit)
+    assert target.read_text() == external
+    assert not any(event.get("reason") == "superseded" for event in events(chat.workspace))
+
+
+def test_existing_session_missing_record_never_initializes_fresh_problem(tmp_path):
+    from hardy.workflows.interactive.record import SchemaError
+    problem = tmp_path / "registered"
+    problem.mkdir()
+    with pytest.raises(SchemaError, match="missing"):
+        MathematicsSession(problem, factory(FakeChatRuntime, []),
+                           (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
+                           (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
+                           lambda proposal: False, require_existing=True)
+    assert not (problem / "session.json").exists()

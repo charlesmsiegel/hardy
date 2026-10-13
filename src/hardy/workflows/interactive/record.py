@@ -32,9 +32,10 @@ class SchemaError(ValueError):
     """A record whose schema or encoding this build cannot read."""
 
 class SessionRecord:
-    def __init__(self, workspace: Path, workspace_guard: WriteGuard | None = None, chat: str = DEFAULT_CHAT):
+    def __init__(self, workspace: Path, workspace_guard: WriteGuard | None = None, chat: str = DEFAULT_CHAT, *, require_existing: bool = False):
         paths = Layout(root=workspace.parent, slug=workspace.name, chat=chat)
         self.chat = chat
+        self.require_existing = require_existing
         self.state_path = workspace / RECORD
         self.transcript_path = paths.transcript
         self.local_path = paths.local_state
@@ -137,6 +138,10 @@ class SessionRecord:
             try:
                 with self._workspace_guard.open(RECORD, encoding="utf-8") as handle:
                     stored = json.loads(handle.read())
+            except FileNotFoundError:
+                if self.require_existing:
+                    raise SchemaError(f"{self.state_path} project record is missing") from None
+                raise
             except (json.JSONDecodeError, UnicodeDecodeError) as error:
                 raise SchemaError(f"{self.state_path} is not readable JSON: {error}") from None
             if not isinstance(stored, dict):
@@ -150,6 +155,8 @@ class SessionRecord:
                     f"{self.state_path} is schema version {version!r}; this Hardy reads version 2 only"
                 )
             return stored
+        if self.require_existing:
+            raise SchemaError(f"{self.state_path} project record is missing")
         # `audit` is absent until the first save; a workspace with none may not
         # read as a clean one.
         return {"schema_version": 2, "names": [], "assumptions": []}

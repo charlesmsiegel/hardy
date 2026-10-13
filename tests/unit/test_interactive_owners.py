@@ -282,3 +282,33 @@ def test_selected_record_snapshot_detaches_only_requested_values(tmp_path):
     selected["names"][0]["formal_name"] = "changed"
     assert record.state["names"] == [{"formal_name": "original"}]
     assert "missing" not in selected
+
+
+def test_existing_record_open_refuses_deletion_instead_of_initializing(tmp_path):
+    import pytest
+
+    from hardy.workflows.interactive.record import SchemaError
+    record = SessionRecord(tmp_path, require_existing=True)
+    with pytest.raises(SchemaError, match="missing"):
+        record.load()
+    assert not record.state_path.exists()
+
+
+def test_hot_final_gate_keeps_quarantine_without_copying_unrelated_history(tmp_path):
+    from types import SimpleNamespace
+
+    from hardy.workflows.interactive.formal import FormalWorkspaceService
+    from hardy.workflows.interactive.session import MathematicsSession
+    class Unrelated:
+        def __deepcopy__(self, memo):
+            raise AssertionError("gate copied unrelated history")
+    record = SessionRecord(tmp_path)
+    record.load()
+    record.state["quarantine"] = [{"formal_name": "Papers.Ref.claim"}]
+    record.state["reports"] = Unrelated()
+    chat = MathematicsSession.__new__(MathematicsSession)
+    chat.record = record
+    chat.formal = FormalWorkspaceService(SimpleNamespace(has_holes=lambda source: False), None)
+    refusal = chat._final_gates("axiom Papers.Ref.claim : True")
+    assert not refusal.ok
+    assert "quarantined" in refusal.output
