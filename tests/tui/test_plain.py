@@ -275,3 +275,56 @@ def test_command_interrupt_returns_to_prompt(settings):
     assert plain.run(settings, session, registry=commands, read=read, out=written.append) == 0
     assert session.sent == ['after interrupt']
     assert 'Command interrupted.' in '\n'.join(written)
+
+
+def test_sigint_during_checkpoint_restore_finishes_before_next_turn(settings, monkeypatch):
+    import os
+    import signal
+    import threading
+
+    from hardy.app.tui import handlers
+    from hardy.workflows import checkpoints
+
+    paths = settings.layout
+    paths.ensure()
+    paths.record.write_text('{"schema": "hardy.session/v1"}')
+    saved = checkpoints.save(paths)
+    released = threading.Event()
+    finished = threading.Event()
+    original = checkpoints.restore
+    def restore(*args, **kwargs):
+        os.kill(os.getpid(), signal.SIGINT)
+        assert released.wait(5)
+        try:
+            return original(*args, **kwargs)
+        finally:
+            finished.set()
+    monkeypatch.setattr(checkpoints, 'restore', restore)
+    async def confirm(self, question):
+        return True
+    monkeypatch.setattr(plain.PlainUi, 'confirm', confirm)
+    old = FakeSession()
+    old.closed = False
+    old.close = lambda: setattr(old, 'closed', True)
+    fresh = FakeSession()
+    def reopen(slug, confirm, config, **kwargs):
+        assert finished.is_set()
+        return config, fresh
+    replies = iter([f'/checkpoint restore {saved.id}', 'after restore'])
+    written = []
+    def out(text):
+        written.append(text)
+        if 'finishing it before continuing' in text:
+            released.set()
+    def read(prompt):
+        try:
+            return next(replies)
+        except StopIteration:
+            raise EOFError from None
+    try:
+        assert plain.run(settings, old, registry=handlers.build_registry(), reopen=reopen, read=read, out=out) == 0
+        assert old.closed and finished.is_set()
+        assert fresh.sent == ['after restore']
+        assert old.sent == []
+    finally:
+        released.set()

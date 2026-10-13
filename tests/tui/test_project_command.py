@@ -745,3 +745,59 @@ async def test_checkpoint_copy_runs_off_event_loop(ui, root, monkeypatch, operat
     state = State(config=config, session=object(), reopen=Reopener(root))
     ui.confirmations = [True]
     await asyncio.wait_for(handlers.handle_checkpoint(ui, f'restore {saved.id}' if operation == 'restore' else '', state), 5)
+
+
+@pytest.mark.parametrize('operation', ['save', 'restore', 'reopen'])
+async def test_checkpoint_cancellation_waits_for_copy_and_reopen(ui, root, monkeypatch, operation):
+    import asyncio
+    import threading
+
+    from hardy.workflows import checkpoints
+
+    _live_problem(root, 'sylow')
+    config = _settings(root, 'sylow')
+    saved = checkpoints.save(config.layout)
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    opener = Reopener(root)
+    fresh = object()
+    opener.session = fresh
+    original = opener if operation == 'reopen' else getattr(checkpoints, operation)
+    def blocked(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        try:
+            return original(*args, **kwargs)
+        finally:
+            completed.set()
+    if operation == 'reopen':
+        reopen = blocked
+    else:
+        monkeypatch.setattr(checkpoints, operation, blocked)
+        reopen = opener
+    class Session:
+        closed = False
+        def close(self):
+            self.closed = True
+    old = Session()
+    state = State(config=config, session=old, reopen=reopen)
+    ui.confirmations = [True]
+    task = asyncio.create_task(handlers.handle_checkpoint(ui, '' if operation == 'save' else f'restore {saved.id}', state))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not task.done(), 'cancelled checkpoint returned while its worker still owned the tree'
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done(), 'a second cancellation abandoned the checkpoint worker'
+        release.set()
+        after = await task
+        assert completed.is_set()
+        assert after.session is (old if operation == 'save' else fresh)
+        assert not after.done
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

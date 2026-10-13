@@ -1217,7 +1217,7 @@ async def handle_checkpoint(ui: Ui, argument: str, state: State) -> State:
                 return state
             return await _restore_checkpoint(ui, rest.strip(), state)
         name = argument.strip()
-        checkpoint = await asyncio.to_thread(checkpoints.save, paths, name=name)
+        checkpoint = await _finish_checkpoint(ui, asyncio.to_thread(checkpoints.save, paths, name=name))
     except (checkpoints.CheckpointError, layout.LayoutError, OSError) as error:
         ui.write(f"Checkpoint failed: {error}", style="error")
         return state
@@ -1228,7 +1228,6 @@ async def handle_checkpoint(ui: Ui, argument: str, state: State) -> State:
 
 
 async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
-    from hardy.app.terminal import confirm_assumption
     from hardy.workflows import checkpoints
 
     if state.reopen is None:
@@ -1240,6 +1239,27 @@ async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
                             "(What is replaced is checkpointed first.)"):
         ui.write("Nothing restored.")
         return state
+    return await _finish_checkpoint(ui, _replace_checkpoint(ui, state, chosen))
+
+
+async def _finish_checkpoint(ui: Ui, operation):
+    """Once a copy starts, settle it before another command can touch the tree."""
+    task = asyncio.create_task(operation)
+    notified = False
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not notified:
+                ui.write("Checkpoint operation already started; finishing it before continuing.", style="warning")
+                notified = True
+
+
+async def _replace_checkpoint(ui: Ui, state: State, chosen) -> State:
+    from hardy.app.terminal import confirm_assumption
+    from hardy.workflows import checkpoints
+
+    paths = state.config.layout
     # The session and its kernel let go of the tree before it is swapped: the
     # cell journal's lease, the delegation owner token and the provider thread
     # all belong to the process that opened this tree, not to the next one.
