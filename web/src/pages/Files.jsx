@@ -55,7 +55,7 @@
 // was never affected -- it reads the staged file directly
 // (`uploads.library_import`), never through `_read_import`.
 
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import Absent from '../components/Absent.jsx';
 import Empty from '../components/Empty.jsx';
 import Label from '../components/Label.jsx';
@@ -248,7 +248,7 @@ function LeanTexEditor({path, kind, revision, row}) {
       .then((answer) => answer.found && setTrail((previous) => [...previous, answer]))
       .catch(() => undefined);
 
-  if (filePanel.error) return <p className="panel__error">{filePanel.error}</p>;
+  if (filePanel.error && !filePanel.data) return <p className="panel__error">{filePanel.error}</p>;
   if (!filePanel.data) return <p className="panel__note">Reading {path}...</p>;
 
   const text = filePanel.data.text;
@@ -279,11 +279,14 @@ function LeanTexEditor({path, kind, revision, row}) {
 
   return (
     <div className="wb-files__editor-split">
+      {filePanel.error ? <p className="panel__error">{filePanel.error}; the editor keeps your text.</p> : null}
       <div className="wb-files__editor-main">
         <Editor
           path={path}
           kind={kind}
           text={text}
+          sha256={filePanel.data.sha256}
+          missing={filePanel.data.missing}
           truncated={filePanel.data.truncated}
           verdict={row ? row.verdict : null}
           onName={setCaretName}
@@ -599,6 +602,7 @@ function UploadCard({file, reload}) {
 
 export default function Files({arg}) {
   const {revision, refusal} = useSession();
+  const opened = useRef({path: '', kind: null});
   const [, go] = useHash();
   const filesPanel = usePanel('/api/files', revision);
   const envPanel = usePanel('/api/environment', revision);
@@ -624,7 +628,7 @@ export default function Files({arg}) {
   }, [uploadsPanel.reload]);
 
   const errors = [filesPanel, envPanel, uploadsPanel].map((panel) => panel.error).filter(Boolean);
-  if (errors.length) return <p className="panel__error">{errors[0]}</p>;
+  if (errors.length && (!filesPanel.data || !envPanel.data || !uploadsPanel.data)) return <p className="panel__error">{errors[0]}</p>;
   if (!filesPanel.data || !envPanel.data || !uploadsPanel.data) {
     return <p className="panel__note">Reading the project's files...</p>;
   }
@@ -635,7 +639,7 @@ export default function Files({arg}) {
   const totalTracked = data.lean.length + data.tex.length + data.cas.length + data.pdf.length;
   const empty = totalTracked === 0 && staged.length === 0;
 
-  if (empty) {
+  if (empty && !arg) {
     return (
       <div className="wb-page-body">
         <div className="wb-page-head">
@@ -656,7 +660,11 @@ export default function Files({arg}) {
   }
 
   const selectedPath = arg || '';
-  const selectedKind = selectedPath ? kindOf(selectedPath, data) : null;
+  const listedKind = selectedPath ? kindOf(selectedPath, data) : null;
+  // A removed row must not unmount an authored buffer. Keep the type of the
+  // already-open file; /api/file reports deletion so the editor can decide.
+  const selectedKind = listedKind || (opened.current.path === selectedPath ? opened.current.kind : null);
+  opened.current = {path: selectedPath, kind: selectedKind};
   const pick = (path) => go({page: 'files', arg: path});
   // One lookup, shared by the head line and the editor: two would be two
   // chances for the header's facts and the editor's verdict to describe
@@ -671,6 +679,7 @@ export default function Files({arg}) {
         <span className="page-title">Files</span>
         <span className="wb-page-subtitle">read here, written through the session {'·'} click a file to open it</span>
       </div>
+      {errors.length ? <p className="panel__error">{errors[0]}</p> : null}
       {refusal ? <div className="wb-files__refusal">{refusal}</div> : null}
 
       <div className="wb-files">

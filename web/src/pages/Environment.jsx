@@ -8,6 +8,8 @@
 // found on PATH; install elan...") -- this page's only job is to print it,
 // not to summarise or hide it.
 
+import {useState} from 'react';
+import {get} from '../api.js';
 import Empty from '../components/Empty.jsx';
 import Facts from '../components/Facts.jsx';
 import Label from '../components/Label.jsx';
@@ -17,9 +19,21 @@ import useSession from '../session/useSession.js';
 
 export default function Environment() {
   const {revision} = useSession();
-  const {data, error} = usePanel('/api/environment', revision);
+  const panel = usePanel('/api/environment', revision);
+  const [refreshed, setRefreshed] = useState(null);
+  const [failure, setFailure] = useState('');
+  const [probing, setProbing] = useState(false);
+  const data = refreshed?.revision === revision ? refreshed.data : panel.data;
+  const error = failure || panel.error;
+  const reprobe = async () => {
+    setProbing(true);
+    setFailure('');
+    try { setRefreshed({revision, data: await get('/api/environment?refresh=1')}); }
+    catch (error) { setFailure(String(error?.message ?? error)); }
+    finally { setProbing(false); }
+  };
 
-  if (error) return <p className="panel__error">{error}</p>;
+  if (error && !data) return <p className="panel__error">{error}</p>;
   if (!data) return <p className="panel__note">Probing the environment...</p>;
 
   return (
@@ -27,8 +41,12 @@ export default function Environment() {
       <div className="wb-page-head">
         <span className="page-title">Environment</span>
         <span className="wb-page-subtitle">what /env prints · nothing here is inferred</span>
+        <button type="button" className="button" disabled={probing} onClick={reprobe}>
+          {probing ? 'Probing...' : 'Re-probe'}
+        </button>
       </div>
 
+      {error ? <p className="panel__error">{error}</p> : null}
       {data.checks.length ? (
         <>
           <div className="wb-cards-auto">
