@@ -592,48 +592,65 @@ class ProjectOwners:
                                 scope=scope, context=item.context, reason=reason)
             batch.append(opened)
             current = opened
+        persisted: list[str] = []
         if batch:
             snapshot = store.append(batch, expected_revision=snapshot.revision, validate=self.policy.validate)
-        if verified:
+            # Receipts only after append returns: a prepared batch says nothing
+            # about what survived, and later journal/acceptance writes may fail.
+            if scope in batch:
+                persisted.append("scope recorded")
+            if item in batch:
+                persisted.append("item recorded" if existing is None else "item restated")
+            if current in batch:
+                persisted.append("proof obligation opened")
+        try:
+            if verified:
+                if current.status is ObligationStatus.RESOLVED:
+                    if self.policy.is_accepted(snapshot, current.resolution):
+                        if self._describes(current.resolution, module, signature, sources):
+                            return "; ".join(said)
+                        # Accepted on an earlier build of this module (its text,
+                        # a module it imports, the shared sources, the toolchain):
+                        # the declaration is verified again on the build as
+                        # saved, so the record says what the kernel checked this time.
+                        said.append("earlier evidence described an earlier build")
+                    else:
+                        # Accepted once, under a policy that has since changed its
+                        # digest or a record that no longer reads: this audit is
+                        # fresh evidence, and the obligation is re-accepted on it.
+                        said.append("earlier acceptance no longer reads under the current policy")
+                reference = self._mint(subject=item.ref, scope=scope.ref, context=item.context, module=module,
+                                       declaration=name, statement=statement, axioms=axioms, signature=signature,
+                                       source=source, inputs=source_inputs(module, sources))
+                persisted.append("evidence recorded")
+                proposal = Resolution(id=f"{current.id}:resolution:{reference.artifact.digest[:12]}",
+                                      obligation=current.ref, item=item.ref, evidence=(reference,),
+                                      explanation=f"{name} in {module}: {status}")
+                receipt = self.decide(snapshot, proposal)
+                if receipt is None:
+                    raise ValueError("acceptance decision unavailable")
+                persisted.append("acceptance decision recorded")
+                accepted = self.policy.accept(snapshot, proposal, receipt)
+                closed = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
+                                                    "status": "resolved", "resolution": accepted, "reason": None})
+                store.append((closed,), expected_revision=snapshot.revision, validate=self.policy.validate)
+                said.append("proof obligation re-accepted" if current.status is ObligationStatus.RESOLVED
+                            else "proof obligation resolved")
+                return "; ".join(said)
             if current.status is ObligationStatus.RESOLVED:
-                if self.policy.is_accepted(snapshot, current.resolution):
-                    if self._describes(current.resolution, module, signature, sources):
-                        return "; ".join(said)
-                    # Accepted on an earlier build of this module (its text,
-                    # a module it imports, the shared sources, the toolchain):
-                    # the declaration is verified again on the build as
-                    # saved, so the record says what the kernel checked this time.
-                    said.append("earlier evidence described an earlier build")
-                else:
-                    # Accepted once, under a policy that has since changed its
-                    # digest or a record that no longer reads: this audit is
-                    # fresh evidence, and the obligation is re-accepted on it.
-                    said.append("earlier acceptance no longer reads under the current policy")
-            reference = self._mint(subject=item.ref, scope=scope.ref, context=item.context, module=module,
-                                   declaration=name, statement=statement, axioms=axioms, signature=signature,
-                                   source=source, inputs=source_inputs(module, sources))
-            proposal = Resolution(id=f"{current.id}:resolution:{reference.artifact.digest[:12]}",
-                                  obligation=current.ref, item=item.ref, evidence=(reference,),
-                                  explanation=f"{name} in {module}: {status}")
-            receipt = self.decide(snapshot, proposal)
-            if receipt is None:
-                raise ValueError("acceptance decision unavailable")
-            accepted = self.policy.accept(snapshot, proposal, receipt)
-            closed = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
-                                                "status": "resolved", "resolution": accepted, "reason": None})
-            store.append((closed,), expected_revision=snapshot.revision, validate=self.policy.validate)
-            said.append("proof obligation re-accepted" if current.status is ObligationStatus.RESOLVED
-                        else "proof obligation resolved")
+                reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "status": "open",
+                                                      "resolution": None, "reason": reason})
+                store.append((reopened,), expected_revision=snapshot.revision, validate=self.policy.validate)
+                said.append(f"proof obligation reopened ({reason})")
+            elif current in batch:
+                said.append(f"proof obligation open ({reason})")
+            elif current.reason != reason:
+                revised = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "reason": reason})
+                store.append((revised,), expected_revision=snapshot.revision, validate=self.policy.validate)
+                said.append(f"proof obligation still open ({reason})")
             return "; ".join(said)
-        if current.status is ObligationStatus.RESOLVED:
-            reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "status": "open",
-                                                  "resolution": None, "reason": reason})
-            store.append((reopened,), expected_revision=snapshot.revision, validate=self.policy.validate)
-            said.append(f"proof obligation reopened ({reason})")
-        elif current in batch:
-            said.append(f"proof obligation open ({reason})")
-        elif current.reason != reason:
-            revised = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "reason": reason})
-            store.append((revised,), expected_revision=snapshot.revision, validate=self.policy.validate)
-            said.append(f"proof obligation still open ({reason})")
-        return "; ".join(said)
+        except (ValueError, OSError, LockTimeout) as error:
+            if not persisted:
+                raise
+            operation = "proof acceptance" if verified else "proof obligation update"
+            return "; ".join((*persisted, f"{operation} not recorded: {error}"))

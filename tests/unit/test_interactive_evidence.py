@@ -306,3 +306,41 @@ def test_partial_reopening_keeps_committed_reopening_notes(session_factory, monk
     snapshot = LedgerStore(chat.workspace).read()
     statuses = {snapshot.get(o.item).name: o.status for o in snapshot.current(c.Obligation)}
     assert statuses == {'a': c.ObligationStatus.OPEN, 'b': c.ObligationStatus.RESOLVED}
+
+
+def test_recording_reports_item_and_open_obligation_when_evidence_mint_fails(session_factory, monkeypatch):
+    from hardy.workflows.ledger.store import LedgerStore
+    chat = session_factory()
+    def fail(**kwargs):
+        raise OSError('mint failed')
+    monkeypatch.setattr(chat.owners, '_mint', fail)
+    note = chat.owners.record_saved({'Main': BASE}, {'Main': {'status': 'clean', 'declarations': [
+        {'name': 'base_fact', 'axioms': []}], 'forbidden': [], 'unapproved': [], 'assumed': []}}, {'Main': 'sig'})
+    snapshot = LedgerStore(chat.workspace).read()
+    assert snapshot.head('lean:base_fact') is not None
+    assert snapshot.current(c.Obligation)[0].status is c.ObligationStatus.OPEN
+    assert 'item recorded' in note and 'proof obligation opened' in note
+    assert 'proof acceptance not recorded: mint failed' in note
+    assert 'evidence recorded' not in note
+
+
+def test_recording_reports_journal_receipts_when_final_ledger_append_fails(session_factory, monkeypatch):
+    from hardy.workflows.ledger.store import LedgerStore
+    chat = session_factory()
+    append = LedgerStore.append
+    attempts = 0
+    def failing(store, records, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise OSError('final append failed')
+        return append(store, records, **kwargs)
+    monkeypatch.setattr(LedgerStore, 'append', failing)
+    note = chat.owners.record_saved({'Main': BASE}, {'Main': {'status': 'clean', 'declarations': [
+        {'name': 'base_fact', 'axioms': []}], 'forbidden': [], 'unapproved': [], 'assumed': []}}, {'Main': 'sig'})
+    assert 'item recorded' in note and 'proof obligation opened' in note
+    assert 'evidence recorded' in note and 'acceptance decision recorded' in note
+    assert 'proof acceptance not recorded: final append failed' in note
+    snapshot = LedgerStore(chat.workspace).read()
+    assert snapshot.current(c.Obligation)[0].status is c.ObligationStatus.OPEN
+    assert len(chat.owners.journal.read().records) == 2
