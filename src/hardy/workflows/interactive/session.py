@@ -355,11 +355,11 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
     return "\0".join(parts)
 
 
-# What one assumption probe may spend. Generous because it is paid once per
-# axiom request rather than per turn, and because the alternative -- timing out
-# and telling the human the statement is unchecked -- is the outcome the probe
-# exists to avoid.
+# What each assumption shape or vacuity probe may spend. Generous because
+# each runs once per axiom request, and a timeout leaves the statement unchecked.
 PROBE_SECONDS = 600.0
+# Automation is a disclosure retried on later saves, so it has a shorter budget.
+AUTOMATION_PROBE_SECONDS = 120.0
 
 
 class _ConversationTurn(Iterator[TurnEvent]):
@@ -1339,10 +1339,6 @@ class MathematicsSession:
     PROBES = admission_policy.PROBES
     WITNESSES = admission_policy.WITNESSES
 
-    # Consecutive refused `save_lean` calls on one path before the next is
-    # refused without running Lean. A failing run made 21 in a row.
-    SAVE_STREAK_LIMIT = 3
-
     def _assumption_probe(self, declaration: str) -> tuple[str | None, str]:
         return admission_policy.assumption_probe(declaration, run_source=self._admission_elaborate_source)
 
@@ -1350,7 +1346,7 @@ class MathematicsSession:
         return admission_policy.vacuity_probe(statement, run_source=self._admission_elaborate_source)
 
     def _automation_probe(self, proposed: Mapping[str, str]) -> dict[str, str] | None:
-        return self.formal._automation_probe(proposed, probes=self.PROBES, probe_seconds=PROBE_SECONDS, run_source=self._probe_lean_source)
+        return self.formal._automation_probe(proposed, probes=self.PROBES, probe_seconds=AUTOMATION_PROBE_SECONDS, run_source=self._probe_lean_source)
 
     def _refresh_automation(self, sources: dict[str, str] | None = None) -> str:
         return self.formal._refresh_automation(current=self._theorem_statements(sources), stored=self.record.snapshot_of("automation").get("automation", {}), environment=self._probe_environment(), probe=self._automation_probe, publish=self.record.publish_automation)
@@ -1711,18 +1707,19 @@ class MathematicsSession:
                     timeout=60,
                 )
                 out = probe.stdout
-                stopped = probe.interrupted or probe.timed_out or probe.output_overflow
+                stopped = probe.interrupted or probe.timed_out or probe.output_overflow or probe.returncode != 0
                 # A probe that was stopped has no answer: reading its partial
                 # output would silently narrow `LEAN_PATH` and stamp every
                 # external import `missing`.
-                if probe.returncode == 0:
+                if not stopped:
                     found = [Path(part) for part in out.strip().split(os.pathsep) if part]
             except (OSError, subprocess.SubprocessError):
+                stopped = True
                 found = []
         if not found:
             found = [Path(part) for part in os.environ.get("LEAN_PATH", "").split(os.pathsep) if part]
         if stopped:
-            # Answered by nobody: the probe was interrupted, so `found` is the
+            # Answered by nobody: the probe failed or was stopped, so `found` is the
             # inherited `LEAN_PATH` fallback rather than Lake's computed one.
             # Caching that would be durable damage rather than a slow turn --
             # a configured project's package paths would be missing, every
@@ -3853,7 +3850,7 @@ class MathematicsSession:
         return self.admission._consume_search_evidence()
 
     def _admission_elaborate_source(self, source: str):
-        return self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
+        return self._probe_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
 
     def _admission_refute_source(self, source: str):
         return self._probe_lean_source(source, timeout=max(self.lean.timeout, refute.PROBE_SECONDS))

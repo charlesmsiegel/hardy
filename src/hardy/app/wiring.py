@@ -7,7 +7,6 @@ digest would stale a pool whenever an unrelated command grew a flag.
 """
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path, PurePosixPath
@@ -87,7 +86,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             lean_command=(str(config.lake), "env", "lean"),
             timeout_seconds=config.limits.lean_process_seconds,
         )
-    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+    except (ValueError, OSError) as error:
         # A Lean that cannot be identified is a setup failure, and a setup
         # failure is a run: the workflow writes a manifest and a trajectory
         # saying so, where a traceback here would leave nothing on disk.

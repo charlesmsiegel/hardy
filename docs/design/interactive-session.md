@@ -329,6 +329,11 @@ proposal shown to the human carries the names inspected since the last request,
 each marked resolved or not, so the human sees what was tried rather than being
 told that something was.
 
+Assumption shape and vacuity elaborations each have a 600-second probe budget.
+The post-save automation disclosure has a separate 120-second budget; an
+unanswered disclosure is retried on a later save. All probes use the configured
+Lake environment without workspace or shared build paths.
+
 **The vacuity probe.** The first elaboration asks two questions at once: does
 the proposed axiom elaborate at all, and does any of a fixed automation ladder
 close it. A second elaboration runs only when the first returns no refusal, and
