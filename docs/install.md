@@ -95,6 +95,15 @@ Naming a release means that release: when `HARDY_VERSION` (or
 installer stops rather than quietly putting a branch on the machine under a
 version number that says otherwise.
 
+The macOS Homebrew bootstrap is pinned to a commit and a recorded SHA256. A
+checksum mismatch stops installation; there is no fallback to an unchecked
+script. Homebrew publishes no installer checksum, so this records the chosen
+script's identity rather than verifying a publisher signature. Existing tools
+and system package-manager downloads use those tools' own trust mechanisms.
+Repository-ref installs are not release-manifest verified: git is preferred
+because it records the resolved commit; archive fallbacks have no independent
+checksum. See [running safely](guides/running-safely.md) for the trust limits.
+
 ## What the installers do
 
 Each step is skipped when the machine already satisfies it, so re-running the
@@ -103,7 +112,9 @@ installer is cheap and safe.
 1. **Python 3.11+**, installed with the system package manager (`apt-get`,
    `dnf`/`yum`, `pacman`, `zypper`, `apk`), Homebrew, or winget. When no system
    Python is new enough, the POSIX installers fall back to a private
-   [uv](https://astral.sh/uv)-managed Python 3.12.
+   [uv](https://astral.sh/uv)-managed Python 3.12. A downloaded uv is pinned
+   to 0.13.0 and checked against a recorded per-platform SHA256 before extraction;
+   its executables live under the installation prefix in `bin/`.
 2. **Hardy itself**, the released wheel, verified against the release
    manifest, installed into a dedicated virtual environment with the `hardy`
    command linked into your `PATH`. Run from a checkout it is an editable
@@ -122,6 +133,8 @@ installer is cheap and safe.
    (`-NoLauncher`) skips this step.
 3. **`lake`**, installed through [elan](https://github.com/leanprover/elan),
    the Lean toolchain manager, which supplies `lake`, `lean`, and `elan`.
+   The bootstrap archive is pinned to v4.2.4 and checked against a recorded
+   per-platform SHA256 before its installer runs.
 4. **A shared Mathlib project**, a Lake project pinned to one Lean toolchain
    and one Mathlib commit (the values in `scripts/lib/common.sh`, which
    `hardy.app.installers` and the Windows installer repeat), with Mathlib's
@@ -186,8 +199,12 @@ curl, TeX), which are the only steps that use `sudo`.
 | `--no-launcher` | `-NoLauncher` | Do not put a launcher for `hardy web --open` on the Desktop (or in the Start Menu) |
 | `--from-release` | `-FromRelease` | Install the published wheel even from a checkout |
 | `--from-source` | `-FromSource` | Install this source tree, editable |
-| `--prefix DIR` | `-Prefix DIR` | Where the virtual environment and Lean project live |
-| `--bin-dir DIR` | `-BinDir DIR` | Where the `hardy` command is placed |
+| `--prefix DIR` | `-Prefix DIR` | Absolute directory for the virtual environment and Lean project; filesystem roots are refused |
+| `--bin-dir DIR` | `-BinDir DIR` | Absolute directory for the `hardy` command; filesystem roots are refused |
+
+The same directory restrictions apply to updates, uninstalls, `HARDY_HOME`,
+and `HARDY_BIN_DIR`. Explicit empty values, relative paths, and paths resolving
+to a filesystem root are rejected before installation or removal begins.
 
 `HARDY_MODEL` is used without prompting when it is already set, which is how
 to configure an unattended install:

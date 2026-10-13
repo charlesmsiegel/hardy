@@ -11,10 +11,56 @@
 # the full option list.
 set -euo pipefail
 
+# Refuse unsafe installation directories before downloads, mkdir, or removal.
+# Normalize dot components as well as existing symlinks: /tmp/.. is root too.
+bootstrap_require_absolute_dir_option() {
+	case "$2" in
+	/*) ;;
+	*) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
+	esac
+	normalized_dir="$(printf '%s\n' "$2" | awk -F/ '{
+		n=0; for(i=1;i<=NF;i++) {
+			if($i=="" || $i==".") continue;
+			if($i=="..") { if(n>0) n--; } else parts[++n]=$i;
+		}
+		for(i=1;i<=n;i++) printf "/%s",parts[i]; print "";
+	}')"
+	if [ -d "$2" ]; then normalized_dir="$(cd "$2" && pwd -P | sed 's#//*#/#g')"; fi
+	case "$normalized_dir" in
+	"" | /) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
+	esac
+}
+
+# A standalone entrypoint cannot source common.sh until after fetching it.
+# Keep this preflight in agreement with the shared parser's path validation.
+hardy_home="${HARDY_HOME-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+hardy_bin="${HARDY_BIN_DIR-$HOME/.local/bin}"
+take_directory=""
+for argument in "$@"; do
+	if [ -n "$take_directory" ]; then
+		case "$take_directory" in
+		--prefix) hardy_home="$argument" ;;
+		--bin-dir) hardy_bin="$argument" ;;
+		esac
+		take_directory=""
+		continue
+	fi
+	case "$argument" in --prefix | --bin-dir) take_directory="$argument" ;; esac
+done
+[ -z "$take_directory" ] || { printf 'error: %s needs a directory\n' "$take_directory" >&2; exit 1; }
+bootstrap_require_absolute_dir_option '--prefix (HARDY_HOME)' "$hardy_home"
+bootstrap_require_absolute_dir_option '--bin-dir (HARDY_BIN_DIR)' "$hardy_bin"
+
 SCRIPT_NAME=install-macos.sh
 REPO_ROOT=""
-script_directory="$(dirname "${BASH_SOURCE[0]:-$0}")"
-if [ -d "$script_directory" ]; then REPO_ROOT="$(cd "$script_directory/.." && pwd)"; fi
+script_path="${BASH_SOURCE[0]:-$0}"
+case "$script_path" in
+sh) ;;
+-sh) ;;
+bash) ;;
+-bash) ;;
+*) if [ -f "$script_path" ]; then REPO_ROOT="$(cd "$(dirname "$script_path")/.." && pwd)"; fi ;;
+esac
 
 # A copy of this script downloaded on its own (or piped from curl) has no
 # scripts/lib/common.sh beside it, so it fetches the rest of the installer and
@@ -61,14 +107,14 @@ hardy_fetch_installers() {
 	export HARDY_RELEASE_MANIFEST="$staging/download/SHA256SUMS"
 }
 
-if [ ! -e "$REPO_ROOT/scripts/lib/common.sh" ]; then
+if [ -z "$REPO_ROOT" ] || [ ! -f "$REPO_ROOT/scripts/lib/common.sh" ]; then
 	# Whether the repository was chosen, before the default hides the answer.
 	repo_chosen="${HARDY_REPO_URL:+1}"
 	# --prefix is parsed by the shared argument parser, long after this; but the
 	# installers are kept beside the installation they manage, so the bootstrap
 	# has to honour it too or an update would later look for them under the
 	# default prefix and find nothing.
-	hardy_home="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+	hardy_home="${HARDY_HOME-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
 	take_prefix=0
 	for argument in "$@"; do
 		if [ "$take_prefix" = 1 ]; then
@@ -153,7 +199,8 @@ if [ ! -e "$REPO_ROOT/scripts/lib/common.sh" ]; then
 		# unpacked archive keeps neither, and is the fallback for the clean
 		# machine that has no git yet.
 		if command -v git >/dev/null 2>&1; then
-			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" && fetched=1
+			if clone_output="$(git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" 2>&1)"; then fetched=1; fi
+			printf '%s\n' "$clone_output" | sed -e 's#://[^/@]*@#://***@#g' >&2
 		fi
 		if [ "$fetched" = 0 ] && command -v curl >/dev/null 2>&1; then
 			rm -rf "$staging"
@@ -199,14 +246,24 @@ use_homebrew_path() {
 	return 0
 }
 
+HOMEBREW_INSTALL_COMMIT="7a3f48c7e498d7df3237fd41c30f4d492857edf4"
+HOMEBREW_INSTALL_SHA256="5f333bbe53bc490e51e7ccb1df8779b3dd6ee73a1a7379efda216edb08ccb148"
+
 ensure_homebrew() {
 	use_homebrew_path
 	have brew && return 0
 	confirm "Install Homebrew from https://brew.sh (it manages Python and TeX here)?" ||
 		fail "Homebrew is required on macOS; install Python 3.11+ and MacTeX yourself, then re-run"
 	# The Homebrew installer prompts for sudo itself and needs the Command Line Tools.
-	NONINTERACTIVE=$([ "$ASSUME_YES" = 1 ] && echo 1 || echo "") \
-		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+	local installer
+	installer="$(mktemp "${TMPDIR:-/tmp}/hardy-homebrew.XXXXXX")" || fail "could not stage Homebrew bootstrap"
+	# Homebrew publishes no installer checksum. This recorded digest pins the
+	# reviewed commit and detects drift; it is not a publisher signature.
+	(
+		trap 'rm -f "$installer"' EXIT
+		download_bootstrap_asset "https://raw.githubusercontent.com/Homebrew/install/$HOMEBREW_INSTALL_COMMIT/install.sh" "$HOMEBREW_INSTALL_SHA256" "$installer"
+		NONINTERACTIVE=$([ "$ASSUME_YES" = 1 ] && echo 1 || echo "") /bin/bash "$installer"
+	)
 	use_homebrew_path
 	have brew || fail "Homebrew installed but brew is not on PATH; open a new shell and re-run"
 }
