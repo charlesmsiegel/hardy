@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,7 @@ from uuid import uuid4
 
 from hardy.formal.syntax import ImportCycle, dependents, module_name, module_path
 from hardy.formal.workspace import BuildFailure, LeanWorkspace
+from hardy.foundation.files import guard_for
 from hardy.foundation.values import FrozenModel, json_digest
 
 
@@ -117,13 +119,25 @@ class WorkspaceOverlay:
         changes = self.change_set()
         fresh = self._create(base, delegation_id=self.generation.delegation_id, base_revision=base_revision,
                              root=self.root, parent_generation=self.generation.id, now=now)
-        for change in changes.files:
-            relative = PurePosixPath(change.path)
-            if change.operation == "delete":
-                fresh.delete(relative)
-            else:
-                fresh._write(relative, change.content or "")
-        return fresh
+        # Apply the whole change set before checking its imports: deleting a
+        # dependency before its importer is just one valid ordering of a batch.
+        try:
+            for change in changes.files:
+                relative = PurePosixPath(change.path)
+                guard, name = guard_for(fresh.workspace.root, relative, create=True)
+                if change.operation == "delete":
+                    guard.unlink(name, missing_ok=True)
+                    fresh.workspace.forget(module_name(relative))
+                else:
+                    guard.write_text(name, change.content or "", sync=False)
+            sources = fresh.workspace.sources()
+            failure = fresh.workspace.build_modules(tuple(sources))
+            if failure is not None:
+                raise ValueError(f"overlay refresh refused: {failure.module}: {failure.output}")
+            return fresh
+        except BaseException:
+            shutil.rmtree(fresh.workspace.root.parent, ignore_errors=True)
+            raise
 
     @classmethod
     def open(cls, root: Path, generation_id: str, *, like: LeanWorkspace) -> WorkspaceOverlay:
@@ -160,10 +174,14 @@ class WorkspaceOverlay:
         finally:
             LeanWorkspace.discard(shadow)
 
-    def delete(self, relative: PurePosixPath) -> None:
+    def delete(self, relative: PurePosixPath) -> BuildFailure | None:
         shadow, commit = self.workspace.stage(relative, None)
         try:
-            commit()
+            affected = sorted(dependents(shadow.sources(), module_name(relative)))
+            failure = shadow.build_modules(affected)
+            if failure is None:
+                commit()
+            return failure
         finally:
             LeanWorkspace.discard(shadow)
 

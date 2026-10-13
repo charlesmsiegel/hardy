@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 from uuid import uuid4
 
+from hardy.formal.build_cache import publish_build
 from hardy.formal.workspace import LeanWorkspace
 from hardy.foundation.files import guard_for, normalize_newlines
 from hardy.foundation.locking import FileLock
@@ -624,7 +625,10 @@ class AuthoritativeAdmission:
                     # Journaled before the first write: a crash mid-mutation leaves a
                     # tree that is half the proposal, and recovery must know to look.
                     phase(AdmissionPhase.FILES_COMMITTING, head)
-                    self._commit_files(staged, plan)
+                    try:
+                        self._commit_files(staged, plan)
+                    except OSError as error:
+                        return fail(head, "conflicted", (f"file publication failed; inspect the admission attempt journal: {error}",))
                     phase(AdmissionPhase.FILES_COMMITTED, head)
                     try:
                         # Two transactions by the ledger's own contract: an obligation is
@@ -657,15 +661,25 @@ class AuthoritativeAdmission:
                         (f"the project head kept moving; gave up after {self.rounds} reconciliations",))
 
     def _commit_files(self, staged: LeanWorkspace, plan: ChangeSet) -> None:
-        for change in plan.files:
-            guard, name = guard_for(self.workspace.root, PurePosixPath(change.path), create=True)
-            if change.operation == "delete":
-                guard.unlink(name, missing_ok=True)
-            else:
-                guard.write_text(name, change.content or "")
-        if self.workspace.build.is_dir():
-            shutil.rmtree(self.workspace.build)
-        shutil.copytree(staged.build, self.workspace.build)
+        before = {change.path: self.workspace.read(PurePosixPath(change.path)) for change in plan.files}
+        changed: list[str] = []
+        with publish_build(staged.build, self.workspace.build):
+            try:
+                for change in plan.files:
+                    guard, name = guard_for(self.workspace.root, PurePosixPath(change.path), create=True)
+                    if change.operation == "delete":
+                        guard.unlink(name, missing_ok=True)
+                    else:
+                        guard.write_text(name, change.content or "")
+                    changed.append(change.path)
+            except BaseException:
+                for path in reversed(changed):
+                    guard, name = guard_for(self.workspace.root, PurePosixPath(path), create=True)
+                    if before[path] is None:
+                        guard.unlink(name, missing_ok=True)
+                    else:
+                        guard.write_text(name, before[path])
+                raise
 
     def recover(self) -> tuple[AdmissionAttempt, ...]:
         """Attempts left without a terminal phase; files-committed ones become sticky attention."""

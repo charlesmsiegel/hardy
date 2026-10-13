@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from hardy.formal.build_cache import publish_build
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.formal.syntax import (
     Compile,
@@ -389,28 +390,28 @@ class Promoter:
                         # realization means. Identical bytes are a harmless re-promotion.
                         return self._fail(record, PromotionBlocker(kind="target_conflict", detail=f"{shared} is already published with different content; a changed module is a new realization line, not an overwrite"))
                 build_before = temporary / "build-before"
-                if self.shared_build.is_dir():
-                    shutil.copytree(self.shared_build, build_before)
-                for shared, source in staged.items():
-                    guard, name = guard_for(self.shared_root, module_path(shared), create=True)
-                    guard.write_text(name, source)
-                if self.shared_build.is_dir():
-                    shutil.rmtree(self.shared_build)
-                shutil.copytree(shadow_build, self.shared_build)
                 try:
-                    held = self.realizations.heads().get(realization.id)
-                    if held is not None and held.status == "attached" and held.source_sha256 == source_sha:
-                        attached = held  # the same bytes were promoted before; nothing new to vouch for
-                    else:
-                        self.realizations.propose(realization)
-                        attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness,
-                                                            approval=request.approval, actor=record.actor)
+                    with publish_build(shadow_build, self.shared_build):
+                        for shared, source in staged.items():
+                            guard, name = guard_for(self.shared_root, module_path(shared), create=True)
+                            guard.write_text(name, source)
+                        held = self.realizations.heads().get(realization.id)
+                        if held is not None and held.status == "attached" and held.source_sha256 == source_sha:
+                            attached = held  # the same bytes were promoted before; nothing new to vouch for
+                        else:
+                            self.realizations.propose(realization)
+                            attached = self.realizations.attach(realization.id, verification=verification, faithfulness=request.faithfulness,
+                                                                approval=request.approval, actor=record.actor)
                 except Exception as error:
                     # Files without an admitted realization would be a shared
                     # module nothing vouches for: put the tree back as it was.
-                    self._restore(before, build_before)
+                    try:
+                        self._restore(before, build_before)
+                    except OSError as recovery_error:
+                        self._withdraw(realization.id, f"{type(error).__name__}: {error}")
+                        return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{error}; shared source rollback failed: {recovery_error}"[:2000]))
                     self._withdraw(realization.id, f"{type(error).__name__}: {error}")
-                    return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{type(error).__name__}: {error}; the shared tree was restored"[:2000]))
+                    return self._fail(record, PromotionBlocker(kind="admission_failed", detail=f"{type(error).__name__}: {error}; shared sources restored"[:2000]))
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
         admitted = record.model_copy(update={"status": "admitted", "realization": attached.id, "verification": verification, "at": _stamp(),
@@ -428,10 +429,8 @@ class Promoter:
                     parent = parent.parent
             else:
                 path.write_bytes(content)
-        if self.shared_build.is_dir():
-            shutil.rmtree(self.shared_build)
-        if build_before.is_dir():
-            shutil.copytree(build_before, self.shared_build)
+        # The publication context already restored the previous build before
+        # source rollback; never delete that live mirror during recovery.
 
     def _withdraw(self, realization_id_: str, reason: str) -> None:
         try:
