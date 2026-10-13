@@ -143,7 +143,9 @@ class FindingLedger:
                 if record.mode == "push":
                     pending.setdefault(record.recipient, []).append(record.finding_id)
             elif event.kind == "context.pushes_consumed":
-                pending[event.delegation_id] = []
+                consumed = set(event.payload.get("findings", ()))
+                pending[event.delegation_id] = [id for id in pending.get(event.delegation_id, ())
+                                                if id not in consumed]
         return tree, findings, promotions, pending
 
     def get(self, finding_id: str) -> Finding:
@@ -254,9 +256,13 @@ class FindingLedger:
     def consume_pushes(self, recipient: str) -> tuple[Finding, ...]:
         """The pushed findings a recipient takes into its next context; recorded as consumed."""
         pushed = self.pending_pushes(recipient)
-        if pushed:
-            self.store.append(recipient, "context.pushes_consumed", {"findings": [f.id for f in pushed]})
+        self.acknowledge_pushes(recipient, tuple(f.id for f in pushed))
         return pushed
+
+    def acknowledge_pushes(self, recipient: str, findings: tuple[str, ...]) -> None:
+        """Receipt only the findings actually included at the provider boundary."""
+        if findings:
+            self.store.append(recipient, "context.pushes_consumed", {"findings": list(findings)})
 
     # -- structure ---------------------------------------------------------------------
 

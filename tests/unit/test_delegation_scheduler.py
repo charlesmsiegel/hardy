@@ -279,3 +279,23 @@ def test_a_tranche_that_names_only_checks_is_granted_under_a_time_bounded_parent
                                                   tranche=ResourceDelta(official_checks=2), requested_by="human", reason="r"))
     assert decision.granted is not None, decision.refused_because
     assert decision.resulting == ResourceLease(official_checks=3, active_seconds=60.0)
+
+
+def test_launch_candidates_exclude_unowned_queue_and_submitted_meet_lane_floor(tmp_path):
+    store = _store(tmp_path, ("e1", _spec(lane="explore")), ("e2", _spec(lane="explore")),
+                   ("x1", _spec()), root_slots=2)
+    scheduler = _scheduler(store, constraints=PortfolioConstraints(exploration_floor=Decimal("0.5"), verify_floor=0))
+    chosen = scheduler.choose(1, candidates={"e2", "x1"}, submitted={"e1"})
+    assert [d.id for d in chosen] == ["x1"]
+    assert [d.id for d in scheduler.choose(1, candidates={"x1"})] == ["x1"]
+
+
+def test_submitted_parent_seats_exclude_blocked_candidates_before_choice(tmp_path):
+    store = _store(tmp_path, ("x", _spec()), root_slots=2)
+    cell = _spec("cell", checks=3)
+    store.append("cell", "delegation.created", {"spec": cell.model_dump(mode="json"), "parent_id": "root", "created_at": "t"})
+    store.append("cell", "budget.reserved", {"lease": cell.lease.model_dump(mode="json"), "slots": 1})
+    for id in ("a", "b"):
+        store.append(id, "delegation.created", {"spec": _spec().model_dump(mode="json"), "parent_id": "cell", "created_at": "a"})
+        store.append(id, "budget.reserved", {"lease": _spec().lease.model_dump(mode="json"), "slots": 1})
+    assert [d.id for d in _scheduler(store).choose(1, candidates={"b", "x"}, submitted={"a"})] == ["x"]

@@ -2023,3 +2023,14 @@ existing proof Race/best-first machinery reused beneath delegation
 The delegation/swarm architecture is now sufficiently settled to write an
 implementation plan. Rich UI/UX and general literature/book management should be
 designed as the next major follow-on efforts rather than folded into this spec.
+Coordinator plans bind to the subtree identity, objective, authority, isolation,
+child identities and pins. The complete observed view remains journal provenance.
+Live child usage and state changes do not invalidate a whole plan: allocation,
+state transitions and finding promotion recheck their own current preconditions.
+A coordinator redistributes only within its reserve; growing its own lease
+requires its parent.
+
+The safety digest uses `hardy.delegation/CoordinationCharter/v2`; the observed
+view preserves the prior `hardy.delegation/CoordinationView/v1` digest. Plans
+carrying only the prior view identity are refused and require a new checkpoint.
+Existing journal evidence keeps its original identity and is never restamped.

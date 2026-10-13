@@ -384,7 +384,11 @@ def run_worker(launch: WorkerLaunch, open_worker: OpenWorker, token: CancelToken
         except Exception as error:  # noqa: BLE001 - unknown usage is recorded as unknown
             store.append("worker.usage_error", {"error": f"{type(error).__name__}: {error}"},
                          phase=RunPhase.PROVING)
-    state.close()
+    try:
+        state.close()
+    except Exception as error:  # noqa: BLE001 - cleanup failure must preserve measured usage
+        status, reason = DelegationState.FAILED, f"{type(error).__name__}: {error}"
+        store.append("worker.close_error", {"error": reason}, phase=RunPhase.PROVING)
     measured = _usage_of(usage, exchanges=exchanges, seconds=max(0.0, clock() - started))
     measured = measured.model_copy(update={"official_checks": state.checks.checks})
     store.write_json(PurePosixPath("findings.json"), [f.model_dump(mode="json") for f in state.findings])

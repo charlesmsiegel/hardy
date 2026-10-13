@@ -1505,3 +1505,110 @@ def test_cancel_says_which_targets_only_another_session_can_stop(tmp_path):
         if second is not None:
             second.shutdown()
         first.shutdown()
+
+class HeldExecutor:
+    slots = 2
+
+    def __init__(self):
+        self.jobs = []
+
+    def submit(self, job):
+        from concurrent.futures import Future
+
+        from hardy.agents.executor import CancelToken, JobHandle
+        self.jobs.append(job)
+        return JobHandle(job.name, CancelToken(), Future())
+
+    def active(self):
+        return 0
+
+    def shutdown(self, *, wait):
+        pass
+
+
+def test_submitted_unstarted_workers_each_take_only_one_slot(tmp_path):
+    seed_lemma(tmp_path)
+    executor = HeldExecutor()
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=executor,
+                                     open_worker=_open([FINISH]), notify=lambda text: None,
+                                     root=RootResources(lease=ResourceLease(official_checks=4), slots=2))
+    first = controller.delegate(_spec(tmp_path))
+    second = controller.delegate(_spec(tmp_path))
+    assert [job.name for job in executor.jobs] == [first.id, second.id]
+    assert not controller._pending
+    controller.shutdown()
+
+
+def test_post_start_exception_preserves_check_liability(tmp_path, monkeypatch):
+    controller = _controller(tmp_path, _open([FINISH]), checks=4)
+    def crash(launch, open_worker, token):
+        from hardy.formal.budget import CheckBudget
+        budget = CheckBudget(official_checks=2, active_seconds=60, proof_seconds=60)
+        launch.on_budget(budget)
+        budget.acquire()
+        raise OSError("artifact write failed")
+    monkeypatch.setattr("hardy.workflows.delegation.controller.run_worker", crash)
+    try:
+        delegation = controller.delegate(_spec(tmp_path, checks=2))
+        controller.wait(delegation.id, timeout=5)
+        usage = LeaseLedger(controller.tree()).usage(delegation.id)
+        assert usage.official_checks == 1
+        assert "provider_calls" in usage.unknown
+        assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 3
+    finally:
+        controller.shutdown()
+
+
+def test_failed_executor_submit_preserves_pushed_findings(tmp_path):
+    from hardy.workflows.delegation.findings import Finding, FindingLedger
+    seed_lemma(tmp_path)
+    executor = HeldExecutor()
+    executor.slots = 1
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=executor,
+                                     open_worker=_open([FINISH]), notify=lambda text: None,
+                                     root=RootResources(lease=ResourceLease(official_checks=4), slots=2))
+    first = controller.delegate(_spec(tmp_path))
+    second = controller.delegate(_spec(tmp_path))
+    ledger = FindingLedger(controller.store)
+    finding = ledger.propose(Finding(id=f"{first.id}:finding:0", source_delegation=first.id,
+                                    kind="note", summary="read me", sequence=0))
+    ledger.promote(finding.id, recipient=second.id, mode="push", selector="human", authorized_by=ROOT_ID, reason="read")
+    executor.slots = 2
+    def reject(job):
+        raise RuntimeError("executor stopped")
+    executor.submit = reject
+    controller._dispatch()
+    assert [f.id for f in ledger.pending_pushes(second.id)] == [finding.id]
+    assert second.id in controller._pending
+    controller.shutdown()
+
+
+def test_worker_cleanup_failure_keeps_measured_provider_usage(tmp_path, monkeypatch):
+    def fail_close(state):
+        raise OSError("CAS cleanup failed")
+    monkeypatch.setattr("hardy.workflows.delegation.worker._WorkerState.close", fail_close)
+    controller = _controller(tmp_path, _open([FINISH], report={"cost_usd": 0.5, "usage": {"input_tokens": 3, "output_tokens": 1}}))
+    try:
+        delegation = controller.delegate(_spec(tmp_path))
+        done = controller.wait(delegation.id, timeout=5)
+        assert done.state is DelegationState.FAILED
+        assert LeaseLedger(controller.tree()).usage(delegation.id).cost_usd == Decimal("0.5")
+    finally:
+        controller.shutdown()
+
+
+def test_cancelled_before_start_keeps_zero_usage(tmp_path):
+    from hardy.agents.executor import WorkerCancelled
+    seed_lemma(tmp_path)
+    executor = HeldExecutor()
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=executor,
+                                     open_worker=_open([FINISH]), notify=lambda text: None,
+                                     root=RootResources(lease=ResourceLease(official_checks=4), slots=2))
+    try:
+        delegation = controller.delegate(_spec(tmp_path))
+        controller._handles[delegation.id]._future.set_exception(WorkerCancelled())
+        assert controller.tree().get(delegation.id).state is DelegationState.CANCELLED
+        assert LeaseLedger(controller.tree()).usage(delegation.id) == ResourceUsage()
+        assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 4
+    finally:
+        controller.shutdown()
