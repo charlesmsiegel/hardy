@@ -422,3 +422,60 @@ def test_charter_transition_preserves_legacy_view_identity_and_refuses_old_plan(
     finally:
         release.set()
         controller.shutdown()
+
+
+def test_finish_of_now_terminal_subtree_is_refused_without_aborting_plan(tmp_path):
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        assert started.wait(5)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        controller.finish_subtree(cell.id, synthesis="human finished", by="human")
+        release.set()
+        for child in children:
+            controller.wait(child.id, timeout=5)
+        assert controller.tree().get(cell.id).state is DelegationState.COMPLETED
+        plan = CoordinationPlan(view_digest=view.digest, actions=(
+            PlanAction(action="finish"), PlanAction(action="noop")))
+        outcomes = apply_plan(controller, cell.id, plan, ASSISTED)
+        assert [outcome.applied for outcome in outcomes] == [False, True]
+        assert "terminal" in " ".join(outcomes[0].refused_because)
+        applied = [event for event in controller.store.events() if event.kind == "coordinator.plan_applied"]
+        assert [outcome["applied"] for outcome in applied[-1].payload["outcomes"]] == [False, True]
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_tranche_refused_at_journal_does_not_abort_remaining_actions(tmp_path, monkeypatch):
+    from hardy.workflows.delegation.budget import LeaseLedger
+
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        original = controller.store.append
+        raced = False
+        def append(id, kind, payload, **kwargs):
+            nonlocal raced
+            event = original(id, kind, payload, **kwargs)
+            if kind == "scheduler.decision" and id == children[0].id and not raced:
+                raced = True
+                # A concurrent journal writer reserves the balance after the
+                # scheduler snapshot, before the requested reserve is committed.
+                ledger = LeaseLedger(controller.tree())
+                sibling = children[1].id
+                lease = ledger.reserved(sibling).model_copy(update={
+                    "official_checks": ledger.reserved(sibling).official_checks + ledger.allocatable(cell.id).official_checks})
+                original(sibling, "budget.reserved", {"lease": lease.model_dump(mode="json"), "slots": 1})
+            return event
+        monkeypatch.setattr(controller.store, "append", append)
+        plan = CoordinationPlan(view_digest=view.digest, actions=(
+            PlanAction(action="tranche", target=children[0].id, args={"checks": 1}), PlanAction(action="noop")))
+        outcomes = apply_plan(controller, cell.id, plan, ASSISTED)
+        assert [outcome.applied for outcome in outcomes] == [False, True]
+        assert "allocatable" in " ".join(outcomes[0].refused_because)
+        assert any(event.kind == "coordinator.plan_applied" for event in controller.store.events())
+    finally:
+        release.set()
+        controller.shutdown()

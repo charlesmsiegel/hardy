@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -758,12 +759,18 @@ class DelegationController:
                 except RuntimeError:
                     # The executor is gone; the work stays queued for a restart to relaunch.
                     return
-                if pushed:
-                    FindingLedger(self.store).acknowledge_pushes(chosen.id, tuple(f.id for f in pushed))
+                # Submission transfers ownership even if a later receipt write fails.
                 self._pending.pop(chosen.id, None)
                 self._handles[chosen.id] = handle
                 taken[parent] = taken.get(parent, 0) + wanted
                 handle.add_done_callback(self._settle)
+                if pushed:
+                    try:
+                        FindingLedger(self.store).acknowledge_pushes(chosen.id, tuple(f.id for f in pushed))
+                    except OSError:
+                        # The accepted worker keeps its seats and settlement callback.
+                        # Unreceipted findings remain pending for a later boundary.
+                        logging.getLogger(__name__).exception("Push receipt write failed for %s", chosen.id)
 
     def pin(self, id: str, kind: PinKind, *, by: str, value: int | None = None) -> Pin:
         with self._lock:
