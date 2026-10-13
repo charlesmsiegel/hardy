@@ -754,6 +754,13 @@ class WebHost:
                 # is flipped in `_start_turn`: a cancel arriving on another
                 # HTTP thread before the scheduled task runs a line of its
                 # body would otherwise find nothing running.
+                # Lift a previous operation's remembered stop at admission,
+                # before a cancel can arrive for this newly counted command.
+                # Safe commands may run beside stopped work and must leave
+                # its stop intact, just as in the terminal shell.
+                resume = getattr(self.session, "resume_work", None)
+                if resume is not None and not outcome.command.safe_in_flight:
+                    resume()
                 self._commands_running += 1
                 self._loop.create_task(self._run_command(outcome))
             return {"kind": outcome.kind, "message": outcome.message}
@@ -941,7 +948,9 @@ class WebHost:
             # Wherever the handler ended, including a raise: a count left up
             # would refuse every command and every turn after it.
             self._commands_running -= 1
-            self.ui.stopping(None)
+            # The handler that registered a stopper owns its cleanup. A safe
+            # command finishing beside it must not discard that operation's
+            # Escape callback.
             self.emit({"type": "state", **self.state()})
             self.emit({"type": "changed"})
             self._after_turn()

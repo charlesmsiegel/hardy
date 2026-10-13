@@ -856,3 +856,121 @@ def test_cas_commands_keep_requests_live_and_hold_project_ownership_until_worker
         release.set()
         pool.shutdown(wait=True)
         host.stop()
+
+
+def test_help_preserves_escape_for_a_native_export_replay(tmp_path):
+    from hardy.algebra.cas import CasSession, backend_for
+    from hardy.algebra.tools import CasToolRuntime
+    from hardy.workflows.contracts import RunLimits
+
+    host = _host(tmp_path)
+    session = CasSession(backend=backend_for("sympy"), command=None,
+                         log_path=host.config.layout.cas / "cells.jsonl",
+                         limits=RunLimits(cas_cell_seconds=10), cwd=tmp_path)
+    recorded, ready, release = (tmp_path / name for name in ("recorded", "replaying", "release"))
+    source = (
+        "import pathlib, time\n"
+        f"if pathlib.Path({str(recorded)!r}).exists():\n"
+        f"    pathlib.Path({str(ready)!r}).touch()\n"
+        f"    while not pathlib.Path({str(release)!r}).exists():\n        time.sleep(0.01)\n"
+        f"else:\n    pathlib.Path({str(recorded)!r}).touch()\nx = 41"
+    )
+    try:
+        assert session.execute(source).accepted
+        host.session.cas = CasToolRuntime(session=session, observation_bytes=4096)
+        host.session.resume_work = session.resume
+        sub = host.subscribe()
+        assert host.submit("/cas export")["kind"] == "command"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        assert host.submit("/help")["kind"] == "command"
+        _drain(sub, {"changed"})
+        assert host.state()["command_running"]
+        assert host.cancel()["stopped"] == 1
+        _drain(sub, {"changed"})
+        assert not host.state()["command_running"]
+        assert session.execute("x + 1").value_repr == "42"
+    finally:
+        release.touch()
+        host.stop()
+        session.close()
+
+
+def test_cancelled_native_reset_does_not_interrupt_the_next_web_cell(tmp_path, monkeypatch):
+    from hardy.algebra.cas import CasSession, backend_for
+    from hardy.algebra.tools import CasToolRuntime
+    from hardy.workflows.contracts import RunLimits
+
+    host = _host(tmp_path)
+    session = CasSession(backend=backend_for("sympy"), command=None,
+                         log_path=host.config.layout.cas / "cells.jsonl",
+                         limits=RunLimits(cas_cell_seconds=10), cwd=tmp_path)
+    entered, pressed = threading.Event(), threading.Event()
+    try:
+        assert session.execute("import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); x=1").accepted
+        original_kill = session._kernel.kill
+
+        def kill(*, immediate=False):
+            entered.set()
+            assert pressed.wait(3)
+            return original_kill(immediate=immediate)
+
+        monkeypatch.setattr(session._kernel, "kill", kill)
+        host.session.cas = CasToolRuntime(session=session, observation_bytes=4096)
+        host.session.resume_work = session.resume
+        sub = host.subscribe()
+        host.submit("/cas reset")
+        assert entered.wait(3)
+        assert host.cancel()["stopped"] == 1
+        pressed.set()
+        _drain(sub, {"changed"})
+        host.submit("/cas 42")
+        _drain(sub, {"changed"})
+        latest = session.records()[-1]
+        assert latest.source.strip() == "42"
+        assert latest.status == "ok", latest
+        assert latest.accepted
+    finally:
+        pressed.set()
+        host.stop()
+        session.close()
+
+
+def test_web_admission_preserves_safe_reads_and_stops_recorded_after_admission(tmp_path):
+    from hardy.algebra.cas import CasSession, backend_for
+    from hardy.algebra.tools import CasToolRuntime
+    from hardy.workflows.contracts import RunLimits
+
+    host = _host(tmp_path)
+    session = CasSession(backend=backend_for("sympy"), command=None,
+                         log_path=host.config.layout.cas / "cells.jsonl",
+                         limits=RunLimits(cas_cell_seconds=10), cwd=tmp_path)
+    try:
+        assert session.execute("x = 1").accepted
+        host.session.cas = CasToolRuntime(session=session, observation_bytes=4096)
+        host.session.resume_work = session.resume
+        sub = host.subscribe()
+        session.interrupt()
+        host.submit("/help")
+        _drain(sub, {"changed"})
+        assert session.execute("41").status == "interrupted"
+
+        def admit_then_stop():
+            # Same loop batch: the command is admitted, then stopped before
+            # its scheduled handler has executed any code.
+            assert host.submit("/cas 42")["kind"] == "command"
+            session.interrupt()
+
+        host._call(admit_then_stop)
+        _drain(sub, {"changed"})
+        assert session.records()[-1].source.strip() == "42"
+        assert session.records()[-1].status == "interrupted"
+        host.submit("/cas 43")
+        _drain(sub, {"changed"})
+        assert session.records()[-1].source.strip() == "43"
+        assert session.records()[-1].accepted
+    finally:
+        host.stop()
+        session.close()
