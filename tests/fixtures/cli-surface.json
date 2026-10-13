@@ -960,7 +960,7 @@
    "compare": "read two scoreboards with explicit treatment differences; JSON on stdout",
    "import-benchmark": "preserve a pinned upstream archive; no execution or corpus adoption",
    "history": "read chronological scoreboard observations without pooling; JSON on stdout",
-   "summary": "write a Markdown report over every scoreboard, one row per model (read-only)"
+   "summary": "write a Markdown report over every scoreboard, one row per compatible pooling group"
   },
   "subcommand_dest": "evals_command"
  },
@@ -2048,7 +2048,7 @@
     "type": "Path",
     "choices": null,
     "required": false,
-    "help": "default: evals/pools/<first label>/pool.json",
+    "help": "default: evals/pools/<lexically first label>/pool.json",
     "metavar": null
    }
   ],
