@@ -62,8 +62,6 @@ RUNTIME_ENVIRONMENT_KEYS = {
 # to know the deadline is not the end of the story: stopping a child that
 # overran costs time too, and `MAX_TEARDOWN_SECONDS` is what that can add.
 TEARDOWN_SECONDS = 2
-# One `wait` for the terminated child, then one `join` per output reader.
-MAX_TEARDOWN_SECONDS = TEARDOWN_SECONDS * 3
 
 # What a child gets between being asked to stop and being made to. Long enough
 # for Lean to unwind and for a CAS kernel to turn the signal into a traceback
@@ -75,6 +73,8 @@ INTERRUPT_GRACE_SECONDS = 2.0
 # because by then the leader is gone and nothing can be waited on: this is a
 # blocking pause on the way out of a run that has already been stopped.
 _SWEEP_GRACE_SECONDS = 0.2
+# Group grace, one bounded wait, then one bounded join per output reader.
+MAX_TEARDOWN_SECONDS = _SWEEP_GRACE_SECONDS + TEARDOWN_SECONDS * 3
 
 
 def child_creation() -> dict[str, object]:
@@ -370,6 +370,7 @@ class _Running:
 
     def __init__(self, child: subprocess.Popen) -> None:
         self.child = child
+        self.output_readers: tuple[threading.Thread, ...] = ()
         # Which thread started it. A child belongs to whoever owns that thread
         # at the moment a sweep looks: the turn's, unless the thread has been
         # detached into a background job -- then Esc's sweeps leave it alone
@@ -378,7 +379,7 @@ class _Running:
         self.interrupted = threading.Event()
         # That a stop was asked of this child at all, whatever its leader was
         # doing at the time. `interrupted` is the *record* and is set only for
-        # a leader still running, so a child that finished a moment before the
+        # work or output capture still pending, so a child that finished before the
         # press keeps the result it earned; but a leader can exit while the
         # compiler it started holds the pipes open, and there the work is very
         # much still going. Escalation keys on this, so the ladder is walked
@@ -514,11 +515,11 @@ def interrupt_thread(ident: int) -> int:
 def _interrupt(entries: list[_Running]) -> int:
     for entry in entries:
         # Read before signalling, and it decides only the *record*: a child
-        # that had already exited when the press landed finished on its own,
+        # whose leader and capture had already settled finished on its own,
         # and marking it interrupted would throw away a completed Lean check or
         # a successful compile and report that it never finished. The signal
         # still goes out either way, because the group can outlive its leader.
-        running = entry.child.poll() is None
+        running = entry.child.poll() is None or any(reader.is_alive() for reader in entry.output_readers)
         entry.asked.set()
         signal_interrupt(entry.child)
         if running:
@@ -550,7 +551,7 @@ def stop_thread(ident: int) -> int:
 
 def _stop(entries: list[_Running]) -> int:
     for entry in entries:
-        running = entry.child.poll() is None
+        running = entry.child.poll() is None or any(reader.is_alive() for reader in entry.output_readers)
         entry.asked.set()
         # Escalation is about the group, not the leader: a wrapper that has
         # already exited leaves nothing to terminate, and the descendant still
@@ -626,6 +627,7 @@ def run_guarded(
         list(argv),
         cwd=str(cwd) if cwd else None,
         env=env,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         **child_creation(),
@@ -635,18 +637,27 @@ def run_guarded(
     overflow = threading.Event()
 
     def drain(pipe, destination: bytearray) -> None:
-        while chunk := pipe.read1(4096):
-            with capture_lock:
-                remaining = max(0, limits.max_output_bytes - sum(map(len, captured)))
-                destination.extend(chunk[:remaining])
-                if len(chunk) > remaining:
-                    overflow.set()
+        try:
+            while chunk := pipe.read1(4096):
+                with capture_lock:
+                    remaining = max(0, limits.max_output_bytes - sum(map(len, captured)))
+                    destination.extend(chunk[:remaining])
+                    if len(chunk) > remaining:
+                        overflow.set()
+        except (OSError, ValueError):
+            pass
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                pipe.close()
 
     readers = [threading.Thread(target=drain, args=(pipe, target), daemon=True)
                for pipe, target in zip((child.stdout, child.stderr), captured, strict=True)]
     for reader in readers:
         reader.start()
     with tracked(child) as entry:
+        entry.output_readers = tuple(readers)
+        if entry.asked.is_set() and any(reader.is_alive() for reader in readers):
+            entry.interrupted.set()
         settled = threading.Event()
         watcher = threading.Thread(
             target=_escalate_after_grace, args=(child, entry, settled), daemon=True
@@ -685,14 +696,17 @@ def run_guarded(
             for reader in readers:
                 reader.join(timeout=TEARDOWN_SECONDS)
         interrupted = entry.interrupted.is_set()
-    stopped = timed_out or interrupted or overflow.is_set()
+    with capture_lock:
+        captured_stdout, captured_stderr = map(bytes, captured)
+        output_overflow = overflow.is_set()
+    stopped = timed_out or interrupted or output_overflow
     return GuardedResult(
         returncode=None if stopped else child.returncode,
-        stdout=_decode_output(bytes(captured[0])),
-        stderr=_decode_output(bytes(captured[1])),
+        stdout=_decode_output(captured_stdout),
+        stderr=_decode_output(captured_stderr),
         timed_out=timed_out,
         interrupted=interrupted,
-        output_overflow=overflow.is_set(),
+        output_overflow=output_overflow,
     )
 
 
@@ -776,13 +790,19 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
 
     def drain(pipe, destination: bytearray) -> None:
         nonlocal captured_bytes
-        while chunk := pipe.read1(4_096):
-            with output_lock:
-                remaining = max(0, spec.max_output_bytes - captured_bytes)
-                destination.extend(chunk[:remaining])
-                captured_bytes += min(len(chunk), remaining)
-                if len(chunk) > remaining:
-                    overflow.set()
+        try:
+            while chunk := pipe.read1(4_096):
+                with output_lock:
+                    remaining = max(0, spec.max_output_bytes - captured_bytes)
+                    destination.extend(chunk[:remaining])
+                    captured_bytes += min(len(chunk), remaining)
+                    if len(chunk) > remaining:
+                        overflow.set()
+        except (OSError, ValueError):
+            pass
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                pipe.close()
 
     assert child.stdout is not None
     assert child.stderr is not None
@@ -800,62 +820,54 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
     # had been counting down since before the signal was sent.
     grace_deadline: float | None = None
     with tracked(child) as entry:
-        while child.poll() is None:
-            if overflow.is_set():
-                break
-            now = time.monotonic()
-            if entry.escalated.is_set():
-                # The second press. Straight to the teardown below, which
-                # kills rather than waiting out a grace the user has already
-                # declined to wait for.
-                break
-            if entry.interrupted.is_set() and grace_deadline is None:
-                grace_deadline = now + INTERRUPT_GRACE_SECONDS
-            if grace_deadline is not None and now >= grace_deadline:
-                break
-            if now >= deadline:
-                timed_out = True
-                break
-            time.sleep(0.005)
-        # Read inside the register, so a stop asked for at the very last moment
-        # is still reported as one rather than as a clean exit that happened to
-        # land at the same time.
-        interrupted = entry.interrupted.is_set()
-        escalated = entry.escalated.is_set()
-        asked = entry.asked.is_set()
-
-    if child.poll() is not None and (asked or overflow.is_set()):
-        # The leader is gone but Hardy is what stopped this run, so the signal
-        # it took may have been taken by the wrapper alone. Sweep the group for
-        # the compiler that ignored it and would otherwise be left orphaned.
-        # Not done after an ordinary clean exit: there the group id belongs to
-        # a pid the system is free to reuse, and nothing is known to be left in
-        # it.
-        #
-        # SIGTERM and then SIGKILL, because there is no leader left to `wait`
-        # on -- nothing here can observe whether a descendant took the first
-        # signal, so the only alternative to following through is returning
-        # while it runs on.
-        terminate_group(child)
-        time.sleep(_SWEEP_GRACE_SECONDS)
-        kill_group(child)
-    if child.poll() is None:
-        # The group, not the leader: a wrapper that exits on SIGTERM while the
-        # compiler it started keeps running would leave the work orphaned and
-        # the budget this module exists to enforce meaningless.
-        terminate_group(child)
-        # A child that has already had its SIGTERM and stayed is not given
-        # another two seconds to think about it: that wait is what the second
-        # press bought its way out of.
+        entry.output_readers = tuple(readers)
+        if entry.asked.is_set() and any(reader.is_alive() for reader in readers):
+            entry.interrupted.set()
         try:
-            child.wait(timeout=0 if escalated else TEARDOWN_SECONDS)
-        except subprocess.TimeoutExpired:
+            # The leader can finish before its descendants release the pipes.
+            # Keep the deadline and stop registration until capture settles.
+            while child.poll() is None or any(reader.is_alive() for reader in readers):
+                if overflow.is_set():
+                    break
+                if entry.escalated.is_set():
+                    entry.interrupted.set()
+                    break
+                now = time.monotonic()
+                if entry.asked.is_set() and grace_deadline is None:
+                    grace_deadline = now + INTERRUPT_GRACE_SECONDS
+                if grace_deadline is not None and now >= grace_deadline:
+                    entry.interrupted.set()
+                    break
+                if now >= deadline:
+                    if entry.asked.is_set():
+                        entry.interrupted.set()
+                    else:
+                        timed_out = True
+                    break
+                time.sleep(0.005)
+            if timed_out or overflow.is_set() or entry.asked.is_set():
+                # A group remains addressable after its leader is reaped.
+                terminate_group(child)
+                if not entry.escalated.is_set():
+                    # Reaping the leader alone says nothing about descendants
+                    # which ignored SIGTERM. Follow through for the whole tree.
+                    time.sleep(_SWEEP_GRACE_SECONDS)
+                kill_group(child)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                child.wait(timeout=TEARDOWN_SECONDS)
+        except BaseException:
             kill_group(child)
-            child.wait()
-    for reader in readers:
-        reader.join(timeout=TEARDOWN_SECONDS)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                child.wait(timeout=TEARDOWN_SECONDS)
+            raise
+        finally:
+            for reader in readers:
+                reader.join(timeout=TEARDOWN_SECONDS)
+        interrupted = entry.interrupted.is_set()
 
-    output_overflow = overflow.is_set()
+    with output_lock:
+        captured_stdout, captured_stderr = bytes(stdout), bytes(stderr)
+        output_overflow = overflow.is_set()
     # A child Hardy stopped has no meaningful exit status, so the result says so
     # rather than reporting the signal as if the toolchain had decided it. An
     # interrupted child is stopped by Hardy too, even when it obeys promptly
@@ -867,8 +879,8 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
         argv=spec.argv,
         cwd=spec.cwd,
         returncode=None if stopped else child.returncode,
-        stdout=_decode_output(bytes(stdout)),
-        stderr=_decode_output(bytes(stderr)),
+        stdout=_decode_output(captured_stdout),
+        stderr=_decode_output(captured_stderr),
         timed_out=timed_out,
         output_overflow=output_overflow,
         duration_ms=round((time.monotonic() - started) * 1_000),
