@@ -205,10 +205,13 @@ def test_the_manifest_names_paths_the_same_way_on_every_platform(tmp_path):
     _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
     digest = manifest_digest(tmp_path)
 
-    hasher = hashlib.sha256()
-    for path in sorted(p for p in tmp_path.rglob("*.json") if p.name != "tombstones.json"):
-        hasher.update(path.relative_to(tmp_path).as_posix().encode("utf-8"))
-        hasher.update(path.read_bytes())
+    from hardy.corpus.catalog import MANIFEST_DIGEST_SCHEME
+    hasher = hashlib.sha256(MANIFEST_DIGEST_SCHEME.encode("ascii") + b"\0")
+    for path in sorted((p for p in tmp_path.rglob("*.json") if p.name != "tombstones.json"),
+                       key=lambda p: p.relative_to(tmp_path).as_posix()):
+        for field in (path.relative_to(tmp_path).as_posix().encode("utf-8"), path.read_bytes()):
+            hasher.update(len(field).to_bytes(8, "big"))
+            hasher.update(field)
     assert digest == hasher.hexdigest(), "the manifest must hash posix-shaped relative paths"
 
 
@@ -518,3 +521,75 @@ def test_a_sidecar_that_is_valid_json_of_the_wrong_shape_is_reported(tmp_path, n
     (root / name).write_text("[]", encoding="utf-8")
     issues = check_issues(root)
     assert issues and any(Path(name).name in issue for issue in issues), issues
+
+
+def test_check_validates_each_shard_once(tmp_path, monkeypatch):
+    from hardy.corpus import catalog
+    _write(tmp_path, "11", [_entry()])
+    _registry(tmp_path, {"odd-squares": "2026-09-03"})
+    _changelog(tmp_path)
+    calls = []
+    original = catalog._load_shard
+    def counted(path):
+        calls.append(path.name)
+        return original(path)
+    monkeypatch.setattr(catalog, "_load_shard", counted)
+    assert check_issues(tmp_path) == []
+    assert calls == ["11.json"]
+
+
+def test_bad_taxonomy_is_read_once_and_names_its_table(tmp_path, monkeypatch):
+    from hardy.corpus import taxonomy
+    _write(tmp_path, "11", [_entry(), _entry(id="second", name="Second")])
+    path = tmp_path / "taxonomy" / "msc2020.json"
+    path.write_text('{"codes": []}', encoding="utf-8")
+    taxonomy.forget()
+    reads = []
+    original = Path.read_text
+    def counted(self, *args, **kwargs):
+        if self == path:
+            reads.append(self)
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", counted)
+    assert check_issues(tmp_path) == ["msc2020.json has no 'codes' table"]
+    assert reads == [path]
+
+
+def test_manifest_frames_file_boundaries(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root in (a, b):
+        (root / "problems").mkdir(parents=True)
+    (a / "problems" / "01.json").write_bytes(b'{"x":1}')
+    (a / "problems" / "02.json").write_bytes(b'{"y":2}')
+    (b / "problems" / "01.json").write_bytes(b'{"x":1}problems/02.json{"y":2}')
+    assert manifest_digest(a) != manifest_digest(b)
+
+
+def test_manifest_paths_have_portable_case_sensitive_order(tmp_path):
+    from hardy.corpus.catalog import _content_paths
+    (tmp_path / "fixtures").mkdir()
+    for name in ("Z.json", "a.json", "_.json"):
+        (tmp_path / "fixtures" / name).write_bytes(b'{}')
+    assert [p.name for p in _content_paths(tmp_path)] == ["Z.json", "_.json", "a.json"]
+
+
+def test_manifest_scheme_transition_preserves_published_release(tmp_path):
+    from hardy.corpus.catalog import MANIFEST_DIGEST_SCHEME
+    _write(tmp_path, "11", [_entry()])
+    _registry(tmp_path, {"odd-squares": "2026-09-03"})
+    _changelog(tmp_path, digest=manifest_digest(tmp_path, scheme="legacy-v1"))
+    old = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert check_issues(tmp_path) == []
+    assert release_issues(tmp_path, old) == []
+    assert release(tmp_path, "0.1.1", ["framed manifest"], today="2026-10-13") == []
+    assert f"scheme {MANIFEST_DIGEST_SCHEME}" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert old in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") or old.split("\n\n", 1)[1] in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+
+
+def test_explicit_v2_scheme_does_not_accept_a_legacy_digest(tmp_path):
+    from hardy.corpus.catalog import MANIFEST_DIGEST_SCHEME
+    _write(tmp_path, "11", [_entry()])
+    _changelog(tmp_path, digest=manifest_digest(tmp_path, scheme="legacy-v1"))
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(path.read_text(encoding="utf-8").replace("\n\n- initial", f" - scheme {MANIFEST_DIGEST_SCHEME}\n\n- initial"), encoding="utf-8")
+    assert any("content changed" in issue for issue in version_issues(tmp_path))

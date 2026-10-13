@@ -85,7 +85,7 @@ def test_twins_are_excluded_from_the_completion_rate():
 def test_twins_appear_in_the_twin_table_with_a_refusal_rate():
     rows = [_row("t", "true", "solved"), _row("f", "false", "refused"), _row("g", "false", "graded")]
     stats = summary.twin_stats(rows)
-    assert stats == {"refused": 1, "twins": 2, "rate": 50.0}
+    assert stats == {"refused": 1, "twins": 2, "invalid_twins": 0, "rate": 50.0}
 
 
 def test_totals_and_averages_survive_none_tokens_and_none_wall_seconds():
@@ -286,14 +286,27 @@ def test_two_boards_for_different_models_produce_two_model_rows(tmp_path):
     assert [r["id"] for r in data["models"][1]["rows"]] == ["c"]
 
 
-def test_two_boards_for_one_model_with_different_pooling_keys_is_refused(tmp_path):
+def test_two_boards_for_one_model_with_different_pooling_keys_are_separate(tmp_path):
     problems, baseline = _files(tmp_path)
     _board(tmp_path / "boards" / "a", ids=["t"], problems=problems, baseline=baseline, model="model-a", run_digest="r1")
     _board(tmp_path / "boards" / "b", ids=["c"], problems=problems, baseline=baseline, model="model-a", run_digest="r2")
-    with pytest.raises(summary.SummaryRefused) as caught:
+    data = summary.build(tmp_path / "boards", problems_path=problems, baseline_path=baseline)
+    assert [m["boards"] for m in data["models"]] == [["a"], ["b"]]
+    text = summary.render(data, problems=load_corpus(problems), root=problems)
+    assert "model-a [batch; r1;" in text and "model-a [batch; r2;" in text
+    out = tmp_path / "EVALS.md"
+    summary.write(tmp_path / "boards", problems_path=problems, baseline_path=baseline, out_path=out)
+    before = out.read_bytes()
+    summary.write(tmp_path / "boards", problems_path=problems, baseline_path=baseline, out_path=out)
+    assert out.read_bytes() == before
+
+
+def test_duplicate_slots_in_one_summary_group_are_still_refused(tmp_path):
+    problems, baseline = _files(tmp_path)
+    for label in ("a", "b"):
+        _board(tmp_path / "boards" / label, ids=["t"], problems=problems, baseline=baseline, model="model-a", run_digest="r1")
+    with pytest.raises(summary.SummaryRefused, match="repeat 0"):
         summary.build(tmp_path / "boards", problems_path=problems, baseline_path=baseline)
-    assert "run_procedure_digest" in str(caught.value)
-    assert "model-a" in str(caught.value)
 
 
 def test_no_scoreboards_at_all_produces_a_valid_file_not_a_crash(tmp_path):
@@ -316,3 +329,9 @@ def test_write_produces_the_file_end_to_end_and_is_stable_on_regeneration(tmp_pa
     summary.write(tmp_path / "boards", problems_path=problems, baseline_path=baseline, out_path=out_path)
     second_bytes = out_path.read_bytes()
     assert first_bytes == second_bytes
+
+
+def test_invalid_twins_are_visible_but_excluded_from_refusal_denominator():
+    rows = [_row("f", "false", "refused"), _row("g", "false", "invalid")]
+    assert summary.twin_stats(rows) == {"refused": 1, "twins": 1, "invalid_twins": 1, "rate": 100.0}
+    assert summary.twin_stats([rows[1]])["rate"] is None

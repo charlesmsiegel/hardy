@@ -52,6 +52,9 @@ class TierAggregate(FrozenModel):
     solved_other: int
     unsolved: int
     invalid: int
+    invalid_true: int = 0
+    invalid_twins: int = 0
+    measured_twins: int = 0
     solve_rate: float | None
     interval: tuple[float, float]
     refused: int

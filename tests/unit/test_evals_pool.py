@@ -221,3 +221,16 @@ def test_the_default_output_is_a_named_pool_directory_holding_pool_json(tmp_path
     assert written.is_file()
     assert json.loads(written.read_text(encoding="utf-8"))["boards"] == ["a"]
     assert not (tmp_path / "pools" / "a").is_file()
+
+
+def test_label_order_does_not_change_pool(tmp_path):
+    a = _board(tmp_path / "a", ids=["t"], run_digest="r", env_digest="e")
+    b = _board(tmp_path / "b", ids=["u"], run_digest="r", env_digest="e")
+    assert pool.pool([a, b], problems_path=PROBLEMS, baseline_path=BASELINE) == pool.pool(
+        [b, a], problems_path=PROBLEMS, baseline_path=BASELINE)
+
+
+def test_duplicate_labels_are_refused_explicitly(tmp_path):
+    a = _board(tmp_path / "a", ids=["t"], run_digest="r", env_digest="e")
+    with pytest.raises(pool.PoolRefused, match="label.*a.*twice"):
+        pool.pool([a, a], problems_path=PROBLEMS, baseline_path=BASELINE)

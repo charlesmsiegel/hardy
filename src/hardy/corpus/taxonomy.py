@@ -29,9 +29,8 @@ class UnknownCode(KeyError):
 class MalformedTaxonomy(ValueError):
     """A taxonomy file that parses as JSON but is not a taxonomy.
 
-    A `ValueError` so that `corpus.load_corpus`, which runs these lookups
-    inside entry validation, normalises it to a `CorpusError` rather than
-    letting a bare `KeyError` walk out of `hardy evals corpus check`.
+    Corpus loading validates the tables before parsing entries and reports
+    the malformed table once, independently of shard size.
     """
 
 
@@ -180,3 +179,14 @@ def arxiv_of(code: str) -> str:
 def arxiv_classes() -> frozenset[str]:
     """The mapping's codomain -- what an `arxiv_override` may name."""
     return frozenset(_mapping()["arxiv"].values())
+
+
+def validate(root: Path) -> None:
+    """Validate both tables before entry validators can obscure their errors."""
+    for name, read in (("msc2020.json", _codes_at), ("msc-to-arxiv.json", _mapping_at)):
+        try:
+            read(root)
+        except MalformedTaxonomy:
+            raise
+        except (OSError, ValueError) as error:
+            raise MalformedTaxonomy(f"{name}: {error}") from error

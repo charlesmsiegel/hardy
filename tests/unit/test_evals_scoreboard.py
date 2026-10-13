@@ -701,3 +701,13 @@ def test_the_disclosure_counts_only_statements_the_headline_can_reach():
     floor = scoreboard.aggregate([], baseline, active_ids=active).floor
     assert floor["active"] == 4, "every active entry is still counted as active"
     assert floor["active_unwitnessed"] == 2, "only the two the headline measures"
+
+
+def test_invalid_twins_are_missing_measurements_with_explicit_counts():
+    rows = [_row(expected="false", outcome="refused"),
+            _row(expected="false", outcome="invalid"), _row(outcome="invalid")]
+    result = scoreboard._tier_aggregate(rows, _baseline({}))
+    assert result.refusal_rate == 1.0
+    assert result.measured_twins == 1
+    assert result.invalid == 2 and result.invalid_true == 1 and result.invalid_twins == 1
+    assert scoreboard._tier_aggregate([rows[1]], _baseline({})).refusal_rate is None
