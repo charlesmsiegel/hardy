@@ -1,4 +1,4 @@
-"""The journal is append-only and hash-chained; state is replayed, never cached."""
+"""The journal is append-only and hash-chained; verified replay may be memoized."""
 import json
 from decimal import Decimal
 
@@ -237,3 +237,51 @@ def test_append_decided_reads_and_writes_under_one_lock_and_may_write_nothing(tm
     assert store.tree().revision == seen[0]
     event = store.append_decided("root", "delegation.paused", decide)
     assert event is not None and event.sequence == seen[1] and event.payload == {"reason": f"at {seen[1]}"}
+
+
+def test_unchanged_and_owned_appends_reuse_verified_replay(tmp_path, monkeypatch):
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    reads = []
+    original = store._read
+    monkeypatch.setattr(store, "_read", lambda guard: (reads.append(1), original(guard))[1])
+    for _ in range(10):
+        store.tree()
+        store.events()
+        store.append("root", "delegation.progress", {"note": "working"})
+    assert not reads
+    snapshot = store.events()
+    snapshot[0].payload["created_at"] = "mutated"
+    assert store.events()[0].payload["created_at"] == "t"
+
+
+def test_cached_store_detects_external_append_and_same_size_tamper(tmp_path):
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    DelegationStore(tmp_path).append("root", "delegation.progress", {"note": "external"})
+    assert store.tree().revision == 2
+    path = tmp_path / "delegations" / "journal.jsonl"
+    path.write_bytes(path.read_bytes().replace(b'external', b'tampered'))
+    with pytest.raises(ValueError, match="digest"):
+        store.tree()
+
+
+@pytest.mark.parametrize("change", ["truncate", "replace", "delete"])
+def test_cached_store_refuses_verified_history_rollback(tmp_path, change):
+    store = DelegationStore(tmp_path)
+    _create(store, "root")
+    path = tmp_path / "delegations" / "journal.jsonl"
+    start = path.read_bytes()
+    store.append("root", "usage.reported", {"usage": ResourceUsage(provider_calls=3).model_dump(mode="json")})
+    if change == "truncate":
+        path.write_bytes(start)
+    elif change == "replace":
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(start)
+        replacement.replace(path)
+    else:
+        path.unlink()
+    with pytest.raises(ValueError, match="history"):
+        store.tree()
+    with pytest.raises(ValueError, match="history"):
+        store.append("root", "delegation.progress", {"note": "must not replenish"})
