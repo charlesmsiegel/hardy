@@ -4,16 +4,20 @@ from __future__ import annotations
 import contextlib
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from hardy.algebra.contracts import CasError
+from hardy.algebra.operations import OperationControl
 from hardy.foundation.process import (
+    INTERRUPT_GRACE_SECONDS,
     can_contain,
     child_creation,
     child_environment,
     contain,
     kill_group,
+    signal_interrupt,
     tree_has_members,
 )
 from hardy.foundation.values import FrozenModel
@@ -95,6 +99,7 @@ def run_exported_script(
     cwd: Path,
     timeout: float,
     max_output_bytes: int,
+    control: OperationControl | None = None,
 ) -> ScriptRun:
     """Execute a rendered script the way a reader would, and capture it.
 
@@ -108,6 +113,8 @@ def run_exported_script(
     memory -- and a `MemoryError` raised there would take the export's
     artifacts with it, which is exactly what an export is supposed to survive.
     """
+    if control is not None:
+        control.check()
     cwd.mkdir(parents=True, exist_ok=True)
     argv = backend.script_argv(command, script)
     # A line-oriented interpreter is fed the file on stdin, as the session
@@ -173,73 +180,114 @@ def run_exported_script(
     workers.append(feeder)
     for worker in workers:
         worker.start()
-    timed_out = False
-    try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-    finally:
-        # Killed first, and only then joined. A writer still blocked on a full
-        # pipe is released by the child's death -- the write fails and the
-        # thread unwinds -- whereas closing the handle from here would queue
-        # behind the very write that is stuck. Every worker is a daemon and
-        # every join is bounded, so a wedged one costs a thread.
-        if process.poll() is None:
-            process.kill()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=5)
-        for worker in workers:
-            worker.join(timeout=5)
-        # A reader still going is a reader with more to read. A descendant that
-        # holds the pipe open and writes after the script itself has exited
-        # keeps its worker alive past the join, and snapshotting the buffer
-        # there and calling the capture complete let an export compare against
-        # a transcript that was still arriving -- and report `verified` for it.
-        if any(reader.is_alive() for reader in readers):
-            overflowed[0] = True
-        # Whatever the script started is stopped here, before the caller reads
-        # the published file back. A descendant that redirected its own output
-        # is invisible to every check above -- the workers finish, the capture
-        # looks complete -- and it outlives the run: one that slept and then
-        # rewrote `sys.argv[0]` changed the artifact after the manifest had
-        # recorded its hash, with the verdict already `verified`. The group
-        # exists to be addressed as one, and the run is over.
-        #
-        # Probed before it is killed, because a group with members after the
-        # leader has been reaped is the evidence, and killing it destroys the
-        # evidence. What this cannot see is a descendant that left the group
-        # with `setsid` (or, on Windows, one created to break away from the
-        # job). Where nothing held the tree the probe answers None, and
-        # `descendants_unknown` says so, rather than a probe reporting
-        # "nothing left behind" because nobody looked.
-        if can_sweep_descendants():
-            members = tree_has_members(process)
-            left_behind[0] = bool(members)
-            unknown[0] = members is None
+    stop_requested = threading.Event()
+
+    def interrupt() -> bool:
+        stop_requested.set()
+        if not signal_interrupt(process):
+            # A GUI host on Windows has no console to deliver the signal.
+            # Asking must still end the operation instead of waiting out its
+            # full script deadline for an interrupt that never arrived.
+            kill_group(process)
+        return True
+
+    def escalate() -> bool:
+        stop_requested.set()
         kill_group(process)
-        # And each stream is closed only once its own worker has actually let
-        # go of it. A drain thread blocked in `pipe.read1` -- because, say, a
-        # grandchild the child spawned inherited the handle and is still
-        # holding it open -- holds that `BufferedReader`'s lock for as long as
-        # the read is stuck; `_feed` closes stdin itself and holds its
-        # `BufferedWriter`'s lock the same way for as long as its write is
-        # stuck. Closing any of those same handles from here would wait on
-        # that same blocked call, with no timeout, and the bounded joins two
-        # lines above buy nothing at all. Leaving a stream to its wedged
-        # worker costs a file handle for as long as that thread lives; the
-        # child is already dead, so its end of the pipe is gone regardless and
-        # nothing is kept alive by the wait.
-        closing = []
-        if not readers[0].is_alive():
-            closing.append(process.stdout)
-        if len(readers) > 1 and not readers[1].is_alive():
-            closing.append(process.stderr)
-        if not feeder.is_alive():
-            closing.append(process.stdin)
-        for stream in closing:
-            if stream is not None:
-                with contextlib.suppress(OSError, ValueError):
-                    stream.close()
+        return True
+
+    # Keep the target registered while settling capture workers: a leader
+    # may exit while a descendant still holds both output pipes open.
+    with (control.bind(interrupt, escalate) if control else contextlib.nullcontext()):
+        timed_out = False
+        try:
+            if control is not None:
+                control.check()
+            deadline = time.monotonic() + timeout
+            grace_deadline = None
+            while True:
+                now = time.monotonic()
+                if stop_requested.is_set():
+                    if grace_deadline is None:
+                        grace_deadline = now + INTERRUPT_GRACE_SECONDS
+                    if now >= grace_deadline:
+                        kill_group(process)
+                        break
+                remaining = deadline - now
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    process.wait(timeout=min(0.05, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            # Killed first, and only then joined. A writer still blocked on a full
+            # pipe is released by the child's death -- the write fails and the
+            # thread unwinds -- whereas closing the handle from here would queue
+            # behind the very write that is stuck. Every worker is a daemon and
+            # every join is bounded, so a wedged one costs a thread.
+            if process.poll() is None:
+                process.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=5)
+            if stop_requested.is_set():
+                kill_group(process)
+            for worker in workers:
+                worker.join(timeout=5)
+            # A reader still going is a reader with more to read. A descendant that
+            # holds the pipe open and writes after the script itself has exited
+            # keeps its worker alive past the join, and snapshotting the buffer
+            # there and calling the capture complete let an export compare against
+            # a transcript that was still arriving -- and report `verified` for it.
+            if any(reader.is_alive() for reader in readers):
+                overflowed[0] = True
+            # Whatever the script started is stopped here, before the caller reads
+            # the published file back. A descendant that redirected its own output
+            # is invisible to every check above -- the workers finish, the capture
+            # looks complete -- and it outlives the run: one that slept and then
+            # rewrote `sys.argv[0]` changed the artifact after the manifest had
+            # recorded its hash, with the verdict already `verified`. The group
+            # exists to be addressed as one, and the run is over.
+            #
+            # Probed before it is killed, because a group with members after the
+            # leader has been reaped is the evidence, and killing it destroys the
+            # evidence. What this cannot see is a descendant that left the group
+            # with `setsid` (or, on Windows, one created to break away from the
+            # job). Where nothing held the tree the probe answers None, and
+            # `descendants_unknown` says so, rather than a probe reporting
+            # "nothing left behind" because nobody looked.
+            if can_sweep_descendants():
+                members = tree_has_members(process)
+                left_behind[0] = bool(members)
+                unknown[0] = members is None
+            kill_group(process)
+            # And each stream is closed only once its own worker has actually let
+            # go of it. A drain thread blocked in `pipe.read1` -- because, say, a
+            # grandchild the child spawned inherited the handle and is still
+            # holding it open -- holds that `BufferedReader`'s lock for as long as
+            # the read is stuck; `_feed` closes stdin itself and holds its
+            # `BufferedWriter`'s lock the same way for as long as its write is
+            # stuck. Closing any of those same handles from here would wait on
+            # that same blocked call, with no timeout, and the bounded joins two
+            # lines above buy nothing at all. Leaving a stream to its wedged
+            # worker costs a file handle for as long as that thread lives; the
+            # child is already dead, so its end of the pipe is gone regardless and
+            # nothing is kept alive by the wait.
+            closing = []
+            if not readers[0].is_alive():
+                closing.append(process.stdout)
+            if len(readers) > 1 and not readers[1].is_alive():
+                closing.append(process.stderr)
+            if not feeder.is_alive():
+                closing.append(process.stdin)
+            for stream in closing:
+                if stream is not None:
+                    with contextlib.suppress(OSError, ValueError):
+                        stream.close()
+    if control is not None:
+        control.check()
     return ScriptRun(
         returncode=None if timed_out else process.returncode,
         stdout=_decode(bytes(out)),

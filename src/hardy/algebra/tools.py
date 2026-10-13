@@ -198,6 +198,9 @@ def cas_relative(path: str, suffix: str) -> PurePosixPath:
     backend's, so a Singular session cannot file a `.py` it would then feed to
     Singular.
     """
+    if any(ord(character) < 32 or ord(character) == 127 or character in "\x85\u2028\u2029"
+           for character in str(path)):
+        raise CasError(f"control characters are not allowed in a cell path: {path!r}")
     relative = PurePosixPath(str(path).replace("\\", "/"))
     parts = relative.parts
     if relative.is_absolute() or not parts or any(part in {"..", ".", ""} for part in parts):
@@ -311,20 +314,31 @@ class CasToolRuntime:
         # oldest go first -- the recent cells are the ones a model is building
         # on -- and the result says how many it dropped rather than looking
         # like the whole list.
-        omitted = 0
-        while lines and self._size(result) > self.observation_bytes:
-            lines.pop(0)
-            omitted += 1
-            result = result.model_copy(
-                update={
-                    "accepted": tuple(lines),
-                    "omitted": omitted,
-                    "note": (
-                        f"{omitted} earlier accepted cell(s) omitted to fit the "
-                        "observation budget; they are still part of the session state."
-                    ),
-                }
-            )
+        if self._size(result) <= self.observation_bytes:
+            return result
+
+        def dropping(omitted: int) -> CasStateResult:
+            return result.model_copy(update={
+                "accepted": tuple(lines[omitted:]),
+                "omitted": omitted,
+                "note": (
+                    f"{omitted} earlier accepted cell(s) omitted to fit the "
+                    "observation budget; they are still part of the session state."
+                ),
+            })
+
+        # Once omission has begun, each dropped line saves more bytes than
+        # any extra digit in the count costs. Find the smallest fitting drop
+        # count, preserving the exact newest suffix without encoding every
+        # progressively shorter listing.
+        low, high = 1, len(lines)
+        while low < high:
+            middle = (low + high) // 2
+            if self._size(dropping(middle)) <= self.observation_bytes:
+                high = middle
+            else:
+                low = middle + 1
+        result = dropping(low) if lines else result
         if self._size(result) > self.observation_bytes:
             raise CasError("CAS observation budget is too small to report the session state")
         return result
