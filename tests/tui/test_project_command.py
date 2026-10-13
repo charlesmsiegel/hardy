@@ -723,6 +723,7 @@ async def test_failed_checkpoint_restore_never_retains_closed_session(ui, root, 
     after = await handlers.handle_checkpoint(ui, f'restore {saved.id}', state)
     assert old.closed
     assert after.session is (None if reopen_failure else fresh)
+    assert after.done is reopen_failure
     assert 'Reopening sylow as it stands' in ui.text
 
 

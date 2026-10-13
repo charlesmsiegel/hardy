@@ -1270,7 +1270,7 @@ async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
     except Exception as error:  # noqa: BLE001 - the tree is restored; the reopen is what failed
         ui.write(f"Could not reopen {paths.slug}: {error}. "
                  "Leave and start `hardy chat` again to continue from it.", style="error")
-        return dataclasses.replace(state, session=None)
+        return dataclasses.replace(state, session=None, done=True)
     if hasattr(session, "on_notice"):
         session.on_notice = lambda text: ui.write(f"Hardy: {text}")
     if chat != paths.chat:
