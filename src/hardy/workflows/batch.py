@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from hardy.agents import compaction
-from hardy.agents.contracts import provenance
+from hardy.agents.contracts import ProviderRequestTimeout, provenance
 from hardy.agents.loop import TurnLimitReached
 from hardy.agents.spend_budget import SpendLimitReached, bind_spend_budget
 from hardy.agents.usage import Usage
@@ -636,7 +636,15 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         # what an experiment is read by.
         closed.set()
         reason = "wall_clock_limit"
-        recorder.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
+        if isinstance(error, ProviderRequestTimeout):
+            # This attempt may expire during admission before sending. Earlier
+            # calls in the loop still count, as does any ordinary transport timeout.
+            asked = error.provider_called or (getattr(runtime, "turns", None) or 0) > 0
+            # Recorded-run validation recognizes the public timeout category.
+            error_name = "TimeoutError"
+        else:
+            error_name = type(error).__name__
+        recorder.append({"type": "error", "error": f"{error_name}: {error}"})
     except Exception as error:
         reason = "runtime_error"
         recorder.append({"type": "error", "error": f"{type(error).__name__}: {error}"})

@@ -268,7 +268,7 @@ def test_the_loops_remaining_clock_becomes_the_requests_timeout() -> None:
 
     provider.complete(system="", messages=[Message("user", text="hi")], specs=[], timeout=12.5)
 
-    assert client.sent[0]["timeout"] == 12.5
+    assert client.sent[0]["timeout"] == pytest.approx(12.5, abs=0.01)
 
 
 def test_an_unbounded_loop_leaves_the_clients_own_timeout_alone() -> None:
@@ -810,3 +810,197 @@ def test_cache_provenance_records_flag_and_omits_unknown_transports():
     from hardy.agents.contracts import provenance
     assert provenance(SimpleNamespace(model='m', prompt_caching=True))['prompt_caching'] is True
     assert 'prompt_caching' not in provenance(SimpleNamespace(model='m'))
+
+
+@pytest.mark.parametrize('slow_attempt', [1, 2])
+def test_admission_delay_exhausts_deadline_without_sending_or_charging(slow_attempt):
+    class Busy(Exception):
+        status_code = 529
+        response = SimpleNamespace(headers={})
+    class Failing(FakeClient):
+        def create(self, **request):
+            self.sent.append(request.copy())
+            raise Busy('busy')
+    clock = [0.0]
+    class Ledger:
+        def __init__(self):
+            self.count = 0
+            self.settled = []
+        def reserve(self, request):
+            self.count += 1
+            if self.count == slow_attempt:
+                clock[0] = 20
+            return self.count
+        def settle(self, token, usage):
+            self.settled.append((token, usage))
+    client, ledger = Failing([]), Ledger()
+    provider = AnthropicProvider('m', client=client, spend_budget=ledger,
+                                 clock=lambda: clock[0], sleep=lambda _: None)
+    with pytest.raises(TimeoutError):
+        provider.complete(system='', messages=[], specs=[], timeout=10)
+    assert len(client.sent) == slow_attempt - 1
+    assert ledger.settled[-1][0] == slow_attempt
+    assert all(value == 0 for value in ledger.settled[-1][1].values())
+
+
+def test_retry_admission_refusal_preserves_spent_error_exchange():
+    from hardy.agents.spend_budget import SpendLimitReached
+    class ServerError(Exception):
+        status_code = 500
+    class Failing(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            raise ServerError('may have run')
+    class Ledger:
+        def __init__(self):
+            self.count = 0
+            self.settled = []
+        def reserve(self, request):
+            self.count += 1
+            if self.count == 2:
+                raise SpendLimitReached('token_limit')
+            return self.count
+        def settle(self, token, usage):
+            self.settled.append(usage)
+    ledger, client, events = Ledger(), Failing([]), []
+    provider = AnthropicProvider('m', client=client, spend_budget=ledger, sleep=lambda _: None)
+    runtime = ApiRuntime('m', system_prompt='', specs=[], dispatch=lambda *_: ToolResult(True, ''),
+                         provider=provider, observe=events.append)
+    with pytest.raises(SpendLimitReached):
+        runtime.ask('hi')
+    assert len(client.sent) == 1
+    assert ledger.settled == [None]
+    assert runtime.turns == 1
+    result = next(event for event in events if event['type'] == 'result')
+    assert result['is_error'] is True
+    assert not result.get('provider_unasked', False)
+
+
+def test_first_admission_refusal_remains_unasked():
+    from hardy.agents.spend_budget import SpendLimitReached
+    ledger = SimpleNamespace(reserve=lambda _: (_ for _ in ()).throw(SpendLimitReached('token_limit')))
+    client, events = FakeClient([]), []
+    runtime = ApiRuntime('m', system_prompt='', specs=[], dispatch=lambda *_: ToolResult(True, ''),
+                         provider=AnthropicProvider('m', client=client, spend_budget=ledger), observe=events.append)
+    with pytest.raises(SpendLimitReached):
+        runtime.ask('hi')
+    assert client.sent == []
+    assert runtime.turns == 0
+    result = next(event for event in events if event['type'] == 'result')
+    assert result['provider_unasked'] is True
+    assert result['is_error'] is True
+    assert result['error'] == 'SpendLimitReached: token_limit'
+
+
+def test_request_timeout_excludes_time_spent_admitting_each_attempt():
+    class Busy(Exception):
+        status_code = 529
+    class Flaky(FakeClient):
+        def create(self, **request):
+            self.sent.append(request.copy())
+            if len(self.sent) == 1:
+                raise Busy('busy')
+            return Reply([])
+    clock = [0.0]
+    def reserve(_):
+        clock[0] += 2
+        return object()
+    ledger = SimpleNamespace(reserve=reserve, settle=lambda *_: None)
+    client = Flaky([])
+    provider = AnthropicProvider('m', client=client, spend_budget=ledger, clock=lambda: clock[0],
+                                 sleep=lambda delay: clock.__setitem__(0, clock[0] + delay))
+    provider.complete(system='', messages=[], specs=[], timeout=10)
+    assert [request['timeout'] for request in client.sent] == [8, 5]
+
+
+@pytest.mark.parametrize('expired_attempt', [1, 2])
+def test_admission_timeout_accounts_only_exchanges_with_sent_requests(expired_attempt):
+    from hardy.agents.usage import Usage
+    class ServerError(Exception):
+        status_code = 500
+    class Failing(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            raise ServerError('may have run')
+    clock = [0.0]
+    class Ledger:
+        def __init__(self):
+            self.count = 0
+            self.settled = []
+        def reserve(self, request):
+            self.count += 1
+            if self.count == expired_attempt:
+                clock[0] = 20
+            return self.count
+        def settle(self, token, usage):
+            self.settled.append(usage)
+    ledger, client, events = Ledger(), Failing([]), []
+    runtime = ApiRuntime('m', system_prompt='', specs=[], dispatch=lambda *_: ToolResult(True, ''),
+                         wall_seconds=10, observe=events.append,
+                         provider=AnthropicProvider('m', client=client, spend_budget=ledger,
+                                                    clock=lambda: clock[0], sleep=lambda _: None))
+    with pytest.raises(TimeoutError):
+        runtime.ask('hi')
+    assert len(client.sent) == expired_attempt - 1
+    assert all(value == 0 for value in ledger.settled[-1].values())
+    if expired_attempt == 2:
+        assert ledger.settled[0] is None
+    result = next(event for event in events if event['type'] == 'result')
+    assert result['is_error'] is True
+    assert result['turns'] == expired_attempt - 1
+    assert result.get('provider_unasked', False) is (expired_attempt == 1)
+    usage = Usage().record(result)
+    assert usage.turns == expired_attempt - 1
+    assert usage.summary()['exchanges'] == expired_attempt - 1
+
+
+@pytest.mark.parametrize('expired_attempt', [1, 2])
+def test_batch_admission_timeout_does_not_invent_unsent_usage(tmp_path, monkeypatch, expired_attempt):
+    import test_recorded_runs as fixtures
+    clock, calls, settled = [0.0], [], []
+    class ServerError(Exception):
+        status_code = 500
+    class Ledger:
+        count = 0
+        def reserve(self, request):
+            self.count += 1
+            if self.count == expired_attempt:
+                clock[0] = 20
+            return self.count
+        def settle(self, token, usage):
+            settled.append(usage)
+        def summary(self):
+            return {}
+    class Client:
+        def create(self, **request):
+            calls.append(request)
+            raise ServerError('may have run')
+    def make(script, **context):
+        return ApiRuntime('m', provider=AnthropicProvider('m', client=SimpleNamespace(messages=Client()),
+                          spend_budget=Ledger(), clock=lambda: clock[0], sleep=lambda _: None), **context)
+    monkeypatch.setattr(fixtures, '_Runtime', make)
+    output = fixtures._batch(tmp_path, [], wall_seconds=10)
+    result = json.loads((output / 'result.json').read_text())
+    assert len(calls) == expired_attempt - 1
+    assert all(value == 0 for value in settled[-1].values())
+    assert result['terminal_reason'] == 'wall_clock_limit'
+    assert result['turns'] == expired_attempt - 1
+    assert result['usage']['exchanges'] == expired_attempt - 1
+
+    trajectory = json.loads((output / 'trajectory.json').read_text())
+    assert any(event.get('type') == 'error' and event.get('error', '').startswith('TimeoutError:')
+               for event in trajectory['events'])
+
+
+def test_batch_ordinary_timeout_preserves_unknown_exchange(tmp_path, monkeypatch):
+    import test_recorded_runs as fixtures
+    class TimedOut(fixtures._Runtime):
+        turns = None
+        def ask(self, text):
+            raise TimeoutError('transport timeout without a report')
+    monkeypatch.setattr(fixtures, '_Runtime', TimedOut)
+    output = fixtures._batch(tmp_path, [])
+    result = json.loads((output / 'result.json').read_text())
+    assert result['terminal_reason'] == 'wall_clock_limit'
+    assert result['turns'] is None
+    assert result['usage']['exchanges'] == 1

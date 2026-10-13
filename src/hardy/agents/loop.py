@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
 
-from hardy.agents.contracts import TurnEvent
+from hardy.agents.contracts import ProviderRequestTimeout, TurnEvent
 from hardy.agents.spend_budget import SpendLimitReached
 from hardy.foundation.values import ToolResult
 
@@ -474,9 +474,18 @@ class AgentLoop:
                     timeout=budget.remaining_seconds(),
                 )
             except SpendLimitReached as error:
-                budget.spent -= 1  # Admission refused before the actual provider call.
+                if not error.provider_called:
+                    budget.spent -= 1  # Admission refused before any actual provider call.
+                self._failure = f"SpendLimitReached: {error.limit}"
                 self._budget_refused = True
                 self._observe({"type": "budget_limit", "limit": error.limit})
+                raise
+            except ProviderRequestTimeout as error:
+                if not error.provider_called:
+                    budget.spent -= 1
+                    # Admission expired before this exchange sent any request.
+                    self._budget_refused = True
+                self._failure = f"{type(error).__name__}: {error}"
                 raise
             except BaseException as error:  # noqa: BLE001 - re-raised, recorded on the way past
                 # Recorded here because `_report` runs from a `finally` and

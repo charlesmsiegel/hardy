@@ -10,6 +10,14 @@ from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 
+class ProviderRequestTimeout(TimeoutError):
+    """A provider deadline with explicit evidence of whether a request was sent."""
+
+    def __init__(self, message: str, *, provider_called: bool):
+        self.provider_called = provider_called
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class TurnEvent:
     """One thing that happened while a turn was in flight.
