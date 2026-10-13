@@ -266,10 +266,22 @@ def test_kernel_kill_does_not_close_stdin_owned_by_a_blocked_writer(tmp_path):
         killer.start()
         assert done.wait(1), 'kill waited for stdin owned by the active sender'
         assert kernel.process.poll() is not None
+        writer.join(timeout=1)
+        assert not writer.is_alive(), 'a killed kernels sender still holds the session caller'
     finally:
         if ready.exists():
             with contextlib.suppress(ProcessLookupError):
                 os.kill(int(ready.read_text()), 9)
         writer.join(timeout=3)
         killer.join(timeout=3)
+        kernel.kill(immediate=True)
+
+
+def test_input_delivery_does_not_assume_a_leader_exit_ended_its_descendant(tmp_path):
+    helper = 'import sys,time; time.sleep(.3); sys.stdin.buffer.read(1000000)'
+    source = f'import subprocess,sys; subprocess.Popen([sys.executable,"-c",{helper!r}], stdin=sys.stdin)'
+    kernel = _Kernel([sys.executable, '-c', source], tmp_path, 4096, merge_stderr=True)
+    try:
+        assert kernel.send(b'x' * 1_000_000)
+    finally:
         kernel.kill(immediate=True)
