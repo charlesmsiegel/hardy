@@ -159,11 +159,15 @@ def test_declared_cap_must_equal_the_actual_manifest_cap(tmp_path, monkeypatch, 
 
 def test_changed_artifact_seal_blocks_scheduler_measurements(tmp_path, monkeypatch, certification):
     boards, states, inputs = run_certified(tmp_path, monkeypatch, certification)
-    # A non-authoritative extra artifact still invalidates the sealed timing
-    # association; its run's independently checked mathematical outcome survives.
-    (states[0][0] / "after-run.txt").write_text("added later")
+    from hardy.workflows.recorded import validate_recorded_run
+
+    # An added file breaks the exhaustive recorded-run inventory and its
+    # sealed timing association, so neither authentication nor measurement survives.
+    run_dir = states[0][0]
+    (run_dir / "after-run.txt").write_text("added later", encoding="utf-8")
+    assert "unlisted artifact: after-run.txt" in validate_recorded_run(run_dir)
     report = certification.certify(boards[0], **inputs)
-    assert report["attempts"][0]["authenticated"]
+    assert not report["attempts"][0]["authenticated"]
     assert not report["attempts"][0]["eligible"]
     assert report["measurements"]["scheduler_worker_utilization"] is None
 
