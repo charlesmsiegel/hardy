@@ -108,7 +108,7 @@ def link_digest(link: SourceClaimLink, target: VersionRef | ProjectItem) -> str:
     """
     return json_digest({
         "schema": "hardy-source-interpretation-v1", "artifact_sha256": link.artifact_sha256,
-        "node": link.node, "node_version": link.node_version, "node_kind": link.node_kind,
+        "tree": link.tree, "node": link.node, "node_version": link.node_version, "node_kind": link.node_kind,
         "span": link.span.model_dump(mode="json"), "target": target.model_dump(mode="json"),
         "relation": link.relation.value, "notation_mapping": link.notation_mapping,
         "context_mapping": link.context_mapping,
@@ -291,7 +291,10 @@ class ClaimLinker:
                 if created is not None and created.id == proposed.id:
                     # The ledger write already happened on an earlier pass; only
                     # the link append lost its race. Minting again would refuse
-                    # the claim as a duplicate of our own.
+                    # the claim as a duplicate of our own. Recheck the exact
+                    # created version before following its current head: only
+                    # provenance may have changed while the link lost its race.
+                    self._attach_source(link, created)
                     claim_ref = self.claims.head(created.id).ref
                 else:
                     ledger = self.claims.snapshot()
