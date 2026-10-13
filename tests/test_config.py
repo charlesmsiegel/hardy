@@ -1016,3 +1016,31 @@ def test_write_setting_invalid_toml_is_preserved(tmp_path):
 def test_read_file_treats_whitespace_strings_as_unset(tmp_path):
     path = write(tmp_path / 'config.toml', 'model = "  "\ntectonic = ""\nlean_command = []\n')
     assert config.read_file(path) == {'lean_command': []}
+
+
+@pytest.mark.parametrize('original', ['[lake]\nx=1\n', 'lake.x=1\nlake.y=2\n'])
+def test_write_setting_refuses_unsupported_table_value_unchanged(tmp_path, original):
+    path = tmp_path / 'config.toml'
+    path.write_text(original)
+    with pytest.raises(ValueError):
+        config.write_setting(path, 'lake', '/tools/lake')
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize('separator', ['\u2028', '\u0085'])
+def test_write_setting_preserves_unicode_string_separators(tmp_path, separator):
+    path = tmp_path / 'config.toml'
+    original = f'model = "chosen{separator}identity"\ntectonic = ""\n'
+    path.write_text(original)
+    config.write_setting(path, 'tectonic', '/tools/tectonic')
+    assert config.read_file(path)['model'] == f'chosen{separator}identity'
+    assert original.split('\n')[0] in path.read_text()
+
+
+def test_write_setting_rejects_original_raw_control_character_unchanged(tmp_path):
+    path = tmp_path / 'config.toml'
+    original = 'model = """chosen\x0bidentity"""\ntectonic = ""\n'
+    path.write_bytes(original.encode())
+    with pytest.raises(ValueError):
+        config.write_setting(path, 'tectonic', '/tools/tectonic')
+    assert path.read_bytes() == original.encode()
