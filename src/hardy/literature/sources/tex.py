@@ -219,13 +219,13 @@ class TexAdapter:
         unread = sorted(set(texts) - {path for path, _, _ in pages})
         if unread:
             diagnostics.append(Diagnostic(code="files_not_reached", detail=f"{len(unread)} text file(s) are not reached from the root: {', '.join(unread[:8])}", severity="info"))
-        unmapped = sum(len(text) for _, text, _ in pages) - sum(right.end - right.start for _, right in pairs)
+        unmapped = len(assembled_text) - sum(right.end - right.start for _, right in pairs)
         if unmapped:
             diagnostics.append(Diagnostic(code="unmapped_synthetic_text", detail=f"{unmapped} assembled character(s) are masked or synthesized and have no exact native counterpart", severity="info"))
         assembled = DerivedRepresentation(
             id=assembled_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.NORMALIZED_TEXT, extractor=self.name, extractor_version=self.version,
             configuration=(("assembly", "root-and-inputs"), ("root", root or "")), inputs=(native_id,), output_sha256=payload_digest(assembled_payload),
-            derived_at=stamp, quality=QualityProfile(status="ok" if not unread else "partial", coverage=len(pages) / max(1, len(texts)), diagnostics=tuple(diagnostics)),
+            derived_at=stamp, quality=QualityProfile(status="ok" if not unread else "partial", coverage=(len(texts) - len(unread)) / max(1, len(texts)), diagnostics=tuple(diagnostics)),
             access=artifact.access, payload_files=tuple(assembled_payload),
         )
         mapping = RepresentationMapping(id=f"map-{native_id}-{assembled_id}", artifact_sha256=artifact.sha256, left=native_id, right=assembled_id,
