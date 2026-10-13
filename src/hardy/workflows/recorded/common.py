@@ -12,6 +12,7 @@ from typing import Any
 from hardy.formal import audit
 from hardy.formal.contracts import FormalStatus
 from hardy.formal.verifier import ALLOWED_AXIOMS
+from hardy.workflows.storage import artifact_bytes
 
 #: The formal grades that carry verification evidence and are audited as
 #: verified runs. `verified_modulo` is one of them: a wider trust base is a
@@ -38,11 +39,13 @@ def _exact_source(path: Path, *, label: str) -> tuple[str | None, str | None]:
     the file cannot be read or decoded.
     """
     try:
-        return path.read_bytes().decode("utf-8"), None
+        return artifact_bytes(path).decode("utf-8"), None
     except OSError as error:
         return None, f"{label} could not be read: {error}"
     except UnicodeDecodeError as error:
         return None, f"{label} is not valid UTF-8: {error}"
+    except ValueError:
+        return None, f"{label} is not a regular file"
 
 
 def permitted_axioms(assumed: Sequence[str] = ()) -> frozenset[str]:
@@ -103,3 +106,11 @@ def _usage_issues(usage: Any, where: str) -> list[str]:
         elif usage[field] is not None and not isinstance(usage[field], (int, float)):
             issues.append(f"{where} usage states a non-numeric {field}")
     return issues
+
+
+def _required_text(path: Path) -> str:
+    """Strict artifact text whose read failure retains the artifact's name."""
+    text, error = _exact_source(path, label=str(path))
+    if error is not None:
+        raise ValueError(error)
+    return text

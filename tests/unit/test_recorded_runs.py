@@ -377,11 +377,11 @@ def test_a_staged_manifest_cannot_state_fewer_exchanges_than_the_provider_report
 
     run_dir = tmp_path / 'run'
     run_dir.mkdir()
-    (run_dir / 'trajectory.jsonl').write_text(
-        '\n'.join(json.dumps({'kind': kind, 'payload': {}}) for kind in ('claude.result', 'claude.result'))
-        + '\n',
-        encoding='utf-8',
-    )
+    from hardy.workflows.storage import RunStore
+
+    store = RunStore(run_dir, UUID(int=1))
+    for kind in ('claude.result', 'claude.result'):
+        store.append(kind, {}, phase=domain.RunPhase.PROVING)
     manifest = domain.RunManifest(
         run_id=UUID(int=1),
         created_at=datetime(2026, 9, 1, tzinfo=UTC),
@@ -441,14 +441,11 @@ def _staged_record(tmp_path, kinds_with_phase, log_text: str | None = None):
 
     run_dir = tmp_path / 'run'
     run_dir.mkdir()
-    (run_dir / 'trajectory.jsonl').write_text(
-        '\n'.join(
-            json.dumps({'kind': kind, 'phase': phase, 'payload': {'session_id': session}})
-            for kind, phase, session in kinds_with_phase
-        )
-        + '\n',
-        encoding='utf-8',
-    )
+    from hardy.workflows.storage import RunStore
+
+    store = RunStore(run_dir, UUID(int=1))
+    for kind, phase, session in kinds_with_phase:
+        store.append(kind, {'session_id': session}, phase=domain.RunPhase(phase))
     if log_text is not None:
         (run_dir / 'writeup').mkdir()
         (run_dir / 'writeup' / 'compile.log').write_text(log_text, encoding='utf-8')

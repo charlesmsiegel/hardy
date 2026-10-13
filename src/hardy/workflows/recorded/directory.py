@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from hardy.workflows.contracts import RunManifest
 from hardy.workflows.recorded.batch import validate_batch_consistency
+from hardy.workflows.recorded.common import _exact_source
 from hardy.workflows.recorded.staged import (
     _live_staged_issues,
     _trajectory_events,
@@ -19,13 +20,16 @@ def validate_recorded_run(run_dir: Path) -> tuple[str, ...]:
     if not run_dir.is_dir():
         return (f"{run_dir} is not a directory",)
     manifest_path = run_dir / "manifest.json"
-    if manifest_path.exists():
+    if manifest_path.exists() or manifest_path.is_symlink():
+        text, error = _exact_source(manifest_path, label="manifest.json")
+        if error is not None:
+            return (error,)
         try:
-            manifest = RunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+            manifest = RunManifest.model_validate_json(text)
         except ValidationError as error:
             return (f"manifest.json does not validate: {error.error_count()} error(s)",)
         trajectory = run_dir / "trajectory.jsonl"
-        parsed = _trajectory_events(trajectory) if trajectory.exists() else ([], [])
+        parsed = _trajectory_events(trajectory, run_id=manifest.run_id) if trajectory.exists() else ([], [])
         return (validate_run_consistency(run_dir, manifest, _trajectory=parsed)
                 + tuple(_live_staged_issues(run_dir, manifest, _trajectory=parsed)))
     if (run_dir / "result.json").exists():

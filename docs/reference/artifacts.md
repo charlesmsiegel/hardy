@@ -19,7 +19,7 @@ Every `hardy prove` attempt, staged or live, ends with a `manifest.json` in its 
 | `claim_sha256` | The digest of the frozen, approved claim (`formalization.json`) this run proved or attempted. Absent before a claim was approved. |
 | `grades` | The four independent grades; see below. |
 | `terminal_reason` | Why the run stopped, when it stopped for a reason other than reaching `completed` cleanly. `null` on an ordinary completion. |
-| `artifacts` | Every file in the run directory other than `manifest.json` itself, keyed by its path relative to the directory, valued by its SHA-256. The map is computed before the manifest is written, so the manifest cannot hash itself; this is what the manifest is taken over. |
+| `artifacts` | Every file in the run directory other than `manifest.json` itself, keyed by its path relative to the directory, valued by its SHA-256. The map is computed before the manifest is written, so the manifest cannot hash itself; this is what the manifest is taken over. Publication and recorded audits refuse symlinks and other nonregular entries, without following directory links; ordinary directories carry no artifact bytes. |
 | `timings_ms` | Named durations in milliseconds, such as active work time. |
 | `usage` | What the provider reported the run cost: `cost_usd`, the four token counters, and `exchanges`, each `null` where the provider reported nothing rather than `0`; `reported` says how many exchanges each figure actually covers. Empty for a run that never opened a provider thread. |
 

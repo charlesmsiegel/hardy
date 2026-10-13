@@ -73,7 +73,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 5000,
+    "active": 7000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -247,7 +247,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 20000,
+    "active": 22000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -446,7 +446,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 24000,
+    "active": 26000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -554,7 +554,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 5000,
+    "active": 7000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -731,7 +731,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 8000,
+    "active": 10000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -819,7 +819,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 5000,
+    "active": 7000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -980,7 +980,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 8000,
+    "active": 10000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1102,7 +1102,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 10000,
+    "active": 12000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1226,7 +1226,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 10000,
+    "active": 12000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1326,7 +1326,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 5000,
+    "active": 7000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1465,7 +1465,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 11000,
+    "active": 15000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1554,7 +1554,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 5000,
+    "active": 7000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1714,7 +1714,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 8000,
+    "active": 10000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1836,7 +1836,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 10000,
+    "active": 12000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -1946,7 +1946,7 @@
    "verified_evidence": false,
    "claim": false,
    "timings_ms": {
-    "active": 7000,
+    "active": 13000,
     "user_wait_excluded": 1000
    },
    "artifacts": [
@@ -3056,7 +3056,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 166000,
+    "active": 168000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -3215,7 +3215,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 14000,
+    "active": 16000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -3319,7 +3319,7 @@
    "verified_evidence": false,
    "claim": true,
    "timings_ms": {
-    "active": 5000,
+    "active": 7000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -3409,7 +3409,7 @@
    "verified_evidence": false,
    "claim": false,
    "timings_ms": {
-    "active": 4000,
+    "active": 6000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -3563,7 +3563,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 13000,
+    "active": 17000,
     "user_wait_excluded": 4000
    },
    "artifacts": [
@@ -3765,7 +3765,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 10000,
+    "active": 12000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
@@ -4005,7 +4005,7 @@
    "verified_evidence": true,
    "claim": true,
    "timings_ms": {
-    "active": 10000,
+    "active": 12000,
     "user_wait_excluded": 2000
    },
    "artifacts": [
