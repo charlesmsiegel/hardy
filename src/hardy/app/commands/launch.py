@@ -100,7 +100,7 @@ def _launch(
         )
         return runtime
 
-    def build(confirm: Callable[[dict[str, Any]], bool]) -> MathematicsSession:
+    def build(confirm: Callable[[dict[str, Any]], bool], *, require_existing: bool = False) -> MathematicsSession:
         fresh = launch["fresh_thread"]
         launch["fresh_thread"] = False
         try:
@@ -124,6 +124,7 @@ def _launch(
                 detach_after=config.compute_detach_seconds,
                 cas_factory=worker_cas,
                 chat=config.chat,
+                require_existing=require_existing,
             )
         except BaseException:
             launch["fresh_thread"] = fresh

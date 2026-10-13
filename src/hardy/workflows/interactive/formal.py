@@ -179,6 +179,7 @@ class SavePolicy:
     persist: Callable[[], None]
     owed_note: Callable[[], str]
     committed: Callable[[str], None] = lambda path: None
+    verify_commit: Callable[[], None] = lambda: None
 
 class FormalWorkspaceService:
     SAVE_STREAK_LIMIT = 3
@@ -313,6 +314,7 @@ class FormalWorkspaceService:
             # ledger records these bytes, not whatever the live tree holds by
             # the time it is asked.
             audited = shadow.sources()
+            policy.verify_commit()
             commit()
             policy.committed(str(relative))
         finally:

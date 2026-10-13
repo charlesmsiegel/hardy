@@ -61,6 +61,7 @@ class DocumentPolicy:
     registry: Callable[[], list[dict[str, str]]]
     owed_note: Callable[[], str]
     committed: Callable[[str], None] = lambda path: None
+    verify_commit: Callable[[], None] = lambda: None
 
 @dataclass(frozen=True)
 class FormalDocumentFacts:
@@ -140,6 +141,7 @@ class DocumentService:
             # `writeup.tex -> ~/.bashrc`.
             try:
                 guard, name = guard_for(self.tex_root, relative, create=True)
+                policy.verify_commit()
                 guard.write_text(name, source.rstrip() + "\n")
             except OSError as error:
                 # Raised on, never swallowed: the whole point of running here
