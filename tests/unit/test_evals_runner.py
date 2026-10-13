@@ -407,6 +407,11 @@ def test_source_revision_is_none_when_the_anchor_has_no_git_above_it(monkeypatch
     anywhere, and finding no `.git` above it at all -- as `tmp_path` never
     does -- must be `None`, not a crash or a `git` invocation.
     """
+    # Managed workspaces can mount an empty .git at /tmp to protect metadata.
+    # This case needs an explicitly Git-free ancestry, independently of those
+    # host mounts; the neighboring cases exercise real repository markers.
+    exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda path: False if path.name == ".git" else exists(path))
     monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
     # The execution host may itself put a .git marker above the temp root.
     exists = Path.exists
