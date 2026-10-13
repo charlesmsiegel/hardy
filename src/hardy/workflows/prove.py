@@ -77,7 +77,7 @@ from hardy.workflows.strategies.lessons import record_replay, replay_history
 
 ALLOWED = {
     RunPhase.SETUP: {RunPhase.FORMALIZING},
-    RunPhase.FORMALIZING: {RunPhase.AWAITING_APPROVAL},
+    RunPhase.FORMALIZING: {RunPhase.AWAITING_APPROVAL, RunPhase.CANCELLED},
     RunPhase.AWAITING_APPROVAL: {
         RunPhase.FORMALIZING,
         RunPhase.PROVING,
@@ -130,7 +130,7 @@ def _strategy_record(request: ProveRequest, *, shared_tool_budget: bool) -> dict
         "verifier_call_journal": True,
         "prompt_set_sha256": PROMPT_SET_SHA256,
         "source_sha256": {
-            name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in modules
+            name: hashlib.sha256((root / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for name in modules
         },
     }
 
@@ -260,9 +260,9 @@ class ProveWorkflow:
     def run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
         self._runtime_in_flight = None
         self._thread_in_flight = None
-        # Deliberately NOT cleared here. `build_prove_workflow` makes a fresh
-        # workflow per run, so there is nothing stale to clear -- and clearing
-        # would throw away the one case the whole handle exists for. `/prove`
+        # Deliberately NOT cleared here: cancellation remains latched even
+        # when `accept` reuses a workflow across its problems. Clearing would
+        # throw away the one case the whole handle exists for. `/prove`
         # publishes the workflow the moment it is built, which is *before* this
         # call: building it identifies the Lean environment, which takes long
         # enough to be a very likely moment to press Esc. A `cancel()` landing
@@ -542,8 +542,12 @@ class ProveWorkflow:
             self._refuse_if_cancelled()
             active_elapsed = self._active_elapsed(run)
             if active_elapsed >= self._config.limits.active_seconds:
-                terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
-                break
+                run.grades = Grades(
+                    formal=FormalStatus.NOT_FORMALIZED,
+                    known_gaps=("The active budget expired before a formalization was approved.",),
+                )
+                state.transition(RunPhase.CANCELLED)
+                return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             formalization_input = StandaloneFormalizationInput(text=request.text)
             prompt = formalization_prompt(formalization_input, revision)
             try:
@@ -626,6 +630,18 @@ class ProveWorkflow:
                 return TerminalReason.USER_REJECTION
             if choice == "revise":
                 revision = self._ask_user(run, terminal.revision_text)
+                self._refuse_if_cancelled()
+                store.append("user.revision", {"text": revision}, phase=state.phase)
+                if proposal_number + 1 >= self._config.limits.formalization_proposals:
+                    run.grades = Grades(
+                        formal=FormalStatus.NOT_FORMALIZED,
+                        known_gaps=(
+                            "The user requested a revision after the last formalization "
+                            "proposal; the revision was not attempted.",
+                        ),
+                    )
+                    state.transition(RunPhase.CANCELLED)
+                    return TerminalReason.USER_REJECTION
                 state.transition(RunPhase.FORMALIZING)
                 continue
             run.approved_claim = freeze_claim(
@@ -1031,11 +1047,13 @@ class ProveWorkflow:
         unchecked: list[str] = []
         policy = AdmissionPolicy()
         for item in assumptions:
+            self._refuse_if_cancelled()
             # check_scratch owns the import header; its position is part of
             # the shared refutation judge's diagnostic-line contract.
             verdict = refutation_probe(
                 item.statement, run_source=self._lean.check_scratch, imported=False
             )
+            self._refuse_if_cancelled()
             decision = policy.refutation(verdict)
             store.append(
                 "assumption.refutation",
@@ -1108,10 +1126,10 @@ class ProveWorkflow:
 
 
 def _artifact_hashes(run_dir: Path) -> dict[str, str]:
+    from hardy.workflows.storage import artifact_paths
+
     artifacts = {}
-    for path in sorted(run_dir.rglob("*")):
-        if not path.is_file() or path.name == "manifest.json":
-            continue
+    for path in artifact_paths(run_dir):
         relative = path.relative_to(run_dir).as_posix()
         artifacts[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return artifacts

@@ -369,7 +369,40 @@ def _faithfulness_issues(
     return issues
 
 
-def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str, ...]:
+def _trajectory_events(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    """Read damaged rows as findings, preserving their position in the log."""
+    text, error = _exact_source(path, label="trajectory.jsonl")
+    if error is not None:
+        return [], [error]
+    events: list[dict[str, Any]] = []
+    issues: list[str] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            event = None
+        if not isinstance(event, dict):
+            issues.append(f"trajectory.jsonl line {number} is not a JSON object")
+            events.append({})
+        elif not isinstance(event.get("payload", {}), dict):
+            issues.append(f"trajectory.jsonl line {number} has a non-object payload")
+            events.append({})
+        else:
+            events.append(event)
+    return events, issues
+
+
+def _recorded_claim(path: Path) -> FrozenClaim | None:
+    try:
+        return FrozenClaim.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def validate_run_consistency(
+    run_dir: Path, manifest: RunManifest,
+    *, _trajectory: tuple[list[dict[str, Any]], list[str]] | None = None,
+) -> tuple[str, ...]:
     """Report every way a run's artifacts disagree with each other."""
     issues = []
     manifest_path = run_dir / "manifest.json"
@@ -386,10 +419,19 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != expected:
             issues.append("hash mismatch: " + relative)
+    from hardy.workflows.storage import artifact_paths
+
+    for path in artifact_paths(run_dir):
+        relative = path.relative_to(run_dir).as_posix()
+        if relative not in manifest.artifacts:
+            issues.append("unlisted artifact: " + relative)
     claim_path = run_dir / "formalization.json"
     claim = None
     if claim_path.exists():
-        claim = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8"))
+        claim = _recorded_claim(claim_path)
+        if claim is None:
+            issues.append("formalization.json is not a valid Frozen Claim")
+    if claim is not None:
         if claim.content_hash != manifest.claim_sha256:
             issues.append("Frozen Claim hash differs from manifest")
         # The manifest's own toolchain is what a reader quotes to reproduce a
@@ -397,19 +439,18 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
         # the two disagreeing means one of them is not what ran.
         if manifest.environment != claim.environment:
             issues.append("manifest environment differs from the Frozen Claim")
-    elif manifest.claim_sha256 is not None:
+    elif not claim_path.exists() and manifest.claim_sha256 is not None:
         issues.append("formalization.json is missing")
     trajectory = run_dir / "trajectory.jsonl"
     if not trajectory.exists():
         issues.append("trajectory.jsonl is missing")
     else:
-        events = [
-            json.loads(line) for line in trajectory.read_text(encoding="utf-8").splitlines()
-        ]
+        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory)
+        issues.extend(trajectory_issues)
         if not events or events[-1].get("kind") != "workflow.terminal":
             issues.append("trajectory has no final terminal event")
         else:
-            terminal = events[-1]["payload"]
+            terminal = events[-1].get("payload", {})
             reason = manifest.terminal_reason.value if manifest.terminal_reason else None
             if terminal.get("terminal_reason") != reason:
                 issues.append("terminal reason differs from manifest")
@@ -461,7 +502,10 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
     return tuple(issues)
 
 
-def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
+def _live_staged_issues(
+    run_dir: Path, manifest: RunManifest,
+    *, _trajectory: tuple[list[dict[str, Any]], list[str]] | None = None,
+) -> list[str]:
     """What a recorded staged run owes beyond self-consistency.
 
     A fixture may leave these blank; a run that names a real model and a real
@@ -477,9 +521,12 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
     if manifest.phase is not RunPhase.SETUP:
         issues.extend(_usage_issues(manifest.usage, "manifest"))
     trajectory = run_dir / "trajectory.jsonl"
-    kinds = []
+    events = []
     if trajectory.exists():
-        kinds = [json.loads(line).get("kind") for line in trajectory.read_text(encoding="utf-8").splitlines()]
+        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory)
+        if _trajectory is None:
+            issues.extend(trajectory_issues)
+    kinds = [event.get("kind") for event in events]
     if not any(str(kind).startswith(("claude.", "codex.")) for kind in kinds):
         issues.append("trajectory records no provider events; nothing a model did is on record")
     # The manifest is covered by no hash of its own, so its spend is checked
@@ -505,8 +552,9 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
                 spoken = "\n".join(item.message for item in verification.diagnostics)
                 claim_path = run_dir / "formalization.json"
                 theorem = None
-                if claim_path.exists():
-                    theorem = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8")).proposal.theorem_name
+                claim = _recorded_claim(claim_path)
+                if claim is not None:
+                    theorem = claim.proposal.theorem_name
                 reports = audit.parse(spoken, (theorem,)) if theorem else None
                 if reports is None:
                     issues.append("the fresh verifier kept no axiom report from Lean; the check cannot be shown to have run")
@@ -518,20 +566,18 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
     # record cannot then support the faithfulness grade it carries.
     sessions: dict[str, set[str]] = {}
     reader_results = 0
-    if trajectory.exists():
-        for line in trajectory.read_text(encoding="utf-8").splitlines():
-            event = json.loads(line)
-            if event.get("kind") != "claude.result":
-                continue
-            phase = str(event.get("phase"))
+    for event in events:
+        if event.get("kind") != "claude.result":
+            continue
+        phase = str(event.get("phase"))
+        if phase == RunPhase.AWAITING_APPROVAL.value:
+            reader_results += 1
+        session = (event.get("payload") or {}).get("session_id")
+        if not isinstance(session, str) or not session:
             if phase == RunPhase.AWAITING_APPROVAL.value:
-                reader_results += 1
-            session = (event.get("payload") or {}).get("session_id")
-            if not isinstance(session, str) or not session:
-                if phase == RunPhase.AWAITING_APPROVAL.value:
-                    issues.append("the faithfulness reader's result records no provider session")
-                continue
-            sessions.setdefault(session, set()).add(phase)
+                issues.append("the faithfulness reader's result records no provider session")
+            continue
+        sessions.setdefault(session, set()).add(phase)
     for session, phases in sessions.items():
         if RunPhase.AWAITING_APPROVAL.value in phases and len(phases) > 1:
             issues.append(
@@ -569,8 +615,9 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
             # the claim hash alone would let a document about another theorem
             # pass on a hash it merely quotes.
             claim_path = run_dir / "formalization.json"
-            if claim_path.exists():
-                proposal = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8")).proposal
+            claim = _recorded_claim(claim_path)
+            if claim is not None:
+                proposal = claim.proposal
                 binders = f" {proposal.binders.strip()}" if proposal.binders.strip() else ""
                 signature = f"theorem {proposal.theorem_name}{binders} : {proposal.proposition.strip()}"
                 if signature not in text:

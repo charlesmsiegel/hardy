@@ -430,7 +430,7 @@ Item and scope selectors are stable ids or `ID@FULL_SHA256`, never a guessed nam
 
 ## Provider budget (api backend)
 
-Only relevant on the `api` backend (`backend = "api"` in the config file, or `HARDY_BACKEND=api`); refused on the SDK backends, on staged `hardy prove`, and on `hardy evals run`. Set `provider_budget` to a JSON policy path in the config, resolved relative to that config file:
+Only relevant on the `api` backend (`backend = "api"` in the config file, or `HARDY_BACKEND=api`); refused on the SDK backends, on staged `hardy prove` and model-backed `hardy accept` (exit `2` with a usage message), and on `hardy evals run`. Set `provider_budget` to a JSON policy path in the config, resolved relative to that config file:
 
 ```toml
 backend = "api"
