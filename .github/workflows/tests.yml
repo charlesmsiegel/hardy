@@ -27,9 +27,15 @@ jobs:
           ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - name: Hermetic suite, with coverage
-        run: uv run --extra test pytest -q -m "not real_toolchain and not live" --cov --cov-report=xml --cov-report=html --cov-report=term
+        run: uv run --extra test pytest -q --cov --cov-report=xml --cov-report=html --cov-report=term -m "not real_toolchain and not live"
+      - name: Unit suite under an ASCII locale
+        env:
+          LC_ALL: C
+          PYTHONCOERCECLOCALE: "0"
+          PYTHONUTF8: "0"
+        run: uv run --extra test python -X utf8=0 -m pytest -q tests/unit -m "not real_toolchain and not live"
       - name: Lint
-        run: uvx ruff check src tests
+        run: uvx ruff check src tests scripts
       # The manifest gate inside the tree can only compare two values from that
       # same tree, so editing a shard *and* rewriting the digest on the
       # existing heading passes it. The anchor has to come from outside: the

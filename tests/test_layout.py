@@ -1216,6 +1216,28 @@ def _os_replace_call_lines(tree: ast.AST) -> list[int]:
     ]
 
 
+def _path_replace_call_lines(tree: ast.AST) -> list[int]:
+    # Path.replace takes one positional argument. str.replace needs two;
+    # dataclasses.replace always has field keywords and is not a rename.
+    return [node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "replace" and len(node.args) == 1 and not node.keywords]
+
+
+def test_path_replace_cannot_bypass_atomic_retry():
+    offenders = {}
+    for path in _SOURCE_ROOT.rglob("*.py"):
+        lines = _path_replace_call_lines(ast.parse(path.read_text(encoding="utf-8")))
+        if lines:
+            offenders[path.relative_to(_SOURCE_ROOT).as_posix()] = lines
+    assert not offenders, f"Path.replace bypasses replace_with_retry: {offenders}"
+
+
+def test_path_replace_ratchet_does_not_mistake_text_or_dataclass_replacement():
+    tree = ast.parse("tmp.replace(target)\ntext.replace('a', 'b')\ndataclasses.replace(value, path=target)")
+    assert _path_replace_call_lines(tree) == [1]
+
+
 def test_os_replace_is_confined_to_locking_and_an_explicit_allowlist():
     """#332: every other atomic rename goes through `replace_with_retry`.
 
@@ -1323,6 +1345,8 @@ NEWLINE_WATCHED_MODULES = (
     "app/installers.py",
     "app/setup.py",
     "app/config.py",
+    "evals/staged.py",
+    "evals/benchmarks.py",
 )
 
 #: File-mode characters this scan will look at. A literal outside this

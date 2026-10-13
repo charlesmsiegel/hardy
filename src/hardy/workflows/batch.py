@@ -22,6 +22,7 @@ from hardy.formal.contracts import Request
 from hardy.formal.latency import manifest_binds
 from hardy.formal.lean import LeanToolResult, LeanTools, environment_identity
 from hardy.formal.verifier import audit_line_messages, proof_body_violation
+from hardy.foundation.files import normalize_newlines
 from hardy.foundation.locking import atomic_write_bytes
 from hardy.foundation.values import ToolResult
 from hardy.prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
@@ -281,7 +282,9 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
 
     def _dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         if closed.is_set():
-            return ToolResult(False, "the run's budget expired before this tool call was made")
+            why = "the run's budget expired before this tool call was made"
+            recorder.append({"type": "refused_tool", "name": name, "arguments": arguments, "why": why})
+            return ToolResult(False, why)
         # The run is over, and the calls still queued behind the one that ended
         # it do not get to change what it decided. Declining the next provider
         # turn does not reach these: one response can ask for two submissions,
@@ -712,7 +715,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     if sketch is not None:
         writeup += sketch_section(sketch)
-    (output_dir / "writeup.md").write_text(writeup, encoding="utf-8", newline="\n")
+    (output_dir / "writeup.md").write_text(normalize_newlines(writeup), encoding="utf-8", newline="\n")
     trajectory = {"schema_version": 2, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed, context_window, compacted), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason}
     trajectory["attempt_receipt"] = recorder.finish(trajectory, result.as_dict())
     _write_json(output_dir / "trajectory.json", trajectory)

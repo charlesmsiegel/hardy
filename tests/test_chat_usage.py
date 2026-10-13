@@ -81,7 +81,9 @@ class ReportingRuntime:
         pass
 
 
-def spending(tmp_path: Path, script=({"cost_usd": 0.5, "usage": REPORT},)):
+def spending(tmp_path: Path, script=None):
+    if script is None:
+        script = ({"cost_usd": 0.5, "usage": REPORT},)
     runtime = ReportingRuntime(list(script))
     return session(tmp_path, runtime)
 

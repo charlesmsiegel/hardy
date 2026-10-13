@@ -22,8 +22,8 @@ from pathlib import Path
 outside = Path(sys.argv[1])
 observed = {}
 for name, action in (
-    ("outside_read", lambda: (outside / "input.txt").read_text() == "fixture only"),
-    ("outside_write", lambda: (outside / "output.txt").write_text("fixture only") > 0),
+    ("outside_read", lambda: (outside / "input.txt").read_text(encoding="utf-8") == "fixture only"),
+    ("outside_write", lambda: (outside / "output.txt").write_text("fixture only", encoding="utf-8", newline="\n") > 0),
     ("loopback_connect", lambda: socket.create_connection(("127.0.0.1", int(sys.argv[2])), timeout=2).close() is None),
 ):
     try:
@@ -41,7 +41,7 @@ def probe() -> dict:
         outside = root / "outside"
         scratch.mkdir()
         outside.mkdir()
-        (outside / "input.txt").write_text("fixture only")
+        (outside / "input.txt").write_text("fixture only", encoding="utf-8", newline="\n")
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             listener.listen(1)

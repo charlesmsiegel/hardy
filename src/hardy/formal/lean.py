@@ -29,7 +29,7 @@ from hardy.formal.syntax import (
     declares_tokens,
     lex,
 )
-from hardy.foundation.files import WriteGuard
+from hardy.foundation.files import WriteGuard, normalize_newlines
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.truncation import truncate
 from hardy.foundation.values import FrozenModel, ToolResult
@@ -665,7 +665,7 @@ class LeanTools:
 
     def source(self, proof: str, *, audit: bool = False) -> str:
         imports = "\n".join(f"import {name}" for name in self.request.imports)
-        body = f"{imports}\n\n{self.request.declaration} := {proof.strip()}\n"
+        body = normalize_newlines(f"{imports}\n\n{self.request.declaration} := {proof.strip()}\n")
         name = self.target_name
         return self.with_audit(body, (f"axioms {name}",)) if audit and name else body
 

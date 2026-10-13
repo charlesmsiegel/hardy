@@ -496,7 +496,7 @@ def test_the_script_records_the_environment_it_was_checked_under(
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
     manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
     assert "PYTHONHASHSEED=0" in script
-    assert manifest["environment"] == {"PYTHONHASHSEED": "0"}
+    assert manifest["environment"] == {"PYTHONHASHSEED": "0", "PYTHONIOENCODING": "utf-8"}
 
 
 def _late_helper(done: Path) -> str:
@@ -1191,8 +1191,8 @@ def test_the_script_is_checked_where_it_is_published(sympy_session, tmp_path) ->
     run = subprocess.run(
         [sys.executable, str(directory / "session.py")],
         capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONHASHSEED": "0"},
+        encoding="utf-8",
+        env={**os.environ, "PYTHONHASHSEED": "0", "PYTHONIOENCODING": "utf-8"},
     )
     assert "published only" in run.stdout
 
@@ -1403,8 +1403,8 @@ def test_a_cell_that_sabotages_the_interpreter_keeps_a_runnable_artifact(
     run = subprocess.run(
         [sys.executable, str(directory / "session.py")],
         capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONHASHSEED": "0"},
+        encoding="utf-8",
+        env={**os.environ, "PYTHONHASHSEED": "0", "PYTHONIOENCODING": "utf-8"},
     )
     assert run.returncode == 0, run.stderr
 

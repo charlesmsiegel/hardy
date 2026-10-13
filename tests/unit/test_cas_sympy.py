@@ -8,6 +8,7 @@ actually ship with computes, keeps state, and reports values — the behaviours
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -216,7 +217,8 @@ def test_running_the_exported_script_prints_what_the_session_recorded(
         [sys.executable, "-u", str(script)],
         cwd=str(tmp_path),
         capture_output=True,
-        text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
         timeout=300,
         check=False,
     )
@@ -264,7 +266,8 @@ def test_a_script_that_cannot_run_is_not_reported_as_reproducing(
         [sys.executable, str(tmp_path / "cas" / "session.py")],
         cwd=str(tmp_path),
         capture_output=True,
-        text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
         timeout=300,
         check=False,
     )
@@ -323,7 +326,8 @@ def test_a_tuple_valued_cell_still_exports_a_runnable_script(
         [sys.executable, "-u", str(tmp_path / "cas" / "session.py")],
         cwd=str(tmp_path),
         capture_output=True,
-        text=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        encoding="utf-8",
         timeout=300,
         check=False,
     )
