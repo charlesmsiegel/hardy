@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from hardy.algebra.cas import CasError, CasSession, CellRecord, backend_for
 from hardy.algebra.contracts import MERGED_CAPTURE_NOTE
-from hardy.foundation.files import LayoutError, files_under, guard_for, read_text
+from hardy.foundation.files import LayoutError, files_under, guard_for, portable_key, read_text
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import cas_spill_note
 from hardy.workflows.contracts import RunLimits
@@ -207,9 +207,9 @@ def cas_relative(path: str, suffix: str) -> PurePosixPath:
         raise CasError(f"not a path inside cas/: {path!r}")
     if not relative.name.endswith(suffix) or relative.name == suffix:
         raise CasError(f"a cell for this backend is filed with the {suffix} suffix: {path!r}")
-    if parts[0] in CAS_SCRATCH:
+    if portable_key(parts[0]) in CAS_SCRATCH:
         raise CasError(f"{parts[0]}/ is scratch an export empties; file the cell elsewhere: {path!r}")
-    if len(parts) == 1 and (relative.name in RESERVED_NAMES or relative.name == f"session{suffix}"):
+    if len(parts) == 1 and (portable_key(relative.name) in RESERVED_NAMES or portable_key(relative.name) == portable_key(f"session{suffix}")):
         raise CasError(f"{relative.name} is Hardy's own file under cas/ and not a cell's: {path!r}")
     return relative
 

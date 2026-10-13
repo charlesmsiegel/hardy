@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from hardy.app.web.panels.record import file_verdicts
-from hardy.foundation.files import resolve_named_child
+from hardy.foundation.files import portable_key, resolve_named_child
 from hardy.literature.bibliography import Bibliography, BibliographyError
 from hardy.literature.sources.seeds import SeedStore
 
@@ -85,7 +85,7 @@ def files(problem: Path) -> dict[str, list[dict[str, Any]]]:
                     _row(problem, path)
                     for path in root.rglob("*")
                     if path.is_file() and not path.is_symlink() and ".build" not in path.parts
-                    and not (tree_name == "cas" and (path.relative_to(root).parts[0] in CAS_SKIPPED))
+                    and not (tree_name == "cas" and (portable_key(path.relative_to(root).parts[0]) in CAS_SKIPPED))
                 ),
                 key=lambda row: row["path"],
             )
@@ -122,7 +122,7 @@ def file_text(problem: Path, relative: str) -> dict[str, Any]:
     """
     if Path(relative).parts[:1] not in {(name,) for name in SERVED_TREES}:
         raise ValueError("only lean/, tex/ and cas/ are served as text")
-    if Path(relative).parts[:1] == ("cas",) and (len(Path(relative).parts) < 2 or Path(relative).parts[1] in CAS_SKIPPED):
+    if Path(relative).parts[:1] == ("cas",) and (len(Path(relative).parts) < 2 or portable_key(Path(relative).parts[1]) in CAS_SKIPPED):
         raise ValueError("not a computer algebra file of this problem")
     path = confine(problem, relative)
     data = path.read_bytes()

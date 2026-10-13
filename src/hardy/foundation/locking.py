@@ -286,9 +286,8 @@ class FileLock:
             # the kernel and closes the window between the check and the open,
             # but Windows has no such flag and `getattr(os, "O_NOFOLLOW", 0)`
             # quietly becomes nothing there -- so a `.local/bibliography.lock`
-            # shipped in a clone as a link was followed, and the `ftruncate`
-            # below then emptied whatever it named. `WriteGuard` makes the
-            # same two-part check for the same reason; see its docstring for
+            # shipped in a clone as a link could lock an unrelated file.
+            # `WriteGuard` makes the same two-part check for the same reason; see its docstring for
             # the threat model, which is a repository shipping a symlink
             # rather than a local adversary racing the check.
             if self.path.is_symlink():
@@ -303,26 +302,23 @@ class FileLock:
             if getattr(error, "errno", None) not in BUSY:
                 raise
             return False
-        # Whose it is, for a person looking at a stuck workspace. Written
-        # under the lock, so it is never a partial read, and it is not what
-        # the lock is enforced by -- nothing here is trusted to be accurate.
-        try:
-            os.ftruncate(self._handle, 0)
-            os.write(self._handle, str(os.getpid()).encode())
-        except OSError:
-            pass
+        # Rendezvous content never changes: tracked locks remain readable and
+        # byte-identical across sessions, including legacy PID-bearing files.
         return True
 
+
+# Beyond any rendezvous content, and within the CRT's signed-long limit.
+LOCK_OFFSET = 0x7FFF_FFFF
 
 if sys.platform == "win32":  # pragma: no cover - exercised on non-blocking Windows CI
     import msvcrt
 
     def _lock(handle: int) -> None:
-        os.lseek(handle, 0, os.SEEK_SET)
+        os.lseek(handle, LOCK_OFFSET, os.SEEK_SET)
         msvcrt.locking(handle, msvcrt.LK_NBLCK, 1)
 
     def _unlock(handle: int) -> None:
-        os.lseek(handle, 0, os.SEEK_SET)
+        os.lseek(handle, LOCK_OFFSET, os.SEEK_SET)
         msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
 
 else:
