@@ -650,3 +650,163 @@ def test_a_message_with_no_blocks_is_still_rebuilt() -> None:
     ])
 
     assert [_kind(block) for block in sent[0]["content"]] == ["thinking", "text", "tool_use"]
+
+
+@pytest.mark.parametrize('status', [429, 529, 500, 502, 503, 504])
+def test_transient_status_retries_with_fresh_clock(status):
+    class Transient(Exception):
+        status_code = status
+
+    class Flaky(FakeClient):
+        def create(self, **request):
+            self.sent.append(request.copy())
+            if len(self.sent) < 3:
+                raise Transient('busy')
+            return Reply([Block(type='text', text='done')])
+
+    clock = [0.0]
+    sleeps = []
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+    client = Flaky([])
+    events = []
+    provider = AnthropicProvider('m', client=client, sleep=sleep, clock=lambda: clock[0], observe=events.append)
+    turn = provider.complete(system='', messages=[Message('user', text='hi')], specs=[], timeout=10)
+    assert turn.text == 'done'
+    assert sleeps == [1, 2]
+    assert [request['timeout'] for request in client.sent] == [10, 9, 7]
+    assert [event['type'] for event in events] == ['provider_retry', 'provider_retry']
+
+
+def test_retry_never_sleeps_past_deadline():
+    class Busy(Exception):
+        status_code = 529
+    class Failing(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            raise Busy('busy')
+    client = Failing([])
+    provider = AnthropicProvider('m', client=client, sleep=lambda _: pytest.fail('slept'), clock=lambda: 0)
+    with pytest.raises(Busy):
+        provider.complete(system='', messages=[], specs=[], timeout=0.5)
+    assert len(client.sent) == 1
+
+
+def test_cache_markers_preserve_original_blocks_and_thinking():
+    blocks = ({'type': 'text', 'text': 'answer'}, {'type': 'thinking', 'thinking': 'reason', 'signature': 'sig'})
+    client = FakeClient([Reply([])])
+    provider = AnthropicProvider('m', client=client)
+    provider.complete(system='stable', messages=[Message('assistant', blocks=blocks)], specs=[])
+    request = client.sent[0]
+    assert request['system'] == [{'type': 'text', 'text': 'stable', 'cache_control': {'type': 'ephemeral'}}]
+    assert request['messages'][0]['content'][0]['cache_control'] == {'type': 'ephemeral'}
+    assert 'cache_control' not in request['messages'][0]['content'][1]
+    assert all('cache_control' not in block for block in blocks)
+
+
+@pytest.mark.parametrize('status, expected', [(400, 1), (401, 1), (403, 1), (404, 1), (413, 1), (529, 4)])
+def test_retry_count_is_bounded_and_permanent_failures_stop(status, expected):
+    class Failure(Exception):
+        status_code = status
+    class Failing(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            raise Failure('failed')
+    client = Failing([])
+    provider = AnthropicProvider('m', client=client, sleep=lambda _: None)
+    with pytest.raises(Failure):
+        provider.complete(system='', messages=[], specs=[])
+    assert len(client.sent) == expected
+
+
+def test_runtime_records_retry_and_counts_one_turn():
+    class Busy(Exception):
+        status_code = 529
+    class Flaky(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            if len(self.sent) == 1:
+                raise Busy('busy')
+            return Reply([Block(type='text', text='done')])
+    seen = []
+    runtime = ApiRuntime('m', system_prompt='', specs=[], dispatch=lambda *_: ToolResult(True, ''), observe=seen.append,
+                         provider=AnthropicProvider('m', client=Flaky([]), sleep=lambda _: None))
+    assert runtime.ask('hi') == 'done'
+    assert runtime.turns == 1
+    assert any(event['type'] == 'provider_retry' for event in seen)
+
+
+def test_retry_after_and_per_attempt_budget_settlement():
+    class Busy(Exception):
+        status_code = 429
+        response = SimpleNamespace(headers={'retry-after': '3'})
+    class Flaky(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            if len(self.sent) == 1:
+                raise Busy('busy')
+            return Reply([], usage=SimpleNamespace(input_tokens=1, output_tokens=2))
+    class Ledger:
+        def __init__(self):
+            self.reservations = []
+            self.settlements = []
+        def reserve(self, request):
+            token = len(self.reservations)
+            self.reservations.append(request.copy())
+            return token
+        def settle(self, token, usage):
+            self.settlements.append((token, usage))
+    ledger = Ledger()
+    sleeps = []
+    provider = AnthropicProvider('m', client=Flaky([]), sleep=sleeps.append, spend_budget=ledger)
+    provider.complete(system='', messages=[], specs=[])
+    assert sleeps == [3]
+    assert len(ledger.reservations) == 2
+    assert all(value == 0 for value in ledger.settlements[0][1].values())
+    assert ledger.settlements[1][1]['output_tokens'] == 2
+
+
+def test_runtime_exposes_prompt_cache_billing_identity():
+    runtime = ApiRuntime('m', system_prompt='', specs=[], dispatch=lambda *_: ToolResult(True, ''),
+                         provider=AnthropicProvider('m', client=FakeClient([])))
+    assert runtime.prompt_caching is True
+
+
+def test_connection_failure_retries_but_preserves_unknown_usage():
+    class APIConnectionError(Exception):
+        pass
+    class Flaky(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            if len(self.sent) == 1:
+                raise APIConnectionError('connection lost')
+            return Reply([Block(type='text', text='done')])
+    settled = []
+    ledger = SimpleNamespace(reserve=lambda _: object(), settle=lambda token, usage: settled.append(usage))
+    provider = AnthropicProvider('m', client=Flaky([]), sleep=lambda _: None, spend_budget=ledger)
+    assert provider.complete(system='', messages=[], specs=[]).text == 'done'
+    assert settled[0] is None
+
+
+def test_retry_does_not_start_when_sleep_returns_after_deadline():
+    class Busy(Exception):
+        status_code = 529
+    class Failing(FakeClient):
+        def create(self, **request):
+            self.sent.append(request)
+            raise Busy('busy')
+    clock = [0.0]
+    def delayed_sleep(_):
+        clock[0] = 20
+    client = Failing([])
+    provider = AnthropicProvider('m', client=client, sleep=delayed_sleep, clock=lambda: clock[0])
+    with pytest.raises(Busy):
+        provider.complete(system='', messages=[], specs=[], timeout=10)
+    assert len(client.sent) == 1
+
+
+def test_cache_provenance_records_flag_and_omits_unknown_transports():
+    from hardy.agents.contracts import provenance
+    assert provenance(SimpleNamespace(model='m', prompt_caching=True))['prompt_caching'] is True
+    assert 'prompt_caching' not in provenance(SimpleNamespace(model='m'))

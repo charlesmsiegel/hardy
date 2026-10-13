@@ -75,6 +75,9 @@ def provenance(runtime: Any) -> dict[str, Any]:
     limit = getattr(runtime, "output_limit", None)
     if limit is not None:
         stated["output_limit"] = limit
+    caching = getattr(runtime, "prompt_caching", None)
+    if caching is not None:
+        stated["prompt_caching"] = caching
     budget = getattr(runtime, "provider_budget", None)
     if budget is not None:
         stated["provider_budget"] = budget

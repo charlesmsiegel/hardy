@@ -288,8 +288,8 @@ def test_real_api_runtime_replays_selected_context_without_adopting_native_messa
     chat.send("NEW API QUESTION")
     request = clients[-1].sent[-1]
     context = [e for e in chat.record._recorded() if e["type"] == "branch_context"][-1]
-    assert context["text"] in request["system"]
-    assert "SHARED API QUESTION" in request["system"]
+    assert context["text"] in "".join(block["text"] for block in request["system"])
+    assert "SHARED API QUESTION" in "".join(block["text"] for block in request["system"])
     assert "EXCLUDED API QUESTION" not in json.dumps(request)
     assert "NEW API QUESTION" in json.dumps(request["messages"])
     chat.switch_model("replacement-model")
@@ -331,7 +331,7 @@ def test_backend_that_ignores_provider_threads_receives_the_whole_active_branch(
     chat._make_runtime = make
     chat.switch_model("api")
     chat.send("new API turn")
-    assert "POST FORK NATIVE TURN" in client.sent[-1]["system"]
+    assert "POST FORK NATIVE TURN" in "".join(block["text"] for block in client.sent[-1]["system"])
 
 
 def test_accounting_is_not_model_context_and_abandoned_attempts_do_not_return_in_summary(tmp_path):

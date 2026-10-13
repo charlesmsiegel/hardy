@@ -229,7 +229,7 @@ WITHHELD = ("audit", "automation", PROJECT_CONTEXT_KEY)
 #: dropped rather than merged over when the runtime changes: a value left
 #: behind by the backend that stated it describes turns that never ran under
 #: it, which is exactly what recording provenance exists to prevent.
-OPTIONAL_PROVENANCE = ("output_limit",)
+OPTIONAL_PROVENANCE = ("output_limit", "prompt_caching")
 USAGE_KEY = "usage"
 #: How far into `transcript.jsonl` the stored ledger has been brought up to
 #: date. Hardy's own bookkeeping, and no more the model's business than the

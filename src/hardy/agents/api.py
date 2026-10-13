@@ -21,11 +21,14 @@ performs every Lean check and every write.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator, Sequence
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -282,11 +285,16 @@ class AnthropicProvider:
         client: Any | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         spend_budget: SpendBudget | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        observe: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
         self._client = client
         self.spend_budget = spend_budget
+        self._sleep, self._clock = sleep, clock
+        self.observe = observe or (lambda event: None)
 
     def client(self) -> Any:
         """The SDK client, built on the first call that needs one.
@@ -304,14 +312,8 @@ class AnthropicProvider:
         if self._client is None:
             if not os.environ.get("ANTHROPIC_API_KEY"):
                 raise RuntimeError(KEY_MISSING)
-            # No retries. The client retries a timeout by default, and every
-            # attempt is handed the same `timeout` -- the whole of the run's
-            # remaining budget -- so a request with five minutes left could
-            # spend that three times over, plus backoff, before control came
-            # back here. A trajectory saying `wall_clock_enforced_by: "hardy"`
-            # would then be describing a bound nothing kept. Retrying is a
-            # decision the loop can make with the clock in front of it; the
-            # transport may not make it invisibly.
+            # Hardy retries in complete(), with the remaining deadline for each
+            # attempt. Disable hidden SDK retries that reset the timeout.
             self._client = load_sdk().Anthropic(max_retries=0)
         return self._client
 
@@ -377,44 +379,51 @@ class AnthropicProvider:
         request: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": system,
-            "messages": as_messages(messages),
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if system else [],
+            "messages": deepcopy(as_messages(messages)),
             "tools": tool_schema(specs),
         }
-        # The loop's remaining wall clock, handed to the client as its own
-        # request timeout. Without it a stalled request runs until the SDK's
-        # unrelated default gives up, and the loop's deadline -- which is
-        # checked between calls -- is not reached until then. Not passed at all
-        # when the loop is unbounded, so the client keeps its own default
-        # rather than being given `None` as an instruction to wait forever.
-        if timeout is not None:
-            request["timeout"] = max(timeout, 0.0)
-        reservation = self.spend_budget.reserve(request) if self.spend_budget is not None else None
-        try:
-            reply = self._within(request, timeout)
-            reported = _usage(getattr(reply, "usage", None))
-        except BaseException as error:
+        # Cache the history tail without changing stored provider blocks. Thinking
+        # blocks cannot carry explicit cache breakpoints.
+        if request["messages"]:
+            for block in reversed(request["messages"][-1]["content"]):
+                if isinstance(block, dict) and block.get("type") not in ("thinking", "redacted_thinking"):
+                    block["cache_control"] = {"type": "ephemeral"}
+                    break
+        started = self._clock()
+        for attempt in range(4):
+            remaining = timeout if attempt == 0 else (None if timeout is None else max(0.0, timeout - (self._clock() - started)))
+            if remaining is not None:
+                request["timeout"] = remaining
+            reservation = self.spend_budget.reserve(request) if self.spend_budget is not None else None
+            try:
+                reply = self._within(request, remaining)
+                reported = _usage(getattr(reply, "usage", None))
+            except BaseException as error:
+                if reservation is not None:
+                    self.spend_budget.settle(reservation, dict.fromkeys(COUNTERS, 0) if _rejected(error) else None)
+                if timed_out(error):
+                    bound = f"its {timeout:g}s budget" if timeout is not None else "the transport's own timeout"
+                    raise TimeoutError(f"the provider request exceeded {bound}") from error
+                status = getattr(error, "status_code", None)
+                connection = any(cls.__name__ == "APIConnectionError" for cls in type(error).__mro__)
+                if attempt == 3 or not (status in {429, 500, 502, 503, 504, 529} or connection):
+                    raise
+                delay = float(2 ** attempt)
+                headers = getattr(getattr(error, "response", None), "headers", {})
+                with contextlib.suppress(ValueError, TypeError):
+                    delay = max(delay, float(headers.get("retry-after", 0)))
+                remaining = None if timeout is None else timeout - (self._clock() - started)
+                if remaining is not None and delay >= remaining:
+                    raise
+                self.observe({"type": "provider_retry", "status": status, "attempt": attempt + 1, "sleep": delay})
+                self._sleep(delay)
+                if timeout is not None and self._clock() - started >= timeout:
+                    raise
+                continue
             if reservation is not None:
-                # Zero only where the provider refused before doing any work;
-                # anything else may have been billed, and settling it unknown
-                # keeps it charged at its reservation.
-                self.spend_budget.settle(reservation, dict.fromkeys(COUNTERS, 0) if _rejected(error) else None)
-            # The SDK's own timeout is an `APITimeoutError` -- a subclass of
-            # `APIConnectionError`, not of Python's `TimeoutError` -- so a
-            # request that ran out of the wall clock Hardy handed it would
-            # reach `runner.run` as an ordinary failure and be recorded as
-            # `runtime_error` rather than `wall_clock_limit`. The loop and the
-            # runner both read the built-in; this is where the two vocabularies
-            # meet.
-            if timed_out(error):
-                # `timeout` is None on an unbounded loop, where the client's own
-                # default fired instead -- still a timeout, and the message says
-                # which bound it was rather than formatting a None.
-                bound = f"its {timeout:g}s budget" if timeout is not None else "the transport's own timeout"
-                raise TimeoutError(f"the provider request exceeded {bound}") from error
-            raise
-        if reservation is not None:
-            self.spend_budget.settle(reservation, reported)
+                self.spend_budget.settle(reservation, reported)
+            break
         text: list[str] = []
         calls: list[ToolCall] = []
         reasoning: list[Any] = []
@@ -510,6 +519,8 @@ class ApiRuntime:
             if self._provider.spend_budget not in (None, spend_budget):
                 raise ValueError("provider already belongs to another spend budget")
             self._provider.spend_budget = spend_budget
+        if isinstance(self._provider, AnthropicProvider) and observe is not None:
+            self._provider.observe = observe
         self._loop = AgentLoop(
             self._provider,
             system_prompt=system_prompt,
@@ -534,6 +545,11 @@ class ApiRuntime:
     def provider_budget(self) -> dict[str, Any] | None:
         owner = getattr(self._provider, "spend_budget", None)
         return owner.summary() if owner is not None else None
+
+    @property
+    def prompt_caching(self) -> bool:
+        """Whether this owned transport requests ephemeral prefix caching."""
+        return isinstance(self._provider, AnthropicProvider)
 
     @property
     def output_limit(self) -> int | None:
