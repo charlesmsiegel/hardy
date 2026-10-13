@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pdf_helpers import Page, book_pages, build_pdf
+from test_shared_claims import admit
 
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.literature.sources.artifacts import ImportRequest
@@ -109,9 +110,9 @@ def test_semantic_report_and_link_comparison_count_false_merges(tmp_path):
     linker = ClaimLinker(library=lib, claims=claims, links=links)
     theorem = next(n for n in tree.nodes if n.number == "1.2")
     lemma = next(n for n in tree.nodes if n.number == "2.1")
-    right = linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
+    right = admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
         new_claim=ProjectItem(id="c-right", kind="theorem", name="right", origin="background_paper", statement="s"), interpreter="m")).id, verdict=verdict())
-    wrong = linker.admit(linker.propose(sha, tree.id, lemma.id, InterpretationProposal(claim_candidates=(claims.head("c-right").ref,), interpreter="m")).id, verdict=verdict())
+    wrong = admit(linker, linker.propose(sha, tree.id, lemma.id, InterpretationProposal(claim_candidates=(claims.head("c-right").ref,), interpreter="m")).id, verdict=verdict())
     linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=ProjectItem(id="c-other", kind="theorem", name="other", origin="background_paper", statement="o"), interpreter="m"))
     real = realizations.propose(FormalRealization(id=realization_id(right.claim, RealizationOrigin.MATHLIB, "M", "d", ENV), claim=right.claim, origin=RealizationOrigin.MATHLIB,
                                                   module="M", declaration="d", formal_type="T", environment=ENV, at="now"))
@@ -128,7 +129,7 @@ def test_semantic_report_and_link_comparison_count_false_merges(tmp_path):
     assert (comparison.expected, comparison.admitted, comparison.correct, comparison.false_merges, comparison.missing) == (3, 2, 1, 1, 1)
     assert comparison.precision == 0.5 and comparison.recall == 1 / 3
     # A second admitted link naming the same relation is still one relation found: recall stays a proportion.
-    linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(claims.head("c-right").ref,), interpreter="m")).id, verdict=verdict())
+    admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(claims.head("c-right").ref,), interpreter="m")).id, verdict=verdict())
     twice = compare_links(links, [ExpectedLink(artifact_sha256=sha, node=theorem.id, claim_id="c-right")])
     assert (twice.expected, twice.admitted, twice.correct, twice.missing) == (1, 3, 1, 0) and twice.recall == 1.0
     assert wrong.claim.id == "c-right"

@@ -6,6 +6,7 @@ import shutil
 
 import pytest
 from pdf_helpers import book_pages, build_pdf
+from test_shared_claims import admit
 
 from hardy.literature.sources.artifacts import ImportRequest
 from hardy.literature.sources.contracts import AccessPolicy, RepresentationKind
@@ -36,7 +37,7 @@ def populated(tmp_path, name="library", access=AccessPolicy.PRIVATE_LOCAL):
     links = LinkStore(root / "links")
     linker = ClaimLinker(library=lib, claims=claims, links=links)
     theorem = next(n for n in tree.nodes if n.number == "1.2")
-    link = linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
+    link = admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
         new_claim=ProjectItem(id="cyclic-subgroups", kind="theorem", name="Subgroups of cyclic groups are cyclic", origin="background_paper",
                               statement="Every subgroup of a cyclic group is cyclic."), interpreter="m")).id, verdict=verdict())
     return root, lib, sha, tree, theorem, link

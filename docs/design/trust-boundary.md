@@ -409,7 +409,8 @@ the kernel has nothing to say about it. The faithfulness gate
 (`workflows/faithfulness.py`) is what stands there.
 
 The reader is independent of *context*, not merely of weights. It starts on its
-own thread and receives the user's words and the frozen Lean signature alone,
+own thread and receives the user's words, the frozen Lean signature, and any frozen caller-resolved
+semantic context, all quoted under a marker derived from their bytes,
 without the conversation that produced the formalization or that
 conversation's own account of what it did. Withholding tools is what makes
 that true rather than aspirational: the reader is offered none, because the
@@ -690,3 +691,12 @@ trigger and the provider transcript path, which may be enough to persist the
 summary and mark the boundary. What that hook **cannot** do is decide what the
 surviving context contains, so it would record the loss rather than end it.
 [The roadmap](../roadmap.md) tracks the rest.
+
+A source-to-claim link's faithfulness verdict names its interpretation digest:
+the exact artifact, node version and kind, span, selected claim version (or
+frozen proposed claim), relation, and notation/context mappings. An ambiguous
+proposal is reviewed against the selected candidate. Admission preserves that
+subject even when adding source provenance creates a new claim revision;
+a verdict about any other subject cannot admit the link. Explicit user approval
+remains a separate admission path. Older links without a recorded node kind
+can only detect content changes; new links also detect kind changes.

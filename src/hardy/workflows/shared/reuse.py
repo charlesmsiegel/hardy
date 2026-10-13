@@ -6,7 +6,8 @@ are different answers a caller acts on differently. The order follows the
 architecture's preference: an established result in the current project,
 then an exact claim with a Mathlib realization, then one with a shared Hardy
 realization, then a related claim reachable through a recorded relation,
-then an exact claim known only from sources, then candidates and leads. An
+then an exact claim known only from sources, then candidates and leads. Within each class, availability precedes origin, so an importable shared
+realization outranks a Mathlib realization from a stale environment. An
 empty answer says the search found nothing, never that nothing exists.
 """
 from __future__ import annotations
@@ -111,5 +112,5 @@ def resolve_reusable_claim(
         results.append(ReuseResult(cls=ReuseClass.RELATED_FAMILY, claim=hit.ref, claim_name=hit.name, reason=f"{hit.match}; navigational only, not an identity match"))
     if not results:
         results.append(ReuseResult(cls=ReuseClass.NONE, reason="no shared claim matched the query; this is not evidence that none exists or that Mathlib lacks one"))
-    results.sort(key=lambda r: (CLASS_ORDER[r.cls], 0 if r.availability in {"importable", "project"} else 1, r.claim.id if r.claim else ""))
+    results.sort(key=lambda r: (CLASS_ORDER[r.cls], 0 if r.availability in {"importable", "project"} else 1, ORIGIN_ORDER.get(r.realization.origin, 9) if r.realization else 9, r.claim.id if r.claim else ""))
     return tuple(results[:limit])

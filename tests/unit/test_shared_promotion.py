@@ -65,7 +65,7 @@ def clean_audit(space, targets):
     for name in targets:
         source = (space.root / module_path(name)).read_text(encoding="utf-8")
         names = [n for kind in ("theorem", "lemma") for n in declarations(source).get(kind, ())]
-        found[name] = {"status": "clean", "assumed": [], "declarations": names}
+        found[name] = {"status": "clean", "assumed": [], "declarations": [{"name": name, "axioms": []} for name in names]}
     return found
 
 
@@ -187,7 +187,7 @@ def test_rewrite_imports_only_touches_named_modules():
 
 def test_audit_must_cover_the_promoted_declaration(tmp_path):
     def elsewhere(space, targets):
-        return {name: {"status": "clean", "assumed": [], "declarations": ["Prym.two_le_three"]} for name in targets}
+        return {name: {"status": "clean", "assumed": [], "declarations": [{"name": "Prym.two_le_three", "axioms": []}]} for name in targets}
 
     root, claims, claim, promoter, request, compiled = setup(tmp_path, audit=elsewhere)
     prepared = promoter.prepare(request, SOURCES, AUDIT)
@@ -305,3 +305,27 @@ def test_a_declaration_name_repeated_by_a_quoted_twin_blocks_promotion(tmp_path)
     failed = promoter.promote(prepared.id, request, sources)
     assert failed.status == "failed" and "twice" in failed.blockers[-1].detail
     assert promoter.realizations.for_claim(claim.id) == ()
+
+
+@pytest.mark.parametrize("module", ["LeanCamCombi.X", "AesopExtras", "Initial.Setup", "BatteriesPlus", "StdExtra"])
+def test_toolchain_prefix_is_not_a_module_root(module):
+    closure = compute_closure({"Prym.Main": f"import {module}\ntheorem t : True := trivial\n"}, "Prym.Main", shared_modules=(), audit=AUDIT)
+    assert next(e for e in closure if e.module == module).disposition == "blocked"
+
+
+@pytest.mark.parametrize("module", ["Lean", "Lean.Elab.Command", "Std.Data.HashMap", "Aesop", "Init", "Batteries"])
+def test_toolchain_roots_remain_imports(module):
+    closure = compute_closure({"Prym.Main": f"import {module}\ntheorem t : True := trivial\n"}, "Prym.Main", shared_modules=(), audit=AUDIT)
+    assert next(e for e in closure if e.module == module).disposition == "mathlib_import"
+
+
+def test_promotion_accepts_the_actual_audit_verdict_shape(tmp_path):
+    from hardy.formal.audit import AxiomReport, classify
+
+    def actual_audit(space, targets):
+        return {name: classify(tuple(AxiomReport(n, ()) for n in statements((space.root / module_path(name)).read_text())), ()).as_dict()
+                for name in targets}
+
+    root, claims, claim, promoter, request, compiled = setup(tmp_path, audit=actual_audit)
+    prepared = promoter.prepare(request, SOURCES, AUDIT)
+    assert promoter.promote(prepared.id, request, SOURCES).status == "admitted"

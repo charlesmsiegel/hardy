@@ -159,7 +159,7 @@ def compute_closure(
                 entries[imported] = ClosureEntry(module=imported, disposition="mathlib_import", reason="Mathlib dependency kept as an import")
             elif imported in shared_modules:
                 entries[imported] = ClosureEntry(module=imported, disposition="already_shared", reason="already in the shared library; reused")
-            elif imported.startswith(("Init", "Lean", "Std", "Batteries", "Aesop")):
+            elif any(imported == root or imported.startswith(root + ".") for root in ("Init", "Lean", "Std", "Batteries", "Aesop")):
                 entries[imported] = ClosureEntry(module=imported, disposition="mathlib_import", reason="toolchain dependency kept as an import")
             else:
                 entries[imported] = ClosureEntry(module=imported, disposition="blocked", reason="external import that is neither Mathlib nor shared; project-specific dependency")
@@ -206,6 +206,7 @@ def shared_modules_in(shared_root: Path) -> tuple[str, ...]:
     return tuple(sorted(".".join(relative.with_suffix("").parts) for relative in files_under(shared_root, ".lean")))
 
 
+# Per-module mappings have the formal.audit.Verdict.as_dict() shape.
 AuditReader = Callable[[LeanWorkspace, tuple[str, ...]], Mapping[str, Mapping[str, Any]]]
 
 
@@ -352,7 +353,14 @@ class Promoter:
                 verdict = verdicts.get(shared)
                 if verdict is None or verdict.get("status") != "clean" or verdict.get("assumed"):
                     return self._fail(record, PromotionBlocker(kind="audit_failed", detail=f"{shared}: audit {verdict!r} is not clean in the current environment"))
-                if shared == target_module and not ({record.declaration, short} & set(verdict.get("declarations") or ())):
+                # Bare names remain supported for legacy adapters; canonical
+                # audit output carries a name and axiom list for each entry.
+                established = set()
+                for entry in verdict.get("declarations") or ():
+                    name = entry.get("name") if isinstance(entry, Mapping) else entry
+                    if isinstance(name, str):
+                        established.add(name)
+                if shared == target_module and not ({record.declaration, short} & established):
                     # A clean module status says nothing about a declaration the
                     # audit never looked at; the promoted declaration must be
                     # among the ones the audit actually established.
