@@ -29,7 +29,14 @@ kernel32.SetConsoleCtrlHandler.argtypes = [callback_type, ctypes.c_bool]
 if not kernel32.SetConsoleCtrlHandler(callback, True):
     raise ctypes.WinError(ctypes.get_last_error())
 signal.signal(signal.SIGBREAK, lambda *_: write("python-sigbreak.json", True))
-write("ready.json", {"hwnd": kernel32.GetConsoleWindow()})
+hwnd = kernel32.GetConsoleWindow()
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+window_class = ctypes.create_unicode_buffer(256)
+user32.GetClassNameW(hwnd, window_class, len(window_class))
+session_id = ctypes.c_uint()
+kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(session_id))
+write("ready.json", {"hwnd": hwnd, "window_class": window_class.value, "session_id": session_id.value})
 try:
     while True:
         time.sleep(0.05)
