@@ -797,7 +797,8 @@ def test_stop_during_capture_preserves_completed_cell_output(monkeypatch) -> Non
             signal.raise_signal(signal.SIGINT)
             return "hi\n", "", False
 
-    old_handler = signal.getsignal(signal.SIGINT)
+    old_handlers = {number: signal.getsignal(number) for number in driver._STOP_SIGNALS}
+    old_pending = driver.PENDING_INTERRUPT
     namespace = {}
     driver.PENDING_INTERRUPT = False
     try:
@@ -814,5 +815,6 @@ def test_stop_during_capture_preserves_completed_cell_output(monkeypatch) -> Non
         assert "output was being collected" in reply["stderr"]
         assert driver.PENDING_INTERRUPT is False
     finally:
-        signal.signal(signal.SIGINT, old_handler)
-        driver.PENDING_INTERRUPT = False
+        for number, handler in old_handlers.items():
+            signal.signal(number, handler)
+        driver.PENDING_INTERRUPT = old_pending
