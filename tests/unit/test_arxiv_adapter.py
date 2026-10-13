@@ -56,6 +56,7 @@ def held(tmp_path, identifier="math.DG/0211159v1", with_source=True):
 def test_held_paper_registers_as_edition_and_tree_artifact(tmp_path):
     papers, record = held(tmp_path)
     library = ManagedLibrary(tmp_path / "library")
+    # Subject-class input still works; every stored identity is canonical.
     identifier = parse_id("math.DG/0211159v1")
     report = register_paper(library, papers, identifier)
     sha = report.outcome.artifact.sha256
@@ -63,13 +64,13 @@ def test_held_paper_registers_as_edition_and_tree_artifact(tmp_path):
     assert artifact.format is SourceFormat.TEX_TREE and artifact.access is AccessPolicy.PUBLIC_PROVIDER_RETRIEVABLE
     assert report.extraction.status == "ok"
     edition = library.catalog.edition_of(sha)
-    assert edition is not None and edition.id == "edition-arxiv-math.DG-0211159v1" and ("arxiv", "math.DG/0211159v1") in edition.identifiers
+    assert edition is not None and edition.id == "edition-arxiv-math-0211159v1" and ("arxiv", "math/0211159v1") in edition.identifiers
     work = library.catalog.snapshot().work(edition.work)
     assert work.title == "The entropy formula for the Ricci flow" and work.authors == ("Grigori Perelman",)
     tree = library.build_tree(sha)
     assert any(n.kind is NodeKind.THEOREM and n.label == "thm:mono" for n in tree.nodes)
     provenance = library.artifacts.provenance(sha)[0]
-    assert provenance.provider == "arxiv" and provenance.source_url.endswith("math.DG/0211159v1")
+    assert provenance.provider == "arxiv" and provenance.source_url.endswith("math/0211159v1")
     assert papers.holds(identifier) and papers.holds_source(identifier)  # untouched
     again = register_paper(library, papers, identifier)
     assert again.outcome.reused and len(library.artifacts.provenance(sha)) == 2 and len(library.catalog.snapshot().editions) == 1
@@ -82,12 +83,12 @@ def test_versions_are_distinct_editions_of_one_work(tmp_path):
     first = register_paper(library, papers_v1, parse_id("math.DG/0211159v1"))
     second = register_paper(library, papers_v2, parse_id("math.DG/0211159v2"))
     editions = {e.id: e for e in library.catalog.snapshot().editions}
-    assert set(editions) == {"edition-arxiv-math.DG-0211159v1", "edition-arxiv-math.DG-0211159v2"}
+    assert set(editions) == {"edition-arxiv-math-0211159v1", "edition-arxiv-math-0211159v2"}
     assert len({e.work for e in editions.values()}) == 1
     # identical e-print bytes are one artifact; the second registration proposes a second edition but cannot make it authoritative
     assert first.outcome.artifact.sha256 == second.outcome.artifact.sha256
-    assert library.catalog.edition_of(first.outcome.artifact.sha256).id == "edition-arxiv-math.DG-0211159v1"
-    assert [p.edition for p in library.catalog.candidates_for(first.outcome.artifact.sha256)] == ["edition-arxiv-math.DG-0211159v2"]
+    assert library.catalog.edition_of(first.outcome.artifact.sha256).id == "edition-arxiv-math-0211159v1"
+    assert [p.edition for p in library.catalog.candidates_for(first.outcome.artifact.sha256)] == ["edition-arxiv-math-0211159v2"]
 
 
 def test_paper_without_source_registers_its_metadata_text(tmp_path):
