@@ -172,19 +172,36 @@ class _Kernel:
             if stdin is None or self._stopped:
                 return False
             self._input_writers += 1
-        try:
-            stdin.write(payload)
-            stdin.flush()
-        except (BrokenPipeError, OSError, ValueError):
-            return False
-        finally:
+        finished = threading.Event()
+        sent = False
+
+        def write() -> None:
+            nonlocal sent
+            try:
+                stdin.write(payload)
+                stdin.flush()
+                sent = True
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            finally:
+                with self._input_lock:
+                    self._input_writers -= 1
+                    close = self._stopped and self._input_writers == 0
+                if close:
+                    with contextlib.suppress(OSError, ValueError):
+                        stdin.close()
+                finished.set()
+
+        # A helper outside the group can retain the read end even after the
+        # interpreter is killed. Leave a wedged writer its handle, without keeping
+        # the session caller and its lock waiting for that unrelated process.
+        threading.Thread(target=write, daemon=True).start()
+        while not finished.wait(0.05):
             with self._input_lock:
-                self._input_writers -= 1
-                close = self._stopped and self._input_writers == 0
-            if close:
-                with contextlib.suppress(OSError, ValueError):
-                    stdin.close()
-        return True
+                stopped = self._stopped
+            if stopped:
+                return False
+        return sent
 
     def read_reply(
         self,
