@@ -427,3 +427,55 @@ def test_goal_identity_recovers_linked_approach_and_earlier_blocked_assessment(t
     assert approach.historical_assessments[0].ref == old.ref
     assert approach.historical_assessments[0].research.reason == "Finite covering is unavailable"
     assert "historical" in approach.summary.lower()
+
+
+@pytest.mark.parametrize("limit", [1, 10])
+def test_retrieval_builds_current_entries_and_context_once_per_source(tmp_path, monkeypatch, limit):
+    from hardy.workflows.context import ContextManager
+    from hardy.workflows.ledger.graph import LedgerGraph
+
+    store = LedgerStore(tmp_path)
+    scope = Scope(id="scope")
+    notes = tuple(ProjectItem(id=f"note-{i}", kind="research_note", name="alpha beta",
+                             statement=f"alpha beta {i}", origin="human_authored") for i in range(30))
+    store.append((scope, *notes), expected_revision=0)
+    manager = ContextManager(store)
+    context = manager.create_root(id="root", label="Base")
+    for i in range(4):
+        context = manager.extend(context.ref, id=f"context-{i}", label=f"Context {i}")
+    index = retrieval.build_index((retrieval.ledger_source("p", store),))
+    counts = dict(entries=0, graphs=0, reads=0, chains=0)
+    original_entries, original_init = retrieval._entries, LedgerGraph.__init__
+    original_chain = LedgerGraph.context_chain
+
+    def entries(source):
+        counts["entries"] += 1
+        return original_entries(source)
+
+    def graph_init(self, snapshot):
+        counts["graphs"] += 1
+        original_init(self, snapshot)
+
+    def chain(self, ref):
+        counts["chains"] += 1
+        return original_chain(self, ref)
+
+    def read_source(identifier):
+        counts["reads"] += 1
+        return retrieval.ledger_source(identifier, LedgerStore(store.project))
+
+    monkeypatch.setattr(retrieval, "_entries", entries)
+    monkeypatch.setattr(LedgerGraph, "__init__", graph_init)
+    monkeypatch.setattr(LedgerGraph, "context_chain", chain)
+    service = retrieval.ProjectRetriever(index, read_source=read_source)
+    query = retrieval.RetrievalQuery(project_source="p", text="alpha beta", scope=scope.ref,
+                                    context=context.ref, limit=limit)
+    result = service.retrieve(query)
+    assert len(result.delivered) == limit
+    assert counts == dict(entries=1, graphs=2, reads=2, chains=7)
+    changed = notes[0].model_copy(update={"name": "externally changed"})
+    LedgerStore(store.project).append((changed,), expected_revision=store.read().revision)
+    stale = service.retrieve(query)
+    assert not stale.delivered
+    assert all("source content changed" in hit.reason for hit in stale.rejected)
+    assert counts == dict(entries=2, graphs=4, reads=4, chains=14)
