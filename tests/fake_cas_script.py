@@ -66,6 +66,8 @@ def main() -> None:
         if literal is not None:
             sys.stdout.write(literal.group(1) + "\n")
             continue
+        if source.startswith("_hardy_display = lambda"):
+            continue
         reply = answer(source)
         sys.stdout.write(reply["stdout"])
         if reply["value_repr"]:

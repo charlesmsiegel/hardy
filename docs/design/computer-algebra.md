@@ -132,6 +132,12 @@ undo that, so one stray call would leave the kernel deaf and discard every
 value in the session. They mean something in a REPL that owns its terminal, and
 this one is spoken to over a pipe.
 
+Kernel teardown bounds both process termination and output-pipe settlement.
+A descendant that escapes the tracked process tree may retain an output handle;
+teardown returns after its drain deadline, and a daemon reader retains the stream
+until EOF so closing it cannot block teardown. This is bounded cleanup, not
+process confinement.
+
 ## Two output bounds, and why they are not one bound
 
 `cas_output_bytes` (256 KiB) caps what Hardy captures from the kernel at all.
@@ -162,9 +168,9 @@ session and can be narrowed in a following cell: `len(_)`, `_[0]`,
 `_.args[:3]`. Inspecting live state is cheaper and more useful than paging
 through a file, and it needs no further tool. This is Python's own `_`
 convention: the driver assigns `namespace["_"]` directly after evaluating the
-trailing expression (`algebra/driver.py`), the same binding a REPL makes
-through `sys.displayhook`; the exported script, with no live kernel behind it,
-calls `sys.displayhook` itself to reproduce it (`algebra/backends.py`). The
+trailing expression (`algebra/driver.py`), a module global rather than the builtins binding made by
+`sys.displayhook`; the exported script uses `_hardy_display` to assign the same
+global and print its repr, leaving it unchanged for `None` (`algebra/backends.py`). The
 wording is `prompts/cas_spill.md.j2`.
 
 ## A truncated capture is recorded, and not accepted
@@ -202,7 +208,8 @@ pedantry:
 - A kernel evaluates a trailing expression and reports its value, where `exec`
   in a script discards it. `2 + 2` once exported as "verified" and printed
   nothing. So `SympyBackend.render_cell` hands a trailing expression to
-  `sys.displayhook`, which is exactly what the driver does with it
+  `_hardy_display`, which binds the module global `_` and prints the repr
+  when the value is not `None`, matching the driver
   (`algebra/backends.py`).
 - A construct legal at the head of a cell, a `__future__` import for instance,
   is a syntax error partway down a file.

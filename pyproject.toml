@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6"]
+test = ["nbformat>=5", "pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6"]
 # The Codex backend is optional: Hardy runs on the Claude backend alone, and
 # only a ChatGPT-subscription user needs this SDK installed.
 codex = ["openai-codex>=0.144"]

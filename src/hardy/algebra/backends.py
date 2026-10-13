@@ -19,7 +19,7 @@ def _source_offset(source: str, lineno: int, col_offset: int) -> int:
     any non-ASCII text ahead of the position would be spliced in the wrong
     place by naive arithmetic.
     """
-    lines = source.splitlines(keepends=True)
+    lines = re.findall(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z", source)
     if lineno - 1 >= len(lines):
         return len(source)
     prefix = sum(len(line) for line in lines[: lineno - 1])
@@ -36,10 +36,17 @@ class SympyBackend:
     kernel_name = "python3"
     framing = "length"
     comment = "#"
-    # `import sys` is here for `render_cell` below, which needs `displayhook`
-    # to make a trailing expression visible in the script. It goes after the
-    # star import so nothing sympy exports can shadow the module.
-    preamble = "from sympy import *\nimport sys"
+    # The display helper reproduces the driver's module-global `_`, unlike
+    # Python's displayhook, which binds builtins._. Capture the namespace and
+    # repr/print operations before a cell can rebind their global names.
+    preamble = (
+        "from sympy import *\nimport sys\n"
+        '_hardy_display = lambda value, namespace=globals(), '
+        'write=__import__("builtins").print, representation=repr: '
+        'None if value is None else '
+        '(namespace.__setitem__("_", value), '
+        'write(representation(value), file=__import__("sys").stdout))'
+    )
     # Both halves, because both bear on a result. The digest is derived from
     # `repr` output and the exported script is executed by an interpreter, so
     # a different Python can change a representation, an ordering, or a
@@ -163,7 +170,7 @@ class SympyBackend:
         value and prints nothing. Writing the raw source out and then calling
         the pair verified was a claim about an artifact that did not behave
         the way the record said, so the trailing expression is handed to
-        `sys.displayhook` instead -- which is precisely what the driver does
+        `_hardy_display` instead -- matching what the driver does
         with it: nothing when the value is None, otherwise bind `_` and print
         the repr.
 
@@ -194,7 +201,7 @@ class SympyBackend:
         # printed `x` where the record said `(x,)`. Parenthesised first, the
         # comma builds the tuple the driver evaluated. They also make an
         # expression spread over several lines stay one expression.
-        return f"{source[:start]}sys.displayhook(({source[start:end]})){source[end:]}"
+        return f"{source[:start]}_hardy_display(({source[start:end]})){source[end:]}"
 
     def parse_version(self, sanitized_stdout: str) -> str:
         return sanitized_stdout
@@ -338,7 +345,8 @@ class Macaulay2Backend(_SentinelBackend):
     # worse than a false positive; there is no cost to the wider pattern.
     # In combined capture a preceding stdout write need not end in a newline.
     # A full banner embedded in ordinary text is conservatively an error too.
-    error_pattern = re.compile(r"stdio:\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
+    # Loaded files use their path (which may contain spaces), not `stdio`.
+    error_pattern = re.compile(r"[^\r\n]+:\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
     # M2 echoes each `iN : ` input prompt (and the source line behind it) even
     # when stdin is not a tty, and prints an `oN` counter before every
     # non-suppressed statement's value. Observed verbatim in the same run: a
