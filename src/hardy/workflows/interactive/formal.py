@@ -34,6 +34,7 @@ from hardy.formal.workspace import (
     unreadable_assumptions,
     unreadable_structure,
 )
+from hardy.foundation.files import reserved_device_name
 from hardy.foundation.values import ToolResult
 
 # The head of a saved theorem's statement as `statements` reports it: the
@@ -326,6 +327,8 @@ class FormalWorkspaceService:
             relative = safe_relative(path)
         except WorkspacePathError as error:
             return ToolResult(False, str(error), source)
+        if any(reserved_device_name(part) for part in relative.parts):
+            return ToolResult(False, f"a guarded file may not use a Windows reserved device name: {path!r}", source)
         # `ratchet=False` is how an imported file enters (#112). The two gates
         # it skips are authorship steering -- `theorem` reserved to registered
         # results, the writeup catch-up -- rules about how a model writes new

@@ -48,7 +48,7 @@ from typing import Literal
 from pydantic import field_validator
 
 from hardy.documents.syntax import typeset, unfinished_definition
-from hardy.foundation.files import LayoutError, WriteGuard, read_text
+from hardy.foundation.files import LayoutError, WriteGuard, portable_key, read_text
 from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 from hardy.foundation.values import FrozenModel
 from hardy.literature.metadata import PaperRecord
@@ -937,7 +937,7 @@ def is_generated(path: str) -> bool:
     use, reserved by accident. There is exactly one generated file, and it
     sits at the root of the writeup tree.
     """
-    return PurePosixPath(str(path).replace("\\", "/")).as_posix() == GENERATED
+    return portable_key(PurePosixPath(str(path).replace("\\", "/")).as_posix()) == portable_key(GENERATED)
 
 
 def _escaped(text: str) -> str:

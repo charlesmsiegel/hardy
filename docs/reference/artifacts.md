@@ -156,7 +156,7 @@ A project's `ledger/` is an append-only, hash-chained sequence of transactions, 
 | `activate` | The version this transaction makes active, or `null` to leave the active version unchanged. |
 | `digest` | This transaction's own content digest, computed over every other field; a stored file whose digest does not match its own content is refused. |
 
-Every committed version of the project remains addressable; there is no separate mutable database to repair, only replay of this chain. `writer.lock` is the OS-level lock's rendezvous file, created once and left in place; an empty file at a known path makes no claim on anything by itself, so it is harmless committed alongside the transactions it once serialized.
+Every committed version of the project remains addressable; there is no separate mutable database to repair, only replay of this chain. `writer.lock` is the OS-level lock's rendezvous file, created once and left in place; a rendezvous file at a known path makes no claim on anything by itself, so it is harmless committed alongside the transactions it once serialized. Lock rendezvous files are created empty and never rewritten or unlinked. Legacy files containing a PID keep their bytes unchanged. On Windows the lock covers a byte beyond the file content, so other processes can read, copy, or stage these files while the lock is held.
 
 ## `evidence/`
 

@@ -48,6 +48,8 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from hardy.foundation.files import reserved_device_name
+
 READ_CHUNK_BYTES = 64 * 1024
 #: The name a one-file gzip submission is stored under. arXiv serves a
 #: single-file source as the gzip of that file, with no tar around it and no
@@ -255,6 +257,8 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
         raise ArchiveError(f"the member path {name!r} is nested too deep")
     if any(len(part.encode("utf-8")) > limits.max_component_bytes for part in parts):
         raise ArchiveError(f"a component of the member path {name!r} is too long")
+    if any(reserved_device_name(part) for part in parts):
+        raise ArchiveError(f"member path {name!r} uses a Windows reserved device name")
     path = "/".join(parts)
     if len(path.encode("utf-8")) > limits.max_path_bytes:
         raise ArchiveError(f"the member path {name!r} is too long")

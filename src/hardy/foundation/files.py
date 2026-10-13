@@ -192,16 +192,23 @@ class WriteGuard:
     def mkdir(self) -> None:
         """Put the directory back if something removed it, and re-pin it.
 
-        Not just convenience. `CasSession._append` recreates the log's
-        directory before every append, because a session whose workspace was
-        deleted underneath it should not lose the record of a cell that has
-        already run. A fresh directory has a fresh inode, so without re-pinning
-        here the next write would be refused for the rest of the session by a
-        guard that is comparing against a directory nobody can reach any more.
+        A fresh directory has a fresh inode, whether this guard or another
+        writer created it. Re-prove its location before pinning that identity,
+        so later writes do not compare against an unreachable old directory.
+        This proves location only; owners holding a writer lease still need
+        to establish that their lease remains valid before writing.
         """
-        if self.directory.is_dir() and not self.directory.is_symlink():
+        if not (self.directory.is_dir() and not self.directory.is_symlink()):
+            if self.directory.parent.resolve() / self.directory.name != self._resolved:
+                raise LayoutError(f"{self.directory} resolves elsewhere; refusing to write through it")
+            self._make()
             return
-        self._make()
+        current = _identity(self.directory)
+        if current != self._identity or self._identity is None:
+            resolved = resolve_named_child(self.directory, self.directory.parent.resolve())
+            if resolved != self._resolved:
+                raise LayoutError(f"{self.directory} now resolves to {resolved}; refusing to write through it")
+            self._identity = current
 
     def confirm(self) -> None:
         """Refuse unless the directory is still the one that was proven.
@@ -213,9 +220,11 @@ class WriteGuard:
         current = _identity(self.directory)
         if self._identity is not None:
             if current != self._identity:
+                resolved = self.directory.resolve()
+                reason = "its identity changed" if resolved == self._resolved else f"it now resolves to {resolved}"
                 raise LayoutError(
                     f"{self.directory} is no longer the directory it was proven to be "
-                    f"(it now resolves to {self.directory.resolve()}); refusing to write through it"
+                    f"({reason}); refusing to write through it"
                 )
             return
         # Nothing pinned. Either the filesystem does not number files -- some
@@ -495,6 +504,19 @@ def _collect(base: Path, directory: Path, suffix: str, found: list[PurePosixPath
             found.append(PurePosixPath(path.relative_to(base).as_posix()))
 
 
+def portable_key(relative: str) -> str:
+    """Compare names as case-insensitive filesystems and Windows aliases do."""
+    return "/".join(part.rstrip(". ").casefold() for part in str(relative).replace("\\", "/").split("/"))
+
+
+def reserved_device_name(name: str) -> bool:
+    """Whether a component denotes a Windows device, on every platform."""
+    stem = str(name).rstrip(". ").split(".", 1)[0].rstrip(" ").upper()
+    return stem in {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} or (
+        len(stem) == 4 and stem[:3] in {"COM", "LPT"} and stem[3] in "123456789¹²³"
+    )
+
+
 def _name(name: str) -> str:
     """`name`, refusing anything that is not a single file name.
 
@@ -513,6 +535,8 @@ def _name(name: str) -> str:
     candidate = Path(text)
     if candidate.is_absolute() or candidate.name != text:
         raise LayoutError(f"a guarded file is one name, not a path: {name!r}")
+    if reserved_device_name(text):
+        raise LayoutError(f"a guarded file may not use a Windows reserved device name: {name!r}")
     return text
 
 
