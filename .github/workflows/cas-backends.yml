@@ -39,4 +39,4 @@ jobs:
           Singular --version
           M2 --version
       - name: Real-backend tests
-        run: uv run --extra test pytest tests/integration/test_cas_real.py -v -m real_toolchain
+        run: uv run --extra test pytest tests/integration/test_cas_real.py tests/unit/test_cas_export_fidelity.py -v -m real_toolchain

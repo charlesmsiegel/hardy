@@ -115,7 +115,10 @@ def truncate(
     line cannot then be asked for whole, which `summary` reports as bytes
     dropped.
     """
-    lines = text.splitlines(keepends=True)
+    parts = text.split("\n")
+    lines = [part + "\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
     total_lines = len(lines)
     total_bytes = len(text.encode("utf-8"))
     begin = max(start_line - 1, 0)

@@ -298,7 +298,7 @@ def test_awkwardly_shaped_cells_still_render_into_a_runnable_script(
 
     report = export_session(sympy_session, tmp_path / "cas")
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
-    assert "y = 2; sys.displayhook((x + y))" in script
+    assert "y = 2; _hardy_display((x + y))" in script
     assert "# ∀ε>0" in script  # the comment survives the splice
     assert script_agreed(report), report.script_detail
     assert reproduced(report), report.model_dump_json(indent=2)

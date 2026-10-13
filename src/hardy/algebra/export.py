@@ -691,7 +691,7 @@ def render_script(
             if verdict.verdict == "verified"
             else f"  [{verdict.verdict}: {_one_line(verdict.detail)}]"
         )
-        filed = f" {record.path}" if record.path else ""
+        filed = f" {_one_line(record.path)}" if record.path else ""
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){filed}{note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
@@ -743,6 +743,7 @@ def render_notebook(
         notebook_cells.append(
             {
                 "cell_type": "code",
+                "id": f"cell-{record.seq}",
                 "execution_count": record.seq,
                 "metadata": {
                     "hardy": {
