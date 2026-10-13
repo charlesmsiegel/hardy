@@ -281,7 +281,9 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
 
     def _dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         if closed.is_set():
-            return ToolResult(False, "the run's budget expired before this tool call was made")
+            why = "the run's budget expired before this tool call was made"
+            recorder.append({"type": "refused_tool", "name": name, "arguments": arguments, "why": why})
+            return ToolResult(False, why)
         # The run is over, and the calls still queued behind the one that ended
         # it do not get to change what it decided. Declining the next provider
         # turn does not reach these: one response can ask for two submissions,
