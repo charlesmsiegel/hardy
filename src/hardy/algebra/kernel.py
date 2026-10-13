@@ -44,6 +44,9 @@ class _Kernel:
         self.marker_seen = False
         self._tail = b""
         self._changed = threading.Condition()
+        self._input_lock = threading.Lock()
+        self._input_writers = 0
+        self._stopped = False
         cwd.mkdir(parents=True, exist_ok=True)
         # Its own process group (see `child_creation`), so an interrupt reaches
         # a cell that shelled out as well as the interpreter that started it,
@@ -71,9 +74,12 @@ class _Kernel:
         # it did before any job existed. Closing it would take a suspended
         # start (`CREATE_SUSPENDED`, assign, resume), which is not done.
         contain(self.process)
+        self._readers: list[tuple[object, threading.Thread]] = []
         for pipe, destination in ((self.process.stdout, self.out), (self.process.stderr, self.err)):
             if pipe is not None:
-                threading.Thread(target=self._drain, args=(pipe, destination), daemon=True).start()
+                reader = threading.Thread(target=self._drain, args=(pipe, destination), daemon=True)
+                self._readers.append((pipe, reader))
+                reader.start()
 
     def _drain(self, pipe, destination: bytearray) -> None:
         # read1, not read: a buffered `read(n)` blocks until it has all n bytes
@@ -95,8 +101,8 @@ class _Kernel:
                             self.marker_seen = True
                     self._changed.notify_all()
         except (OSError, ValueError):
-            # `kill()` closes these pipes, and a `read1` already in flight on
-            # one of them does not politely return b"" -- it raises, on a
+            # A stream closed under a `read1` already in flight does not
+            # politely return b"" -- it raises, on a
             # thread with nobody to catch it, and Python prints the traceback
             # to stderr as if Hardy had crashed. `_drain_capped` has caught
             # exactly this pair since it was written; there is no reason for
@@ -104,6 +110,12 @@ class _Kernel:
             # is what the `finally` below records.
             pass
         finally:
+            # The reader owns this stream until EOF, including when a helper
+            # escaped the process group and still holds its write end.
+            with contextlib.suppress(OSError, ValueError):
+                close = getattr(pipe, "close", None)
+                if close is not None:
+                    close()
             with self._changed:
                 self._finished += 1
                 self._changed.notify_all()
@@ -153,14 +165,25 @@ class _Kernel:
             self._tail = b""
 
     def send(self, payload: bytes) -> bool:
-        stdin = self.process.stdin
-        if stdin is None:
-            return False
+        # Claim ownership before touching BufferedWriter. Shutdown must never
+        # wait for its IO lock when an escaped helper keeps the input pipe open.
+        with self._input_lock:
+            stdin = self.process.stdin
+            if stdin is None or self._stopped:
+                return False
+            self._input_writers += 1
         try:
             stdin.write(payload)
             stdin.flush()
         except (BrokenPipeError, OSError, ValueError):
             return False
+        finally:
+            with self._input_lock:
+                self._input_writers -= 1
+                close = self._stopped and self._input_writers == 0
+            if close:
+                with contextlib.suppress(OSError, ValueError):
+                    stdin.close()
         return True
 
     def read_reply(
@@ -234,6 +257,8 @@ class _Kernel:
         wait would freeze the UI -- for exactly as long as the press was made
         to avoid waiting.
         """
+        with self._input_lock:
+            self._stopped = True
         # The group, whether or not the interpreter still leads it. A cell that
         # shelled out leaves its helpers in the group, and an interpreter that
         # took the signal and exited leaves them there with no leader -- still
@@ -251,10 +276,18 @@ class _Kernel:
                 self.process.wait(timeout=0 if immediate else 2)
             except subprocess.TimeoutExpired:
                 kill_group(self.process)
-                self.process.wait()
-        for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    self.process.wait(timeout=2)
+        # SIGTERM taking the leader is not proof its helpers stopped.
+        kill_group(self.process)
+        # Closing a BufferedReader still owned by read1 would wait without a
+        # deadline. Its daemon reader closes it itself when the holder exits.
+        with self._input_lock:
+            streams = [self.process.stdin] if self._input_writers == 0 else []
+        streams.extend(pipe for pipe, reader in self._readers if not reader.is_alive())
+        for stream in streams:
             if stream is not None:
-                with contextlib.suppress(OSError):
+                with contextlib.suppress(OSError, ValueError):
                     stream.close()
 
 
