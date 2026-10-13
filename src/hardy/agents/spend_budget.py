@@ -22,6 +22,7 @@ import threading
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
+from copy import copy
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
@@ -132,20 +133,28 @@ class SpendBudget:
                 raise ValueError("provider budget journal rewrites verified history")
             # External changes are independently verified, including the full
             # byte digest. Own appends extend both hash and state below.
-            self._events = events
-            self._verified_state = ({}, {}, None)
-            self._state_revision = 0
-            self._spent_tokens = 0
-            self._spent_cost = Decimal(0)
-            self._has_overrun = False
-            self._reported_tokens = 0
-            self._actual_tokens = 0
-            self._actual_cost = Decimal(0)
-            self._incomplete = 0
-            self._overruns = 0
-            self._state(events)
-            self._journal_hash = sha256(self.guard.path(self.path.name).read_bytes())
-            self._signature = stamp
+            # A rejected semantic tail must not become verified history or
+            # replace any charged totals. Publish the candidate only after
+            # replay and byte hashing both succeed.
+            candidate = copy(self)
+            candidate._events = events
+            candidate._verified_state = ({}, {}, None)
+            candidate._state_revision = 0
+            candidate._spent_tokens = 0
+            candidate._spent_cost = Decimal(0)
+            candidate._has_overrun = False
+            candidate._reported_tokens = 0
+            candidate._actual_tokens = 0
+            candidate._actual_cost = Decimal(0)
+            candidate._incomplete = 0
+            candidate._overruns = 0
+            candidate._state(events)
+            candidate._journal_hash = sha256(candidate.guard.path(candidate.path.name).read_bytes())
+            candidate._signature = stamp
+            for name in ("_events", "_verified_state", "_state_revision", "_spent_tokens", "_spent_cost",
+                         "_has_overrun", "_reported_tokens", "_actual_tokens", "_actual_cost", "_incomplete",
+                         "_overruns", "_journal_hash", "_signature"):
+                setattr(self, name, getattr(candidate, name))
         return self._events
 
     def _read(self) -> list[dict[str, Any]]:
