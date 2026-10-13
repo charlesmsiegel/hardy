@@ -947,7 +947,17 @@ function Write-Config {
     Write-Detail "wrote $ConfigPath"
 }
 
+function Get-ConfiguredBackend {
+    $python = Join-Path $Venv 'Scripts\python.exe'
+    $program = "from pathlib import Path; import sys; from hardy.app.config import load; print(load(path=Path(sys.argv[1])).backend)"
+    $backend = Invoke-Native $python @('-', $ConfigPath) -InputObject $program
+    if ($LASTEXITCODE -ne 0 -or -not $backend) { Stop-Install 'could not resolve the configured backend' }
+    return ([string]($backend | Select-Object -Last 1)).Trim()
+}
+
 function Install-ClaudeCli {
+    $backend = Get-ConfiguredBackend
+    if ($backend -ne 'claude') { Write-Detail "Claude CLI provisioning is not required for the $backend backend"; return }
     Write-Step 'Checking the Claude Code CLI'
     if (Get-Command claude -ErrorAction SilentlyContinue) {
         Write-Detail 'claude already installed'
@@ -999,40 +1009,54 @@ function Install-ClaudeCli {
 
 function Install-Tectonic {
     if ($SkipLatex) { return }
-    Write-Step 'Installing pinned, digest-checked Tectonic'
+    Write-Step 'Checking effective Tectonic configuration'
     $venvPython = Join-Path $Venv 'Scripts\python.exe'
     $program = @'
-import sys
+import json, os, subprocess, sys
 from pathlib import Path
+from hardy.app.config import load, read_file, write_setting
 from hardy.app.installers import install_tectonic, download_file
-result = install_tectonic(destination_root=Path(sys.argv[1]), confirmer=lambda _: True, downloader=download_file)
-if not result.installed_path:
-    print(result.manual_instructions)
-    raise SystemExit(1)
-print(result.installed_path)
+path, tools = Path(sys.argv[1]), Path(sys.argv[2])
+full_latex = sys.argv[4] == "True"
+no_config = sys.argv[3] == "True"
+values = read_file(path)
+config = load(path=path)
+selected = str(config.tectonic)
+try:
+    healthy = subprocess.run([selected, "--version"], capture_output=True, timeout=60).returncode == 0
+except (OSError, subprocess.TimeoutExpired):
+    healthy = False
+explicit = bool(values.get("tectonic") or os.environ.get("HARDY_TECTONIC", ""))
+if not healthy:
+    if explicit:
+        raise SystemExit("Configured Tectonic could not run; repair the explicit compiler setting before reinstalling")
+    result = install_tectonic(destination_root=tools, confirmer=lambda _: True, downloader=download_file)
+    if not result.installed_path:
+        raise SystemExit(result.manual_instructions)
+    selected = str(result.installed_path)
+tectonic_env = None
+if not explicit:
+    if no_config:
+        tectonic_env = selected
+    else:
+        write_setting(path, "tectonic", selected)
+latex_env = None
+if not full_latex and not values.get("latex_command") and not os.environ.get("HARDY_LATEX_COMMAND", ""):
+    command = [selected, "--keep-logs", "--keep-intermediates"]
+    if no_config:
+        latex_env = subprocess.list2cmdline(command)
+    else:
+        write_setting(path, "latex_command", subprocess.list2cmdline(command))
+print(json.dumps({"selected": selected, "tectonic_env": tectonic_env, "latex_env": latex_env}))
 '@
-    $installed = Invoke-Native $venvPython @('-', (Join-Path $Prefix 'tools')) -InputObject $program
-    if ($LASTEXITCODE -ne 0 -or -not $installed) { Stop-Install 'Tectonic could not be installed' }
-    $script:InstalledTectonic = ([string]($installed | Select-Object -Last 1)).Trim()
-    # This also supports -NoConfig: the current verification uses the explicit
-    # executable, and the summary tells the user how to persist the setting.
-    $hasTectonicSetting = (Test-Path -LiteralPath $ConfigPath) -and (Select-String -LiteralPath $ConfigPath -Pattern '^\s*tectonic\s*=' -Quiet)
-    if (-not $env:HARDY_TECTONIC -and -not $hasTectonicSetting) { $env:HARDY_TECTONIC = $script:InstalledTectonic }
-    if (-not $NoConfig -and -not $hasTectonicSetting) {
-        Add-Utf8Line $ConfigPath ('tectonic = "{0}"' -f (ConvertTo-TomlString $script:InstalledTectonic))
-    }
-    # Tectonic is also the default compiler for interactive cells on Windows.
-    # Keep .log/.aux artifacts consumed by LatexTools; preserve explicit choices.
-    $hasLatexSetting = (Test-Path -LiteralPath $ConfigPath) -and (Select-String -LiteralPath $ConfigPath -Pattern '^\s*latex_command\s*=' -Quiet)
-    if (-not $FullLatex -and -not $hasLatexSetting -and -not $env:HARDY_LATEX_COMMAND) {
-        $compiler = ConvertTo-TomlString $script:InstalledTectonic
-        if (-not $NoConfig) {
-            Add-Utf8Line $ConfigPath ('latex_command = ["{0}", "--keep-logs", "--keep-intermediates"]' -f $compiler)
-        }
-        else {
-            $env:HARDY_LATEX_COMMAND = '"{0}" --keep-logs --keep-intermediates' -f $script:InstalledTectonic
-            Write-Detail ('To persist the interactive compiler, add latex_command = ["' + $compiler + '", "--keep-logs", "--keep-intermediates"] to your config')
-        }
+    $result = Invoke-Native $venvPython @('-', $ConfigPath, (Join-Path $Venv 'tools'), [string][bool]$NoConfig, [string][bool]$FullLatex) -InputObject $program
+    if ($LASTEXITCODE -ne 0 -or -not $result) { Stop-Install 'Tectonic configuration could not be completed' }
+    $selection = ($result | Select-Object -Last 1) | ConvertFrom-Json
+    $script:InstalledTectonic = $selection.selected
+    if ($selection.tectonic_env) { $env:HARDY_TECTONIC = $selection.tectonic_env }
+    if ($selection.latex_env) {
+        $env:HARDY_LATEX_COMMAND = $selection.latex_env
+        Write-Detail "To persist the interactive compiler, set latex_command to $($selection.latex_env) in your config"
     }
 }
 
@@ -1055,8 +1079,15 @@ function Test-Installation {
 import sys
 from hardy.app.config import load
 from hardy.app.doctor import run_checks
-skipped = set(sys.argv[1:]) | {"claude login"}
-checks = run_checks(load())
+config = load()
+auth = {"claude": ("claude login", "run claude login to complete subscription sign-in"),
+        "codex": ("codex login", "run codex login to complete Codex sign-in"),
+        "api": ("anthropic key", "set ANTHROPIC_API_KEY to authenticate the API backend")}
+name, instruction = auth[config.backend]
+skipped = set(sys.argv[1:]) | {name}
+checks = run_checks(config)
+if any(c.name == name and not c.ok for c in checks):
+    print(instruction)
 for check in checks:
     print(check.line())
 raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for c in checks) else 0)
@@ -1070,7 +1101,6 @@ raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for 
         $script:VerificationFailed = $true
         Write-Warn 'hardy doctor reported failures in installer responsibilities (see above)'
     }
-    Write-Detail "run 'claude login' to complete subscription sign-in"
     # hardy.exe is already known-good (the --help check above), so a failure
     # here implicates the shim specifically -- the command the summary tells
     # the user to run, and where #305 actually broke (Test-Installation used
@@ -1098,7 +1128,6 @@ Start doing mathematics with an agent:
 
 Other useful commands:
 
-  claude login           complete subscription sign-in
   hardy setup            finish configuration and smoke tests (including Tectonic)
   hardy doctor --deep     check Lean, Mathlib, LaTeX, and the model end to end
   hardy chat --root . --project my-project

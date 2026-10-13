@@ -1841,7 +1841,7 @@ def test_windows_installer_doctor_classifies_pending_login(failed_check, expecte
             return self.name
 
     config = types.ModuleType('hardy.app.config')
-    config.load = lambda: object()
+    config.load = lambda: types.SimpleNamespace(backend="claude")
     doctor = types.ModuleType('hardy.app.doctor')
     doctor.run_checks = lambda _: [Check(failed_check)]
     monkeypatch.setitem(sys.modules, 'hardy.app.config', config)
@@ -1947,6 +1947,7 @@ $script:cliInstalled = $false
 $script:refreshed = 0
 $Yes = $true
 $script:VerificationFailed = $false
+function Get-ConfiguredBackend { return 'claude' }
 function Get-Command($Name) {
     if ($Name -eq 'npm' -and $script:nodeInstalled) { return @{ Source = 'npm' } }
     if ($Name -eq 'claude' -and $script:cliInstalled) { return @{ Source = 'claude' } }
@@ -1976,6 +1977,7 @@ def test_windows_cli_provision_failure_reaches_summary():
     result = run_installer_functions(r'''
 $script:VerificationFailed = $false
 $Yes = $true
+function Get-ConfiguredBackend { return 'claude' }
 function Get-Command($Name) { if ($Name -eq 'winget') { return @{ Source = 'winget' } } }
 function Invoke-Native { $global:LASTEXITCODE = 7 }
 Install-ClaudeCli
@@ -1997,20 +1999,53 @@ Install-Latex
     assert 'Tectonic' in result.stdout
 
 
-def test_windows_tectonic_records_interactive_compiler_without_overwriting(tmp_path):
+@pytest.mark.parametrize('quoted, value, healthy, no_config, full_latex', [
+    (True, 'existing', True, False, False),
+    (True, '', False, False, False),
+    (False, '   ', False, False, False),
+    (False, '', False, True, False),
+    (False, '', False, False, True),
+])
+def test_windows_tectonic_uses_effective_toml_settings(tmp_path, monkeypatch, capsys, quoted, value, healthy, no_config, full_latex):
+    import json
+    import types
+
+    from hardy.app import installers
+    from hardy.app.config import load, read_file
+
     config = tmp_path / 'config.toml'
-    config.write_text('model = "test-model"\n')
-    result = run_installer_functions(
-        "$SkipLatex = $false; $FullLatex = $false; $NoConfig = $false; "
-        f"$ConfigPath = '{config}'; $Venv = '{tmp_path / 'venv'}'; $Prefix = '{tmp_path}'; "
-        "$env:HARDY_TECTONIC = ''; $env:HARDY_LATEX_COMMAND = ''; "
-        "function Invoke-Native { $global:LASTEXITCODE = 0; return 'C:\\tools\\tectonic.exe' }; "
-        "Install-Tectonic; Install-Tectonic"
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    content = config.read_text()
-    assert content.count('latex_command =') == 1
-    assert '--keep-logs' in content and '--keep-intermediates' in content
+    key = '"tectonic"' if quoted else 'tectonic'
+    latex_key = '"latex_command"' if quoted else 'latex_command'
+    compiler = str(tmp_path / value) if value == 'existing' else value
+    latex = compiler if compiler.strip() else compiler
+    original = f'model = "test"\n{key} = {json.dumps(compiler)}\n{latex_key} = {json.dumps(latex)}\n'
+    config.write_text(original, encoding='utf-8-sig')
+    monkeypatch.setenv('HARDY_TECTONIC', '')
+    monkeypatch.setenv('HARDY_LATEX_COMMAND', '')
+    monkeypatch.setenv('HARDY_CONFIG', str(config))
+    calls = []
+    managed = tmp_path / 'managed with spaces' / 'tectonic.exe'
+    def install(**kwargs):
+        calls.append(kwargs)
+        return types.SimpleNamespace(installed_path=managed)
+    monkeypatch.setattr(installers, 'install_tectonic', install)
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **kw: types.SimpleNamespace(returncode=0 if healthy else 1))
+    source = POWERSHELL_SCRIPT.read_text().split('function Install-Tectonic {', 1)[1].split('function Test-Installation', 1)[0]
+    program = re.search(r"\$program = @'\n(.*?)\n'@", source, re.S).group(1)
+    monkeypatch.setattr(sys, 'argv', ['-', str(config), str(tmp_path / 'tools'), str(no_config), str(full_latex)])
+    exec(program, {})
+    outcome = json.loads(capsys.readouterr().out)
+    assert len(calls) == (0 if healthy else 1)
+    parsed = read_file(config)
+    if healthy or no_config:
+        assert config.read_text(encoding='utf-8-sig') == original
+    else:
+        assert parsed['tectonic'] == str(managed)
+        if not full_latex:
+            assert load(path=config).latex_command[0] == str(managed)
+    if no_config:
+        assert outcome['tectonic_env'] == str(managed)
+        assert outcome['latex_env']
 
 
 @pytest.mark.parametrize('function_name', ['Install-Tectonic', 'Test-Installation'])
@@ -2023,23 +2058,132 @@ def test_windows_python_probe_uses_stdin_for_ps51_quotes(function_name):
     shim = r'''import sys, types
 from pathlib import Path
 config = types.ModuleType("hardy.app.config")
-config.load = lambda: None
+config.load = lambda **kwargs: types.SimpleNamespace(backend="claude", tectonic="tectonic")
+config.read_file = lambda path: {"tectonic": "tectonic", "latex_command": "tectonic"}
+config.write_setting = lambda *args: None
 sys.modules["hardy.app.config"] = config
 doctor = types.ModuleType("hardy.app.doctor")
 doctor.run_checks = lambda _: [types.SimpleNamespace(name="claude login", ok=False, required=True, line=lambda: "pending login")]
 sys.modules["hardy.app.doctor"] = doctor
 installers = types.ModuleType("hardy.app.installers")
 installers.download_file = lambda *args: None
+import subprocess
+subprocess.run = lambda *args, **kwargs: types.SimpleNamespace(returncode=0)
 installers.install_tectonic = lambda **kwargs: types.SimpleNamespace(installed_path=Path(sys.argv[1]) / "tectonic.exe")
 sys.modules["hardy.app.installers"] = installers
 '''
     embedded = (shim + program).replace("'@", "''@")
     result = run_installer_functions(
         "$program = @'\n" + embedded + "\n'@\n"
-        + f"Invoke-Native '{sys.executable}' @('-', 'test destination') -InputObject $program; exit $LASTEXITCODE",
+        + f"Invoke-Native '{sys.executable}' @('-', 'config.toml', 'test destination', 'True', 'False') -InputObject $program; exit $LASTEXITCODE",
         require_ps51=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert ('pending login' if function_name == 'Test-Installation' else 'tectonic.exe') in result.stdout
-    assert "@('-', (Join-Path $Prefix 'tools')) -InputObject $program" in source
+    assert "-InputObject $program" in source
     assert "(@('-') + $advisory) -InputObject $program" in source
+
+
+@pytest.mark.parametrize('failed_check, expected', [('anthropic key', 0), ('anthropic sdk', 1), ('tectonic', 1)])
+def test_windows_api_authentication_is_advisory(failed_check, expected, monkeypatch, capsys):
+    import types
+    source = POWERSHELL_SCRIPT.read_text().split('function Test-Installation {', 1)[1].split('function Write-Summary', 1)[0]
+    program = re.search(r"\$program = @'\n(.*?)\n'@", source, re.S).group(1)
+    config = types.ModuleType('hardy.app.config')
+    config.load = lambda: types.SimpleNamespace(backend='api')
+    doctor = types.ModuleType('hardy.app.doctor')
+    doctor.run_checks = lambda _: [types.SimpleNamespace(name=failed_check, ok=False, required=True, line=lambda: failed_check)]
+    monkeypatch.setitem(sys.modules, 'hardy.app.config', config)
+    monkeypatch.setitem(sys.modules, 'hardy.app.doctor', doctor)
+    monkeypatch.setattr(sys, 'argv', ['installer-probe'])
+    with pytest.raises(SystemExit) as result:
+        exec(program, {})
+    assert result.value.code == expected
+    output = capsys.readouterr().out
+    assert 'claude login' not in output
+    if failed_check == 'anthropic key':
+        assert 'ANTHROPIC_API_KEY' in output
+
+
+def test_windows_uninstall_never_claims_generic_prefix_tools():
+    assert "Remove-Part 'the Hardy-managed tools' (Join-Path $Prefix 'tools')" not in (SCRIPTS / 'uninstall-windows.ps1').read_text()
+    assert "(Join-Path $Venv 'tools')" in POWERSHELL_SCRIPT.read_text()
+
+
+def test_windows_compiler_environment_precedence_preserves_config(tmp_path, monkeypatch, capsys):
+    import json
+    import types
+
+    from hardy.app import installers
+    config = tmp_path / 'config.toml'
+    original = '"tectonic" = ""\n"latex_command" = ""\n'
+    config.write_text(original, encoding='utf-8-sig')
+    selected = str(tmp_path / 'user-selected.exe')
+    monkeypatch.setenv('HARDY_CONFIG', str(config))
+    monkeypatch.setenv('HARDY_TECTONIC', selected)
+    monkeypatch.setenv('HARDY_LATEX_COMMAND', selected)
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **kw: types.SimpleNamespace(returncode=0))
+    def refuse_download(**kwargs):
+        pytest.fail('healthy selected compiler must not trigger acquisition')
+    monkeypatch.setattr(installers, 'install_tectonic', refuse_download)
+    source = POWERSHELL_SCRIPT.read_text().split('function Install-Tectonic {', 1)[1].split('function Test-Installation', 1)[0]
+    program = re.search(r"\$program = @'\n(.*?)\n'@", source, re.S).group(1)
+    monkeypatch.setattr(sys, 'argv', ['-', str(config), str(tmp_path / 'tools'), 'False', 'False'])
+    exec(program, {})
+    result = json.loads(capsys.readouterr().out)
+    assert result['selected'] == selected
+    assert config.read_text(encoding='utf-8-sig') == original
+
+
+@posix_only
+def test_windows_compiler_function_preserves_real_quoted_config_without_download(tmp_path):
+    import json
+    import shlex
+    venv = tmp_path / 'venv'
+    python = venv / 'Scripts' / 'python.exe'
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+    python.chmod(0o755)
+    compiler = tmp_path / 'healthy compiler'
+    compiler.write_text('#!/bin/sh\nprintf "tectonic healthy\\n"\n')
+    compiler.chmod(0o755)
+    config = tmp_path / 'config.toml'
+    original = f'"tectonic" = {json.dumps(str(compiler))}\n"latex_command" = [{json.dumps(str(compiler))}]\n'
+    config.write_text(original, encoding='utf-8-sig')
+    result = run_installer_functions(
+        "$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest; "
+        "$SkipLatex=$false; $FullLatex=$false; $NoConfig=$false; "
+        f"$ConfigPath='{config}'; $Venv='{venv}'; $Prefix='{tmp_path}'; "
+        "$env:HARDY_TECTONIC=''; $env:HARDY_LATEX_COMMAND=''; "
+        "Install-Tectonic; Write-Output $script:InstalledTectonic"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert str(compiler) in result.stdout
+    assert config.read_text(encoding='utf-8-sig') == original
+    assert not (venv / 'tools').exists()
+
+
+@pytest.mark.parametrize('sdk_installed, expected', [(True, 0), (False, 1)])
+def test_windows_auth_policy_uses_real_api_doctor_checks(tmp_path, monkeypatch, capsys, sdk_installed, expected):
+    import types
+
+    from hardy.app import doctor
+    from hardy.app.config import load
+
+    config = tmp_path / 'config.toml'
+    config.write_text('backend="api"\nmodel="test"\n')
+    monkeypatch.setenv('HARDY_CONFIG', str(config))
+    monkeypatch.delenv('HARDY_BACKEND', raising=False)
+    monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+    monkeypatch.setitem(sys.modules, 'anthropic', types.SimpleNamespace(__version__='test') if sdk_installed else None)
+    monkeypatch.setattr(doctor, 'run_checks', lambda config: doctor._backend_checks(config.backend))
+    assert load().backend == 'api'
+    source = POWERSHELL_SCRIPT.read_text().split('function Test-Installation {', 1)[1].split('function Write-Summary', 1)[0]
+    program = re.search(r"\$program = @'\n(.*?)\n'@", source, re.S).group(1)
+    monkeypatch.setattr(sys, 'argv', ['installer-probe'])
+    with pytest.raises(SystemExit) as result:
+        exec(program, {})
+    assert result.value.code == expected
+    output = capsys.readouterr().out
+    assert 'ANTHROPIC_API_KEY' in output
+    assert 'claude login' not in output
