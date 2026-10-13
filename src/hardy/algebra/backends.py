@@ -42,10 +42,10 @@ class SympyBackend:
     preamble = (
         "from sympy import *\nimport sys\n"
         '_hardy_display = lambda value, namespace=globals(), '
-        'write=__import__("builtins").print, representation=repr: '
+        'write=__import__("builtins").print, representation=repr, output=sys: '
         'None if value is None else '
         '(namespace.__setitem__("_", value), '
-        'write(representation(value), file=__import__("sys").stdout))'
+        'write(representation(value), file=output.stdout))'
     )
     # Both halves, because both bear on a result. The digest is derived from
     # `repr` output and the exported script is executed by an interpreter, so
