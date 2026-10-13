@@ -12,7 +12,10 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires a native Windows console")
+pytestmark = pytest.mark.skipif(
+    os.name != "nt" or os.environ.get("HARDY_NATIVE_CONSOLE_CLOSE") != "1",
+    reason="native desktop-console investigation; set HARDY_NATIVE_CONSOLE_CLOSE=1 on Windows",
+)
 
 
 def test_real_console_close_event(tmp_path):
