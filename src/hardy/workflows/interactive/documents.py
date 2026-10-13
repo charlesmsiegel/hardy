@@ -126,10 +126,10 @@ class DocumentService:
         # is the one file this save is about to change.
         compiled_tree = self._tex_tree_digest(relative)
 
-        provenance_error: str | None = None
+        source_saved = False
 
         def _write() -> None:
-            nonlocal provenance_error
+            nonlocal source_saved
             # `guard_for`, not a bare write to `target`. `_tex_path` proves the
             # NAME is a relative, dot-free, colon-free path; it does not and
             # cannot say where the directories of that name lead.
@@ -143,6 +143,7 @@ class DocumentService:
                 guard, name = guard_for(self.tex_root, relative, create=True)
                 policy.verify_commit()
                 guard.write_text(name, source.rstrip() + "\n")
+                source_saved = True
             except OSError as error:
                 # Raised on, never swallowed: the whole point of running here
                 # is that `check` publishes nothing when this fails. Wrapped
@@ -175,8 +176,8 @@ class DocumentService:
         # doing that first meant a write the guard refused left a committed PDF
         # and a set of labels describing source that is not on disk, while the
         # unchanged `tex_signature` reported the writeup as freshly compiled.
-        # The save is now the last thing that can fail before anything is
-        # published, so a failure leaves the workspace as it was.
+        # Aux publication refuses before source commit and rolls back on a
+        # source refusal; PDF publication follows the source write.
         try:
             result = self.latex.check(
                 source,
@@ -191,11 +192,14 @@ class DocumentService:
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
-        if provenance_error is not None:
-            return ToolResult(
-                False, f"source was saved but provenance could not be updated: {provenance_error}; "
-                "the publication stamp was not refreshed", source,
-            )
+        if source_saved and policy.committed_authored_save is not None:
+            try:
+                policy.committed_authored_save(f"tex/{relative}")
+            except (OSError, ValueError) as error:
+                return ToolResult(
+                    False, f"source was saved but provenance could not be updated: {error}; "
+                    "the publication stamp was not refreshed", source,
+                )
         if not result.ok:
             return result
         # Stamped after the write, on a compile that succeeded, only when what
@@ -238,7 +242,8 @@ class DocumentService:
         # about the *registry*: a name recorded for something the document has
         # not labelled yet, which is a promise made and not yet kept even when
         # no theorem is waiting on it.
-        missing = [item["latex_name"] for item in policy.registry() if item["latex_name"] not in self._labels()]
+        labels = self._labels()
+        missing = [item["latex_name"] for item in policy.registry() if item["latex_name"] not in labels]
         note = policy.owed_note()
         if missing:
             note = f"\n\nStill missing labels for registered names: {missing}{note}"

@@ -174,6 +174,41 @@ def test_stamp_counts_and_obligations_share_one_source_snapshot(session, monkeyp
     assert len(reads) == 1
 
 
+def test_check_computes_obligations_once_and_save_at_most_twice(session, monkeypatch):
+    original = session._obligations
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(session, "_obligations", counted)
+    assert session._check_latex("writeup.tex", DOCUMENT).ok
+    assert len(calls) == 1
+    calls.clear()
+    assert session._save_latex("writeup.tex", DOCUMENT).ok
+    assert len(calls) <= 2
+
+
+def test_save_reads_aux_once_for_registry_advice(session, monkeypatch):
+    session.state["names"] = [
+        {"formal_name": f"t{i}", "latex_name": f"label{i}"} for i in range(12)
+    ]
+    original = session.documents._labels
+    calls = []
+
+    def counted():
+        calls.append(True)
+        return original()
+
+    monkeypatch.setattr(session.documents, "_labels", counted)
+    result = session._save_latex("writeup.tex", DOCUMENT)
+    assert result.ok
+    assert "label11" in result.output
+    # Two obligation snapshots and one registry advisory read.
+    assert len(calls) <= 3
+
+
 def test_fragment_refuses_non_utf8_root_with_file_name(tmp_path):
     tree = tmp_path / "tex"
     tree.mkdir()

@@ -156,11 +156,11 @@ def test_the_scratch_copy_is_compiled_lf_only_as_it_is_saved(tmp_path: Path, mon
     assert seen and set(seen) == {FINE.encode("utf-8")}
 
 
-def test_a_locked_aux_file_is_not_fatal_and_stamps_nothing(tmp_path: Path, monkeypatch):
+def test_a_locked_aux_file_refuses_before_commit_and_stamps_nothing(tmp_path: Path, monkeypatch):
     """An indexer or scanner holding `.build/tex/writeup.aux` past the retry
     window used to raise `FileInUse` out of `check`, after the source had
-    already been committed -- exactly what #335 set out to prevent. The save
-    stands, nothing is stamped, and the report says which file was held."""
+    already been committed. Refuse before the source changes and name the
+    file that must be released."""
     from hardy.foundation import files as foundation_files
     from hardy.foundation.locking import FileInUse
 
@@ -185,11 +185,125 @@ def test_a_locked_aux_file_is_not_fatal_and_stamps_nothing(tmp_path: Path, monke
         published=lambda: published.append(True),
     )
 
-    assert result.ok
-    assert committed == [True]
+    assert not result.ok
+    assert committed == []
     assert not published
     assert "writeup.aux is open in another program" in result.output
     assert not (aux / "writeup.aux").exists()
+
+
+def test_locked_aux_preserves_source_labels_pdf_and_stamp(tmp_path, monkeypatch):
+    from hardy.foundation.files import WriteGuard
+    from hardy.foundation.locking import FileInUse
+
+    tree = tmp_path / "tex"
+    tree.mkdir()
+    source = tree / "writeup.tex"
+    source.write_text(FINE, encoding="utf-8")
+    aux = tmp_path / "build"
+    aux.mkdir()
+    (aux / "writeup.aux").write_bytes(b"old labels")
+    (tmp_path / "writeup.pdf").write_bytes(b"old pdf")
+    write_from = WriteGuard.write_from
+
+    def locked(self, name, incoming, **kwargs):
+        if self.directory == aux and name == "writeup.aux":
+            raise FileInUse("locked aux")
+        return write_from(self, name, incoming, **kwargs)
+
+    monkeypatch.setattr(WriteGuard, "write_from", locked)
+    stamps = []
+    revised = FINE.replace("Fine.", r"New.\label{new}")
+    result = LatexTools(COMMAND).check(
+        revised, tree=tree, output_dir=tmp_path, aux_dir=aux,
+        commit=lambda: source.write_text(revised, encoding="utf-8"),
+        published=lambda: stamps.append(True),
+    )
+    assert not result.ok
+    assert "source was not saved" in result.output
+    assert source.read_text(encoding="utf-8") == FINE
+    assert (aux / "writeup.aux").read_bytes() == b"old labels"
+    assert (tmp_path / "writeup.pdf").read_bytes() == b"old pdf"
+    assert not stamps
+
+
+def test_aux_lock_that_also_denies_backup_reads_refuses_before_commit(tmp_path, monkeypatch):
+    from hardy.foundation.files import WriteGuard
+    from hardy.foundation.locking import FileInUse
+
+    aux = tmp_path / "build"
+    aux.mkdir()
+    (aux / "writeup.aux").write_bytes(b"old labels")
+    original = WriteGuard.write_from
+
+    def denied(self, name, incoming, **kwargs):
+        if name == "hardy-previous-writeup.aux":
+            raise FileInUse("aux denies readers")
+        return original(self, name, incoming, **kwargs)
+
+    monkeypatch.setattr(WriteGuard, "write_from", denied)
+    committed = []
+    result = LatexTools(COMMAND).check(
+        FINE, output_dir=tmp_path, aux_dir=aux, commit=lambda: committed.append(True),
+    )
+    assert not result.ok and "writeup.aux" in result.output
+    assert not committed
+    assert (aux / "writeup.aux").read_bytes() == b"old labels"
+
+
+@pytest.mark.parametrize("had_aux", [False, True])
+def test_source_refusal_restores_aux_publication(tmp_path, had_aux):
+    aux = tmp_path / "build"
+    aux.mkdir()
+    if had_aux:
+        (aux / "writeup.aux").write_bytes(b"old labels")
+    (tmp_path / "writeup.pdf").write_bytes(b"old pdf")
+
+    def refuse():
+        raise PermissionError("source write refused")
+
+    with pytest.raises(PermissionError, match="source write refused"):
+        LatexTools(COMMAND).check(FINE, output_dir=tmp_path, aux_dir=aux, commit=refuse)
+    assert (aux / "writeup.aux").exists() == had_aux
+    if had_aux:
+        assert (aux / "writeup.aux").read_bytes() == b"old labels"
+    assert (tmp_path / "writeup.pdf").read_bytes() == b"old pdf"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires native Windows sharing handles")
+@pytest.mark.parametrize("held_name", ["writeup.pdf", "writeup.aux"])
+def test_native_windows_publication_lock_states(tmp_path, held_name):
+    tree = tmp_path / "tex"
+    tree.mkdir()
+    source = tree / "writeup.tex"
+    source.write_text(FINE, encoding="utf-8")
+    aux_dir = tmp_path / "build"
+    aux_dir.mkdir()
+    aux = aux_dir / "writeup.aux"
+    aux.write_bytes(b"old labels")
+    pdf = tmp_path / "writeup.pdf"
+    pdf.write_bytes(b"old PDF")
+    held = pdf if held_name.endswith("pdf") else aux
+    revised = FINE.replace("Fine.", r"New.\label{new}")
+    stamps = []
+    # Windows CRT read handles permit other readers, but deny replacement.
+    with held.open("rb"):
+        result = LatexTools(COMMAND).check(
+            revised, tree=tree, output_dir=tmp_path, aux_dir=aux_dir,
+            commit=lambda: source.write_text(revised, encoding="utf-8"),
+            published=lambda: stamps.append(True),
+        )
+    assert held_name in result.output and "open in another program" in result.output
+    assert not stamps
+    assert pdf.read_bytes() == b"old PDF"
+    if held_name.endswith("aux"):
+        assert not result.ok
+        assert source.read_text(encoding="utf-8") == FINE
+        assert aux.read_bytes() == b"old labels"
+    else:
+        assert result.ok
+        assert source.read_text(encoding="utf-8") == revised
+        assert "new" in aux.read_text(encoding="utf-8")
 
 
 def test_an_unlocked_writeup_pdf_still_fires_published(tmp_path: Path):

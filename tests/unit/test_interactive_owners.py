@@ -141,6 +141,67 @@ def test_document_owner_stamps_once_the_pdf_actually_publishes(tmp_path):
     assert len(stamps) == 1
 
 
+def test_document_owner_reads_labels_once_for_many_registry_entries(tmp_path, monkeypatch):
+    from hardy.foundation.values import ToolResult
+    from hardy.workflows.interactive.documents import DocumentPolicy, DocumentService
+
+    class Compiler:
+        def check(self, source, **kwargs):
+            kwargs["commit"]()
+            return ToolResult(True, "compiled", source)
+
+    owner = DocumentService(tmp_path, Compiler())
+    calls = []
+
+    def labels():
+        calls.append(True)
+        return {"present"}
+
+    monkeypatch.setattr(owner, "_labels", labels)
+    policy = DocumentPolicy(
+        bibliography_refusal=lambda path, source: "", stamp=lambda: "",
+        vouch=lambda keys: "", stamp_writeup=lambda *args: None,
+        registry=lambda: [{"latex_name": "present"}, *[{"latex_name": f"missing{i}"} for i in range(20)]],
+        owed_note=lambda: "",
+    )
+    result = owner._save_latex("writeup.tex", "source", policy=policy)
+    assert result.ok
+    assert len(calls) == 1
+    assert "missing19" in result.output and "'present'" not in result.output
+
+
+def test_committed_tex_save_supersedes_import_even_with_held_pdf(session, monkeypatch):
+    from hardy.foundation.values import ToolResult
+
+    session.state["imported"] = [{"kind": "tex", "path": "tex/writeup.tex", "origin": "outside", "sha256": "old"}]
+
+    def compiler(source, **kwargs):
+        kwargs["commit"]()
+        return ToolResult(True, "PDF held; source committed", source)
+
+    monkeypatch.setattr(session.latex, "check", compiler)
+    result = session._save_latex("writeup.tex", "authored")
+    assert result.ok
+    assert session.state.get("imported", []) == []
+    assert any(event.get("reason") == "superseded" for event in session.record._recorded())
+
+
+def test_provenance_failure_does_not_restore_old_aux_over_committed_source(session, monkeypatch):
+    from dataclasses import replace
+
+    def refused(path):
+        raise PermissionError("provenance record held")
+
+    policy = replace(session._document_policy(), committed_authored_save=refused)
+    source = "\\documentclass{article}\n\\begin{document}New.\\label{new}\\end{document}\n"
+    result = session.documents._save_latex("writeup.tex", source, policy=policy)
+    assert not result.ok
+    assert "source was saved" in result.output and "provenance" in result.output
+    assert session.documents._tex_sources()["writeup.tex"] == source
+    assert "new" in session.documents._labels()
+    assert not session.state.get("tex_signature")
+
+
 def test_admission_owner_rolls_back_approval_when_generated_save_refuses(tmp_path):
     from types import SimpleNamespace
 
