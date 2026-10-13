@@ -30,7 +30,7 @@ def test_a_refused_save_is_counted_against_its_path(session) -> None:
 
 
 def test_the_fourth_consecutive_refused_save_is_braked(session) -> None:
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         assert not _save(session).ok
 
     result = _save(session)
@@ -41,10 +41,10 @@ def test_the_fourth_consecutive_refused_save_is_braked(session) -> None:
 
 
 def test_the_brake_does_not_climb_the_counter(session) -> None:
-    for _ in range(session.SAVE_STREAK_LIMIT + 2):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT + 2):
         _save(session)
 
-    assert session._save_streak["Main.lean"] == session.SAVE_STREAK_LIMIT
+    assert session._save_streak["Main.lean"] == session.formal.SAVE_STREAK_LIMIT
 
 
 def test_a_green_check_lifts_the_brake(session) -> None:
@@ -52,7 +52,7 @@ def test_a_green_check_lifts_the_brake(session) -> None:
     intend to save" -- and a green check only ever means the source it was
     actually handed, so this saves the same source the check just vouched
     for."""
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         _save(session)
     assert _check(session, source=GREEN).ok
 
@@ -69,7 +69,7 @@ def test_the_brake_returns_after_one_admitted_save_spends_the_vouch(session) -> 
     consecutive refused saves of `Main.lean`) the brake exists for. Spending
     the vouch on the first admitted save means at most one of the twelve
     gets through."""
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         _save(session)
     assert _check(session, source=UNREGISTERED).ok
 
@@ -86,7 +86,7 @@ def test_check_then_save_with_a_trailing_newline_is_admitted(session) -> None:
     `source.rstrip() + "\\n"`, so `check_lean(X)` and `save_lean(X + "\\n")`
     produce identical bytes on disk -- one string vouched for and the other
     braked was the sharpest confirmed case of the message being false."""
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         _save(session)
     assert _check(session, source=UNREGISTERED).ok
 
@@ -102,7 +102,7 @@ def test_an_unrelated_green_check_does_not_lift_the_brake(session) -> None:
     Reproduces the confirmed sequence: four refused saves of one failing
     source, one unrelated green `check_lean` on the same path, and the fifth
     save of the original failing source is still braked."""
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         assert not _save(session, source=UNREGISTERED).ok
     assert _check(session, source=GREEN).ok
 
@@ -113,7 +113,7 @@ def test_an_unrelated_green_check_does_not_lift_the_brake(session) -> None:
 
 
 def test_a_new_turn_clears_the_streak(session) -> None:
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         _save(session)
 
     list(session.stream("again"))
@@ -125,7 +125,7 @@ def test_a_path_spelled_differently_shares_the_streak(session) -> None:
     """`Main.lean` and `./Main.lean` name the same workspace file, and the
     streak that brakes repeated refusals must count them together rather
     than resetting every time the model's spelling changes."""
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         assert not _save(session, path="Main.lean").ok
 
     result = _save(session, path="./Main.lean")
@@ -135,7 +135,7 @@ def test_a_path_spelled_differently_shares_the_streak(session) -> None:
 
 
 def test_another_path_is_not_braked(session) -> None:
-    for _ in range(session.SAVE_STREAK_LIMIT):
+    for _ in range(session.formal.SAVE_STREAK_LIMIT):
         _save(session)
 
     result = _save(session, path="Other.lean")
