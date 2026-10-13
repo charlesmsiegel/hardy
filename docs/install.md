@@ -130,13 +130,14 @@ installer is cheap and safe.
    the Lean version and commit, the Mathlib revision, and the manifest digest
    it actually ran against, and `hardy doctor` says when a project has been
    repinned away from these.
-5. **`pdflatex`**, a LaTeX subset large enough for Hardy's writeups
+5. **LaTeX**: Windows uses pinned, digest-checked Tectonic by default,
+   including interactive cells; `-FullLatex` adds TeX Live providing pdflatex.
+   POSIX installs **`pdflatex`**, a subset large enough for Hardy's writeups
    (`amsmath`, `amsthm`, `amssymb`, `geometry`, `hyperref`). Use
    `--full-latex` for the distribution's complete TeX instead.
 6. **The Claude Code CLI**, installed with npm when npm is available, since
-   Hardy authenticates through it. Node itself is not installed for you; if
-   npm is missing the installer says so rather than guessing a package
-   manager.
+   Hardy authenticates through it. On Windows, missing npm triggers an offer to install Node.js LTS through
+   winget. POSIX leaves Node installation to the user when npm is missing.
 7. **Configuration**: the installer asks for a model identity and writes it
    to the config file below (mode 600). On the default backend there is no
    API key: sign in once with `claude login`. The opt-in `api` backend is
@@ -180,7 +181,7 @@ curl, TeX), which are the only steps that use `sudo`.
 | `--yes` | `-Yes` | Non-interactive; accept every install, skip prompts |
 | `--skip-mathlib` | `-SkipMathlib` | Install `lake` but do not build the shared Mathlib project |
 | `--skip-latex` | `-SkipLatex` | Do not install TeX |
-| `--full-latex` | `-FullLatex` | Full TeX Live / MacTeX / TeX Live instead of the subset |
+| `--full-latex` | `-FullLatex` | Full TeX Live / MacTeX; Windows adds TeX Live with pdflatex instead of using Tectonic for interactive cells |
 | `--no-config` | `-NoConfig` | Do not write a config file |
 | `--no-launcher` | `-NoLauncher` | Do not put a launcher for `hardy web --open` on the Desktop (or in the Start Menu) |
 | `--from-release` | `-FromRelease` | Install the published wheel even from a checkout |
