@@ -330,10 +330,10 @@ class AgentLoop:
         #: teardown reads them, so an exchange nobody drained still says which
         #: calls it never made.
         #: Tool calls answered in advance and not yet run, as
-        #: `(message index, arguments)`. The arguments ride along because the
+        #: `(placeholder identity, arguments)`. The arguments ride along because the
         #: placeholder message cannot carry them and the abandonment event is
         #: the last place they can be written down.
-        self._pending: list[tuple[int, dict[str, Any]]] = []
+        self._pending: list[tuple[Message, dict[str, Any]]] = []
 
     def set_gate(self, before_turn: Callable[[Sequence[Message]], str | None]) -> None:
         """Install the hook asked before every provider call. See `before_turn`."""
@@ -443,6 +443,8 @@ class AgentLoop:
                 compacted = self._hook(lambda: self._compact(self.messages))
                 if compacted is not None:
                     self.messages = compacted
+                    self._pending = [(message, arguments) for message, arguments in self._pending
+                                     if any(current is message for current in self.messages)]
             # Again, because the two hooks above are where a caller spends real
             # time -- `before_turn` is where a cheap-closer ladder runs, and
             # running Lean is exactly the thing that eats a budget. Left to the
@@ -478,6 +480,7 @@ class AgentLoop:
                     budget.spent -= 1  # Admission refused before any actual provider call.
                 self._failure = f"SpendLimitReached: {error.limit}"
                 self._budget_refused = True
+                self._failure = f"SpendLimitReached: {error.limit}"
                 self._observe({"type": "budget_limit", "limit": error.limit})
                 raise
             except ProviderRequestTimeout as error:
@@ -671,9 +674,8 @@ class AgentLoop:
         by a real result a moment later, and recording each in advance would
         fill the transcript with cancellations that never happened.
         """
-        for index, arguments in self._pending:
-            message = self.messages[index] if index < len(self.messages) else None
-            if message is None or message.text != ABANDONED:
+        for message, arguments in self._pending:
+            if not any(current is message for current in self.messages):
                 continue
             self._observe({
                 "type": "abandoned_tool",
@@ -704,7 +706,7 @@ class AgentLoop:
                 Message("tool_result", text=ABANDONED, call_id=call.id, name=call.name, ok=False)
             )
             placeholders.append(len(self.messages) - 1)
-            # The arguments travel with the index, because the placeholder does
+            # The arguments travel with the placeholder identity, because it does
             # not carry them and the abandonment event is the only place they
             # can still be recorded. A call that reaches `_call_tools` gets a
             # `tool_use` event with its input; one abandoned before that got a
@@ -712,7 +714,7 @@ class AgentLoop:
             # sends on every later request -- held arguments the transcript
             # never saw. A reader could not then rebuild the context that was
             # sent, nor the compaction digests taken over it.
-            self._pending.append((len(self.messages) - 1, dict(call.arguments)))
+            self._pending.append((self.messages[-1], dict(call.arguments)))
         return placeholders
 
     def _call_tools(self, calls: Sequence[ToolCall], placeholders: Sequence[int], budget: Budget) -> Iterator[TurnEvent]:
@@ -758,6 +760,9 @@ class AgentLoop:
                     # is also what the model needs to see.
                     result = ToolResult(False, f"the tool failed: {type(error).__name__}: {error}")
                     self._observe({"type": "tool_error", "name": call.name, "error": f"{type(error).__name__}: {error}"})
+            answered = self.messages[placeholder]
+            self._pending = [(message, arguments) for message, arguments in self._pending
+                             if message is not answered]
             self.messages[placeholder] = (
                 Message("tool_result", text=result.output, call_id=call.id, name=call.name, ok=result.ok)
             )

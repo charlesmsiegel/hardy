@@ -365,3 +365,98 @@ def test_model_replay_omits_accounting_on_the_selected_path(tmp_path):
     record.branch(parent, expected_leaf=parent)
     assert "cost_usd" not in record.history().replay()
     assert "native-secret-state" not in record.history().replay()
+
+def test_threadless_reopens_and_model_switch_reuse_unchanged_branch_context(tmp_path):
+    from test_chat import FakeChatRuntime, session
+
+    class NoThread(FakeChatRuntime):
+        def stream(self, text):
+            yield from super().stream(text)
+            self.session_id = None
+
+    chat = session(tmp_path, NoThread(["answer"]))
+    chat.send("shared")
+    chat.fork_conversation(None)
+    for _ in range(3):
+        chat = session(tmp_path, NoThread([]))
+    chat.switch_model("other")
+    contexts = [e for e in chat.record._recorded() if e["type"] == "branch_context"]
+    assert len(contexts) == 1
+    assert contexts[0]["text"] in chat._system_prompt
+    chat.send("new branch content")
+    chat = session(tmp_path, NoThread([]))
+    contexts = [e for e in chat.record._recorded() if e["type"] == "branch_context"]
+    assert len(contexts) == 2
+    assert "new branch content" in contexts[-1]["text"]
+    assert contexts[-1]["text"] in chat._system_prompt
+
+
+def test_recover_spend_skips_late_result_marked_unfolded_after_local_loss(tmp_path):
+    record = SessionRecord(tmp_path)
+    record._record({"type": "result", "session_id": "same", "cost_usd": 0.25, "turns": 1})
+    record._record({"type": "result", "session_id": "same", "cost_usd": 0.25,
+                    "turns": 1, "usage_unfolded": True})
+    reopened = SessionRecord(tmp_path)
+    reopened.load()
+    usage = reopened._recover_spend()
+    assert usage.cost_usd == 0.25
+    assert reopened.local["usage_recovered_turns"] == 1
+    assert reopened._recover_spend() == usage
+
+
+def test_record_tail_cursor_reuses_unchanged_and_resets_on_replacement(tmp_path):
+    import os
+    record = SessionRecord(tmp_path)
+    append(record, "user", "first")
+    cursor, reset, events = record.events_since(None)
+    assert reset and len(events) == 1
+    events[0]["message"]["content"] = "mutated"
+    cursor2, reset, events = record.events_since(cursor)
+    assert cursor2 == cursor and not reset and events == []
+    append(record, "assistant", "next")
+    cursor2, reset, events = record.events_since(cursor)
+    assert not reset and [e["message"]["content"] for e in events] == ["next"]
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(record.transcript_path.read_bytes())
+    stat = record.transcript_path.stat()
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    replacement.replace(record.transcript_path)
+    _, reset, events = record.events_since(cursor2)
+    assert reset and events[0]["message"]["content"] == "first"
+
+
+def test_unreported_exchange_survives_local_loss_without_counting_late_result(tmp_path):
+    record = SessionRecord(tmp_path)
+    record._record({"type": "exchange_unreported"})
+    record._record({"type": "result", "cost_usd": 0.25, "usage_unfolded": True})
+    reopened = SessionRecord(tmp_path)
+    reopened.load()
+    usage = reopened._recover_spend()
+    assert usage.turns == 1
+    assert usage.cost_usd is None
+    assert usage.reports == {}
+    assert reopened.local["usage_recovered_turns"] == 1
+    assert reopened._recover_spend() == usage
+
+
+def test_record_tail_resets_on_external_append_and_truncation(tmp_path):
+    record = SessionRecord(tmp_path)
+    append(record, "user", "first")
+    original = record.transcript_path.read_bytes()
+    cursor, _, _ = record.events_since(None)
+    external = SessionRecord(tmp_path)
+    append(external, "assistant", "external")
+    cursor, reset, events = record.events_since(cursor)
+    assert reset and len(events) == 2
+    record.transcript_path.write_bytes(original)
+    _, reset, events = record.events_since(cursor)
+    assert reset and [e["message"]["content"] for e in events] == ["first"]
+
+
+def test_unreported_exchange_accounting_is_withheld_from_visible_replay(tmp_path):
+    record = SessionRecord(tmp_path)
+    append(record, "user", "visible")
+    record._record({"type": "exchange_unreported"})
+    replay = record.history().replay()
+    assert "visible" in replay
+    assert "exchange_unreported" not in replay

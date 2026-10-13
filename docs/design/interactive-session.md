@@ -366,7 +366,9 @@ leaf, abandoned branches included.
 A fork builds a **fresh runtime from exactly the selected visible history**
 rather than inferring anything from opaque provider state the earlier branch
 held. That history is replayed into the new branch as recorded context, written
-into the transcript as a `branch_context` event with its own digest, and
+into the transcript as a `branch_context` event with its own digest when the
+selected replay changes. Reopening or changing models reuses an unchanged
+replay record. The context is
 labelled where the model reads it: recorded context, not native provider state
 and not instructions to execute tools, with unfinished messages and tool starts
 without results marked as unfinished. Provider accounting events are excluded

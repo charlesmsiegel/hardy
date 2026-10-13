@@ -52,7 +52,8 @@ class SessionRecord:
         # of `session.json`, and a rewrite has nothing to fear from an append.
         self._appends = threading.Lock()
         self._history = History()
-        self._history_stamp: tuple[int, int] | None = None
+        self._history_stamp: tuple[int, ...] | None = None
+        self._history_generation = 0
         self._writer_epoch: str | None | object = _UNBOUND
         self.state: dict[str, Any] = {}
         self.local: dict[str, Any] = {}
@@ -227,20 +228,38 @@ class SessionRecord:
                 raise
             except ValueError as error:
                 raise SchemaError(f"Transcript history is invalid: {error}") from error
+            self._history_generation += 1
             self._history_stamp = stamp
         if self._writer_epoch is _UNBOUND:
             self._writer_epoch = self._history.epoch
 
-    def _history_identity(self) -> tuple[int, int]:
+    def _history_identity(self) -> tuple[int, ...]:
         if not self.transcript_path.exists():
             return (0, 0)
         stat = self.transcript_path.stat()
-        return (stat.st_size, stat.st_mtime_ns)
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
     def history(self) -> HistorySnapshot:
         with self._appends, self._history_lock():
             self._refresh_history()
             return self._history.snapshot()
+
+    def events_since(self, cursor: tuple[int, int] | None) -> tuple[tuple[int, int], bool, list[dict[str, Any]]]:
+        """Read only new validated events, resetting on transcript replacement.
+
+        The generation invalidates consumer state after an external change.
+        Locally appended events retain their generation and advance the index.
+        """
+        with self._appends, self._history_lock():
+            self._refresh_history()
+            count = len(self._history.entries)
+            reset = cursor is None or cursor[0] != self._history_generation or not 0 <= cursor[1] <= count
+            start = 0 if reset else cursor[1]
+            current = (self._history_generation, count)
+            if start == count:
+                return current, reset, []
+            entries = list(self._history.entries.values())[start:]
+            return current, reset, [entry.event() for entry in entries]
 
     def branch(self, parent: str | None, *, expected_leaf: str | None,
                action: str = "fork", summary: str = "") -> str:
@@ -419,7 +438,10 @@ class SessionRecord:
         start = self._ledger_cursor(fresh=held is None)
         counted = 0
         for event in self._recorded(start):
-            if event.get("type") == "result":
+            if event.get("type") == "exchange_unreported":
+                recovered = recovered.record({})
+                counted += 1
+            elif event.get("type") == "result" and not event.get("usage_unfolded"):
                 recovered = recovered.record(event)
                 counted += 1
         if not counted:
