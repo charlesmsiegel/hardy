@@ -102,6 +102,15 @@ def compiles_document(sources: Mapping[str, str], path: str) -> bool:
     return path == ROOT_DOCUMENT or path in reached_fragments(sources)
 
 
+def _tex_lines(source: str) -> list[tuple[str, str]]:
+    """Actual TeX line endings, excluding form feeds and Unicode separators."""
+    return [
+        (match.group("body"), match.group("ending"))
+        for match in re.finditer(r"(?P<body>[^\r\n]*)(?P<ending>\r\n|\r|\n|$)", source)
+        if match.group(0)
+    ]
+
+
 def uncommented(source: str) -> str:
     r"""`source` with its TeX comments dropped.
 
@@ -110,7 +119,7 @@ def uncommented(source: str) -> str:
     the single character before the marker.
     """
     kept = []
-    for line in source.split("\n"):
+    for line, _ in _tex_lines(source):
         cut = 0
         while True:
             found = line.find("%", cut)
@@ -693,6 +702,19 @@ def _drop_iffalse(text: str, conditionals: Conditionals = NO_CONDITIONALS) -> st
     return "".join(out)
 
 
+def _next_conditional(text: str, conditionals: Conditionals, index: int) -> re.Match[str] | None:
+    """Find the next conditional control token, consuming escaped backslashes."""
+    while index < len(text):
+        index = text.find("\\", index)
+        if index < 0:
+            return None
+        found = conditionals.pattern.match(text, index)
+        if found is not None:
+            return found
+        index = _skip_command(text, index)
+    return None
+
+
 def _false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list[tuple[int, int]]:
     r"""Each `\iffalse ... \fi` region of `text`, reading every name
     `conditionals` calls ambiguous as a conditional when `nest` and as an
@@ -707,7 +729,7 @@ def _false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list
         depth = 1
         pos = opened.end()
         while depth > 0:
-            found = conditionals.pattern.search(text, pos)
+            found = _next_conditional(text, conditionals, pos)
             if found is None:
                 pos = length
                 break
@@ -843,10 +865,13 @@ def _drop_macro_bodies(text: str) -> str:
 VERBATIM_ENVIRONMENT = re.compile(
     r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim\*?|lstlisting|minted)\}"
 )
-#: `\verb` and its delimiter. The delimiter is any character that is not a
-#: letter, a star or a space -- `%` very much included, which is the whole
-#: reason this is matched during the comment scan rather than after it.
-INLINE_VERBATIM = re.compile(r"\\(?:verb|lstinline)\*?(?:\[[^\]]*\])?(?P<mark>[^*\sa-zA-Z])")
+#: `\verb` and its delimiter. A following letter extends the command name;
+#: after a star or `\lstinline` options, a letter can be the delimiter.
+#: The delimiter is any character that is not a space -- `%` included, so
+#: this is matched during the comment scan rather than after it.
+INLINE_VERBATIM = re.compile(
+    r"\\(?:verb(?![a-zA-Z])\*?|lstinline(?![a-zA-Z])\*?(?:\[[^\]]*\])?)(?P<mark>[^\s])"
+)
 
 
 class _MacroState:
@@ -1076,9 +1101,12 @@ def _executed_line(
                 state.skipping = 1
                 index = false.end()
                 continue
-            found = INLINE_VERBATIM.match(line, index)
+            found = INLINE_VERBATIM.match(line, index) if state.phase == "idle" else None
             if found is not None:
-                closed = line.find(found.group("mark"), found.end())
+                if found.group("mark") == "{" and found.group(0).startswith("\\lstinline"):
+                    closed = line.find("}", found.end())
+                else:
+                    closed = line.find(found.group("mark"), found.end())
                 end = len(line) if closed < 0 else closed + 1
                 if inline is not None and closed >= 0 and state.phase == "idle":
                     inline(index, line[found.end() : closed])
@@ -1105,7 +1133,7 @@ def _executed_line(
                 state.defines(bool(definition.group("env")))
                 index = definition.end()
                 continue
-            binding = _LET.match(line, index)
+            binding = _LET.match(line, index) if state.phase == "idle" else None
             if binding is not None:
                 kept.append(binding.group(0))
                 state.lets()
@@ -1190,10 +1218,7 @@ def typeset(
     # all: `\bib%` and then `item{key}` is a `\bibitem` it runs and this
     # scan used to see as two innocent fragments.
     gap = ""
-    lines = source.split("\n")
-    if source.endswith("\n"):
-        lines.pop()
-    for raw in lines:
+    for raw, _ in _tex_lines(source):
         line = raw
         if closing is not None:
             _, marker, rest = line.partition(closing)
@@ -1296,7 +1321,7 @@ def executed_begin_document(source: str) -> re.Match[str] | None:
     pieces: list[str] = []
     closing: str | None = None
     conditionals = read_conditionals({ROOT_DOCUMENT: source})
-    for raw in source.split("\n"):
+    for raw, ending in _tex_lines(source):
         line = raw
         prefix = ""
         while line:
@@ -1319,8 +1344,8 @@ def executed_begin_document(source: str) -> re.Match[str] | None:
             prefix += " " * opener_length
             closing = f"\\end{{{environment}}}"
             line = rest
-        pieces.append(prefix)
-    text = "\n".join(pieces)
+        pieces.append(prefix + ending)
+    text = "".join(pieces)
     chars = list(text)
     for start, end in _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False):
         chars[start:end] = " " * (end - start)
