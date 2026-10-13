@@ -386,3 +386,18 @@ def test_resumed_usage_reports_are_counted_once_by_the_ledger(tmp_path):
     # A run where no report could be read either way proves nothing, and is
     # itself worth knowing: the ledger would then count every report whole.
     assert determined["tokens"] and determined["cost"], determined
+
+
+def test_api_error_success_subtype_reports_real_error_and_status():
+    events = []
+    live = runtime(observe=events.append)
+    message = ResultMessage(is_error=True, subtype='success')
+    message.api_error_status = 529
+    message.errors = ['overloaded_error']
+    message.result = 'API Error: overloaded'
+    list(live._note(message, []))
+    assert '529' in live.failure
+    assert live.failure != 'success'
+    result = next(event for event in events if event['type'] == 'result')
+    assert result['api_error_status'] == 529
+    assert result['errors'] == ['overloaded_error']

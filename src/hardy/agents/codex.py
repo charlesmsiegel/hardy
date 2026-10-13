@@ -12,10 +12,13 @@ requested structure is a failed stage rather than something to parse loosely.
 
 from __future__ import annotations
 
+import contextlib
+import queue
 import shutil
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -51,7 +54,7 @@ class AgentThread:
     active_turn: Any | None = None
     # The bound this thread's turns run under, or None for unbounded. This
     # SDK's `turn` takes no timeout, so the deadline is kept here and enforced
-    # by `run_structured` against the interrupt the SDK does offer.
+    # by `run_structured` on the caller side; SDK interruption is best effort.
     wall_seconds: float | None = None
 
 
@@ -191,62 +194,107 @@ class CodexRuntime:
         output_type: type[T],
     ) -> T:
         self._asked += 1
-        handle = thread.sdk_thread.turn(
-            prompt,
-            output_schema=output_type.model_json_schema(),
-        )
-        thread.active_turn = handle
-        final_response: str | None = None
+        deadline = time.monotonic() + thread.wall_seconds if thread.wall_seconds else None
         phase = _phase_for_stage(stage)
-        # This SDK's turn takes no timeout, and `stream()` blocks, so a
-        # provider that accepts the turn and then never answers would hang
-        # here forever. The interrupt the SDK does offer is what a deadline
-        # can be built from: it stops the turn, `stream()` returns, and the
-        # expiry below is raised as the error the caller expects.
-        expired = threading.Event()
-        timer: threading.Timer | None = None
-        if thread.wall_seconds:
-            def _expire() -> None:
-                expired.set()
-                interrupt = getattr(handle, "interrupt", None)
-                if interrupt is not None:
-                    interrupt()
+        outbox: queue.Queue = queue.Queue()
+        abandoned = threading.Event()
+        handle = None
+        final_response: T | None = None
+        malformed = False
 
-            timer = threading.Timer(thread.wall_seconds, _expire)
-            timer.daemon = True
-            timer.start()
+        def pump() -> None:
+            # Both SDK startup and stream reads can block. Only this daemon
+            # touches the SDK; the caller owns the deadline and the record.
+            try:
+                sdk_handle = thread.sdk_thread.turn(
+                    prompt, output_schema=output_type.model_json_schema()
+                )
+                if abandoned.is_set():
+                    with contextlib.suppress(Exception):
+                        sdk_handle.interrupt()
+                    return
+                outbox.put(("handle", sdk_handle, time.monotonic()))
+                for event in sdk_handle.stream():
+                    if abandoned.is_set():
+                        return
+                    outbox.put(("event", event, time.monotonic()))
+            except BaseException as error:
+                outbox.put(("error", error, time.monotonic()))
+            finally:
+                outbox.put(("done", None, time.monotonic()))
+
+        threading.Thread(target=pump, name="hardy-codex-turn", daemon=True).start()
+        expired = False
         try:
-            for event in handle.stream():
-                normalized = normalize_event(event)
-                method = str(normalized.get("method", "unknown"))
-                self._store.append("codex." + method.replace("/", "."), normalized, phase=phase)
-                candidate = _agent_message_text(normalized)
-                if candidate is not None:
-                    final_response = candidate
+            while True:
+                remaining = None if deadline is None else max(0, deadline - time.monotonic())
+                try:
+                    kind, value, received_at = outbox.get(timeout=remaining)
+                    if deadline is not None and received_at > deadline:
+                        expired = True
+                        break
+                except queue.Empty:
+                    expired = True
+                    break
+                if kind == "handle":
+                    handle = value
+                    thread.active_turn = handle
+                elif kind == "event":
+                    normalized = normalize_event(value)
+                    method = str(normalized.get("method", "unknown"))
+                    self._store.append("codex." + method.replace("/", "."), normalized, phase=phase)
+                    candidate = _agent_message_text(normalized)
+                    if candidate is not None:
+                        try:
+                            final_response = output_type.model_validate_json(candidate)
+                            malformed = False
+                        except (ValidationError, ValueError):
+                            final_response = None
+                            malformed = True
+                elif kind == "error":
+                    raise value
+                else:
+                    break
         finally:
-            if timer is not None:
-                timer.cancel()
-            thread.active_turn = None
-        # Asked before the missing-response check below, because a turn cut
-        # short by its deadline also has no final response, and "it ran out of
-        # time" is the more useful of the two things to say.
-        if expired.is_set():
-            raise TimeoutError(
-                f"the {stage} turn exceeded its {thread.wall_seconds:g}s budget"
-            )
+            abandoned.set()
+            if thread.active_turn is handle:
+                thread.active_turn = None
+        if expired:
+            if handle is not None:
+                failures: list[str] = []
+                def interrupt() -> None:
+                    try:
+                        handle.interrupt()
+                    except Exception as error:
+                        failures.append(str(error))
+                # A transport's interrupt may itself stall. Wait only briefly
+                # for its outcome; the daemon never writes to the run record.
+                self._store.append("codex.interrupt_requested", {}, phase=phase)
+                interrupter = threading.Thread(target=interrupt, name="hardy-codex-interrupt", daemon=True)
+                interrupter.start()
+                interrupter.join(timeout=0.01)
+                if failures:
+                    self._store.append("codex.interrupt_failed", {"error": failures[0]}, phase=phase)
+                elif interrupter.is_alive():
+                    self._store.append("codex.interrupt_pending", {}, phase=phase)
+            if final_response is not None:
+                self._store.append("codex.deadline_raced", {}, phase=phase)
+                return final_response
+            raise TimeoutError(f"the {stage} turn exceeded its {thread.wall_seconds:g}s budget")
+        if malformed:
+            raise ValueError(f"{stage} turn returned malformed structured output")
         if final_response is None:
             raise ValueError(f"{stage} turn returned no structured final response")
-        try:
-            return output_type.model_validate_json(final_response)
-        except (ValidationError, ValueError) as error:
-            raise ValueError(f"{stage} turn returned malformed structured output") from error
+        return final_response
 
     def run_proof(self, thread: AgentThread, prompt: str) -> ProofSubmission:
         return self.run_structured(thread, "proof", prompt, ProofSubmission)
 
     def cancel(self, thread: AgentThread) -> None:
-        if thread.active_turn is not None:
-            thread.active_turn.interrupt()
+        handle = thread.active_turn
+        if handle is not None:
+            with contextlib.suppress(Exception):
+                handle.interrupt()
 
     def close(self) -> None:
         for directory in self._isolated:
