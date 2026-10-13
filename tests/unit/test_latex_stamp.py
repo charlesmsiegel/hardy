@@ -161,3 +161,14 @@ def test_saving_another_theorem_does_not_stale_the_writeup(session) -> None:
     )
 
     assert session._tex_signature() == before
+
+
+def test_stamp_counts_and_obligations_share_one_source_snapshot(session, monkeypatch):
+    reads = []
+    def changing_tree():
+        reads.append(True)
+        return {} if len(reads) == 1 else {"External": "theorem external : True := trivial\n"}
+    monkeypatch.setattr(session.lean_workspace, "sources", changing_tree)
+    stamp = session._stamp()
+    assert "0 theorems machine-checked by Lean" in stamp
+    assert len(reads) == 1
