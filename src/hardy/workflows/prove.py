@@ -130,7 +130,7 @@ def _strategy_record(request: ProveRequest, *, shared_tool_budget: bool) -> dict
         "verifier_call_journal": True,
         "prompt_set_sha256": PROMPT_SET_SHA256,
         "source_sha256": {
-            name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in modules
+            name: hashlib.sha256((root / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for name in modules
         },
     }
 
