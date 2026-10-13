@@ -870,11 +870,13 @@ def write_setting(path: Path, key: str, value: str) -> None:
         raise ValueError(f"{path}: {key} is a table; cannot replace it with a scalar setting")
     # TOML's line terminator is LF (optionally preceded by CR), not Python's
     # broader Unicode splitlines: those separators may occur inside strings.
-    lines = original.split("\n")
+    lines = original.replace("\r\n", "\n").split("\n")
     if lines and lines[-1] == "":
         lines.pop()
     updated = _upsert(lines, key, value)
-    _parse_toml("\n".join(updated) + "\n", path)
+    prospective = _parse_toml("\n".join(updated) + "\n", path)
+    if prospective.get(key) != value:
+        raise ValueError(f"{path}: could not set top-level {key} without changing its meaning")
     _rewrite(path, updated)
 
 
