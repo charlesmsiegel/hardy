@@ -699,6 +699,7 @@ def test_a_cell_cannot_outlive_the_remaining_session_budget(tmp_path, cas_sessio
         record = session.execute("hang")
         elapsed = time.monotonic() - started
         assert record.status == "timeout"
+        assert "session budget ended this cell" in record.stderr
         assert elapsed < 10
     finally:
         session.close()
@@ -1053,5 +1054,75 @@ def test_a_rebuild_with_no_failed_cells_does_not_warn_about_any(tmp_path, cas_se
         session.execute("hang")
         recovered = session.execute("b")
         assert "not replayed" not in recovered.restart_note
+    finally:
+        session.close()
+
+
+def test_divergent_rebuild_stops_its_kernel(cas_session, monkeypatch) -> None:
+    session = cas_session()
+    original_start = session._start
+    rebuilt = []
+
+    def start():
+        original_start()
+        rebuilt.append(session._kernel)
+
+    monkeypatch.setattr(session, "_start", start)
+    try:
+        session.execute("drift")
+        session._drop_kernel()
+        with pytest.raises(CasError, match="faithfully"):
+            session.execute("a")
+        assert session.state == "poisoned"
+        assert session._kernel is None
+        assert rebuilt[-1].process.poll() is not None
+    finally:
+        session.close()
+
+
+def test_unusable_budget_preserves_live_namespace(cas_session) -> None:
+    session = cas_session()
+    try:
+        session.execute("a")
+        kernel = session._kernel
+        records = session.records()
+        session.spent_seconds = session.limits.cas_session_seconds - 0.02
+        with pytest.raises(CasError, match="budget exhausted"):
+            session.execute("b")
+        assert session._kernel is kernel
+        assert kernel.process.poll() is None
+        assert session.records() == records
+    finally:
+        session.close()
+
+
+def test_version_probe_bills_start_and_cell(cas_session, monkeypatch) -> None:
+    session = cas_session()
+    clock = time.monotonic()
+    monkeypatch.setattr(
+        "hardy.algebra.session.time",
+        SimpleNamespace(monotonic=lambda: clock, monotonic_ns=time.monotonic_ns),
+    )
+    original_start, original_send = session._start, session._send
+
+    def start():
+        nonlocal clock
+        original_start()
+        clock += 0.25
+
+    def send(source):
+        nonlocal clock
+        outcome = original_send(source)
+        clock += 0.5
+        return outcome
+
+    monkeypatch.setattr(session, "_start", start)
+    monkeypatch.setattr(session, "_send", send)
+    try:
+        session.probe_version()
+        assert session.spent_seconds == pytest.approx(0.75)
+        assert session.total_spent_seconds == pytest.approx(0.75)
+        assert json.loads(session.log_path.with_name(session._spend_name).read_text()) == pytest.approx(0.75)
+        assert session._kernel is None
     finally:
         session.close()

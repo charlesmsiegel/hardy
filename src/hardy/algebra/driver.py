@@ -964,6 +964,7 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
 
 def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dict:
     """Execute one cell against the persistent namespace and describe what happened."""
+    global PENDING_INTERRUPT
     try:
         parsed = ast.parse(source, filename=CELL_FILENAME)
     # Hardy asked for this one; handled below, together with every other
@@ -1023,7 +1024,14 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     except BaseException:
         status = "error"
         failure = _describe_failure()
+    # The cell has finished. Stops while collecting its output must preserve
+    # what it did, rather than escape as an unrun-cell reply.
+    _handle_stops_by(_remember)
     captured_out, captured_err, overran = capture.settle(marker)
+    if PENDING_INTERRUPT:
+        PENDING_INTERRUPT = False
+        status = "interrupted"
+        captured_err += "[stop arrived after the cell finished, while its output was being collected]\n"
     # Appended rather than printed. `traceback.print_exc()` writes to
     # `sys.stderr`, which is backed by descriptor 2 -- and a cell is free to
     # close it: `import os; os.close(2); 1 / 0` made the print raise a second
