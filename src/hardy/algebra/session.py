@@ -684,8 +684,8 @@ class CasSession:
                     return incomplete(
                         status="interrupted",
                         stderr=(
-                            "the kernel was not reading its input, so the cell was "
-                            "never sent; it was stopped and its state is gone"
+                            "the frame was not completely delivered; "
+                            "it was stopped and its state is gone"
                         ),
                         kernel_lost=True,
                         signalled=True,
