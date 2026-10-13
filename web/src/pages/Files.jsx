@@ -451,7 +451,7 @@ function Viewer({path, kind, revision, row}) {
   return (
     <div className="wb-files__viewer-body">
       {kind === 'lean' || kind === 'tex'
-        ? <LeanTexEditor path={path} kind={kind} revision={revision} row={row} />
+        ? <LeanTexEditor key={path} path={path} kind={kind} revision={revision} row={row} />
         : null}
       {kind === 'cas' ? <CasViewer path={path} revision={revision} /> : null}
       {kind === 'pdf' ? <PdfViewer path={path} /> : null}
