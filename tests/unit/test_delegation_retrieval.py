@@ -47,16 +47,16 @@ _HEAD = (
     b'<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">'
 )
 _ENTRIES = {
-    "math.DG/0211159": (
-        b"<entry><id>http://arxiv.org/abs/math.DG/0211159v1</id>"
+    "math/0211159": (
+        b"<entry><id>http://arxiv.org/abs/math/0211159v1</id>"
         b"<published>2002-11-11T18:00:00Z</published><updated>2002-11-11T18:00:00Z</updated>"
         b"<title>The entropy formula for the Ricci flow</title>"
         b"<summary>A monotonic expression for the Ricci flow and its geometric applications.</summary>"
         b"<author><name>Grigori Perelman</name></author>"
         b'<category term="math.DG"/></entry>'
     ),
-    "math.AG/0000001": (
-        b"<entry><id>http://arxiv.org/abs/math.AG/0000001v1</id>"
+    "math/0000001": (
+        b"<entry><id>http://arxiv.org/abs/math/0000001v1</id>"
         b"<published>2002-11-11T18:00:00Z</published><updated>2002-11-11T18:00:00Z</updated>"
         b"<title>Geometric integrality of generic fibers</title>"
         b"<summary>Fibers of flat families and their base change.</summary>"
@@ -151,10 +151,10 @@ def test_literature_search_and_source_text_honour_hidden_sources_and_record_inte
     assert found.ok
     payload = json.loads(found.output)
     ids = [lead["paper_id"] for lead in payload["leads"]]
-    assert ids == ["math.AG/0000001v1"] and payload["withheld"] == 1
+    assert ids == ["math/0000001v1"] and payload["withheld"] == 1
     assert payload["leads"][0]["resolution"] == "abstract"
     assert records[-1]["payload"]["intent"] == "results with a matching conclusion"
-    assert records[-1]["payload"]["refused"] == ["math.DG/0211159v1"]
+    assert records[-1]["payload"]["refused"] == ["math/0211159v1"]
     hidden = retriever.source_text("math.DG/0211159v1")
     assert not hidden.ok and "not available" in hidden.output
     fetched = retriever.fetch("math.AG/0000001")
@@ -298,3 +298,14 @@ def test_read_item_bounds_its_dependency_list_and_reports_the_rest(tmp_path):
     flow.record_item(id="HUB", kind=c.ProjectItemKind.THEOREM, name="Hub", statement="everything", dependencies=tuple(deps))
     payload = json.loads(_retriever(tmp_path).item("HUB").output)
     assert len(payload["depends_on"]) == MAX_DEPENDENCY_ROWS and payload["dependencies_withheld"] == 4
+
+
+@pytest.mark.parametrize('hidden,requested', [
+    ('math.DG/0211159v1', 'math/0211159v2'),
+    ('math/0211159', 'math.GT/0211159v1'),
+    ('arXiv:math.GT/0211159v1', 'https://arxiv.org/abs/math/0211159v1'),
+])
+def test_hidden_arxiv_sources_cover_subject_class_aliases(hidden, requested):
+    policy = VisibilityPolicy(hidden_sources=(hidden,))
+    assert not policy.permits_source(requested)
+    assert policy.permits_source('math/0000001v1')

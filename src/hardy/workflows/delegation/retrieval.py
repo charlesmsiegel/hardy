@@ -15,7 +15,7 @@ from collections.abc import Callable
 from typing import Any
 
 from hardy.foundation.values import FrozenModel, ToolResult
-from hardy.literature.arxiv import ArxivError
+from hardy.literature.arxiv import ArxivError, parse_id
 from hardy.literature.tools import PaperToolRuntime
 from hardy.workflows.delegation.context import _trust
 from hardy.workflows.ledger.contracts import ProjectItem, VersionRef
@@ -30,7 +30,10 @@ _ABSTRACT_CHARS = 400
 
 
 def _stem(paper_id: str) -> str:
-    return _VERSION.sub("", paper_id.strip())
+    try:
+        return parse_id(paper_id).stem
+    except ArxivError:
+        return _VERSION.sub("", paper_id.strip())
 
 
 #: The most project items one `read_project` answer carries, whatever limit the model
