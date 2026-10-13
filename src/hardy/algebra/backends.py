@@ -347,7 +347,9 @@ class Macaulay2Backend(_SentinelBackend):
     # In combined capture a preceding stdout write need not end in a newline.
     # A full banner embedded in ordinary text is conservatively an error too.
     # Loaded files use their path (which may contain spaces), not `stdio`.
-    error_pattern = re.compile(r"[^\r\n]+:\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
+    # Start at the numeric suffix's colon. Consuming an arbitrary path here
+    # retries the entire remaining line at every position on clean output.
+    error_pattern = re.compile(r"(?<=[^\r\n]):\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
     # M2 echoes each `iN : ` input prompt (and the source line behind it) even
     # when stdin is not a tty, and prints an `oN` counter before every
     # non-suppressed statement's value. Observed verbatim in the same run: a
