@@ -65,13 +65,15 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     # Each board's own pooling key -- the same two fields `evals todo`
     # computes for a run that hasn't happened yet -- read off the board it
     # actually names, not recomputed from this checkout.
-    keys: dict[str, tuple[str | None, str]] = {
-        path.name: (
-            board.condition.run_procedure_digest,
-            environment_digest_of_board({"environment": board.environment.model_dump(mode="json"), "host": board.host}),
-        )
-        for path, board in boards
-    }
+    keys: dict[str, tuple[str | None, str]] = {}
+    for path, board in boards:
+        try:
+            environment_digest = environment_digest_of_board({
+                "environment": board.environment.model_dump(mode="json"), "host": board.host,
+            })
+        except (ValueError, KeyError, TypeError) as error:
+            raise PoolRefused(f"{path.name} has an invalid environment identity: {error}") from error
+        keys[path.name] = (board.condition.run_procedure_digest, environment_digest)
 
     run_digests = {run for run, _ in keys.values()}
     if len(run_digests) > 1:

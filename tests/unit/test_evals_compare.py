@@ -203,3 +203,11 @@ def test_staged_review_usage_folds_each_session_on_its_own(tmp_path):
     data = compare._row(board_dir, row, authenticated=True)
     assert data["canonical_review_usage"]["cost_usd"]["value"] == pytest.approx(.05)
     assert data["canonical_review_usage"]["input_tokens"]["value"] == 350
+
+
+def test_unknown_host_scheme_uses_comparison_refusal_boundary(tmp_path):
+    paths, kwargs = _boards(tmp_path)
+    _edit(paths[0] / 'scoreboard.json',
+          lambda board: board['host'].update(environment_identity_scheme='host-compatibility-v3'))
+    with pytest.raises(compare.ComparisonRefused, match='left.*unsupported environment identity scheme'):
+        compare.compare(*paths, varying=(), **kwargs)
