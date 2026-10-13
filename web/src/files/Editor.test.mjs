@@ -161,3 +161,29 @@ test('normalized save reload acknowledges the committed digest without conflicti
   assert.equal(buffer(), 'newer edits');
   assert.doesNotMatch(document.body.textContent, /changed on disk/);
 });
+test('switching Files paths never presents the previous file as the new buffer', async () => {
+  const {default: Files} = await server.ssrLoadModule('/src/pages/Files.jsx');
+  const {SessionContext} = await server.ssrLoadModule('/src/session/SessionProvider.jsx');
+  let finish;
+  globalThis.fetch = async (url) => {
+    if (url.includes('path=lean%2FB.lean')) return new Promise((resolve) => {
+      finish = () => resolve(new Response(JSON.stringify({text:'second file',sha256:'second'})));
+    });
+    return new Response(JSON.stringify(
+      url === '/api/files' ? {lean:[{path:'lean/A.lean',bytes:8,modified:1},{path:'lean/B.lean',bytes:8,modified:1}],tex:[],cas:[],pdf:[]} :
+      url.startsWith('/api/file?') ? {text:'first file',sha256:'first'} :
+      url === '/api/environment' ? {checks:[]} : url === '/api/uploads' ? [] : {}));
+  };
+  const page = async (path) => act(async () => {
+    root.render(React.createElement(SessionContext.Provider, {value:{revision:401,setDraft(){}}}, React.createElement(Files, {arg:path})));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  await page('lean/A.lean');
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(buffer(), 'first file');
+  await page('lean/B.lean');
+  const showedPreviousBuffer = !!document.querySelector('textarea');
+  await act(async () => { finish(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(showedPreviousBuffer, false, 'wait for B rather than label A text as B');
+  assert.equal(buffer(), 'second file');
+});
