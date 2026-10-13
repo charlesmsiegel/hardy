@@ -203,7 +203,7 @@ def add_parser(subparsers: Any) -> None:
     pool.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
     pool.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
     pool.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<first label>/pool.json")
+    pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<lexically first label>/pool.json")
     compare = verbs.add_parser("compare", help="read two scoreboards with explicit treatment differences; JSON on stdout")
     compare.add_argument("left", type=Path)
     compare.add_argument("right", type=Path)
@@ -226,7 +226,7 @@ def add_parser(subparsers: Any) -> None:
                          metavar=("BOARD", "BASELINE"), help="Explicit baseline override for one selected board; repeatable")
     summary = verbs.add_parser(
         "summary",
-        help="write a Markdown report over every scoreboard, one row per model (read-only)",
+        help="write a Markdown report over every scoreboard, one row per compatible pooling group",
     )
     summary.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
     summary.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
@@ -533,7 +533,7 @@ def run_pool(args: argparse.Namespace) -> int:
     or when a board fails its own audit; see `pool.pool`'s docstring.
 
     Writes only its own output (`--out`, default
-    `evals/pools/<first label>/pool.json`) and never touches a scoreboard.
+    `evals/pools/<lexically first label>/pool.json`) and never touches a scoreboard.
     """
     from hardy.evals.pool import PoolRefused
     from hardy.evals.pool import pool as pool_boards
@@ -542,7 +542,11 @@ def run_pool(args: argparse.Namespace) -> int:
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 2
-    labels = [args.scoreboards / label for label in args.labels]
+    names = sorted(args.labels)
+    if len(set(names)) != len(names):
+        print("Refused: duplicate scoreboard labels", file=sys.stderr)
+        return 2
+    labels = [args.scoreboards / label for label in names]
     missing = [str(label) for label in labels if not (label / "scoreboard.json").exists()]
     if missing:
         print("Refused: no scoreboard.json under " + ", ".join(missing), file=sys.stderr)
@@ -556,12 +560,14 @@ def run_pool(args: argparse.Namespace) -> int:
     # a pool is a named directory so the derived view has somewhere to grow --
     # and a file with no extension where a directory is documented is the kind
     # of surprise that only shows up when something tries to write beside it.
-    out = args.out if args.out is not None else DEFAULT_POOLS / args.labels[0] / "pool.json"
+    out = args.out if args.out is not None else DEFAULT_POOLS / names[0] / "pool.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n": the same repository-evidence integrity concern as the
     # baseline and scoreboard writes -- Path.write_text's default would
     # checkin this on Windows as CRLF.
-    out.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    from hardy.foundation.locking import atomic_write_bytes
+
+    atomic_write_bytes(out, (json.dumps(result, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
     headline = result["aggregates"]["headline"]
     print(
         f"Pooled {len(result['boards'])} board(s) ({', '.join(result['boards'])}) into {out}: "
@@ -574,14 +580,13 @@ def run_pool(args: argparse.Namespace) -> int:
 
 def run_summary(args: argparse.Namespace) -> int:
     """`evals summary`: a Markdown report over every scoreboard, one row per
-    model. Read-only over `--scoreboards`, `--corpus` and `--baseline` --
+    compatible model/procedure/environment group. Read-only over `--scoreboards`, `--corpus` and `--baseline` --
     writes only `--out` (default `corpus/EVALS.md`) -- and never fails merely
     because there is nothing yet to report (`summary.render` writes a valid,
     empty-of-tables file when `--scoreboards` holds no boards).
 
-    Refuses, like `evals pool`, when one model's own boards do not share a
-    pooling key, claim the same `(id, repeat)` twice, or fail their own
-    audit; see `summary.build` and `summary.SummaryRefused`.
+    Refuses, like `evals pool`, when compatible boards claim the same
+    `(id, repeat)` twice or fail their own audit; see `summary.build` and `summary.SummaryRefused`.
     """
     from hardy.evals.summary import SummaryRefused
     from hardy.evals.summary import write as write_summary

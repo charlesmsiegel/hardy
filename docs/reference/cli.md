@@ -295,7 +295,7 @@ Combines scoreboards sharing one pooling key into one derived, recomputable scor
 | `--scoreboards` | `evals/scoreboards` |  | Where the labels are resolved. |
 | `--corpus` | `corpus` |  | The corpus the scoreboards were run against. |
 | `--baseline` | `evals/baseline.json` |  | The tier file the scoreboards were scored against. |
-| `--out` | `evals/pools/<first label>/pool.json` |  | Where the pooled result is written. |
+| `--out` | `evals/pools/<lexically first label>/pool.json` |  | Where the pooled result is written. |
 
 #### hardy evals compare
 
@@ -336,7 +336,9 @@ Preserves a pinned upstream archive from `minif2f`, `putnambench`, or `proofnet`
 
 #### hardy evals summary
 
-Writes a Markdown report over every scoreboard, one row per model. Read-only.
+Writes a Markdown report over every scoreboard, one row per compatible
+model/procedure/environment group. Reads the inputs and atomically writes only
+the report at `--out`.
 
 | Option | Default | Env var | Meaning |
 | --- | --- | --- | --- |

@@ -118,7 +118,7 @@ changed, or (for a twin) with a row that has no negation sweep. It also
 includes any entry, active or not, whose row has an attempt recorded
 `not_run`, because a run refuses such a row wherever it sits in the file.
 When the tier file was swept under another environment or procedure
-digest (a Mathlib upgrade, another machine, or an edit to one of the
+digest (a Mathlib upgrade, another machine, or an edit to one of the six
 deciding sources), the default is instead every entry the file holds plus
 the active entries it does not, and the command says why on stderr. If
 there is nothing to sweep, it refuses with exit `2` and names `--only` as
@@ -279,7 +279,7 @@ boards pool only when both say they measured the same procedure against
 the same environment.
 
 `run_procedure_digest` moves whenever anything the run's outcome depends on
-changes. That includes the code: editing Python code or prompt templates under `src/hardy/` that
+changes. That includes the code: editing anything under `src/hardy/` that
 is not in the denylist in `src/hardy/evals/identity.py` moves it, and a
 moved digest orphans every scoreboard already on disk, so boards stop
 pooling with each other and `evals todo` reports `boards_counted: 0` for
@@ -289,7 +289,7 @@ models that plainly have boards. It also includes the condition itself:
 `repeats`, `reviewer_model`, and the staged strategy and history mode, so
 two boards run under different models or budgets never pool together
 either, by design rather than by omission. The corresponding digest for the
-baseline, `procedure_digest`, moves the same way when one of the
+baseline, `procedure_digest`, moves the same way when one of the six
 `DECIDING_SOURCES` in `src/hardy/evals/sweep.py` changes, and that stales
 the whole tier file rather than one entry.
 
@@ -343,8 +343,9 @@ hardy evals summary
 
 [`hardy evals summary`](../reference/cli.md#hardy-evals-summary) writes a
 Markdown report over every scoreboard under `--scoreboards`, one row per
-model, to `--out` (default `corpus/EVALS.md`). It is read-only: nothing
-about a scoreboard changes because a summary was written, and the file it
+compatible model/procedure/environment group, to `--out` (default
+`corpus/EVALS.md`). It reads the scoreboards and atomically replaces its report;
+nothing about a scoreboard changes because a summary was written, and the file it
 writes is corpus content, committed on `corpus/curation` alongside the
 statements it reports on rather than on `main`.
 

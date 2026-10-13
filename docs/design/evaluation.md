@@ -249,6 +249,17 @@ Excluding them from ranking-capable reports, and withholding a claim entirely
 where the invalid rate is high, belongs with the reporting layer that is not
 built ([roadmap](../roadmap.md)).
 
+Twin refusal rates exclude unreadable rows: `refusal_rate` is `refused` divided
+by `measured_twins` (all twins except `invalid`), or null when none are measured.
+`invalid_true` and `invalid_twins` partition the existing `invalid` count; the
+Markdown summary reports measured and invalid twins separately with the same
+rate. Token, cost and wall-clock totals still include every row. Existing boards
+retain their original aggregates. Boards whose aggregates predate these counters
+may fail the current aggregate check (including valid twins with an absent
+`measured_twins` count); new measurements are required and old evidence is never
+restamped. Pooling re-derives
+aggregates from audited historical rows without editing their scoreboards.
+
 Coverage is reported the same way. `floor` is computed over the baseline's
 entries, so a partial baseline makes every floor a floor over the swept subset;
 the aggregate carries `baselined` and `active_baselined` denominators so those

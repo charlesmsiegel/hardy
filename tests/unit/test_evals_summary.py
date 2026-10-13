@@ -335,3 +335,21 @@ def test_invalid_twins_are_visible_but_excluded_from_refusal_denominator():
     rows = [_row("f", "false", "refused"), _row("g", "false", "invalid")]
     assert summary.twin_stats(rows) == {"refused": 1, "twins": 1, "invalid_twins": 1, "rate": 100.0}
     assert summary.twin_stats([rows[1]])["rate"] is None
+
+
+def test_interrupted_summary_write_preserves_previous_output(tmp_path, monkeypatch):
+    from hardy.corpus import catalog
+    from hardy.foundation import locking
+
+    out = tmp_path / "EVALS.md"
+    out.write_bytes(b"previous report")
+    monkeypatch.setattr(summary, "build", lambda *args, **kwargs: {})
+    monkeypatch.setattr(summary, "render", lambda *args, **kwargs: "new report\n")
+    monkeypatch.setattr(catalog, "load_corpus", lambda *args: None)
+    def interrupted(*args):
+        raise OSError("interrupted temporary write")
+    monkeypatch.setattr(locking.os, "fsync", interrupted)
+    with pytest.raises(OSError, match="interrupted temporary write"):
+        summary.write(tmp_path, problems_path=tmp_path, baseline_path=tmp_path, out_path=out)
+    assert out.read_bytes() == b"previous report"
+    assert list(tmp_path.iterdir()) == [out]
