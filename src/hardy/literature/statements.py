@@ -201,11 +201,12 @@ def _included_anywhere(files: Mapping[str, str], roots: Sequence[str]) -> set[st
     """Every file some document in `roots` pulls in, directly or not."""
     reached: set[str] = set()
     for start in roots:
+        conditionals = completion.read_conditionals(files, start)
         pending = [start]
         seen = {start}
         while pending:
             current = pending.pop()
-            executed = completion.displayed(files.get(current, "")).executed
+            executed = completion.displayed(files.get(current, ""), conditionals).executed
             for match in completion.INCLUSION.finditer(executed):
                 target = completion.target(match.group(1), files)
                 if target and target not in seen:
@@ -231,6 +232,7 @@ def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
     is only ever taken from the source itself, so nothing here claims a
     printed number that drifts from it.
     """
+    conditionals = completion.read_conditionals(files, root)
     seen: set[str] = set()
     ordered: list[tuple[str, str]] = []
     # An explicit stack rather than recursion. A bundle of a thousand files
@@ -244,7 +246,7 @@ def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
         if not path or path in seen or path not in files:
             return
         seen.add(path)
-        executed = completion.without_definitions(completion.displayed(files[path]).executed)
+        executed = completion.without_definitions(completion.displayed(files[path], conditionals).executed)
         stack.append((path, executed, 0, list(completion.INCLUSION.finditer(executed))))
 
     opened(root)

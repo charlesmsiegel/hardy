@@ -430,3 +430,29 @@ def test_inventory_distinguishes_source_numbers_from_attribution(heading, number
     assert statement.heading == heading
     assert statement.number == number
     assert statement.as_dict()["number"] == number
+
+
+def test_inventory_reads_root_declared_conditionals_across_inputs():
+    files = {
+        "main.tex": r"\documentclass{article}\newif\ifdraft\begin{document}\input{part}\end{document}",
+        "part.tex": r"\iffalse\ifdraft X\fi\input{ghost}\fi\input{live}",
+        "ghost.tex": r"\begin{theorem}\label{ghost}Hidden claim.\end{theorem}",
+        "live.tex": r"\begin{theorem}\label{live}Live claim.\end{theorem}",
+    }
+    found = assume.inventory(files)
+    assert [statement.ref for statement in found] == ["live"]
+    survey = assume.survey(files)
+    assert "ghost.tex" not in survey.read
+    assert "live.tex" in survey.read
+
+
+def test_root_selection_does_not_follow_false_input_after_root_declared_conditional():
+    files = {
+        "afigure.tex": r"\documentclass{standalone}\newif\ifdraft\begin{document}\input{part}\end{document}",
+        "part.tex": r"\iffalse\ifdraft X\fi\input{zpaper}\fi",
+        "zpaper.tex": r"\documentclass{article}\begin{document}\input{afigure}\begin{theorem}\label{paper}Claim.\end{theorem}\end{document}",
+    }
+    assert assume.root_of(files) == "zpaper.tex"
+    survey = assume.survey(files)
+    assert survey.root == "zpaper.tex"
+    assert [statement.ref for statement in survey.statements] == ["paper"]

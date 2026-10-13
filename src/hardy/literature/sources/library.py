@@ -280,10 +280,12 @@ class ManagedLibrary:
             page_spans.update(page_spans_from(mapping))
         previous = self.trees.preferred(sha256)
         tree = build_tree(artifact, record, text, tuple(native) + tuple(text_observations), page_spans=page_spans, previous=previous)
-        if previous is not None and tree.id == previous.id:
-            # Replaying the same current observations is the same revision,
-            # rather than a new revision claiming to supersede itself.
-            tree = tree.model_copy(update={"version": previous.version, "supersedes": previous.supersedes})
+        existing = next((stored for stored in self.trees.list(sha256) if stored.id == tree.id), None)
+        if existing is not None:
+            # Replaying any held identity reuses its immutable revision. The
+            # admission check still verifies all content against the old record;
+            # selecting a preferred revision remains a separate journal action.
+            tree = tree.model_copy(update={"version": existing.version, "supersedes": existing.supersedes})
         texts = self.representations.texts(sha256)
         representations = {r.id: r for r in self.representations.list(sha256)}
         return self.trees.admit(tree, representations, texts)
