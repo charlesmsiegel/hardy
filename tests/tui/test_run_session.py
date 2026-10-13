@@ -156,3 +156,36 @@ def test_the_banner_appears_on_the_plain_path(settings, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
     assert run_session(settings, lambda confirm: FakeSession(), plain=True) == 0
     assert runner.WARNING in capsys.readouterr().out
+
+
+def test_render_failure_closes_live_session_before_plain_factory(settings, monkeypatch):
+    from types import SimpleNamespace
+
+    import hardy.app.tui as tui
+
+    class Session(FakeSession):
+        closed = False
+        def close(self):
+            self.closed = True
+    from hardy.workflows.delegation.store import OwnerToken
+    token = OwnerToken.hold(settings.layout.problem)
+    first = Session()
+    replacement = Session()
+    replacement.close = lambda: (setattr(replacement, "closed", True), token.release())
+    assert OwnerToken.alive(settings.layout.problem, token.id)
+    class BrokenShell:
+        def __init__(self, config, *args, **kwargs):
+            self.state = SimpleNamespace(config=config, session=None)
+        def attach(self, session):
+            self.state.session = replacement
+        def run(self):
+            raise RuntimeError('render failed')
+    monkeypatch.setattr(tui, '_is_interactive', lambda: True)
+    monkeypatch.setattr('hardy.app.tui.shell.Shell', BrokenShell)
+    def fallback(config, factory, **kwargs):
+        assert replacement.closed
+        assert not OwnerToken.alive(settings.layout.problem, token.id)
+        assert not first.closed
+        return 0
+    monkeypatch.setattr(tui, '_run_plain', fallback)
+    assert tui.run_session(settings, lambda confirm: first) == 0

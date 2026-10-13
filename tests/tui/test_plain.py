@@ -257,3 +257,21 @@ def test_streamed_output_cannot_split_the_assumption_details(monkeypatch):
     assert not worker.is_alive()
     checked = next(i for i, line in enumerate(written) if "Checked:" in line)
     assert written.index("concurrent model output") > checked
+
+
+def test_command_interrupt_returns_to_prompt(settings):
+    from hardy.app.tui.commands import Command
+    async def interrupt(ui, argument, state):
+        raise KeyboardInterrupt
+    commands = [Command('interrupt', 'interrupt', interrupt)]
+    replies = iter(['/interrupt', 'after interrupt'])
+    session = FakeSession()
+    written = []
+    def read(prompt):
+        try:
+            return next(replies)
+        except StopIteration:
+            raise EOFError from None
+    assert plain.run(settings, session, registry=commands, read=read, out=written.append) == 0
+    assert session.sent == ['after interrupt']
+    assert 'Command interrupted.' in '\n'.join(written)
