@@ -18,8 +18,9 @@ def environment_digest_of_board(board: dict[str, Any]) -> str:
 
     Over its recorded `environment` and `host` (`sweep.environment_digest_of`)
     -- a board stores those two components, not a precomputed digest -- so
-    this is the single place that turns them into the same digest `evals run`
-    would produce today. `pool.py` imports this rather than defining a second
+    this dispatches using the recorded host scheme. Unmarked historical boards
+    retain their original exact-host identity, while new marked boards use
+    the compatibility key. Reading evidence never upgrades its scheme. `pool.py` imports this rather than defining a second
     copy, so the two can never silently disagree on what "the same
     environment" means.
     """

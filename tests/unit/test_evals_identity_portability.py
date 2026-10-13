@@ -42,7 +42,7 @@ def test_deciding_process_changes_digest(tmp_path, monkeypatch):
 def test_kernel_patch_is_provenance_not_compatibility():
     from hardy.formal.contracts import EnvironmentIdentity
     env = EnvironmentIdentity(lean_version='v', lean_commit='c', mathlib_revision='m', lake_manifest_sha256='a' * 64)
-    host = dict(platform='Linux-6.18.44-x86_64', system='Linux', machine='x86_64', cpu_count=4, processor='cpu')
+    host = dict(environment_identity_scheme='host-compatibility-v2', platform='Linux-6.18.44-x86_64', system='Linux', machine='x86_64', cpu_count=4, processor='cpu')
     assert sweep.environment_digest_of(env, host) == sweep.environment_digest_of(env, {**host, 'platform': 'Linux-6.18.45-x86_64'})
     assert sweep.environment_digest_of(env, host) != sweep.environment_digest_of(env, {**host, 'machine': 'arm64'})
     assert sweep.environment_digest_of(env, host) != sweep.environment_digest_of(env, {**host, 'processor': 'other'})
@@ -104,3 +104,33 @@ def test_persisted_path_sorts_use_explicit_string_keys():
                 if isinstance(argument, ast.Call) and isinstance(argument.func, ast.Attribute) and argument.func.attr in {"glob", "rglob", "iterdir"} and not any(keyword.arg == "key" for keyword in node.keywords):
                     offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == []
+
+
+def test_historical_boards_keep_original_exact_host_digest():
+    from hardy.evals import digests
+    from hardy.evals.outstanding import environment_digest_of_board
+    from hardy.formal.contracts import EnvironmentIdentity
+
+    env = EnvironmentIdentity(lean_version='v', lean_commit='c', mathlib_revision='m', lake_manifest_sha256='a' * 64)
+    host = dict(platform='Linux-6.18.44-x86_64', machine='x86_64', cpu_count=4)
+    board = dict(environment=env.model_dump(mode='json'), host=host)
+    original = digests.environment_digest({'identity': env.model_dump(mode='json'), 'host': host})
+    assert environment_digest_of_board(board) == original
+    patched = {**board, 'host': {**host, 'platform': 'Linux-6.18.45-x86_64'}}
+    assert environment_digest_of_board(patched) != original
+
+
+def test_new_host_records_explicit_environment_scheme():
+    assert sweep.host_info()['environment_identity_scheme'] == 'host-compatibility-v2'
+
+
+def test_linux_processor_identity_and_missing_fallback(monkeypatch):
+    monkeypatch.setattr(Path, 'read_text', lambda path, **kwargs: 'model name : Example CPU\n')
+    assert sweep._processor_identity('Linux', '') == 'Example CPU'
+
+    def missing(path, **kwargs):
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(Path, 'read_text', missing)
+    assert sweep._processor_identity('Linux', '') == 'unknown-processor'
+    assert sweep._processor_identity('Windows', 'CPU Model') == 'CPU Model'

@@ -226,26 +226,57 @@ def read_stage_b(elaboration: Elaboration, name: str) -> Attempt:
 Elaborate = Callable[[str], Elaboration]
 
 
+def _processor_identity(system: str, fallback: str) -> str:
+    """Coarse CPU model, without depending on the locale or an unbounded probe."""
+    import subprocess
+
+    if system == "Linux":
+        try:
+            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="replace").splitlines():
+                key, separator, value = line.partition(":")
+                if separator and key.strip() in {"model name", "Hardware"} and value.strip():
+                    return value.strip()
+        except OSError:
+            pass
+    elif system == "Darwin":
+        try:
+            result = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True,
+                                    text=True, encoding="utf-8", errors="replace", timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return fallback.strip() or "unknown-processor"
+
+
 def host_info() -> dict[str, Any]:
     """Coarse machine identity. Lives here rather than in `commands` because
     `staleness` needs the current host to compare against the recorded one."""
     import os
     import platform
 
-    return {"platform": platform.platform(), "system": platform.system(), "machine": platform.machine(), "processor": platform.processor(), "cpu_count": os.cpu_count()}
+    return {"environment_identity_scheme": "host-compatibility-v2", "platform": platform.platform(), "system": platform.system(), "machine": platform.machine(), "processor": _processor_identity(platform.system(), platform.processor()), "cpu_count": os.cpu_count()}
 
 
 def environment_digest_of(environment: EnvironmentIdentity, host: dict[str, Any]) -> str:
     """Lean identity and coarse host compatibility, with a versioned scheme.
 
-    Full platform detail remains provenance; kernel and libc patches do not
-    move the compatibility key.
+    Marked v2 hosts keep full platform detail as provenance; kernel and libc
+    patches do not move their compatibility key. Unmarked historical hosts
+    retain the original exact-host algorithm.
 
     The host is in here rather than merely recorded beside the measurement:
     machine speed turns the sweep's process backstop into `timed_out`
     attempts, and a tactic that times out on a slow machine and closes on a
     fast one gives the same statement two different tiers.
     """
+    scheme = host.get("environment_identity_scheme")
+    if scheme is None:
+        # Historical boards bind their complete recorded host. Never migrate
+        # their pooling identity merely by reading them with newer code.
+        return digests.environment_digest({"identity": environment.model_dump(mode="json"), "host": host})
+    if scheme != "host-compatibility-v2":
+        raise ValueError(f"unsupported environment identity scheme: {scheme!r}")
     compatibility_host = {key: host.get(key) for key in ("system", "machine", "processor", "cpu_count")}
     return digests.environment_digest({"scheme": "host-compatibility-v2", "identity": environment.model_dump(mode="json"), "host": compatibility_host})
 
@@ -910,6 +941,12 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
         # difference on its own, so say plainly when the machine is what moved:
         # "environment digest" alone reads as a mystery to whoever hits it.
         detail = (
+            "environment identity scheme changed from "
+            f"{baseline.host.get('environment_identity_scheme', 'exact-host-v1')!r} to "
+            f"{current_host.get('environment_identity_scheme', 'exact-host-v1')!r}; "
+            "re-sweep without restamping historical evidence"
+            if baseline.host.get("environment_identity_scheme") != current_host.get("environment_identity_scheme")
+            else (
             f"it was swept on {baseline.host.get('platform', 'another machine')!r} "
             f"({baseline.host.get('machine')}, {baseline.host.get('cpu_count')} cpus) and this is "
             f"{current_host.get('platform')!r} ({current_host.get('machine')}, "
@@ -917,6 +954,7 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
             "so it decides tiers"
             if baseline.host != current_host
             else "the Lean toolchain identity differs"
+        )
         )
         issues.append(
             f"the baseline's environment digest is not this project's: {detail}; "
