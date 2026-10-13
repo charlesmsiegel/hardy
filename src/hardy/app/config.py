@@ -812,23 +812,49 @@ def load(
 
 
 def _upsert(lines: list[str], key: str, value: str) -> list[str]:
-    """`lines` with `key` set to `value`, replacing its line or appending one."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    rendered = f'{key} = "{escaped}"'
-    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
-    for index, line in enumerate(lines):
-        if pattern.match(line):
-            lines[index] = rendered
-            return lines
-    lines.append(rendered)
-    return lines
+    """Replace one complete top-level assignment, keeping surrounding text.
+
+    Let TOML decode keys and decide when an assignment ends: quoted keys and
+    multiline values cannot be found reliably by matching a line prefix.
+    """
+    rendered = f'{key} = "{_toml_string(value)}"'
+    start = 0
+    fragment = []
+    for end, line in enumerate(lines):
+        fragment.append(line)
+        text = "\n".join(fragment)
+        try:
+            parsed = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            continue
+        # Settings are top-level. New assignments must also precede tables,
+        # otherwise TOML would put an appended key inside the last table.
+        if text.lstrip().startswith("["):
+            return [*lines[:start], rendered, *lines[start:]]
+        if key in parsed:
+            # Preserve a trailing comment without mistaking a # in the value
+            # for one. Only a prefix that still parses is a complete value.
+            for position, character in enumerate(text):
+                if character != "#" or "\n" in text[position:]:
+                    continue
+                try:
+                    tomllib.loads(text[:position])
+                except tomllib.TOMLDecodeError:
+                    continue
+                rendered += " " + text[position:]
+                break
+            comments = [held for held in fragment[:-1] if held.lstrip().startswith("#")]
+            return [*lines[:start], *comments, rendered, *lines[end + 1:]]
+        start = end + 1
+        fragment = []
+    return [*lines, rendered]
 
 
 def write_setting(path: Path, key: str, value: str) -> None:
     """Upsert one setting in the user's own config file.
 
-    Line-based rather than a parse-and-rewrite so the installer's comments and
-    any hand-written ordering survive; the file is often edited by a human.
+    Only the matching assignment is replaced, using TOML to recognize its
+    key and extent; surrounding comments and hand-written ordering survive.
 
     For the USER's file only -- `~/.hardy/config.toml`, or wherever `--config`
     points. The project layer inside a checkout goes through
@@ -839,6 +865,7 @@ def write_setting(path: Path, key: str, value: str) -> None:
         raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
     header = ["# Written by Hardy. Every value can be overridden by a", "# HARDY_* environment variable or a command-line flag."]
     lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else list(header)
+    _parse_toml("\n".join(lines), path)
     _rewrite(path, _upsert(lines, key, value))
 
 
