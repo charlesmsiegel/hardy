@@ -1264,7 +1264,7 @@ class MathematicsSession:
         return None
 
     def _final_gates(self, source: str) -> ToolResult | None:
-        return self.formal._final_gates(source, self.record.snapshot_of("assumptions"))
+        return self.formal._final_gates(source, self.record.snapshot_of("assumptions", "quarantine"))
 
     def _run_lean_source(self, source: str, timeout: float | None = None) -> ToolResult:
         return self.lean.run_source(
