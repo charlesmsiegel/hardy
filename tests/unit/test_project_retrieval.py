@@ -479,3 +479,34 @@ def test_retrieval_builds_current_entries_and_context_once_per_source(tmp_path, 
     assert not stale.delivered
     assert all("source content changed" in hit.reason for hit in stale.rejected)
     assert counts == dict(entries=2, graphs=4, reads=4, chains=14)
+
+
+@pytest.mark.parametrize("text", ["alpha", "does-not-exist"])
+def test_selected_sources_rebuild_entries_only_for_delivery(tmp_path, monkeypatch, text):
+    from hardy.workflows.ledger.state import LedgerSnapshot
+
+    scope = Scope(id="scope")
+    note = ProjectItem(id="note", name="alpha", kind="research_note", origin="human_authored")
+    sources = {identifier: retrieval.RetrievalSource(identifier, LedgerSnapshot((scope, note)))
+               for identifier in ("p", "excluded")}
+    index = retrieval.build_index(tuple(sources.values()))
+    builds, contexts = [], []
+    original_entries = retrieval._entries
+    original_context = retrieval.ProjectRetriever._context_refs
+
+    def entries(source):
+        builds.append(source.id)
+        return original_entries(source)
+
+    def context_refs(source, query):
+        contexts.append(source.id)
+        return original_context(source, query)
+
+    monkeypatch.setattr(retrieval, "_entries", entries)
+    monkeypatch.setattr(retrieval.ProjectRetriever, "_context_refs", staticmethod(context_refs))
+    service = retrieval.ProjectRetriever(index, read_source=sources.__getitem__)
+    query = retrieval.RetrievalQuery(project_source="p", source_ids=("p",), text=text, scope=scope.ref)
+    result = service.retrieve(query)
+    assert [hit.entry.ref for hit in result.delivered] == ([note.ref] if text == "alpha" else [])
+    assert builds == (["p"] if text == "alpha" else [])
+    assert contexts == ["p"]
