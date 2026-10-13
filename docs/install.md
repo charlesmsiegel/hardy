@@ -436,3 +436,9 @@ The Windows uninstaller reports paths that remain locked and exits nonzero
 after a partial removal. Close Hardy and terminals using those folders and
 rerun it. Removing elan honors `ELAN_HOME` and removes its PATH entry only
 after the toolchain directory has actually been removed.
+
+On a clean Windows machine without the Claude Code CLI, the installer offers
+to install Node.js LTS through winget when npm is missing, then installs the
+CLI with npm. `-Yes` accepts this dependency step. Both are shared tools and
+remain installed when Hardy is removed. Provisioning failures produce a
+nonzero exit after the summary; signing in remains the user's next step.
