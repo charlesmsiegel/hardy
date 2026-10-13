@@ -258,7 +258,7 @@ class FakeOpener:
     def __init__(self, root: Path) -> None:
         self.root, self.session = root, None
 
-    def __call__(self, slug, confirm, current, *, chat="main", root=None):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None, require_existing=False):
         moved = {"root": root} if root is not None else {}
         config = dataclasses.replace(current, project=slug, chat=chat, **moved)
         self.session = ScriptedSession(config.layout.problem, chat)
