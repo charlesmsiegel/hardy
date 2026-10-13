@@ -80,3 +80,22 @@ def test_real_admission_probes_ignore_shadow_mathlib(tmp_path):
     for run in (chat._admission_elaborate_source, chat._admission_refute_source):
         checked = run(source)
         assert checked.ok, checked.output
+
+    # A workspace-only module distinguishes the two runners regardless of
+    # which Mathlib spelling Lake puts first in its own search path.
+    workspace_source = 'theorem workspaceMarker : True := True.intro\n'
+    workspace_file = tmp_path / 'ProjectOnly.lean'
+    workspace_file.write_text(workspace_source)
+    compiled_workspace = elaborate(
+        workspace_source,
+        argv=(lake, 'env', 'lean', '--root=' + str(tmp_path), '-o', str(tmp_path / 'ProjectOnly.olean')),
+        cwd=Path(project), timeout_seconds=60, source_path=workspace_file,
+    )
+    assert compiled_workspace.success, compiled_workspace.process.stdout + compiled_workspace.process.stderr
+    workspace_import = 'import ProjectOnly\nexample : True := workspaceMarker\n'
+    control = chat._run_lean_source(workspace_import)
+    assert control.ok, control.output
+    for run in (chat._admission_elaborate_source, chat._admission_refute_source):
+        isolated = run(workspace_import)
+        assert not isolated.ok
+        assert "unknown module prefix 'ProjectOnly'" in isolated.output
