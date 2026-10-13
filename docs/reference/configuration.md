@@ -83,6 +83,12 @@ environment value outside the constraint is refused where the file is read:
 - `delegation_workers` must be a whole number of at least `1`.
 - `compute_detach_seconds` must be zero or a finite number of seconds.
 
+CAS execution also honors the runtime limits `cas_cell_seconds` and
+`cas_session_seconds`. A new cell is refused when the remaining session
+budget is less than 0.1 seconds, or one tenth of its configured cell limit
+if that is smaller. The refusal preserves the live namespace. Version
+probes and kernel startup consume the same session budget as cells.
+
 ### Windows paths
 
 TOML's `"..."` strings treat `\` as an escape character, so a Windows path
