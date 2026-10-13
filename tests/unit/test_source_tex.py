@@ -183,6 +183,30 @@ def test_literal_form_feed_is_not_a_file_boundary(tmp_path):
     assert not [o for o in report.extraction.observations if o.kind is ObservationKind.PAGE_BREAK]
 
 
+def test_coverage_counts_reached_files_not_root_segments(tmp_path):
+    lib, report = imported(tmp_path, bundle(
+        ("main.tex", MAIN.encode()), ("lemmas.tex", LEMMAS.encode()),
+        ("unread.tex", b"Unreached text."),
+    ))
+    sha = report.outcome.artifact.sha256
+    assembled = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    assert assembled.quality.coverage == pytest.approx(2 / 3)
+
+
+def test_inserted_separators_are_explicitly_unmapped(tmp_path):
+    lib, report = imported(tmp_path, bundle(("main.tex", MAIN.encode()), ("lemmas.tex", LEMMAS.encode())))
+    sha = report.outcome.artifact.sha256
+    assembled = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    native = lib.representations.list(sha, RepresentationKind.NATIVE_SOURCE)[0]
+    mapping, = lib.representations.mappings(sha, left=native.id)
+    text = lib.representations.text(sha, assembled.id)
+    assert mapping.partial
+    unmapped = len(text) - sum(right.end - right.start for _, right in mapping.pairs)
+    assert unmapped == 2
+    diagnostic = next(d for d in report.extraction.diagnostics if d.code == "unmapped_synthetic_text")
+    assert diagnostic.detail.startswith("2 assembled character(s)")
+
+
 def test_tex_label_references_and_citations(tmp_path):
     source = MAIN.replace(r"See Lemma \ref{lem:key}.", r"See Lemma \ref{lem:key}, \eqref{eq:one}, \cite{paper}, \ref{missing}.")
     lib, report = imported(tmp_path, bundle(("main.tex", source.encode()), ("lemmas.tex", LEMMAS.encode())))
