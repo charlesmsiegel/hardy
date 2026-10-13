@@ -29,7 +29,7 @@ class FakeOpener:
         #: Set to raise from the next open, as a failed reopen would.
         self.fail_with: Exception | None = None
 
-    def __call__(self, slug, confirm, current, *, chat="main", root=None):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None, require_existing=False):
         import dataclasses
         self.calls.append((slug, chat))
         self.configs.append(current)
@@ -514,10 +514,10 @@ class BlockingOpener(FakeOpener):
         self.armed = 0
         self.cancels = 0
 
-    def __call__(self, slug, confirm, current, *, chat="main", root=None):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None, require_existing=False):
         self.entered.set()
         self.release.wait(5)
-        return super().__call__(slug, confirm, current, chat=chat, root=root)
+        return super().__call__(slug, confirm, current, chat=chat, root=root, require_existing=require_existing)
 
     def arm(self) -> None:
         self.armed += 1
@@ -1055,7 +1055,7 @@ def test_editor_save_conflict_never_reaches_authored_save(tmp_path: Path) -> Non
     path.write_text("old", encoding="utf-8")
     base = hashlib.sha256(b"old").hexdigest()
     saved = []
-    host.session.save_authored = lambda path, source: saved.append((path, source)) or ToolResult(True, "saved")
+    host.session.save_authored = lambda path, source, **options: saved.append((path, source)) or ToolResult(True, "saved")
     try:
         path.write_text("external", encoding="utf-8")
         with pytest.raises(FileConflict):

@@ -94,7 +94,7 @@ def _web(
             parser.error(str(error))
 
     opener, build, close = _launch(config, args, open_session=entry is not None)
-    factory = (lambda confirm, _config: build(confirm)) if build is not None else None
+    factory = (lambda confirm, _config: build(confirm, require_existing=True)) if build is not None else None
     host = WebHost(config, opener, factory, projects=registry)
     try:
         try:

@@ -22,7 +22,7 @@ class FakeOpener:
     def __init__(self, tmp_path):
         self.tmp_path, self.session = tmp_path, None
 
-    def __call__(self, slug, confirm, current, *, chat="main", root=None):
+    def __call__(self, slug, confirm, current, *, chat="main", root=None, require_existing=False):
         import dataclasses
 
         moved = {"root": root} if root is not None else {}

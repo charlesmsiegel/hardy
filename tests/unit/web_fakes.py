@@ -189,7 +189,7 @@ class FakeSession:
         event["entry_id"] = identify(event)
         self._history.append(event)
 
-    def save_authored(self, path: str, source: str) -> ToolResult:
+    def save_authored(self, path: str, source: str, *, verify_commit=None) -> ToolResult:
         """The editor's save, minus Lean.
 
         Mirrors `MathematicsSession.save_authored`'s contract rather than its
@@ -217,6 +217,8 @@ class FakeSession:
             # the thing it stands in for.
             target = self.workspace / tree / relative
             target.parent.mkdir(parents=True, exist_ok=True)
+            if verify_commit is not None:
+                verify_commit()
             target.write_text(source.rstrip() + "\n", encoding="utf-8")
             result = ToolResult(True, f"saved {relative}")
         self.saved.append((path, source))

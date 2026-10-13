@@ -492,7 +492,7 @@ class WebHost:
             # Already open. A reopen would rebuild the session and cancel its
             # background workers over a click on the row that is highlighted.
             return current
-        self._await(self._reopen(slug, chat=chat, root=target.parent))
+        self._await(self._reopen(slug, chat=chat, root=target.parent, require_existing=True))
         self._remember(target)
         return self.state()
 
@@ -593,7 +593,10 @@ class WebHost:
             if self.ui is not None:
                 self.ui.write(f"Could not record {problem} in the project registry: {error}", style="error")
 
-    async def _reopen(self, slug: str, chat: str | None = None, root: Path | None = None) -> None:
+    async def _reopen(
+        self, slug: str, chat: str | None = None, root: Path | None = None,
+        *, require_existing: bool = False,
+    ) -> None:
         """Open `slug` on a worker and adopt what comes back. Loop thread only.
 
         `root` is where `slug` lives when it is not the current root: the
@@ -636,6 +639,8 @@ class WebHost:
             options["chat"] = chat
         if root is not None:
             options["root"] = root
+        if require_existing:
+            options["require_existing"] = True
         call = functools.partial(self.opener, slug, confirm, current, **options)
         previous = self.session
         # Where the user was, for the note below: nowhere when nothing was open.
@@ -738,12 +743,17 @@ class WebHost:
                 except FileNotFoundError:
                     return None
 
-            if base_sha256 is not _UNSPECIFIED and digest() != base_sha256:
-                raise FileConflict("This file changed on disk. Choose whether to reload or keep your edits before saving.")
+            def validate_base() -> None:
+                if digest() != base_sha256:
+                    raise FileConflict("This file changed on disk. Choose whether to reload or keep your edits before saving.")
+
+            guarded = base_sha256 is not _UNSPECIFIED
+            if guarded:
+                validate_base()
             save = getattr(self.session, "save_authored", None)
             if save is None:
                 raise RuntimeError("this session cannot save files")
-            result = save(path, source)
+            result = save(path, source, verify_commit=validate_base) if guarded else save(path, source)
             response = {"ok": result.ok, "output": result.output, "path": path}
             if base_sha256 is not _UNSPECIFIED:
                 response["sha256"] = digest()
