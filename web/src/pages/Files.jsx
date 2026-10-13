@@ -286,6 +286,7 @@ function LeanTexEditor({path, kind, revision, row}) {
           kind={kind}
           text={text}
           sha256={filePanel.data.sha256}
+          project={filePanel.data.project}
           missing={filePanel.data.missing}
           truncated={filePanel.data.truncated}
           verdict={row ? row.verdict : null}

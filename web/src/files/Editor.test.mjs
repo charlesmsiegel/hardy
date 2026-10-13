@@ -245,3 +245,58 @@ test(`re-probe supersedes a pending canonical read (status ${status}) and surviv
   assert.equal(normalReads, 2);
 });
 }
+
+for (const action of ['Save & check', 'Check']) {
+  test(`queued ${action} stays bound to loaded project after switch and unmount`, async () => {
+    const {default: Files} = await server.ssrLoadModule('/src/pages/Files.jsx');
+    const {SessionContext} = await server.ssrLoadModule('/src/session/SessionProvider.jsx');
+    const disk = {'/projects/A':'original', '/projects/B':'original'};
+    let active = '/projects/A';
+    let deliver;
+    const checked = [];
+    globalThis.fetch = async (url, init) => {
+      if (init?.method === 'PUT' || url === '/api/check') {
+        const sent = JSON.parse(init.body);
+        return new Promise((resolve) => { deliver = () => {
+          assert.equal(sent.project, '/projects/A', 'identity comes from the loaded file, not live session state');
+          if (sent.project !== undefined && sent.project !== active) {
+            resolve(new Response(JSON.stringify({error:'Project changed; reopen the file.'}), {status:409}));
+            return;
+          }
+          if (init.method === 'PUT') disk[active] = sent.source;
+          else checked.push({project:active, source:sent.source});
+          resolve(new Response(JSON.stringify({ok:true,output:'done',sha256:'saved'})));
+        }; });
+      }
+      return new Response(JSON.stringify(
+        url === '/api/files' ? {lean:[{path:'lean/A.lean',bytes:8,modified:1}],tex:[],cas:[],pdf:[]} :
+        url.startsWith('/api/file?') ? {text:'original',sha256:'old',project:'/projects/A'} :
+        url === '/api/environment' ? {checks:[]} : url === '/api/uploads' ? [] : {}));
+    };
+    await act(async () => {
+      root.render(React.createElement(SessionContext.Provider, {value:{revision:action,setDraft(){},state:{path:'/projects/B'}}}, React.createElement(Files, {arg:'lean/A.lean'})));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await type('A private edits');
+    await click(action);
+    assert.equal(typeof deliver, 'function');
+    active = '/projects/B';
+    await act(() => root.render(null));
+    await act(async () => { deliver(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.deepEqual(disk, {'/projects/A':'original','/projects/B':'original'});
+    assert.deepEqual(checked, [], 'never check A source using B environment');
+  });
+}
+
+test('same-path project change replaces dirty draft and ignores old-project response', async () => {
+  let finish;
+  globalThis.fetch = async () => new Promise((resolve) => { finish = () => resolve(new Response(JSON.stringify({ok:true,output:'old-project-response',sha256:'saved'}))); });
+  await draw({project:'/projects/A'});
+  await type('A edits');
+  await click('Save & check');
+  await draw({project:'/projects/B',text:'B original',sha256:'B hash'});
+  await act(async () => { finish(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(buffer(), 'B original');
+  assert.doesNotMatch(document.body.textContent, /old-project-response|changed on disk/);
+});
