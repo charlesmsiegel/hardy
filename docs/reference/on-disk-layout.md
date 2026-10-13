@@ -45,6 +45,8 @@ One directory per machine, independent of any project root:
 
 Every entry under `artifacts/` is named by the SHA-256 of the bytes it holds, so identical files imported from two paths land once, and a file whose bytes changed lands as a second artifact. Nothing under `library/` is ever rewritten in place: artifacts and derived records are written once beside a staging directory and moved in with one rename, and the mutable state (which edition an artifact belongs to, which tree is preferred, which interpretation was admitted) is an append-only journal of numbered, hash-chained files. The design behind this layout is [the general literature sources design](../superpowers/specs/2026-09-10-general-literature-sources-design.md).
 
+OCR enrichment renders the requested PDF page or exact region with Poppler's `pdftoppm`, retaining the rendered PNG and the original image XObjects beside the OCR reading. Token boxes refer to that retained PNG. If rendering is unavailable or fails, the reading records a failed diagnostic. Portable exports list absent artifact copies in `missing_bytes` and omitted or absent derived payloads in `withheld_payloads`; those identities remain recorded even when their bytes are unavailable.
+
 ## A root and its `.hardy/`
 
 A **root** is any directory holding `.hardy/`; that is the whole of what makes it one. A root holds one or more problems as sibling directories, each described in the next section:
@@ -71,6 +73,8 @@ A **root** is any directory holding `.hardy/`; that is the whole of what makes i
 `.hardy/checkpoints/<slug>/<id>/` holds one whole-workspace checkpoint taken by `/checkpoint`: `checkpoint.json` (the id, the name given, the slug, the chat, when it was taken, and how many files and bytes it copied) beside `tree/`, a copy of the problem directory as it stood, less the `cas/` scratch trees and the writer lease files. A checkpoint is one machine's copy and is ignored by `.hardy/.gitignore`; `/checkpoint restore` puts its tree back in the problem's place after checkpointing what it replaces.
 
 `.hardy/papers/` is this root's arXiv library: the full text and metadata of every paper any problem in this root has fetched, shared so that fetching once serves every problem. It is machine-local and never committed. What travels with a clone instead is each problem's own `bibliography.json`, which records the sha256 of the bytes a citation was made against, so a clone with an empty library can still say what a citation is a citation of.
+
+Redirected arXiv acquisitions retain the requested `source_url` and final `resolved_url`. The latter is absent from historical content renderings when empty, so existing content digests remain unchanged; newly redirected readings include the final URL in their digested provenance.
 
 Hardy writes `.hardy/.gitignore` the first time it opens a project under this root, and appends to it (rather than overwriting) on every later open, so a rule already there from a user's own file is left alone. It opens with:
 

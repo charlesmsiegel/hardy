@@ -188,7 +188,7 @@ class ArtifactStore:
             )
             reused = not self._admit(artifact, data)
         artifact = self.record(sha256)
-        if reused and RESTRICTION[request.access] > RESTRICTION[artifact.access]:
+        if RESTRICTION[request.access] > RESTRICTION[artifact.access]:
             # Identical bytes imported again under a stricter policy: the record
             # tightens. The looser policy of an earlier import never survives
             # a later correction, whatever order the imports came in.

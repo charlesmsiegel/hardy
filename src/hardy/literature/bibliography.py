@@ -41,6 +41,8 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -51,7 +53,7 @@ from hardy.documents.syntax import typeset, unfinished_definition
 from hardy.foundation.files import LayoutError, WriteGuard, read_text
 from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 from hardy.foundation.values import FrozenModel
-from hardy.literature.metadata import PaperRecord
+from hardy.literature.metadata import ArxivError, PaperRecord, parse_id
 from hardy.literature.sources.contracts import BibliographicWork, EditionOrVersion
 from hardy.workflows.layout import LOCAL_DIR
 
@@ -368,12 +370,12 @@ def base_key(record: PaperRecord) -> str:
 
 
 def edition_identities(work: BibliographicWork, edition: EditionOrVersion) -> tuple[str, ...]:
-    """Every name an edition answers to; the catalog identity first, because only it is exact.
+    """Every name an edition answers to, with the catalog identity first.
 
     An ISBN, a DOI or an arXiv version is recorded as an alias for discovery.
-    None of them settles a match on its own here: two printings share an ISBN
-    and two arXiv versions share a DOI, and a citation is about the exact
-    edition the reader read.
+    An exact arXiv version settles a match. ISBNs and DOIs do not: two
+    printings share an ISBN and two arXiv versions share a DOI, and a citation
+    is about the exact edition the reader read.
     """
     names = [f"edition:{edition.id}"]
     for kind, value in edition.identifiers:
@@ -381,6 +383,21 @@ def edition_identities(work: BibliographicWork, edition: EditionOrVersion) -> tu
         if cleaned:
             names.append(f"{kind}:{cleaned}")
     return tuple(dict.fromkeys(names))
+
+
+
+def _exact_identity(name: str) -> str | None:
+    """A catalog identity or canonical, versioned arXiv identity; other aliases are discovery only."""
+    if name.startswith("edition:"):
+        return name
+    if name.startswith("arxiv:"):
+        try:
+            identifier = parse_id(name)
+        except ArxivError:
+            return None
+        if identifier.versioned:
+            return f"arxiv:{identifier}"
+    return None
 
 
 def edition_base_key(work: BibliographicWork, edition: EditionOrVersion) -> str:
@@ -449,6 +466,24 @@ class Bibliography:
         """
         return WriteGuard(self.problem / LOCAL_DIR, create=True).path(LOCK)
 
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Hold the bibliography lock and translate its failures for every writer."""
+        try:
+            with FileLock(self._lock_target(), timeout=self.lock_timeout):
+                yield
+        except LockUnavailable as error:
+            # Not contention, and saying it was would send someone looking for
+            # a session that does not exist while the real cause -- a
+            # read-only checkout, a directory nobody may write -- goes unread.
+            raise BibliographyError(
+                f"this bibliography's lock could not be taken: {error}"
+            ) from error
+        except LockTimeout as error:
+            raise BibliographyError(
+                f"another session is writing this bibliography: {error}"
+            ) from error
+
     def read(self) -> Store:
         """What the store says, or an empty one when there is nothing yet.
 
@@ -496,20 +531,8 @@ class Bibliography:
         identity it was missing, so a paper first met without a DOI and later
         reached by one stays a single entry.
         """
-        try:
-            with FileLock(self._lock_target(), timeout=self.lock_timeout):
-                return self._cite(record, now)
-        except LockUnavailable as error:
-            # Not contention, and saying it was would send someone looking for
-            # a session that does not exist while the real cause -- a
-            # read-only checkout, a directory nobody may write -- goes unread.
-            raise BibliographyError(
-                f"this bibliography's lock could not be taken: {error}"
-            ) from error
-        except LockTimeout as error:
-            raise BibliographyError(
-                f"another session is writing this bibliography: {error}"
-            ) from error
+        with self._locked():
+            return self._cite(record, now)
 
     def _cite(self, record: PaperRecord, now: datetime | None) -> tuple[Entry, bool]:
         """`cite`'s body, run with the store's lock held.
@@ -539,8 +562,9 @@ class Bibliography:
                 )
             ) if record.content_sha256 else (held.content_sha256, *held.also_read)
             later = tuple(digest for digest in seen if digest and digest != held.content_sha256)
-            updated = held.model_copy(update={"identities": merged, "also_read": later})
-            if merged == held.identities and later == held.also_read:
+            reads = tuple(dict.fromkeys((held.content_sha256, *held.read_artifacts, *later))) if held.edition else held.read_artifacts
+            updated = Entry.model_validate({**held.model_dump(), "identities": merged, "also_read": later, "read_artifacts": reads})
+            if updated == held:
                 # Nothing about the entry has changed, and the generated file
                 # is still rewritten. It is derived state that a clone, a
                 # merge, or a hand edit can leave missing or wrong, and there
@@ -582,10 +606,10 @@ class Bibliography:
     ) -> tuple[Entry, bool]:
         """Record an edition read through exact artifacts; the same controlled path as `cite`.
 
-        An edition already present under its catalog identity comes back with
+        An edition already present under its catalog or exact arXiv identity comes back with
         its key unchanged and any newly read artifact digests and spans added.
         Two distinct editions are two entries however alike their titles,
-        DOIs or ISBNs are: only the catalog identity matches.
+        DOIs or ISBNs are: those aliases do not settle a match.
         """
         if edition.work != work.id:
             raise BibliographyError(f"edition {edition.id} belongs to work {edition.work}, not {work.id}")
@@ -594,13 +618,8 @@ class Bibliography:
         for digest in read_artifacts:
             if not DIGEST.fullmatch(digest):
                 raise BibliographyError(f"read_artifacts must hold sha256 digests; got {digest[:80]!r}")
-        try:
-            with FileLock(self._lock_target(), timeout=self.lock_timeout):
-                return self._cite_edition(work, edition, read_artifacts, spans, now)
-        except LockUnavailable as error:
-            raise BibliographyError(f"this bibliography's lock could not be taken: {error}") from error
-        except LockTimeout as error:
-            raise BibliographyError(f"another session is writing this bibliography: {error}") from error
+        with self._locked():
+            return self._cite_edition(work, edition, read_artifacts, spans, now)
 
     def _cite_edition(
         self, work: BibliographicWork, edition: EditionOrVersion, read_artifacts: tuple[str, ...],
@@ -608,9 +627,11 @@ class Bibliography:
     ) -> tuple[Entry, bool]:
         store = self.read()
         names = edition_identities(work, edition)
-        held = next((entry for entry in store.entries if names[0] in entry.identities), None)
+        exact = {identity for name in names if (identity := _exact_identity(name)) is not None}
+        held = next((entry for entry in store.entries
+                     if any(_exact_identity(name) in exact for name in entry.identities)), None)
         if held is not None:
-            merged_reads = tuple(dict.fromkeys((*held.read_artifacts, *read_artifacts)))
+            merged_reads = tuple(dict.fromkeys((held.content_sha256, *held.also_read, *held.read_artifacts, *read_artifacts)))
             merged_spans = tuple(dict.fromkeys((*held.cited_spans, *spans)))
             merged_names = tuple(dict.fromkeys((*held.identities, *names)))
             later = tuple(d for d in merged_reads if d != held.content_sha256)
@@ -618,7 +639,11 @@ class Bibliography:
             # the validators would refuse must not reach the store on this path
             # when the new-entry path would have refused it.
             updated = Entry.model_validate({**held.model_dump(), "identities": merged_names, "read_artifacts": merged_reads,
-                                            "also_read": later, "cited_spans": merged_spans})
+                                            "also_read": later, "cited_spans": merged_spans,
+                                            "work": held.work or work.id, "edition": held.edition or edition.id,
+                                            "edition_label": held.edition_label or edition.label,
+                                            "publisher": held.publisher or edition.venue,
+                                            "isbn": held.isbn or dict(edition.identifiers).get("isbn")})
             if updated == held:
                 self._write(store)
                 return held, False
@@ -690,7 +715,7 @@ class Bibliography:
         except (OSError, LayoutError):
             # Unreadable or absent, which the write below settles either way.
             pass
-        with FileLock(self._lock_target(), timeout=self.lock_timeout):
+        with self._locked():
             # Re-rendered under the lock: another session may have cited
             # between the comparison above and here, and writing the stale
             # render would undo its citation.

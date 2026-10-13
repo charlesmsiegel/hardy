@@ -45,7 +45,7 @@ from .contracts import (
     WorkKind,
 )
 from .observations import PRODUCER, PRODUCER_VERSION, ObservationStore, observe_text
-from .ocr import OcrEngine, OcrResult, ocr_representations, page_images, weak_regions_of
+from .ocr import OcrEngine, ocr_representations, run_region_engine, weak_regions_of
 from .representations import RepresentationStore
 from .trees import TreeStore, build_tree, page_spans_from
 
@@ -231,13 +231,8 @@ class ManagedLibrary:
         """
         artifact = self.artifacts.record(sha256)
         data = self.artifacts.read(sha256)
-        images = page_images(data, region.page_index)
-        try:
-            result = engine(images[0][1] if images else b"", images[0][0].name if images else "", region)
-        except Exception as error:
-            result = OcrResult(tokens=(), engine=getattr(engine, "name", "ocr"), engine_version=getattr(engine, "version", "unknown"),
-                               diagnostics=(Diagnostic(code="ocr_engine_failed", detail=f"{type(error).__name__}: {error}", severity="error", page_index=region.page_index),))
-        representations, mappings = ocr_representations(sha256, artifact.access, region, images, result, reason=reason)
+        images, reading_image, result = run_region_engine(data, region, engine)
+        representations, mappings = ocr_representations(sha256, artifact.access, region, images, result, reason=reason, reading_image=reading_image)
         admitted = None
         for record, payloads in representations:
             admitted = self.representations.admit(record, payloads)

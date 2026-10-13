@@ -199,3 +199,51 @@ def test_proof_reads_resume_at_the_offset(tmp_path):
     second = json.loads(runtime.call("read_source", {"source": sha[:12], "node": node["node"], "part": "proof", "start": len(first["text"])}).output)
     assert second["node"] == first["node"] and not second["text"].startswith("Proof.") and second["text"]
     assert second["text"] != first["text"]
+
+
+def test_source_dispatcher_translates_io_failure(tmp_path, monkeypatch):
+    runtime, sha = seeded(tmp_path)
+    def denied(*args, **kwargs):
+        raise PermissionError('library unreadable')
+    monkeypatch.setattr(runtime.library.artifacts, 'availability', denied)
+    result = runtime.call('source_map', {'source': sha})
+    assert not result.ok and 'the source library could not be read' in result.output
+
+
+def test_scoped_search_applies_limit_after_grant(tmp_path):
+    pages = [Page(((f'Chapter {i}. Topic', 72, 740), (f'Theorem {i}.1. Common statement.', 72, 700))) for i in range(1, 125)]
+    runtime, sha = seeded(tmp_path, pages=pages)
+    tree = runtime.library.trees.preferred(sha)
+    chapter = next(n for n in tree.nodes if n.kind.value == 'chapter' and n.number == '124')
+    store = SeedStore(tmp_path / 'scoped')
+    store.add(new_seed(sha, tree=tree.id, subtree=chapter.id), expected_revision=0)
+    runtime = SourceToolRuntime(store, runtime.library)
+    found = json.loads(runtime.call('find_source_statements', {'source': sha, 'kind': 'theorem', 'limit': 1}).output)['statements']
+    assert [n['number'] for n in found] == ['124.1']
+    hits = json.loads(runtime.call('search_source', {'source': sha, 'query': 'Common', 'limit': 1}).output)['hits']
+    assert len(hits) == 1 and hits[0]['node'] in runtime._scope(sha, tree.id, chapter.id)
+
+
+def test_statement_grant_refuses_sibling_proof_and_clamps_context(tmp_path):
+    runtime, sha = seeded(tmp_path)
+    tree = runtime.library.trees.preferred(sha)
+    theorem = next(n for n in tree.nodes if n.number == '1.2')
+    store = SeedStore(tmp_path / 'scoped')
+    store.add(new_seed(sha, tree=tree.id, subtree=theorem.id), expected_revision=0)
+    runtime = SourceToolRuntime(store, runtime.library)
+    proof = runtime.call('read_source', {'source': sha, 'node': theorem.id, 'part': 'proof'})
+    assert not proof.ok and 'outside the seeded subtree' in proof.output
+    context = json.loads(runtime.call('read_source', {'source': sha, 'node': theorem.id, 'part': 'context'}).output)
+    node = json.loads(runtime.call('read_source', {'source': sha, 'node': theorem.id, 'part': 'node'}).output)
+    assert context['text'] == node['text']
+
+
+def test_context_missing_payload_is_an_unavailable_result(tmp_path):
+    runtime, sha = seeded(tmp_path)
+    tree = runtime.library.trees.preferred(sha)
+    theorem = next(n for n in tree.nodes if n.number == '1.2')
+    rep = theorem.span.ranges[0].representation
+    (runtime.library.root / 'representations' / sha / rep / 'text.txt').unlink()
+    result = runtime.call('read_source', {'source': sha, 'node': theorem.id, 'part': 'context'})
+    assert not result.ok and f'representation {rep} is not available' in result.output
+    assert 'KeyError' not in result.output

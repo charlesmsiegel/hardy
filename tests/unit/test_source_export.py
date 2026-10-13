@@ -221,3 +221,39 @@ def test_a_corrupt_or_incomplete_journal_is_never_seeded_piecemeal(tmp_path):
     with pytest.raises(JournalError, match="digest"):
         verify_chain(tampered / "ledger")
     assert verify_chain(tampered / "links") == len(link_files)
+
+
+def test_private_export_of_metadata_only_library_records_missing_data(tmp_path):
+    _, lib, sha, *_ = populated(tmp_path)
+    export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=tmp_path / 'metadata')
+    restored = ManagedLibrary(tmp_path / 'restored')
+    import_export(restored, tmp_path / 'metadata')
+    bundle = tmp_path / 'private'
+    manifest = export_library(restored, classes=frozenset({ExportClass.PRIVATE_SOURCE_CACHE}), into=bundle)
+    assert manifest.missing_bytes == (sha,)
+    assert manifest.withheld_payloads
+    assert (bundle / 'export.json').is_file()
+    assert all((bundle / name).is_file() for name, _ in manifest.files)
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_export_failure_restores_destination(tmp_path, monkeypatch, existing):
+    from hardy.literature.sources import export as module
+    _, lib, *_ = populated(tmp_path)
+    bundle = tmp_path / 'bundle'
+    if existing:
+        bundle.mkdir()
+    original = module._copy
+    calls = 0
+    def fail_after_copy(*args):
+        nonlocal calls
+        calls += 1
+        original(*args)
+        if calls == 2:
+            raise OSError('disk full')
+    monkeypatch.setattr(module, '_copy', fail_after_copy)
+    with pytest.raises(OSError, match='disk full'):
+        export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=bundle)
+    assert bundle.exists() == existing
+    if existing:
+        assert list(bundle.iterdir()) == []

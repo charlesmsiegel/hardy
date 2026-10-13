@@ -95,3 +95,52 @@ def test_a_malformed_digest_on_a_merge_is_refused_and_the_store_stays_readable(t
         bibliography.cite_edition(HARTSHORNE, GTM52, read_artifacts=("not-a-digest",))
     entries = bibliography.entries()
     assert len(entries) == 1 and entries[0].read_artifacts == (PDF,)
+
+
+@pytest.mark.parametrize("edition_first", [False, True])
+def test_arxiv_and_edition_paths_share_entry_and_keep_first_key(tmp_path, edition_first):
+    from hardy.literature.metadata import PaperRecord
+    from hardy.literature.sources.arxiv_adapter import catalog_records
+
+    record = PaperRecord(arxiv_id="2401.12345v2", title="Entropy formula", authors=("Grigori Perelman",),
+                         abstract="x", published="2002-11-11T00:00:00Z", content_sha256=PDF)
+    work, edition = catalog_records(record)
+    bibliography = Bibliography(tmp_path)
+    if edition_first:
+        first, _ = bibliography.cite_edition(work, edition, read_artifacts=(EPUB,), spans=("span-1",))
+        second, added = bibliography.cite(record)
+    else:
+        first, _ = bibliography.cite(record)
+        bibliography.cite(record.model_copy(update={"content_sha256": SCAN}))
+        second, added = bibliography.cite_edition(work, edition, read_artifacts=(EPUB,), spans=("span-1",))
+    assert not added and second.key == first.key
+    assert len(bibliography.entries()) == 1
+    assert set(second.identities) >= {"arxiv:2401.12345v2", f"edition:{edition.id}"}
+    assert second.edition == edition.id and second.work == work.id and second.edition_label == edition.label
+    assert second.cited_spans == ("span-1",)
+    assert set((second.content_sha256, *second.also_read)) >= {PDF, EPUB}
+    assert set(second.read_artifacts) >= {PDF, EPUB}
+    if not edition_first:
+        assert SCAN in second.also_read and SCAN in second.read_artifacts
+
+
+@pytest.mark.parametrize("alias", ["2401.12345", "not-an-arxiv-id"])
+def test_ambiguous_arxiv_alias_does_not_merge_distinct_editions(tmp_path, alias):
+    bibliography = Bibliography(tmp_path)
+    first_edition = GTM52.model_copy(update={"identifiers": (("arxiv", alias),)})
+    second_edition = REPRINT.model_copy(update={"identifiers": (("arxiv", alias),)})
+    first, _ = bibliography.cite_edition(HARTSHORNE, first_edition, read_artifacts=(PDF,))
+    second, added = bibliography.cite_edition(HARTSHORNE, second_edition, read_artifacts=(EPUB,))
+    assert added and len(bibliography.entries()) == 2
+    assert second.key != first.key and second.edition == second_edition.id
+    assert bibliography.entries()[0] == first
+
+
+def test_versioned_arxiv_subject_aliases_match_canonical_identity(tmp_path):
+    bibliography = Bibliography(tmp_path)
+    first_edition = GTM52.model_copy(update={"identifiers": (("arxiv", "math.DG/0211159v1"),)})
+    second_edition = REPRINT.model_copy(update={"identifiers": (("arxiv", "math/0211159v1"),)})
+    first, _ = bibliography.cite_edition(HARTSHORNE, first_edition, read_artifacts=(PDF,))
+    second, added = bibliography.cite_edition(HARTSHORNE, second_edition, read_artifacts=(EPUB,))
+    assert not added and second.key == first.key and len(bibliography.entries()) == 1
+    assert second.edition == first_edition.id and second.edition_label == first_edition.label

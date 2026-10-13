@@ -173,3 +173,17 @@ def test_access_policy_and_metadata_are_recorded(tmp_path):
 )
 def test_detect_format(data, name, expected):
     assert detect_format(data, name=name) == expected
+
+
+@pytest.mark.parametrize('first,second', [
+    (AccessPolicy.REDISTRIBUTABLE, AccessPolicy.PRIVATE_LOCAL),
+    (AccessPolicy.PRIVATE_LOCAL, AccessPolicy.REDISTRIBUTABLE),
+])
+def test_metadata_only_restore_preserves_strictest_policy(tmp_path, first, second):
+    artifacts = store(tmp_path)
+    initial = artifacts.import_bytes(ImportRequest(data=PDF, access=first))
+    (artifacts.root / initial.artifact.sha256 / 'content').unlink()
+    restored = artifacts.import_bytes(ImportRequest(data=PDF, access=second))
+    assert restored.artifact.access is AccessPolicy.PRIVATE_LOCAL
+    assert artifacts.record(initial.artifact.sha256).access is AccessPolicy.PRIVATE_LOCAL
+    assert artifacts.read(initial.artifact.sha256) == PDF
