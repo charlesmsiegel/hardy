@@ -99,3 +99,27 @@ def test_macaulay2_failed_cell_note_is_stripped_before_error_search(tmp_path, ca
     note = next(line for line in script.splitlines() if line.startswith("-- --- cell"))
     echoed = "i1 : " + note
     assert backend.classify(backend.sanitize(echoed, script)) == "ok"
+
+
+@pytest.mark.parametrize("source", ["__import__ = None; 6", "sys = None; 6", "print = None; repr = None; globals = None; 6"])
+def test_display_helper_survives_import_name_rebinding(tmp_path, source):
+    session = CasSession(backend=SympyBackend(), command=None, log_path=tmp_path / "cells.jsonl", limits=RunLimits(cas_cell_seconds=120), cwd=tmp_path)
+    try:
+        record = session.execute(source)
+        assert record.accepted and record.value_repr == "6"
+        backend = SympyBackend()
+        result = subprocess.run([sys.executable, "-c", backend.preamble + "\n" + backend.render_cell(record.source)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "6\n"
+    finally:
+        session.close()
+
+
+def test_display_helper_uses_current_stdout():
+    backend = SympyBackend()
+    source = 'original = sys.stdout; sink = __import__("io").StringIO(); sys.stdout = sink; 6'
+    script = backend.preamble + "\n" + backend.render_cell(source)
+    script += '\nsys.stdout = original; print(sink.getvalue(), end="")'
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "6\n"
