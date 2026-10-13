@@ -33,9 +33,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from hardy.agents.contracts import TurnEvent, final_text
+from hardy.agents.contracts import ProviderRequestTimeout, TurnEvent, final_text
 from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
-from hardy.agents.spend_budget import COUNTERS, SpendBudget
+from hardy.agents.spend_budget import COUNTERS, SpendBudget, SpendLimitReached
 from hardy.foundation.values import ToolResult
 
 BACKEND = "anthropic-api"
@@ -376,6 +376,8 @@ class AnthropicProvider:
         specs: Sequence[dict[str, Any]],
         timeout: float | None = None,
     ) -> ProviderTurn:
+        started = self._clock()
+        provider_called = False
         request: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -390,13 +392,29 @@ class AnthropicProvider:
                 if isinstance(block, dict) and block.get("type") not in ("thinking", "redacted_thinking"):
                     block["cache_control"] = {"type": "ephemeral"}
                     break
-        started = self._clock()
         for attempt in range(4):
             remaining = timeout if attempt == 0 else (None if timeout is None else max(0.0, timeout - (self._clock() - started)))
             if remaining is not None:
                 request["timeout"] = remaining
-            reservation = self.spend_budget.reserve(request) if self.spend_budget is not None else None
             try:
+                reservation = self.spend_budget.reserve(request) if self.spend_budget is not None else None
+            except SpendLimitReached as error:
+                error.provider_called = provider_called
+                raise
+            # Admission can wait for a journal lock. Recheck after it, and refund
+            # this reservation at zero if no request can still be sent.
+            remaining = None if timeout is None else max(0.0, timeout - (self._clock() - started))
+            if remaining is not None:
+                if remaining <= 0:
+                    if reservation is not None:
+                        self.spend_budget.settle(reservation, dict.fromkeys(COUNTERS, 0))
+                    raise ProviderRequestTimeout(
+                        f"the provider request exceeded its {timeout:g}s budget before sending",
+                        provider_called=provider_called,
+                    )
+                request["timeout"] = remaining
+            try:
+                provider_called = True
                 reply = self._within(request, remaining)
                 reported = _usage(getattr(reply, "usage", None))
             except BaseException as error:

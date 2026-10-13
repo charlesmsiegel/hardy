@@ -75,8 +75,11 @@ class SpendPolicy(FrozenModel):
 
 
 class SpendLimitReached(RuntimeError):
-    def __init__(self, limit: str):
+    """Admission refused; retain whether this exchange already sent a request."""
+
+    def __init__(self, limit: str, *, provider_called: bool = False):
         self.limit = limit
+        self.provider_called = provider_called
         super().__init__(f"provider budget refused the call: {limit}")
 
 
