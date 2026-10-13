@@ -247,8 +247,9 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
         f"{prefix}{digit}" for prefix in ("com", "lpt") for digit in "123456789¹²³"
     }
     for part in parts:
-        if (part.endswith((".", " ")) or any(c in ':*?"<>|' or ord(c) < 32 for c in part)
-                or part.partition(".")[0].rstrip(" ").casefold() in reserved):
+        if part.partition(".")[0].rstrip(" ").casefold() in reserved:
+            raise ArchiveError(f"the member path {name!r} is not portable: Windows reserved device name")
+        if part.endswith((".", " ")) or any(c in ':*?"<>|' or ord(c) < 32 for c in part):
             raise ArchiveError(f"the member path {name!r} is not portable")
     if len(parts) > limits.max_depth:
         raise ArchiveError(f"the member path {name!r} is nested too deep")
