@@ -409,3 +409,46 @@ def test_attention_is_receipted_for_the_model_only_once_the_request_was_accepted
         assert chat.delegations.attention().pending("main_agent") == ()
     finally:
         chat.delegations.shutdown()
+
+
+def test_lazy_api_budget_refusal_preserves_pending_attention(tmp_path):
+    from hardy.agents.api import ApiRuntime
+    from hardy.agents.loop import ProviderTurn
+    from hardy.agents.spend_budget import SpendLimitReached
+
+    seed_lemma(tmp_path)
+
+    class Provider:
+        model = "fixture"
+        refuse = True
+        received = []
+
+        def complete(self, **kwargs):
+            self.received.append(kwargs["messages"][-1].text)
+            if self.refuse:
+                raise SpendLimitReached("token_limit")
+            return ProviderTurn(text="Noted")
+
+    def make(model=None, **context):
+        if context.get("system_prompt") == WORKER_SYSTEM_PROMPT:
+            return GatedWorkerRuntime(WORKER_SCRIPT, **context)
+        return FakeChatRuntime([], **context)
+
+    chat = MathematicsSession(tmp_path, make, FAKE_LEAN, FAKE_LATEX, lambda proposal: False, delegation_slots=2)
+    try:
+        delegation = chat.delegate("L17", objective="prove L17", checks=1)
+        chat.delegations.wait(delegation.id, timeout=10)
+        pending = chat.delegations.attention().pending("main_agent")
+        assert pending
+        provider = Provider()
+        chat.runtime = ApiRuntime("fixture", system_prompt="", specs=[], dispatch=chat._dispatch,
+                                  observe=chat._observed, provider=provider)
+        with pytest.raises(SpendLimitReached):
+            chat.send("first")
+        assert chat.delegations.attention().pending("main_agent") == pending
+        provider.refuse = False
+        chat.send("second")
+        assert "[Hardy delegation attention" in provider.received[-1]
+        assert chat.delegations.attention().pending("main_agent") == ()
+    finally:
+        chat.close()

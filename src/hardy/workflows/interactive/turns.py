@@ -33,6 +33,7 @@ class TurnPersistence:
     publish_usage: Callable[[Usage, int], None]
     mark_read: Callable[[int], None]
     end: Callable[[], int]
+    request_accepted: Callable[[], None] = lambda: None
 
 def _digest(messages: Sequence[Message]) -> str:
     """A digest over a run of conversation messages, in order.
@@ -81,6 +82,8 @@ class TurnCoordinator:
         self._gate = threading.Lock()
         self._cancelled = threading.Event()
         self._reported = threading.Event()
+        self._request_receipted = False
+        self._request_rejected = False
         self._spend = threading.Lock()
         self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
 
@@ -95,21 +98,40 @@ class TurnCoordinator:
         place.
         """
         if event.get("type") != "result":
+            if event.get("type") in {"assistant", "thinking", "tool_use"}:
+                self._accept_request(persistence)
             persistence.event(event)
             return
         # The append and accounting decision share the teardown's lock. The
         # durable marker lets a fresh ledger recover the same skip decision.
         with self._spend:
+            if persistence.current_turn() and (event.get("provider_unasked") or event.get("turns") == 0 or event.get("is_error")):
+                self._request_rejected = True
             unfolded = not persistence.current_turn() or self._reported.is_set()
             recorded = {**event, "usage_unfolded": True} if unfolded else event
             offset = persistence.event(recorded)
-            persistence.remember_thread()
             if unfolded:
                 persistence.mark_read(offset)
-                return
-            self._reported.set()
-            persistence.publish_usage(persistence.read_usage().record(event), offset)
+            else:
+                # The durable report wins even if a subsequent local-state
+                # write fails. Teardown must not append a second unknown.
+                self._reported.set()
+                persistence.publish_usage(persistence.read_usage().record(event), offset)
+            persistence.remember_thread()
+        if not event.get("provider_unasked") and event.get("turns") != 0 and not event.get("is_error"):
+            self._accept_request(persistence)
 
+
+    def _accept_request(self, persistence: TurnPersistence) -> None:
+        """Receipt carried context once, after provider response evidence.
+
+        Iterator construction, Hardy notices, and rejected results are not
+        evidence the model received the payload.
+        """
+        with self._spend:
+            if persistence.current_turn() and not self._request_receipted and not self._request_rejected:
+                persistence.request_accepted()
+                self._request_receipted = True
 
     def _tally(self, name: str, ok: bool) -> None:
         # Every tool name, not only `save_lean`/`check_lean`: `_steering_block`
@@ -170,6 +192,8 @@ class TurnCoordinator:
         # says nothing about whether this one will.
         with self._spend:
             self._reported.clear()
+            self._request_receipted = False
+            self._request_rejected = False
         # And the same for the children. A stop stays in force after `cancel`
         # so that a tool call already past the gate cannot spawn its child a
         # moment later and outlive the press that was spent on it -- which
@@ -211,6 +235,8 @@ class TurnCoordinator:
                         event = next(tail)
                     except StopIteration:
                         return
+                if tail is None and event.kind in {"text", "thinking", "tool_use", "tool_result", "reply"}:
+                    self._accept_request(persistence)
                 try:
                     yield event
                 except BaseException:
@@ -220,19 +246,14 @@ class TurnCoordinator:
             close = getattr(iterator, "close", None)
             if close is not None:
                 close()
-            # Even a failed exchange belongs to a provider thread, and that turn
-            # and its tool calls are only reachable again by resuming it.
-            persistence.remember_thread()
-            # And it belongs in the ledger. A transport failure, or Hardy's own
-            # wall clock firing after the request went out, ends the exchange
-            # with no `result` at all -- but the provider may well have billed
-            # for what it did before that. Counted with everything about it
-            # unreported, because the alternative is a session that burned
-            # tokens and still says `Nothing spent yet.` Final: the runtime's
-            # worker can outlive the wait `_consume` gives it, but a report
-            # arriving after this is stale rather than late -- `_observed`
-            # says why it cannot be folded in afterwards.
-            self._remember_spend({}, persistence.end(), unreported=True, persistence=persistence)
+            # Provider-thread persistence may fail independently of accounting.
+            # A result already durably appended wins; otherwise teardown must
+            # preserve one unknown liability even when this local save raises.
+            try:
+                persistence.remember_thread()
+            finally:
+                self._remember_spend({}, persistence.end(), unreported=True, persistence=persistence)
+
 
 
     def cancel(self, reason: str = "user_cancelled", *, runtime: ChatRuntime, interrupt_work: Callable[[], int], persistence: TurnPersistence) -> int:
