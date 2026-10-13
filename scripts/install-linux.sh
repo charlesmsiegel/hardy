@@ -16,6 +16,7 @@ set -euo pipefail
 # Normalize dot components as well as existing symlinks: /tmp/.. is root too.
 bootstrap_require_absolute_dir_option() {
 	case "$2" in
+	*/../* | */..) printf 'error: %s cannot contain parent traversal (..)\n' "$1" >&2; exit 1 ;;
 	/*) ;;
 	*) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
 	esac

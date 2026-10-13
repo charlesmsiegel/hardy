@@ -187,6 +187,18 @@ reliably right in.
 Nothing is installed system-wide except distribution packages (Python, git,
 curl, TeX), which are the only steps that use `sudo`.
 
+The POSIX installers also provision pinned Tectonic through the same
+checksum-checked Python recipe, selecting the Linux or macOS release archive.
+Its absolute path is recorded as `tectonic` unless a compiler is already
+configured. `--skip-latex` skips both pdflatex and Tectonic. Tectonic serves
+staged documents; pdflatex serves interactive writeup tools, so the default
+TeX subset remains necessary. `--full-latex` selects the full TeX distribution.
+
+Verification treats subscription sign-in as a next step: run `claude login`.
+Missing required installed tools still cause exit 1, and the installation
+summary is printed even when those doctor checks fail. Explicit skips waive
+only the corresponding tool checks; an absent Claude CLI is still a failure.
+
 ## Options
 
 | POSIX | Windows | Effect |
@@ -205,6 +217,7 @@ curl, TeX), which are the only steps that use `sudo`.
 The same directory restrictions apply to updates, uninstalls, `HARDY_HOME`,
 and `HARDY_BIN_DIR`. Explicit empty values, relative paths, and paths resolving
 to a filesystem root are rejected before installation or removal begins.
+Parent traversal components (`..`) are also refused, including under symlinks.
 
 `HARDY_MODEL` is used without prompting when it is already set, which is how
 to configure an unattended install:

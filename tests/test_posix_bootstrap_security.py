@@ -153,3 +153,66 @@ def test_tampered_homebrew_script_is_not_executed(tmp_path):
     assert result.returncode == 1
     assert "checksum mismatch" in result.stderr
     assert not (tmp_path / "executed").exists()
+
+
+@pytest.mark.parametrize("name", ["install.sh", "install-linux.sh", "install-macos.sh", "lib/common.sh"])
+def test_parent_traversal_below_root_symlink_is_refused(name, tmp_path):
+    alias = tmp_path / "root-alias"
+    alias.symlink_to("/", target_is_directory=True)
+    if name == "lib/common.sh":
+        program = '. "$1"; require_absolute_dir_option --prefix "$2"'
+    else:
+        source = (SCRIPTS / name).read_text()
+        program = source[source.index('bootstrap_require_absolute_dir_option()'):source.index('# A standalone entrypoint')]
+        program += '\nbootstrap_require_absolute_dir_option --prefix "$2"'
+    result = subprocess.run(["bash", "-c", program, "test", str(SCRIPTS / name), str(alias / "hardy-nonexistent-test-dir" / "..")],
+                            env=dict(os.environ, HOME=str(tmp_path)), capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "--prefix" in result.stderr
+
+
+@pytest.mark.parametrize("checks,skip_latex,skip_mathlib,model,expected", [
+    ([('claude login', False, True)], 0, 0, 'configured', 0),
+    ([('claude cli', False, True)], 0, 0, 'configured', 1),
+    ([('tectonic', False, True)], 0, 0, 'configured', 1),
+    ([('latex', False, True), ('tectonic', False, True)], 1, 0, 'configured', 0),
+    ([('lean', False, True), ('mathlib', False, True)], 0, 1, 'configured', 0),
+    ([('model', False, True)], 0, 0, '', 0),
+    ([('claude cli', False, True)], 1, 1, '', 1),
+    ([('cas', False, False)], 0, 0, 'configured', 0),
+])
+def test_install_verdict_classifies_doctor_checks_and_always_prints_summary(
+    checks, skip_latex, skip_mathlib, model, expected, tmp_path,
+):
+    import json
+    import sys
+
+    venv = tmp_path / "prefix" / "venv"
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin" / "python"
+    python.write_text('#!' + sys.executable + '\n'
+                      'import os, sys, json\n'
+                      'from hardy.app import doctor, config\n'
+                      'doctor.run_checks = lambda _: [doctor.Check(n, ok, n + " detail", required) '
+                      'for n, ok, required in json.loads(os.environ["FAKE_DOCTOR_CHECKS"])]\n'
+                      'config.load = lambda: None\n'
+                      'program = sys.argv[2]; sys.argv = sys.argv[2:]; exec(program)\n')
+    python.chmod(0o755)
+    hardy = venv / "bin" / "hardy"
+    hardy.write_text('#!/bin/sh\n[ "$1" = --help ] && exit 0\nexit 1\n')
+    hardy.chmod(0o755)
+    noops = ('resolve_install_source', 'check_disk_space', 'ensure_python', 'ensure_tools', 'create_environment',
+             'link_command', 'install_launcher', 'ensure_elan', 'ensure_lean_project', 'ensure_latex',
+             'ensure_tectonic', 'ensure_claude_cli', 'write_config')
+    program = '. "$1";\n' + '\n'.join(name + '() { :; }' for name in noops)
+    program += '\nos_label() { echo test; }; INSTALL_FROM=source; REPO_ROOT="$PWD";'
+    program += f' SKIP_LATEX={skip_latex}; SKIP_MATHLIB={skip_mathlib}; hardy_install_main --yes'
+    result = subprocess.run(["bash", "-c", program, "test", str(SCRIPTS / 'lib/common.sh')],
+                            env=dict(os.environ, HOME=str(tmp_path), HARDY_HOME=str(tmp_path / 'prefix'),
+                                     HARDY_CONFIG=str(tmp_path / 'config.toml'), HARDY_MODEL=model,
+                                     PYTHONPATH=str(SCRIPTS.parent / 'src'), FAKE_DOCTOR_CHECKS=json.dumps(checks)),
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == expected, result.stdout + result.stderr
+    assert 'Hardy is installed.' in result.stdout
+    if checks[0][0] == 'claude login':
+        assert 'claude login' in result.stdout

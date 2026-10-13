@@ -3,14 +3,15 @@
 Every recipe asks before it acts and pins what it fetches. The Tectonic
 download is checked against a recorded digest before anything is unpacked, and
 a mismatch installs nothing at all rather than leaving a half-trusted binary
-on disk. These are the Windows recipes; the shell installers cover Linux and
-macOS, and neither requires WSL.
+on disk. Windows uses these recipes directly; the POSIX shell installers opt into a
+pinned Linux or macOS Tectonic target. No platform requires WSL.
 """
 
 from __future__ import annotations
 
 import hashlib
 import shutil
+import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -37,6 +38,14 @@ TECTONIC_URL = (
     "tectonic%400.16.9/tectonic-0.16.9-x86_64-pc-windows-msvc.zip"
 )
 TECTONIC_SHA256 = "131a24604785a9600989a3d91225f597df52ac06f00aeffe86fd529f99ee5cdd"
+
+# POSIX shell installers opt into a target; the default recipe remains Windows.
+TECTONIC_POSIX_SHA256 = {
+    "aarch64-apple-darwin": "edb67c61aba768289f6da441c9e6f523cfaff4f8b2a5708523ef29c543f8e88e",
+    "aarch64-unknown-linux-musl": "f9aa39017dbd51f111fdb93dda222178cbe51c8193508fc567b523cc74fff9c1",
+    "x86_64-apple-darwin": "79d8839fa3594bfea9b2bf2ac0a0455bcc4d0de956a5e5c403107e9a72f79e86",
+    "x86_64-unknown-linux-musl": "60b13a0826ae7ad9ce34b4a2df06bff2cfcfa6dda8a915477c0cbb84e1a4a902",
+}
 
 
 class InstallOutcome(FrozenModel):
@@ -201,42 +210,48 @@ def install_tectonic(
     destination_root: Path,
     confirmer: Callable[[str], bool],
     downloader: Callable[[str, Path], None],
+    target: str | None = None,
 ) -> InstallOutcome:
-    destination = destination_root / "tectonic" / TECTONIC_VERSION / "tectonic.exe"
-    prompt = f"Download Tectonic {TECTONIC_VERSION} from {TECTONIC_URL} to {destination}?"
+    if target is not None and target not in TECTONIC_POSIX_SHA256:
+        return InstallOutcome(status="failed", manual_instructions=f"No pinned Tectonic bootstrap for {target}; install it manually.")
+    executable = "tectonic" if target else "tectonic.exe"
+    url = (f"https://github.com/tectonic-typesetting/tectonic/releases/download/"
+           f"tectonic%40{TECTONIC_VERSION}/tectonic-{TECTONIC_VERSION}-{target}.tar.gz") if target else TECTONIC_URL
+    destination = destination_root / "tectonic" / TECTONIC_VERSION / executable
+    prompt = f"Download Tectonic {TECTONIC_VERSION} from {url} to {destination}?"
     if not confirmer(prompt):
-        return InstallOutcome(
-            status="declined",
-            manual_instructions="Install Tectonic manually, then resume with `hardy setup`.",
-        )
+        return InstallOutcome(status="declined", manual_instructions="Install Tectonic manually, then resume with `hardy setup`.")
     destination_root.mkdir(parents=True, exist_ok=True)
-    # Staged in a temporary directory so a failed digest check leaves nothing
-    # behind that a later run could mistake for a verified install.
     with tempfile.TemporaryDirectory(prefix="hardy-tectonic-", dir=destination_root) as staged:
-        archive = Path(staged) / "tectonic.zip"
-        downloader(TECTONIC_URL, archive)
-        if _sha256(archive) != TECTONIC_SHA256:
-            return InstallOutcome(
-                status="failed",
-                manual_instructions=(
-                    "Downloaded Tectonic failed its pinned checksum. "
-                    "Nothing was installed; rerun `hardy setup` to retry."
-                ),
-            )
-        staged_executable = Path(staged) / "tectonic.exe"
-        with zipfile.ZipFile(archive) as bundle:
-            info = bundle.getinfo("tectonic.exe")
-            if info.is_dir():
-                raise ValueError("pinned Tectonic archive has no executable file")
-            with bundle.open(info) as source, staged_executable.open("wb") as target:
-                shutil.copyfileobj(source, target)
+        archive = Path(staged) / ("tectonic.tar.gz" if target else "tectonic.zip")
+        downloader(url, archive)
+        if _sha256(archive) != (TECTONIC_POSIX_SHA256[target] if target else TECTONIC_SHA256):
+            return InstallOutcome(status="failed", manual_instructions=(
+                "Downloaded Tectonic failed its pinned checksum. Nothing was installed; rerun `hardy setup` to retry."
+            ))
+        staged_executable = Path(staged) / executable
+        if target:
+            with tarfile.open(archive, "r:gz") as bundle:
+                info = bundle.getmember(executable)
+                if not info.isfile():
+                    raise ValueError("pinned Tectonic archive has no executable file")
+                source = bundle.extractfile(info)
+                if source is None:
+                    raise ValueError("pinned Tectonic archive has no executable file")
+                with source, staged_executable.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+            staged_executable.chmod(0o755)
+        else:
+            with zipfile.ZipFile(archive) as bundle:
+                info = bundle.getinfo(executable)
+                if info.is_dir():
+                    raise ValueError("pinned Tectonic archive has no executable file")
+                with bundle.open(info) as source, staged_executable.open("wb") as output:
+                    shutil.copyfileobj(source, output)
         destination.parent.mkdir(parents=True, exist_ok=True)
         replace_with_retry(staged_executable, destination)
-        return InstallOutcome(
-            status="installed",
-            manual_instructions="Tectonic installed; `hardy setup` will now run smoke tests.",
-            installed_path=destination,
-        )
+        return InstallOutcome(status="installed", manual_instructions="Tectonic installed; `hardy setup` will now run smoke tests.",
+                              installed_path=destination)
 
 
 def _sha256(path: Path) -> str:
