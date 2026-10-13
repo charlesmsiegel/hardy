@@ -254,7 +254,7 @@ def _entries(source: RetrievalSource) -> tuple[IndexEntry, ...]:
         parent_context, members = None, ()
         if isinstance(record, MathematicalContext):
             group, name, context = "concept_representation_context", record.label, record.ref
-            active = LedgerGraph(snapshot).active_context(record.ref)
+            active = graph.active_context(record.ref)
             parent_context = record.parent
             members = tuple(member.ref for member in (*active.declarations, *active.bindings))
             summary = "\n".join((record.label,
@@ -313,6 +313,9 @@ def build_index(sources: tuple[RetrievalSource, ...]) -> ProjectRetrievalIndex:
     return ProjectRetrievalIndex(sources=identities, entries=entries)
 
 
+_ContextRefs = tuple[set[VersionRef], set[VersionRef], set[VersionRef], ValueError | TypeError | None]
+
+
 class ProjectRetriever:
     def __init__(self, index: ProjectRetrievalIndex, *, read_source: Callable[[str], RetrievalSource],
                  policies: Mapping[str, LedgerPolicy] | None = None,
@@ -337,26 +340,35 @@ class ProjectRetriever:
             return RetrievalSource(identifier, status="unreadable", detail=str(error))
 
     @staticmethod
-    def _contexts(snapshot: LedgerSnapshot, query: RetrievalQuery) -> set[VersionRef]:
-        return {context.ref for context in LedgerGraph(snapshot).context_chain(query.context)} if query.context else set()
+    def _context_refs(source: RetrievalSource, query: RetrievalQuery) -> _ContextRefs:
+        contexts, declarations, bindings = set(), set(), set()
+        error = None
+        if source.snapshot is not None and query.context and source.kind == "project":
+            try:
+                graph = LedgerGraph(source.snapshot)
+                contexts = {context.ref for context in graph.context_chain(query.context)}
+                active = graph.active_context(query.context)
+                declarations = {declaration.ref for declaration in active.declarations}
+                bindings = {binding.ref for binding in active.bindings}
+            except (ValueError, TypeError) as caught:
+                error = caught
+        return contexts, declarations, bindings, error
 
-    def _rank(self, entry: IndexEntry, source: RetrievalSource, query: RetrievalQuery) -> int | None:
+    def _rank(self, entry: IndexEntry, source: RetrievalSource, query: RetrievalQuery,
+              context_refs: _ContextRefs) -> int | None:
         text = query.text.casefold().strip()
         if text == entry.ref.id.casefold():
             return 0
         if source.snapshot is not None:
-            try:
-                contexts = self._contexts(source.snapshot, query) if source.kind == "project" else set()
-                if entry.kind != "MathematicalContext" and entry.context and entry.context not in contexts:
-                    return None  # Transient local vocabulary is not a global hit.
-                active = LedgerGraph(source.snapshot).active_context(query.context) if query.context and source.kind == "project" else None
-                if entry.kind == "declaration" and (active is None or entry.ref not in {d.ref for d in active.declarations}):
-                    return None
-                active_bindings = {binding.ref for binding in active.bindings} if active else set()
-                if any(alias.symbol.casefold() == text and alias.binding in active_bindings for alias in entry.aliases):
-                    return 1
-            except (ValueError, TypeError):
+            contexts, declarations, active_bindings, error = context_refs
+            if error is not None:
                 return None
+            if entry.kind != "MathematicalContext" and entry.context and entry.context not in contexts:
+                return None  # Transient local vocabulary is not a global hit.
+            if entry.kind == "declaration" and entry.ref not in declarations:
+                return None
+            if any(alias.symbol.casefold() == text and alias.binding in active_bindings for alias in entry.aliases):
+                return 1
         if text == entry.name.casefold():
             return 2
         if any(related.ref.id.casefold() == text for related in entry.related):
@@ -423,7 +435,9 @@ class ProjectRetriever:
                 raise ValueError("external assumption revoked before retrieval delivery")
 
     def _deliver(self, entry: IndexEntry, source: RetrievalSource, identity: SourceIdentity,
-                 project: RetrievalSource, query: RetrievalQuery) -> FormalReading | None:
+                 project: RetrievalSource, query: RetrievalQuery,
+                 current: Mapping[VersionRef, IndexEntry] | Exception,
+                 context_refs: _ContextRefs) -> FormalReading | None:
         if source.status != "available" or source.snapshot is None:
             raise ValueError(f"source {source.status}: {source.detail}")
         frozen = next(s for s in self.index.sources if s.id == source.id)
@@ -439,18 +453,24 @@ class ProjectRetriever:
             if not isinstance(context, MathematicalContext) or project.snapshot.head(context.id) != context:
                 raise ValueError("requesting context is stale or invalid")
         snapshot = source.snapshot
-        if entry not in _entries(source):
+        if isinstance(current, Exception):
+            raise current
+        if current.get(entry.ref) != entry:
             raise ValueError("indexed content does not match the current exact source record")
         subject = snapshot.get(entry.ref)
         if snapshot.head(subject.id) != subject:
             raise ValueError("indexed record is no longer current")
         if source.kind == "project" and source.id != query.project_source:
             raise ValueError("foreign project records require explicit cross-project admission")
-        if entry.kind != "MathematicalContext" and entry.context and (source.kind == "shared_library" or entry.context not in self._contexts(snapshot, query)):
+        contexts, declarations, _, context_error = context_refs
+        if entry.context and source.kind == "project" and context_error is not None:
+            raise context_error
+        if entry.kind != "MathematicalContext" and entry.context and (source.kind == "shared_library" or entry.context not in contexts):
             raise ValueError("context-local item is unavailable in the requesting context")
         if isinstance(subject, ProjectItem) and subject.declaration:
-            active = LedgerGraph(snapshot).active_context(query.context) if query.context else None
-            if active is None or subject.ref not in {declaration.ref for declaration in active.declarations}:
+            if context_error is not None:
+                raise context_error
+            if subject.ref not in declarations:
                 raise ValueError("context-local declaration is shadowed or unavailable")
         if source.kind == "shared_library":
             authorization = self.read_shared(SharedReadRequest(identity, query)) if self.read_shared else None
@@ -475,9 +495,18 @@ class ProjectRetriever:
             raise ValueError("query names a source absent from the frozen index")
         live = {id: self._read(id) for id in sorted(known)}
         identities = {id: source_identity(source) for id, source in live.items()}
+        # Rebuild from fresh sources once; defer failures to delivery so stale
+        # identities and unavailable sources retain their rejection reasons.
+        current: dict[str, dict[VersionRef, IndexEntry] | Exception] = {}
+        for id, source in live.items():
+            try:
+                current[id] = {entry.ref: entry for entry in _entries(source)}
+            except (OSError, ValueError, TypeError) as error:
+                current[id] = error
+        context_refs = {id: self._context_refs(source, query) for id, source in live.items()}
         candidates = [(rank, entry) for entry in self.index.entries
             if (not query.source_ids or entry.source_id in query.source_ids)
-            and (rank := self._rank(entry, live[entry.source_id], query)) is not None]
+            and (rank := self._rank(entry, live[entry.source_id], query, context_refs[entry.source_id])) is not None]
         candidates.sort(key=lambda pair: (pair[0], pair[1].source_id, pair[1].ref.id, pair[1].ref.digest))
         matches = []
         truncated = len(candidates) > query.limit or any(entry.summary_truncated or entry.metadata_truncated for _, entry in candidates[:query.limit])
@@ -489,7 +518,7 @@ class ProjectRetriever:
                 continue
             try:
                 formal = self._deliver(entry, live[entry.source_id], identities[entry.source_id],
-                                       live[query.project_source], query)
+                                       live[query.project_source], query, current[entry.source_id], context_refs[entry.source_id])
                 accepted, reason = True, "Authenticated kernel declaration" if formal else "Recorded " + entry.group
             except (OSError, ValueError, TypeError) as error:
                 formal, accepted, reason = None, False, str(error)
