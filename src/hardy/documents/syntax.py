@@ -1190,7 +1190,10 @@ def typeset(
     # all: `\bib%` and then `item{key}` is a `\bibitem` it runs and this
     # scan used to see as two innocent fragments.
     gap = ""
-    for raw in source.split("\n"):
+    lines = source.split("\n")
+    if source.endswith("\n"):
+        lines.pop()
+    for raw in lines:
         line = raw
         if closing is not None:
             _, marker, rest = line.partition(closing)
