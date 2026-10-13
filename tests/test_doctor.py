@@ -301,3 +301,18 @@ def test_windows_install_hints_name_setup_and_powershell(tmp_path, monkeypatch):
         detail = next(check.detail for check in checks if check.name == name)
         assert 'hardy setup' in detail
         assert 'install-windows.ps1' in detail
+
+
+@pytest.mark.parametrize('body', ['null', '[]', '"signed in"', '{"loggedIn": "false"}', '{"loggedIn": 1}'])
+def test_malformed_auth_status_does_not_authenticate(monkeypatch, body):
+    monkeypatch.setattr(doctor, 'run_guarded', _answering(body))
+    assert not doctor._login_check('claude').ok
+
+
+def test_failed_auth_status_does_not_authenticate(monkeypatch):
+    answer = _answering('{"loggedIn": true}')
+    def failed(*args, **kwargs):
+        result = answer(*args, **kwargs)
+        return result.model_copy(update={"returncode": 1})
+    monkeypatch.setattr(doctor, 'run_guarded', failed)
+    assert not doctor._login_check('claude').ok
