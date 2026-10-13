@@ -371,3 +371,37 @@ def test_ambiguous_verdict_names_the_selected_subject(tmp_path):
         linker.admit(link.id, verdict=bound_a, choose=b.ref)
     assert (claims.snapshot().revision, links.snapshot().revision) == before
     assert linker.admit(link.id, verdict=bound_a, choose=a.ref).interpretation_target == a.ref
+
+
+def test_retried_new_claim_admission_refuses_a_changed_statement(tmp_path, monkeypatch):
+    from hardy.foundation.journal import StaleRevision
+
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    link = linker.propose(sha, tree.id, node_numbered(tree, "1.2").id,
+                          InterpretationProposal(new_claim=claim("retry-changed", "original", "Original statement."), interpreter="m"))
+    real_append = links.append
+    calls = []
+
+    def racing(record, *, expected_revision):
+        calls.append(record.status)
+        if len(calls) == 1:
+            changed = claims.head("retry-changed").model_copy(update={"statement": "A stronger statement."})
+            claims.append((ProjectItem.model_validate(changed.model_dump(mode="json")),), expected_revision=claims.snapshot().revision)
+            raise StaleRevision("the claim changed before the link admission retry")
+        return real_append(record, expected_revision=expected_revision)
+
+    monkeypatch.setattr(links, "append", racing)
+    with pytest.raises(LinkError, match="revised"):
+        admit(linker, link.id, verdict=verdict())
+    assert links.get(link.id).status is LinkStatus.PROPOSED
+    assert calls == [LinkStatus.ADMITTED]
+    assert claims.head("retry-changed").statement == "A stronger statement."
+
+
+def test_interpretation_digest_includes_the_source_tree(tmp_path):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    proposed = claim("tree-subject", "subject", "Statement.")
+    link = linker.propose(sha, tree.id, node_numbered(tree, "1.2").id,
+                          InterpretationProposal(new_claim=proposed, interpreter="m"))
+    changed = link.model_copy(update={"tree": "different-tree"})
+    assert link_digest(link, proposed) != link_digest(changed, proposed)
