@@ -325,7 +325,7 @@ def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
             lean_command=tuple(config.lean_command),
             timeout_seconds=config.limits.lean_process_seconds,
         )
-    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+    except (ValueError, OSError) as error:
         return None, str(error) or f"the Lake project could not be read: {type(error).__name__}"
     assert config.lean_project is not None  # environment_identity refuses None
     service = LeanService(

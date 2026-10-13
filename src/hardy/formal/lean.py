@@ -413,6 +413,7 @@ class Elaboration(FrozenModel):
             self.process.returncode == 0
             and not self.process.timed_out
             and not self.process.output_overflow
+            and not self.process.interrupted
             and not self.open_goals
             and not any(item.severity == "error" for item in self.diagnostics)
             and not self.exited_early
@@ -547,7 +548,14 @@ def environment_identity(
         raise ValueError(f"{manifest_path} is missing; run the installer to build the project")
     raw = manifest_path.read_bytes()
     manifest = json.loads(raw.decode("utf-8"))
-    mathlib = next(item for item in manifest["packages"] if item["name"] == "mathlib")
+    packages = manifest.get("packages") if isinstance(manifest, dict) else None
+    if not isinstance(packages, list) or not all(isinstance(item, dict) and isinstance(item.get("name"), str) for item in packages):
+        raise ValueError(f"{manifest_path} has no readable packages list")
+    mathlib = next((item for item in packages if item["name"] == "mathlib"), None)
+    if mathlib is None:
+        raise ValueError(f"{manifest_path} names no mathlib package")
+    if not isinstance(mathlib.get("rev"), str) or not mathlib["rev"]:
+        raise ValueError(f"{manifest_path} names no readable mathlib revision")
     version, commit = lean_identity(
         lean_command, lean_project, runner=runner, timeout_seconds=timeout_seconds
     )
@@ -680,12 +688,13 @@ class LeanTools:
     ) -> LeanToolResult:
         if self.project is not None and not self.project.is_dir():
             return LeanToolResult(False, f"Lean project directory not found: {self.project}", source)
+        deadline = self.timeout if timeout is None else timeout
         try:
             elaboration = elaborate(
                 source,
                 argv=argv if argv is not None else (*self.lean_command, "--json"),
                 cwd=self.project if self.project is not None else Path.cwd(),
-                timeout_seconds=self.timeout if timeout is None else timeout,
+                timeout_seconds=deadline,
                 max_output_bytes=self.max_output_bytes,
                 env=env,
                 source_path=source_path,
@@ -693,9 +702,10 @@ class LeanTools:
             )
         except FileNotFoundError:
             return LeanToolResult(False, f"Lean executable not found: {self.lean_command[0]}", source)
-        return self._observe(elaboration, source)
+        return self._observe(elaboration, source, deadline)
 
-    def _observe(self, elaboration: Elaboration, source: str) -> LeanToolResult:
+    def _observe(self, elaboration: Elaboration, source: str, deadline: float | None = None) -> LeanToolResult:
+        deadline = self.timeout if deadline is None else deadline
         process = elaboration.process
         # Before the timeout, because a run stopped by Esc may well have been
         # heading for one, and the model must not read "timeout" and conclude
@@ -703,7 +713,7 @@ class LeanTools:
         if process.interrupted:
             header = f"interrupted after {process.duration_ms / 1000:.3f}s; Lean did not finish"
         elif process.timed_out:
-            header = f"timeout after {self.timeout:.1f}s"
+            header = f"timeout after {deadline:.1f}s"
         elif process.output_overflow:
             header = f"output limit of {self.max_output_bytes} bytes reached"
         else:

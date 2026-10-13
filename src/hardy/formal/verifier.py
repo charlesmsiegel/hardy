@@ -256,13 +256,15 @@ class FinalVerifier:
         )
         diagnostics = elaboration.diagnostics
         process = elaboration.process
-        if process.timed_out or process.output_overflow:
+        if process.timed_out or process.output_overflow or process.interrupted:
             return _failure(
                 store,
                 source,
                 source_sha,
                 TerminalReason.TIMEOUT_BUDGET_EXHAUSTED,
-                "Fresh Lean verification timed out or exceeded its output limit",
+                ("Fresh Lean verification was interrupted before it finished"
+                 if process.interrupted else
+                 "Fresh Lean verification timed out or exceeded its output limit"),
                 diagnostics,
             )
         # `success` rather than its parts restated, so the verifier also
