@@ -952,19 +952,50 @@ function Install-ClaudeCli {
     Write-Step 'Checking the Claude Code CLI'
     if (Get-Command claude -ErrorAction SilentlyContinue) {
         Write-Detail 'claude already installed'
-    } elseif (Get-Command npm -ErrorAction SilentlyContinue) {
+    }
+    else {
+        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+            if (-not (Confirm-Step 'Install Node.js LTS (shared tool) to provide npm for the Claude Code CLI?')) {
+                Write-Warn 'Node.js installation declined; install the Claude Code CLI before using Hardy'
+                $script:VerificationFailed = $true
+                return
+            }
+            if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+                Write-Warn 'winget is unavailable; install Node.js LTS and the Claude Code CLI, then rerun'
+                $script:VerificationFailed = $true
+                return
+            }
+            Write-Detail 'installing Node.js LTS with winget'
+            Invoke-Native winget @('install', '--id', 'OpenJS.NodeJS.LTS', '--exact', '--source', 'winget',
+                '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
+                Write-Warn "winget could not install Node.js LTS (exit $LASTEXITCODE)"
+                $script:VerificationFailed = $true
+                return
+            }
+            Update-SessionPath
+            if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+                Write-Warn 'npm is still unavailable after Node.js installation; open a new terminal and rerun'
+                $script:VerificationFailed = $true
+                return
+            }
+        }
         Write-Detail 'installing @anthropic-ai/claude-code'
         Invoke-Native npm @('install', '-g', '@anthropic-ai/claude-code') -Quiet
-        if ($LASTEXITCODE -ne 0) { Write-Warn "npm could not install @anthropic-ai/claude-code; install it yourself" }
-    } else {
-        # Node is not Hardy's to install, and guessing a package manager here
-        # would be worse than saying plainly what is missing.
-        Write-Warn "Node.js/npm not found: install Node, then 'npm install -g @anthropic-ai/claude-code'"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "npm could not install @anthropic-ai/claude-code (exit $LASTEXITCODE)"
+            $script:VerificationFailed = $true
+            return
+        }
+        Update-SessionPath
+        if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+            Write-Warn 'the Claude Code CLI is still unavailable; open a new terminal and rerun'
+            $script:VerificationFailed = $true
+            return
+        }
     }
-    if (Get-Command claude -ErrorAction SilentlyContinue) {
-        $status = (Invoke-Native claude @('auth', 'status') -DropErrors) -join ''
-        if ($status -notmatch '"loggedIn"\s*:\s*true') { Write-Detail "run 'claude login' to sign in with your subscription" }
-    }
+    $status = (Invoke-Native claude @('auth', 'status') -DropErrors) -join ''
+    if ($status -notmatch '"loggedIn"\s*:\s*true') { Write-Detail "run 'claude login' to sign in with your subscription" }
 }
 
 function Install-Tectonic {
@@ -1085,8 +1116,8 @@ Install-LeanProject
 Install-Latex
 Write-Config
 Install-Tectonic
-Install-ClaudeCli
 $script:VerificationFailed = $false
+Install-ClaudeCli
 Test-Installation
 Write-Summary
 if ($script:VerificationFailed) { exit 1 }

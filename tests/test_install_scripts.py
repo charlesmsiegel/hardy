@@ -1932,3 +1932,49 @@ def test_windows_http_500_does_not_select_source(tmp_path):
     assert result.returncode == 1
     assert '500' in result.stdout + result.stderr
     assert not (tmp_path / 'src').exists()
+
+
+def test_windows_clean_cli_install_provisions_node_and_refreshes_path():
+    result = run_installer_functions(r'''
+$script:nodeInstalled = $false
+$script:cliInstalled = $false
+$script:refreshed = 0
+$Yes = $true
+$script:VerificationFailed = $false
+function Get-Command($Name) {
+    if ($Name -eq 'npm' -and $script:nodeInstalled) { return @{ Source = 'npm' } }
+    if ($Name -eq 'claude' -and $script:cliInstalled) { return @{ Source = 'claude' } }
+    if ($Name -eq 'winget') { return @{ Source = 'winget' } }
+}
+function Invoke-Native($File, $Arguments, [switch]$Quiet, [switch]$DropErrors) {
+    $global:LASTEXITCODE = 0
+    if ($File -eq 'winget') {
+        if ($Arguments -notcontains 'OpenJS.NodeJS.LTS') { throw 'wrong dependency' }
+        $script:nodeInstalled = $true
+    }
+    elseif ($File -eq 'npm') {
+        if (-not $script:nodeInstalled -or $script:refreshed -lt 1) { throw 'PATH not refreshed' }
+        $script:cliInstalled = $true
+    }
+    elseif ($File -eq 'claude') { return '{"loggedIn":false}' }
+}
+function Update-SessionPath { $script:refreshed++ }
+Install-ClaudeCli
+if (-not $script:cliInstalled -or $script:VerificationFailed -or $script:refreshed -lt 2) { exit 1 }
+''')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'claude login' in result.stdout
+
+
+def test_windows_cli_provision_failure_reaches_summary():
+    result = run_installer_functions(r'''
+$script:VerificationFailed = $false
+$Yes = $true
+function Get-Command($Name) { if ($Name -eq 'winget') { return @{ Source = 'winget' } } }
+function Invoke-Native { $global:LASTEXITCODE = 7 }
+Install-ClaudeCli
+if (-not $script:VerificationFailed) { exit 1 }
+Write-Output 'summary still reachable'
+''')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'summary still reachable' in result.stdout
