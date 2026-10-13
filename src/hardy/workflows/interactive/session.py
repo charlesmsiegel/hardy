@@ -809,7 +809,9 @@ class MathematicsSession:
         return self.delegations.delegate(spec)
 
     def close(self) -> None:
-        """End background work with the session: cancel what runs, then stop the pool. Idempotent.
+        """End background work with the session: cancel what runs, then stop the pool.
+
+        Attempt every owner despite cleanup errors; failed cleanup remains retryable.
 
         A worker cannot outlive the process that reads its results, so what
         is still running is journaled cancelled with this reason rather than
@@ -819,17 +821,28 @@ class MathematicsSession:
         """
         if self._closed:
             return
-        self._closed = True
+        errors: list[Exception] = []
         try:
             self.delegations.cancel_all(reason="session closed")
-            # A detached computation is a thread of this session's, not the
-            # pool's: it is cancelled above with the rest and waited for here,
-            # so the kernel and the journal outlive the last write it makes.
+        except Exception as error:  # noqa: BLE001 - later owners must still release resources
+            errors.append(error)
+        try:
             still = self.jobs.close()
             if still:
-                self._notify(f"background job{'s' if len(still) > 1 else ''} {', '.join(still)} did not stop in time")
-        finally:
+                raise RuntimeError(f"background jobs did not stop in time: {', '.join(still)}")
+        except Exception as error:  # noqa: BLE001 - shutdown must run even if a kernel interrupt fails
+            errors.append(error)
+        try:
             self.delegations.shutdown()
+        except Exception as error:  # noqa: BLE001 - preserve all cleanup failures for the caller
+            errors.append(error)
+        self._closed = not errors
+        if errors:
+            for error in errors[1:]:
+                errors[0].add_note(f"Additional cleanup failure: {type(error).__name__}: {error}")
+                for note in getattr(error, "__notes__", ()):
+                    errors[0].add_note(note)
+            raise errors[0]
 
     def admit(self, delegation_id: str) -> tuple[AdmissionOutcome, ...]:
         """Admit a finished delegation's provable findings into the project through the installed owners.

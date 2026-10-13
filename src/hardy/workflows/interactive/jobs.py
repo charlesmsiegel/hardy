@@ -241,10 +241,28 @@ class ComputationJobs:
         """
         with self._lock:
             jobs = list(self._running.values())
+        errors: list[Exception] = []
         for job in jobs:
-            self._cancel(job)
+            try:
+                if job.token.cancelled:
+                    self._cancel(job)
+                else:
+                    job.token.cancel()
+            except Exception as error:  # noqa: BLE001 - other jobs still need cancellation and waiting
+                errors.append(error)
         deadline = time.monotonic() + max(0.0, timeout)
-        return tuple(job.id for job in jobs if not job.done.wait(max(0.0, deadline - time.monotonic())))
+        running = tuple(job.id for job in jobs if not job.done.wait(max(0.0, deadline - time.monotonic())))
+        if errors:
+            for error in errors[1:]:
+                errors[0].add_note(f"Additional job cleanup failure: {type(error).__name__}: {error}")
+                for note in getattr(error, "__notes__", ()):
+                    errors[0].add_note(note)
+            if running:
+                errors[0].add_note(f"Background jobs still running: {', '.join(running)}")
+                for note in getattr(error, "__notes__", ()):
+                    errors[0].add_note(note)
+            raise errors[0]
+        return running
 
     # -- delivery to the model -----------------------------------------------------
 

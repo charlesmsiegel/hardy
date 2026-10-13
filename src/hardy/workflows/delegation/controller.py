@@ -1105,27 +1105,39 @@ class DelegationController:
         worker, which only the session running it can act on
         (`running_elsewhere`).
         """
-        requested: list[str] = []
-        with self._lock:
-            tree = self.tree()
-            if ROOT_ID not in tree.delegations:
-                return ()
-            foreign = self._foreign_live(tree)
+        try:
+            requested: list[str] = []
+            with self._lock:
+                tree = self.tree()
+                if ROOT_ID not in tree.delegations:
+                    return ()
+                foreign = self._foreign_live(tree)
 
-            def keeps_foreign(id: str) -> bool:
-                return id in foreign or any(node in foreign for node in tree.descendants(id))
+                def keeps_foreign(id: str) -> bool:
+                    return id in foreign or any(node in foreign for node in tree.descendants(id))
 
-            pending = list(tree.children(ROOT_ID))
-            while pending:
-                child = pending.pop(0)
-                if tree.get(child).terminal:
-                    continue
-                if child in foreign or keeps_foreign(child):
-                    # Not cancelled whole; this session's work beneath it still is.
-                    pending.extend(tree.children(child))
-                    continue
-                requested.extend(self.cancel(child, reason=reason))
-        return tuple(requested)
+                pending = list(tree.children(ROOT_ID))
+                while pending:
+                    child = pending.pop(0)
+                    if tree.get(child).terminal:
+                        continue
+                    if child in foreign or keeps_foreign(child):
+                        # Not cancelled whole; this session's work beneath it still is.
+                        pending.extend(tree.children(child))
+                        continue
+                    requested.extend(self.cancel(child, reason=reason))
+            return tuple(requested)
+        except Exception as error:  # noqa: BLE001 - cancellation journal failure cannot leave owned handles running
+            with self._lock:
+                handles = tuple(self._handles.values())
+            for handle in handles:
+                try:
+                    handle.cancel()
+                except Exception as secondary:  # noqa: BLE001 - reach the remaining handles
+                    error.add_note(f"Additional handle cancellation failure: {type(secondary).__name__}: {secondary}")
+                    for note in getattr(secondary, "__notes__", ()):
+                        error.add_note(note)
+            raise
 
     def running_elsewhere(self, ids: tuple[str, ...]) -> tuple[str, ...]:
         """Which of `ids` are running in another live session: a cancel request reaches those only there.
@@ -1174,5 +1186,7 @@ class DelegationController:
     def shutdown(self) -> None:
         with self._lock:
             self._closed = True
-        self.executor.shutdown(wait=True)
-        self._owner.release()
+        try:
+            self.executor.shutdown(wait=True)
+        finally:
+            self._owner.release()

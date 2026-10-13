@@ -864,6 +864,56 @@ async def test_checkpoint_teardown_write_failure_ends_closed_session(ui, root):
     state = State(config=config, session=session, reopen=Reopener(root))
     ui.confirmations = [True]
     after = await handlers.handle_checkpoint(ui, f'restore {saved.id}', state)
-    assert session._closed and shutdown == [True]
+    assert not session._closed and shutdown == [True]
     assert after.session is None and after.done
     assert 'disk full writing cancellation' in ui.text and 'restart' in ui.text
+
+
+async def test_failed_restore_close_settles_actual_detached_thread(ui, root):
+    import threading
+    from types import SimpleNamespace
+
+    from hardy.foundation.values import ToolResult
+    from hardy.workflows import checkpoints
+    from hardy.workflows.interactive.jobs import ComputationJobs, Detached
+    from hardy.workflows.interactive.session import MathematicsSession
+
+    _live_problem(root, 'sylow')
+    config = _settings(root, 'sylow')
+    saved = checkpoints.save(config.layout)
+    handles = []
+    ready = threading.Event()
+    cancelled = threading.Event()
+    def attach(**kwargs):
+        handles.append(kwargs['handle'])
+        handles[-1].token.on_cancel(cancelled.set)
+        return SimpleNamespace(id='job-one')
+    def disk_full(**kwargs):
+        raise OSError('disk full writing cancellation')
+    delegations = SimpleNamespace(attach_computation=attach, cancel_all=disk_full, shutdown=lambda: None,
+                                  finish_computation=lambda *args, **kwargs: None)
+    gate = threading.Lock()
+    jobs = ComputationJobs(detach_after=.01, gate=gate, record=lambda _: 0, recorded=lambda: iter(()),
+                           delegations=delegations, notify=lambda _: None, tally=lambda *_: None, cas_session=lambda: None)
+    def tool(*args):
+        ready.set()
+        if not cancelled.wait(5):
+            (config.layout.problem / 'orphan-write.txt').write_text('orphan')
+        return ToolResult(False, 'cancelled')
+    session = object.__new__(MathematicsSession)
+    session._closed = False
+    session.delegations, session.jobs = delegations, jobs
+    gate.acquire()
+    try:
+        assert isinstance(jobs.call('check_lean', {'path': 'Main.lean'}, tool, 'call'), Detached)
+        assert ready.is_set()
+        job = jobs._running['job-one']
+        state = State(config=config, session=session, reopen=Reopener(root))
+        ui.confirmations = [True]
+        after = await handlers.handle_checkpoint(ui, f'restore {saved.id}', state)
+        assert after.session is None and after.done
+        assert job.done.is_set() and job.cancelled and handles[0].token.cancelled
+        assert not (config.layout.problem / 'orphan-write.txt').exists()
+    finally:
+        cancelled.set()
+        job.done.wait(5)

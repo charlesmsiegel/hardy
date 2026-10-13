@@ -1658,3 +1658,42 @@ def test_receipt_write_failure_keeps_accepted_worker_owned_once(tmp_path, monkey
         assert second.id not in controller._handles
     finally:
         controller.shutdown()
+
+
+def test_failed_cancel_journal_still_interrupts_every_owned_handle(tmp_path, monkeypatch):
+    from concurrent.futures import Future
+
+    from hardy.agents.executor import CancelToken, JobHandle
+
+    controller = _controller(tmp_path, _open([]))
+    tokens = [CancelToken(), CancelToken()]
+    try:
+        for token in tokens:
+            controller.attach_computation(objective='pending computation', handle=JobHandle('compute', token, Future()))
+        def disk_full(*args, **kwargs):
+            raise OSError('journal full')
+        monkeypatch.setattr(controller.store, 'cancel_subtree', disk_full)
+        with pytest.raises(OSError, match='journal full'):
+            controller.cancel_all(reason='session closed')
+        assert all(token.cancelled for token in tokens)
+    finally:
+        controller.shutdown()
+
+
+def test_executor_shutdown_error_still_releases_real_owner_token(tmp_path, monkeypatch):
+    from hardy.workflows.delegation.store import OwnerToken
+
+    controller = _controller(tmp_path, _open([]))
+    token = controller._owner
+    original = controller.executor.shutdown
+    def shutdown(**kwargs):
+        original(**kwargs)
+        raise OSError('executor shutdown failed')
+    monkeypatch.setattr(controller.executor, 'shutdown', shutdown)
+    try:
+        assert OwnerToken.alive(tmp_path, token.id)
+        with pytest.raises(OSError, match='executor shutdown failed'):
+            controller.shutdown()
+        assert not OwnerToken.alive(tmp_path, token.id)
+    finally:
+        token.release()

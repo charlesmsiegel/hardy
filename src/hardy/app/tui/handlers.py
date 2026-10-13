@@ -1276,7 +1276,8 @@ async def _replace_checkpoint(ui: Ui, state: State, chosen) -> State:
         if cas is not None:
             cas.session.close()
     except Exception as error:  # noqa: BLE001 - closing may already have invalidated the session
-        ui.write(f"Could not close the session for checkpoint restore: {error}. "
+        detail = "; ".join([str(error), *getattr(error, "__notes__", ())])
+        ui.write(f"Could not close the session for checkpoint restore: {detail}. "
                  "Leave and restart `hardy chat` before continuing.", style="error")
         return dataclasses.replace(state, session=None, done=True)
     restored = None
