@@ -361,3 +361,26 @@ jobs:
           foreach ($gone in @('venv', 'installers')) {
             if (Test-Path (Join-Path $prefix $gone)) { throw "$gone survived uninstall" }
           }
+
+      # Exercise the default TeX path rather than -SkipLatex: Tectonic alone
+      # must make doctor report a usable compiler on native Windows PS 5.1.
+      - name: Default LaTeX installation is usable without a TeX distribution
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = Join-Path $env:RUNNER_TEMP 'hardy-tectonic-smoke'
+          $bin = Join-Path $prefix 'bin'
+          $env:HARDY_CONFIG = Join-Path $prefix 'config.toml'
+          $env:HARDY_MODEL = 'installer-smoke-model'
+          try {
+            & powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 `
+              -Yes -SkipMathlib -NoLauncher -FromSource -Prefix $prefix -BinDir $bin
+            if ($LASTEXITCODE -ne 0) { throw "the default LaTeX installer exited $LASTEXITCODE" }
+            & (Join-Path $prefix 'venv\Scripts\python.exe') -c "from hardy.app.config import load; from hardy.app.doctor import run_checks; c=run_checks(load()); assert next(x for x in c if x.name=='tectonic').ok; assert next(x for x in c if x.name=='latex').ok; assert not next(x for x in c if x.name=='claude login').ok"
+            if ($LASTEXITCODE -ne 0) { throw 'doctor did not recognize the installed Tectonic compiler' }
+          }
+          finally {
+            & powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1 `
+              -Yes -RemoveConfig -Prefix $prefix -BinDir $bin
+            if ($LASTEXITCODE -ne 0) { throw "the smoke uninstaller exited $LASTEXITCODE" }
+          }
