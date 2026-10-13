@@ -189,3 +189,47 @@ def test_render_failure_closes_live_session_before_plain_factory(settings, monke
         return 0
     monkeypatch.setattr(tui, '_run_plain', fallback)
     assert tui.run_session(settings, lambda confirm: first) == 0
+
+
+@pytest.mark.parametrize('changed_problem', [False, True])
+def test_fallback_reopens_live_model_chat_and_kernel(settings, monkeypatch, changed_problem):
+    import dataclasses
+    from types import SimpleNamespace
+
+    import hardy.app.tui as tui
+
+    live = dataclasses.replace(settings, model='changed-model', chat='aside', project='other' if changed_problem else settings.project)
+    returned = dataclasses.replace(live, context_window=12345)
+    stale_kernel = SimpleNamespace(closed=True)
+    fresh_kernel = SimpleNamespace(closed=False)
+    class Session:
+        def __init__(self, kernel):
+            self.cas = kernel
+        def close(self):
+            pass
+    old = Session(fresh_kernel)
+    class BrokenShell:
+        def __init__(self, *args, **kwargs):
+            self.state = SimpleNamespace(config=live, session=old)
+        def attach(self, session):
+            pass
+        def run(self):
+            raise RuntimeError('render failure')
+    built = []
+    def launch_factory(confirm):
+        built.append(True)
+        return Session(stale_kernel)
+    reopened = []
+    def reopen(slug, confirm, current, *, chat):
+        assert current is live and chat == 'aside'
+        reopened.append(slug)
+        return returned, Session(fresh_kernel)
+    def plain(config, session, **kwargs):
+        assert config is returned
+        assert not session.cas.closed
+        return 0
+    monkeypatch.setattr(tui, '_is_interactive', lambda: True)
+    monkeypatch.setattr('hardy.app.tui.shell.Shell', BrokenShell)
+    monkeypatch.setattr('hardy.app.tui.plain.run', plain)
+    assert tui.run_session(settings, launch_factory, reopen=reopen) == 0
+    assert built == [True] and reopened == [live.project]

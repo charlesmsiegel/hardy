@@ -1268,12 +1268,17 @@ async def _replace_checkpoint(ui: Ui, state: State, chosen) -> State:
     # The session and its kernel let go of the tree before it is swapped: the
     # cell journal's lease, the delegation owner token and the provider thread
     # all belong to the process that opened this tree, not to the next one.
-    close = getattr(state.session, "close", None)
-    if close is not None:
-        close()
-    cas = getattr(state.reopen, "cas", None)
-    if cas is not None:
-        cas.session.close()
+    try:
+        close = getattr(state.session, "close", None)
+        if close is not None:
+            close()
+        cas = getattr(state.reopen, "cas", None)
+        if cas is not None:
+            cas.session.close()
+    except Exception as error:  # noqa: BLE001 - closing may already have invalidated the session
+        ui.write(f"Could not close the session for checkpoint restore: {error}. "
+                 "Leave and restart `hardy chat` before continuing.", style="error")
+        return dataclasses.replace(state, session=None, done=True)
     restored = None
     try:
         restored, kept = await asyncio.to_thread(checkpoints.restore, paths, chosen.id)

@@ -843,3 +843,27 @@ async def test_cancelled_checkpoint_worker_ends_unusable_session(ui, root, monke
     after = await handlers.handle_checkpoint(ui, '' if operation == 'save' else f'restore {saved.id}', state)
     assert after.session is None and after.done
     assert 'restart `hardy chat`' in ui.text
+
+
+async def test_checkpoint_teardown_write_failure_ends_closed_session(ui, root):
+    from types import SimpleNamespace
+
+    from hardy.workflows import checkpoints
+    from hardy.workflows.interactive.session import MathematicsSession
+
+    _live_problem(root, 'sylow')
+    config = _settings(root, 'sylow')
+    saved = checkpoints.save(config.layout)
+    session = object.__new__(MathematicsSession)
+    session._closed = False
+    shutdown = []
+    def disk_full(**kwargs):
+        raise OSError('disk full writing cancellation')
+    session.delegations = SimpleNamespace(cancel_all=disk_full, shutdown=lambda: shutdown.append(True))
+    session.jobs = SimpleNamespace(close=lambda: ())
+    state = State(config=config, session=session, reopen=Reopener(root))
+    ui.confirmations = [True]
+    after = await handlers.handle_checkpoint(ui, f'restore {saved.id}', state)
+    assert session._closed and shutdown == [True]
+    assert after.session is None and after.done
+    assert 'disk full writing cancellation' in ui.text and 'restart' in ui.text
