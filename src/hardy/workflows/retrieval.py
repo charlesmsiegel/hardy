@@ -495,15 +495,9 @@ class ProjectRetriever:
             raise ValueError("query names a source absent from the frozen index")
         live = {id: self._read(id) for id in sorted(known)}
         identities = {id: source_identity(source) for id, source in live.items()}
-        # Rebuild from fresh sources once; defer failures to delivery so stale
-        # identities and unavailable sources retain their rejection reasons.
         current: dict[str, dict[VersionRef, IndexEntry] | Exception] = {}
-        for id, source in live.items():
-            try:
-                current[id] = {entry.ref: entry for entry in _entries(source)}
-            except (OSError, ValueError, TypeError) as error:
-                current[id] = error
-        context_refs = {id: self._context_refs(source, query) for id, source in live.items()}
+        context_refs = {id: self._context_refs(source, query) for id, source in live.items()
+                        if not query.source_ids or id in query.source_ids}
         candidates = [(rank, entry) for entry in self.index.entries
             if (not query.source_ids or entry.source_id in query.source_ids)
             and (rank := self._rank(entry, live[entry.source_id], query, context_refs[entry.source_id])) is not None]
@@ -517,6 +511,13 @@ class ProjectRetriever:
                     accepted=False, reason="retrieval text budget exhausted", rank=rank))
                 continue
             try:
+                # Build only sources with a candidate entering delivery, once
+                # from this call's snapshots; retain build failures as receipts.
+                if entry.source_id not in current:
+                    try:
+                        current[entry.source_id] = {item.ref: item for item in _entries(live[entry.source_id])}
+                    except (OSError, ValueError, TypeError) as error:
+                        current[entry.source_id] = error
                 formal = self._deliver(entry, live[entry.source_id], identities[entry.source_id],
                                        live[query.project_source], query, current[entry.source_id], context_refs[entry.source_id])
                 accepted, reason = True, "Authenticated kernel declaration" if formal else "Recorded " + entry.group
