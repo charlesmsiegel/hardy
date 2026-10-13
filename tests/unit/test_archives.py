@@ -379,3 +379,9 @@ def test_unreadable_zip_is_refused_by_name(into: Path, defect: str) -> None:
     with pytest.raises(archives.ArchiveError):
         archives.extract(bytes(raw), into)
     assert list(into.iterdir()) == []
+
+
+@pytest.mark.parametrize('name', ['NUL', 'CON.tex', 'aux.tex', 'folder/COM1.lean', 'LPT9/data.tex'])
+def test_device_refusal_names_the_shared_portable_policy(name):
+    with pytest.raises(archives.ArchiveError, match='reserved device'):
+        archives.member_path(name)
