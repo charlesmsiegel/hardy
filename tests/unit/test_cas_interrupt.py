@@ -626,12 +626,17 @@ def test_escalating_does_not_block_the_caller_on_a_deaf_kernel(cas_session, tmp_
             assert session.escalate() is True
             spent.append(time.monotonic() - started)
 
-        threading.Thread(target=press_twice, daemon=True).start()
+        presser = threading.Thread(target=press_twice, daemon=True)
+        presser.start()
 
         record = session.execute(f"deafterm {ready}")
 
         assert record.status == "interrupted"
         assert session.state == "dead"
+        # The reader can finish as soon as SIGKILL closes the pipe, before
+        # the pressing thread has returned from escalate and recorded timing.
+        presser.join(timeout=5)
+        assert not presser.is_alive(), "the second press did not return"
         assert spent, "the second press never landed"
         # SIGKILL cannot be caught, so this is the cost of reaping a child --
         # not the two seconds a SIGTERM-first teardown spends being polite.
