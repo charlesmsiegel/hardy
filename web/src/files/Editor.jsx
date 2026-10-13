@@ -78,19 +78,36 @@ function Verdict({verdict}) {
   );
 }
 
-export default function Editor({path, kind, text, truncated, verdict, onSaved, onName}) {
-  const [buffer, setBuffer] = useState(text);
+export default function Editor({path, kind, text, sha256, missing = false, truncated, verdict, onSaved, onName}) {
+  const [draft, setDraft] = useState({path, buffer: text, loadedText: text, loadedHash: sha256,
+    disk: {text, sha256, missing}, conflict: false});
+  const current = useRef(draft);
+  const update = (change) => {
+    current.current = change(current.current);
+    setDraft(current.current);
+  };
+  const buffer = draft.buffer;
+  const setBuffer = (value) => update((state) => ({...state, buffer: value}));
+  const generation = useRef(0);
   const [busy, setBusy] = useState('');
   const [result, setResult] = useState(null);
   const [caret, setCaret] = useState(0);
   const area = useRef(null);
 
-  // A fresh file, or the same file re-read after a save, replaces the buffer.
-  // Keyed on `path` *and* `text` so a save's own reload lands, and so that
-  // opening a second file does not show the first one's contents.
   useEffect(() => {
-    setBuffer(text);
-  }, [path, text]);
+    const disk = {text, sha256, missing};
+    update((state) => {
+      if (state.path !== path || (state.buffer === state.loadedText && !missing)) {
+        return {path, buffer: text, loadedText: text, loadedHash: sha256, disk, conflict: false};
+      }
+      // A reload of our own saved source acknowledges the submitted text,
+      // while a newer edit typed during that request remains the user's.
+      const acknowledged = !missing && (text === state.buffer
+        || (sha256 !== undefined && sha256 === state.loadedHash));
+      return {...state, disk, ...(acknowledged ? {loadedText: text, loadedHash: sha256} : {}),
+        conflict: missing || (!acknowledged && (text !== state.loadedText || sha256 !== state.loadedHash))};
+    });
+  }, [path, text, sha256, missing]);
 
   // The result is cleared when a DIFFERENT file is opened, and not when this
   // one's text changes. A save reloads the file it just wrote, so clearing on
@@ -99,10 +116,14 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
   // that flashes and vanishes is worse than no refusal, because the reader
   // sees the file unchanged and no reason given.
   useEffect(() => {
+    generation.current += 1;
     setResult(null);
+    setBusy('');
   }, [path]);
 
-  const dirty = buffer !== text;
+  const dirty = buffer !== draft.loadedText;
+  const notSaved = dirty || draft.conflict || missing;
+  const incomplete = truncated || draft.disk.truncated;
   const editable = kind === 'lean' || kind === 'tex';
 
   // The name under the caret, reported upward so the rail can look it up.
@@ -113,7 +134,12 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
     if (onName) onName(nameAt(buffer, caret));
   }, [buffer, caret, onName]);
 
-  const run = async (what) => {
+  const run = async (what, overwrite = false) => {
+    if (busy || incomplete || (what === 'save' && draft.conflict && !overwrite)) return;
+    const requestGeneration = generation.current;
+    const source = current.current.buffer;
+    const base = overwrite ? current.current.disk.sha256 : current.current.loadedHash;
+    const body = what === 'save' ? {path, source, base_sha256: base} : {path, source};
     // Measured on the ENCODED body, not on the buffer. `/api/file` serves a
     // file up to 1 MiB and the viewer presents it as complete and editable;
     // the same text as JSON is larger, because the envelope and the escaping
@@ -121,7 +147,7 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
     // `MAX_EDIT_BODY` (4 MiB) for these two routes; refusing here as well
     // means a reader gets a sentence naming the figure instead of a bare 413
     // from a request that never had a chance.
-    const encoded = new TextEncoder().encode(JSON.stringify({path, source: buffer})).length;
+    const encoded = new TextEncoder().encode(JSON.stringify(body)).length;
     if (encoded > EDIT_BODY_LIMIT) {
       setResult({
         ok: false,
@@ -138,11 +164,26 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
     setResult(null);
     try {
       const answer = what === 'save'
-        ? await put('/api/file', {path, source: buffer})
-        : await post('/api/check', {path, source: buffer});
+        ? await put('/api/file', body)
+        : await post('/api/check', body);
+      if (requestGeneration !== generation.current) return;
       setResult({...answer, what});
-      if (what === 'save' && answer.ok && onSaved) onSaved();
+      if (what === 'save' && answer.ok) {
+        update((state) => {
+          const newerDisk = state.disk.sha256 !== base && state.disk.sha256 !== answer.sha256;
+          return {...state, loadedText: source, loadedHash: answer.sha256,
+            disk: newerDisk ? state.disk : {text: source, sha256: answer.sha256, missing: false},
+            conflict: newerDisk};
+        });
+        if (onSaved) onSaved();
+      }
     } catch (failure) {
+      if (requestGeneration !== generation.current) return;
+      if (what === 'save' && failure instanceof ApiError && failure.data?.conflict) {
+        const disk = {text: failure.data.text, sha256: failure.data.sha256,
+          missing: !!failure.data.missing, truncated: !!failure.data.truncated};
+        update((state) => ({...state, disk, conflict: true}));
+      }
       // The server's own sentence, whatever it is: 409 while a turn runs,
       // 400 for a path it will not take, 503 while it shuts down. A generic
       // "could not save" here would throw away the only useful half.
@@ -153,7 +194,7 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
         transport: true,
       });
     } finally {
-      setBusy('');
+      if (requestGeneration === generation.current) setBusy('');
     }
   };
 
@@ -165,7 +206,7 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
     <div className="wb-editor">
       <div className="wb-editor__bar">
         <span className="wb-editor__path">{path}</span>
-        {dirty ? (
+        {notSaved ? (
           <span className="wb-editor__verdict">
             <Absent kind="na" />{' '}
             <span className="panel__note">
@@ -180,7 +221,7 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
         <button
           type="button"
           className="wb-editor__button"
-          disabled={!!busy}
+          disabled={!!busy || incomplete}
           onClick={() => run('check')}
           title="Runs Lean or LaTeX over this text and throws the result away. Nothing is written."
         >
@@ -189,13 +230,29 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
         <button
           type="button"
           className="wb-editor__button wb-editor__button--go"
-          disabled={!!busy || !dirty}
+          disabled={!!busy || incomplete || !dirty || draft.conflict}
           onClick={() => run('save')}
           title="Checks and saves through the session, exactly as the model's own save does."
         >
           {busy === 'save' ? 'Saving...' : 'Save & check'}
         </button>
       </div>
+
+      {draft.conflict ? (
+        <div className="panel__note" role="alert">
+          The file {draft.disk.missing ? 'was deleted on disk' : 'changed on disk'}; your edits are preserved.
+          {draft.disk.truncated ? ' The changed file is too large to read completely; open it on disk before saving.' : ''}
+          <button type="button" className="wb-editor__button" disabled={!!busy || incomplete}
+            onClick={() => update((state) => ({...state, buffer: state.disk.text,
+              loadedText: state.disk.text, loadedHash: state.disk.sha256, conflict: false}))}>
+            Reload from disk (discards edits)
+          </button>
+          <button type="button" className="wb-editor__button" disabled={!!busy || incomplete}
+            onClick={() => run('save', true)}>
+            {draft.disk.missing ? 'Keep edits and recreate' : 'Keep edits and overwrite'}
+          </button>
+        </div>
+      ) : null}
 
       {truncated ? (
         <div className="panel__note">
@@ -217,7 +274,7 @@ export default function Editor({path, kind, text, truncated, verdict, onSaved, o
         />
       )}
 
-      {!dirty && !busy ? (
+      {!notSaved && !busy ? (
         <details className="wb-editor__highlight">
           <summary>highlighted</summary>
           {kind === 'lean' ? <Lean src={buffer} /> : <Tex src={buffer} />}

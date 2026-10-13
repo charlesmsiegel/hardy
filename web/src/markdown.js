@@ -9,7 +9,6 @@
 
 import {Marked} from 'marked';
 import katex from 'katex';
-import 'katex/dist/katex.min.css';
 
 //: The schemes a link in a reply may carry. Anything else -- `javascript:`,
 //: `data:`, `vbscript:` -- is a script the reader would run by clicking, so
@@ -37,43 +36,32 @@ marked.use({
   },
 });
 
-//: Code is the one place a `$` means a dollar. Math is applied between these
-//: spans and never inside them, so `` `$5` `` in a reply stays five dollars.
-const CODE = /(<pre[\s\S]*?<\/pre>|<code[\s\S]*?<\/code>)/;
-
-const ENTITIES = {'&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&amp;': '&'};
-
-/** Undo the escaping `marked` applied, so TeX reaches KaTeX as it was written.
- *
- *  `\le` arrives from the parser as `&lt;`-escaped text because the parser
- *  could not know it was TeX; handing that to KaTeX would typeset the entity.
- *  `&amp;` is last, or `&amp;lt;` would decode twice.
- */
-function unescape(text) {
-  return text
-    .replace(/&(lt|gt|quot|#39);/g, (match) => ENTITIES[match])
-    .replace(/&amp;/g, '&');
-}
-
+// Math is recognized before HTML exists. Inline markdown elements delimit a
+// text run; their URLs, code and tags can never become TeX source.
 function tex(source, displayMode) {
-  // `throwOnError: false` renders the offending source in red rather than
-  // throwing: one malformed formula must not blank the whole reply.
-  return katex.renderToString(unescape(source), {displayMode, throwOnError: false});
+  return katex.renderToString(source, {displayMode, throwOnError: false});
 }
 
-function renderMath(html) {
-  return html
-    .split(CODE)
-    .map((part, index) =>
-      index % 2
-        ? part
-        : part
-            .replace(/\$\$([\s\S]+?)\$\$/g, (_, source) => tex(source, true))
-            .replace(/(^|[^\\$])\$([^\n$]+?)\$/g, (_, before, source) => before + tex(source, false)),
-    )
-    .join('');
-}
+marked.use({extensions: [{
+  name: 'math',
+  level: 'inline',
+  start(source) { return source.indexOf('$'); },
+  tokenizer(source) {
+    const display = source.startsWith('$$');
+    const match = display
+      ? /^\$\$((?:\\[\s\S]|[^$])+?)\$\$/.exec(source)
+      : /^\$((?:\\[^\n]|[^$\n])+?)\$(?!\d)/.exec(source);
+    if (!match || !match[1].trim() || (!display && match[1] !== match[1].trim())) return undefined;
+    // Ask the same lexer which inline constructs would occupy this span.
+    // TeX backslashes remain the original source, never entity-decoded HTML.
+    if (this.lexer.inlineTokens(match[1]).some((token) => !['text', 'escape'].includes(token.type))) {
+      return undefined;
+    }
+    return {type: 'math', raw: match[0], source: match[1], display};
+  },
+  renderer(token) { return tex(token.source, token.display); },
+}]});
 
 export function render(markdown) {
-  return renderMath(marked.parse(markdown ?? ''));
+  return marked.parse(markdown ?? '');
 }
