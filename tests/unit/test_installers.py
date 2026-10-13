@@ -211,3 +211,45 @@ def test_a_file_at_the_lean_project_path_is_refused_untouched(tmp_path):
     assert str(project) in outcome.manual_instructions
     assert 'not a directory' in outcome.manual_instructions
     assert project.read_bytes() == b'mine'
+
+
+def test_dangling_project_symlink_is_refused_before_confirmation(tmp_path):
+    installers = importlib.import_module('hardy.app.installers')
+    project = tmp_path / 'lean'
+    target = tmp_path / 'missing'
+    try:
+        project.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        import pytest
+
+        if getattr(error, 'winerror', None) == 1314:
+            pytest.skip('Windows symlink privilege is unavailable')
+        raise
+    outcome = installers.create_lean_project(
+        lean_project=project,
+        confirmer=lambda _: (_ for _ in ()).throw(AssertionError('must not prompt')),
+    )
+    assert outcome.status == 'failed'
+    assert 'not a directory' in outcome.manual_instructions
+    assert project.is_symlink() and project.readlink() == target
+    assert not target.exists()
+
+
+def test_valid_directory_project_symlink_is_reused(tmp_path):
+    installers = importlib.import_module('hardy.app.installers')
+    target = tmp_path / 'target'
+    target.mkdir()
+    (target / 'lakefile.toml').write_text('name = "mine"\n')
+    project = tmp_path / 'lean'
+    try:
+        project.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        import pytest
+
+        if getattr(error, 'winerror', None) == 1314:
+            pytest.skip('Windows symlink privilege is unavailable')
+        raise
+    outcome = installers.create_lean_project(lean_project=project, confirmer=lambda _: False)
+    assert outcome.status == 'present'
+    assert project.is_symlink()
+    assert (target / 'lakefile.toml').read_text() == 'name = "mine"\n'

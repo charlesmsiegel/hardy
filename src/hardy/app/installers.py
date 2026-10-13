@@ -69,7 +69,7 @@ def create_lean_project(
             manual_instructions=f"Using the existing Lake project at {lean_project}.",
             installed_path=lean_project,
         )
-    if lean_project.exists() and not lean_project.is_dir():
+    if (lean_project.exists() or lean_project.is_symlink()) and not lean_project.is_dir():
         return InstallOutcome(
             status="failed",
             manual_instructions=f"{lean_project} exists and is not a directory; move it aside and rerun `hardy setup`.",

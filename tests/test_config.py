@@ -962,3 +962,13 @@ def test_lean_timeout_environment_refuses_unusable_deadlines(tmp_path, monkeypat
 @pytest.mark.parametrize('raw', ['"90"', '90.5'])
 def test_lean_timeout_accepts_positive_finite_seconds(tmp_path, raw):
     assert config.load(write(tmp_path / 'config.toml', f'lean_timeout = {raw}\n')).lean_timeout > 0
+
+
+@pytest.mark.parametrize('source', ['toml', 'override'])
+def test_lean_timeout_oversized_integer_is_a_configuration_error(tmp_path, source):
+    path = tmp_path / 'config.toml'
+    huge = 10 ** 400
+    if source == 'toml':
+        path.write_text(f'lean_timeout = {huge}\n')
+    with pytest.raises(ValueError, match='lean_timeout must be a finite, positive number of seconds'):
+        config.load(path, **({'lean_timeout': huge} if source == 'override' else {}))
