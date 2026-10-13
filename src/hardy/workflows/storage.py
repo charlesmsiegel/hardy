@@ -26,7 +26,8 @@ from hardy.foundation.values import FrozenModel
 from hardy.workflows.contracts import RunManifest, RunPhase
 
 SECRET_KEY = re.compile(
-    r"^(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)$",
+    r"^(?:[A-Za-z0-9]+[_-])*(?:authorization|api[_-]?key|access[_-]?token|"
+    r"refresh[_-]?token|secret(?:[_-]?access)?(?:[_-]?key)?|password|passwd|token)$",
     re.IGNORECASE,
 )
 

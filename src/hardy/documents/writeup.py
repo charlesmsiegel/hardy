@@ -334,12 +334,10 @@ def _render(
         "@@ASSUMPTIONS@@": _assumptions(grades.assumed, declared),
         "@@HASHES@@": _verbatim("\n".join(hashes)),
         "@@IDENTITIES@@": "\n".join(
-            BACKSLASH + "item " + escape_tex_text(line) for line in identity_lines
+            BACKSLASH + "item{} " + escape_tex_text(line) for line in identity_lines
         ),
     }
-    for marker, value in replacements.items():
-        template = template.replace(marker, value)
-    return template
+    return re.sub(r"@@[A-Z_]+@@", lambda match: replacements[match.group()], template)
 
 
 def _assumptions(
@@ -374,14 +372,14 @@ def _assumptions(
         # One line break, not two: the provenance sits under the statement it
         # describes. Two in a row is two breaks, and LaTeX refuses the
         # second with "there's no line here to end" -- which is no PDF at all.
-        lines.append(f"{rendered}{BACKSLASH}{BACKSLASH}{provenance}")
+        lines.append(f"{rendered}{BACKSLASH}{BACKSLASH}{{}}{provenance}")
     # The template writes this after a bold label and opens no list
     # of its own, so the block has to carry its own environment. A bare
     # item outside one is a fatal error, not a formatting blemish.
     return (
         BACKSLASH
         + "begin{itemize}\n"
-        + "\n".join(BACKSLASH + "item " + line for line in lines)
+        + "\n".join(BACKSLASH + "item{} " + line for line in lines)
         + "\n"
         + BACKSLASH
         + "end{itemize}"
@@ -394,7 +392,7 @@ def _items(values: tuple[str, ...], empty: str) -> str:
     return (
         BACKSLASH
         + "begin{itemize}\n"
-        + "\n".join(BACKSLASH + "item " + escape_tex_text(value) for value in values)
+        + "\n".join(BACKSLASH + "item{} " + escape_tex_text(value) for value in values)
         + "\n"
         + BACKSLASH
         + "end{itemize}"
@@ -404,7 +402,9 @@ def _items(values: tuple[str, ...], empty: str) -> str:
 def _verbatim(value: str) -> str:
     # Verbatim content is not escaped, so it must not be able to close its own
     # environment and start writing LaTeX.
-    if any(line.strip() == BACKSLASH + "end{Verbatim}" for line in value.splitlines()):
+    # fancyvrb FV@@CheckEnd scans for the delimiter anywhere on the line;
+    # FancyVerbGetLine ends scanning even when trailing input is discarded.
+    if BACKSLASH + "end{Verbatim}" in value:
         raise ValueError("verbatim content contains an environment terminator")
     return value
 

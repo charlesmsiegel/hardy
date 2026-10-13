@@ -99,7 +99,8 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # rule matching `"[^"]*"` stopped, leaving the response field standing.
     (
         re.compile(
-            r"(?i)\b(proxy-authorization|authorization)([\"\']?\s*[:=]\s*)([\"\'])"
+            r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*authorization)"
+            r"([\"\']?\s*[:=]\s*)([\"\'])"
             r"((?:basic|bearer|digest|negotiate|token|apikey)\s+)"
             r"(?:\\.|[^\r\n])*?\3"
         ),
@@ -119,7 +120,7 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # and does not run past the end of it into the rest of the payload.
     (
         re.compile(
-            r"(?i)\b(proxy-authorization|authorization)(\s*[:=]\s*)"
+            r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*authorization)(\s*[:=]\s*)"
             r"(basic|bearer|digest|negotiate|token|apikey)\s+[^\r\n]+"
         ),
         r"\1\2\3 [REDACTED-KEY]",
@@ -137,7 +138,9 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # because the snippet is one string rather than a key of its own.
     (
         re.compile(
-            r"(?i)\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)"
+            r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*"
+            r"(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|"
+            r"secret(?:[_-]?access)?(?:[_-]?key)?|password|passwd|token))"
             # Not a value some earlier pattern has already replaced: the
             # scheme rule above leaves `Authorization: Basic [REDACTED-KEY]`,
             # and without this the generic rule matched it again and ate the
@@ -973,9 +976,10 @@ def _refusals(material: Mapping[str, Any]) -> str:
     # to be tested before it is used as a slice bound: without that a run with
     # fifty denials kept every failed call as well and reported no clip.
     floor = min(len(failures), FAILURE_FLOOR)
-    room = max(0, 50 - max(len(denials), 50 - floor))
-    kept_denials = denials[-(50 - floor) :] if 50 - floor > 0 else []
-    kept_failures = failures[-max(room, floor) :] if max(room, floor) > 0 else []
+    for_denials = 50 - floor
+    kept_denials = denials[-for_denials:] if for_denials else []
+    room = 50 - len(kept_denials)
+    kept_failures = failures[-room:] if room else []
     kept = kept_denials + kept_failures
     dropped = len(refused) - len(kept)
     shown = _list(kept, "Nothing was refused.")
@@ -1387,7 +1391,7 @@ def default_path(workspace: Path, project: str, *, now: datetime | None = None) 
             # picked the same name, and `write` replaces its destination -- so
             # whichever finished last destroyed the other's account. `O_EXCL`
             # is the reservation: the name is taken the moment it is chosen.
-            os.close(os.open(chosen, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            os.close(os.open(chosen, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666))
             return chosen
         except FileExistsError:
             chosen = workspace / f"{project}-{stamp}-{suffix}.html"

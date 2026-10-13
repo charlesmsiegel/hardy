@@ -450,3 +450,42 @@ def test_a_compile_that_read_a_host_font_is_a_failed_document(tmp_path) -> None:
     )
 
     assert result.status is domain.DocumentStatus.TEX_FAILED
+
+
+def test_bracket_leading_items_keep_their_normal_bullet():
+    from hardy.documents.writeup import _items
+
+    assert r'\item{} [0, 1) is half-open' in _items(('[0, 1) is half-open',), 'none')
+
+
+def test_model_markers_are_literal_and_never_rescanned(tmp_path):
+    from hardy.documents import writeup
+    from hardy.workflows import contracts as domain
+
+    tex = writeup._render(
+        _claim(domain),
+        writeup.WriteupContent(
+            title='X @@LEAN_SIGNATURE@@ Y', theorem_text='@@ASSUMPTIONS@@',
+            proof_text='@@HASHES@@', known_gaps=('[0, 1) @@IDENTITIES@@',),
+        ),
+        domain.Grades(), None, _identities(writeup, tmp_path),
+        domain.DocumentStatus.NOT_ATTEMPTED,
+    )
+    assert writeup.escape_tex_text('X @@LEAN_SIGNATURE@@ Y') in tex
+    assert '\n@@HASHES@@\n' in tex
+    assert '\n@@ASSUMPTIONS@@\n' in tex
+    assert r'\item{} ' + writeup.escape_tex_text('[0, 1) @@IDENTITIES@@') in tex
+    assert tex.count('theorem demo') == 1
+
+
+def test_verbatim_cannot_close_its_environment_even_with_prefix_or_suffix():
+    import pytest
+
+    from hardy.documents.writeup import _verbatim
+
+    for value in (r'\end{Verbatim}x', r'  \end{Verbatim} -/',
+                  'a\n' + r'\end{Verbatim}\input{y}', r'see \end{Verbatim} mid-line'):
+        with pytest.raises(ValueError, match='terminator'):
+            _verbatim(value)
+    benign = r'see \end{Other} or end{Verbatim}'
+    assert _verbatim(benign) == benign

@@ -1514,3 +1514,59 @@ def test_checkpoint_supersession_uses_exact_block_identity():
     page = build(transcript=events)
     assert page.count("First complete") == 1 and page.count("Second further") == 1
     assert "First draft" not in page and "Second unfinished" not in page
+
+
+@pytest.mark.parametrize('key', [
+    'DB_PASSWORD', 'AWS_SECRET_ACCESS_KEY', 'client_secret', 'my_api_key',
+    'OPENAI_API_KEY', 'GITHUB_TOKEN', 'service-authorization',
+])
+def test_prefixed_credentials_keep_their_names_but_lose_the_values(key):
+    assert export.redact(f'{key}="private", public: visible') == f'{key}=[REDACTED], public: visible'
+    payload = {'nested': {key: 'private'}}
+    assert export.prepare(payload)['nested'][key] == '[REDACTED]'
+    from hardy.workflows.storage import _redact
+
+    assert _redact(payload)['nested'][key] == '[REDACTED]'
+
+
+def test_credential_word_fragments_and_formal_sources_stay_intact():
+    text = 'secretary: Alice\ntokenize = True'
+    assert export.redact(text) == text
+    source = 'theorem db_password : True := by trivial'
+    assert export.redact(source, keys=False) == source
+
+
+@posix_only
+@pytest.mark.parametrize(('mask', 'mode'), [(0o022, 0o644), (0o077, 0o600)])
+def test_default_export_reservation_obeys_the_umask(tmp_path, mask, mode):
+    import stat
+
+    previous = os.umask(mask)
+    try:
+        destination = export.default_path(tmp_path, 'project')
+        export.write(material(), destination)
+        assert stat.S_IMODE(destination.stat().st_mode) == mode
+    finally:
+        os.umask(previous)
+
+
+@pytest.mark.parametrize(('denials', 'failures', 'lost_denials', 'lost_failures'), [
+    (0, 60, 0, 10), (1, 60, 0, 11), (50, 10, 10, 0),
+])
+def test_refusals_fill_all_fifty_slots_and_count_each_omission(
+    denials, failures, lost_denials, lost_failures,
+):
+    transcript = [
+        {'type': 'refused_tool', 'name': f'Bash{i}'} for i in range(denials)
+    ] + [
+        {'type': 'tool', 'name': f'save{i}', 'result': {'ok': False, 'output': 'no'}}
+        for i in range(failures)
+    ]
+    listed = export._refusals({'transcript': transcript})
+    assert listed.count('<li>') == 50
+    assert listed.count('not a Hardy tool') == denials - lost_denials
+    assert f'save{failures - 1}:' in listed
+    if lost_denials:
+        assert f'{lost_denials} older SDK-refused requests' in listed
+    if lost_failures:
+        assert f'{lost_failures} older failed tool calls' in listed
