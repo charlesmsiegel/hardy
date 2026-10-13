@@ -57,7 +57,7 @@ def _searching_session(session_factory, approvals, search):
 
     session = session_factory(confirm=confirm, search=search, search_detail="fake")
 
-    # The real `fake_lean` fixture patches `_run_lean_source` on a *different*
+    # The real `fake_lean` fixture patches `_probe_lean_source` on a *different*
     # session object (the plain `session` fixture), so a `_searching_session`
     # needs its own stand-in. `tests/fake_lean.py` prints exactly one error on
     # a source it does not recognise, which the probe would read as the last
@@ -65,7 +65,7 @@ def _searching_session(session_factory, approvals, search):
     # "Lean proves this outright" before the search gate could be exercised.
     # So this fakes a genuine assumption instead: every `example` line fails
     # to close its goal, and the `axiom` line elaborates cleanly.
-    def fake_run_lean_source(source, timeout=None):
+    def fake_probe_lean_source(source, timeout=None):
         diagnostics = []
         for index, line in enumerate(source.splitlines(), start=1):
             if line.startswith("example"):
@@ -74,7 +74,7 @@ def _searching_session(session_factory, approvals, search):
                 )
         return LeanToolResult(False, "", source, diagnostics=tuple(diagnostics))
 
-    session._run_lean_source = fake_run_lean_source
+    session._probe_lean_source = fake_probe_lean_source
     return session
 
 
@@ -186,10 +186,10 @@ def test_a_shape_refused_request_still_consumes_the_search(session_factory, appr
 
 
 class ClosesWithSimp:
-    """A `_run_lean_source` stand-in whose `example` lines close exactly on
+    """A `_probe_lean_source` stand-in whose `example` lines close exactly on
     `closes_with`, mirroring `conftest.fake_lean`'s `Fake` -- but installed
     directly on a `_searching_session` session, whose own
-    `fake_run_lean_source` fails every `example` line unconditionally and so
+    `fake_probe_lean_source` fails every `example` line unconditionally and so
     can never drive `_assumption_probe` into a refusal."""
 
     closes_with: str | None = None
@@ -212,8 +212,8 @@ def test_a_probe_refused_request_still_consumes_the_search(session_factory, appr
     refused by after the search gate has already passed."""
     session = _searching_session(session_factory, approvals, Search(unavailable=("X",)))
     session._tool("inspect_declarations", {"names": ["X"]})
-    session._run_lean_source = ClosesWithSimp()
-    session._run_lean_source.closes_with = "simp"
+    session._probe_lean_source = ClosesWithSimp()
+    session._probe_lean_source.closes_with = "simp"
 
     refused = session._tool("request_assumption", _request())
     assert not refused.ok

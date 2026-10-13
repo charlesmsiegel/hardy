@@ -167,7 +167,7 @@ def test_an_error_lean_could_not_place_counts_against_the_declaration(
             diagnostics=(LeanDiagnostic(severity="error", message="boom", line=None),),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", unplaced)
+    monkeypatch.setattr(session, "_probe_lean_source", unplaced)
 
     refusal, _ = session._assumption_probe("axiom f : True")
 
@@ -193,7 +193,7 @@ def test_an_error_before_the_probes_is_refused_not_credited_as_a_proof(
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", stray)
+    monkeypatch.setattr(session, "_probe_lean_source", stray)
 
     refusal, _ = session._assumption_probe("axiom f : True")
 
@@ -309,7 +309,7 @@ def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
     def mute(source: str, timeout: float | None = None):
         return LeanToolResult(False, "something went wrong", source, diagnostics=())
 
-    monkeypatch.setattr(session, "_run_lean_source", mute)
+    monkeypatch.setattr(session, "_probe_lean_source", mute)
 
     refusal, caveat = session._assumption_probe("axiom f : True")
 
@@ -510,7 +510,7 @@ def test_an_error_before_the_probes_is_not_read_as_the_probe_closing_the_goal(
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", stray)
+    monkeypatch.setattr(session, "_probe_lean_source", stray)
 
     warning = session._vacuity_probe(SYLOW)
 
