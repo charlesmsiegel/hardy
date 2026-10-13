@@ -44,6 +44,7 @@ import asyncio
 import contextlib
 import dataclasses
 import functools
+import hashlib
 import queue
 import threading
 from collections import deque
@@ -70,6 +71,7 @@ T = TypeVar("T")
 RING = 1000
 
 _TURN_OVER = object()
+_UNSPECIFIED = object()
 
 
 class Busy(Exception):
@@ -89,6 +91,12 @@ class NoProject(Exception):
 
     def __init__(self) -> None:
         super().__init__(NO_PROJECT_OPEN)
+
+
+class FileConflict(Busy):
+    """An editor's base no longer describes the committed source."""
+
+    conflict = True
 
 
 class Subscription:
@@ -469,6 +477,11 @@ class WebHost:
         registered = {entry.path for entry in self.projects_registry.entries()}
         if target not in registered and target != self._open_path():
             raise ValueError(f"{target} is not a registered project. Add it first, from the project menu.")
+        if not (target / RECORD).is_file():
+            raise ValueError(
+                f"{target} no longer holds a Hardy project (its record is missing). "
+                "Restore it, or forget it from the project menu."
+            )
         if chat != DEFAULT_CHAT and chat not in {known.id for known in chats.list_chats(target)}:
             raise ValueError(f"no chat {chat!r} in {slug}")
         reason = self._busy()
@@ -629,35 +642,47 @@ class WebHost:
         came_from = current.layout.problem if previous is not None else None
         try:
             config, session = await self._loop.run_in_executor(None, call)
+            # Only once the opener has returned: a raise leaves the user in the
+            # session they are still in, and closing it would take its worker pool
+            # and its running delegations down under them. The problem being left
+            # takes its background work with it -- `_switch` does the same, and a
+            # failure to clean up is a notice rather than a refusal to switch.
+            if previous is not None and previous is not session:
+                close = getattr(previous, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
+                        self.ui.write(f"Could not close the previous session cleanly: {error}", style="error")
+            self._attach(config, session)
+            self.opener.session = self.session
+            if came_from is not None and came_from != config.layout.problem:
+                self._discard_queued_on_switch()
+                # The switch itself is the record, on the project just opened --
+                # a reader of *this* transcript should be able to tell it was
+                # reached by a switch rather than always having been the live
+                # project. Not for a chat change within the same project: that
+                # replaces no project, and `record_hardy_note` would say so about
+                # nothing that happened. Nor for an open from nothing: there was
+                # no project to have switched from.
+                note = getattr(session, "record_hardy_note", None)
+                if note is not None:
+                    note(f"Switched here from {came_from.name}.")
         finally:
             self._commands_running -= 1
             self.emit({"type": "state", **self.state()})
-        # Only once the opener has returned: a raise leaves the user in the
-        # session they are still in, and closing it would take its worker pool
-        # and its running delegations down under them. The problem being left
-        # takes its background work with it -- `_switch` does the same, and a
-        # failure to clean up is a notice rather than a refusal to switch.
-        if previous is not None and previous is not session:
-            close = getattr(previous, "close", None)
-            if close is not None:
-                try:
-                    close()
-                except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
-                    self.ui.write(f"Could not close the previous session cleanly: {error}", style="error")
-        self._attach(config, session)
-        self.opener.session = self.session
-        if came_from is not None and came_from != config.layout.problem:
-            # The switch itself is the record, on the project just opened --
-            # a reader of *this* transcript should be able to tell it was
-            # reached by a switch rather than always having been the live
-            # project. Not for a chat change within the same project: that
-            # replaces no project, and `record_hardy_note` would say so about
-            # nothing that happened. Nor for an open from nothing: there was
-            # no project to have switched from.
-            note = getattr(session, "record_hardy_note", None)
-            if note is not None:
-                note(f"Switched here from {came_from.name}.")
-        self.emit({"type": "changed"})
+            self.emit({"type": "changed"})
+            self._after_turn()
+
+    def _discard_queued_on_switch(self) -> None:
+        """Do not deliver the previous project's input to its replacement."""
+        if self._queued:
+            count = len(self._queued)
+            self._queued = []
+            self.ui.write(
+                f"Dropped {count} queued message(s) from the previous project; "
+                "they were not sent to the newly opened project.", style="error",
+            )
 
     def run_exclusive(self, fn: Callable[[], T]) -> T:
         """Run `fn` on the calling thread while the session is held as if a command ran.
@@ -688,7 +713,9 @@ class WebHost:
         finally:
             self._call(end)
 
-    def save_file(self, path: str, source: str) -> dict[str, Any]:
+    def save_file(
+        self, path: str, source: str, *, base_sha256: str | None | object = _UNSPECIFIED,
+    ) -> dict[str, Any]:
         """One editor save, held exclusive, reported as the session reported it.
 
         `run_exclusive` raises `Busy` while a turn, a command or a detached
@@ -701,11 +728,26 @@ class WebHost:
         reader; a generic "save failed" would throw all of them away.
         """
         def go() -> dict[str, Any]:
+            from hardy.app.web.panels.workspace import confine
+
+            def digest() -> str | None:
+                target = confine(self.config.layout.problem, path)
+                try:
+                    with target.open("rb") as handle:
+                        return hashlib.file_digest(handle, "sha256").hexdigest()
+                except FileNotFoundError:
+                    return None
+
+            if base_sha256 is not _UNSPECIFIED and digest() != base_sha256:
+                raise FileConflict("This file changed on disk. Choose whether to reload or keep your edits before saving.")
             save = getattr(self.session, "save_authored", None)
             if save is None:
                 raise RuntimeError("this session cannot save files")
             result = save(path, source)
-            return {"ok": result.ok, "output": result.output, "path": path}
+            response = {"ok": result.ok, "output": result.output, "path": path}
+            if base_sha256 is not _UNSPECIFIED:
+                response["sha256"] = digest()
+            return response
 
         return self.run_exclusive(go)
 
@@ -930,6 +972,7 @@ class WebHost:
             # hands the opener and the one every `config.` read here sees.
             self.config = self._state.config
             if self._state.config.layout.problem != before_problem:
+                self._discard_queued_on_switch()
                 # A `/project new` or `/project switch` typed into the
                 # composer landed somewhere; the registry is what the page
                 # lists, so where the user now is has to be in it.
