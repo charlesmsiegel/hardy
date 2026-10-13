@@ -331,3 +331,42 @@ def test_mcp_load_runtime_project_notice_never_reaches_stdout(tmp_path, monkeypa
     captured = capsys.readouterr()
     assert captured.out == ''
     assert 'ignoring 1 settings' in captured.err
+
+
+def test_stdio_initialize_first_frame_is_json_with_project_notice(tmp_path):
+    import json
+    import os
+    import queue
+    import subprocess
+    import sys
+    import threading
+
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    (run_dir / '.hardy').mkdir()
+    (run_dir / '.hardy' / 'config.toml').write_text('model = "ignored"\n')
+    config_path = tmp_path / 'global.toml'
+    # No CAS kernel is needed to test the transport's initialize handshake.
+    config_path.write_text('cas_backend = "singular"\ncas_command = "/nonexistent-hardy-cas"\n')
+    env = dict(os.environ, HARDY_RUN_DIR=str(run_dir), HARDY_CONFIG=str(config_path), HARDY_ROOT=str(run_dir))
+    env.pop('HARDY_CLAIM_SHA256', None)
+    env.update(HARDY_CAS_BACKEND='singular', HARDY_CAS_COMMAND='/nonexistent-hardy-cas')
+    request = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
+        'protocolVersion': '2024-11-05', 'capabilities': {},
+        'clientInfo': {'name': 'regression', 'version': '1'}}}
+    with subprocess.Popen([sys.executable, '-m', 'hardy.mcp_server'], stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env) as child:
+        try:
+            child.stdin.write(json.dumps(request) + chr(10))
+            child.stdin.flush()
+            lines = queue.Queue()
+            reader = threading.Thread(target=lambda: lines.put(child.stdout.readline()), daemon=True)
+            reader.start()
+            first = json.loads(lines.get(timeout=20))
+            assert first['id'] == 1
+            assert 'result' in first
+            assert first['result']['serverInfo']['name'] == 'Hardy Lean Tools'
+        finally:
+            child.terminate()
+            _, stderr = child.communicate(timeout=10)
+        assert 'ignoring 1 settings' in stderr
