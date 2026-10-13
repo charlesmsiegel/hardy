@@ -19,7 +19,12 @@ def test_real_console_close_event(tmp_path):
     helper = Path(__file__).parents[1] / "fixtures" / "console" / "close_probe.py"
     errors = (tmp_path / "child-stderr.txt").open("w", encoding="utf-8")
     child = subprocess.Popen(
-        [sys.executable, str(helper), str(tmp_path)],
+        [
+            str(Path(os.environ["SYSTEMROOT"]) / "System32" / "conhost.exe"),
+            sys.executable,
+            str(helper),
+            str(tmp_path),
+        ],
         creationflags=subprocess.CREATE_NEW_CONSOLE,
         stdout=subprocess.DEVNULL,
         stderr=errors,
@@ -31,10 +36,20 @@ def test_real_console_close_event(tmp_path):
             assert child.poll() is None, "console probe exited before installing the native handler"
             time.sleep(0.05)
         assert ready.exists(), "native console probe did not become ready"
-        hwnd = json.loads(ready.read_text(encoding="utf-8"))["hwnd"]
+        console = json.loads(ready.read_text(encoding="utf-8"))
+        print(f"native console identity: {console}", flush=True)
+        hwnd = console["hwnd"]
         assert hwnd, "Windows runner provides no console window; real close is unverified"
+        assert console["window_class"] == "ConsoleWindowClass", (
+            "runner supplied a pseudoconsole message window, not a desktop console: " + str(console)
+        )
         user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+        user32.PostMessageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        ]
         user32.PostMessageW.restype = ctypes.c_bool
         assert user32.PostMessageW(hwnd, 0x0010, 0, 0), ctypes.get_last_error()  # WM_CLOSE
         timed_out = False
@@ -47,17 +62,25 @@ def test_real_console_close_event(tmp_path):
             "visible": bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd))),
             "exit": child.poll(),
             "timed_out": timed_out,
-            "files": {path.name: path.read_text(encoding="utf-8") for path in tmp_path.glob("*.json")},
+            "files": {
+                path.name: path.read_text(encoding="utf-8") for path in tmp_path.glob("*.json")
+            },
         }
         print(f"native console transport diagnostics: {evidence}", flush=True)
-        assert not timed_out, "WM_CLOSE accepted but the console process did not terminate; inspect native event evidence"
+        assert not timed_out, (
+            "WM_CLOSE accepted but the console process did not terminate; inspect native event evidence"
+        )
         observed = tmp_path / "native-event.json"
         assert observed.exists(), "WM_CLOSE did not deliver a console event on this Windows runner"
         event = json.loads(observed.read_text(encoding="utf-8"))
-        print(f"native console close evidence: {event}; "
-              f"SIGBREAK={(tmp_path / 'python-sigbreak.json').exists()}; "
-              f"finally={(tmp_path / 'finally.json').exists()}; exit={child.returncode}")
-        assert event["event"] == 2, "must observe CTRL_CLOSE_EVENT, never substitute CTRL_BREAK_EVENT"
+        print(
+            f"native console close evidence: {event}; "
+            f"SIGBREAK={(tmp_path / 'python-sigbreak.json').exists()}; "
+            f"finally={(tmp_path / 'finally.json').exists()}; exit={child.returncode}"
+        )
+        assert event["event"] == 2, (
+            "must observe CTRL_CLOSE_EVENT, never substitute CTRL_BREAK_EVENT"
+        )
     finally:
         if child.poll() is None:
             child.kill()
