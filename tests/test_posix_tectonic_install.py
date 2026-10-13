@@ -73,11 +73,15 @@ def test_shell_tectonic_records_path_and_preserves_existing_config(existing, ski
     import subprocess
     import sys
 
+    from hardy.app.config import read_file
+
     source = Path(__file__).resolve().parents[1] / 'scripts/lib/common.sh'
     venv = tmp_path / 'venv'
     (venv / 'bin').mkdir(parents=True)
     python = venv / 'bin' / 'python'
-    installed = tmp_path / 'tools/tectonic'
+    installed = tmp_path / 'prefix/tools/tectonic/0.16.9/tectonic'
+    installed.parent.mkdir(parents=True)
+    installed.write_text('downloaded compiler')
     python.write_text('#!' + sys.executable + '\n'
                       'import sys\nfrom types import SimpleNamespace\nfrom hardy.app import installers\n'
                       f'installers.install_tectonic=lambda **kwargs: SimpleNamespace(installed_path={str(installed)!r})\n'
@@ -88,7 +92,7 @@ def test_shell_tectonic_records_path_and_preserves_existing_config(existing, ski
         config.write_text('tectonic = "/user/compiler"\n')
     program = '. "$1"; VENV="$2"; WRITE_CONFIG="$3"; ensure_tectonic; printf "selected=%s\\n" "${HARDY_TECTONIC:-}"'
     environment = {key: value for key, value in os.environ.items() if key != 'HARDY_TECTONIC'}
-    environment.update(HOME=str(tmp_path), HARDY_CONFIG=str(config), PYTHONPATH=str(source.parents[2] / 'src'))
+    environment.update(HOME=str(tmp_path), HARDY_HOME=str(tmp_path / 'prefix'), HARDY_CONFIG=str(config), PYTHONPATH=str(source.parents[2] / 'src'))
     result = subprocess.run(['bash', '-c', program, 'test', str(source), str(venv), '0' if skip_config else '1'],
                             env=environment, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -99,7 +103,7 @@ def test_shell_tectonic_records_path_and_preserves_existing_config(existing, ski
         assert not config.exists()
         assert f'selected={installed}' in result.stdout
     else:
-        assert config.read_text() == f'tectonic = "{installed}"\n'
+        assert read_file(config)['tectonic'] == str(installed)
         assert f'selected={installed}' in result.stdout
 
 
@@ -124,3 +128,72 @@ def test_shell_tectonic_skip_and_failure_preserve_config(skip_latex, tmp_path):
     assert result.returncode == (0 if skip_latex else 1)
     assert marker.exists() == (not skip_latex)
     assert config.read_text() == 'model = "configured"\n'
+
+
+def _run_shell_tectonic(tmp_path, contents, env_setting=None, healthy=False):
+    import subprocess
+    import sys
+
+    source = Path(__file__).resolve().parents[1] / 'scripts/lib/common.sh'
+    config = tmp_path / 'config.toml'
+    compiler = tmp_path / 'custom-compiler'
+    if healthy:
+        compiler.write_text('#!/bin/sh\necho tectonic-test\n')
+        compiler.chmod(0o755)
+    if contents is not None:
+        config.write_text(contents.replace('CUSTOM', str(compiler)), encoding='utf-8')
+    venv = tmp_path / 'venv'
+    (venv / 'bin').mkdir(parents=True)
+    worker = venv / 'bin/python'
+    installed = tmp_path / 'prefix/tools/tectonic/0.16.9/tectonic'
+    installed.parent.mkdir(parents=True)
+    installed.write_text('#!/bin/sh\necho downloaded\n')
+    installed.chmod(0o755)
+    marker = tmp_path / 'downloaded'
+    worker.write_text('#!' + sys.executable + '\n'
+                      'import sys\nfrom types import SimpleNamespace\nfrom pathlib import Path\n'
+                      'from hardy.app import installers\n'
+                      f'def fake_install(**kwargs):\n Path({str(marker)!r}).touch(); return SimpleNamespace(installed_path=Path({str(installed)!r}))\n'
+                      'installers.install_tectonic=fake_install\n'
+                      'sys.argv=sys.argv[1:]; exec(sys.stdin.read())\n')
+    worker.chmod(0o755)
+    environment = {key: value for key, value in os.environ.items() if key != 'HARDY_TECTONIC'}
+    environment.update(HOME=str(tmp_path), HARDY_HOME=str(tmp_path / 'prefix'), HARDY_CONFIG=str(config),
+                       PYTHONPATH=str(source.parents[2] / 'src'))
+    if env_setting is not None:
+        environment['HARDY_TECTONIC'] = env_setting.replace('CUSTOM', str(compiler))
+    result = subprocess.run(['bash', '-c', '. "$1"; VENV="$2"; ensure_tectonic; result=$?; '
+                             'printf "selected=%s\\n" "${HARDY_TECTONIC:-}"; exit "$result"',
+                             'test', str(source), str(venv)], env=environment, capture_output=True, text=True, timeout=15)
+    return result, config, marker, installed
+
+
+@pytest.mark.parametrize('contents,environment', [('tectonic = "CUSTOM"\n', None), (None, 'CUSTOM')])
+def test_healthy_effective_compiler_skips_recipe_even_during_outage(tmp_path, contents, environment):
+    result, config, marker, _ = _run_shell_tectonic(tmp_path, contents, environment, healthy=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not marker.exists(), 'an existing healthy compiler must not download'
+    if contents:
+        assert config.read_text() == contents.replace('CUSTOM', str(tmp_path / 'custom-compiler'))
+    else:
+        assert not config.exists()
+
+
+@pytest.mark.parametrize('contents', ['\ufefftectonic = "CUSTOM"\n', '"tectonic" = "CUSTOM"\n'])
+def test_parser_supported_custom_compiler_setting_is_not_duplicated(tmp_path, contents):
+    from hardy.app.config import read_file
+
+    result, config, _, _ = _run_shell_tectonic(tmp_path, contents)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert config.read_text() == contents.replace('CUSTOM', str(tmp_path / 'custom-compiler'))
+    assert read_file(config)['tectonic'] == str(tmp_path / 'custom-compiler')
+
+
+@pytest.mark.parametrize('contents', ['tectonic = ""\n', '\ufeff"tectonic" = ""\n', '"tec\\u0074onic" = ""\n'])
+def test_semantically_empty_compiler_is_upserted_through_config_writer(tmp_path, contents):
+    from hardy.app.config import read_file
+
+    result, config, _, installed = _run_shell_tectonic(tmp_path, contents, env_setting='')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert read_file(config)['tectonic'] == str(installed)
+    assert f'selected={installed}' in result.stdout
