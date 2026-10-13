@@ -51,8 +51,18 @@ class CancelToken:
                 return
             self._event.set()
             callbacks, self._callbacks = self._callbacks, []
+        errors: list[Exception] = []
         for callback in callbacks:
-            callback()
+            try:
+                callback()
+            except Exception as error:  # noqa: BLE001 - a failed interrupt must not skip other cancellation callbacks
+                errors.append(error)
+        if errors:
+            for error in errors[1:]:
+                errors[0].add_note(f"Additional cancellation callback failure: {type(error).__name__}: {error}")
+                for note in getattr(error, "__notes__", ()):
+                    errors[0].add_note(note)
+            raise errors[0]
 
 
 @dataclass(frozen=True)

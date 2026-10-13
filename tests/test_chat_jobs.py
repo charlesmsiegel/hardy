@@ -317,3 +317,83 @@ def test_a_browser_check_waits_behind_a_detached_job_for_the_tool_gate(tmp_path:
     finally:
         tool.release.set()
         chat.close()
+
+
+def test_session_close_attempts_all_stages_preserves_errors_and_retries():
+    from types import SimpleNamespace
+
+    import pytest
+
+    from hardy.workflows.interactive.session import MathematicsSession
+
+    chat = object.__new__(MathematicsSession)
+    chat._closed = False
+    reached = []
+    first = OSError('journal full')
+    def fail_cancel(**kwargs):
+        reached.append('cancel')
+        raise first
+    def fail_jobs():
+        reached.append('jobs')
+        secondary = RuntimeError('kernel interrupt failed')
+        secondary.add_note('second kernel interruption failed')
+        raise secondary
+    chat.delegations = SimpleNamespace(cancel_all=fail_cancel, shutdown=lambda: reached.append('shutdown'))
+    chat.jobs = SimpleNamespace(close=fail_jobs)
+    with pytest.raises(OSError) as error:
+        chat.close()
+    assert error.value is first
+    assert reached == ['cancel', 'jobs', 'shutdown']
+    assert 'kernel interrupt failed' in str(error.value.__notes__)
+    assert 'second kernel interruption failed' in str(error.value.__notes__)
+    chat.delegations.cancel_all = lambda **kwargs: reached.append('retry cancel')
+    chat.jobs.close = lambda: reached.append('retry jobs') or ()
+    chat.close()
+    assert chat._closed and reached[-3:] == ['retry cancel', 'retry jobs', 'shutdown']
+
+
+def test_jobs_close_cancels_remaining_jobs_when_cas_interrupt_fails():
+    from types import SimpleNamespace
+
+    import pytest
+
+    from hardy.workflows.interactive.jobs import ComputationJobs, _Job
+
+    def interrupt():
+        raise OSError('CAS interrupt failed')
+    jobs = ComputationJobs(detach_after=.01, gate=threading.Lock(), record=lambda _: 0, recorded=lambda: iter(()),
+                           delegations=None, notify=lambda _: None, tally=lambda *_: None,
+                           cas_session=lambda: SimpleNamespace(interrupt=interrupt))
+    first = _Job(name='cas_run', arguments={}, call_id='one', objective='CAS', id='one')
+    second = _Job(name='check_lean', arguments={}, call_id='two', objective='Lean', id='two')
+    for job in (first, second):
+        job.token.on_cancel(lambda current=job: jobs._cancel(current))
+        job.done.set()
+    jobs._running = {'one': first, 'two': second}
+    with pytest.raises(OSError, match='CAS interrupt failed'):
+        jobs.close()
+    assert first.cancelled and first.token.cancelled
+    assert second.cancelled and second.token.cancelled
+
+
+def test_cancel_token_failure_still_releases_waiting_worker():
+    import pytest
+
+    from hardy.agents.executor import CancelToken
+
+    token = CancelToken()
+    release = threading.Event()
+    settled = threading.Event()
+    def interrupt():
+        raise OSError('CAS interrupt failed')
+    token.on_cancel(interrupt)
+    token.on_cancel(release.set)
+    worker = threading.Thread(target=lambda: (release.wait(5), settled.set()))
+    worker.start()
+    try:
+        with pytest.raises(OSError, match='CAS interrupt failed'):
+            token.cancel()
+        assert release.is_set() and settled.wait(1)
+    finally:
+        release.set()
+        worker.join(5)
