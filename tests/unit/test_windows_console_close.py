@@ -17,11 +17,12 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires a native Windo
 
 def test_real_console_close_event(tmp_path):
     helper = Path(__file__).parents[1] / "fixtures" / "console" / "close_probe.py"
+    errors = (tmp_path / "child-stderr.txt").open("w", encoding="utf-8")
     child = subprocess.Popen(
         [sys.executable, str(helper), str(tmp_path)],
         creationflags=subprocess.CREATE_NEW_CONSOLE,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=errors,
     )
     try:
         deadline = time.monotonic() + 15
@@ -61,3 +62,4 @@ def test_real_console_close_event(tmp_path):
         if child.poll() is None:
             child.kill()
         child.wait(timeout=10)
+        errors.close()

@@ -16,4 +16,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Observe real CTRL_CLOSE_EVENT
-        run: uv run --python 3.12 --extra test pytest -s -v tests/unit/test_windows_console_close.py
+        run: uv run --python 3.12 --extra test pytest -s -v tests/unit/test_windows_console_close.py --basetemp=console-probe-evidence
+      - name: Keep native console diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-console-evidence
+          path: console-probe-evidence/
+          if-no-files-found: warn
