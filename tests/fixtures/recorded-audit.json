@@ -43,7 +43,10 @@
   ]
  },
  "prove-verified/undeclared-assumption": {
-  "recorded": []
+  "recorded": [
+   "unlisted artifact: assumptions.json",
+   "assumptions.json is not a valid declared-assumption list"
+  ]
  },
  "prove-verified/forged-formal-grade": {
   "recorded": [
@@ -63,7 +66,8 @@
  },
  "prove-verified/malformed-trajectory": {
   "recorded": [
-   "raised JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+   "trajectory.jsonl line 28 is not a JSON object",
+   "trajectory has no final terminal event"
   ]
  },
  "prove-verified/truncated-trajectory": {

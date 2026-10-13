@@ -304,12 +304,10 @@ def test_the_checked_in_runs_pass_and_the_exceptions_are_named():
 
 
 # Mutations the reader accepts. Some change nothing the reader is meant to
-# judge (a false-statement run already ends `no_proof_submitted`; an
-# `assumptions.json` beside a kernel-verified run declares nothing the
-# evidence uses); the others are recorded as found. Changing what the reader
+# judge (a false-statement run already ends `no_proof_submitted`); the
+# others are recorded as found. Changing what the reader
 # accepts is a behaviour change and belongs in a commit of its own.
 ACCEPTED = frozenset({
-    "prove-verified/undeclared-assumption",
     "batch-verified/dropped-event",
     "batch-verified/inconsistent-turns",
     "batch-false-statement/dropped-event",
@@ -321,7 +319,7 @@ ACCEPTED = frozenset({
 
 # Mutations the reader meets with an exception rather than a finding. Nothing
 # is accepted, but `hardy accept --recorded` reports a traceback, not a reason.
-RAISES = frozenset({"prove-verified/malformed-trajectory"})
+RAISES = frozenset()
 
 
 def regenerate() -> None:
