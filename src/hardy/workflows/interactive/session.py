@@ -2188,7 +2188,10 @@ class MathematicsSession:
     def _unreached_tex(self) -> list[str]:
         return self.documents._unreached_tex()
 
-    def _theorem_counts(self) -> tuple[int, int]:
+    def _theorem_counts(
+        self, owed: tuple[completion.Obligation, ...] | None = None,
+        sources: dict[str, str] | None = None,
+    ) -> tuple[int, int]:
         """(machine-checked theorems, open theorems), from `_obligations` and
         `_saved_theorems`.
 
@@ -2197,10 +2200,11 @@ class MathematicsSession:
         the same set arithmetic. One place computing it is one place to get it
         right.
         """
-        owed = self._obligations()
+        sources = self.lean_workspace.sources() if sources is None else sources
+        owed = self._obligations(sources) if owed is None else owed
         gaps = {item.subject for item in owed if item.kind == "lean"}
         opened = {item.subject for item in owed if item.kind == "open"}
-        saved = self._saved_theorems()
+        saved = self._saved_theorems(sources)
         return len(saved - gaps - opened), len(saved & opened)
 
     def _steering_block(self) -> str:
@@ -4468,10 +4472,11 @@ class MathematicsSession:
         because "1 theorem machine-checked" was true of a vacuous restatement
         of Sylow III while saying more than the theorem did.
         """
-        owed = self._obligations()
+        sources = self.lean_workspace.sources()
+        owed = self._obligations(sources)
         unbacked = sum(1 for item in owed if item.kind == "theorem")
         opened = {item.subject for item in owed if item.kind == "open"}
-        checked, _ = self._theorem_counts()
+        checked, _ = self._theorem_counts(owed, sources)
         assumed = len(self.state["assumptions"])
         parts = [
             f"\\textbf{{Hardy}} --- {checked} theorem{'' if checked == 1 else 's'} "
@@ -4497,7 +4502,7 @@ class MathematicsSession:
                 f"{count} theorem{'' if count == 1 else 's'} here "
                 f"{'is' if count == 1 else 'are'} still open ({listed})"
             )
-        flagged = self._automation_closed()
+        flagged = self._automation_closed(sources)
         if flagged:
             # Named, for the open clause's reason: this is about particular
             # claims printed on the pages in front of the reader, and a count
