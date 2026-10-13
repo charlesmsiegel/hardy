@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -195,25 +194,10 @@ def _subscription_checks() -> list[Check]:
 
 
 def _login_check(cli: str) -> Check:
-    """Whether the subscription is actually signed in.
+    from hardy.app.claude_auth import check_login
 
-    `--version` would prove only that the executable exists, and reporting that
-    as authentication would let doctor call a logged-out machine ready — the
-    failure would then arrive on the first model call instead of here.
-    """
-    try:
-        finished = run_guarded([cli, "auth", "status"], timeout=30)
-    except (OSError, subprocess.SubprocessError) as error:
-        return Check("claude login", False, f"could not run {cli}: {error}")
-    if finished.interrupted or finished.timed_out:
-        return Check("claude login", False, f"{cli} auth status did not finish")
-    try:
-        status = json.loads(finished.stdout)
-    except (json.JSONDecodeError, TypeError):
-        return Check("claude login", False, "could not read `claude auth status`; run `claude login`")
-    if not status.get("loggedIn"):
-        return Check("claude login", False, "not signed in; run `claude login` to use your subscription")
-    return Check("claude login", True, f"signed in via {status.get('authMethod', 'unknown method')}")
+    ok, detail = check_login(cli, runner=run_guarded)
+    return Check("claude login", ok, detail)
 
 
 def _mathlib_check(config: Config) -> Check:
@@ -266,16 +250,17 @@ def run_checks(config: Config, *, deep: bool = False, backend: str | None = None
         _toolchain_pin_check(config),
     ]
 
+    installer = "scripts/install-windows.ps1" if os.name == "nt" else "scripts/install.sh"
     lean_executable = config.lean_command[0]
-    if shutil.which(lean_executable) is None:
-        checks.append(Check("lean", False, f"{lean_executable} not found on PATH; install elan (see scripts/install.sh)"))
+    if shutil.which(lean_executable) is None and not Path(lean_executable).is_file():
+        checks.append(Check("lean", False, f"{lean_executable} not found on PATH; run hardy setup or install elan (see {installer})"))
     else:
         ok, detail = _probe([*config.lean_command, "--version"], cwd=config.lean_project)
         checks.append(Check("lean", ok, detail))
 
     latex_executable = config.latex_command[0]
-    if shutil.which(latex_executable) is None:
-        checks.append(Check("latex", False, f"{latex_executable} not found on PATH; install a TeX distribution (see scripts/install.sh)"))
+    if shutil.which(latex_executable) is None and not Path(latex_executable).is_file():
+        checks.append(Check("latex", False, f"{latex_executable} not found on PATH; run hardy setup or install a TeX distribution (see {installer})"))
     else:
         ok, detail = _probe([latex_executable, "--version"], timeout=60)
         checks.append(Check("latex", ok, detail))

@@ -200,3 +200,14 @@ def test_a_declined_lean_project_writes_nothing(tmp_path) -> None:
     assert outcome.status == 'declined'
     assert outcome.installed_path is None
     assert not project.exists()
+
+
+def test_a_file_at_the_lean_project_path_is_refused_untouched(tmp_path):
+    installers = importlib.import_module('hardy.app.installers')
+    project = tmp_path / 'lean'
+    project.write_bytes(b'mine')
+    outcome = installers.create_lean_project(lean_project=project, confirmer=lambda _: True)
+    assert outcome.status == 'failed'
+    assert str(project) in outcome.manual_instructions
+    assert 'not a directory' in outcome.manual_instructions
+    assert project.read_bytes() == b'mine'

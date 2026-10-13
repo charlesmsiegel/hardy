@@ -76,14 +76,20 @@ def ensure_codex_login(
 
 
 def probe_claude() -> tuple[bool, str]:
-    """Report whether the Claude Code CLI the agent SDK drives is present."""
+    """Report SDK presence and the CLI login, using the same check as doctor."""
     from importlib import metadata
 
     try:
         version = metadata.version("claude-agent-sdk")
     except metadata.PackageNotFoundError:
         return False, "claude-agent-sdk is not installed"
-    return shutil.which("claude") is not None, f"claude-agent-sdk {version}"
+    from hardy.app.claude_auth import check_login
+
+    cli = shutil.which("claude")
+    if cli is None:
+        return False, f"claude-agent-sdk {version}; claude CLI is not on PATH"
+    ok, detail = check_login(cli)
+    return ok, f"claude-agent-sdk {version}" + (f"; {detail}" if not ok else "")
 
 
 def probe_api() -> tuple[bool, str]:
@@ -172,7 +178,7 @@ def discover_environment(
         path=None,
         version=backend_version,
         healthy=authenticated,
-        detail="authenticated" if authenticated else "authentication required",
+        detail="authenticated" if authenticated else f"authentication required: {backend_version}",
     )
     elan_status = _version_status(
         "elan", elan, (str(elan), "--version") if elan else (), config, runner
