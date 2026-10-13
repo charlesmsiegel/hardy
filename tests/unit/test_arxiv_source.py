@@ -34,7 +34,7 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
 </feed>
 """
 
-PAPER = "math.DG/0211159v1"
+PAPER = "math/0211159v1"
 MAIN = b"\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n"
 
 
@@ -136,7 +136,7 @@ def test_an_unversioned_identifier_admits_nothing(held) -> None:
     _, library, _ = held
     with pytest.raises(arxiv.ArxivError, match="version"):
         library.admit_source(
-            arxiv.parse_id("math.DG/0211159"), _bundle(), source_url="u", fetched_at="t"
+            arxiv.parse_id("math/0211159"), _bundle(), source_url="u", fetched_at="t"
         )
 
 
@@ -244,7 +244,7 @@ def test_fetching_a_source_asks_the_e_print_endpoint_once(held) -> None:
 
     assert not already
     assert len(transport.urls) == 1
-    assert transport.urls[0].endswith("/e-print/math.DG/0211159v1")
+    assert transport.urls[0].endswith("/e-print/math/0211159v1")
     assert library.holds_source(identifier)
     assert [item.path for item in manifest.files] == ["main.tex"]
 
@@ -285,7 +285,7 @@ def test_an_unversioned_source_fetch_is_refused(held) -> None:
     client, _, transport = held
 
     with pytest.raises(arxiv.ArxivError, match="version"):
-        client.fetch_source("math.DG/0211159")
+        client.fetch_source("math/0211159")
 
     assert transport.urls == []
 
@@ -344,3 +344,13 @@ def test_a_directory_taking_a_reserved_name_is_refused_rather_than_crashing(held
         )
 
     assert not library.holds_source(arxiv.parse_id(PAPER))
+
+
+def test_subject_class_source_spelling_reuses_canonical_tree(held) -> None:
+    client, library, transport = held
+    first, _ = client.fetch_source('math.GT/0211159v1')
+    second, already = client.fetch_source(PAPER)
+    assert first == second and already
+    assert first.arxiv_id == PAPER
+    assert library.read_source(arxiv.parse_id('math.GT/0211159v1'), 'main.tex')
+    assert len(transport.urls) == 1

@@ -330,3 +330,52 @@ def test_a_member_name_that_is_not_utf_8_is_refused_by_name(into: Path) -> None:
         archives.extract(buffer.getvalue(), into)
 
     assert _files(into) == set()
+
+
+@pytest.mark.parametrize('name', ['main.tex.', 'main.tex ', 'fig.png:hidden', 'nul', 'aux.tex', 'COM1.sty', 'conin$', 'lpt¹.txt', 'bad?.tex'])
+def test_nonportable_member_names_are_refused(name: str) -> None:
+    with pytest.raises(archives.ArchiveError):
+        archives.member_path(name)
+
+
+def _zip_members(*names: str) -> bytes:
+    import zipfile
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in names:
+            archive.writestr(name, b'hello world ' * 100)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize('kind', ['tar', 'zip'])
+@pytest.mark.parametrize('names', [('Main.tex', 'main.tex'), ('é.tex', 'e\u0301.tex'), ('a', 'A/b.tex'), ('A/x.tex', 'a/y.tex')])
+def test_portable_aliases_are_refused_whole(into: Path, kind: str, names: tuple[str, str]) -> None:
+    data = _zip_members(*names) if kind == 'zip' else _tar(*[(name, b'hello', 'file') for name in names])
+    with pytest.raises(archives.ArchiveError):
+        archives.extract(data, into)
+    assert list(into.iterdir()) == []
+
+
+@pytest.mark.parametrize('kind', ['tar', 'zip'])
+@pytest.mark.parametrize('root', ['.', './', './/'])
+def test_root_directory_entry_is_ignored(into: Path, kind: str, root: str) -> None:
+    data = _zip_members(root + '/' if not root.endswith('/') else root, './main.tex') if kind == 'zip' else _tar((root, None, 'dir'), ('./main.tex', b'hello', 'file'))
+    result = archives.extract(data, into, limits=archives.Limits(max_files=1))
+    assert [item.path for item in result.files] == ['main.tex']
+
+
+@pytest.mark.parametrize('defect', ['encrypted', 'method', 'deflate'])
+def test_unreadable_zip_is_refused_by_name(into: Path, defect: str) -> None:
+    raw = bytearray(_zip_members('main.tex'))
+    central = raw.index(b'PK\x01\x02')
+    if defect == 'encrypted':
+        raw[6] |= 1
+        raw[central + 8] |= 1
+    elif defect == 'method':
+        raw[8:10] = (6).to_bytes(2, 'little')
+        raw[central + 10:central + 12] = (6).to_bytes(2, 'little')
+    else:
+        raw[38:46] = b'\xff' * 8
+    with pytest.raises(archives.ArchiveError):
+        archives.extract(bytes(raw), into)
+    assert list(into.iterdir()) == []

@@ -22,6 +22,7 @@ from hardy.literature.metadata import (
     SOURCE_ENDPOINT,
     USER_AGENT,
     ArxivError,
+    Download,
     PaperRecord,
     SourceManifest,
     Transport,
@@ -30,6 +31,26 @@ from hardy.literature.metadata import (
     _stamp,
     parse_id,
 )
+
+
+class _ArxivRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow only HTTPS redirects within the original origin."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self.origin = urllib.parse.urlsplit(url)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            target = urllib.parse.urlsplit(newurl)
+            port = target.port
+        except ValueError as error:
+            raise ArxivError(f"arXiv redirected to an invalid URL: {newurl}") from error
+        if (target.scheme != "https" or target.hostname != self.origin.hostname
+                or port not in (None, 443) or target.username is not None
+                or target.password is not None):
+            raise ArxivError(f"arXiv redirected to {newurl}; refusing a changed origin")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _http(url: str, timeout: float, limit: int | None = None) -> bytes:
@@ -48,7 +69,8 @@ def _http(url: str, timeout: float, limit: int | None = None) -> bytes:
     deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        opened = urllib.request.urlopen(request, timeout=timeout)  # noqa: S310 - fixed https endpoint
+        opener = urllib.request.build_opener(_ArxivRedirect(url))
+        opened = opener.open(request, timeout=timeout)  # noqa: S310 - HTTPS redirects restricted to origin
     except urllib.error.HTTPError as error:
         raise ArxivError(f"arXiv answered HTTP {error.code} {error.reason}") from error
     except (OSError, http.client.HTTPException) as error:
@@ -66,6 +88,7 @@ def _http(url: str, timeout: float, limit: int | None = None) -> bytes:
     # descends from `HTTPException` and would have walked straight through an
     # `OSError` handler.
     with opened as response:
+        resolved_url = response.geturl() if hasattr(response, "geturl") else url
         chunks: list[bytes] = []
         received = 0
         wanted = bound + 1
@@ -97,7 +120,7 @@ def _http(url: str, timeout: float, limit: int | None = None) -> bytes:
     body = b"".join(chunks)
     if len(body) > bound:
         raise ArxivError(f"the arXiv response exceeds {bound} bytes")
-    return body
+    return Download(body, resolved_url if resolved_url != url else "")
 
 
 class ArxivClient:

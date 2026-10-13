@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import textwrap
+import urllib.parse
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -101,11 +102,21 @@ def parse_id(raw: str) -> ArxivId:
     for pattern in (NEW_STYLE, OLD_STYLE):
         found = pattern.fullmatch(text)
         if found:
-            return ArxivId(found.group(1), int(found.group(2)) if found.group(2) else None)
+            stem = re.sub(r"^([a-z-]+)\.[A-Z]{2}/", r"\1/", found.group(1))
+            return ArxivId(stem, int(found.group(2)) if found.group(2) else None)
     raise ArxivError(
         f"{raw!r} is not an arXiv identifier; expected something like 2401.12345v2 "
         "or math.GT/0211159v1"
     )
+
+
+class Download(bytes):
+    """Downloaded bytes with the final HTTPS response URL, if redirected."""
+
+    def __new__(cls, body: bytes, resolved_url: str = ""):
+        value = super().__new__(cls, body)
+        value.resolved_url = resolved_url
+        return value
 
 
 class PaperRecord(FrozenModel):
@@ -133,6 +144,7 @@ class PaperRecord(FrozenModel):
     abs_url: str = ""
     #: What Hardy asked for, so the record says where it came from.
     source_url: str = ""
+    resolved_url: str = ""
     fetched_at: str = ""
     content_sha256: str = ""
     content_bytes: int = 0
@@ -174,6 +186,8 @@ class PaperRecord(FrozenModel):
         # for.
         if self.source_url:
             head.extend(_wrapped(f"Source: {self.source_url}"))
+        if self.resolved_url:
+            head.extend(_wrapped(f"Resolved source: {self.resolved_url}"))
         if self.fetched_at:
             head.append(f"Retrieved: {self.fetched_at}")
         if self.response_sha256:
@@ -264,6 +278,7 @@ class SourceManifest(FrozenModel):
     archive_sha256: str
     archive_bytes: int
     source_url: str = ""
+    resolved_url: str = ""
     fetched_at: str = ""
     files: tuple[SourceFile, ...] = ()
 
@@ -325,6 +340,15 @@ def _coherent(identifier: ArxivId, record: PaperRecord) -> None:
             f"the record stored under {identifier} says its metadata came from "
             f"{record.source_url[:200]!r}, which is not arXiv's API"
         )
+    if record.resolved_url:
+        try:
+            target = urllib.parse.urlsplit(record.resolved_url)
+            port = target.port
+        except ValueError as error:
+            raise ArxivError(f"the record stored under {identifier} has invalid redirect provenance") from error
+        if (target.scheme != "https" or target.hostname != "export.arxiv.org"
+                or port not in (None, 443) or target.username is not None):
+            raise ArxivError(f"the record stored under {identifier} has invalid redirect provenance")
     try:
         datetime.fromisoformat(record.fetched_at)
     except ValueError as error:
@@ -362,6 +386,12 @@ def _entries(body: bytes, source_url: str, fetched_at: str) -> tuple[PaperRecord
     records = []
     for entry in root.findall(f"{ATOM}entry"):
         record = _entry(entry, source_url, fetched_at, response_digest)
+        if record is not None and getattr(body, "resolved_url", ""):
+            record = record.model_copy(update={"resolved_url": body.resolved_url})
+            record = record.model_copy(update={
+                "content_sha256": digest(record.content()),
+                "content_bytes": len(record.content().encode("utf-8")),
+            })
         if record is not None:
             records.append(record)
     return tuple(records)

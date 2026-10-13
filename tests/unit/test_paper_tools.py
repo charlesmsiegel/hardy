@@ -33,7 +33,7 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def _feed(
-    identifier: str = "math.DG/0211159v1",
+    identifier: str = "math/0211159v1",
     title: str = "The entropy formula for the Ricci flow",
     abstract: str = "We present a monotonic expression for the Ricci flow.",
 ) -> bytes:
@@ -78,24 +78,24 @@ def test_a_search_returns_leads_and_records_nothing(tmp_path: Path):
     result = runtime.call("search_papers", {"query": "ricci flow"})
     assert result.ok
     payload = _json(result)
-    assert payload["results"][0]["paper_id"] == "math.DG/0211159v1"
+    assert payload["results"][0]["paper_id"] == "math/0211159v1"
     assert not payload["results"][0]["held"]
     assert runtime.library.stored() == ()
 
 
 def test_a_fetch_pins_a_version(tmp_path: Path):
     runtime = _runtime(tmp_path)
-    payload = _json(runtime.call("fetch_paper", {"paper_id": "math.DG/0211159"}))
-    assert payload["paper_id"] == "math.DG/0211159v1"
+    payload = _json(runtime.call("fetch_paper", {"paper_id": "math/0211159"}))
+    assert payload["paper_id"] == "math/0211159v1"
     assert not payload["already_held"]
     assert payload["content_sha256"]
-    assert runtime.library.stored() == ("math.DG/0211159v1",)
+    assert runtime.library.stored() == ("math/0211159v1",)
 
 
 def test_a_second_fetch_says_it_was_already_held(tmp_path: Path):
     runtime = _runtime(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    assert _json(runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"}))["already_held"]
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    assert _json(runtime.call("fetch_paper", {"paper_id": "math/0211159v1"}))["already_held"]
 
 
 def test_reading_an_unfetched_paper_says_to_fetch_it(tmp_path: Path):
@@ -106,24 +106,24 @@ def test_reading_an_unfetched_paper_says_to_fetch_it(tmp_path: Path):
 
 def test_reading_serves_what_was_stored(tmp_path: Path):
     runtime = _runtime(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1"})
     assert result.ok
     assert "monotonic expression" in result.output
-    assert "arXiv:math.DG/0211159v1" in result.output
+    assert "arXiv:math/0211159v1" in result.output
 
 
 def test_a_long_record_comes_back_bounded_and_says_how_to_read_on(tmp_path: Path):
     runtime = _runtime(
         tmp_path, _feed(abstract="\n".join(f"line {n}" for n in range(500))), observation_bytes=256
     )
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1"})
     assert result.ok
     assert "start_line" in result.output
     assert len(result.output.encode("utf-8")) < 2_000
     later = runtime.call(
-        "read_paper", {"paper_id": "math.DG/0211159v1", "start_line": 20}
+        "read_paper", {"paper_id": "math/0211159v1", "start_line": 20}
     )
     assert later.ok
     assert later.output != result.output
@@ -141,16 +141,16 @@ def test_citing_an_unfetched_paper_is_refused(tmp_path: Path):
 def test_citing_an_unversioned_identifier_is_refused(tmp_path: Path):
     """An unversioned citation cites whatever has been uploaded since."""
     runtime = _runtime(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("cite_paper", {"paper_id": "math/0211159"})
     assert not result.ok
     assert "no version" in result.output
 
 
 def test_citing_returns_a_key_and_writes_the_bibliography(tmp_path: Path):
     runtime = _runtime(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    payload = _json(runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"}))
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    payload = _json(runtime.call("cite_paper", {"paper_id": "math/0211159v1"}))
     assert payload["cite_key"].startswith("perelman2002entropy-")
     assert payload["added"]
     assert "\\input" in payload["note"]
@@ -160,9 +160,9 @@ def test_citing_returns_a_key_and_writes_the_bibliography(tmp_path: Path):
 
 def test_citing_the_same_paper_twice_adds_one_entry(tmp_path: Path):
     runtime = _runtime(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    first = _json(runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"}))
-    second = _json(runtime.call("cite_paper", {"paper_id": "arXiv:math.DG/0211159v1"}))
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    first = _json(runtime.call("cite_paper", {"paper_id": "math/0211159v1"}))
+    second = _json(runtime.call("cite_paper", {"paper_id": "arXiv:math/0211159v1"}))
     assert second["cite_key"] == first["cite_key"]
     assert not second["added"]
     assert second["entries"] == 1
@@ -224,7 +224,7 @@ def test_a_search_answer_is_bounded_like_every_other_observation(tmp_path: Path)
     # The list is never cut: a shortened list hides papers the search found,
     # and a model cannot tell that from a search that found fewer.
     assert len(payload["results"]) == 1
-    assert payload["results"][0]["paper_id"] == "math.DG/0211159v1"
+    assert payload["results"][0]["paper_id"] == "math/0211159v1"
 
 
 def test_a_search_abstract_is_clipped_before_the_whole_thing_is_dropped(tmp_path: Path):
@@ -243,13 +243,13 @@ def test_a_filesystem_failure_is_a_tool_result_rather_than_a_traceback(tmp_path:
     own record cannot describe afterwards.
     """
     runtime = _runtime(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
 
     def refuse(*args, **kwargs):
         raise OSError(28, "No space left on device")
 
     runtime.bibliography.cite = refuse
-    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("cite_paper", {"paper_id": "math/0211159v1"})
     assert not result.ok
     assert "could not be written" in result.output
 
@@ -262,7 +262,7 @@ def test_a_search_answer_fits_even_when_the_metadata_alone_is_huge(tmp_path: Pat
     """
     authors = "".join(f"<author><name>Author {n}</name></author>" for n in range(2_000))
     feed = FEED.format(
-        identifier="math.DG/0211159v1", title="T" * 4_000, abstract="a" * 4_000
+        identifier="math/0211159v1", title="T" * 4_000, abstract="a" * 4_000
     ).replace("<author><name>Grigori Perelman</name></author>", authors)
     runtime = _runtime(tmp_path, feed.encode("utf-8"), observation_bytes=2_048)
     result = runtime.call("search_papers", {"query": "ricci flow"})
@@ -271,7 +271,7 @@ def test_a_search_answer_fits_even_when_the_metadata_alone_is_huge(tmp_path: Pat
     payload = _json(result)
     # Every paper survives, whatever else does not: a shortened list is
     # indistinguishable from a search that found fewer.
-    assert [item["paper_id"] for item in payload["results"]] == ["math.DG/0211159v1"]
+    assert [item["paper_id"] for item in payload["results"]] == ["math/0211159v1"]
 
 
 def test_the_throttle_is_shared_across_project_roots(tmp_path: Path):
@@ -287,14 +287,14 @@ def test_a_fetch_answer_is_bounded_too(tmp_path: Path):
     """The one answer that put whatever arrived straight into the context."""
     authors = "".join(f"<author><name>Author {n}</name></author>" for n in range(3_000))
     feed = FEED.format(
-        identifier="math.DG/0211159v1", title="T" * 5_000, abstract="a"
+        identifier="math/0211159v1", title="T" * 5_000, abstract="a"
     ).replace("<author><name>Grigori Perelman</name></author>", authors)
     runtime = _runtime(tmp_path, feed.encode("utf-8"), observation_bytes=4_096)
-    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
     assert result.ok
     assert len(result.output.encode("utf-8")) <= 4_096
     payload = _json(result)
-    assert payload["paper_id"] == "math.DG/0211159v1"
+    assert payload["paper_id"] == "math/0211159v1"
     assert "more" in payload["authors"][-1]
 
 
@@ -303,14 +303,14 @@ def test_a_fetch_answer_fits_even_when_one_field_is_enormous(tmp_path: Path):
     runtime = _runtime(
         tmp_path,
         FEED.format(
-            identifier="math.DG/0211159v1", title="T" * 200_000, abstract="a"
+            identifier="math/0211159v1", title="T" * 200_000, abstract="a"
         ).encode("utf-8"),
         observation_bytes=1_024,
     )
-    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
     assert result.ok
     assert len(result.output.encode("utf-8")) <= 1_024
-    assert _json(result)["paper_id"] == "math.DG/0211159v1"
+    assert _json(result)["paper_id"] == "math/0211159v1"
 
 
 def test_every_line_of_a_stored_record_can_be_reached(tmp_path: Path):
@@ -324,16 +324,16 @@ def test_every_line_of_a_stored_record_can_be_reached(tmp_path: Path):
     runtime = _runtime(
         tmp_path,
         FEED.format(
-            identifier="math.DG/0211159v1", title="T", abstract="word " * 4_000
+            identifier="math/0211159v1", title="T", abstract="word " * 4_000
         ).encode("utf-8"),
         observation_bytes=2_048,
     )
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
     seen = ""
     start = 1
     for _ in range(200):
         result = runtime.call(
-            "read_paper", {"paper_id": "math.DG/0211159v1", "start_line": start}
+            "read_paper", {"paper_id": "math/0211159v1", "start_line": start}
         )
         assert result.ok, result.output
         seen += result.output
@@ -383,14 +383,14 @@ def test_a_paged_read_stays_inside_the_configured_budget(tmp_path: Path):
     the configured ceiling -- by a little, on every long read.
     """
     runtime = _runtime(tmp_path, _feed(abstract="word " * 20_000), observation_bytes=2048)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1"})
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 2048
     assert "start_line=" in result.output
     # And the continuation it offers is itself inside the budget.
     line = int(result.output.split("start_line=")[1].split(" ")[0].rstrip("."))
-    more = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": line})
+    more = runtime.call("read_paper", {"paper_id": "math/0211159v1", "start_line": line})
     assert more.ok, more.output
     assert len(more.output.encode("utf-8")) <= 2048
 
@@ -446,10 +446,10 @@ def test_a_fetch_answer_fits_the_budget_even_when_the_identity_does_not(tmp_path
     path was the one that overran it.
     """
     runtime = _runtime(tmp_path, observation_bytes=128)
-    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 128
-    assert "math.DG/0211159v1" in result.output
+    assert "math/0211159v1" in result.output
 
 
 def test_an_empty_search_answer_is_measured_like_every_other(tmp_path: Path):
@@ -473,8 +473,8 @@ def test_a_citation_answer_is_measured_and_never_loses_its_key(tmp_path: Path):
     a caller that does not get it cannot cite the paper it just recorded.
     """
     runtime = _runtime(tmp_path, observation_bytes=96)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("cite_paper", {"paper_id": "math/0211159v1"})
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 96
     assert json.loads(result.output)["cite_key"]
@@ -487,8 +487,8 @@ def test_a_window_that_cannot_fit_is_refused_not_returned_oversized(tmp_path: Pa
     offered next skips the part that was cut -- a page that cannot be turned.
     """
     runtime = _runtime(tmp_path, _feed(abstract="word " * 5_000), observation_bytes=96)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    refused = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    refused = runtime.call("read_paper", {"paper_id": "math/0211159v1"})
     assert not refused.ok
     assert "does not fit" in refused.output
     # And the refusal is measured like the answer it declined to give. It was
@@ -501,8 +501,8 @@ def test_a_window_that_cannot_fit_is_refused_not_returned_oversized(tmp_path: Pa
 def test_a_start_line_past_the_end_is_refused_within_the_budget(tmp_path: Path):
     """The other refusal `read_paper` writes, measured the same way."""
     runtime = _runtime(tmp_path, _feed(), observation_bytes=96)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": 9_999})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1", "start_line": 9_999})
     assert not result.ok
     assert len(result.output.encode("utf-8")) <= 96
 
@@ -536,8 +536,8 @@ def test_a_long_cite_key_sheds_the_json_around_it(tmp_path: Path):
     # Between the two: a 71-byte key fits, and the 87 bytes of the smallest
     # JSON carrying it does not.
     runtime = _runtime(tmp_path, feed.encode("utf-8"), observation_bytes=80)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    result = runtime.call("cite_paper", {"paper_id": "math/0211159v1"})
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 80
     # The key survives whole -- it is the whole answer, and a truncated cite
@@ -557,12 +557,12 @@ def test_a_window_whose_first_line_was_clipped_is_refused(tmp_path: Path):
     omitted middle is unreachable by any later call.
     """
     runtime = _runtime(tmp_path, _feed(abstract="word " * 400), observation_bytes=160)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
     # Line 11 is a 94-byte wrapped abstract line, and the continuation note
     # for it runs to about 120 bytes -- so no shrunken budget holds both, and
     # what used to come back was that line with its tail cut off and a
     # `start_line` pointing past the cut.
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": 11})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1", "start_line": 11})
     assert not result.ok, result.output
     assert "does not fit" in result.output
 
@@ -577,10 +577,10 @@ def test_a_long_identity_sheds_down_to_the_paper_id(tmp_path: Path):
     where shortening the answer would name a different paper.
     """
     runtime = _runtime(tmp_path, _feed(), observation_bytes=48)
-    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 48
-    assert json.loads(result.output)["paper_id"] == "math.DG/0211159v1"
+    assert json.loads(result.output)["paper_id"] == "math/0211159v1"
 
 
 def test_an_empty_search_fits_the_smallest_budget(tmp_path: Path):
@@ -645,7 +645,7 @@ def test_the_source_verbs_are_offered_beside_the_others():
 def test_a_source_cannot_be_fetched_before_the_paper_is(tmp_path: Path):
     runtime = _sourced(tmp_path)
 
-    result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
 
     assert not result.ok
     assert "fetch_paper" in result.output
@@ -653,13 +653,13 @@ def test_a_source_cannot_be_fetched_before_the_paper_is(tmp_path: Path):
 
 def test_fetching_a_source_lists_what_it_holds(tmp_path: Path):
     runtime = _sourced(tmp_path, ("main.tex", MAIN_TEX), ("figures/plot.png", b"\x89PNG\x00\x01"))
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
 
-    result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
 
     assert result.ok, result.output
     payload = _json(result)
-    assert payload["paper_id"] == "math.DG/0211159v1"
+    assert payload["paper_id"] == "math/0211159v1"
     assert "main.tex" in payload["files"]
     assert payload["archive_sha256"]
     # A binary file is held but is not offered as something to read.
@@ -668,10 +668,10 @@ def test_fetching_a_source_lists_what_it_holds(tmp_path: Path):
 
 def test_a_source_file_is_read_through_read_paper(tmp_path: Path):
     runtime = _sourced(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
 
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1", "file": "main.tex"})
 
     assert result.ok, result.output
     assert "\\section{One}" in result.output
@@ -679,9 +679,9 @@ def test_a_source_file_is_read_through_read_paper(tmp_path: Path):
 
 def test_reading_a_file_of_a_source_nobody_fetched_says_how_to_get_it(tmp_path: Path):
     runtime = _sourced(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
 
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"})
+    result = runtime.call("read_paper", {"paper_id": "math/0211159v1", "file": "main.tex"})
 
     assert not result.ok
     assert "fetch_source" in result.output
@@ -689,11 +689,11 @@ def test_reading_a_file_of_a_source_nobody_fetched_says_how_to_get_it(tmp_path: 
 
 def test_a_file_the_source_does_not_hold_is_refused(tmp_path: Path):
     runtime = _sourced(tmp_path)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
 
     result = runtime.call(
-        "read_paper", {"paper_id": "math.DG/0211159v1", "file": "../record.json"}
+        "read_paper", {"paper_id": "math/0211159v1", "file": "../record.json"}
     )
 
     assert not result.ok
@@ -705,11 +705,11 @@ def test_a_long_source_file_is_paged_like_any_other_read(tmp_path: Path):
         f"Line {number} of the paper.".encode() for number in range(400)
     )
     runtime = _sourced(tmp_path, ("main.tex", body))
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
     runtime.observation_bytes = 400
 
-    first = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"})
+    first = runtime.call("read_paper", {"paper_id": "math/0211159v1", "file": "main.tex"})
 
     assert first.ok, first.output
     assert len(first.output.encode("utf-8")) <= 400
@@ -728,9 +728,9 @@ def test_a_refused_archive_is_reported_as_a_tool_answer(tmp_path: Path):
         library, transport=transport, clock=lambda: 1_000_000.0, sleep=lambda seconds: None
     )
     runtime = PaperToolRuntime(library, Bibliography(tmp_path / "problem"), client=client)
-    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
 
-    result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
 
     assert not result.ok
     assert "gzip, tar, zip, or PDF" in result.output

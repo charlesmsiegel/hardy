@@ -44,7 +44,7 @@ FEED = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def _feed(
-    identifier: str = "math.DG/0211159v1",
+    identifier: str = "math/0211159v1",
     title: str = "The entropy formula for the Ricci flow",
     abstract: str = "We present a monotonic expression for the Ricci flow.",
     extra: str = "",
@@ -101,7 +101,7 @@ def _client(tmp_path: Path, transport: Recorder, clock: Clock | None = None):
         ("arXiv:2401.12345v2", "2401.12345v2"),
         ("https://arxiv.org/abs/2401.12345v2", "2401.12345v2"),
         ("https://arxiv.org/pdf/2401.12345v2.pdf", "2401.12345v2"),
-        ("math.GT/0211159v1", "math.GT/0211159v1"),
+        ("math.GT/0211159v1", "math/0211159v1"),
         ("  2401.12345  ", "2401.12345"),
     ],
 )
@@ -118,19 +118,19 @@ def test_a_record_is_stored_under_the_version_arxiv_reported(tmp_path: Path):
     """An unversioned request must not become an unversioned record."""
     transport = Recorder(_feed())
     client, library, _ = _client(tmp_path, transport)
-    record, held = client.fetch("math.DG/0211159")
-    assert record.arxiv_id == "math.DG/0211159v1"
+    record, held = client.fetch("math/0211159")
+    assert record.arxiv_id == "math/0211159v1"
     assert not held
-    assert library.stored() == ("math.DG/0211159v1",)
-    assert "id_list=math.DG" in transport.urls[0].replace("%2F", "/")
+    assert library.stored() == ("math/0211159v1",)
+    assert "id_list=math" in transport.urls[0].replace("%2F", "/")
 
 
 def test_a_second_fetch_of_a_held_version_makes_no_request(tmp_path: Path):
     transport = Recorder(_feed())
     client, _, clock = _client(tmp_path, transport)
-    client.fetch("math.DG/0211159v1")
+    client.fetch("math/0211159v1")
     clock.now += arxiv.QUERY_TTL_SECONDS * 10
-    record, held = client.fetch("math.DG/0211159v1")
+    record, held = client.fetch("math/0211159v1")
     assert held
     assert record.title.startswith("The entropy formula")
     assert len(transport.urls) == 1
@@ -139,10 +139,10 @@ def test_a_second_fetch_of_a_held_version_makes_no_request(tmp_path: Path):
 def test_a_new_version_is_a_new_record_beside_the_old_one(tmp_path: Path):
     """The promise the whole file is for: a version is never an overwrite."""
     client, library, clock = _client(tmp_path, Recorder(_feed()))
-    client.fetch("math.DG/0211159v1")
-    second, _, _ = _client(tmp_path, Recorder(_feed("math.DG/0211159v2")), clock)
-    second.fetch("math.DG/0211159v2")
-    assert library.stored() == ("math.DG/0211159v1", "math.DG/0211159v2")
+    client.fetch("math/0211159v1")
+    second, _, _ = _client(tmp_path, Recorder(_feed("math/0211159v2")), clock)
+    second.fetch("math/0211159v2")
+    assert library.stored() == ("math/0211159v1", "math/0211159v2")
 
 
 def test_a_stored_record_is_never_rewritten(tmp_path: Path):
@@ -152,19 +152,19 @@ def test_a_stored_record_is_never_rewritten(tmp_path: Path):
     same abstract today; that is the whole point of pinning a version.
     """
     client, library, clock = _client(tmp_path, Recorder(_feed()))
-    client.fetch("math.DG/0211159v1")
+    client.fetch("math/0211159v1")
     rewritten, _, _ = _client(
         tmp_path, Recorder(_feed(abstract="Something else entirely.")), clock
     )
     clock.now += arxiv.QUERY_TTL_SECONDS * 10
-    record, held = rewritten.fetch("math.DG/0211159v1")
+    record, held = rewritten.fetch("math/0211159v1")
     assert held
     assert "monotonic expression" in record.abstract
 
 
 def test_a_record_edited_on_disk_is_refused_rather_than_served(tmp_path: Path):
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     content = library.path_for(record.identifier) / "content.txt"
     content.write_text(content.read_text(encoding="utf-8") + "and P=NP.\n", encoding="utf-8")
     with pytest.raises(arxiv.ArxivError, match="does not match its recorded digest"):
@@ -173,7 +173,7 @@ def test_a_record_edited_on_disk_is_refused_rather_than_served(tmp_path: Path):
 
 def test_the_digest_covers_what_read_paper_serves(tmp_path: Path):
     client, _, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     assert record.content_sha256 == arxiv.digest(record.content())
     assert record.content_bytes == len(record.content().encode("utf-8"))
 
@@ -236,7 +236,7 @@ def test_a_doi_and_a_journal_reference_are_kept(tmp_path: Path):
         "<arxiv:journal_ref>Trans. AMS 353 (2001) 21-40</arxiv:journal_ref>"
     )
     client, _, _ = _client(tmp_path, Recorder(_feed(extra=extra)))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     assert record.doi == "10.1090/S0002-9947-00-02676-3"
     assert record.journal_ref == "Trans. AMS 353 (2001) 21-40"
 
@@ -245,7 +245,7 @@ def test_a_wrapped_title_comes_back_as_one_line(tmp_path: Path):
     client, _, _ = _client(
         tmp_path, Recorder(_feed(title="The entropy formula\n  for the Ricci flow"))
     )
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     assert record.title == "The entropy formula for the Ricci flow"
 
 
@@ -286,17 +286,17 @@ def test_a_response_that_is_not_xml_is_refused(tmp_path: Path):
 
 
 def test_an_old_style_identifier_is_one_flat_directory(tmp_path: Path):
-    """`math.DG/0211159v1` cannot be a path component as it stands."""
+    """`math/0211159v1` cannot be a path component as it stands."""
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     directory = library.path_for(record.identifier)
     assert directory.parent == library.records
-    assert directory.name == "math.DG_0211159v1"
+    assert directory.name == "math_0211159v1"
 
 
 def test_the_untouched_response_is_kept_beside_the_record(tmp_path: Path):
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     stored = (library.path_for(record.identifier) / "response.xml").read_bytes()
     assert stored == _feed()
 
@@ -333,7 +333,7 @@ def test_a_symlinked_records_directory_is_refused(tmp_path: Path):
         library, transport=Recorder(_feed()), clock=lambda: 0.0, sleep=lambda seconds: None
     )
     with pytest.raises(LayoutError):
-        client.fetch("math.DG/0211159v1")
+        client.fetch("math/0211159v1")
     assert list(outside.iterdir()) == []
 
 
@@ -366,7 +366,7 @@ def test_an_edited_record_is_refused_even_when_its_content_file_matches(tmp_path
     verified file sat untouched beside it.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     path = library.path_for(record.identifier) / "record.json"
     path.write_text(
         record.model_copy(update={"title": "A completely different paper"}).model_dump_json(),
@@ -396,7 +396,7 @@ def test_a_response_that_fails_mid_body_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
-    monkeypatch.setattr(client_module.urllib.request, "urlopen", lambda *a, **k: Collapsing())
+    monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", lambda *a, **k: Collapsing())
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -420,7 +420,7 @@ def test_a_chunked_response_cut_short_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
-    monkeypatch.setattr(client_module.urllib.request, "urlopen", lambda *a, **k: Truncated())
+    monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", lambda *a, **k: Truncated())
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -429,7 +429,7 @@ def test_a_connection_that_never_opens_is_an_arxiv_error(monkeypatch):
     def refuse(*args, **kwargs):
         raise OSError("network unreachable")
 
-    monkeypatch.setattr(client_module.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", refuse)
     with pytest.raises(arxiv.ArxivError, match="could not be reached"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -480,7 +480,7 @@ def test_a_record_filed_under_another_papers_identifier_is_refused(tmp_path: Pat
     and then `read_paper(A)` serves B and `cite_paper(A)` records B under A.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed(), _feed("2401.00001v1")))
-    first, _ = client.fetch("math.DG/0211159v1")
+    first, _ = client.fetch("math/0211159v1")
     other, _ = client.fetch("2401.00001v1")
     stolen = library.path_for(first.identifier)
     # The whole record, response included, so this reaches the identity check
@@ -547,7 +547,7 @@ def test_a_cache_entry_dated_in_the_future_is_stale(tmp_path: Path):
     version.
     """
     clock = Clock()
-    transport = Recorder(_feed(), _feed("math.DG/0211159v2"))
+    transport = Recorder(_feed(), _feed("math/0211159v2"))
     client, library, _ = _client(tmp_path, transport, clock)
     client.search("ricci flow")
     clock.now -= 10 * arxiv.QUERY_TTL_SECONDS
@@ -562,7 +562,7 @@ def test_an_edited_response_is_refused(tmp_path: Path):
     over a file that had been edited or deleted underneath it.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     response = library.path_for(record.identifier) / "response.xml"
     response.write_bytes(response.read_bytes() + b"<!-- edited -->")
     with pytest.raises(arxiv.ArxivError, match="where its metadata came from"):
@@ -571,7 +571,7 @@ def test_an_edited_response_is_refused(tmp_path: Path):
 
 def test_a_deleted_response_is_refused(tmp_path: Path):
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     (library.path_for(record.identifier) / "response.xml").unlink()
     with pytest.raises(arxiv.ArxivError, match="could not be read"):
         library.read(record.identifier)
@@ -580,7 +580,7 @@ def test_a_deleted_response_is_refused(tmp_path: Path):
 def test_a_record_with_no_response_digest_is_refused(tmp_path: Path):
     """An empty digest was an opt-out from the provenance check."""
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     path = library.path_for(record.identifier) / "record.json"
     path.write_text(
         record.model_copy(update={"response_sha256": ""}).model_dump_json(),
@@ -593,7 +593,7 @@ def test_a_record_with_no_response_digest_is_refused(tmp_path: Path):
 def test_a_symlinked_response_is_refused(tmp_path: Path):
     """The one read beside two guarded ones that followed links."""
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     stored = library.path_for(record.identifier) / "response.xml"
     outside = tmp_path / "elsewhere.xml"
     outside.write_bytes(stored.read_bytes())
@@ -613,19 +613,19 @@ def test_a_record_admitted_from_the_cache_says_when_the_bytes_arrived(tmp_path: 
     clock = Clock()
     client, library, _ = _client(tmp_path, Recorder(_feed()), clock)
     obtained = clock.now
-    first, _ = client.fetch("math.DG/0211159v1")
+    first, _ = client.fetch("math/0211159v1")
     # The admission is undone and the query cache left in place: the shape of
     # a fetch that reached arXiv and then failed to land, retried later.
     shutil.rmtree(library.path_for(first.identifier))
     clock.now += 3_600
-    again, _ = client.fetch("math.DG/0211159v1")
+    again, _ = client.fetch("math/0211159v1")
     assert again.fetched_at == arxiv._stamp(obtained)
     assert again.fetched_at != arxiv._stamp(clock.now)
 
 
 def test_a_stored_abstract_is_wrapped_so_every_line_can_be_read(tmp_path: Path):
     client, _, _ = _client(tmp_path, Recorder(_feed(abstract="word " * 2_000)))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     assert max(len(line) for line in record.content().splitlines()) <= arxiv.ABSTRACT_COLUMNS
 
 
@@ -639,7 +639,7 @@ def test_a_stored_record_is_the_bytes_its_digest_names(tmp_path: Path):
     is the one thing this store exists to rule out.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     stored = (library.path_for(record.identifier) / "content.txt").read_bytes()
     assert b"\r\n" not in stored
     assert arxiv.digest(stored.decode("utf-8")) == record.content_sha256
@@ -655,7 +655,7 @@ def test_a_record_whose_line_endings_were_rewritten_is_refused(tmp_path: Path):
     bytes the check was about.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     stored = library.path_for(record.identifier) / "content.txt"
     stored.write_bytes(stored.read_bytes().replace(b"\n", b"\r\n"))
     with pytest.raises(arxiv.ArxivError, match="does not match its recorded digest"):
@@ -701,7 +701,7 @@ def test_a_record_that_lies_about_where_it_came_from_is_refused(tmp_path: Path):
     `response.xml` was untouched, so its digest matched too.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     stored = library.path_for(record.identifier) / "record.json"
     for moved in (
         record.model_copy(update={"source_url": "https://example.invalid/made-up"}),
@@ -714,7 +714,7 @@ def test_a_record_that_lies_about_where_it_came_from_is_refused(tmp_path: Path):
 
 def test_the_provenance_a_reader_is_served_is_the_provenance_recorded(tmp_path: Path):
     client, _, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     served = record.content()
     assert record.source_url in served
     assert f"Retrieved: {record.fetched_at}" in served
@@ -799,7 +799,7 @@ def test_a_record_edited_away_from_its_own_response_is_refused(tmp_path: Path):
     genuinely arXiv's.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     held = library.path_for(record.identifier)
     forged = record.model_copy(update={"authors": ("Somebody Else",)})
     forged = forged.model_copy(update={"content_sha256": arxiv.digest(forged.content())})
@@ -818,7 +818,7 @@ def test_a_wrapped_line_is_bounded_in_bytes_not_code_points(tmp_path: Path):
     unreachable by any later `read_paper`.
     """
     client, _, _ = _client(tmp_path, Recorder(_feed(abstract="数" * 500)))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     widest = max(len(line.encode("utf-8")) for line in record.content().splitlines())
     assert widest <= arxiv.ABSTRACT_COLUMNS
 
@@ -860,7 +860,7 @@ def test_a_field_the_content_does_not_render_is_still_re_derived(tmp_path: Path)
     provenance comparison exists to rule out.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     held = library.path_for(record.identifier) / "record.json"
     for moved in (
         record.model_copy(update={"primary_category": "cs.CR"}),
@@ -882,13 +882,13 @@ def test_an_entry_with_no_title_or_authors_is_not_a_paper(tmp_path: Path):
     bare = (
         b'<?xml version="1.0" encoding="UTF-8"?>'
         b'<feed xmlns="http://www.w3.org/2005/Atom">'
-        b"<entry><id>http://arxiv.org/abs/math.DG/0211159v1</id>"
+        b"<entry><id>http://arxiv.org/abs/math/0211159v1</id>"
         b"<published>2002-11-11T18:00:00Z</published>"
         b"<updated>2002-11-11T18:00:00Z</updated></entry></feed>"
     )
     client, _, _ = _client(tmp_path, Recorder(bare))
     with pytest.raises(arxiv.ArxivError, match="no title, summary, author"):
-        client.fetch("math.DG/0211159v1")
+        client.fetch("math/0211159v1")
 
 
 def test_a_slot_taken_by_someone_else_is_not_fired_on(tmp_path: Path):
@@ -1012,7 +1012,7 @@ def test_a_source_the_record_re_derives_itself_from_is_still_checked(tmp_path: P
     from somewhere that is not arXiv.
     """
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     held = library.path_for(record.identifier)
     forged = record.model_copy(update={"source_url": "https://example.invalid/made-up"})
     forged = forged.model_copy(update=_consistent(forged))
@@ -1025,7 +1025,7 @@ def test_a_source_the_record_re_derives_itself_from_is_still_checked(tmp_path: P
 def test_a_retrieval_time_that_is_not_a_time_is_refused(tmp_path: Path):
     """Same gap, the other field. A record has to say WHEN, not merely say."""
     client, library, _ = _client(tmp_path, Recorder(_feed()))
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     held = library.path_for(record.identifier)
     forged = record.model_copy(update={"fetched_at": "whenever"})
     forged = forged.model_copy(update=_consistent(forged))
@@ -1046,7 +1046,7 @@ def test_a_clock_behind_arxivs_does_not_refuse_a_record_it_fetched(tmp_path: Pat
     """
     clock = Clock(now=1.0)
     client, library, _ = _client(tmp_path, Recorder(_feed()), clock)
-    record, _ = client.fetch("math.DG/0211159v1")
+    record, _ = client.fetch("math/0211159v1")
     assert record.fetched_at < record.published
     assert library.read(record.identifier) == record
 
@@ -1061,8 +1061,8 @@ def test_a_wrong_identifier_drop_removes_only_the_body_it_rejected(tmp_path: Pat
     had its replacement deleted -- so the next request went to the network
     for something that had been on disk, and could fail there.
     """
-    right = _feed("math.DG/0211159v1")
-    client, library, _ = _client(tmp_path, Recorder(_feed("math.DG/9999999v1")))
+    right = _feed("math/0211159v1")
+    client, library, _ = _client(tmp_path, Recorder(_feed("math/9999999v1")))
     original = library.drop_query
     keys: list[str] = []
 
@@ -1074,7 +1074,7 @@ def test_a_wrong_identifier_drop_removes_only_the_body_it_rejected(tmp_path: Pat
 
     library.drop_query = _slow
     with pytest.raises(arxiv.ArxivError, match="refusing to store one paper"):
-        client.fetch("math.DG/0211159v1")
+        client.fetch("math/0211159v1")
     assert keys, "the wrong answer was not dropped at all"
     held = library.cached_query(keys[0], now=1_000_000.0)
     assert held is not None, "a good answer was deleted by the process that read a bad one"
@@ -1179,3 +1179,41 @@ def test_nothing_changes_a_cache_key_without_holding_it(tmp_path: Path, monkeypa
     held = library.cached_query(key, now=1_000_000.0)
     assert held is not None, "an unlocked drop removed the entry anyway"
     assert held[0] == _feed(), "an unlocked write replaced the entry anyway"
+
+
+def test_subject_class_spelling_uses_the_canonical_cached_record(tmp_path: Path):
+    transport = Recorder(_feed(identifier='math/0211159v1'))
+    client, library, _ = _client(tmp_path, transport)
+    first, _ = client.fetch('math.GT/0211159v1')
+    second, held = client.fetch('math/0211159v1')
+    assert first == second
+    assert first.arxiv_id == 'math/0211159v1'
+    assert held
+    assert library.holds(arxiv.parse_id('math.GT/0211159v1'))
+    assert library.read(arxiv.parse_id('math.GT/0211159v1')) == first
+    assert len(transport.urls) == 1
+
+
+@pytest.mark.parametrize('target', ['https://evil.example/paper', 'http://export.arxiv.org/paper', 'https://export.arxiv.org:8443/paper', 'https://user@export.arxiv.org/paper', 'https://export.arxiv.org:bad/paper'])
+def test_arxiv_redirect_policy_refuses_a_changed_origin(target: str):
+    handler = client_module._ArxivRedirect('https://export.arxiv.org/api/query')
+    request = client_module.urllib.request.Request('https://export.arxiv.org/api/query')
+    with pytest.raises(arxiv.ArxivError, match='redirect'):
+        handler.redirect_request(request, None, 302, 'Found', {}, target)
+
+
+def test_arxiv_redirect_policy_allows_same_origin_https():
+    handler = client_module._ArxivRedirect('https://export.arxiv.org/api/query')
+    request = client_module.urllib.request.Request('https://export.arxiv.org/api/query')
+    redirected = handler.redirect_request(request, None, 302, 'Found', {}, 'https://export.arxiv.org/new')
+    assert redirected.full_url == 'https://export.arxiv.org/new'
+
+
+def test_redirect_final_url_is_recorded_and_survives_query_cache(tmp_path: Path):
+    final_url = 'https://export.arxiv.org/api/query?redirected=1'
+    transport = Recorder(client_module.Download(_feed(identifier='2401.00001v1'), final_url))
+    client, library, _ = _client(tmp_path, transport)
+    result = client.search('test')
+    assert result[0].resolved_url == final_url
+    assert f'Resolved source: {final_url}' in result[0].content()
+    assert client.search('test')[0] == result[0]

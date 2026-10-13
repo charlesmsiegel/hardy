@@ -26,7 +26,7 @@ from hardy.workflows.interactive.session import CHAT_TOOLS, MathematicsSession
 FEED = (
     b'<?xml version="1.0" encoding="UTF-8"?>'
     b'<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">'
-    b"<entry><id>http://arxiv.org/abs/math.DG/0211159v1</id>"
+    b"<entry><id>http://arxiv.org/abs/math/0211159v1</id>"
     b"<published>2002-11-11T18:00:00Z</published><updated>2002-11-11T18:00:00Z</updated>"
     b"<title>The entropy formula for the Ricci flow</title>"
     b"<summary>A monotonic expression for the Ricci flow.</summary>"
@@ -48,7 +48,8 @@ The entropy is monotonic.
 \end{document}
 """
 
-PAPER = "math.DG/0211159v1"
+PAPER = "math/0211159v1"
+PAPER_ALIAS = "math.DG/0211159v1"
 
 
 def _bundle(
@@ -104,8 +105,8 @@ def session(tmp_path: Path) -> MathematicsSession:
 
 @pytest.fixture
 def sourced(session: MathematicsSession) -> MathematicsSession:
-    session._tool("fetch_paper", {"paper_id": PAPER})
-    session._tool("fetch_source", {"paper_id": PAPER})
+    session._tool("fetch_paper", {"paper_id": PAPER_ALIAS})
+    session._tool("fetch_source", {"paper_id": PAPER_ALIAS})
     return session
 
 
@@ -132,7 +133,7 @@ def test_the_assume_verbs_are_offered() -> None:
 
 
 def test_listing_a_paper_with_no_source_says_how_to_get_one(session) -> None:
-    session._tool("fetch_paper", {"paper_id": PAPER})
+    session._tool("fetch_paper", {"paper_id": PAPER_ALIAS})
 
     result = session._tool("list_statements", {"paper_id": PAPER})
 
@@ -212,7 +213,7 @@ def test_a_statement_the_paper_does_not_make_is_refused(sourced) -> None:
 
 
 def test_a_paper_with_no_source_cannot_be_assumed_from(session) -> None:
-    session._tool("fetch_paper", {"paper_id": PAPER})
+    session._tool("fetch_paper", {"paper_id": PAPER_ALIAS})
 
     result = _assume(session)
 
@@ -752,7 +753,7 @@ def test_a_listing_names_the_documents_it_did_not_read(session) -> None:
     reader weighing an assumption is owed the fact that another document in
     the bundle was never looked at -- a decoy carrying a real preamble is
     otherwise invisible."""
-    session._tool("fetch_paper", {"paper_id": PAPER})
+    session._tool("fetch_paper", {"paper_id": PAPER_ALIAS})
     session.papers.library.admit_source(
         session.papers._held(PAPER).identifier,
         _bundle(PAPER_SOURCE, second=("decoy.tex", DECOY_SOURCE)),
@@ -912,7 +913,7 @@ def test_an_empty_listing_names_the_documents_it_did_not_read(session) -> None:
     paper. When another document in the bundle went unread, the honest
     answer says so -- the empty-listing branch returned before the payload
     that carries `unread_documents` was ever built."""
-    session._tool("fetch_paper", {"paper_id": PAPER})
+    session._tool("fetch_paper", {"paper_id": PAPER_ALIAS})
     session.papers.library.admit_source(
         session.papers._held(PAPER).identifier,
         _bundle(
