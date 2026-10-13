@@ -496,7 +496,7 @@ def test_the_script_records_the_environment_it_was_checked_under(
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
     manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
     assert "PYTHONHASHSEED=0" in script
-    assert manifest["environment"] == {"PYTHONHASHSEED": "0", "PYTHONIOENCODING": "utf-8"}
+    assert manifest["environment"] == {"PYTHONHASHSEED": "0"}
 
 
 def _late_helper(done: Path) -> str:
