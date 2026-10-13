@@ -197,3 +197,30 @@ def test_semantically_empty_compiler_is_upserted_through_config_writer(tmp_path,
     assert result.returncode == 0, result.stdout + result.stderr
     assert read_file(config)['tectonic'] == str(installed)
     assert f'selected={installed}' in result.stdout
+
+
+@pytest.mark.parametrize('written', ['"lean_project" = "CUSTOM"\n', '\ufefflean_project = "CUSTOM"\n',
+                                    '"lean\\u005fproject" = "CUSTOM"\n', '"lean_project" = ""\n'])
+def test_write_config_respects_parsed_existing_project_settings(written, tmp_path):
+    import subprocess
+    import sys
+
+    from hardy.app.config import read_file
+
+    source = Path(__file__).resolve().parents[1] / 'scripts/lib/common.sh'
+    config = tmp_path / 'config.toml'
+    config.write_text(written.replace('CUSTOM', str(tmp_path / 'user-project')))
+    venv = tmp_path / 'prefix/venv'
+    (venv / 'bin').mkdir(parents=True)
+    worker = venv / 'bin/python'
+    worker.write_text('#!' + sys.executable + '\nimport sys\nprogram=sys.argv[2]; sys.argv=sys.argv[2:]; exec(program)\n')
+    worker.chmod(0o755)
+    environment = {key: value for key, value in os.environ.items() if key != 'HARDY_LEAN_PROJECT'}
+    environment.update(HOME=str(tmp_path), HARDY_HOME=str(tmp_path / 'prefix'), HARDY_CONFIG=str(config),
+                       PYTHONPATH=str(source.parents[2] / 'src'))
+    result = subprocess.run(['bash', '-c', '. "$1"; write_config', 'test', str(source)],
+                            env=environment, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert read_file(config)['lean_project'] == str(tmp_path / ('user-project' if 'CUSTOM' in written else 'prefix/lean'))
+    if 'CUSTOM' in written:
+        assert config.read_text() == written.replace('CUSTOM', str(tmp_path / 'user-project'))
