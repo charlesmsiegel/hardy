@@ -1185,7 +1185,7 @@ class Shell:
         run_in_terminal.py:108-112) re-reads the size and repaints anyway.
         """
         original = getattr(self._app, "_on_resize", None)
-        if original is None:
+        if original is None or not hasattr(self._app, "_running_in_terminal"):
             self._notices += ("prompt_toolkit resize guard unavailable.",)
             return
 

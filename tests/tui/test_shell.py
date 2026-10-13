@@ -808,3 +808,10 @@ def test_missing_vt100_private_tables_keeps_shell_importable(settings, monkeypat
     instance = isolated.Shell(settings, None, handlers.build_registry())
     assert any('Shift+Enter newline is unavailable' in notice for notice in instance._notices)
     assert 'shift+enter' not in str(instance._hint())
+
+
+def test_missing_resize_suspension_flag_skips_guard(settings):
+    instance = shell.Shell(settings, None, handlers.build_registry())
+    del instance._app._running_in_terminal
+    instance._guard_resize()
+    assert any('resize guard unavailable' in notice for notice in instance._notices)
