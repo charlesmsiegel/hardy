@@ -1978,3 +1978,62 @@ Write-Output 'summary still reachable'
 ''')
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'summary still reachable' in result.stdout
+
+
+def test_windows_default_latex_defers_to_pinned_tectonic():
+    result = run_installer_functions(r'''
+$SkipLatex = $false; $FullLatex = $false
+function Install-WithWinget { throw 'default must not provision MiKTeX or TeXLive' }
+function Test-Command { throw 'default must not require pdflatex' }
+Install-Latex
+''')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Tectonic' in result.stdout
+
+
+def test_windows_tectonic_records_interactive_compiler_without_overwriting(tmp_path):
+    config = tmp_path / 'config.toml'
+    config.write_text('model = "test-model"\n')
+    result = run_installer_functions(
+        "$SkipLatex = $false; $FullLatex = $false; $NoConfig = $false; "
+        f"$ConfigPath = '{config}'; $Venv = '{tmp_path / 'venv'}'; $Prefix = '{tmp_path}'; "
+        "$env:HARDY_TECTONIC = ''; $env:HARDY_LATEX_COMMAND = ''; "
+        "function Invoke-Native { $global:LASTEXITCODE = 0; return 'C:\\tools\\tectonic.exe' }; "
+        "Install-Tectonic; Install-Tectonic"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    content = config.read_text()
+    assert content.count('latex_command =') == 1
+    assert '--keep-logs' in content and '--keep-intermediates' in content
+
+
+@pytest.mark.parametrize('function_name', ['Install-Tectonic', 'Test-Installation'])
+def test_windows_python_probe_uses_stdin_for_ps51_quotes(function_name):
+    source = POWERSHELL_SCRIPT.read_text()
+    function = source.split('function ' + function_name + ' {', 1)[1].split('\nfunction ', 1)[0]
+    program = re.search(r"\$program = @'\n(.*?)\n'@", function, re.S).group(1)
+    # Execute the shipped embedded Python via the real native interpreter.
+    # Only dependency actions are replaced: no downloads or external tools.
+    shim = r'''import sys, types
+from pathlib import Path
+config = types.ModuleType("hardy.app.config")
+config.load = lambda: None
+sys.modules["hardy.app.config"] = config
+doctor = types.ModuleType("hardy.app.doctor")
+doctor.run_checks = lambda _: [types.SimpleNamespace(name="claude login", ok=False, required=True, line=lambda: "pending login")]
+sys.modules["hardy.app.doctor"] = doctor
+installers = types.ModuleType("hardy.app.installers")
+installers.download_file = lambda *args: None
+installers.install_tectonic = lambda **kwargs: types.SimpleNamespace(installed_path=Path(sys.argv[1]) / "tectonic.exe")
+sys.modules["hardy.app.installers"] = installers
+'''
+    embedded = (shim + program).replace("'@", "''@")
+    result = run_installer_functions(
+        "$program = @'\n" + embedded + "\n'@\n"
+        + f"Invoke-Native '{sys.executable}' @('-', 'test destination') -InputObject $program; exit $LASTEXITCODE",
+        require_ps51=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ('pending login' if function_name == 'Test-Installation' else 'tectonic.exe') in result.stdout
+    assert "@('-', (Join-Path $Prefix 'tools')) -InputObject $program" in source
+    assert "(@('-') + $advisory) -InputObject $program" in source

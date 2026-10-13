@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Takes a clean Windows machine to a working `hardy` command: Python, the Lean
-    toolchain (elan/lake), a Mathlib project, pdflatex, and Hardy itself. Run it
+    toolchain (elan/lake), a Mathlib project, Tectonic, and Hardy itself. Run it
     from PowerShell, in a clone or on its own:
 
         powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
@@ -12,7 +12,7 @@
     No clone is required. Run from a checkout it installs that tree, editable;
     run on its own it downloads Hardy's published wheel, checks it against the
     release manifest, and installs that. Winget installs Python, Git, and
-    MiKTeX; elan comes from its official release, exactly as on Linux and macOS.
+    optional full TeX Live; elan and Tectonic use pinned, digest-checked releases.
 
 .PARAMETER Yes
     Non-interactive: accept every install and skip the configuration prompts.
@@ -30,7 +30,7 @@
     Do not install a TeX distribution.
 
 .PARAMETER FullLatex
-    Install full TeX Live instead of MiKTeX's install-on-demand distribution.
+    Also install full TeX Live providing pdflatex instead of using Tectonic for interactive cells.
 
 .PARAMETER NoConfig
     Do not write the config file.
@@ -866,6 +866,10 @@ function Install-Latex {
         Write-Step 'Skipping LaTeX (-SkipLatex)'
         return
     }
+    if (-not $FullLatex) {
+        Write-Step 'Using pinned Tectonic for LaTeX; provisioned after configuration'
+        return
+    }
     Write-Step 'Checking for pdflatex'
     Update-SessionPath
     if (Test-Command 'pdflatex') {
@@ -876,16 +880,7 @@ function Install-Latex {
         Write-Warn 'continuing without pdflatex; Hardy writeup tools will fail'
         return
     }
-    if ($FullLatex) {
-        Install-WithWinget 'TeXLive.TeXLive' 'TeX Live'
-    }
-    else {
-        # MiKTeX is the small option: it fetches LaTeX packages on demand.
-        Install-WithWinget 'MiKTeX.MiKTeX' 'MiKTeX'
-        if (Test-Command 'initexmf') {
-            Invoke-Native initexmf @('--set-config-value', '[MPM]AutoInstall=1') -DropErrors
-        }
-    }
+    Install-WithWinget 'TeXLive.TeXLive' 'TeX Live'
     Update-SessionPath
     if (-not (Test-Command 'pdflatex')) {
         Stop-Install 'pdflatex is still not on PATH after installing TeX; open a new PowerShell window and re-run'
@@ -1012,7 +1007,7 @@ if not result.installed_path:
     raise SystemExit(1)
 print(result.installed_path)
 '@
-    $installed = Invoke-Native $venvPython @('-c', $program, (Join-Path $Prefix 'tools'))
+    $installed = Invoke-Native $venvPython @('-', (Join-Path $Prefix 'tools')) -InputObject $program
     if ($LASTEXITCODE -ne 0 -or -not $installed) { Stop-Install 'Tectonic could not be installed' }
     $script:InstalledTectonic = ([string]($installed | Select-Object -Last 1)).Trim()
     # This also supports -NoConfig: the current verification uses the explicit
@@ -1021,6 +1016,19 @@ print(result.installed_path)
     if (-not $env:HARDY_TECTONIC -and -not $hasTectonicSetting) { $env:HARDY_TECTONIC = $script:InstalledTectonic }
     if (-not $NoConfig -and -not $hasTectonicSetting) {
         Add-Utf8Line $ConfigPath ('tectonic = "{0}"' -f (ConvertTo-TomlString $script:InstalledTectonic))
+    }
+    # Tectonic is also the default compiler for interactive cells on Windows.
+    # Keep .log/.aux artifacts consumed by LatexTools; preserve explicit choices.
+    $hasLatexSetting = (Test-Path -LiteralPath $ConfigPath) -and (Select-String -LiteralPath $ConfigPath -Pattern '^\s*latex_command\s*=' -Quiet)
+    if (-not $FullLatex -and -not $hasLatexSetting -and -not $env:HARDY_LATEX_COMMAND) {
+        $compiler = ConvertTo-TomlString $script:InstalledTectonic
+        if (-not $NoConfig) {
+            Add-Utf8Line $ConfigPath ('latex_command = ["{0}", "--keep-logs", "--keep-intermediates"]' -f $compiler)
+        }
+        else {
+            $env:HARDY_LATEX_COMMAND = '"{0}" --keep-logs --keep-intermediates' -f $script:InstalledTectonic
+            Write-Detail ('To persist the interactive compiler, add latex_command = ["' + $compiler + '", "--keep-logs", "--keep-intermediates"] to your config')
+        }
     }
 }
 
@@ -1053,7 +1061,7 @@ raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for 
     if (-not $hasModel) { $advisory += 'model' }
     if ($SkipLatex) { $advisory += @('latex', 'tectonic') }
     if ($SkipMathlib) { $advisory += @('lean', 'mathlib') }
-    Invoke-Native $venvPython (@('-c', $program) + $advisory)
+    Invoke-Native $venvPython (@('-') + $advisory) -InputObject $program
     if ($LASTEXITCODE -ne 0) {
         $script:VerificationFailed = $true
         Write-Warn 'hardy doctor reported failures in installer responsibilities (see above)'
