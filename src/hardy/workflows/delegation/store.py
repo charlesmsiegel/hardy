@@ -1,4 +1,4 @@
-"""Append-only delegation journal; the tree is a replay, not a cache.
+"""Append-only delegation journal; verified replay is memoized within an owner.
 
 One JSONL journal per workspace, hash-chained like the ledger's transactions and
 guarded by an OS lock. Each delegation owns a RunStore directory beside it for
@@ -12,6 +12,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -67,6 +68,7 @@ class DelegationTree:
         self.usage_reported: Mapping[str, ResourceUsage] = MappingProxyType(usage)
         self.events = events
         self._cancel_requests = cancel_requests
+        self._started: frozenset[str] = frozenset()
 
     def cancel_requested(self, id: str) -> bool:
         self.get(id)
@@ -107,11 +109,11 @@ class DelegationTree:
         return tuple(chain)
 
 
-def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
-    delegations: dict[str, Delegation] = {}
-    usage: dict[str, ResourceUsage] = {}
-    cancel_requests: set[str] = set()
-    started: set[str] = set()
+def _replay(events: tuple[DelegationEvent, ...], before: DelegationTree | None = None) -> DelegationTree:
+    delegations = dict(before.delegations) if before else {}
+    usage = dict(before.usage_reported) if before else {}
+    cancel_requests = set(before._cancel_requests) if before else set()
+    started = set(before._started) if before else set()
     for event in events:
         id = event.delegation_id
         if event.kind == "delegation.created":
@@ -170,7 +172,10 @@ def _replay(events: tuple[DelegationEvent, ...]) -> DelegationTree:
         if event.kind == "delegation.context":
             delegations[id] = current.model_copy(update={
                 key: str(event.payload[key]) for key in _CONTEXT_KEYS if key in event.payload})
-    return DelegationTree(delegations, usage, events, frozenset(cancel_requests))
+    tree = DelegationTree(delegations, usage, (*before.events, *events) if before else events,
+                          frozenset(cancel_requests))
+    tree._started = frozenset(started)
+    return tree
 
 
 def _refuse_overspawn(tree: DelegationTree, event: DelegationEvent) -> None:
@@ -256,6 +261,34 @@ def _refuse_overdraft(tree: DelegationTree, delegation_id: str, event: Delegatio
 class DelegationStore:
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
+        self._cached_tree = _replay(())
+        self._signature = None
+
+    @staticmethod
+    def _stamp(guard: WriteGuard):
+        path = guard.path(JOURNAL)
+        if not path.exists():
+            return None
+        stat = path.stat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+    def _refresh(self, guard: WriteGuard) -> tuple[DelegationEvent, ...]:
+        stamp = self._stamp(guard)
+        if stamp != self._signature:
+            events = self._read(guard)
+            verified = self._cached_tree.events
+            if events[:len(verified)] != verified:
+                raise ValueError("delegation journal rewrites verified history")
+            self._cached_tree = _replay(events)
+            self._signature = stamp
+        return self._cached_tree.events
+
+    def _snapshot(self) -> DelegationTree:
+        tree = self._cached_tree
+        result = DelegationTree(deepcopy(dict(tree.delegations)), deepcopy(dict(tree.usage_reported)),
+                                deepcopy(tree.events), tree._cancel_requests)
+        result._started = tree._started
+        return result
 
     def _guard(self, *, create: bool) -> WriteGuard:
         root = WriteGuard(self.workspace, create=create)
@@ -286,19 +319,28 @@ class DelegationStore:
 
     def events(self) -> tuple[DelegationEvent, ...]:
         if not (self.workspace / DIRECTORY).exists():
+            if self._cached_tree.events:
+                raise ValueError("delegation journal removes verified history")
             return ()
         guard = self._guard(create=False)
         with self._lock(guard):
-            return self._read(guard)
+            return deepcopy(self._refresh(guard))
 
     def tree(self) -> DelegationTree:
-        return _replay(self.events())
+        if not (self.workspace / DIRECTORY).exists():
+            if self._cached_tree.events:
+                raise ValueError("delegation journal removes verified history")
+            return _replay(())
+        guard = self._guard(create=False)
+        with self._lock(guard):
+            self._refresh(guard)
+            return self._snapshot()
 
     def append(self, delegation_id: str, kind: str, payload: dict[str, Any], *,
                now: datetime | None = None) -> DelegationEvent:
         guard = self._guard(create=True)
         with self._lock(guard):
-            return self._append(guard, self._read(guard), delegation_id, kind, payload, now=now)
+            return self._append(guard, self._refresh(guard), delegation_id, kind, payload, now=now)
 
     def append_decided(self, delegation_id: str, kind: str,
                        decide: Callable[[DelegationTree], dict[str, Any] | None], *,
@@ -311,8 +353,8 @@ class DelegationStore:
         """
         guard = self._guard(create=True)
         with self._lock(guard):
-            events = self._read(guard)
-            payload = decide(_replay(events))
+            events = self._refresh(guard)
+            payload = decide(self._snapshot())
             if payload is None:
                 return None
             return self._append(guard, events, delegation_id, kind, payload, now=now)
@@ -323,12 +365,12 @@ class DelegationStore:
         event = DelegationEvent(
             sequence=len(events), previous=events[-1].digest if events else None,
             delegation_id=delegation_id, kind=kind,
-            timestamp=(now or datetime.now(UTC)).isoformat(), payload=payload,
+            timestamp=(now or datetime.now(UTC)).isoformat(), payload=deepcopy(payload),
         )
         # Validated before it is written: the journal never holds an event
         # its own replay would refuse.
-        before = _replay(events)
-        _replay((*events, event))
+        before = self._cached_tree
+        after = _replay((event,), before)
         if kind == "budget.reserved":
             # Re-checked here, under the journal's own lock: two processes
             # that both passed `grant` on one stale balance cannot both record.
@@ -341,7 +383,9 @@ class DelegationStore:
             handle.write(line)
             handle.flush()
             os.fsync(handle.fileno())
-        return event
+        self._cached_tree = after
+        self._signature = self._stamp(guard)
+        return event.model_copy(deep=True)
 
     def artifacts(self, delegation_id: str) -> RunStore:
         """The per-delegation artifact store, created on first use.

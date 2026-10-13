@@ -600,3 +600,65 @@ def test_only_a_status_error_with_its_response_settles_at_zero(tmp_path, budget_
         provider.complete(system="", messages=[], specs=[], timeout=0.5)
     with pytest.raises(module.SpendLimitReached, match="token_limit"):
         provider.complete(system="", messages=[], specs=[], timeout=0.5)
+
+def test_owned_budget_operations_do_not_reread_or_requote_history(tmp_path, budget_module, monkeypatch):
+    owner = budget_module.SpendBudget(tmp_path / "budget.jsonl", policy(budget_module, token_limit=100000))
+    reads = []
+    quotes = []
+    original_read, original_quote = owner._read, owner._quote
+    monkeypatch.setattr(owner, "_read", lambda: (reads.append(1), original_read())[1])
+    monkeypatch.setattr(owner, "_quote", lambda *args: (quotes.append(1), original_quote(*args))[1])
+    for _ in range(10):
+        identifier = owner.reserve(request())
+        owner.settle(identifier, usage())
+        assert owner.summary()["journal_sha256"] == __import__("hashlib").sha256(owner.path.read_bytes()).hexdigest()
+    assert not reads
+    assert len(quotes) <= 20
+
+
+def test_cached_budget_external_changes_are_verified(tmp_path, budget_module):
+    owner = budget_module.SpendBudget(tmp_path / "budget.jsonl", policy(budget_module, token_limit=10000))
+    other = budget_module.SpendBudget(owner.path, owner.policy)
+    identifier = other.reserve(request())
+    assert owner.summary()["pending"] == 1
+    owner.settle(identifier, usage())
+    assert other.summary()["actual_tokens"] == 2
+    raw = owner.path.read_bytes()
+    owner.path.write_bytes(raw.replace(b'fixture', b'changed'))
+    with pytest.raises(ValueError):
+        owner.summary()
+
+
+def test_cached_budget_truncation_and_replacement_do_not_hide_changes(tmp_path, budget_module):
+    owner = budget_module.SpendBudget(tmp_path / "budget.jsonl", policy(budget_module, token_limit=10000))
+    identifier = owner.reserve(request())
+    raw = owner.path.read_bytes()
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(raw.replace(b'fixture', b'changed'))
+    replacement.replace(owner.path)
+    with pytest.raises(ValueError):
+        owner.reserve(request())
+    owner.path.write_bytes(raw[:-3])
+    with pytest.raises(ValueError, match="incomplete"):
+        owner.settle(identifier, usage())
+
+
+@pytest.mark.parametrize("history", [10, 1000])
+def test_budget_call_validates_only_new_events_at_any_history_length(tmp_path, budget_module, monkeypatch, history):
+    owner = budget_module.SpendBudget(tmp_path / "budget.jsonl", policy(budget_module, token_limit=1000000))
+    for _ in range(history):
+        owner.settle(owner.reserve(request()), usage())
+    validations = []
+    original = budget_module.json_digest
+    monkeypatch.setattr(budget_module, "json_digest", lambda value: (validations.append(1), original(value))[1])
+    owner.settle(owner.reserve(request()), usage())
+    assert len(validations) == 2
+
+
+def test_cached_budget_refuses_complete_line_rollback(tmp_path, budget_module):
+    owner = budget_module.SpendBudget(tmp_path / "budget.jsonl", policy(budget_module, token_limit=10000))
+    start = owner.path.read_bytes()
+    owner.reserve(request())
+    owner.path.write_bytes(start)
+    with pytest.raises(ValueError, match="history"):
+        owner.summary()

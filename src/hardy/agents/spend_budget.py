@@ -90,10 +90,23 @@ class SpendBudget:
         self.guard = WriteGuard(self.path.parent, create=not read_only)
         self._read_only = read_only
         self._lock = threading.Lock()
+        self._events = []
+        self._signature = None
+        self._verified_state = ({}, {}, None)
+        self._state_revision = 0
+        self._journal_hash = sha256()
+        self._spent_tokens = 0
+        self._spent_cost = Decimal(0)
+        self._has_overrun = False
+        self._reported_tokens = 0
+        self._actual_tokens = 0
+        self._actual_cost = Decimal(0)
+        self._incomplete = 0
+        self._overruns = 0
         with self._lock, self._file_lock():
             if not self.path.exists() and not read_only:
                 self._append([], "start", {"schema": "hardy.provider-budget/v1", "policy": self.policy.model_dump(mode="json")})
-            self._state(self._read())
+            self._state(self._refresh())
 
     def _file_lock(self):
         return nullcontext() if self._read_only else FileLock(self.path.with_suffix(self.path.suffix + ".lock"))
@@ -106,6 +119,34 @@ class SpendBudget:
         cost = ((estimated_input * max(tariff.input_per_million, tariff.cache_read_per_million, tariff.cache_write_per_million)
                  + output * tariff.output_per_million) / 1_000_000) if tariff else Decimal(0)
         return estimated_input + output, cost
+
+    def _stamp(self):
+        stat = self.guard.path(self.path.name).stat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+    def _refresh(self):
+        stamp = self._stamp()
+        if stamp != self._signature:
+            events = self._read()
+            if events[:len(self._events)] != self._events:
+                raise ValueError("provider budget journal rewrites verified history")
+            # External changes are independently verified, including the full
+            # byte digest. Own appends extend both hash and state below.
+            self._events = events
+            self._verified_state = ({}, {}, None)
+            self._state_revision = 0
+            self._spent_tokens = 0
+            self._spent_cost = Decimal(0)
+            self._has_overrun = False
+            self._reported_tokens = 0
+            self._actual_tokens = 0
+            self._actual_cost = Decimal(0)
+            self._incomplete = 0
+            self._overruns = 0
+            self._state(events)
+            self._journal_hash = sha256(self.guard.path(self.path.name).read_bytes())
+            self._signature = stamp
+        return self._events
 
     def _read(self) -> list[dict[str, Any]]:
         data = self.guard.path(self.path.name).read_bytes()
@@ -134,13 +175,18 @@ class SpendBudget:
                  "kind": kind, "payload": payload}
         event["digest"] = json_digest(event)
         with self.guard.open(self.path.name, "a", encoding="utf-8", newline="\n") as stream:
-            stream.write(json.dumps(event, allow_nan=False, ensure_ascii=False) + "\n")
+            line = json.dumps(event, allow_nan=False, ensure_ascii=False) + "\n"
+            stream.write(line)
             stream.flush()
             os.fsync(stream.fileno())
+        self._events.append(event)
+        self._state(self._events)
+        self._journal_hash.update(line.encode("utf-8"))
+        self._signature = self._stamp()
 
     def _state(self, events: list[dict[str, Any]]) -> tuple[dict, dict, str | None]:
-        reservations, settled, ending = {}, {}, None
-        for event in events[1:]:
+        reservations, settled, ending = self._verified_state
+        for event in events[max(1, self._state_revision):]:
             payload = event["payload"]
             if event["kind"] == "reserve":
                 if payload["id"] in reservations:
@@ -150,17 +196,32 @@ class SpendBudget:
                         or not isinstance(payload["request_sha256"], str) or len(payload["request_sha256"]) != 64):
                     raise ValueError("provider reservation differs from its frozen quote policy")
                 reservations[payload["id"]] = payload
+                self._spent_tokens += tokens
+                self._spent_cost += cost
             elif event["kind"] == "settle":
                 if payload["id"] not in reservations or payload["id"] in settled:
                     raise ValueError("provider settlement lacks one preceding reservation")
                 if payload != self._settlement(payload["id"], payload["reported"]):
                     raise ValueError("provider settlement differs from reported usage")
                 settled[payload["id"]] = payload
+                quote = reservations[payload["id"]]
+                tokens, cost = self._charged(quote, payload)
+                self._spent_tokens += tokens - quote["tokens"]
+                self._spent_cost += cost - Decimal(quote["cost_usd"])
+                overran = self._overran(quote, payload)
+                self._has_overrun |= overran
+                self._reported_tokens += sum(n or 0 for n in payload["reported"].values())
+                self._actual_tokens += payload["tokens"] or 0
+                self._actual_cost += Decimal(payload["cost_usd"] or "0")
+                self._incomplete += payload["tokens"] is None
+                self._overruns += payload["tokens"] is not None and overran
             elif event["kind"] == "deny":
                 ending = payload["limit"]
             else:
                 raise ValueError("unknown provider budget journal event")
-        return reservations, settled, ending
+        self._state_revision = len(events)
+        self._verified_state = reservations, settled, ending
+        return self._verified_state
 
     def _settlement(self, identifier: str, usage: Mapping | None) -> dict[str, Any]:
         if usage is not None and not isinstance(usage, Mapping):
@@ -215,7 +276,7 @@ class SpendBudget:
             raise ValueError("provider budget reader cannot reserve")
         if request.get("model") not in self.policy.models:
             with self._lock, self._file_lock():
-                self._append(self._read(), "deny", {"limit": "model_not_in_policy"})
+                self._append(self._refresh(), "deny", {"limit": "model_not_in_policy"})
             raise SpendLimitReached("model_not_in_policy")
         output = request.get("max_tokens")
         if isinstance(output, bool) or not isinstance(output, int) or output < 1:
@@ -223,23 +284,15 @@ class SpendBudget:
         serialized = json.dumps(dict(request), ensure_ascii=False, sort_keys=True, allow_nan=False)
         tokens, cost = self._quote(len(serialized), output)
         with self._lock, self._file_lock():
-            events = self._read()
+            events = self._refresh()
             reservations, settled, _ = self._state(events)
-            pending = set(reservations) - set(settled)
-            charged = [self._charged(reservations[k], value) for k, value in settled.items()]
-            # Every pending reservation is liability at its quote, this owner's
-            # in-flight calls and anybody else's alike: one that is not ours
-            # may belong to a crashed process or another live one, and either
-            # way nothing has refunded it.
-            spent_tokens = sum(t for t, _ in charged) + sum(reservations[k]["tokens"] for k in pending)
-            spent_cost = sum((c for _, c in charged), Decimal(0)) + sum(
-                (Decimal(reservations[k]["cost_usd"]) for k in pending), Decimal(0))
+            spent_tokens, spent_cost = self._spent_tokens, self._spent_cost
             limit = None
             if self.policy.token_limit is not None and spent_tokens + tokens > self.policy.token_limit:
                 limit = "token_limit"
             elif self.policy.cost_limit_usd is not None and spent_cost + cost > self.policy.cost_limit_usd:
                 limit = "cost_limit"
-            elif any(self._overran(reservations[k], value) for k, value in settled.items()):
+            elif self._has_overrun:
                 limit = "reservation_overrun"
             if limit:
                 self._append(events, "deny", {"limit": limit})
@@ -256,7 +309,7 @@ class SpendBudget:
         # admission charges it at its quote like any other.
         with self._lock, self._file_lock():
             value = self._settlement(identifier, usage)
-            events = self._read()
+            events = self._refresh()
             reservations, settled, _ = self._state(events)
             if identifier not in reservations:
                 raise ValueError("unknown provider reservation")
@@ -268,23 +321,20 @@ class SpendBudget:
 
     def summary(self) -> dict[str, Any]:
         with self._lock, self._file_lock():
-            reservations, settled, ending = self._state(self._read())
+            reservations, settled, ending = self._state(self._refresh())
             pending = len(reservations) - len(settled)
-            unknown = pending or any(value["tokens"] is None for value in settled.values())
-            tokens = sum(value["tokens"] or 0 for value in settled.values())
-            cost = sum((Decimal(value["cost_usd"] or "0") for value in settled.values()), Decimal(0))
+            unknown = pending or self._incomplete
+            tokens, cost = self._actual_tokens, self._actual_cost
             return {"policy": self.policy.model_dump(mode="json"), "policy_sha256": self.policy.digest,
-                "journal_sha256": sha256(self.guard.path(self.path.name).read_bytes()).hexdigest(),
+                "journal_sha256": self._journal_hash.hexdigest(),
                 "reservations": len(reservations), "pending": pending,
-                "reported_tokens": sum(n or 0 for value in settled.values() for n in value["reported"].values()),
+                "reported_tokens": self._reported_tokens,
                 "actual_tokens": None if unknown else tokens,
                 # Complete settlements only. A partial report whose stated
                 # counters overran its reservation is not counted here; it
                 # shows only as the "reservation_overrun" deny it causes at
                 # the next reservation, in `ending_limit`.
-                "reservation_overruns": sum(value["tokens"] is not None and (
-                    value["tokens"] > reservations[k]["tokens"] or self.policy.tariff is not None
-                    and Decimal(value["cost_usd"]) > Decimal(reservations[k]["cost_usd"])) for k, value in settled.items()),
+                "reservation_overruns": self._overruns,
                 "derived_cost_usd": str(cost) if self.policy.tariff and not unknown else None,
                 "provider_cost_usd": None, "ending_limit": ending,
                 "enforcement": "expected-spend admission; actual overrun remains possible"}
