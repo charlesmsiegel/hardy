@@ -377,3 +377,28 @@ def test_a_csname_newif_is_a_finding() -> None:
     found = inventory({"a.tex": "\\expandafter\\newif\\csname ifdraft\\endcsname \\iffalse \\ifdraft \\fi x\\fi"})
 
     assert _ambiguous(found)
+
+
+@pytest.mark.parametrize("source, title, starred", [
+    (r"\section[Short]{Main results}", "Main results", False),
+    (r"\subsection*[x]{Y}", "Y", True),
+    ("\\section % comment\n [Short] % comment\n {Main results}", "Main results", False),
+])
+def test_section_optional_short_title(source, title, starred):
+    found = inventory({"paper.tex": source})
+    section, = found.sections
+    assert section.starred == starred
+    assert _slice(source, section.title) == title
+    assert _slice(source, section.command) == source
+    assert not found.findings
+
+
+def test_section_short_title_without_long_title_reports_full_command():
+    source = r"\section[Short]"
+    found = inventory({"paper.tex": source})
+    section, = found.sections
+    assert section.title is None
+    assert _slice(source, section.command) == source
+    finding, = found.findings
+    assert finding.kind == "missing_argument"
+    assert _slice(source, finding.span) == source

@@ -19,7 +19,9 @@ decision beside them, as are cross-artifact correspondences.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import re
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -53,7 +55,7 @@ from .contracts import (
 from .locators import text_digest
 
 BUILDER = "hardy.trees.deterministic"
-BUILDER_VERSION = "1"
+BUILDER_VERSION = "2"
 LEVELS: dict[str, int] = {"part": 0, "chapter": 1, "appendix": 1, "section": 2, "subsection": 3}
 LEVEL_KINDS: dict[int, NodeKind] = {0: NodeKind.PART, 1: NodeKind.CHAPTER, 2: NodeKind.SECTION, 3: NodeKind.SUBSECTION}
 KINDS_BY_KEYWORD: dict[str, NodeKind] = {k.value: k for k in STATEMENT_KINDS}
@@ -106,10 +108,7 @@ def _boundaries(text: str, observations: list[StructuralObservation]) -> list[in
 
 
 def _next_boundary(boundaries: list[int], after: int) -> int:
-    for boundary in boundaries:
-        if boundary > after:
-            return boundary
-    return boundaries[-1]
+    return boundaries[min(bisect_right(boundaries, after), len(boundaries) - 1)]
 
 
 def _trim(text: str, start: int, end: int) -> int:
@@ -164,6 +163,7 @@ def build_tree(
     page_obs = [o for o in observations if o.artifact_sha256 == artifact.sha256 and _page(o) is not None]
     boundaries = _boundaries(text, text_obs)
     units: list[Unit] = []
+    proof_ends = sorted(r.end for o in text_obs if o.kind is ObservationKind.PROOF_END and (r := _range(o)) is not None)
 
     # 1. Headings: text headings first, outline entries located inside their page.
     seen_heading_starts: set[int] = set()
@@ -229,12 +229,12 @@ def build_tree(
             # A display environment the source delimits itself: equation,
             # figure, table, diagram. Its span is exactly the environment.
             kind = {"equation": NodeKind.EQUATION, "figure": NodeKind.FIGURE, "table": NodeKind.TABLE, "diagram": NodeKind.DIAGRAM}.get(o.value("kind"), NodeKind.UNKNOWN)
-            units.append(Unit(kind=kind, start=r.start, end=r.end, boundary="high", observations=(o.id,), confidence=o.confidence))
+            units.append(Unit(kind=kind, start=r.start, end=r.end, label=o.value("label") or None, boundary="high", observations=(o.id,), confidence=o.confidence))
         elif o.kind is ObservationKind.PROOF_START:
             limit = _next_boundary(boundaries, r.start)
-            ends = [e for e in text_obs if e.kind is ObservationKind.PROOF_END and (er := _range(e)) is not None and r.end <= er.end <= limit]
-            if ends:
-                end = min(_range(e).end for e in ends)  # type: ignore[union-attr]
+            end_index = bisect_left(proof_ends, r.end)
+            if end_index < len(proof_ends) and proof_ends[end_index] <= limit:
+                end = proof_ends[end_index]
                 boundary = "high"
             else:
                 end = _trim(text, r.start, limit)
@@ -253,31 +253,39 @@ def build_tree(
     # 3. Container spans: a heading runs to the next heading of the same or a higher level.
     containers = [u for u in units if u.kind in CONTAINER_KINDS]
     container_end: dict[int, int] = {}
-    for index, unit in enumerate(containers):
-        end = len(text)
-        for later in containers[index + 1:]:
-            if later.level is not None and unit.level is not None and later.level <= unit.level:
-                end = later.start
-                break
-        container_end[id(unit)] = _trim(text, unit.start, end)
+    container_parent: dict[int, Unit | None] = {}
+    stack: list[Unit] = []
+    for unit in containers:
+        while stack and (stack[-1].level or 0) >= (unit.level or 0):
+            closed = stack.pop()
+            container_end[id(closed)] = _trim(text, closed.start, unit.start)
+        container_parent[id(unit)] = stack[-1] if stack else None
+        stack.append(unit)
+    for unit in stack:
+        container_end[id(unit)] = _trim(text, unit.start, len(text))
+    container_starts = [u.start for u in containers]
 
     def container_of(position: int) -> Unit | None:
-        best = None
-        for unit in containers:
-            if unit.start <= position < max(container_end[id(unit)], unit.start + 1) and (best is None or (unit.level or 0) > (best.level or 0)):
-                best = unit
-        return best
+        index = bisect_right(container_starts, position) - 1
+        unit = containers[index] if index >= 0 else None
+        while unit is not None:
+            if position < max(container_end[id(unit)], unit.start + 1):
+                return unit
+            unit = container_parent[id(unit)]
+        return None
 
     # 4. Nodes with content-derived identities.
     nodes: list[SourceNode] = []
     ids: dict[int, str] = {}
     counters: dict[str | None, int] = {}
+    taken: set[str] = set()
 
     def make_node(unit: Unit, parent: str | None, start: int, end: int) -> SourceNode:
         order = counters.get(parent, 0)
         counters[parent] = order + 1
         node = node_record(artifact.sha256, rep, text, unit, parent=parent, start=start, end=end, order=order,
-                           page_spans=page_spans, taken=set(ids.values()), provenance=f"{BUILDER}/{builder_version}")
+                           page_spans=page_spans, taken=taken, provenance=f"{BUILDER}/{builder_version}")
+        taken.add(node.id)
         ids[id(unit)] = node.id
         nodes.append(node)
         return node
@@ -285,12 +293,7 @@ def build_tree(
     for unit in units:
         if unit.kind not in CONTAINER_KINDS:
             continue
-        parent_unit = None
-        for other in containers:
-            if other is unit or other.level is None or unit.level is None or other.level >= unit.level:
-                continue
-            if other.start <= unit.start < container_end[id(other)] and (parent_unit is None or (other.level or 0) > (parent_unit.level or 0)):
-                parent_unit = other
+        parent_unit = container_parent[id(unit)]
         make_node(unit, ids.get(id(parent_unit)) if parent_unit else None, unit.start, container_end[id(unit)])
     for unit in units:
         if unit.kind in CONTAINER_KINDS:
@@ -333,9 +336,17 @@ def build_tree(
     # 6. Edges: containment, proof_of, source_refers_to.
     edges: list[SourceEdge] = [SourceEdge(kind=SourceEdgeKind.CONTAINS, source=n.parent, target=n.id) for n in nodes if n.parent]
     by_number: dict[str, list[SourceNode]] = {}
+    by_label: dict[str, list[SourceNode]] = {}
     for node in nodes:
+        if node.kind not in CONTAINER_KINDS and node.label:
+            by_label.setdefault(node.label, []).append(node)
         if node.kind in STATEMENT_KINDS and node.number:
             by_number.setdefault(node.number, []).append(node)
+    statements_by_parent: dict[str | None, list[SourceNode]] = {}
+    for node in nodes:
+        if node.kind in STATEMENT_KINDS:
+            statements_by_parent.setdefault(node.parent, []).append(node)
+    statement_ends = {parent: [n.span.ranges[0].end for n in group] for parent, group in statements_by_parent.items()}
     unit_by_node = {ids[id(u)]: u for u in units if id(u) in ids}
     for node in nodes:
         if node.kind is not NodeKind.PROOF:
@@ -345,21 +356,41 @@ def build_tree(
         if unit is not None and unit.proof_target_number and unit.proof_target_number in by_number:
             target = by_number[unit.proof_target_number][0]
         else:
-            earlier = [n for n in nodes if n.kind in STATEMENT_KINDS and n.span.ranges[0].end <= node.span.ranges[0].start and n.parent == node.parent]
-            target = earlier[-1] if earlier else None
+            group = statements_by_parent.get(node.parent, [])
+            index = bisect_right(statement_ends.get(node.parent, []), node.span.ranges[0].start) - 1
+            target = group[index] if index >= 0 else None
         if target is not None:
             edges.append(SourceEdge(kind=SourceEdgeKind.PROOF_OF, source=node.id, target=target.id))
         else:
             diagnostics.append(Diagnostic(code="proof_without_statement", detail=f"proof {node.id} has no preceding statement in its container", severity="info"))
-    for o in text_obs:
-        if o.kind is not ObservationKind.REFERENCE:
-            continue
+    # Sweep reference positions once. The heap retains the last containing
+    # leaf in reading order, including overlapping display/statement spans.
+    references = [(index, o) for index, o in enumerate(text_obs) if o.kind is ObservationKind.REFERENCE]
+    leaf_nodes = [n for n in nodes if n.kind not in CONTAINER_KINDS]
+    holders: dict[int, SourceNode] = {}
+    active: list[tuple[int, int]] = []
+    cursor = 0
+    for index, o in sorted(references, key=lambda item: item[1].anchor.locator.start):
         r = _range(o)
         assert r is not None
-        holder = next((n for n in reversed(nodes) if n.span.ranges[0].start <= r.start < max(n.span.ranges[0].end, n.span.ranges[0].start + 1) and n.kind not in CONTAINER_KINDS), None)
+        while cursor < len(leaf_nodes) and leaf_nodes[cursor].span.ranges[0].start <= r.start:
+            part = leaf_nodes[cursor].span.ranges[0]
+            heapq.heappush(active, (-cursor, max(part.end, part.start + 1)))
+            cursor += 1
+        while active and active[0][1] <= r.start:
+            heapq.heappop(active)
+        if active:
+            holders[index] = leaf_nodes[-active[0][0]]
+    for index, o in references:
+        r = _range(o)
+        assert r is not None
+        holder = holders.get(index)
         if holder is None:
             continue
-        targets = by_number.get(o.value("number"), [])
+        if o.value("kind") == "citation":
+            continue
+        targets = (by_label.get(o.value("label") or o.value("number"), []) if o.value("kind") == "label"
+                   else by_number.get(o.value("number"), []))
         wanted_kind = KINDS_BY_KEYWORD.get(o.value("kind"))
         target = next((t for t in targets if wanted_kind is None or t.kind is wanted_kind), None)
         if target is None:

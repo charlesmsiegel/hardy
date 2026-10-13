@@ -121,7 +121,8 @@ def test_tex_environments_build_tree_without_model(tmp_path):
     sections = [n for n in tree.nodes if n.kind is NodeKind.SECTION]
     assert [s.title for s in sections] == ["Introduction", "Lemmas"] and lemma.parent == sections[1].id
     refs = [d for d in tree.diagnostics if d.code == "unresolved_reference"]
-    assert refs  # \ref{lem:key} names a label, not a printed number; the builder says so rather than inventing a target
+    assert not refs
+    assert any(e.kind is SourceEdgeKind.SOURCE_REFERS_TO and e.target == lemma.id for e in tree.edges)
 
 
 def test_single_tex_file_and_packed_directory_are_admissible(tmp_path):
@@ -160,3 +161,105 @@ def test_directory_import_refuses_symlinks_and_traversal(tmp_path):
     lib, report = imported(tmp_path / "lib", buffer.getvalue())
     assert report.extraction.status == "failed" and "refused" in report.extraction.diagnostics[0].detail
     assert lib.artifacts.holds(report.outcome.artifact.sha256)
+
+
+def test_tex_labels_belong_to_their_own_environment(tmp_path):
+    source = r'''\documentclass{article}
+\begin{document}
+\begin{remark} short \end{remark}
+\begin{theorem}[Own]\label{thm:x} body \end{theorem}
+\begin{lemma}\begin{equation}\label{eq:nested}x=y\end{equation}\end{lemma}
+\end{document}'''
+    _, report = imported(tmp_path, source.encode(), name="main.tex")
+    statements = [o for o in report.extraction.observations if o.kind is ObservationKind.STATEMENT_START]
+    assert [o.value("label") for o in statements] == ["", "thm:x", ""]
+
+
+def test_literal_form_feed_is_not_a_file_boundary(tmp_path):
+    lib, report = imported(tmp_path, MAIN.replace(r"\input{lemmas}", "").replace("Introduction", "Intro\fduction").encode(), name="main.tex")
+    sha = report.outcome.artifact.sha256
+    assembled = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    assert "Intro\fduction" in lib.representations.text(sha, assembled.id)
+    assert not [o for o in report.extraction.observations if o.kind is ObservationKind.PAGE_BREAK]
+
+
+def test_tex_label_references_and_citations(tmp_path):
+    source = MAIN.replace(r"See Lemma \ref{lem:key}.", r"See Lemma \ref{lem:key}, \eqref{eq:one}, \cite{paper}, \ref{missing}.")
+    lib, report = imported(tmp_path, bundle(("main.tex", source.encode()), ("lemmas.tex", LEMMAS.encode())))
+    tree = lib.build_tree(report.outcome.artifact.sha256)
+    refs = [e for e in tree.edges if e.kind is SourceEdgeKind.SOURCE_REFERS_TO]
+    assert {tree.node(e.target).label for e in refs} == {"lem:key", "eq:one"}
+    assert [d.detail for d in tree.diagnostics if d.code == "unresolved_reference"] == ["label missing is referenced but no such unit was recovered"]
+
+
+def test_native_mapping_uses_raw_offsets_after_comments_and_inclusions(tmp_path):
+    main = "\\documentclass{article}\n% Long comment before the first segment\n\\begin{document}\nIntro.\n\\input{sec}\nAfter input.\n\\end{document}\n"
+    child = "% Child comment\n\\begin{theorem}\\label{thm:x} body \\end{theorem}\n"
+    lib, report = imported(tmp_path, bundle(("main.tex", main.encode()), ("sec.tex", child.encode())))
+    sha = report.outcome.artifact.sha256
+    native = lib.representations.list(sha, RepresentationKind.NATIVE_SOURCE)[0]
+    assembled = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    sources = json.loads(lib.representations.payload(sha, native.id, "sources.json"))
+    text = lib.representations.text(sha, assembled.id)
+    mapping, = lib.representations.mappings(sha, left=native.id)
+    for left, right in mapping.pairs:
+        assert sources[left.path][left.start:left.end] == text[right.start:right.end]
+    after = text.index("After input.")
+    from hardy.literature.sources.contracts import RepresentationSpan
+    mapped = project(mapping, RepresentationSpan(representation=assembled.id, start=after, end=after + 12))
+    assert mapped[0].start == main.index("After input.")
+
+
+def test_directory_tar_orders_portable_posix_member_names(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "z.tex").write_text("child")
+    (tmp_path / "a.tex").write_text("root")
+    with tarfile.open(fileobj=io.BytesIO(pack_directory(tmp_path))) as tar:
+        assert tar.getnames() == ["a.tex", "a/z.tex"]
+
+
+def test_tex_boundary_observation_scan_does_not_rescan_text(tmp_path):
+    from hardy.literature.sources.tex import observe_tex
+
+    class CountedText(str):
+        scanned = 0
+
+        def find(self, *args):
+            self.scanned += len(self)
+            return super().find(*args)
+
+        def split(self, *args):
+            self.scanned += len(self)
+            return super().split(*args)
+
+    lib, report = imported(tmp_path, MAIN.encode(), name="main.tex")
+    sha = report.outcome.artifact.sha256
+    rep = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    text = CountedText("\f".join(["x" * 100] * 3000))
+    separators = tuple(100 + index * 101 for index in range(2999))
+    observations = observe_tex(rep, text, sha, separators=separators)
+    breaks = [o for o in observations if o.kind is ObservationKind.PAGE_BREAK]
+    assert [o.anchor.locator.start for o in breaks] == list(separators)
+    assert text.scanned <= len(text)
+
+
+def test_mapping_keeps_live_offsets_after_masked_tex_and_crlf(tmp_path):
+    source = "\\documentclass{article}\r\n\\begin{document}\r\n% hidden label \\label{comment}\r\n\\newcommand{\\hidden}{\\begin{theorem}\\label{macro}secret\\end{theorem}}\r\n\\begin{verbatim}\\label{quoted}\\end{verbatim} Live.\r\n\\iffalse\\label{false}\\fi\r\n\\begin{theorem}\\label{live} True.\\end{theorem}\r\n\\end{document}"
+    lib, report = imported(tmp_path, source.encode(), name="main.tex")
+    sha = report.outcome.artifact.sha256
+    native = lib.representations.list(sha, RepresentationKind.NATIVE_SOURCE)[0]
+    assembled = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    text = lib.representations.text(sha, assembled.id)
+    mapping, = lib.representations.mappings(sha, left=native.id)
+    for left, right in mapping.pairs:
+        assert source[left.start:left.end] == text[right.start:right.end]
+    from hardy.literature.sources.contracts import RepresentationSpan
+    start = text.index(r"\label{live}")
+    mapped = project(mapping, RepresentationSpan(representation=assembled.id, start=start, end=start + 12))
+    assert mapped[0].start <= source.index(r"\label{live}") < mapped[0].end
+    left, right = next((left, right) for left, right in mapping.pairs if right.start <= start and start + 12 <= right.end)
+    assert left.start + start - right.start == source.index(r"\label{live}")
+    labels = [o.value("label") for o in report.extraction.observations if o.kind is ObservationKind.LABEL]
+    assert labels == ["live"]
+    assert mapping.partial
+    assert any(d.code == "unmapped_synthetic_text" for d in report.extraction.diagnostics)

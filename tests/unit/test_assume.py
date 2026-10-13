@@ -394,3 +394,39 @@ def test_a_subfile_the_root_reads_is_not_reported_as_unread() -> None:
     assert reading.root == "main.tex"
     assert [item.file for item in reading.statements] == ["sections/intro.tex"]
     assert reading.unread == ()
+
+
+@pytest.mark.parametrize("own", ["", r"\label{thm:own}"])
+def test_inventory_does_not_claim_nested_equation_label(own):
+    source = (r"\documentclass{article}\begin{document}\begin{theorem}" + own
+              + r"Let $x=1$.\begin{equation}\label{eq:key}x=1\end{equation}"
+              + r"\end{theorem}\end{document}")
+    statement, = assume.inventory({"main.tex": source})
+    assert statement.label == ("thm:own" if own else "")
+    assert statement.ref == ("thm:own" if own else "theorem-1")
+    assert assume.find((statement,), "eq:key") is None
+    assert r"\label{eq:key}" in statement.text
+    assert r"\label{thm:own}" not in statement.text
+
+
+def test_inventory_accepts_own_label_after_nested_environment():
+    source = (r"\documentclass{article}\begin{document}\begin{theorem}"
+              r"\begin{equation}\label{eq:key}x=1\end{equation}\label{thm:own}"
+              r"\end{theorem}\end{document}")
+    statement, = assume.inventory({"main.tex": source})
+    assert statement.label == "thm:own"
+    assert r"\label{eq:key}" in statement.text
+
+
+@pytest.mark.parametrize("heading, number", [
+    ("Hadamard 1893", ""), ("Gauss 1801", ""), ("Theorem 1.2", "1.2"),
+    ("Lemma 3", "3"), ("Proposition A.1", "A.1"), ("THM. 2.3", "2.3"),
+    ("1.2", "1.2"), ("Main estimate", ""),
+])
+def test_inventory_distinguishes_source_numbers_from_attribution(heading, number):
+    source = (r"\documentclass{article}\begin{document}\begin{theorem}["
+              + heading + r"]x\end{theorem}\end{document}")
+    statement, = assume.inventory({"main.tex": source})
+    assert statement.heading == heading
+    assert statement.number == number
+    assert statement.as_dict()["number"] == number

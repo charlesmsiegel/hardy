@@ -249,3 +249,61 @@ def test_build_tree_refuses_a_representation_of_another_artifact():
                               access=AccessPolicy.PRIVATE_LOCAL, admitted_at="2026-09-11T00:00:00+00:00")
     with pytest.raises(TreeError, match="own artifact"):
         build_tree(artifact, _rep(), TEXT, observe_text(_rep(), TEXT))
+
+
+def test_tree_proof_observation_scans_are_linear(tmp_path, monkeypatch):
+    from hardy.literature.sources import trees
+
+    text = "\n".join(f"Theorem {i}. True.\nProof. By Theorem {i}. ∎" for i in range(1, 101))
+    artifact = SourceArtifact(sha256=SHA, byte_size=len(text.encode()), format=SourceFormat.TEX_TREE,
+                              media_type="text/plain", kind="file", access=AccessPolicy.PRIVATE_LOCAL,
+                              admitted_at="2026-09-11T00:00:00+00:00")
+    rep = _rep()
+    observations = observe_text(rep, text)
+    calls = 0
+    original = trees._range
+
+    def counted(observation):
+        nonlocal calls
+        calls += 1
+        return original(observation)
+
+    monkeypatch.setattr(trees, "_range", counted)
+    tree = build_tree(artifact, rep, text, observations)
+    assert len([n for n in tree.nodes if n.kind is NodeKind.PROOF]) == 100
+    assert calls < len(observations) * 12
+
+
+def test_indexed_tree_preserves_golden_identity():
+    text = "Chapter 1 Groups\n1.1 Basics\nTheorem 1.1. True.\nProof. By Theorem 1.1. ∎\nLemma 1.2. Yes.\nProof. Done. ∎\nChapter 2 Rings\nTheorem 2.1. By Lemma 1.2.\n"
+    artifact = SourceArtifact(sha256=SHA, byte_size=len(text.encode()), format=SourceFormat.TEX_TREE,
+                              media_type="text/plain", kind="file", access=AccessPolicy.PRIVATE_LOCAL,
+                              admitted_at="2026-09-11T00:00:00+00:00")
+    rep = _rep()
+    tree = build_tree(artifact, rep, text, observe_text(rep, text), builder_version="1")
+    assert tree.id == "tree-11c79b9defb54a6c"
+
+
+def test_tree_heading_scans_are_linear(monkeypatch):
+    from hardy.literature.sources import trees
+    from hardy.literature.sources.tex import observe_tex
+
+    text = "\n".join(r"\section{Section " + str(i) + r"}\begin{theorem}\label{t:" + str(i) + r"} True.\end{theorem}" for i in range(100))
+    artifact = SourceArtifact(sha256=SHA, byte_size=len(text.encode()), format=SourceFormat.TEX_TREE,
+                              media_type="text/plain", kind="file", access=AccessPolicy.PRIVATE_LOCAL,
+                              admitted_at="2026-09-11T00:00:00+00:00")
+    rep = _rep()
+    observations = observe_tex(rep, text, SHA)
+    accesses = 0
+    original = trees.Unit.__getattribute__
+
+    def counted(unit, name):
+        nonlocal accesses
+        if name == "level":
+            accesses += 1
+        return original(unit, name)
+
+    monkeypatch.setattr(trees.Unit, "__getattribute__", counted)
+    tree = build_tree(artifact, rep, text, observations)
+    assert len([n for n in tree.nodes if n.kind is NodeKind.SECTION]) == 100
+    assert accesses < 2000

@@ -114,6 +114,7 @@ class Statement:
             "kind": self.kind,
             "label": self.label,
             "heading": self.heading,
+            "number": self.number,
             "file": self.file,
             "text": self.text,
         }
@@ -353,8 +354,12 @@ def _read_pages(
             end = closing.search(text, match.end())
             body = text[match.end() : end.start() if end else len(text)]
             counts[kind] = counts.get(kind, 0) + 1
-            labels = LABEL.findall(body)
-            label = labels[0].strip() if labels else ""
+            labels = _own_labels(body)
+            label = labels[0].group(1).strip() if labels else ""
+            unlabelled_body = body
+            for own_label in reversed(labels):
+                unlabelled_body = (unlabelled_body[:own_label.start()]
+                                   + unlabelled_body[own_label.end():])
             heading = (match.group(2) or "").strip()
             found.append(
                 Statement(
@@ -367,9 +372,9 @@ def _read_pages(
                     # `[Theorem 1.2]` style some papers use in the heading.
                     # Anything else would be Hardy's guess wearing the paper's
                     # authority.
-                    number=heading if re.fullmatch(r"[A-Za-z.]* ?[\d.]+", heading) else "",
+                    number=_source_number(heading),
                     ordinal=counts[kind],
-                    text=_tidy(LABEL.sub("", body)),
+                    text=_tidy(unlabelled_body),
                     file=path,
                 )
             )
@@ -380,6 +385,33 @@ def _read_pages(
             if len(found) > MAX_STATEMENTS:
                 return tuple(found[:MAX_STATEMENTS]), True
     return tuple(found), False
+
+
+def _own_labels(body: str) -> list[re.Match[str]]:
+    r"""Literal labels belonging to this statement, outside nested environments."""
+    tokens = re.compile(r"\\(?:begin|end)\{[^}]*\}|\\label\{([^}]*)\}")
+    depth = 0
+    labels: list[re.Match[str]] = []
+    for token in tokens.finditer(body):
+        if token.group(1) is not None:
+            if depth == 0:
+                labels.append(token)
+        elif token.group().startswith(r"\begin"):
+            depth += 1
+        elif depth:
+            depth -= 1
+    return labels
+
+
+def _source_number(heading: str) -> str:
+    """Only an explicit numeric heading with an optional known statement kind."""
+    match = re.fullmatch(
+        r"(?:(?P<word>[A-Za-z]+)\.?\s+)?(?P<number>(?:[A-Z]\.?)?\d+(?:\.\d+)*)",
+        heading,
+    )
+    if match is None or (match.group("word") and _kind_of(match.group("word")) is None):
+        return ""
+    return match.group("number")
 
 
 def find(statements: Sequence[Statement], ref: str) -> Statement | None:

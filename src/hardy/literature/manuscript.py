@@ -268,6 +268,9 @@ class _Scanner:
     def _section(self, name: str, start: int, end: int) -> int:
         starred = end < len(self.text) and self.text[end] == "*"
         after_name = end + 1 if starred else end
+        optional = self._group(after_name, "[", "]")
+        if optional is not None:
+            _, after_name = optional
         argument = self._group(after_name, "{", "}")
         if argument is None:
             self._finding("missing_argument", f"\\{name} has no balanced title", start, after_name)
