@@ -748,7 +748,8 @@ def test_a_kernel_that_stopped_reading_can_still_be_escalated(cas_session) -> No
             seen["escalated"] = session.escalate()
             seen["spent"] = time.monotonic() - started
 
-        threading.Thread(target=press_twice, daemon=True).start()
+        presser = threading.Thread(target=press_twice, daemon=True)
+        presser.start()
         # A regression holds the lock across the write, and `escalate` then
         # blocks forever rather than failing: this is what turns that into a
         # failed assertion instead of a hung suite.
@@ -763,6 +764,9 @@ def test_a_kernel_that_stopped_reading_can_still_be_escalated(cas_session) -> No
         finally:
             watchdog.cancel()
 
+        # Stream closure can finish execute before escalation has returned.
+        presser.join(timeout=5)
+        assert not presser.is_alive(), "the press did not return"
         assert seen.get("sent") is True, "the cell was never sent"
         assert seen.get("blocked") is True, "the write never blocked"
         # Nothing is in flight, so there is nothing to *ask* -- a kernel that
