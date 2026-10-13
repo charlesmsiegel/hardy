@@ -604,7 +604,7 @@ def test_a_publish_that_fails_partway_through_a_deletion_unstamps_the_writeup(
 
     filled: list[bool] = []
 
-    def _explode(work, output_dir, aux_dir):
+    def _explode(work, output_dir, aux_dir, commit=None):
         # The disk fills partway through publishing.
         filled.append(True)
         raise OSError("no space left on device")

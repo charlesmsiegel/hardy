@@ -192,9 +192,9 @@ class DocumentService:
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
-        if source_saved and policy.committed_authored_save is not None:
+        if source_saved:
             try:
-                policy.committed_authored_save(f"tex/{relative}")
+                policy.committed(relative)
             except (OSError, ValueError) as error:
                 return ToolResult(
                     False, f"source was saved but provenance could not be updated: {error}; "

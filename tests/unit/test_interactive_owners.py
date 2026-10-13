@@ -192,7 +192,7 @@ def test_provenance_failure_does_not_restore_old_aux_over_committed_source(sessi
     def refused(path):
         raise PermissionError("provenance record held")
 
-    policy = replace(session._document_policy(), committed_authored_save=refused)
+    policy = replace(session._document_policy(), committed=refused)
     source = "\\documentclass{article}\n\\begin{document}New.\\label{new}\\end{document}\n"
     result = session.documents._save_latex("writeup.tex", source, policy=policy)
     assert not result.ok
