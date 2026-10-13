@@ -694,6 +694,10 @@ def load(
 
     try:
         lean_timeout = float(values.get("lean_timeout", DEFAULT_LEAN_TIMEOUT))
+    except OverflowError:
+        raise ValueError(
+            f"lean_timeout must be a finite, positive number of seconds, not {values.get('lean_timeout')!r}"
+        ) from None
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
 
