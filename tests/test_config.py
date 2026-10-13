@@ -972,3 +972,47 @@ def test_lean_timeout_oversized_integer_is_a_configuration_error(tmp_path, sourc
         path.write_text(f'lean_timeout = {huge}\n')
     with pytest.raises(ValueError, match='lean_timeout must be a finite, positive number of seconds'):
         config.load(path, **({'lean_timeout': huge} if source == 'override' else {}))
+
+
+@pytest.mark.parametrize('written_key', ['"tectonic"', "'tectonic'", '"\\u0074ectonic"', '\ufefftectonic'])
+def test_write_setting_replaces_parsed_key_preserving_other_content(tmp_path, written_key):
+    path = tmp_path / 'config.toml'
+    original = f'{written_key} = "" # locate this tool\n# keep this comment\nmodel = "chosen"\n'
+    path.write_text(original, encoding='utf-8')
+    config.write_setting(path, 'tectonic', '/tools/tectonic')
+    assert config.read_file(path) == {'tectonic': '/tools/tectonic', 'model': 'chosen'}
+    assert '# locate this tool' in path.read_text()
+    assert '# keep this comment\nmodel = "chosen"\n' in path.read_text()
+
+
+def test_write_setting_replaces_multiline_value_without_editing_embedded_assignment(tmp_path):
+    path = tmp_path / 'config.toml'
+    path.write_text('model = """\ntectonic = "decoy"\n"""\n"tectonic" = [\n  "old",\n] # tool\n')
+    config.write_setting(path, 'tectonic', '/tools/tectonic')
+    assert config.read_file(path)['tectonic'] == '/tools/tectonic'
+    assert 'tectonic = "decoy"' in config.read_file(path)['model']
+    assert '# tool' in path.read_text()
+
+
+def test_write_setting_appends_before_existing_table(tmp_path):
+    path = tmp_path / 'config.toml'
+    path.write_text('# header\n[unrelated]\ntectonic = "nested"\n')
+    config.write_setting(path, 'tectonic', '/tools/tectonic')
+    import tomllib
+
+    parsed = tomllib.loads(path.read_text())
+    assert parsed == {'tectonic': '/tools/tectonic', 'unrelated': {'tectonic': 'nested'}}
+
+
+def test_write_setting_invalid_toml_is_preserved(tmp_path):
+    path = tmp_path / 'config.toml'
+    original = 'tectonic = "unfinished\n'
+    path.write_text(original)
+    with pytest.raises(ValueError):
+        config.write_setting(path, 'tectonic', '/tools/tectonic')
+    assert path.read_text() == original
+
+
+def test_read_file_treats_whitespace_strings_as_unset(tmp_path):
+    path = write(tmp_path / 'config.toml', 'model = "  "\ntectonic = ""\nlean_command = []\n')
+    assert config.read_file(path) == {'lean_command': []}
