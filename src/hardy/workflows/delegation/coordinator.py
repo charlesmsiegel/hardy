@@ -309,11 +309,14 @@ def apply_plan(controller: DelegationController, subtree: str, plan: Coordinatio
                 if authority.approval_threshold_checks is not None and checks > authority.approval_threshold_checks:
                     outcomes.append(_refused(action, "authority: above the approval threshold"))
                     continue
-                decision = controller.reinforce(action.target, ResourceDelta(official_checks=checks),
-                                                by=f"coordinator:{subtree}",
-                                                reason=str(action.args.get("reason") or plan.rationale or kind))
-                outcomes.append(ActionOutcome(action=action, applied=decision.granted is not None,
-                                              refused_because=decision.refused_because))
+                try:
+                    decision = controller.reinforce(action.target, ResourceDelta(official_checks=checks),
+                                                    by=f"coordinator:{subtree}",
+                                                    reason=str(action.args.get("reason") or plan.rationale or kind))
+                    outcomes.append(ActionOutcome(action=action, applied=decision.granted is not None,
+                                                  refused_because=decision.refused_because))
+                except ValueError as error:
+                    outcomes.append(_refused(action, str(error)))
         elif kind in {"pause", "resume"}:
             problem = _in_subtree(controller, subtree, action.target)
             if not authority.may_pause_resume:
@@ -336,9 +339,12 @@ def apply_plan(controller: DelegationController, subtree: str, plan: Coordinatio
                 controller.cancel(action.target, reason=f"retired by coordinator:{subtree}")
                 outcomes.append(ActionOutcome(action=action, applied=True))
             else:
-                controller.finish_subtree(subtree, synthesis=str(action.args.get("synthesis") or plan.rationale),
-                                          by=f"coordinator:{subtree}")
-                outcomes.append(ActionOutcome(action=action, applied=True))
+                try:
+                    controller.finish_subtree(subtree, synthesis=str(action.args.get("synthesis") or plan.rationale),
+                                              by=f"coordinator:{subtree}")
+                    outcomes.append(ActionOutcome(action=action, applied=True))
+                except ValueError as error:
+                    outcomes.append(_refused(action, str(error)))
         elif kind == "lane":
             problem = _in_subtree(controller, subtree, action.target)
             if not authority.may_allocate_within_reserve:

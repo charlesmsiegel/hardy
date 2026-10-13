@@ -1612,3 +1612,38 @@ def test_cancelled_before_start_keeps_zero_usage(tmp_path):
         assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 4
     finally:
         controller.shutdown()
+
+
+def test_receipt_write_failure_keeps_accepted_worker_owned_once(tmp_path, monkeypatch):
+    from hardy.workflows.delegation.findings import Finding, FindingLedger
+
+    seed_lemma(tmp_path)
+    executor = HeldExecutor()
+    executor.slots = 1
+    controller = DelegationController(DelegationStore(tmp_path), LedgerStore(tmp_path), executor=executor,
+                                     open_worker=_open([FINISH]), notify=lambda text: None,
+                                     root=RootResources(lease=ResourceLease(official_checks=4), slots=2))
+    try:
+        first = controller.delegate(_spec(tmp_path))
+        second = controller.delegate(_spec(tmp_path))
+        ledger = FindingLedger(controller.store)
+        finding = ledger.propose(Finding(id=f"{first.id}:finding:0", source_delegation=first.id,
+                                        kind="note", summary="read me", sequence=0))
+        ledger.promote(finding.id, recipient=second.id, mode="push", selector="human", authorized_by=ROOT_ID, reason="read")
+        executor.slots = 2
+        def fail_receipt(*args):
+            raise OSError("disk full")
+        with monkeypatch.context() as patch:
+            patch.setattr(FindingLedger, "acknowledge_pushes", fail_receipt)
+            controller._dispatch()
+        assert second.id not in controller._pending
+        assert second.id in controller._handles
+        assert ledger.pending_pushes(second.id) == (finding,)
+        controller._dispatch()
+        assert [job.name for job in executor.jobs].count(second.id) == 1
+        # The accepted handle also owns settlement when the worker fails.
+        controller._handles[second.id]._future.set_exception(OSError("worker failed"))
+        assert controller.tree().get(second.id).state is DelegationState.FAILED
+        assert second.id not in controller._handles
+    finally:
+        controller.shutdown()
