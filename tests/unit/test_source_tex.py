@@ -302,3 +302,65 @@ def test_environment_owns_label_after_nested_environment_closes(tmp_path):
     refs = [e for e in tree.edges if e.kind is SourceEdgeKind.SOURCE_REFERS_TO]
     assert {tree.node(e.target).label for e in refs} == {"thm:own", "eq:x"}
     assert not [d for d in tree.diagnostics if d.code == "unresolved_reference"]
+
+
+@pytest.mark.parametrize("labels, missing", [("a,b", []), ("a,missing,b", ["missing"])])
+def test_grouped_cref_resolves_each_recovered_label(tmp_path, labels, missing):
+    source = (r"\documentclass{article}\begin{document}"
+              r"\begin{lemma}\label{a}A\end{lemma}"
+              r"\begin{lemma}\label{b}B\end{lemma}"
+              r"\begin{theorem}By \cref{" + labels + r"}.\end{theorem}\end{document}")
+    lib, report = imported(tmp_path, source.encode(), name="main.tex")
+    tree = lib.build_tree(report.outcome.artifact.sha256)
+    refs = [edge for edge in tree.edges if edge.kind is SourceEdgeKind.SOURCE_REFERS_TO]
+    assert [tree.node(edge.target).label for edge in refs] == ["a", "b"]
+    assert [diagnostic.detail for diagnostic in tree.diagnostics if diagnostic.code == "unresolved_reference"] == [
+        f"label {label} is referenced but no such unit was recovered" for label in missing
+    ]
+    assert refs[0].anchor == refs[1].anchor
+
+
+@pytest.mark.parametrize("explicit_preference", [False, True])
+def test_historical_tree_replay_reuses_revision_without_changing_preference(tmp_path, explicit_preference):
+    from hardy.literature.sources.representations import payload_digest
+
+    lib, report = imported(tmp_path, MAIN.encode(), name="main.tex")
+    sha = report.outcome.artifact.sha256
+    first_rep = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    first = lib.build_tree(sha, representation=first_rep.id)
+    payloads = {"text.txt": (lib.representations.text(sha, first_rep.id) + "\nExtra prose.").encode()}
+    second_rep = first_rep.model_copy(update={"id": "normalized_text-other", "output_sha256": payload_digest(payloads)})
+    lib.representations.admit(second_rep, payloads)
+    second = lib.build_tree(sha, representation=second_rep.id)
+    if explicit_preference:
+        lib.trees.prefer(sha, second.id, reason="user chose this revision", expected_revision=lib.trees.revision())
+    journal_revision = lib.trees.revision()
+    replay = lib.build_tree(sha, representation=first_rep.id)
+    assert replay == first
+    assert lib.trees.get(sha, first.id) == first and lib.trees.get(sha, second.id) == second
+    assert lib.trees.preferred(sha) == second
+    assert lib.trees.revision() == journal_revision
+
+
+def test_plain_ref_can_target_a_label_containing_a_comma(tmp_path):
+    source = (r"\documentclass{article}\begin{document}"
+              r"\begin{lemma}\label{a,b}A\end{lemma}"
+              r"\begin{theorem}By \ref{a,b}.\end{theorem}\end{document}")
+    lib, report = imported(tmp_path, source.encode(), name="main.tex")
+    tree = lib.build_tree(report.outcome.artifact.sha256)
+    refs = [edge for edge in tree.edges if edge.kind is SourceEdgeKind.SOURCE_REFERS_TO]
+    assert [tree.node(edge.target).label for edge in refs] == ["a,b"]
+    assert not [diagnostic for diagnostic in tree.diagnostics if diagnostic.code == "unresolved_reference"]
+
+
+def test_native_inclusions_use_conditionals_declared_in_the_root(tmp_path):
+    main = r"\documentclass{article}\newif\ifdraft\begin{document}\input{part}\end{document}"
+    part = r"\iffalse\ifdraft X\fi\input{ghost}\fi\input{live}"
+    ghost = r"\begin{lemma}\label{ghost}Hidden\end{lemma}"
+    live = r"\begin{lemma}\label{live}Shown\end{lemma}"
+    lib, report = imported(tmp_path, bundle(("main.tex", main.encode()), ("part.tex", part.encode()),
+                                         ("ghost.tex", ghost.encode()), ("live.tex", live.encode())))
+    labels = [o.value("label") for o in report.extraction.observations if o.kind is ObservationKind.LABEL]
+    assert labels == ["live"]
+    tree = lib.build_tree(report.outcome.artifact.sha256)
+    assert {node.label for node in tree.nodes if node.kind is NodeKind.LEMMA} == {"live"}

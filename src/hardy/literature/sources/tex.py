@@ -115,6 +115,7 @@ def pack_directory(directory: Path, *, limits: archives.Limits = archives.DEFAUL
 def _reading_pages(files: dict[str, str], root: str) -> list[tuple[str, str, tuple[tuple[int, int, int], ...]]]:
     """Walk inclusions with exact runs into each original admitted file."""
     seen: set[str] = set()
+    conditionals = completion.read_conditionals(files, root=root)
     pages = []
     stack = []
 
@@ -122,7 +123,7 @@ def _reading_pages(files: dict[str, str], root: str) -> list[tuple[str, str, tup
         if not path or path in seen or path not in files:
             return
         seen.add(path)
-        displayed = completion.displayed(files[path])
+        displayed = completion.displayed(files[path], conditionals)
         executed = displayed.executed
         # The displayed scanner masks definitions in place. Keep only source
         # characters that it emitted unchanged; synthetic/masked characters

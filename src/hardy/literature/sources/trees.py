@@ -389,15 +389,19 @@ def build_tree(
             continue
         if o.value("kind") == "citation":
             continue
-        targets = (by_label.get(o.value("label") or o.value("number"), []) if o.value("kind") == "label"
-                   else by_number.get(o.value("number"), []))
+        label_reference = o.value("kind") == "label"
+        reference = (o.value("label") or o.value("number")) if label_reference else o.value("number")
+        grouped_reference = label_reference and text[r.start:r.end].startswith((r"\cref{", r"\Cref{"))
+        references_to_resolve = [label.strip() for label in reference.split(",")] if grouped_reference else [reference]
         wanted_kind = KINDS_BY_KEYWORD.get(o.value("kind"))
-        target = next((t for t in targets if wanted_kind is None or t.kind is wanted_kind), None)
-        if target is None:
-            diagnostics.append(Diagnostic(code="unresolved_reference", detail=f"{o.value('kind')} {o.value('number')} is referenced but no such unit was recovered", severity="info", representation=rep))
-            continue
-        if target.id != holder.id:
-            edges.append(SourceEdge(kind=SourceEdgeKind.SOURCE_REFERS_TO, source=holder.id, target=target.id, anchor=o.anchor))
+        for name in references_to_resolve:
+            targets = by_label.get(name, []) if label_reference else by_number.get(name, [])
+            target = next((t for t in targets if wanted_kind is None or t.kind is wanted_kind), None)
+            if target is None:
+                diagnostics.append(Diagnostic(code="unresolved_reference", detail=f"{o.value('kind')} {name} is referenced but no such unit was recovered", severity="info", representation=rep))
+                continue
+            if target.id != holder.id:
+                edges.append(SourceEdge(kind=SourceEdgeKind.SOURCE_REFERS_TO, source=holder.id, target=target.id, anchor=o.anchor))
 
     # 7. Numbering gaps are diagnostics.
     groups: dict[str, list[int]] = {}
