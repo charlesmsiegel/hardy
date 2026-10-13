@@ -786,6 +786,7 @@ def test_a_kernel_that_stopped_reading_can_still_be_escalated(cas_session) -> No
 
 def test_stop_during_capture_preserves_completed_cell_output(monkeypatch) -> None:
     import signal
+
     from hardy.algebra import driver
 
     class Capture:
