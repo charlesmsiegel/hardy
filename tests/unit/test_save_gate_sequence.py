@@ -93,10 +93,10 @@ def save_tree(tmp_path, monkeypatch):
         audit_tree=audit_tree,
         closes_and_adds=lambda *_: event("closes"),
         publish_audit=publish,
-        record_results=lambda audited, records: (audited_trees.append(audited), event("ledger", "\nledger note"))[1],
-        refresh_automation=lambda: event("automation", "\nautomation note"),
+        record_results=lambda audited, records, signatures: (audited_trees.append(audited), event("ledger", "\nledger note"))[1],
+        refresh_automation=lambda *args: event("automation", "\nautomation note"),
         persist=lambda: event("persist"),
-        owed_note=lambda: event("owed", "\nowed note"),
+        owed_note=lambda *args: event("owed", "\nowed note"),
     )
     service = FormalWorkspaceService(SimpleNamespace(compile_module=compile_module), workspace)
     return SimpleNamespace(service=service, policy=policy, workspace=workspace, events=events,
@@ -119,7 +119,7 @@ def test_success_builds_dependents_then_commits_discards_and_publishes(save_tree
     result = save(tree, NEW + "\n  ")
     assert tree.events == ["generated", "result", "documentation", "final", "shared", "stage",
                            "compile:Main", "compile:Use", "names", "audit", "closes", "commit",
-                           "discard", "publish", "ledger", "automation", "persist", "owed"]
+                           "discard", "publish", "ledger", "persist", "automation", "persist", "owed"]
     assert result == ToolResult(True, "compiled Main\n\naxiom audit: checked\nautomation note\nledger note\nowed note", NEW)
     assert (tree.workspace.root / "Main.lean").read_text() == NEW
     # The ledger is handed the tree the audit graded, read from the shadow
@@ -135,7 +135,7 @@ def test_cached_save_keeps_audit_and_publication_without_recompiling(save_tree):
     result = save(tree, OLD)
     assert result.ok and result.output.startswith("unchanged; already built\n\naxiom audit: checked")
     assert not any(e.startswith("compile:") for e in tree.events)
-    assert tree.events[-8:] == ["closes", "commit", "discard", "publish", "ledger", "automation", "persist", "owed"]
+    assert tree.events[-9:] == ["closes", "commit", "discard", "publish", "ledger", "persist", "automation", "persist", "owed"]
 
 
 @pytest.mark.parametrize(("gate", "refusal", "output"), [

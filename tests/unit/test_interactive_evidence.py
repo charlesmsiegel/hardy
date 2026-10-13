@@ -176,3 +176,133 @@ def test_admission_reconciles_recorded_results_the_change_set_removed(session_fa
     prove = next(o for o in snapshot.current(c.Obligation) if o.item == snapshot.head("lean:base_fact").ref)
     assert prove.status is c.ObligationStatus.OPEN and "no longer declares base_fact" in (prove.reason or "")
     assert any("base_fact proof obligation reopened" in notice for notice in chat.notices)
+
+
+def test_duplicate_public_name_across_modules_never_mints_evidence(session_factory, tmp_path):
+    chat = session_factory()
+    _head(chat, Main=BASE)
+    source = 'import Mathlib\n\nlemma duplicate : True := by exact True.intro\n'
+    staged = _staged(chat, tmp_path, A=source, B=source)
+    evidence, detail = chat.owners.verify(staged, _request('A.lean', 'B.lean', name='duplicate'),
+                                          _obligation('duplicate'))
+    assert evidence is None
+    assert 'A' in detail and 'B' in detail and 'duplicate' in detail
+
+
+def test_partial_recording_note_keeps_prior_writes(session_factory, monkeypatch):
+    chat = session_factory()
+    source = 'theorem a : True := by trivial\ntheorem b : True := by trivial\n'
+    actual = chat.owners._record_declaration
+    def failing(store, **kwargs):
+        if kwargs['name'] == 'b':
+            raise OSError('injected failure')
+        return actual(store, **kwargs)
+    monkeypatch.setattr(chat.owners, '_record_declaration', failing)
+    note = chat.owners.record_saved({'Main': source}, {'Main': {'status': 'clean', 'declarations': [
+        {'name': 'a', 'axioms': []}, {'name': 'b', 'axioms': []}], 'forbidden': [], 'unapproved': [], 'assumed': []}},
+        {'Main': 'sig'})
+    assert 'a recorded; proof obligation resolved' in note
+    assert 'b not recorded: injected failure' in note
+
+
+def test_delete_reopens_recorded_result_and_announces_it(session_factory):
+    from hardy.workflows.ledger.store import LedgerStore
+    chat = session_factory()
+    _head(chat, Main=BASE)
+    chat.owners.record_saved({'Main': BASE}, {'Main': {'status': 'clean', 'declarations': [
+        {'name': 'base_fact', 'axioms': []}], 'forbidden': [], 'unapproved': [], 'assumed': []}}, {'Main': 'sig'})
+    result = chat._delete_file('Main.lean')
+    assert result.ok
+    snapshot = LedgerStore(chat.workspace).read()
+    prove = next(o for o in snapshot.current(c.Obligation) if o.item == snapshot.head('lean:base_fact').ref)
+    assert prove.status is c.ObligationStatus.OPEN
+    assert prove.reason == 'the Lean tree no longer declares base_fact publicly'
+    assert any('base_fact proof obligation reopened' in notice for notice in chat.notices)
+
+
+def test_saved_audit_is_durable_before_automation_probe(session_factory, monkeypatch):
+    import json
+    chat = session_factory()
+    observed = []
+    def probe(source):
+        recorded = json.loads((chat.workspace / 'session.json').read_text())
+        observed.append(recorded['audit']['Main']['status'])
+        return None
+    monkeypatch.setattr(chat, '_automation_probe', probe)
+    chat.state['names'].append({'formal_name': 'base_fact', 'latex_name': 'base', 'description': 'base'})
+    # The disclosure scans registered theorems, rather than lemmas.
+    result = chat._save_lean('Main.lean', BASE.replace('lemma ', 'theorem '))
+    assert result.ok, result.output
+    assert observed
+
+
+def test_save_publication_reads_and_hashes_once_for_audit_ledger_and_obligations(session_factory, monkeypatch):
+    chat = session_factory()
+    sources = chat.lean_workspace.sources
+    signatures = chat.lean_workspace.current_signatures
+    publishing = chat.formal._publish_saved_audit
+    counts = {'reads': 0, 'hashes': 0}
+    active = False
+    def reading():
+        if active:
+            counts['reads'] += 1
+        return sources()
+    def hashing(snapshot=None):
+        if active:
+            counts['hashes'] += 1
+        return signatures(snapshot)
+    def publish(*args, **kwargs):
+        nonlocal active
+        active = True
+        try:
+            return publishing(*args, **kwargs)
+        finally:
+            active = False
+    monkeypatch.setattr(chat.lean_workspace, 'sources', reading)
+    monkeypatch.setattr(chat.lean_workspace, 'current_signatures', hashing)
+    monkeypatch.setattr(chat.formal, '_publish_saved_audit', publish)
+    result = chat._save_lean('Main.lean', BASE)
+    assert result.ok, result.output
+    # Build/staging reads precede publication; audit, ledger and status consume
+    # one fresh committed-tree read and one signature computation together.
+    assert counts == {'reads': 1, 'hashes': 1}
+
+
+def test_publication_never_stamps_audit_with_a_later_external_edit(session_factory, monkeypatch):
+    chat = session_factory()
+    publish = chat.formal._publish_saved_audit
+    changed = BASE.replace('base_fact', 'edited_fact')
+    def edited(*args, **kwargs):
+        (chat.lean_workspace.root / 'Main.lean').write_text(changed, encoding='utf-8')
+        return publish(*args, **kwargs)
+    monkeypatch.setattr(chat.formal, '_publish_saved_audit', edited)
+    result = chat._save_lean('Main.lean', BASE)
+    assert result.ok, result.output
+    recorded = chat.state['audit']['Main']['signature']
+    assert recorded == chat.lean_workspace.current_signatures({'Main': BASE})['Main']
+    assert recorded != chat.lean_workspace.current_signatures()['Main']
+    assert chat._current_audit()['Main']['stale']
+
+
+def test_partial_reopening_keeps_committed_reopening_notes(session_factory, monkeypatch):
+    from hardy.workflows.ledger.store import LedgerStore
+    chat = session_factory()
+    source = 'theorem a : True := by trivial\ntheorem b : True := by trivial\n'
+    chat.owners.record_saved({'Main': source}, {'Main': {'status': 'clean', 'declarations': [
+        {'name': 'a', 'axioms': []}, {'name': 'b', 'axioms': []}], 'forbidden': [], 'unapproved': [], 'assumed': []}},
+        {'Main': 'sig'})
+    append = LedgerStore.append
+    attempts = 0
+    def failing(store, records, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise OSError('reopening failed')
+        return append(store, records, **kwargs)
+    monkeypatch.setattr(LedgerStore, 'append', failing)
+    note = chat.owners.record_saved({}, {}, {})
+    assert 'a proof obligation reopened' in note
+    assert 'b proof obligation not reopened: reopening failed' in note
+    snapshot = LedgerStore(chat.workspace).read()
+    statuses = {snapshot.get(o.item).name: o.status for o in snapshot.current(c.Obligation)}
+    assert statuses == {'a': c.ObligationStatus.OPEN, 'b': c.ObligationStatus.RESOLVED}

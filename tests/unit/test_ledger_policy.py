@@ -635,3 +635,28 @@ def test_distinct_same_item_blocking_obligations_cannot_authenticate_each_other(
 
 
 
+
+
+def test_policy_source_digest_is_computed_once(monkeypatch):
+    from pathlib import Path
+
+    import hardy.workflows.ledger.policy as policy
+    from hardy.foundation.values import json_digest
+
+    # Each process uses the identity of the code it loaded, with LF normalization.
+    expected = json_digest({"policy": "hardy.ledger.policy/v1",
+                            "source": Path(policy.__file__).read_text(encoding="utf-8")})
+    policy._policy_digest.cache_clear()
+    calls = 0
+    read_text = Path.read_text
+
+    def counted(path, *args, **kwargs):
+        nonlocal calls
+        if path == Path(policy.__file__):
+            calls += 1
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counted)
+    for _ in range(10):
+        assert policy.LedgerPolicy().digest == expected
+    assert calls == 1

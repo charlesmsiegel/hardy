@@ -23,7 +23,7 @@ from hardy.workflows.ledger.contracts import (
     ScopedBinding,
     VersionRef,
 )
-from hardy.workflows.ledger.state import LedgerSnapshot
+from hardy.workflows.ledger.state import LedgerLookup, LedgerSnapshot
 
 RECORD_TYPES = {c.__name__: c for c in (
     ProjectItem, MathematicalContext, ScopedBinding, Scope, Obligation,
@@ -43,13 +43,18 @@ def references(value: object) -> Iterator[VersionRef]:
 
 
 def validate_structure(before: LedgerSnapshot, after: LedgerSnapshot) -> None:
-    additions = after.records[len(before.records):]
+    validate_records(before, after, after.records[len(before.records):])
+
+
+def validate_records(before: LedgerLookup, after: LedgerLookup,
+                     additions: tuple[LedgerRecord, ...] | list[LedgerRecord]) -> None:
+    """Validate one atomic batch using exact/head indexes rather than replay history."""
     if len({r.id for r in additions}) != len(additions):
         raise ValueError("one transaction cannot write an identity twice")
     for record in additions:
         for ref in references(record):
             after.get(ref)
-        old = next((r for r in before.current(LedgerRecord) if r.id == record.id), None)
+        old = before.head_or_none(record.id)
         if old:
             if type(old) is not type(record):
                 raise ValueError("record identity cannot change category")
@@ -98,7 +103,7 @@ def validate_structure(before: LedgerSnapshot, after: LedgerSnapshot) -> None:
         raise ValueError("active context reference must name a mathematical context")
 
 
-def _context(snapshot: LedgerSnapshot, context: MathematicalContext) -> None:
+def _context(snapshot: LedgerLookup, context: MathematicalContext) -> None:
     lineage = []
     cursor = context
     while True:

@@ -174,10 +174,10 @@ class SavePolicy:
     audit_tree: Callable[[LeanWorkspace, Sequence[str]], Any]
     closes_and_adds: Callable[[str, Sequence[str], dict[str, Any]], str | None]
     publish_audit: Callable[[dict[str, Any], dict[str, str]], None]
-    record_results: Callable[[dict[str, str], dict[str, Any]], str]
-    refresh_automation: Callable[[], str]
+    record_results: Callable[[dict[str, str], dict[str, Any], dict[str, str]], str]
+    refresh_automation: Callable[[dict[str, str]], str]
     persist: Callable[[], None]
-    owed_note: Callable[[], str]
+    owed_note: Callable[[dict[str, str], dict[str, str]], str]
     committed: Callable[[str], None] = lambda path: None
     verify_commit: Callable[[], None] = lambda: None
 
@@ -400,7 +400,9 @@ class FormalWorkspaceService:
         # imports inside the workspace, and the olean behind every import
         # outside it. A verdict is an answer about those inputs and expires with
         # them.
-        signatures = self.lean_workspace.current_signatures()
+        current_sources, current_signatures = self.lean_workspace.signature_snapshot()
+        signatures = (current_signatures if current_sources == audited
+                      else self.lean_workspace.current_signatures(audited))
         policy.publish_audit(records, signatures)
         # The project ledger's half of the same save: every result the audit
         # graded is recorded, and a verified one closes its proof obligation.
@@ -410,18 +412,19 @@ class FormalWorkspaceService:
         # be recorded as verified; and a note on the save rather than a gate
         # on it -- the files are committed and the verdict is the kernel's
         # whatever the ledger makes of them.
-        ledger = policy.record_results(audited, records)
+        ledger = policy.record_results(audited, records, signatures)
         # After the commit -- the answer is a disclosure about a saved theorem,
-        # never a gate on saving one -- and before `_save_state`, so the
-        # verdicts persist in the same write the audit records do.
-        automation = policy.refresh_automation()
+        # never a gate on saving one. Persist the audit before this optional
+        # probe, then persist its disclosure separately.
+        policy.persist()
+        automation = policy.refresh_automation(current_sources)
         policy.persist()
         # Absent from `seen` when the source was byte-identical to what was
         # already built, so the cache skipped it. Nothing was wrong with it.
         result = seen.get(module, ToolResult(True, "unchanged; already built", source))
         return ToolResult(
             result.ok,
-            f"{result.output}\n\naxiom audit: {note}{automation}{ledger}{policy.owed_note()}",
+            f"{result.output}\n\naxiom audit: {note}{automation}{ledger}{policy.owed_note(current_sources, current_signatures)}",
             result.source,
         )
 
@@ -968,7 +971,8 @@ class FormalWorkspaceService:
 
 
     def _current_audit(
-        self, sources: dict[str, str] | None = None, *, stored: dict[str, Any]
+        self, sources: dict[str, str] | None = None, *, stored: dict[str, Any],
+        signatures: dict[str, str] | None = None
     ) -> dict[str, dict[str, Any]]:
         """The stored verdicts, each measured against the tree in front of us.
 
@@ -987,7 +991,8 @@ class FormalWorkspaceService:
         reports the cycle; nothing here may grade a workspace it cannot read.
         """
         try:
-            signatures = self.lean_workspace.current_signatures(sources)
+            if signatures is None:
+                signatures = self.lean_workspace.current_signatures(sources)
         except ImportCycle as error:
             return {
                 module: {

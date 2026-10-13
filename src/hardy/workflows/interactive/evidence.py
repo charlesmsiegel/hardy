@@ -78,6 +78,25 @@ from hardy.workflows.ledger.policy import AcceptanceDecision, AuthenticatedEvide
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
 
+
+def shared_names(sources: Mapping[str, str], *, theorem_only: bool = False) -> dict[str, list[str]]:
+    """Public declaration collisions in a tree, ordered independently of input order."""
+    holders: dict[str, list[str]] = {}
+    theorems: set[str] = set()
+    for module, source in sorted(sources.items()):
+        found = declarations(source)
+        theorems.update(found["theorem"])
+        named = (*found["theorem"], *found["lemma"])
+        for name in dict.fromkeys(named):
+            count = named.count(name)
+            if count > 1:
+                holders.setdefault(name, []).extend((module, module))
+            elif name not in found["private"]:
+                holders.setdefault(name, []).append(module)
+    return {name: modules for name, modules in holders.items()
+            if len(modules) > 1 and (not theorem_only or name in theorems)}
+
+
 #: The journal directory beside `ledger/`; committed with it.
 EVIDENCE_DIR = "evidence"
 #: What every evidence reference this owner mints names as its producer.
@@ -298,7 +317,7 @@ class ProjectOwners:
             return None, audited.output
         records, note = audited
         graded: dict[str, tuple[str, str, list[str]]] = {}
-        for module in modules:
+        for module in sorted(modules):
             found = declarations(sources[module])
             # A dependent is rebuilt here without passing the textual gates, so
             # a repeat it carries is met here: no statement for that name can
@@ -311,14 +330,15 @@ class ProjectOwners:
                 name = str(entry.get("name"))
                 if name in found["private"]:
                     continue
-                graded[name] = (module, stated.get(name) or name, [str(axiom) for axiom in entry.get("axioms", ())])
+                graded.setdefault(name, (module, stated.get(name) or name, [str(axiom) for axiom in entry.get("axioms", ())]))
+        shared = shared_names(sources)
         match = _corresponding(request.subject_name, request.subject_statement, graded)
         if match is None:
             return None, (f"no audited declaration corresponds to the candidate {request.subject_name!r}: "
                           f"the change set declares {sorted(graded)}; name the finding after its Lean "
                           "declaration and, when it states the result, state it exactly as Lean was given it")
         module, statement, axioms = graded[match]
-        status = audit.declaration_status(match, {module: records[module]})
+        status = audit.declaration_status(match, {module: records[module]}, shared=shared)
         if status.kind != "verified":
             return None, f"{match} in {module}: {status}"
         reference = self._mint(subject=obligation.item, scope=obligation.scope.ref, context=obligation.context,
@@ -437,6 +457,9 @@ class ProjectOwners:
         ledger refuses is reported in the note and the save stands.
         """
         store = LedgerStore(self.problem)
+        # Recording addresses lemmas by name even when the document view has
+        # no theorem involved in a collision. Do not inherit its exemption.
+        shared = shared_names(sources)
         notes: list[str] = []
         try:
             notes.extend(self._reopen_vanished(store, sources))
@@ -471,7 +494,8 @@ class ProjectOwners:
                         signature=signatures.get(module, ""), status=status,
                     )
                 except (ValueError, OSError, LockTimeout) as error:
-                    return f"\n\nproject ledger: not recorded: {error}"
+                    notes.append(f"{name} not recorded: {error}")
+                    break
                 if note:
                     notes.append(f"{name} {note}")
         if not notes:
@@ -516,8 +540,12 @@ class ProjectOwners:
                 reason = f"the Lean tree no longer declares {item.name} publicly"
                 reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
                                                       "status": "open", "resolution": None, "reason": reason})
-                snapshot = store.append((reopened,), expected_revision=snapshot.revision,
-                                        validate=self.policy.validate)
+                try:
+                    snapshot = store.append((reopened,), expected_revision=snapshot.revision,
+                                            validate=self.policy.validate)
+                except (ValueError, OSError, LockTimeout) as error:
+                    notes.append(f"{item.name} proof obligation not reopened: {error}")
+                    return notes
                 notes.append(f"{item.name} proof obligation reopened ({reason})")
         return notes
 

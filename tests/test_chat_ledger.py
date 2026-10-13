@@ -187,7 +187,7 @@ def test_a_ledger_that_refuses_the_write_does_not_refuse_the_save(tmp_path: Path
     chat.send("Save it.")
     outcome = results(tmp_path, "save_lean")[-1]
     assert outcome["ok"] and (tmp_path / "lean" / "Main.lean").exists()
-    assert "project ledger: not recorded" in outcome["output"] and "read-only" in outcome["output"]
+    assert "not recorded:" in outcome["output"] and "read-only" in outcome["output"]
     assert LedgerStore(tmp_path).read().records == ()
 
 
@@ -309,4 +309,4 @@ def test_a_corrupt_evidence_journal_is_a_note_on_the_save_not_a_failure(tmp_path
     chat.send("Save another.")
     outcome = results(tmp_path, "save_lean")[-1]
     assert outcome["ok"] and (tmp_path / "lean" / "Helper.lean").exists()
-    assert "project ledger: not recorded" in outcome["output"], outcome["output"]
+    assert "not recorded:" in outcome["output"], outcome["output"]

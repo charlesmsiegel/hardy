@@ -8,11 +8,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TypeVar
+from typing import Protocol, TypeVar
 
 from hardy.workflows.ledger.contracts import LedgerRecord, VersionRef
 
 RecordT = TypeVar("RecordT", bound=LedgerRecord)
+
+
+class LedgerLookup(Protocol):
+    """Exact/head lookup needed by structural validation, independent of history."""
+
+    active_context: VersionRef | None
+
+    def get(self, ref: VersionRef) -> LedgerRecord: ...
+    def head(self, id: str) -> LedgerRecord: ...
+    def head_or_none(self, id: str) -> LedgerRecord | None: ...
 
 
 @dataclass(frozen=True)
@@ -39,6 +49,9 @@ class LedgerSnapshot:
             return self._heads[id]
         except KeyError:
             raise ValueError(f"unknown record identity: {id}") from None
+
+    def head_or_none(self, id: str) -> LedgerRecord | None:
+        return self._heads.get(id)
 
     def current(self, record_type: type[RecordT]) -> tuple[RecordT, ...]:
         return tuple(r for r in self._heads.values() if isinstance(r, record_type))

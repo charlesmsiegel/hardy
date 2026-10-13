@@ -371,3 +371,21 @@ def test_the_clip_notice_does_not_promise_every_denial_survived():
     assert len(notice) == 1
     assert "SDK-refused requests are not listed" in notice[0].detail
     assert "every call the SDK refused outright is kept" not in notice[0].detail
+
+
+def test_an_unapproved_axiom_is_not_printed_under_proved():
+    text = assemble(theorems={'t': 'theorem t : True'}, audit={'M': {
+        'status': 'rejected', 'declarations': [{'name': 't', 'axioms': ['Evil.ax']}],
+        'unapproved': ['Evil.ax'], 'assumed': [], 'forbidden': []}}).text()
+    proved = text.split('Proved\n', 1)[1].split('\nNot established', 1)[0]
+    assert 't:' not in proved
+    assert "t: rests on unapproved axioms ['Evil.ax']" in text
+
+
+def test_every_audit_grade_routes_explicitly(monkeypatch):
+    from hardy.formal import audit
+    for kind in audit.GRADES:
+        monkeypatch.setattr(audit, 'declaration_status', lambda *args, kind=kind, **kwargs: audit.DeclarationStatus(kind))
+        result = assemble(theorems={'t': 'theorem t : True'})
+        proved = next(section for section in result.sections if section.title == 'Proved')
+        assert any(line.startswith('t:') for line in proved.lines) == (kind in {'verified', 'assumed'})

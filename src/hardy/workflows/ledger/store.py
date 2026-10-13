@@ -10,7 +10,8 @@ or a promise that a directory entry survives every power-loss/filesystem failure
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable
+from collections import ChainMap
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 from hardy.foundation.files import WriteGuard
@@ -19,7 +20,7 @@ from hardy.foundation.values import json_digest
 from hardy.workflows.ledger.contracts import LedgerRecord, VersionRef
 from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
-from hardy.workflows.ledger.validation import RECORD_TYPES, validate_structure
+from hardy.workflows.ledger.validation import RECORD_TYPES, validate_records, validate_structure
 
 SCHEMA = "hardy.ledger/transaction/v1"
 Validator = Callable[[LedgerSnapshot, LedgerSnapshot], None]
@@ -32,6 +33,31 @@ def _refuse_shadowing(origin: LedgerSnapshot, records: Iterable[LedgerRecord]) -
     for record in records:
         if record.id in owned:
             raise ValueError(f"local record {record.id!r} would shadow an authoritative or ancestor identity")
+
+
+class _ReplayIndex:
+    """Operation-local lookups; never escape replay as a returned snapshot."""
+
+    def __init__(self, exact: Mapping[VersionRef, LedgerRecord],
+                 heads: Mapping[str, LedgerRecord], active: VersionRef | None) -> None:
+        self._exact = exact
+        self._heads = heads
+        self.active_context = active
+
+    def get(self, ref: VersionRef) -> LedgerRecord:
+        try:
+            return self._exact[ref]
+        except KeyError:
+            raise ValueError(f"unknown exact reference: {ref.id}@{ref.digest}") from None
+
+    def head(self, id: str) -> LedgerRecord:
+        try:
+            return self._heads[id]
+        except KeyError:
+            raise ValueError(f"unknown record identity: {id}") from None
+
+    def head_or_none(self, id: str) -> LedgerRecord | None:
+        return self._heads.get(id)
 
 
 class LedgerStore:
@@ -74,7 +100,13 @@ class LedgerStore:
             return self._replay(guard)[0]
 
     def _replay(self, guard: WriteGuard) -> tuple[LedgerSnapshot, str | None]:
-        snapshot = self._origin()
+        origin = self._origin()
+        history = list(origin.records)
+        exact = {record.ref: record for record in history}
+        heads = {record.id: record for record in history}
+        owned = set(heads)
+        active = origin.active_context
+        revision = 0
         previous_digest = None
         events = sorted(p.name for p in guard.directory.iterdir() if p.suffix.lower() == ".json")
         for sequence, name in enumerate(events, 1):
@@ -106,14 +138,22 @@ class LedgerStore:
                 if record.ref != VersionRef.model_validate(entry["ref"]):
                     raise ValueError("ledger record reference digest mismatch")
                 records.append(record)
-            active = snapshot.active_context if event["activate"] is None else VersionRef.model_validate(event["activate"])
-            after = LedgerSnapshot(snapshot.records + tuple(records), sequence, active)
-            # A local overlay may extend the base but never shadow one of its identities.
-            _refuse_shadowing(self._origin(), records)
-            validate_structure(snapshot, after)
-            snapshot = after
+            next_active = active if event["activate"] is None else VersionRef.model_validate(event["activate"])
+            for record in records:
+                if record.id in owned:
+                    raise ValueError(f"local record {record.id!r} would shadow an authoritative or ancestor identity")
+            new_exact = {record.ref: record for record in records}
+            new_heads = {record.id: record for record in records}
+            before = _ReplayIndex(exact, heads, active)
+            after = _ReplayIndex(ChainMap(new_exact, exact), ChainMap(new_heads, heads), next_active)
+            validate_records(before, after, records)
+            exact.update(new_exact)
+            heads.update(new_heads)
+            history.extend(records)
+            active = next_active
+            revision = sequence
             previous_digest = event["digest"]
-        return snapshot, previous_digest
+        return LedgerSnapshot(tuple(history), revision, active), previous_digest
 
     def append(
         self, records: Iterable[LedgerRecord], *, expected_revision: int,
