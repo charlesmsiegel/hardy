@@ -14,9 +14,56 @@
 # does the wheel they put in the virtual environment.
 set -eu
 
+# Refuse unsafe installation directories before downloads, mkdir, or removal.
+# Normalize dot components as well as existing symlinks: /tmp/.. is root too.
+bootstrap_require_absolute_dir_option() {
+	case "$2" in
+	/*) ;;
+	*) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
+	esac
+	normalized_dir="$(printf '%s\n' "$2" | awk -F/ '{
+		n=0; for(i=1;i<=NF;i++) {
+			if($i=="" || $i==".") continue;
+			if($i=="..") { if(n>0) n--; } else parts[++n]=$i;
+		}
+		for(i=1;i<=n;i++) printf "/%s",parts[i]; print "";
+	}')"
+	if [ -d "$2" ]; then normalized_dir="$(cd "$2" && pwd -P | sed 's#//*#/#g')"; fi
+	case "$normalized_dir" in
+	"" | /) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
+	esac
+}
+
+# A standalone entrypoint cannot source common.sh until after fetching it.
+# Keep this preflight in agreement with the shared parser's path validation.
+hardy_home="${HARDY_HOME-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+hardy_bin="${HARDY_BIN_DIR-$HOME/.local/bin}"
+take_directory=""
+for argument in "$@"; do
+	if [ -n "$take_directory" ]; then
+		case "$take_directory" in
+		--prefix) hardy_home="$argument" ;;
+		--bin-dir) hardy_bin="$argument" ;;
+		esac
+		take_directory=""
+		continue
+	fi
+	case "$argument" in --prefix | --bin-dir) take_directory="$argument" ;; esac
+done
+[ -z "$take_directory" ] || { printf 'error: %s needs a directory\n' "$take_directory" >&2; exit 1; }
+bootstrap_require_absolute_dir_option '--prefix (HARDY_HOME)' "$hardy_home"
+bootstrap_require_absolute_dir_option '--bin-dir (HARDY_BIN_DIR)' "$hardy_bin"
+
 directory=""
-script_directory="$(dirname "$0")"
-if [ -d "$script_directory" ]; then directory="$(cd "$script_directory" && pwd)"; fi
+case "$0" in
+sh) ;;
+-sh) ;;
+bash) ;;
+-bash) ;;
+dash) ;;
+-dash) ;;
+*) if [ -f "$0" ]; then directory="$(cd "$(dirname "$0")" && pwd)"; fi ;;
+esac
 
 # Fetch the release's installer bundle into $1, checked against that release's
 # own manifest — these are scripts about to run as this user. Returns 1 when the
@@ -55,14 +102,14 @@ hardy_fetch_installers() {
 	export HARDY_RELEASE_MANIFEST="$staging/download/SHA256SUMS"
 }
 
-if [ ! -e "$directory/install-linux.sh" ]; then
+if [ -z "$directory" ] || [ ! -f "$directory/install-linux.sh" ] || [ ! -f "$directory/lib/common.sh" ]; then
 	# Whether the repository was chosen, before the default hides the answer.
 	repo_chosen="${HARDY_REPO_URL:+1}"
 	# --prefix is parsed by the shared argument parser, long after this; but the
 	# installers are kept beside the installation they manage, so the bootstrap
 	# has to honour it too or an update would later look for them under the
 	# default prefix and find nothing.
-	hardy_home="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+	hardy_home="${HARDY_HOME-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
 	take_prefix=0
 	for argument in "$@"; do
 		if [ "$take_prefix" = 1 ]; then
@@ -149,7 +196,8 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		# unpacked archive keeps neither, and is the fallback for the clean
 		# machine that has no git yet.
 		if command -v git >/dev/null 2>&1; then
-			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" && fetched=1
+			if clone_output="$(git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" 2>&1)"; then fetched=1; fi
+			printf '%s\n' "$clone_output" | sed -e 's#://[^/@]*@#://***@#g' >&2
 		fi
 		if [ "$fetched" = 0 ] && command -v curl >/dev/null 2>&1; then
 			rm -rf "$staging"

@@ -65,8 +65,8 @@ Options:
   --remove-lean-project  also remove $LEAN_PROJECT
   --remove-config        also remove $HARDY_CONFIG
   --remove-toolchain     also remove elan and the Lean toolchain ($ELAN_HOME)
-  --prefix DIR           where Hardy was installed (default $HARDY_HOME)
-  --bin-dir DIR          where the \`hardy\` command was linked (default $HARDY_BIN_DIR)
+  --prefix DIR           absolute installation directory other than / (default $HARDY_HOME)
+  --bin-dir DIR          absolute command directory other than / (default $HARDY_BIN_DIR)
   -h, --help             show this message
 
 TeX, Node, and the Claude Code CLI are never removed.
@@ -87,11 +87,13 @@ parse_uninstall_arguments() {
 		--remove-toolchain) REMOVE_TOOLCHAIN=1 ;;
 		--prefix)
 			[ $# -ge 2 ] || fail "--prefix needs a directory"
+			require_absolute_dir_option --prefix "$2"
 			HARDY_HOME="$2"
 			shift
 			;;
 		--bin-dir)
 			[ $# -ge 2 ] || fail "--bin-dir needs a directory"
+			require_absolute_dir_option --bin-dir "$2"
 			HARDY_BIN_DIR="$2"
 			shift
 			;;
@@ -103,6 +105,8 @@ parse_uninstall_arguments() {
 		esac
 		shift
 	done
+	require_absolute_dir_option "--prefix (HARDY_HOME)" "$HARDY_HOME"
+	require_absolute_dir_option "--bin-dir (HARDY_BIN_DIR)" "$HARDY_BIN_DIR"
 	VENV="$HARDY_HOME/venv"
 	LEAN_PROJECT="$HARDY_HOME/lean"
 }
@@ -170,6 +174,7 @@ hardy_uninstall_main() {
 	drop "the Desktop launcher" "$(desktop_dir)/hardy.desktop"
 	drop "the Desktop launcher" "$(desktop_dir)/Hardy.command"
 	drop "the virtual environment" "$VENV"
+	drop "the private bootstrap tools" "$HARDY_HOME/bin"
 	drop "the fetched source tree" "$HARDY_HOME/src"
 	# What a release install leaves behind instead of a source tree: the
 	# installer scripts it was run from, and any half-finished download.

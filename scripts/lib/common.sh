@@ -13,8 +13,8 @@
 # `hardy` shim, elan (which supplies lake), the shared Mathlib project, the
 # config file, and the final `hardy doctor` verification.
 
-HARDY_HOME="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
-HARDY_BIN_DIR="${HARDY_BIN_DIR:-$HOME/.local/bin}"
+HARDY_HOME="${HARDY_HOME-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+HARDY_BIN_DIR="${HARDY_BIN_DIR-$HOME/.local/bin}"
 HARDY_CONFIG="${HARDY_CONFIG:-$HOME/.hardy/config.toml}"
 VENV="$HARDY_HOME/venv"
 LEAN_PROJECT="$HARDY_HOME/lean"
@@ -25,6 +25,87 @@ LEAN_PACKAGE=hardymath
 # values, and tests/test_install_scripts.py holds all three in agreement.
 LEAN_TOOLCHAIN="leanprover/lean4:v4.35.0-rc3"
 MATHLIB_REVISION="5e0c4e5239cb0a2d86d68a884bf52cfd963fce22"
+
+# Bootstrap executables are pinned independently of Lean/Mathlib. Digests were
+# recorded from the publisher's GitHub release asset metadata. Refresh version
+# and every target digest together; a mismatch never selects another source.
+UV_VERSION="0.13.0"
+ELAN_VERSION="v4.2.4"
+
+bootstrap_target() {
+	local architecture platform
+	case "$(uname -m)" in
+	x86_64 | amd64) architecture=x86_64 ;;
+	aarch64 | arm64) architecture=aarch64 ;;
+	*) fail "no pinned $1 bootstrap for architecture $(uname -m); install $1 yourself" ;;
+	esac
+	case "$(uname -s)" in
+	Darwin*) platform=apple-darwin ;;
+	Linux*)
+		platform=unknown-linux-gnu
+		if ldd --version 2>&1 | grep -qi musl; then
+			[ "$1" != elan ] || fail "elan has no pinned musl bootstrap; install elan yourself"
+			platform=unknown-linux-musl
+		fi
+		;;
+	*) fail "no pinned $1 bootstrap for $(uname -s); install $1 yourself" ;;
+	esac
+	printf '%s-%s\n' "$architecture" "$platform"
+}
+
+bootstrap_digest() {
+	case "$1:$2" in
+	uv:aarch64-apple-darwin) printf '%s\n' a9c1b29002cf3c83f07fa9cd8a887a3be0107d90e23189721221e7257db8e3d6 ;;
+	uv:aarch64-unknown-linux-gnu) printf '%s\n' 3ccfb6af6e242433eb552f7d9676abd5412c6595c497e990d9c8cb7b5bd4d2c3 ;;
+	uv:aarch64-unknown-linux-musl) printf '%s\n' 281ca6cf43f4e26e35474839ad4861be86de42af2682f74134460f5b2071b96d ;;
+	uv:x86_64-apple-darwin) printf '%s\n' 5f44dcbde809b632f47c36fadb241cb4d6f9af71d0c8f172b5d2026d3dde742c ;;
+	uv:x86_64-unknown-linux-gnu) printf '%s\n' 1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb75154 ;;
+	uv:x86_64-unknown-linux-musl) printf '%s\n' b0828fc4cdc47d65951e94b5f0a15a5364420e8dcd88723f3b21e7a2eb30bbc3 ;;
+	elan:aarch64-apple-darwin) printf '%s\n' 7ad829861392c718dfebde3a83b5c8508df47be02af68894b094b0b3952616e5 ;;
+	elan:aarch64-unknown-linux-gnu) printf '%s\n' 05febd124d84ebf994b2e7479922a5650b1e950c17ae3bd1ddd776b65bb72bf9 ;;
+	elan:x86_64-apple-darwin) printf '%s\n' 8a340b309d8ed2e96f930761fa223b3af57a38f5d253b53ac90293c9516f8cd4 ;;
+	elan:x86_64-unknown-linux-gnu) printf '%s\n' 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63 ;;
+	*) fail "no recorded checksum for $1 on $2; install $1 yourself" ;;
+	esac
+}
+
+# No downloaded bytes run before their recorded digest has matched. Kept as a
+# separate operation so hermetic tests can inject a local curl without changing
+# the trusted digest or adding an unverified override.
+download_bootstrap_asset() {
+	local url="$1" digest="$2" destination="$3" actual
+	have curl || fail "curl is required for the pinned bootstrap"
+	curl -fsSL "$url" -o "$destination" 2>/dev/null || fail "could not download $(redacted "$url")"
+	actual="$(file_sha256 "$destination")" || fail "no SHA256 tool; bootstrap cannot be verified"
+	[ "$actual" = "$digest" ] || fail "checksum mismatch for $(redacted "$url"): expected $digest, got $actual"
+	say "verified $(redacted "$url") against recorded SHA256 $digest" >&2
+}
+
+# Also used by the real-toolchain CI job; caller selects its Lean toolchain.
+install_pinned_elan() (
+	set -e
+	local target digest staging
+	target="$(bootstrap_target elan)" || exit 1
+	digest="$(bootstrap_digest elan "$target")" || exit 1
+	staging="$(mktemp -d "${TMPDIR:-/tmp}/hardy-elan.XXXXXX")" || fail "could not stage elan bootstrap"
+	trap 'rm -rf "$staging"' EXIT
+	download_bootstrap_asset "https://github.com/leanprover/elan/releases/download/$ELAN_VERSION/elan-$target.tar.gz" "$digest" "$staging/elan.tar.gz"
+	tar xzf "$staging/elan.tar.gz" -C "$staging"
+	"$staging/elan-init" "$@"
+)
+
+install_pinned_uv() (
+	set -e
+	local target digest staging
+	target="$(bootstrap_target uv)" || exit 1
+	digest="$(bootstrap_digest uv "$target")" || exit 1
+	staging="$(mktemp -d "${TMPDIR:-/tmp}/hardy-uv.XXXXXX")" || fail "could not stage uv bootstrap"
+	trap 'rm -rf "$staging"' EXIT
+	download_bootstrap_asset "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-$target.tar.gz" "$digest" "$staging/uv.tar.gz"
+	tar xzf "$staging/uv.tar.gz" -C "$staging"
+	mkdir -p "$HARDY_HOME/bin"
+	cp "$staging/uv-$target/uv" "$staging/uv-$target/uvx" "$HARDY_HOME/bin/"
+)
 
 # Whether the repository was chosen or merely defaulted. An install records the
 # repository its release came from, and only an explicit choice now may override
@@ -57,6 +138,27 @@ fail() {
 	exit 1
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Refuse unsafe installation directories before downloads, mkdir, or removal.
+# Normalize dot components as well as existing symlinks: /tmp/.. is root too.
+require_absolute_dir_option() {
+	case "$2" in
+	/*) ;;
+	*) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
+	esac
+	normalized_dir="$(printf '%s\n' "$2" | awk -F/ '{
+		n=0; for(i=1;i<=NF;i++) {
+			if($i=="" || $i==".") continue;
+			if($i=="..") { if(n>0) n--; } else parts[++n]=$i;
+		}
+		for(i=1;i<=n;i++) printf "/%s",parts[i]; print "";
+	}')"
+	if [ -d "$2" ]; then normalized_dir="$(cd "$2" && pwd -P | sed 's#//*#/#g')"; fi
+	case "$normalized_dir" in
+	"" | /) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
+	esac
+}
+
 
 # A private fork's URL can carry credentials (https://user:token@host/repo).
 # They belong in the request and nowhere else — not in the terminal, and not in
@@ -99,8 +201,8 @@ Options:
   --no-launcher     do not put a Hardy launcher on the Desktop (it runs \`hardy web --open\`)
   --from-release    install the published wheel even when run from a clone
   --from-source     install this source tree, editable (the default from a clone)
-  --prefix DIR      where Hardy keeps its venv and Lean project (default $HARDY_HOME)
-  --bin-dir DIR     where the \`hardy\` command is linked (default $HARDY_BIN_DIR)
+  --prefix DIR      absolute directory other than / for the venv and Lean project (default $HARDY_HOME)
+  --bin-dir DIR     absolute directory other than / for the \`hardy\` command (default $HARDY_BIN_DIR)
   -h, --help        show this message
 
 Environment: HARDY_MODEL, when set, is written to the config file without
@@ -122,11 +224,13 @@ parse_arguments() {
 		--from-source) INSTALL_FROM=source ;;
 		--prefix)
 			[ $# -ge 2 ] || fail "--prefix needs a directory"
+			require_absolute_dir_option --prefix "$2"
 			HARDY_HOME="$2"
 			shift
 			;;
 		--bin-dir)
 			[ $# -ge 2 ] || fail "--bin-dir needs a directory"
+			require_absolute_dir_option --bin-dir "$2"
 			HARDY_BIN_DIR="$2"
 			shift
 			;;
@@ -138,6 +242,8 @@ parse_arguments() {
 		esac
 		shift
 	done
+	require_absolute_dir_option "--prefix (HARDY_HOME)" "$HARDY_HOME"
+	require_absolute_dir_option "--bin-dir (HARDY_BIN_DIR)" "$HARDY_BIN_DIR"
 	VENV="$HARDY_HOME/venv"
 	LEAN_PROJECT="$HARDY_HOME/lean"
 }
@@ -377,10 +483,11 @@ find_python() {
 # uv is the fallback when the system cannot supply Python 3.11+.
 install_uv_python() {
 	step "Installing a private Python 3.12 with uv"
+	[ ! -x "$HARDY_HOME/bin/uv" ] || export PATH="$HARDY_HOME/bin:$PATH"
 	if ! have uv; then
-		confirm "Download and run the uv installer from https://astral.sh/uv?" || fail "Python 3.11+ is required"
-		curl -LsSf https://astral.sh/uv/install.sh | sh
-		export PATH="$HOME/.local/bin:$PATH"
+		confirm "Download the pinned, checksum-verified uv $UV_VERSION?" || fail "Python 3.11+ is required"
+		install_pinned_uv
+		export PATH="$HARDY_HOME/bin:$PATH"
 	fi
 	have uv || fail "uv installed but is not on PATH"
 	uv python install 3.12
@@ -596,7 +703,7 @@ ensure_elan() {
 	confirm "Install elan (the Lean toolchain manager, which provides lake)?" ||
 		fail "lake is required; re-run with --skip-mathlib only if you will install Lean yourself"
 	have curl || fail "curl is required to install elan"
-	curl -sSfL https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain stable
+	install_pinned_elan -y --default-toolchain "$LEAN_TOOLCHAIN"
 	export PATH="$HOME/.elan/bin:$PATH"
 	have lake || fail "elan was installed but lake is not on PATH; open a new shell and re-run"
 	say "installed $(elan --version 2>&1 | head -1)"

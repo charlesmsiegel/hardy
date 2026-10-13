@@ -62,7 +62,8 @@ Options:
   --source DIR     the Hardy source tree to pull (default: wherever the
                    installed environment says its code lives; an install from
                    a release has none, and is updated from the release)
-  --prefix DIR     where Hardy is installed (default $HARDY_HOME)
+  --bin-dir DIR    where the hardy command is linked (absolute, other than /)
+  --prefix DIR     absolute installation directory other than / (default $HARDY_HOME)
   -h, --help       show this message
 
 Environment: HARDY_VERSION selects a release tag to move to instead of the
@@ -83,7 +84,14 @@ parse_update_arguments() {
 			;;
 		--prefix)
 			[ $# -ge 2 ] || fail "--prefix needs a directory"
+			require_absolute_dir_option --prefix "$2"
 			HARDY_HOME="$2"
+			shift
+			;;
+		--bin-dir)
+			[ $# -ge 2 ] || fail "--bin-dir needs a directory"
+			require_absolute_dir_option --bin-dir "$2"
+			HARDY_BIN_DIR="$2"
 			shift
 			;;
 		-h | --help)
@@ -94,6 +102,8 @@ parse_update_arguments() {
 		esac
 		shift
 	done
+	require_absolute_dir_option "--prefix (HARDY_HOME)" "$HARDY_HOME"
+	require_absolute_dir_option "--bin-dir (HARDY_BIN_DIR)" "$HARDY_BIN_DIR"
 	VENV="$HARDY_HOME/venv"
 	LEAN_PROJECT="$HARDY_HOME/lean"
 }
@@ -275,6 +285,7 @@ verify_update() {
 
 hardy_update_main() {
 	parse_update_arguments "$@"
+	[ ! -x "$HARDY_HOME/bin/uv" ] || export PATH="$HARDY_HOME/bin:$PATH"
 	resolve_update_source
 	if [ "$UPDATE_FROM" = release ]; then
 		update_from_release

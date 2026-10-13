@@ -198,6 +198,19 @@ Whatever the platform, the pattern is the same:
 5. **Treat the environment as disposable.** Rebuild it rather than
    trusting one that has run output you would not vouch for.
 
+The initial Hardy dispatcher fetched in the examples below executes under
+HTTPS trust. Its release bundle and wheel are checked against `SHA256SUMS`;
+that manifest arrives over the same channel as the assets, so these checks
+detect corruption and mismatched releases, not a compromised release host.
+Downloaded uv and elan bootstrap archives use pinned versions and recorded
+per-platform SHA256 digests before extraction or execution. The Homebrew
+bootstrap uses a pinned commit and recorded digest; Homebrew does not publish
+an installer checksum. Checksums do not constitute publisher signatures.
+Repository-ref installs prefer git to retain the commit identity; branch/tag
+archive fallbacks have no independent checksum. Install only from repositories
+and releases you trust. Signing or attestations would add a separate trust
+anchor and are outside this installation check.
+
 ### Linux
 
 Run the whole session in a container. Hardy's permission model
