@@ -263,3 +263,18 @@ def test_mapping_keeps_live_offsets_after_masked_tex_and_crlf(tmp_path):
     assert labels == ["live"]
     assert mapping.partial
     assert any(d.code == "unmapped_synthetic_text" for d in report.extraction.diagnostics)
+
+
+def test_environment_owns_label_after_nested_environment_closes(tmp_path):
+    source = r'''\documentclass{article}
+\begin{document}
+\begin{theorem}\begin{equation}\label{eq:x}x\end{equation}\label{thm:own}Own\end{theorem}
+\begin{lemma}By \ref{thm:own} and \eqref{eq:x}.\end{lemma}
+\end{document}'''
+    lib, report = imported(tmp_path, source.encode(), name="main.tex")
+    statements = [o for o in report.extraction.observations if o.kind is ObservationKind.STATEMENT_START]
+    assert [o.value("label") for o in statements] == ["thm:own", ""]
+    tree = lib.build_tree(report.outcome.artifact.sha256)
+    refs = [e for e in tree.edges if e.kind is SourceEdgeKind.SOURCE_REFERS_TO]
+    assert {tree.node(e.target).label for e in refs} == {"thm:own", "eq:x"}
+    assert not [d for d in tree.diagnostics if d.code == "unresolved_reference"]

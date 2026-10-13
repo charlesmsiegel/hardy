@@ -280,16 +280,19 @@ def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha25
 
     for match in SECTION.finditer(text):
         add(ObservationKind.HEADING, match.start(), match.end(), (("level", LEVELS[match.group("level")]), ("number", ""), ("title", match.group("title").strip())), "sectioning command")
-    labels = list(LABEL.finditer(text))
-    label_starts = [m.start() for m in labels]
-    environment_tokens = list(re.finditer(r"\\(?:begin|end)\{[A-Za-z*]+\}", text))
-    token_starts = [m.start() for m in environment_tokens]
-
-    def own_label(start: int) -> str:
-        index = bisect_left(label_starts, start)
-        token = bisect_left(token_starts, start)
-        limit = token_starts[token] if token < len(token_starts) else len(text)
-        return labels[index].group("label") if index < len(labels) and labels[index].start() < limit else ""
+    # Assign each label to its nearest open environment. Closing a nested
+    # environment restores the outer owner, so its later label remains local.
+    labels_by_opening: dict[int, str] = {}
+    owners: list[tuple[str, int]] = []
+    tokens = re.finditer(r"\\begin\{(?P<opening>[A-Za-z*]+)\}|\\end\{(?P<closing>[A-Za-z*]+)\}|\\label\{(?P<label>[^}]*)\}", text)
+    for token in tokens:
+        if token.group("opening") is not None:
+            owners.append((token.group("opening"), token.start()))
+        elif token.group("closing") is not None:
+            if owners and owners[-1][0] == token.group("closing"):
+                owners.pop()
+        elif owners:
+            labels_by_opening.setdefault(owners[-1][1], token.group("label"))
 
     open_envs: list[tuple[str, int, int, str | None]] = []
     for match in re.finditer(r"\\begin\{(?P<env>[A-Za-z*]+)\}(?:\[(?P<name>[^\]]*)\])?|\\end\{(?P<env2>[A-Za-z*]+)\}", text):
@@ -297,14 +300,14 @@ def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha25
             env = match.group("env")
             base = ALIASES.get(env.rstrip("*"), env.rstrip("*"))
             if base in STATEMENT_ENVS:
-                label = own_label(match.end())
+                label = labels_by_opening.get(match.start(), "")
                 add(ObservationKind.STATEMENT_START, match.start(), match.end(),
                     (("kind", ALIASES.get(base, base)), ("number", ""), ("number_origin", "none"), ("name", match.group("name") or ""),
                      ("label", label), ("environment", env)), "theorem-like environment")
             elif base == "proof":
                 add(ObservationKind.PROOF_START, match.start(), match.end(), (("label", "Proof"), ("environment", env)), "proof environment")
             elif env in DISPLAY_ENVS:
-                open_envs.append((env, match.start(), match.end(), own_label(match.end())))
+                open_envs.append((env, match.start(), match.end(), labels_by_opening.get(match.start(), "")))
         else:
             env = match.group("env2")
             if env == "proof":
