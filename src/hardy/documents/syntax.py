@@ -58,7 +58,7 @@ def stamped(source: str, stamp: str | None) -> str:
     """
     if not stamp:
         return source
-    found = BEGIN_DOCUMENT.search(source)
+    found = executed_begin_document(source)
     if found is None:
         return source
     banner = (
@@ -110,7 +110,7 @@ def uncommented(source: str) -> str:
     the single character before the marker.
     """
     kept = []
-    for line in source.splitlines():
+    for line in source.split("\n"):
         cut = 0
         while True:
             found = line.find("%", cut)
@@ -841,12 +841,12 @@ def _drop_macro_bodies(text: str) -> str:
 
 
 VERBATIM_ENVIRONMENT = re.compile(
-    r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim|lstlisting|minted)\}"
+    r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim\*?|lstlisting|minted)\}"
 )
 #: `\verb` and its delimiter. The delimiter is any character that is not a
 #: letter, a star or a space -- `%` very much included, which is the whole
 #: reason this is matched during the comment scan rather than after it.
-INLINE_VERBATIM = re.compile(r"\\verb\*?(?P<mark>[^*\sa-zA-Z])")
+INLINE_VERBATIM = re.compile(r"\\(?:verb|lstinline)\*?(?:\[[^\]]*\])?(?P<mark>[^*\sa-zA-Z])")
 
 
 class _MacroState:
@@ -873,7 +873,7 @@ class _MacroState:
     unexecuted as the first.
     """
 
-    __slots__ = ("phase", "depth", "bodies", "letting")
+    __slots__ = ("phase", "depth", "bodies", "letting", "skipping")
 
     def __init__(self) -> None:
         self.phase = "idle"
@@ -884,6 +884,7 @@ class _MacroState:
         #: like everything else here, because `\let\x=` may end one line and
         #: `\begin{verbatim}` begin the next.
         self.letting = 0
+        self.skipping = 0
 
     @property
     def storing(self) -> bool:
@@ -979,7 +980,11 @@ class _MacroState:
                     self.phase = "args" if self.bodies > 0 else "idle"
 
 
-def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str, bool]:
+def _executed_line(
+    line: str, state: _MacroState, *, preserve: bool = False,
+    inline: Callable[[int, str], None] | None = None,
+    conditionals: Conditionals = NO_CONDITIONALS, stop_false: bool = False,
+) -> tuple[str, str | None, str, bool]:
     r"""One line as TeX reads it, up to any verbatim environment it opens.
 
     Returns the text TeX would run, the environment opened (or None), what
@@ -1014,6 +1019,28 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
     index = 0
     while index < len(line):
         character = line[index]
+        if state.skipping:
+            if character == "%":
+                return "".join(kept), None, "", True
+            if character == "\\":
+                conditional = conditionals.pattern.match(line, index)
+                if conditional is not None:
+                    name = conditional.group(2)
+                    if name == "fi":
+                        state.skipping -= 1
+                    elif conditional.group(1) is None and (
+                        conditionals.opens(name) or name in conditionals.ambiguous
+                    ):
+                        state.skipping += 1
+                    after = conditional.end()
+                else:
+                    after = _skip_command(line, index)
+                kept.append(line[index:after])
+                index = after
+            else:
+                kept.append(character)
+                index += 1
+            continue
         if character == "\\":
             if state.letting > 0:
                 # A token `\let` is consuming, not one the document runs.
@@ -1036,27 +1063,39 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
                 # So the text stays and the opener match is skipped, which is
                 # the whole of the rule and none of the erasure.
                 after = _skip_command(line, index)
-                kept.append(line[index:after])
+                kept.append(" " * (after - index) if preserve else line[index:after])
                 state.swallowed()
                 index = after
+                continue
+            false = _IFFALSE.match(line, index) if state.phase == "idle" else None
+            if false is not None:
+                if stop_false:
+                    kept.append(line[index:])
+                    return "".join(kept), None, "", False
+                kept.append(false.group(0))
+                state.skipping = 1
+                index = false.end()
                 continue
             found = INLINE_VERBATIM.match(line, index)
             if found is not None:
                 closed = line.find(found.group("mark"), found.end())
-                kept.append(" ")
+                end = len(line) if closed < 0 else closed + 1
+                if inline is not None and closed >= 0 and state.phase == "idle":
+                    inline(index, line[found.end() : closed])
+                kept.append(" " * (end - index) if preserve else " ")
                 state.escape()
-                index = len(line) if closed < 0 else closed + 1
+                index = end
                 continue
             opener = VERBATIM_ENVIRONMENT.match(line, index)
             if opener is not None:
-                if state.storing:
+                if state.phase != "idle":
                     # Stored, not opened. `\newcommand{\x}{\begin{verbatim}}`
                     # runs nothing until `\x` is expanded, and nothing here
                     # expands macros -- but the scan is stateful, so honouring
                     # it put every following line inside a region that a
                     # commented `\end{verbatim}` would happily close, taking a
                     # real `thebibliography` in between out of the check.
-                    kept.append(" ")
+                    kept.append(" " * (opener.end() - index) if preserve else " ")
                     index = opener.end()
                     continue
                 return "".join(kept), opener.group("env"), line[opener.end() :], False
@@ -1081,15 +1120,20 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
             # break followed by the word "input". Removing it here fixes the
             # class rather than each pattern in turn, which is what the last
             # two rounds of this kept failing to do.
-            kept.append(" " if line[index : index + 2] == "\\\\" else line[index : index + 2])
+            token = line[index : index + 2]
+            if preserve and (state.phase in {"body", "bracket"} or token == "\\\\"):
+                kept.append(" " * len(token))
+            else:
+                kept.append(" " if token == "\\\\" else token)
             state.escape()
             index += 2
             continue
         if character == "%":
             return "".join(kept), None, "", True
-        kept.append(character)
+        storing = state.phase in {"body", "bracket"}
         if not state.swallowed(character):
             state.step(character)
+        kept.append(" " if preserve and (storing or state.phase in {"body", "bracket"}) else character)
         index += 1
     return "".join(kept), None, "", False
 
@@ -1116,7 +1160,10 @@ def unfinished_definition(source: str) -> bool:
     return state.phase != "idle" or state.letting > 0
 
 
-def typeset(source: str, *, carried: _MacroState | None = None) -> str:
+def typeset(
+    source: str, *, carried: _MacroState | None = None,
+    conditionals: Conditionals = NO_CONDITIONALS,
+) -> str:
     r"""`source` reduced to what TeX would actually execute.
 
     Comments dropped and verbatim content removed, decided together and in
@@ -1143,7 +1190,7 @@ def typeset(source: str, *, carried: _MacroState | None = None) -> str:
     # all: `\bib%` and then `item{key}` is a `\bibitem` it runs and this
     # scan used to see as two innocent fragments.
     gap = ""
-    for raw in source.splitlines():
+    for raw in source.split("\n"):
         line = raw
         if closing is not None:
             _, marker, rest = line.partition(closing)
@@ -1151,7 +1198,7 @@ def typeset(source: str, *, carried: _MacroState | None = None) -> str:
                 continue
             line, closing = rest, None
         while True:
-            text, environment, rest, commented = _executed_line(line, state)
+            text, environment, rest, commented = _executed_line(line, state, conditionals=conditionals)
             kept.append(gap)
             kept.append(text)
             gap = "\n"
@@ -1186,7 +1233,7 @@ def _executed(source: str, conditionals: Conditionals = NO_CONDITIONALS) -> str:
     answered by what the writeup's `\input` chain names, not by which of
     those inputs would run.
     """
-    return _drop_macro_bodies(_drop_iffalse(typeset(source), conditionals))
+    return _drop_macro_bodies(_drop_iffalse(typeset(source, conditionals=conditionals), conditionals))
 
 
 def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
@@ -1210,7 +1257,8 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
     """
     if ROOT_DOCUMENT not in sources:
         return []
-    return sorted(path for path in sources if path not in reached_fragments(sources))
+    reached = reached_fragments(sources)
+    return sorted(path for path in sources if path not in reached)
 
 
 def reached_fragments(sources: Mapping[str, str]) -> set[str]:
@@ -1239,4 +1287,38 @@ def reached_fragments(sources: Mapping[str, str]) -> set[str]:
                 frontier.append(target)
     return reached
 
-
+def executed_begin_document(source: str) -> re.Match[str] | None:
+    """Locate a live document opener without changing source offsets."""
+    state = _MacroState()
+    pieces: list[str] = []
+    closing: str | None = None
+    conditionals = read_conditionals({ROOT_DOCUMENT: source})
+    for raw in source.split("\n"):
+        line = raw
+        prefix = ""
+        while line:
+            if closing is not None:
+                end = line.find(closing)
+                if end < 0:
+                    prefix += " " * len(line)
+                    line = ""
+                    break
+                end += len(closing)
+                prefix += " " * end
+                line = line[end:]
+                closing = None
+            text, environment, rest, _ = _executed_line(line, state, preserve=True, conditionals=conditionals)
+            prefix += text
+            if environment is None:
+                prefix += " " * (len(line) - len(text))
+                break
+            opener_length = len(line) - len(text) - len(rest)
+            prefix += " " * opener_length
+            closing = f"\\end{{{environment}}}"
+            line = rest
+        pieces.append(prefix)
+    text = "\n".join(pieces)
+    chars = list(text)
+    for start, end in _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False):
+        chars[start:end] = " " * (end - start)
+    return BEGIN_DOCUMENT.search("".join(chars))

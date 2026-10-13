@@ -27,8 +27,11 @@ from pathlib import PurePosixPath
 
 from hardy.documents.syntax import (
     INCLUSION,
+    INLINE_VERBATIM,
     ROOT_DOCUMENT,
     Conditionals,
+    _executed_line,
+    _MacroState,
     read_conditionals,
     uncommented,
 )
@@ -53,7 +56,7 @@ ENVIRONMENTS = frozenset(
 FALSE_BRANCH = re.compile(r"\\iffalse(?![A-Za-z])")
 # An environment opening, with whatever optional arguments it carries:
 # `\begin{Verbatim}[fontsize=\small]`, `\begin{minted}{lean}`.
-OPENING = re.compile(r"\\begin\{([A-Za-z*]+)\}((?:\[[^\]]*\]|\{[^}]*\})*)")
+OPENING = re.compile(r"\\begin\s*\{([A-Za-z*]+)\}((?:\[[^\]]*\]|\{[^}]*\})*)")
 # Options that let a "verbatim" environment stop being one. `lstlisting` with
 # `literate={True}{{False}}4` renders `False` where the source says `True`, and
 # an escape character hands part of the listing back to TeX -- either way the
@@ -151,6 +154,9 @@ class Displayed:
     # (`Conditionals.ambiguous`): where the branch ends is unknown there, so
     # neither `executed` nor `quoted` can be trusted past them.
     uncertain: tuple[str, ...] = ()
+    # Offset runs include length-preserving masks; only live nonblank text
+    # identifies a raw command. The emitted final newline may be synthetic.
+    runs: tuple[tuple[int, int, int], ...] = ()
 
 
 def displayed(source: str, conditionals: Conditionals | None = None) -> Displayed:
@@ -189,14 +195,25 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
     skipping = 0
     trusted = True
     closing = ""
+    macro_state = _MacroState()
+    runs: list[tuple[int, int, int]] = []
+    raw_offset = 0
+    line_cursor = 0
 
-    def emit(part: str) -> None:
+    def emit(part: str, *, at: int | None = None) -> None:
         nonlocal position
+        if part:
+            runs.append((position, raw_offset + line_cursor if at is None else at, len(part)))
         ran.append(part)
         position += len(part)
 
-    for raw in source.splitlines():
+    for raw_match in re.finditer(r"[^\n]*(?:\n|$)", source):
+        raw_line = raw_match.group(0)
+        if not raw_line:
+            continue
+        raw = raw_line.rstrip("\r\n")
         line = raw
+        line_cursor = 0
         while True:
             if pending is not None:
                 found = line.find(closing)
@@ -207,6 +224,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
                 if trusted:
                     blocks.append((started, "\n".join(pending)))
                 pending = None
+                line_cursor += found + len(closing)
                 line = line[found + len(closing) :]
                 continue
             if skipping:
@@ -228,30 +246,32 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
                         skipping += 1
                 if skipping:
                     break
+                line_cursor += cursor
                 line = line[cursor:]
                 continue
-            # A comment truncates the line, and `uncommented` only ever cuts,
-            # so an offset into what is left is an offset into the raw line --
-            # which is what lets the content after an opening be taken from the
-            # raw line, where a `%` is the character Lean wrote.
-            visible = uncommented(line)
-            blocks.extend(
-                (position + match.start(), match.group(2))
-                for match in INLINE.finditer(visible)
+            inline_blocks: list[tuple[int, str]] = []
+            def capture_inline(
+                offset: int, block: str, *, text: str = line,
+                collected: list[tuple[int, str]] = inline_blocks,
+            ) -> None:
+                header = INLINE_VERBATIM.match(text, offset)
+                if header is not None and not TRANSFORMING.search(header.group(0)):
+                    collected.append((offset, block))
+
+            visible, environment, _, _ = _executed_line(
+                line, macro_state, preserve=True, stop_false=True, conditionals=conditionals,
+                inline=capture_inline,
             )
-            opening = next(
-                (
-                    match
-                    for match in OPENING.finditer(visible)
-                    if match.group(1) in ENVIRONMENTS
-                ),
-                None,
-            )
+            opening = OPENING.match(line, len(visible)) if environment is not None else None
             # A transforming block still *ends* where it ends -- the scan has to
             # walk to its `\end` either way -- but nothing inside it counts as
             # shown to the reader.
             faithful = opening is None or not TRANSFORMING.search(opening.group(2))
             skipped = FALSE_BRANCH.search(visible)
+            blocks.extend(
+                (position + offset, block) for offset, block in inline_blocks
+                if skipped is None or offset < skipped.start()
+            )
             if skipped is not None and (opening is None or skipped.start() < opening.start()):
                 emit(visible[: skipped.start()])
                 skipping = 1
@@ -259,6 +279,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
                     # A conditional whose `\csname`-built name Hardy cannot
                     # read may be any control word in this branch.
                     uncertain.append("csname")
+                line_cursor += skipped.end()
                 line = line[skipped.end() :]
                 continue
             if opening is None:
@@ -272,9 +293,11 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
             trusted = faithful
             pending = []
             closing = f"\\end{{{opening.group(1)}}}"
+            line_cursor += opening.end()
             line = line[opening.end() :]
-        emit("\n")
-    return Displayed("".join(ran), tuple(blocks), tuple(uncertain))
+        emit("\n", at=raw_offset + len(raw))
+        raw_offset += len(raw_line)
+    return Displayed("".join(ran), tuple(blocks), tuple(uncertain), tuple(runs))
 
 
 def target(name: str, tex: Mapping[str, str]) -> str:
@@ -320,13 +343,14 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
         uncertain: list[str] = list(page.uncertain)
         length = 0
         consumed = 0
+        quoted_through = -1
         for match in INCLUSION.finditer(page.executed):
             head = page.executed[consumed : match.start()]
             parts.append(head)
             quoted.extend(
                 (length + offset - consumed, block)
                 for offset, block in page.quoted
-                if consumed <= offset < match.start()
+                if quoted_through < offset <= match.start()
             )
             length += len(head)
             child = walk(target(match.group(1), tex))
@@ -335,12 +359,13 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
             uncertain.extend(name for name in child.uncertain if name not in uncertain)
             length += len(child.executed)
             consumed = match.end()
+            quoted_through = match.start()
         tail = page.executed[consumed:]
         parts.append(tail)
         quoted.extend(
             (length + offset - consumed, block)
             for offset, block in page.quoted
-            if offset >= consumed
+            if offset > quoted_through
         )
         return Displayed("".join(parts), tuple(quoted), tuple(uncertain))
 

@@ -14,13 +14,13 @@ from hardy.documents.syntax import _LET as _LET
 from hardy.documents.syntax import _MACRO_DEF as _MACRO_DEF
 from hardy.documents.syntax import (
     ARTIFACTS,
-    BODY,
     MAX_AUX_BYTES,
     MAX_LOG_BYTES,
     MAX_PASSES,
     OUTPUTS,
     ROOT_DOCUMENT,
     _executed,
+    executed_begin_document,
     reached_fragments,
     read_conditionals,
     stamped,
@@ -125,10 +125,10 @@ def _probe_root(root: str, path: str) -> str:
     """
     stem = path[: -len(".tex")] if path.endswith(".tex") else path
     body = f"\\input{{{stem}}}\n"
-    head, marker, _ = root.partition(BODY)
-    if not marker:
+    marker = executed_begin_document(root)
+    if marker is None:
         return f"{root.rstrip()}\n"
-    return f"{head}{BODY}\n{body}\\end{{document}}\n"
+    return f"{root[:marker.end()]}\n{body}\\end{{document}}\n"
 
 
 def _copy_tree(tree: Path, work: Path) -> None:
@@ -378,14 +378,19 @@ class LatexTools:
                         source,
                     )
                 root.write_text(compiled, encoding="utf-8", newline="\n")
-            elif path != ROOT_DOCUMENT and path not in _reached(work):
+            try:
+                root_source = root.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return ToolResult(False, f"{ROOT_DOCUMENT} is not valid UTF-8; source was not saved", source)
+            if path != ROOT_DOCUMENT and path not in _reached(work):
                 # The root does not pull this fragment in yet, which is exactly
                 # the fragment-first order a split writeup has to be built in.
                 # Compiling the unchanged root would check nothing about the
                 # candidate, and malformed source would be saved as though it
                 # had been checked -- so it is compiled through a probe root
                 # carrying the real preamble.
-                root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8", newline="\n")
+                root.write_text(_probe_root(root_source, path), encoding="utf-8", newline="\n")
+                root_source = _probe_root(root_source, path)
                 actual = False
             # Only the compiler runs under this `try`. `commit` and `_publish`
             # used to sit inside it, where a `FileNotFoundError` out of either
@@ -400,7 +405,7 @@ class LatexTools:
             # a section published an unstamped PDF while saving the root
             # published a stamped one.
             if stamp:
-                root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8", newline="\n")
+                root.write_text(stamped(root_source, stamp), encoding="utf-8", newline="\n")
             try:
                 outcome, terminal, log = self._passes(work, root)
             except subprocess.TimeoutExpired as error:
