@@ -123,6 +123,42 @@ drop() {
 	fi
 }
 
+remove_managed_tools() {
+	local digest relative extra actual version path
+	local manifest="$HARDY_HOME/managed-tools"
+	[ -f "$manifest" ] || return 0
+	while read -r digest relative extra; do
+		[ -z "$extra" ] && [ "${#digest}" = 64 ] || continue
+		case "$digest" in *[!0-9a-f]*) continue ;; esac
+		case "$relative" in
+		bin/uv | bin/uvx) ;;
+		tools/tectonic/*/tectonic)
+			version="${relative#tools/tectonic/}"
+			version="${version%/tectonic}"
+			case "$version" in "" | *[!0-9.]*) continue ;; esac
+			;;
+		*) continue ;;
+		esac
+		path="$HARDY_HOME/$relative"
+		[ -f "$path" ] || continue
+		actual="$(file_sha256 "$path")" || { keeping "unverified private tool" "$path"; continue; }
+		if [ "$actual" = "$digest" ]; then
+			# Owned files only. Even a replaced symlink is removed as a link.
+			rm -f "$path"
+			say "removed private tool ($path)"
+			removed=$((removed + 1))
+			if [ "${relative#tools/tectonic/}" != "$relative" ]; then
+				rmdir "$(dirname "$path")" "$HARDY_HOME/tools/tectonic" "$HARDY_HOME/tools" 2>/dev/null || true
+			else
+				rmdir "$HARDY_HOME/bin" 2>/dev/null || true
+			fi
+		else
+			keeping "private tool changed since installation" "$path"
+		fi
+	done <"$manifest"
+	drop "the private tool ownership record" "$manifest"
+}
+
 keeping() {
 	say "keeping $1 ($2)"
 	kept=$((kept + 1))
@@ -174,8 +210,7 @@ hardy_uninstall_main() {
 	drop "the Desktop launcher" "$(desktop_dir)/hardy.desktop"
 	drop "the Desktop launcher" "$(desktop_dir)/Hardy.command"
 	drop "the virtual environment" "$VENV"
-	drop "the private pinned tools" "$HARDY_HOME/tools"
-	drop "the private bootstrap tools" "$HARDY_HOME/bin"
+	remove_managed_tools
 	drop "the fetched source tree" "$HARDY_HOME/src"
 	# What a release install leaves behind instead of a source tree: the
 	# installer scripts it was run from, and any half-finished download.

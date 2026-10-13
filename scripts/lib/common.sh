@@ -105,7 +105,20 @@ install_pinned_uv() (
 	tar xzf "$staging/uv.tar.gz" -C "$staging"
 	mkdir -p "$HARDY_HOME/bin"
 	cp "$staging/uv-$target/uv" "$staging/uv-$target/uvx" "$HARDY_HOME/bin/"
+	record_managed_tool bin/uv
+	record_managed_tool bin/uvx
 )
+
+# Only newly installed private leaves are owned. Digests prevent uninstall
+# from removing a tool the user replaced later; no generic bin/tools ownership.
+record_managed_tool() {
+	local relative="$1" digest temporary manifest="$HARDY_HOME/managed-tools"
+	digest="$(file_sha256 "$HARDY_HOME/$relative")" || fail "could not record owned tool $relative"
+	temporary="$(mktemp "$HARDY_HOME/managed-tools.XXXXXX")" || fail "could not record owned tools"
+	if [ -f "$manifest" ]; then awk -v path="$relative" '$2 != path' "$manifest" >"$temporary"; fi
+	printf '%s %s\n' "$digest" "$relative" >>"$temporary"
+	mv "$temporary" "$manifest"
+}
 
 # Whether the repository was chosen or merely defaulted. An install records the
 # repository its release came from, and only an explicit choice now may override
@@ -893,10 +906,18 @@ verify() {
 import sys
 from hardy.app.config import load
 from hardy.app.doctor import run_checks
-skipped = set(sys.argv[1:]) | {"claude login"}
-checks = run_checks(load())
+config = load()
+authentication = {"api": "anthropic key", "codex": "codex login", "claude": "claude login"}
+skipped = set(sys.argv[1:]) | {authentication[config.backend]}
+checks = run_checks(config)
 for check in checks:
     print(check.line())
+if config.backend == "api":
+    print("Set ANTHROPIC_API_KEY to authenticate the API backend.")
+elif config.backend == "codex":
+    print("Run hardy setup to sign in to ChatGPT for the Codex backend.")
+else:
+    print("Run claude login to complete subscription sign-in.")
 raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for c in checks) else 0)
 ' "${advisory[@]}"; then
 		:
@@ -905,19 +926,33 @@ raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for 
 		warn "hardy doctor reported failures in installer responsibilities (see above)"
 	fi
 	have_model || warn "no model configured yet: add one to $HARDY_CONFIG or export HARDY_MODEL"
-	say "run 'claude login' to complete subscription sign-in"
 	return "$verdict"
 }
 
 ensure_tectonic() {
 	[ "$SKIP_LATEX" != 1 ] || return 0
-	step "Installing pinned, digest-checked Tectonic"
-	local installed
-	if installed="$(HARDY_CONFIG="$HARDY_CONFIG" "$VENV/bin/python" - "$HARDY_HOME/tools" <<'TECTONIC_PY'
+	step "Checking for Tectonic"
+	local outcome status installed
+	if outcome="$(HARDY_CONFIG="$HARDY_CONFIG" "$VENV/bin/python" - "$HARDY_HOME/tools" "$WRITE_CONFIG" <<'TECTONIC_PY'
+import os
 import platform
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+from hardy.app.config import load, read_file, write_setting
 from hardy.app.installers import install_tectonic, download_file
+config = load()
+compiler = shutil.which(str(config.tectonic))
+if compiler:
+    try:
+        healthy = subprocess.run([compiler, "--version"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        healthy = False
+    if healthy:
+        print("present")
+        print(config.tectonic)
+        raise SystemExit(0)
 architecture = {"arm64": "aarch64", "amd64": "x86_64"}.get(platform.machine().lower(), platform.machine().lower())
 platform_target = "apple-darwin" if platform.system() == "Darwin" else "unknown-linux-musl"
 result = install_tectonic(destination_root=Path(sys.argv[1]), confirmer=lambda _: True, downloader=download_file,
@@ -925,6 +960,14 @@ result = install_tectonic(destination_root=Path(sys.argv[1]), confirmer=lambda _
 if not result.installed_path:
     print(result.manual_instructions, file=sys.stderr)
     raise SystemExit(1)
+configured = bool(read_file(config.requested_path).get("tectonic"))
+explicit_environment = bool(os.environ.get("HARDY_TECTONIC", "").strip())
+if not configured and not explicit_environment:
+    if sys.argv[2] == "1":
+        write_setting(config.requested_path, "tectonic", str(result.installed_path))
+    print("installed-select")
+else:
+    print("installed-preserve")
 print(result.installed_path)
 TECTONIC_PY
 )"; then
@@ -933,14 +976,15 @@ TECTONIC_PY
 		warn "Tectonic could not be installed; run hardy setup after resolving the download failure"
 		return 1
 	fi
-	# Respect a user's existing compiler choice, including --no-config installs.
-	if [ -z "${HARDY_TECTONIC:-}" ] && ! grep -q '^[[:space:]]*tectonic[[:space:]]*=' "$HARDY_CONFIG" 2>/dev/null; then
-		export HARDY_TECTONIC="$installed"
+	status="${outcome%%$'\n'*}"
+	installed="${outcome#*$'\n'}"
+	if [ "$status" = present ]; then
+		say "Tectonic already works at $installed"
+		return 0
 	fi
-	if [ "$WRITE_CONFIG" = 1 ] && ! grep -q '^[[:space:]]*tectonic[[:space:]]*=' "$HARDY_CONFIG" 2>/dev/null; then
-		mkdir -p "$(dirname "$HARDY_CONFIG")"
-		(umask 077; printf 'tectonic = "%s"\n' "$(toml_escape "$installed")" >>"$HARDY_CONFIG")
-	fi
+	# This recipe installs one versioned private leaf, never the tools directory.
+	record_managed_tool "${installed#"$HARDY_HOME/"}"
+	[ "$status" != installed-select ] || export HARDY_TECTONIC="$installed"
 	say "Tectonic installed at $installed"
 }
 

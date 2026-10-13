@@ -195,7 +195,7 @@ def test_install_verdict_classifies_doctor_checks_and_always_prints_summary(
                       'from hardy.app import doctor, config\n'
                       'doctor.run_checks = lambda _: [doctor.Check(n, ok, n + " detail", required) '
                       'for n, ok, required in json.loads(os.environ["FAKE_DOCTOR_CHECKS"])]\n'
-                      'config.load = lambda: None\n'
+                      'from types import SimpleNamespace\nconfig.load = lambda: SimpleNamespace(backend="claude")\n'
                       'program = sys.argv[2]; sys.argv = sys.argv[2:]; exec(program)\n')
     python.chmod(0o755)
     hardy = venv / "bin" / "hardy"
@@ -243,3 +243,93 @@ def test_update_redacts_credentialed_git_origin_on_success_and_failure(pull_stat
     assert 'https://***@example.test/fork' in result.stdout + result.stderr
     if pull_status:
         assert 'git pull failed' in result.stderr
+
+
+def test_uninstall_preserves_unrelated_shared_prefix_tools(tmp_path):
+    prefix = tmp_path / 'prefix'
+    unrelated = [prefix / 'bin/unrelated', prefix / 'tools/unrelated', prefix / 'bin/uv', prefix / 'tools/tectonic/0.16.9/unrelated']
+    for path in unrelated:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('not installed by Hardy')
+    result = run_script('uninstall.sh', tmp_path, ['--yes'])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert all(path.read_text() == 'not installed by Hardy' for path in unrelated)
+
+
+@pytest.mark.parametrize('backend,sdk_present', [('api', True), ('api', False), ('claude', True), ('claude', False)])
+def test_real_backend_auth_checks_are_advisory_but_sdk_failure_is_binding(backend, sdk_present, tmp_path):
+    import sys
+
+    venv = tmp_path / 'prefix/venv'
+    (venv / 'bin').mkdir(parents=True)
+    worker = venv / 'bin/python'
+    worker.write_text('#!' + sys.executable + '\n'
+                      'import builtins, sys\nfrom types import SimpleNamespace\n'
+                      'from hardy.app import doctor\n'
+                      f'sdk = "anthropic" if {backend!r} == "api" else "claude_agent_sdk"\n'
+                      f'if {sdk_present!r}: sys.modules[sdk] = SimpleNamespace(__version__="test")\n'
+                      'original_import = builtins.__import__\n'
+                      f'def checked_import(name, *args, **kwargs):\n'
+                      f' if name == sdk and not {sdk_present!r}: raise ImportError("missing test sdk")\n'
+                      ' return original_import(name, *args, **kwargs)\n'
+                      'builtins.__import__ = checked_import\n'
+                      'doctor.shutil.which = lambda _: "/test/claude"\n'
+                      'doctor.run_guarded = lambda *args, **kwargs: SimpleNamespace(interrupted=False, timed_out=False, stdout=\'{"loggedIn": false}\')\n'
+                      'doctor.run_checks = lambda config: doctor._backend_checks(config.backend)\n'
+                      'program=sys.argv[2]; sys.argv=sys.argv[2:]; exec(program)\n')
+    worker.chmod(0o755)
+    config = tmp_path / 'config.toml'
+    config.write_text(f'backend = "{backend}"\n')
+    environment = {key: value for key, value in os.environ.items() if key not in {'ANTHROPIC_API_KEY', 'HARDY_BACKEND'}}
+    environment.update(HOME=str(tmp_path), HARDY_HOME=str(tmp_path / 'prefix'), HARDY_CONFIG=str(config),
+                       PYTHONPATH=str(SCRIPTS.parent / 'src'))
+    result = subprocess.run(['bash', '-c', '. "$1"; verify', 'test', str(SCRIPTS / 'lib/common.sh')],
+                            env=environment, capture_output=True, text=True, timeout=15)
+    assert result.returncode == (0 if sdk_present else 1), result.stdout + result.stderr
+    if backend == 'api':
+        assert 'ANTHROPIC_API_KEY' in result.stdout
+        assert 'claude login' not in result.stdout
+    else:
+        assert 'claude login' in result.stdout
+
+
+def test_uninstall_removes_only_recorded_unchanged_tool_leaves(tmp_path):
+    prefix = tmp_path / 'prefix'
+    owned = [prefix / 'bin/uv', prefix / 'bin/uvx', prefix / 'tools/tectonic/0.16.9/tectonic']
+    for path in owned:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('Hardy installed executable')
+    unrelated = [prefix / 'bin/unrelated', prefix / 'tools/unrelated', owned[-1].parent / 'unrelated']
+    for path in unrelated:
+        path.write_text('unrelated data')
+    environment = dict(os.environ, HOME=str(tmp_path), HARDY_HOME=str(prefix))
+    record = subprocess.run(['bash', '-c', '. "$1"; record_managed_tool bin/uv; record_managed_tool bin/uvx; '
+                             'record_managed_tool tools/tectonic/0.16.9/tectonic',
+                             'test', str(SCRIPTS / 'lib/common.sh')],
+                            env=environment, capture_output=True, text=True, timeout=15)
+    assert record.returncode == 0, record.stdout + record.stderr
+    owned[1].write_text('user replacement executable')
+    result = run_script('uninstall.sh', tmp_path, ['--yes'])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not owned[0].exists() and not owned[2].exists()
+    assert owned[1].read_text() == 'user replacement executable'
+    assert all(path.read_text() == 'unrelated data' for path in unrelated)
+
+
+def test_existing_private_uv_skips_bootstrap_and_is_not_owned_or_removed(tmp_path):
+    prefix = tmp_path / 'prefix'
+    uv = prefix / 'bin/uv'
+    uv.parent.mkdir(parents=True)
+    original = '#!/bin/sh\nexit 0\n'
+    uv.write_text(original)
+    uv.chmod(0o755)
+    environment = dict(os.environ, HOME=str(tmp_path), HARDY_HOME=str(prefix))
+    result = subprocess.run(['bash', '-c', '. "$1"; install_pinned_uv() { echo unexpected-download; return 1; }; '
+                             'install_uv_python', 'test', str(SCRIPTS / 'lib/common.sh')],
+                            env=environment, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'unexpected-download' not in result.stdout
+    assert not (prefix / 'managed-tools').exists()
+    removed = run_script('uninstall.sh', tmp_path, ['--yes'])
+    assert removed.returncode == 0, removed.stdout + removed.stderr
+    assert uv.read_text() == original

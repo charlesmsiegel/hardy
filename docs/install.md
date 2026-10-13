@@ -189,12 +189,15 @@ curl, TeX), which are the only steps that use `sudo`.
 
 The POSIX installers also provision pinned Tectonic through the same
 checksum-checked Python recipe, selecting the Linux or macOS release archive.
-Its absolute path is recorded as `tectonic` unless a compiler is already
-configured. `--skip-latex` skips both pdflatex and Tectonic. Tectonic serves
+A healthy effective compiler is reused without downloading. Otherwise the
+new compiler's absolute path is recorded as `tectonic` unless a nonempty compiler
+is already configured; TOML parsing preserves quoted keys and BOM files. `--skip-latex` skips both pdflatex and Tectonic. Tectonic serves
 staged documents; pdflatex serves interactive writeup tools, so the default
 TeX subset remains necessary. `--full-latex` selects the full TeX distribution.
 
-Verification treats subscription sign-in as a next step: run `claude login`.
+Verification treats authentication as a backend-specific next step: run
+`claude login` for Claude, supply `ANTHROPIC_API_KEY` for the API backend, or
+sign in through `hardy setup` for Codex.
 Missing required installed tools still cause exit 1, and the installation
 summary is printed even when those doctor checks fail. Explicit skips waive
 only the corresponding tool checks; an absent Claude CLI is still a failure.
@@ -381,6 +384,11 @@ silently takes them; `--all` answers yes. Individually:
 TeX, Node, and the Claude Code CLI are never removed. Hardy may have
 installed them, but they are ordinary shared tools that something else
 likely wants.
+
+POSIX private uv/uvx and versioned Tectonic executables are removed only when
+the installer recorded their ownership and their file digests still match.
+Pre-existing or subsequently replaced tools and unrelated siblings remain;
+shared `bin/` and `tools/` directories are removed only when empty.
 
 Only the PATH lines carrying the installer's own marker comment are
 stripped; a line you wrote yourself for the same directory is left alone.
