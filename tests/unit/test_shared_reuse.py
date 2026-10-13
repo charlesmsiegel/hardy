@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pdf_helpers import book_pages, build_pdf
+from test_shared_claims import admit
 
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.literature.sources.artifacts import ImportRequest
@@ -113,7 +114,7 @@ def test_source_only_claims_and_empty_answers_are_explicit(tmp_path):
     tree = lib.build_tree(sha)
     theorem = next(n for n in tree.nodes if n.number == "1.2")
     linker = ClaimLinker(library=lib, claims=claims, links=links)
-    link = linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
+    link = admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
         new_claim=claim("cyclic-subgroups", "Subgroups of cyclic groups are cyclic", "Every subgroup of a cyclic group is cyclic."), interpreter="m")).id, verdict=verdict())
     results = resolve("cyclic-subgroups", claims, links, realizations)
     assert results[0].cls is ReuseClass.EXACT_CLAIM_SOURCE_ONLY and results[0].links == (link.id,) and not results[0].reusable_now
@@ -137,3 +138,14 @@ def test_a_realization_of_an_earlier_revision_is_not_an_exact_reuse(tmp_path):
     assert not any(r.reusable_now for r in after)
     head = next(r for r in after if r.claim and r.claim.id == c.id)
     assert head.cls is ReuseClass.EXACT_CLAIM_SOURCE_ONLY and "earlier revision" in head.reason and head.claim == claims.head(c.id).ref
+
+
+def test_mathlib_origin_orders_across_different_exact_claims(tmp_path):
+    root, claims, links, realizations = library(tmp_path)
+    for index, (identifier, origin) in enumerate((("a-shared", RealizationOrigin.HARDY_SHARED), ("z-mathlib", RealizationOrigin.MATHLIB))):
+        c = claim(identifier, "Same exact theorem", "Same statement")
+        claims.add_claim(c, expected_revision=index)
+        realizations.attach(realizations.propose(realization(c, origin, identifier)).id,
+                            verification=evidence(c.ref), faithfulness=bound(c), actor="t")
+    results = resolve("Same exact theorem", claims, links, realizations)
+    assert [r.claim.id for r in results[:2]] == ["z-mathlib", "a-shared"]

@@ -18,6 +18,7 @@ from hardy.workflows.shared.claims import (
     LinkError,
     LinkStatus,
     LinkStore,
+    link_digest,
     source_artifact_ref,
 )
 from hardy.workflows.shared.ledger import SharedClaims, shared_store
@@ -32,6 +33,17 @@ def verdict(agreed=True):
                                 divergences=() if agreed else ("hypotheses differ",))
     return FaithfulnessVerdict(claim_sha256="c" * 64, reviewer_model="reader@test", reviewer_backend="test", reviewer_isolation="tools-refused",
                                prompt_sha256="p" * 64, outcome=FaithfulnessOutcome.AGREED if agreed else FaithfulnessOutcome.DISPUTED, review=review)
+
+
+def admit(linker, link_id, **kwargs):
+    v = kwargs.get("verdict")
+    if v is not None:
+        link = linker.links.get(link_id)
+        chosen = kwargs.get("choose")
+        target = (link.proposed_claim if chosen == "proposed" else chosen) or link.interpretation_target or link.claim or link.proposed_claim
+        if target is not None:
+            kwargs["verdict"] = v.model_copy(update={"claim_sha256": link_digest(link, target)})
+    return linker.admit(link_id, **kwargs)
 
 
 def setup(tmp_path, pages=None):
@@ -67,11 +79,11 @@ def test_admission_records_faithfulness_and_mappings(tmp_path):
     link = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(
         new_claim=proposed, interpreter="model:test", notation_mapping=(("Z", "the integers"),), context_mapping=(("group", "any group"),)))
     with pytest.raises(LinkError, match="agreeing"):
-        linker.admit(link.id, verdict=verdict(agreed=False))
+        admit(linker, link.id, verdict=verdict(agreed=False))
     with pytest.raises(LinkError, match="needs an agreeing"):
-        linker.admit(link.id)
-    admitted = linker.admit(link.id, verdict=verdict())
-    assert admitted.status is LinkStatus.ADMITTED and admitted.faithfulness == verdict()
+        admit(linker, link.id)
+    admitted = admit(linker, link.id, verdict=verdict())
+    assert admitted.status is LinkStatus.ADMITTED and admitted.faithfulness.claim_sha256 == link.interpretation_sha256
     assert admitted.notation_mapping == (("Z", "the integers"),) and admitted.context_mapping == (("group", "any group"),)
     shared = claims.head("cyclic-subgroups")
     assert admitted.claim == shared.ref
@@ -79,7 +91,7 @@ def test_admission_records_faithfulness_and_mappings(tmp_path):
     assert links.links_for_claim("cyclic-subgroups") == (admitted,)
     assert [entry.status for entry in links.history(link.id)] == [LinkStatus.PROPOSED, LinkStatus.ADMITTED]
     with pytest.raises(LinkError, match="already admitted"):
-        linker.admit(link.id, verdict=verdict())
+        admit(linker, link.id, verdict=verdict())
 
 
 def test_human_approval_admits_and_models_cannot_approve(tmp_path):
@@ -87,8 +99,8 @@ def test_human_approval_admits_and_models_cannot_approve(tmp_path):
     theorem = node_numbered(tree, "2.1")
     link = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("ideals-Z", "Ideals of Z are principal", "Every ideal of Z is principal."), interpreter="model:test"))
     with pytest.raises(LinkError, match="names a user"):
-        linker.admit(link.id, approval=HumanApproval(actor="model:test", reason="sure", at="now"))
-    admitted = linker.admit(link.id, approval=HumanApproval(actor="user:charles", reason="read it myself", at="now"))
+        admit(linker, link.id, approval=HumanApproval(actor="model:test", reason="sure", at="now"))
+    admitted = admit(linker, link.id, approval=HumanApproval(actor="user:charles", reason="read it myself", at="now"))
     assert admitted.status is LinkStatus.ADMITTED and admitted.approval.actor == "user:charles"
 
 
@@ -98,8 +110,8 @@ def test_two_nodes_link_to_one_claim_with_separate_spans(tmp_path):
     claims.add_claim(shared, expected_revision=0)
     theorem = node_numbered(tree, "1.2")
     lemma = node_numbered(tree, "2.1")  # a different statement; linked as a reformulation for the test
-    first = linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(shared.ref,), interpreter="m")).id, verdict=verdict())
-    second = linker.admit(linker.propose(sha, tree.id, lemma.id, InterpretationProposal(claim_candidates=(shared.ref,), interpreter="m", relation="reformulates")).id, verdict=verdict())
+    first = admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(claim_candidates=(shared.ref,), interpreter="m")).id, verdict=verdict())
+    second = admit(linker, linker.propose(sha, tree.id, lemma.id, InterpretationProposal(claim_candidates=(shared.ref,), interpreter="m", relation="reformulates")).id, verdict=verdict())
     assert first.claim.id == second.claim.id == "cyclic-subgroups"
     assert first.span.id != second.span.id and first.node != second.node
     assert len(links.links_for_claim("cyclic-subgroups")) == 2
@@ -120,17 +132,17 @@ def test_ambiguous_interpretations_coexist_until_adjudicated(tmp_path):
     competing = linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("rr-c", "Formulation C", "C"), interpreter="other"))
     assert competing.id != link.id and len(links.links_for_node(sha, theorem.id)) == 2
     with pytest.raises(LinkError, match="adjudicated"):
-        linker.admit(link.id, verdict=verdict())
+        admit(linker, link.id, verdict=verdict())
     with pytest.raises(LinkError, match="not one of the link's candidates"):
-        linker.admit(link.id, verdict=verdict(), choose=claim("rr-z", "z", "z").ref)
-    admitted = linker.admit(link.id, verdict=verdict(), choose=b.ref)
+        admit(linker, link.id, verdict=verdict(), choose=claim("rr-z", "z", "z").ref)
+    admitted = admit(linker, link.id, verdict=verdict(), choose=b.ref)
     assert admitted.claim == claims.head("rr-b").ref and admitted.candidates == (a.ref, b.ref)
     still = links.get(competing.id)
     assert still.status is LinkStatus.PROPOSED
     rejected = linker.reject(competing.id, actor="user:c", reason="b was right")
     assert rejected.status is LinkStatus.REJECTED
     with pytest.raises(LinkError, match="rejected"):
-        linker.admit(competing.id, verdict=verdict())
+        admit(linker, competing.id, verdict=verdict())
 
 
 def test_concurrent_proposals_both_survive(tmp_path):
@@ -155,8 +167,8 @@ def test_concurrent_proposals_both_survive(tmp_path):
 def test_new_preferred_tree_marks_links_review_needed_not_deleted(tmp_path):
     lib, sha, tree, claims, links, linker = setup(tmp_path)
     theorem, gap = node_numbered(tree, "1.2"), node_numbered(tree, "1.8")
-    kept = linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c-keep", "keep", "keep"), interpreter="m")).id, verdict=verdict())
-    moved = linker.admit(linker.propose(sha, tree.id, gap.id, InterpretationProposal(new_claim=claim("c-move", "move", "move"), interpreter="m")).id, verdict=verdict())
+    kept = admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c-keep", "keep", "keep"), interpreter="m")).id, verdict=verdict())
+    moved = admit(linker, linker.propose(sha, tree.id, gap.id, InterpretationProposal(new_claim=claim("c-move", "move", "move"), interpreter="m")).id, verdict=verdict())
     pages = book_pages()
     pages[1] = Page((("Proposition 1.3. By Theorem 1.2, every quotient of a cyclic group is cyclic.", 72, 720), ("Proof. Immediate. Q.E.D.", 72, 690),
                      ("Theorem 1.8. A gap in numbering is not evidence of missing theorems, reworded.", 72, 660)))
@@ -184,7 +196,7 @@ def test_new_preferred_tree_marks_links_review_needed_not_deleted(tmp_path):
 def test_restart_preserves_links_and_claims(tmp_path):
     lib, sha, tree, claims, links, linker = setup(tmp_path)
     theorem = node_numbered(tree, "1.2")
-    admitted = linker.admit(linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c1", "one", "one"), interpreter="m")).id, verdict=verdict())
+    admitted = admit(linker, linker.propose(sha, tree.id, theorem.id, InterpretationProposal(new_claim=claim("c1", "one", "one"), interpreter="m")).id, verdict=verdict())
     root = tmp_path / "library"
     reopened_claims = SharedClaims(shared_store(root))
     reopened_links = LinkStore(root / "links")
@@ -220,7 +232,7 @@ def test_a_retried_admission_reuses_the_claim_it_minted(tmp_path):
         return real_append(record, expected_revision=expected_revision)
 
     linker.links.append = flaky
-    admitted = linker.admit(link.id, verdict=verdict())
+    admitted = admit(linker, link.id, verdict=verdict())
     assert admitted.status is LinkStatus.ADMITTED and admitted.claim.id == "c-retry" and len(calls) == 2
     assert [c.id for c in claims.claims()] == ["c-retry"]
 
@@ -270,7 +282,7 @@ def test_admission_refuses_a_claim_revised_since_the_proposal(tmp_path):
     claims.append((ProjectItem.model_validate(revised.model_dump(mode="json")),), expected_revision=claims.snapshot().revision)
     assert claims.head("c-move").ref != chosen
     with pytest.raises(LinkError, match="revised"):
-        linker.admit(link.id, verdict=verdict())
+        admit(linker, link.id, verdict=verdict())
     assert links.get(link.id).status is LinkStatus.PROPOSED
     assert all(source_artifact_ref(link) != a for a in claims.head("c-move").artifacts)  # the source was not attached to the revision
 
@@ -307,4 +319,55 @@ def test_a_rejection_during_stale_review_is_kept(tmp_path):
     assert linker.stale_links(sha, refined.id) == ()
     assert calls == [LinkStatus.REVIEW_NEEDED] and links.get(link.id).status is LinkStatus.REJECTED
     with pytest.raises(LinkError, match="rejected"):
+        admit(linker, link.id, verdict=verdict())
+
+
+def test_a_verdict_about_another_statement_does_not_admit_a_link(tmp_path):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    node = node_numbered(tree, "1.2")
+    link = linker.propose(sha, tree.id, node.id, InterpretationProposal(new_claim=claim("wrong-read", "wrong", "wrong"), interpreter="m"))
+    before = links.snapshot().revision
+    with pytest.raises(LinkError, match="another statement"):
         linker.admit(link.id, verdict=verdict())
+    assert links.snapshot().revision == before and claims.claims() == ()
+
+
+def test_link_store_refuses_a_verdict_about_another_statement(tmp_path):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    c = claim("store-target", "target", "target")
+    claims.add_claim(c, expected_revision=0)
+    link = linker.propose(sha, tree.id, node_numbered(tree, "1.2").id,
+                          InterpretationProposal(claim_candidates=(c.ref,), interpreter="m"))
+    forged = link.model_copy(update={"status": LinkStatus.ADMITTED, "faithfulness": verdict()})
+    with pytest.raises(LinkError, match="another statement"):
+        links.append(forged, expected_revision=links.snapshot().revision)
+    assert links.get(link.id) == link
+
+
+def test_kind_only_source_change_needs_review(tmp_path, monkeypatch):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    node = node_numbered(tree, "1.2")
+    link = linker.propose(sha, tree.id, node.id,
+                          InterpretationProposal(new_claim=claim("kind-target", "target", "target"), interpreter="m"))
+    admitted = admit(linker, link.id, verdict=verdict())
+    changed = node.model_copy(update={"kind": type(node.kind)("remark")})
+    refined = tree.model_copy(update={"nodes": tuple(changed if n.id == node.id else n for n in tree.nodes)})
+    monkeypatch.setattr(lib.trees, "get", lambda sha256, tree_id: refined)
+    assert [r.id for r in linker.stale_links(sha, "new-kind")] == [admitted.id]
+    assert links.get(link.id).status is LinkStatus.REVIEW_NEEDED
+    assert "node changed" in links.get(link.id).history[-1]
+
+
+def test_ambiguous_verdict_names_the_selected_subject(tmp_path):
+    lib, sha, tree, claims, links, linker = setup(tmp_path)
+    a, b = claim("subject-a", "a", "A"), claim("subject-b", "b", "B")
+    claims.add_claim(a, expected_revision=0)
+    claims.add_claim(b, expected_revision=1)
+    link = linker.propose(sha, tree.id, node_numbered(tree, "1.2").id,
+                          InterpretationProposal(claim_candidates=(a.ref, b.ref), interpreter="m"))
+    bound_a = verdict().model_copy(update={"claim_sha256": link_digest(link, a.ref)})
+    before = (claims.snapshot().revision, links.snapshot().revision)
+    with pytest.raises(LinkError, match="another statement"):
+        linker.admit(link.id, verdict=bound_a, choose=b.ref)
+    assert (claims.snapshot().revision, links.snapshot().revision) == before
+    assert linker.admit(link.id, verdict=bound_a, choose=a.ref).interpretation_target == a.ref

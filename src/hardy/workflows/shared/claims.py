@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from hardy.foundation.journal import Journal, JournalSnapshot, StaleRevision
-from hardy.foundation.values import FrozenModel
+from hardy.foundation.values import FrozenModel, json_digest
 from hardy.literature.sources.contracts import Digest, SourceSpan, StableId, Text
 from hardy.literature.sources.library import ManagedLibrary
 from hardy.workflows.contracts import FaithfulnessVerdict
@@ -58,6 +58,9 @@ class SourceClaimLink(FrozenModel):
     tree: StableId
     node: StableId
     node_version: Digest
+    node_kind: Text | None = None
+    interpretation_sha256: Digest | None = None
+    interpretation_target: VersionRef | ProjectItem | None = None
     span: SourceSpan
     claim: VersionRef | None = None
     proposed_claim: ProjectItem | None = None
@@ -94,6 +97,22 @@ def _stamp() -> str:
 def source_artifact_ref(link: SourceClaimLink) -> ArtifactRef:
     """The exact source material a claim rests on, as a ledger artifact reference."""
     return ArtifactRef(uri=f"hardy-source:{link.artifact_sha256}/{link.tree}/{link.node}", digest=link.span.content_sha256, locator=link.span.id)
+
+
+def link_digest(link: SourceClaimLink, target: VersionRef | ProjectItem) -> str:
+    """Identity of the exact source reading, selected claim, and interpretation mappings.
+
+    For ambiguous proposals the reviewer must name the selected candidate, not
+    the whole candidate set. The frozen target survives provenance-only revisions
+    made by admission, and survives removal of the unadmitted proposed claim.
+    """
+    return json_digest({
+        "schema": "hardy-source-interpretation-v1", "artifact_sha256": link.artifact_sha256,
+        "node": link.node, "node_version": link.node_version, "node_kind": link.node_kind,
+        "span": link.span.model_dump(mode="json"), "target": target.model_dump(mode="json"),
+        "relation": link.relation.value, "notation_mapping": link.notation_mapping,
+        "context_mapping": link.context_mapping,
+    })
 
 
 class LinkStore:
@@ -149,24 +168,43 @@ def _validate(before: JournalSnapshot, after: JournalSnapshot) -> None:
         heads[record.id] = record
     for record in after.records[len(before.records):]:
         assert isinstance(record, SourceClaimLink)
+        if record.interpretation_sha256 is not None and (
+            record.interpretation_target is None
+            or link_digest(record, record.interpretation_target) != record.interpretation_sha256
+        ):
+            raise LinkError("the interpretation digest does not name this exact source reading")
         if record.status is LinkStatus.ADMITTED:
             if record.claim is None:
                 raise LinkError("an admitted link names an exact shared claim")
             if not ((record.faithfulness is not None and record.faithfulness.agreed) or record.approval is not None):
                 raise LinkError("admission needs an agreeing faithfulness verdict or an explicit human approval")
+            if record.faithfulness is not None and (record.interpretation_sha256 is None or record.faithfulness.claim_sha256 != record.interpretation_sha256):
+                raise LinkError("the faithfulness verdict is about another statement")
+            if record.interpretation_target is not None and record.interpretation_target.id != record.claim.id:
+                raise LinkError("the interpretation names another claim")
             if record.approval is not None and not record.approval.actor.startswith("user:"):
                 raise LinkError("a human approval names a user; a model is not an approver")
             if record.proposed_claim is not None:
                 raise LinkError("an admitted link carries no unadmitted proposed claim")
         elif record.status in {LinkStatus.PROPOSED, LinkStatus.AMBIGUOUS}:
+            if record.interpretation_target is not None and record.interpretation_target not in (record.claim, record.proposed_claim):
+                raise LinkError("the interpretation target does not match the proposed claim")
             if record.claim is None and record.proposed_claim is None and not record.candidates:
                 raise LinkError("a proposal names a candidate claim, a proposed new claim, or both")
             if record.status is LinkStatus.PROPOSED and record.claim is not None and record.candidates:
                 raise LinkError("a single-candidate proposal names one claim")
         previous = heads.get(record.id)
         if previous is not None:
-            if (previous.artifact_sha256, previous.tree, previous.node, previous.span.id) != (record.artifact_sha256, record.tree, record.node, record.span.id):
+            if (previous.artifact_sha256, previous.tree, previous.node, previous.span, previous.node_version, previous.node_kind, previous.relation, previous.notation_mapping, previous.context_mapping) != (record.artifact_sha256, record.tree, record.node, record.span, record.node_version, record.node_kind, record.relation, record.notation_mapping, record.context_mapping):
                 raise LinkError("a link's source identity never changes; propose a new link")
+            if previous.interpretation_sha256 is not None and (previous.interpretation_sha256, previous.interpretation_target) != (record.interpretation_sha256, record.interpretation_target):
+                raise LinkError("a link's interpretation identity never changes; propose a new link")
+            if record.status is LinkStatus.ADMITTED and previous.interpretation_target is None:
+                target = record.interpretation_target
+                allowed = (*previous.candidates, *((previous.claim,) if previous.claim else ()),
+                           *((previous.proposed_claim,) if previous.proposed_claim else ()))
+                if target not in allowed:
+                    raise LinkError("the interpretation target is not one of the proposed claims")
             if previous.status is LinkStatus.ADMITTED and record.status in {LinkStatus.PROPOSED, LinkStatus.AMBIGUOUS}:
                 raise LinkError("an admitted link does not return to a proposal")
             if previous.status is LinkStatus.ADMITTED and record.status is LinkStatus.ADMITTED and previous.claim != record.claim:
@@ -200,7 +238,7 @@ class ClaimLinker:
             heads = self.links.heads(snapshot)
             suffix = sum(1 for held in heads.values() if held.artifact_sha256 == sha256 and held.node == node_id) + 1
             link = SourceClaimLink(
-                id=f"link-{sha256[:12]}-{node_id[2:]}-{suffix}", artifact_sha256=sha256, tree=tree_id, node=node_id, node_version=node.version,
+                id=f"link-{sha256[:12]}-{node_id[2:]}-{suffix}", artifact_sha256=sha256, tree=tree_id, node=node_id, node_version=node.version, node_kind=node.kind.value,
                 span=span, claim=proposal.claim_candidates[0] if len(proposal.claim_candidates) == 1 and proposal.new_claim is None else None,
                 proposed_claim=proposal.new_claim, candidates=proposal.claim_candidates if ambiguous else (),
                 relation=proposal.relation, notation_mapping=proposal.notation_mapping, context_mapping=proposal.context_mapping,
@@ -208,6 +246,9 @@ class ClaimLinker:
                 history=(f"proposed by {proposal.interpreter}" + (f" (confidence {proposal.confidence})" if proposal.confidence is not None else ""),),
                 at=_stamp(),
             )
+            target = link.claim or (link.proposed_claim if not ambiguous else None)
+            if target is not None:
+                link = link.model_copy(update={"interpretation_target": target, "interpretation_sha256": link_digest(link, target)})
             if link.id in heads:
                 raise LinkError(f"link {link.id} already exists")
             try:
@@ -240,6 +281,11 @@ class ClaimLinker:
             if link.status is LinkStatus.REJECTED:
                 raise LinkError(f"link {link_id} was rejected; propose a new link")
             claim_ref, proposed = self._chosen(link, choose)
+            target = link.interpretation_target or claim_ref or proposed
+            assert target is not None
+            interpretation_sha256 = link_digest(link, target)
+            if verdict is not None and verdict.claim_sha256 != interpretation_sha256:
+                raise LinkError("the faithfulness verdict is about another statement")
             if claim_ref is None:
                 assert proposed is not None
                 if created is not None and created.id == proposed.id:
@@ -258,7 +304,7 @@ class ClaimLinker:
                 self._attach_source(link, claim_ref)
                 claim_ref = self.claims.head(claim_ref.id).ref
             admitted = link.model_copy(update={
-                "claim": claim_ref, "proposed_claim": None, "candidates": link.candidates, "faithfulness": verdict, "approval": approval,
+                "claim": claim_ref, "proposed_claim": None, "interpretation_target": target, "interpretation_sha256": interpretation_sha256, "candidates": link.candidates, "faithfulness": verdict, "approval": approval,
                 "status": LinkStatus.ADMITTED, "at": _stamp(),
                 "history": (*link.history, "admitted with " + ("faithfulness verdict" if verdict else f"approval by {approval.actor}")),  # type: ignore[union-attr]
             })
@@ -323,7 +369,7 @@ class ClaimLinker:
                 continue
             try:
                 node = tree.node(link.node)
-                unchanged = (node.statement_span or node.span).content_sha256 == link.span.content_sha256 and node.kind.value == tree.node(link.node).kind.value
+                unchanged = (node.statement_span or node.span).content_sha256 == link.span.content_sha256 and (link.node_kind is None or node.kind.value == link.node_kind)
             except KeyError:
                 unchanged = False
             if unchanged:

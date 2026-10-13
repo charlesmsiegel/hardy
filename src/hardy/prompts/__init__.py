@@ -25,7 +25,7 @@ from hardy.formal.contracts import FrozenClaim
 
 # Bumped whenever a staged template changes. The hash below identifies the text
 # exactly; this names the revision a human can talk about.
-PROMPT_SET_VERSION = "2026-09-01.1"
+PROMPT_SET_VERSION = "2026-10-13.1"
 
 SUFFIX = ".md.j2"
 
@@ -185,18 +185,14 @@ def faithfulness_prompt(claim: FrozenClaim) -> str:
     """
     text = claim.original_text.strip()
     signature = claim_signature(claim)
-    prompt = render(
+    context = claim.semantic_context.model_dump_json(indent=2) if claim.semantic_context is not None else ""
+    return render(
         "staged/faithfulness",
-        fence=_fence(text, signature),
+        fence=_fence(text, signature, context) if context else _fence(text, signature),
         claim=text,
         signature=signature,
+        context=context,
     )
-    if claim.semantic_context is not None:
-        prompt += ("\n\nFrozen caller-resolved semantic context and generated binder origins:\n"
-                   + claim.semantic_context.model_dump_json(indent=2)
-                   + "\nRead the original statement in this context; check the generated binders "
-                   "against their declaration origins. Local hypotheses do not establish global truth.")
-    return prompt
 
 
 def canonical_prompt(canonical_declaration: str, model_signature: str) -> str:
