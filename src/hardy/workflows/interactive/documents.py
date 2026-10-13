@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -17,9 +18,15 @@ from typing import Any
 from hardy.documents import completion
 from hardy.documents.latex import ARTIFACTS as LATEX_ARTIFACTS
 from hardy.documents.latex import OUTPUTS as LATEX_OUTPUTS
-from hardy.documents.latex import ROOT_DOCUMENT, LatexTools, compiles_document, unreached_fragments
+from hardy.documents.latex import (
+    ROOT_DOCUMENT,
+    LatexTools,
+    compiles_document,
+    publication_lock,
+    unreached_fragments,
+)
 from hardy.foundation.files import LayoutError, files_under, guard_for, read_bytes, read_text
-from hardy.foundation.locking import LockTimeout
+from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 from hardy.foundation.values import ToolResult
 from hardy.literature.bibliography import STORE as STORE_BIBLIOGRAPHY
 from hardy.literature.bibliography import BibliographyError, hand_written_bibliography
@@ -102,6 +109,20 @@ class DocumentService:
 
 
     def _save_latex(self, path: str, source: str, *, policy: DocumentPolicy) -> ToolResult:
+        with ExitStack() as stack:
+            try:
+                lock = stack.enter_context(publication_lock(self.workspace))
+            except LockUnavailable as error:
+                return ToolResult(False, f"source was not saved: publication lock unavailable; "
+                                  f"check the lock path and filesystem permissions: {error}", source)
+            except LockTimeout as error:
+                return ToolResult(False, f"source was not saved: another publication holds the lock; "
+                                  f"retry after it finishes: {error}", source)
+            return self._save_latex_locked(path, source, policy=policy, lock=lock)
+
+    def _save_latex_locked(
+        self, path: str, source: str, *, policy: DocumentPolicy, lock: FileLock
+    ) -> ToolResult:
         resolved = self._tex_path(path)
         if isinstance(resolved, ToolResult):
             return resolved
@@ -152,13 +173,6 @@ class DocumentService:
                 # compiler failure. A `LayoutError` needs no wrapper: it
                 # already says which path it refused and why.
                 raise WriteupNotSaved(f"{relative} could not be saved: {error}") from None
-            # Authored bytes have replaced the import even if later PDF/aux
-            # publication raises. A bookkeeping failure cannot undo this write
-            # or escape as a source refusal (which publication may roll back).
-            try:
-                policy.committed(relative)
-            except (OSError, ValueError) as error:
-                provenance_error = str(error)
 
         # Set by `published`, called from inside `check` only when
         # `writeup.pdf` itself was replaced (#335). A compile can succeed, the
@@ -178,6 +192,8 @@ class DocumentService:
         # unchanged `tex_signature` reported the writeup as freshly compiled.
         # Aux publication refuses before source commit and rolls back on a
         # source refusal; PDF publication follows the source write.
+        provenance_error: OSError | ValueError | None = None
+        publication_error: BaseException | None = None
         try:
             result = self.latex.check(
                 source,
@@ -189,17 +205,29 @@ class DocumentService:
                 stamp=policy.stamp(),
                 vouched=policy.vouch,
                 published=_mark_published,
+                _publication_lock=lock,
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
-        if source_saved:
-            try:
-                policy.committed(relative)
-            except (OSError, ValueError) as error:
-                return ToolResult(
-                    False, f"source was saved but provenance could not be updated: {error}; "
-                    "the publication stamp was not refreshed", source,
-                )
+        except BaseException as error:
+            publication_error = error
+            raise
+        finally:
+            if source_saved:
+                try:
+                    policy.committed(relative)
+                except (OSError, ValueError) as error:
+                    provenance_error = error
+                    if publication_error is not None:
+                        publication_error.add_note(
+                            f"source was saved but provenance could not be updated: {error}; "
+                            "the publication stamp was not refreshed"
+                        )
+        if provenance_error is not None:
+            return ToolResult(
+                False, f"source was saved but provenance could not be updated: {provenance_error}; "
+                "the publication stamp was not refreshed", source,
+            )
         if not result.ok:
             return result
         # Stamped after the write, on a compile that succeeded, only when what

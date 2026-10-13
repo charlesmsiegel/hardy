@@ -1,5 +1,7 @@
 """Ownership contracts independent of a model, Lean, or the terminal."""
 
+import pytest
+
 from hardy.workflows.interactive.record import SessionRecord
 
 
@@ -373,3 +375,112 @@ def test_hot_final_gate_keeps_quarantine_without_copying_unrelated_history(tmp_p
     refusal = chat._final_gates("axiom Papers.Ref.claim : True")
     assert not refusal.ok
     assert "quarantined" in refusal.output
+
+
+def test_post_commit_pdf_error_still_retires_import(session, monkeypatch):
+    import errno
+
+    import pytest
+
+    from hardy.foundation.files import WriteGuard
+
+    session.state["imported"] = [{"kind": "tex", "path": "tex/writeup.tex", "origin": "outside", "sha256": "old"}]
+    original = WriteGuard.write_from
+
+    def disk_full(self, name, incoming, **kwargs):
+        if name == "writeup.pdf":
+            raise OSError(errno.ENOSPC, "PDF destination full")
+        return original(self, name, incoming, **kwargs)
+
+    monkeypatch.setattr(WriteGuard, "write_from", disk_full)
+    source = "\\documentclass{article}\n\\begin{document}New.\\label{new}\\end{document}\n"
+    with pytest.raises(OSError, match="PDF destination full"):
+        session._save_latex("writeup.tex", source)
+    assert session.documents._tex_sources()["writeup.tex"] == source
+    assert "new" in session.documents._labels()
+    assert session.state.get("imported", []) == []
+    assert any(event.get("reason") == "superseded" for event in session.record._recorded())
+
+
+def test_save_keeps_publication_lease_through_provenance_and_stamp(session, monkeypatch):
+    from dataclasses import replace
+
+    import pytest
+
+    from hardy.documents.latex import publication_lock
+    from hardy.foundation.locking import FileLock, LockTimeout
+
+    calls = []
+
+    def still_exclusive(stage):
+        with pytest.raises(LockTimeout), FileLock(publication_lock(session.workspace).path, timeout=0):
+            pass
+        calls.append(stage)
+
+    policy = replace(
+        session._document_policy(),
+        committed=lambda _: still_exclusive("provenance"),
+        stamp_writeup=lambda *_: still_exclusive("stamp"),
+    )
+    source = "\\documentclass{article}\n\\begin{document}New.\\end{document}\n"
+    result = session.documents._save_latex("writeup.tex", source, policy=policy)
+    assert result.ok, result.output
+    assert calls == ["provenance", "stamp"]
+
+
+def test_post_commit_publication_and_provenance_errors_are_both_reported(session, monkeypatch):
+    from dataclasses import replace
+
+    import pytest
+
+    from hardy.foundation.files import WriteGuard
+
+    original = WriteGuard.write_from
+
+    def publication_refuses(self, name, incoming, **kwargs):
+        if name == "writeup.pdf":
+            raise OSError("PDF destination full")
+        return original(self, name, incoming, **kwargs)
+
+    def provenance_refuses(_):
+        raise PermissionError("provenance record held")
+
+    monkeypatch.setattr(WriteGuard, "write_from", publication_refuses)
+    policy = replace(session._document_policy(), committed=provenance_refuses)
+    source = "\\documentclass{article}\n\\begin{document}New.\\label{new}\\end{document}\n"
+    with pytest.raises(OSError, match="PDF destination full") as caught:
+        session.documents._save_latex("writeup.tex", source, policy=policy)
+    assert "provenance record held" in " ".join(caught.value.__notes__)
+    assert "source was saved" in " ".join(caught.value.__notes__)
+    assert session.documents._tex_sources()["writeup.tex"] == source
+    assert "new" in session.documents._labels()
+
+
+@pytest.mark.parametrize("tool", ["save_latex", "delete_file"])
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_document_dispatch_refuses_publication_lease_without_mutation(session, monkeypatch, tool, unavailable):
+    from contextlib import nullcontext
+
+    from hardy.documents.latex import publication_lock
+    from hardy.foundation.locking import FileLock
+
+    tex = session.workspace / "tex"
+    tex.mkdir(exist_ok=True)
+    (tex / "writeup.tex").write_text("\\documentclass{article}\n\\begin{document}Old.\\end{document}\n")
+    (tex / "spare.tex").write_text("Spare.\n")
+    session._stamp_writeup()
+    before_state = dict(session.state)
+    before = {p.name: p.read_bytes() for p in tex.iterdir() if p.is_file()}
+    lease = publication_lock(session.workspace)
+    if unavailable:
+        lease.path.mkdir()
+    monkeypatch.setattr("hardy.workflows.interactive.documents.publication_lock", lambda _: FileLock(lease.path, timeout=0))
+    monkeypatch.setattr("hardy.workflows.interactive.session.publication_lock", lambda _: FileLock(lease.path, timeout=0))
+    arguments = {"path": "spare.tex"} if tool == "delete_file" else {"path": "writeup.tex", "source": "New candidate"}
+    with nullcontext() if unavailable else lease:
+        result = session._tool(tool, arguments)
+    assert not result.ok
+    assert "publication" in result.output.lower() and "lock" in result.output.lower()
+    assert "not saved" in result.output if tool == "save_latex" else "not deleted" in result.output
+    assert {p.name: p.read_bytes() for p in tex.iterdir() if p.is_file()} == before
+    assert session.state == before_state
