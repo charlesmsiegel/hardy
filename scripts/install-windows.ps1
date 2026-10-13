@@ -921,9 +921,19 @@ function Write-Config {
     Move-LegacyConfig
     if (Test-Path $ConfigPath) {
         Write-Detail 'config already exists; leaving your model and key untouched'
-        if (-not $SkipMathlib -and -not (Select-String -Path $ConfigPath -Pattern '^\s*lean_project' -Quiet)) {
-            Add-Utf8Line $ConfigPath ('lean_project = "{0}"' -f (ConvertTo-TomlString $LeanProject))
-            Write-Detail "recorded lean_project = $LeanProject"
+        if (-not $SkipMathlib) {
+            $venvPython = Join-Path $Venv 'Scripts\python.exe'
+            $program = @'
+from pathlib import Path
+import sys
+from hardy.app.config import read_file, write_setting
+path = Path(sys.argv[1])
+if not read_file(path).get("lean_project"):
+    write_setting(path, "lean_project", sys.argv[2])
+    print("recorded lean_project = " + sys.argv[2])
+'@
+            Invoke-Native $venvPython @('-', $ConfigPath, $LeanProject) -InputObject $program
+            if ($LASTEXITCODE -ne 0) { Stop-Install 'could not record the Lean project without changing your existing settings' }
         }
         return
     }
