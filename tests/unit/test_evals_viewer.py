@@ -680,7 +680,10 @@ def test_a_wildcard_ipv6_bind_actually_serves_over_af_inet6(tmp_path):
         request = urllib.request.Request(
             f"http://[::1]:{port}/api/corpus", headers={"Host": f"[::1]:{port}"}
         )
-        with urllib.request.urlopen(request) as response:
+        # This fixture contacts only its own IPv6 loopback server; inherited
+        # HTTP proxies must not route that request to an external service.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request) as response:
             assert response.status == 200
     finally:
         server.shutdown()
