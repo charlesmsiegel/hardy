@@ -295,7 +295,7 @@ Combines scoreboards sharing one pooling key into one derived, recomputable scor
 | `--scoreboards` | `evals/scoreboards` |  | Where the labels are resolved. |
 | `--corpus` | `corpus` |  | The corpus the scoreboards were run against. |
 | `--baseline` | `evals/baseline.json` |  | The tier file the scoreboards were scored against. |
-| `--out` | `evals/pools/<lexically first label>/pool.json` |  | Where the pooled result is written. |
+| `--out` | `evals/pools/<first label>/pool.json` |  | Where the pooled result is written. |
 
 #### hardy evals compare
 

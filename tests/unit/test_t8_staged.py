@@ -174,3 +174,11 @@ def test_post_deadline_batch_call_is_journaled_without_running_lean(tmp_path, mo
     assert 'budget expired' in refused[0]['why']
     assert not any(event.get('type') == 'tool' for event in trajectory['events'])
     assert validate_recorded_run(output) == ()
+
+
+@pytest.mark.parametrize('content', ['null', '1', 'true', '{}', '[1]'])
+def test_malformed_assumptions_envelope_is_a_finding(tmp_path, content):
+    run = _kept(tmp_path)
+    (run / 'assumptions.json').write_text(content, encoding='utf-8')
+    issues = validate_recorded_run(run)
+    assert any('assumptions.json' in issue for issue in issues)

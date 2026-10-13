@@ -87,6 +87,8 @@ def _declared(run_dir: Path) -> tuple[DeclaredAssumption, ...] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            return None
         return tuple(DeclaredAssumption.model_validate(item) for item in payload)
     except (OSError, ValueError, ValidationError):
         return None
@@ -425,6 +427,8 @@ def validate_run_consistency(
         relative = path.relative_to(run_dir).as_posix()
         if relative not in manifest.artifacts:
             issues.append("unlisted artifact: " + relative)
+    if (run_dir / ASSUMPTIONS_FILE).exists() and _declared(run_dir) is None:
+        issues.append("assumptions.json is not a valid declared-assumption list")
     claim_path = run_dir / "formalization.json"
     claim = None
     if claim_path.exists():
