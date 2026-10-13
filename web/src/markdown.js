@@ -36,8 +36,8 @@ marked.use({
   },
 });
 
-// Math is recognized before HTML exists. Inline markdown elements delimit a
-// text run; their URLs, code and tags can never become TeX source.
+// Math is recognized before HTML exists. Links, raw tags and code delimit
+// source runs; their URLs and markup can never become TeX source.
 function tex(source, displayMode) {
   return katex.renderToString(source, {displayMode, throwOnError: false});
 }
@@ -54,7 +54,13 @@ marked.use({extensions: [{
     if (!match || !match[1].trim() || (!display && match[1] !== match[1].trim())) return undefined;
     // Ask the same lexer which inline constructs would occupy this span.
     // TeX backslashes remain the original source, never entity-decoded HTML.
-    if (this.lexer.inlineTokens(match[1]).some((token) => !['text', 'escape'].includes(token.type))) {
+    // Stars/underscores inside a delimited formula are TeX, even when
+    // marked would treat them as emphasis. Structural markup remains a
+    // boundary, including code or links nested inside emphasis.
+    const textTokens = (tokens) => tokens.every((token) =>
+      ['text', 'escape', 'em', 'strong', 'del'].includes(token.type)
+      && (!token.tokens || textTokens(token.tokens)));
+    if (!textTokens(this.lexer.inlineTokens(match[1]))) {
       return undefined;
     }
     return {type: 'math', raw: match[0], source: match[1], display};

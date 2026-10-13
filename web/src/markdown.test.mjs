@@ -33,3 +33,17 @@ test('inline formula TeX is passed verbatim and HTML links retain policy', () =>
   assert.match(html, /katex/);
   assert.doesNotMatch(html, /katex-error|<img|href="javascript:/);
 });
+
+for (const source of ['$a*b*c$', '$\\text{a *b*}$', '$$a*b*c$$', '$$\\text{a *b*}$$']) {
+  test(`valid TeX remains math: ${source}`, () => {
+    const html = render(source);
+    assert.match(html, /class="katex"/);
+    assert.doesNotMatch(html, /katex-error/);
+  });
+}
+test('currency and markup retain structure', () => {
+  assert.match(render('costs $5 for *x* and $7 for y'), /\$5 for <em>x<\/em> and \$7/);
+  for (const source of ['$a <em>b</em> c$', '$a `b` c$', '$a *`b`* c$', '$a [b](https://example.com) c$']) {
+    assert.doesNotMatch(render(source), /class="katex"/);
+  }
+});
