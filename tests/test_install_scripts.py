@@ -1740,3 +1740,195 @@ def test_every_installer_pins_the_same_lean_and_mathlib_as_hardy_records() -> No
     # template requires Mathlib at its default branch, which is not a pin.
     assert 'init "$LEAN_PACKAGE" math' not in common
     assert "init $LeanPackage math" not in windows
+
+@pytest.mark.parametrize('script', [POWERSHELL_SCRIPT, SCRIPTS / 'update-windows.ps1'])
+def test_windows_transport_and_redaction_contract(script):
+    text = script.read_text()
+    assert 'SecurityProtocolType]::Tls12' in text
+    assert "$ProgressPreference = 'SilentlyContinue'" in text
+    assert 'function Hide-Credentials' in text
+    assert 'is there a published release yet?' not in text
+
+
+def test_windows_release_only_missing_manifest_falls_back():
+    text = POWERSHELL_SCRIPT.read_text()
+    assert '$status -eq 404' in text
+    assert 'installing the development branch' in text
+
+
+@pytest.mark.parametrize('script', [POWERSHELL_SCRIPT, SCRIPTS / 'uninstall-windows.ps1'])
+def test_windows_path_preserves_raw_registry_kind(script):
+    text = script.read_text()
+    assert 'DoNotExpandEnvironmentNames' in text
+    assert "GetValueKind('Path')" in text
+    assert 'function Test-PathEntry' in text
+
+
+def test_windows_pending_login_and_locked_removal_contract():
+    install = POWERSHELL_SCRIPT.read_text()
+    uninstall = (SCRIPTS / 'uninstall-windows.ps1').read_text()
+    assert 'function Install-Tectonic' in install
+    assert "'claude login'" in install
+    assert 'Hardy was only partly uninstalled' in uninstall
+    assert '$script:Failed++' in uninstall
+
+
+@pytest.mark.parametrize('script', [POWERSHELL_SCRIPT, SCRIPTS / 'uninstall-windows.ps1'])
+def test_windows_whole_path_entry_matching(script):
+    result = run_installer_functions(r'''
+if (Test-PathEntry 'C:\hardy\bin-old' 'C:\hardy\bin') { exit 1 }
+if (-not (Test-PathEntry 'C:\HARDY\bin\;C:\other' 'c:\hardy\bin')) { exit 2 }
+if (Test-PathEntry 'C:\hardy\b' 'C:\hardy\[bin]') { exit 3 }
+''', script)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+@pytest.mark.parametrize('script', [POWERSHELL_SCRIPT, SCRIPTS / 'update-windows.ps1'])
+def test_windows_messages_hide_url_credentials(script):
+    result = run_installer_functions("Write-Step 'https://u:SECRET@example.invalid/repo'; Write-Detail 'https://u:SECRET@example.invalid/repo'; Write-Warn 'https://u:SECRET@example.invalid/repo'", script)
+    assert result.returncode == 0
+    assert 'SECRET' not in result.stdout + result.stderr
+    assert '***@example.invalid' in result.stdout + result.stderr
+
+
+def test_windows_transport_failure_never_becomes_source(tmp_path):
+    result = run_installer_functions(
+        "function Invoke-WebRequest { throw 'TLS connection failed for https://u:SECRET@host/repo' }; "
+        "$RepoUrl = 'https://u:SECRET@host/repo'; $ReleaseVersion = ''; "
+        f"Save-ReleaseAsset '.whl' '{tmp_path}' $false; exit 99"
+    )
+    assert result.returncode == 1
+    assert 'TLS connection failed' in result.stdout + result.stderr
+    assert 'SECRET' not in result.stdout + result.stderr
+
+
+def test_windows_failed_remove_reports_remaining_path(tmp_path):
+    remaining = tmp_path / 'locked'
+    remaining.mkdir()
+    result = run_installer_functions(
+        "function Remove-Item { throw 'locked handle' }; $script:Failed = 0; $script:Removed = 0; "
+        f"Remove-Part 'environment' '{remaining}'; "
+        "if ($script:Failed -ne 1 -or $script:Removed -ne 0) { exit 1 }",
+        SCRIPTS / 'uninstall-windows.ps1',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'locked handle' in result.stdout + result.stderr
+    assert 'removed environment' not in result.stdout
+
+@pytest.mark.parametrize('failed_check, expected', [('claude login', 0), ('tectonic', 1), ('claude cli', 1)])
+def test_windows_installer_doctor_classifies_pending_login(failed_check, expected, monkeypatch):
+    import re
+    import sys
+    import types
+    from dataclasses import dataclass
+
+    source = POWERSHELL_SCRIPT.read_text()
+    function = source.split('function Test-Installation {', 1)[1].split('function Write-Summary', 1)[0]
+    program = re.search(r"\$program = @'\n(.*?)\n'@", function, re.S).group(1)
+
+    @dataclass
+    class Check:
+        name: str
+        ok: bool = False
+        required: bool = True
+
+        def line(self):
+            return self.name
+
+    config = types.ModuleType('hardy.app.config')
+    config.load = lambda: object()
+    doctor = types.ModuleType('hardy.app.doctor')
+    doctor.run_checks = lambda _: [Check(failed_check)]
+    monkeypatch.setitem(sys.modules, 'hardy.app.config', config)
+    monkeypatch.setitem(sys.modules, 'hardy.app.doctor', doctor)
+    monkeypatch.setattr(sys, 'argv', ['installer-probe'])
+    with pytest.raises(SystemExit) as result:
+        exec(program, {})
+    assert result.value.code == expected
+
+
+def test_windows_elan_bootstrap_pinned_before_execution():
+    source = POWERSHELL_SCRIPT.read_text().split('function Install-Elan {', 1)[1].split('function Test-LeanProject', 1)[0]
+    assert 'releases/download/v4.2.4/' in source
+    assert 'fad2e980a191c15884cc1d80d170ffc5fa84f3774541020145b66d1a644c6111' in source
+    assert source.index('Get-FileHash') < source.index('Expand-Archive') < source.index('& $initializer.FullName')
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows registry requires native Windows')
+@pytest.mark.parametrize('kind', ['String', 'ExpandString'])
+def test_windows_path_round_trip_preserves_registry(kind):
+    result = run_installer_functions(r'''
+$original = Get-UserPathRaw
+try {
+    $BinDir = 'C:\hardy\bin'
+    $script:Removed = 0
+    $seed = '%USERPROFILE%\foo;C:\hardy\bin-old;;C:\other\'
+    Set-UserPathRaw $seed ([Microsoft.Win32.RegistryValueKind]::KIND)
+    $raw = Get-UserPathRaw
+    if (Test-PathEntry $raw.Value $BinDir) { exit 1 }
+    Set-UserPathRaw "$BinDir;$($raw.Value)" $raw.Kind
+    Remove-PathEntry
+    $after = Get-UserPathRaw
+    if ($after.Value -cne $seed -or $after.Kind -ne [Microsoft.Win32.RegistryValueKind]::KIND) { exit 2 }
+}
+finally { Set-UserPathRaw $original.Value $original.Kind }
+'''.replace('::KIND', '::' + kind), SCRIPTS / 'uninstall-windows.ps1', require_ps51=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows exclusive file handles require native Windows')
+def test_windows_locked_environment_removal_is_truthful(tmp_path):
+    target = tmp_path / 'venv'
+    target.mkdir()
+    locked = target / 'locked.dll'
+    locked.write_bytes(b'locked')
+    result = run_installer_functions(
+        f"$handle = [IO.File]::Open('{locked}', 'Open', 'Read', 'None'); "
+        "$script:Failed = 0; $script:Removed = 0; "
+        f"try {{ Remove-Part 'virtual environment' '{target}'; "
+        "if ($script:Failed -ne 1 -or $script:Removed -ne 0) { exit 1 } } finally { $handle.Dispose() }",
+        SCRIPTS / 'uninstall-windows.ps1', require_ps51=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'could not remove virtual environment' in result.stdout + result.stderr
+    assert locked.exists()
+
+
+def test_windows_only_http_404_allows_missing_release_fallback(tmp_path):
+    with serving(tmp_path) as base:
+        result = run_installer_functions(
+            f"$env:HARDY_RELEASE_BASE_URL = '{base}'; $RepoUrl = ''; $ReleaseVersion = ''; "
+            f"$asset = Save-ReleaseAsset '.whl' '{tmp_path / 'download'}' $false; "
+            "if ($null -ne $asset) { exit 2 }"
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_windows_missing_asset_is_not_a_missing_release(tmp_path):
+    (tmp_path / 'SHA256SUMS').write_text('abc  unrelated.zip\n')
+    with serving(tmp_path) as base:
+        result = run_installer_functions(
+            f"$env:HARDY_RELEASE_BASE_URL = '{base}'; $RepoUrl = ''; $ReleaseVersion = ''; "
+            f"Save-ReleaseAsset '.whl' '{tmp_path / 'download'}' $false; exit 99"
+        )
+    assert result.returncode == 1
+    assert 'has no .whl asset' in result.stdout + result.stderr
+
+
+def test_windows_http_500_does_not_select_source(tmp_path):
+    class FailingHandler(_QuietHandler):
+        def do_GET(self):  # noqa: N802 - HTTP handler interface
+            self.send_error(500, 'upstream failure')
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FailingHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f'http://127.0.0.1:{server.server_address[1]}'
+        result = run_installer_functions(
+            f"$env:HARDY_RELEASE_BASE_URL = '{base}'; $RepoUrl = ''; $ReleaseVersion = ''; "
+            f"Save-ReleaseAsset '.whl' '{tmp_path / 'download'}' $false; exit 99"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert result.returncode == 1
+    assert '500' in result.stdout + result.stderr
+    assert not (tmp_path / 'src').exists()

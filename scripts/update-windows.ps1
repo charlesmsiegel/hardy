@@ -44,6 +44,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
 $Venv = Join-Path $Prefix 'venv'
@@ -52,10 +54,12 @@ $LeanProject = Join-Path $Prefix 'lean'
 $RepoUrl = if ($env:HARDY_REPO_URL) { $env:HARDY_REPO_URL } else { 'https://github.com/charlesmsiegel/hardy' }
 $ReleaseVersion = if ($env:HARDY_VERSION) { $env:HARDY_VERSION } else { '' }
 
-function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
-function Write-Detail($message) { Write-Host "    $message" }
-function Write-Warn($message) { Write-Warning $message }
-function Stop-Update($message) { Write-Host "error: $message" -ForegroundColor Red; exit 1 }
+function Hide-Credentials($message) { [string]$message -replace '://[^/@\s]*@', '://***@' }
+
+function Write-Step($message) { Write-Host (Hide-Credentials "`n==> $message") -ForegroundColor Cyan }
+function Write-Detail($message) { Write-Host (Hide-Credentials "    $message") }
+function Write-Warn($message) { Write-Warning (Hide-Credentials $message) }
+function Stop-Update($message) { Write-Host (Hide-Credentials "error: $message") -ForegroundColor Red; exit 1 }
 function Test-Command($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
 # See install-windows.ps1's copy for why this exists: under Windows PowerShell
@@ -68,13 +72,15 @@ function Invoke-Native {
         [string[]]$Arguments = @(),
         $InputObject,
         [switch]$Quiet,
-        [switch]$DropErrors
+        [switch]$DropErrors,
+        [switch]$CaptureErrors
     )
     $ErrorActionPreference = 'Continue'
     if ($Quiet) {
         if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments *> $null }
         else { & $File @Arguments *> $null }
     }
+    elseif ($CaptureErrors) { & $File @Arguments 2>&1 }
     elseif ($DropErrors) {
         if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments 2> $null }
         else { & $File @Arguments 2> $null }
@@ -139,13 +145,13 @@ function Save-ReleaseAsset($suffix, $directory) {
     }
     else {
         try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
-        catch { Stop-Update "could not fetch $base/SHA256SUMS - is there a published release yet? (HARDY_VERSION selects one)" }
+        catch { Stop-Update "could not fetch $base/SHA256SUMS: $($_.Exception.Message)" }
     }
     $asset = Find-ReleaseAsset $manifest $suffix
     if (-not $asset) { Stop-Update "the release at $base has no $suffix asset" }
     $path = Join-Path $directory $asset.Name
     try { Invoke-WebRequest -Uri "$base/$($asset.Name)" -OutFile $path -UseBasicParsing }
-    catch { Stop-Update "could not download $base/$($asset.Name)" }
+    catch { Stop-Update "could not download $base/$($asset.Name): $($_.Exception.Message)" }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()
     if ($actual -ne $asset.Digest.ToLower()) {
         Stop-Update "checksum mismatch for $($asset.Name): the release says $($asset.Digest), the download is $actual"
@@ -261,7 +267,8 @@ function Update-Source($tree) {
             Stop-Update 'stopped: commit or stash your changes, then re-run'
         }
     }
-    & git -C $tree pull --ff-only
+    $pullOutput = Invoke-Native git @('-C', $tree, 'pull', '--ff-only') -CaptureErrors
+    foreach ($line in $pullOutput) { Write-Detail ([string]$line) }
     if ($LASTEXITCODE -ne 0) { Stop-Update "git pull failed in $tree" }
     $after = Invoke-Native git @('-C', $tree, 'rev-parse', 'HEAD') -DropErrors
     if ($before -eq $after) { Write-Detail "already up to date ($before)" }

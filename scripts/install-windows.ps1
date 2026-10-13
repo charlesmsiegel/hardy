@@ -62,6 +62,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
 # Captured here, at script scope, because $PSBoundParameters inside a function
@@ -89,10 +91,12 @@ $ReleaseVersion = if ($env:HARDY_VERSION) { $env:HARDY_VERSION } else { '' }
 # decides between them from what is actually here.
 $InstallFrom = ''
 
-function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
-function Write-Detail($message) { Write-Host "    $message" }
-function Write-Warn($message) { Write-Warning $message }
-function Stop-Install($message) { Write-Host "error: $message" -ForegroundColor Red; exit 1 }
+function Hide-Credentials($message) { [string]$message -replace '://[^/@\s]*@', '://***@' }
+
+function Write-Step($message) { Write-Host (Hide-Credentials "`n==> $message") -ForegroundColor Cyan }
+function Write-Detail($message) { Write-Host (Hide-Credentials "    $message") }
+function Write-Warn($message) { Write-Warning (Hide-Credentials $message) }
+function Stop-Install($message) { Write-Host (Hide-Credentials "error: $message") -ForegroundColor Red; exit 1 }
 function Test-Command($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
 # Under Windows PowerShell 5.1 (and 7.0/7.1), redirecting a native command's
@@ -110,13 +114,15 @@ function Invoke-Native {
         [string[]]$Arguments = @(),
         $InputObject,
         [switch]$Quiet,
-        [switch]$DropErrors
+        [switch]$DropErrors,
+        [switch]$CaptureErrors
     )
     $ErrorActionPreference = 'Continue'
     if ($Quiet) {
         if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments *> $null }
         else { & $File @Arguments *> $null }
     }
+    elseif ($CaptureErrors) { & $File @Arguments 2>&1 }
     elseif ($DropErrors) {
         if ($PSBoundParameters.ContainsKey('InputObject')) { $InputObject | & $File @Arguments 2> $null }
         else { & $File @Arguments 2> $null }
@@ -149,12 +155,39 @@ function Confirm-Step($question) {
 }
 
 # Winget and the installers it runs change PATH for future processes only.
+# Compare complete entries after expansion; preserve every unrelated raw entry.
+function Test-PathEntry($pathValue, $directory) {
+    $want = [Environment]::ExpandEnvironmentVariables($directory).TrimEnd('\')
+    foreach ($entry in ($pathValue -split ';')) {
+        if ($entry -and [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -ieq $want) { return $true }
+    }
+    return $false
+}
+
+function Get-UserPathRaw {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try {
+        $value = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+        return @{ Value = $value; Kind = $kind }
+    }
+    finally { $key.Close() }
+}
+
+function Set-UserPathRaw($value, $kind) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try { $key.SetValue('Path', $value, $kind) }
+    finally { $key.Close() }
+    [Environment]::SetEnvironmentVariable('HARDY_PATH_REFRESH', '1', 'User')
+    [Environment]::SetEnvironmentVariable('HARDY_PATH_REFRESH', $null, 'User')
+}
+
 function Update-SessionPath {
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ';'
     foreach ($extra in @((Join-Path $env:USERPROFILE '.elan\bin'), $BinDir)) {
-        if ((Test-Path $extra) -and ($env:Path -notlike "*$extra*")) { $env:Path = "$extra;$env:Path" }
+        if ((Test-Path $extra) -and (-not (Test-PathEntry $env:Path $extra))) { $env:Path = "$extra;$env:Path" }
     }
 }
 
@@ -257,9 +290,8 @@ function Find-ReleaseAsset($manifest, $suffix) {
 
 # Download one asset and refuse it unless it matches the manifest. The wheel is
 # code that will run as this user, so a mismatch stops the install — always,
-# whatever $required says. $required false means only that an unreachable
-# release is answered with $null instead of an exit, so the caller can fall back
-# to the repository when no particular release was asked for.
+# whatever $required says. Only a missing manifest (404), without an explicit
+# release selector, is answered with $null to offer development-source fallback.
 function Save-ReleaseAsset($suffix, $directory, $required = $true) {
     $base = Get-ReleaseBaseUrl
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -273,20 +305,20 @@ function Save-ReleaseAsset($suffix, $directory, $required = $true) {
     else {
         try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
         catch {
-            if (-not $required) { return $null }
-            Stop-Install "could not fetch $base/SHA256SUMS - is there a published release yet? (HARDY_VERSION selects one, -FromSource installs a checkout instead)"
+            $status = $null
+            if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            if (-not $required -and $status -eq 404) { return $null }
+            Stop-Install "could not fetch $base/SHA256SUMS: $($_.Exception.Message)"
         }
     }
     $asset = Find-ReleaseAsset $manifest $suffix
     if (-not $asset) {
-        if (-not $required) { return $null }
         Stop-Install "the release at $base has no $suffix asset"
     }
     $path = Join-Path $directory $asset.Name
     try { Invoke-WebRequest -Uri "$base/$($asset.Name)" -OutFile $path -UseBasicParsing }
     catch {
-        if (-not $required) { return $null }
-        Stop-Install "could not download $base/$($asset.Name)"
+        Stop-Install "could not download $base/$($asset.Name): $($_.Exception.Message)"
     }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()
     if ($actual -ne $asset.Digest.ToLower()) {
@@ -316,18 +348,18 @@ function Invoke-ReleaseInstaller {
     $staging = Join-Path $Prefix 'installers.new'
     Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
     # Required only when a particular release was asked for. Otherwise an
-    # unreachable release means there is not one yet, which is the state before
-    # the first is published, and the repository is where Hardy comes from --
-    # the same fallback all three POSIX bootstraps take.
+    # missing manifest (404) may mean there is no release yet. Transport errors
+    # cannot establish that and never select development source.
     # -FromRelease and HARDY_INSTALL_FROM=release are as explicit as naming a
-    # version: falling back to the repository would install the very thing the
+    # version: installing the development branch (unreleased source) would install the very thing the
     # caller ruled out.
     $named = [bool]($env:HARDY_VERSION -or $env:HARDY_RELEASE_BASE_URL -or
         $FromRelease -or ($env:HARDY_INSTALL_FROM -eq 'release'))
     $bundle = Save-ReleaseAsset 'hardy-installers.tar.gz' (Join-Path $staging 'download') $named
     if (-not $bundle) {
         Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
-        Write-Warn "no release to install from at $(Get-ReleaseBaseUrl); falling back to the repository"
+        Write-Warn "no release to install from at $(Get-ReleaseBaseUrl); installing the development branch (unreleased source)"
+        if (-not (Confirm-Step 'Install the unreleased development branch instead?')) { Stop-Install 'source fallback declined' }
         $script:InstallFrom = 'source'
         return
     }
@@ -409,7 +441,8 @@ function Initialize-Repository {
     Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     if (Test-Command 'git') {
-        & git clone --depth 1 --branch $reference $url $staging
+        $cloneOutput = Invoke-Native git @('clone', '--depth', '1', '--branch', $reference, $url, $staging) -CaptureErrors
+        foreach ($line in $cloneOutput) { Write-Detail ([string]$line) }
         if ($LASTEXITCODE -ne 0) { Stop-Install "git clone of $url (ref $reference) failed" }
     }
     else {
@@ -668,9 +701,9 @@ function Add-Shim {
         Stop-Install $_.Exception.Message
     }
     [System.IO.File]::WriteAllText((Join-Path $BinDir 'hardy.cmd'), $shim.Text, $shim.Encoding)
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($userPath -notlike "*$BinDir*") {
-        [Environment]::SetEnvironmentVariable('Path', "$BinDir;$userPath", 'User')
+    $userPath = Get-UserPathRaw
+    if (-not (Test-PathEntry $userPath.Value $BinDir)) {
+        Set-UserPathRaw "$BinDir;$($userPath.Value)" $userPath.Kind
         Write-Detail "added $BinDir to your user PATH (new terminals only)"
     }
     Update-SessionPath
@@ -722,15 +755,18 @@ function Install-Elan {
     if (-not (Confirm-Step 'Install elan (the Lean toolchain manager, which provides lake)?')) {
         Stop-Install 'lake is required; re-run with -SkipMathlib only if you will install Lean yourself'
     }
-    $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+    if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { Stop-Install 'The pinned elan release has no Windows ARM64 bootstrap; install elan manually, then re-run.' }
+    $architecture = 'x86_64'
     $asset = "elan-$architecture-pc-windows-msvc.zip"
-    $url = "https://github.com/leanprover/elan/releases/latest/download/$asset"
+    $url = "https://github.com/leanprover/elan/releases/download/v4.2.4/$asset"
+    $digest = 'fad2e980a191c15884cc1d80d170ffc5fa84f3774541020145b66d1a644c6111'
     $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("hardy-elan-" + [System.Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     try {
         Write-Detail "downloading $url"
         $archive = Join-Path $staging $asset
         Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLower() -ne $digest) { Stop-Install 'elan bootstrap checksum mismatch; nothing was executed' }
         Expand-Archive -Path $archive -DestinationPath $staging -Force
         $initializer = Get-ChildItem -Path $staging -Filter 'elan-init*.exe' -Recurse | Select-Object -First 1
         if (-not $initializer) { Stop-Install "elan-init.exe was not found inside $asset" }
@@ -931,6 +967,32 @@ function Install-ClaudeCli {
     }
 }
 
+function Install-Tectonic {
+    if ($SkipLatex) { return }
+    Write-Step 'Installing pinned, digest-checked Tectonic'
+    $venvPython = Join-Path $Venv 'Scripts\python.exe'
+    $program = @'
+import sys
+from pathlib import Path
+from hardy.app.installers import install_tectonic, download_file
+result = install_tectonic(destination_root=Path(sys.argv[1]), confirmer=lambda _: True, downloader=download_file)
+if not result.installed_path:
+    print(result.manual_instructions)
+    raise SystemExit(1)
+print(result.installed_path)
+'@
+    $installed = Invoke-Native $venvPython @('-c', $program, (Join-Path $Prefix 'tools'))
+    if ($LASTEXITCODE -ne 0 -or -not $installed) { Stop-Install 'Tectonic could not be installed' }
+    $script:InstalledTectonic = ([string]($installed | Select-Object -Last 1)).Trim()
+    # This also supports -NoConfig: the current verification uses the explicit
+    # executable, and the summary tells the user how to persist the setting.
+    $hasTectonicSetting = (Test-Path -LiteralPath $ConfigPath) -and (Select-String -LiteralPath $ConfigPath -Pattern '^\s*tectonic\s*=' -Quiet)
+    if (-not $env:HARDY_TECTONIC -and -not $hasTectonicSetting) { $env:HARDY_TECTONIC = $script:InstalledTectonic }
+    if (-not $NoConfig -and -not $hasTectonicSetting) {
+        Add-Utf8Line $ConfigPath ('tectonic = "{0}"' -f (ConvertTo-TomlString $script:InstalledTectonic))
+    }
+}
+
 function Test-Installation {
     Write-Step 'Verifying the installation'
     $hardy = Join-Path $Venv 'Scripts\hardy.exe'
@@ -943,15 +1005,29 @@ function Test-Installation {
     $env:HARDY_CONFIG = $ConfigPath
     $hasModel = $ConfiguredModel -or $env:HARDY_MODEL -or
         ((Test-Path $ConfigPath) -and (Select-String -Path $ConfigPath -Pattern '^\s*model' -Quiet))
-    # doctor checks the whole installation, so its verdict is only binding when
-    # nothing was deliberately skipped.
-    $strict = $hasModel -and -not $SkipLatex -and -not $SkipMathlib
-    & $hardy doctor
+    # Authentication can only be completed by the user. Classify the real
+    # doctor checks rather than making its aggregate exit status binding.
+    $venvPython = Join-Path $Venv 'Scripts\python.exe'
+    $program = @'
+import sys
+from hardy.app.config import load
+from hardy.app.doctor import run_checks
+skipped = set(sys.argv[1:]) | {"claude login"}
+checks = run_checks(load())
+for check in checks:
+    print(check.line())
+raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for c in checks) else 0)
+'@
+    $advisory = @()
+    if (-not $hasModel) { $advisory += 'model' }
+    if ($SkipLatex) { $advisory += @('latex', 'tectonic') }
+    if ($SkipMathlib) { $advisory += @('lean', 'mathlib') }
+    Invoke-Native $venvPython (@('-c', $program) + $advisory)
     if ($LASTEXITCODE -ne 0) {
-        if ($strict) { Stop-Install 'hardy doctor reported failures (see above)' }
-        if (-not $hasModel) { Write-Warn "no model configured yet: add one to $ConfigPath or set HARDY_MODEL" }
-        Write-Warn 'some checks did not pass; see what was skipped below'
+        $script:VerificationFailed = $true
+        Write-Warn 'hardy doctor reported failures in installer responsibilities (see above)'
     }
+    Write-Detail "run 'claude login' to complete subscription sign-in"
     # hardy.exe is already known-good (the --help check above), so a failure
     # here implicates the shim specifically -- the command the summary tells
     # the user to run, and where #305 actually broke (Test-Installation used
@@ -961,7 +1037,8 @@ function Test-Installation {
 }
 
 function Write-Summary {
-    Write-Host "`nHardy is installed." -ForegroundColor Green
+    if ($script:VerificationFailed) { Write-Warn 'Hardy installation needs attention; verification failed.' }
+    else { Write-Host "`nHardy is installed." -ForegroundColor Green }
     Write-Host @"
 
   command      $(Join-Path $BinDir 'hardy.cmd')
@@ -969,6 +1046,7 @@ function Write-Summary {
   installed    $(if ($script:InstallFrom -eq 'source') { "editable, from $RepoRoot" } else { 'from the published release' })
   lean project $LeanProject$(if ($SkipMathlib) { ' (skipped)' })
   config       $ConfigPath
+  tectonic     $(if ($SkipLatex) { 'skipped (-SkipLatex); run hardy setup' } else { $script:InstalledTectonic })
   launcher     $(if ($NoLauncher) { 'none (-NoLauncher)' } else { 'Hardy.lnk on the Desktop and in the Start Menu (hardy web --open)' })
 
 Start doing mathematics with an agent:
@@ -977,6 +1055,8 @@ Start doing mathematics with an agent:
 
 Other useful commands:
 
+  claude login           complete subscription sign-in
+  hardy setup            finish configuration and smoke tests (including Tectonic)
   hardy doctor --deep     check Lean, Mathlib, LaTeX, and the model end to end
   hardy chat --root . --project my-project
 
@@ -1004,6 +1084,9 @@ Install-Elan
 Install-LeanProject
 Install-Latex
 Write-Config
+Install-Tectonic
 Install-ClaudeCli
+$script:VerificationFailed = $false
 Test-Installation
 Write-Summary
+if ($script:VerificationFailed) { exit 1 }
