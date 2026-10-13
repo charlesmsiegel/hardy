@@ -196,6 +196,7 @@ def run_uninstall(root: Path, *arguments: str) -> subprocess.CompletedProcess:
         pytest.skip("bash is not available")
     places = {
         "HOME": str(root),
+        "ELAN_HOME": str(root / ".elan"),
         "HARDY_SKIP_PLATFORM_CHECK": "1",
         "HARDY_HOME": str(root / "share/hardy"),
         "HARDY_BIN_DIR": str(root / "bin"),
