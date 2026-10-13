@@ -1,0 +1,19 @@
+# Investigation only: a CTRL_BREAK_EVENT test cannot settle console closure.
+name: Native console close probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/console-close.yml
+      - tests/unit/test_windows_console_close.py
+      - tests/fixtures/console/**
+
+jobs:
+  native-console-close:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Observe real CTRL_CLOSE_EVENT
+        run: uv run --python 3.12 --extra test pytest -s -v tests/unit/test_windows_console_close.py
