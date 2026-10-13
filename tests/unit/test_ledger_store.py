@@ -252,3 +252,43 @@ def test_a_base_snapshot_is_replayed_beneath_local_transactions(tmp_path, store_
     assert store_type(tmp_path / "local", base=lambda: authoritative.read()).read().head("uses-T") == uses
     with pytest.raises(ValueError, match="revision"):
         local.append((item("U"),), expected_revision=0)
+
+
+def test_replay_hash_work_is_linear(tmp_path, monkeypatch):
+    import hardy.workflows.ledger.contracts as contracts
+
+    store = LedgerStore(tmp_path)
+    count = 400
+    for revision in range(count):
+        store.append((item(f"T{revision}"),), expected_revision=revision)
+    calls = 0
+    digest = contracts.json_digest
+
+    def counted(value):
+        nonlocal calls
+        calls += 1
+        return digest(value)
+
+    monkeypatch.setattr(contracts, "json_digest", counted)
+    snapshot = store.read()
+    assert snapshot.revision == count
+    assert calls <= 4 * count
+
+
+def test_overlay_reads_base_once_per_replay(tmp_path):
+    from hardy.workflows.ledger.state import LedgerSnapshot
+
+    calls = 0
+    base = LedgerSnapshot((item("base"),))
+
+    def origin():
+        nonlocal calls
+        calls += 1
+        return base
+
+    store = LedgerStore(tmp_path, base=origin)
+    for revision in range(12):
+        store.append((item(f"local{revision}"),), expected_revision=revision)
+    calls = 0
+    assert store.read().revision == 12
+    assert calls == 1

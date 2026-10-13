@@ -94,8 +94,17 @@ class SessionRecord:
             for module, record in records.items()
         }))
 
+    def mapping_refusal(self, mapping: dict[str, str]) -> str | None:
+        for item in self.state["names"]:
+            if (item["formal_name"] == mapping["formal_name"]
+                    or item.get("latex_name") == mapping["latex_name"]):
+                return f"name conflicts with existing mapping: {item['formal_name']} → {item.get('latex_name')}"
+        return None
+
     def admit_assumption(self, assumption: dict[str, Any], mapping: dict[str, str]) -> bool:
         if any(item["formal_name"] == assumption["formal_name"] for item in self.state["assumptions"]):
+            return False
+        if self.mapping_refusal(mapping):
             return False
         self.state["assumptions"].append(deepcopy(assumption))
         self.state["names"].append(deepcopy(mapping))

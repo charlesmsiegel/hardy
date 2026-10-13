@@ -484,3 +484,55 @@ def test_document_dispatch_refuses_publication_lease_without_mutation(session, m
     assert "not saved" in result.output if tool == "save_latex" else "not deleted" in result.output
     assert {p.name: p.read_bytes() for p in tex.iterdir() if p.is_file()} == before
     assert session.state == before_state
+
+
+def test_assumption_registry_refuses_collisions_atomically(tmp_path):
+    record = SessionRecord(tmp_path)
+    record.load()
+    record.state['names'].append({'formal_name': 't', 'latex_name': 'thm:t'})
+    assert not record.admit_assumption({'formal_name': 'h'}, {'formal_name': 'h', 'latex_name': 'thm:t'})
+    assert record.state['assumptions'] == []
+    assert len(record.state['names']) == 1
+
+
+def test_assumption_requests_refuse_duplicate_and_label_before_confirmation(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from test_chat import FakeChatRuntime, session
+
+    from hardy.workflows.admission import CheckDecision
+    from hardy.workflows.interactive.admission import AssumptionAdmission
+    chat = session(tmp_path, FakeChatRuntime([]))
+    admission = AssumptionAdmission()
+    prompted = []
+    ops = replace(chat._admission_operations(), confirm=lambda p: prompted.append(p) or True)
+    monkeypatch.setattr(admission.policy, 'check_global', lambda *args: CheckDecision(checked='ok'))
+    proposal = {'formal_name': 'h', 'lean_statement': 'True', 'latex_name': 'h',
+                'informal_statement': 'holds', 'source': 'test', 'reason': 'test'}
+    admission.attempted_inspection()
+    assert admission._request_assumption(dict(proposal), search_available=True, operations=ops).ok
+    admission.attempted_inspection()
+    assert not admission._request_assumption({**proposal, 'lean_statement': 'False'}, search_available=True, operations=ops).ok
+    admission.attempted_inspection()
+    assert not admission._request_assumption({**proposal, 'formal_name': 'other'}, search_available=True, operations=ops).ok
+    assert len(prompted) == 1
+    assert len(chat.state['names']) == 1
+
+
+def test_paper_assumption_label_collision_refuses_before_probes_or_confirmation(tmp_path):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from test_chat import FakeChatRuntime, session
+
+    from hardy.workflows.interactive.admission import AssumptionAdmission
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat.state['names'].append({'formal_name': 't', 'latex_name': 'taken'})
+    prompted = []
+    ops = replace(chat._admission_operations(), confirm=lambda p: prompted.append(p) or True)
+    result = AssumptionAdmission()._mint(
+        {'formal_name': 'h', 'latex_name': 'taken', 'lean_statement': 'True'},
+        SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), 'Papers.p', 'Papers.p.h',
+        'statement', operations=ops)
+    assert not result.ok and 't' in result.output and 'taken' in result.output
+    assert prompted == [] and chat.state['assumptions'] == []

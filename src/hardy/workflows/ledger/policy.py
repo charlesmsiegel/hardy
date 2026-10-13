@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -132,6 +133,14 @@ _ESTABLISHES = {
 }
 
 
+@lru_cache(maxsize=1)
+def _policy_digest() -> str:
+    # Bind the source loaded in this process, normalizing checkout line endings.
+    # A changed installation gets a new identity on the next process start.
+    return json_digest({"policy": "hardy.ledger.policy/v1",
+                        "source": Path(__file__).read_text(encoding="utf-8")})
+
+
 class LedgerPolicy:
     """Inject trusted named operations; all reader failures fail closed.
 
@@ -149,10 +158,7 @@ class LedgerPolicy:
         self._read_evidence = read_evidence
         self._read_decision = read_decision
         self._read_scope_change = read_scope_change
-        # Normalize checkout line endings, but bind the actual policy code so a
-        # changed rule cannot accidentally reuse an old serialized decision.
-        self.digest = json_digest({"policy": "hardy.ledger.policy/v1",
-                                   "source": Path(__file__).read_text(encoding="utf-8")})
+        self.digest = _policy_digest()
 
     def validate(self, before: LedgerSnapshot, after: LedgerSnapshot) -> None:
         """Store validator: semantic changes and acceptance checked under lock."""

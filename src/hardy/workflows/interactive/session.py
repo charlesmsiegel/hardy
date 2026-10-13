@@ -1352,8 +1352,8 @@ class MathematicsSession:
     def _automation_probe(self, proposed: Mapping[str, str]) -> dict[str, str] | None:
         return self.formal._automation_probe(proposed, probes=self.PROBES, probe_seconds=PROBE_SECONDS, run_source=self._probe_lean_source)
 
-    def _refresh_automation(self) -> str:
-        return self.formal._refresh_automation(current=self._theorem_statements(), stored=self.record.snapshot_of("automation").get("automation", {}), environment=self._probe_environment(), probe=self._automation_probe, publish=self.record.publish_automation)
+    def _refresh_automation(self, sources: dict[str, str] | None = None) -> str:
+        return self.formal._refresh_automation(current=self._theorem_statements(sources), stored=self.record.snapshot_of("automation").get("automation", {}), environment=self._probe_environment(), probe=self._automation_probe, publish=self.record.publish_automation)
 
     def _automation_closed(self, sources: dict[str, str] | None = None) -> dict[str, str]:
         return self.formal._automation_closed(stored=self.record.snapshot_of("automation").get("automation", {}), current=lambda: self._theorem_statements(sources), environment=self._probe_environment)
@@ -1831,7 +1831,8 @@ class MathematicsSession:
     ) -> ToolResult:
         return self.formal._save_lean_unbraked(path, source, policy=self._formal_save_policy(verify_commit), ratchet=ratchet, generated=generated)
 
-    def _record_saved_results(self, audited: dict[str, str], records: dict[str, Any]) -> str:
+    def _record_saved_results(self, audited: dict[str, str], records: dict[str, Any],
+                              signatures: dict[str, str] | None = None) -> str:
         """The save's ledger half: what the audit graded, recorded; what it verified, resolved.
 
         After the commit and after the audit publishes, over the tree the
@@ -1840,17 +1841,19 @@ class MathematicsSession:
         the save, never a refusal of it. `evidence.py` says what is written
         and why.
         """
-        signatures = self.lean_workspace.current_signatures(audited)
+        if signatures is None:
+            signatures = self.lean_workspace.current_signatures(audited)
         return self.owners.record_saved(audited, records, signatures, shared=self._shared_names(audited))
 
-    def _owed_note(self) -> str:
+    def _owed_note(self, sources: dict[str, str] | None = None,
+                   signatures: dict[str, str] | None = None) -> str:
         """The outstanding obligations, appended to a tool result.
 
         On every save, not only on the one that trips the ratchet. A model that
         is told what the work still owes while it is saving can settle it now;
         one told only when it is refused learns it a theorem too late.
         """
-        owed = self._obligations()
+        owed = self._obligations(sources, signatures=signatures)
         if not owed:
             return ""
         return f"\n\n{_reportability(owed)}\n{completion.describe(owed)}"
@@ -2097,7 +2100,8 @@ class MathematicsSession:
             found.update({name: text for name, text in stated.items() if name in theorems})
         return found
 
-    def _saved_statements(self, sources: dict[str, str] | None = None) -> dict[str, str]:
+    def _saved_statements(self, sources: dict[str, str] | None = None,
+                          *, signatures: dict[str, str] | None = None) -> dict[str, str]:
         """The closed ones, which is what the writeup obligations are about.
 
         A theorem whose proof still has a hole is not a result yet; demanding
@@ -2107,7 +2111,7 @@ class MathematicsSession:
         the moment the hole closes -- or at a report that names it, which asks
         for the carrying directly.
         """
-        opened = self._open_theorems(sources)
+        opened = self._open_theorems(sources, signatures=signatures)
         return {
             name: text
             for name, text in self._theorem_statements(sources).items()
@@ -2141,59 +2145,8 @@ class MathematicsSession:
         from the obligations entirely. So they are reported, and the model is
         asked to put one in a namespace.
         """
-        holders: dict[str, list[str]] = {}
-        theorems: set[str] = set()
-        snapshot = self.lean_workspace.sources() if sources is None else sources
-        for module, source in sorted(snapshot.items()):
-            found = declarations(source)
-            # Lemmas too, not only theorems. The audit records every
-            # declaration a module has, and a verdict is looked up BY NAME: an
-            # audited `lemma result` in one module answers for an unaudited
-            # `theorem result` in another, and the page would print the second
-            # statement as kernel-verified on the strength of the first. What
-            # collides is the name, so what is counted is every declaration
-            # that can carry one.
-            # `private` is a subset of the two above rather than a fourth
-            # kind, and Lean mangles a private name so it cannot collide with
-            # anything outside its own module. Counting one made two modules
-            # that both spell a helper `private lemma step` look ambiguous, and
-            # the obligation asking the model to namespace one of them could
-            # not be satisfied -- there was nothing wrong to fix.
-            hidden = set(found["private"])
-            named = (*found["theorem"], *found["lemma"])
-            # A name the module repeats. Lean will not let one module declare
-            # a name twice, so the scan saw a copy inside a syntax quotation,
-            # and which statement is the real one cannot be told. Listed as
-            # the module twice, private or not -- a quoted `private theorem t`
-            # would otherwise take the real public `t` out of every count --
-            # and the writeup gate refuses over it.
-            for name in dict.fromkeys(name for name in named if named.count(name) > 1):
-                holders.setdefault(name, []).extend((module, module))
-                if name in found["theorem"]:
-                    theorems.add(name)
-            for name in named:
-                if name in hidden or named.count(name) > 1:
-                    continue
-                if name in found["theorem"]:
-                    # Which names a THEOREM answers to somewhere. A lemma is
-                    # scaffolding: two disconnected modules both spelling one
-                    # `step` collide with nothing a report, a registry entry or
-                    # a label can name, and the obligation below -- which says
-                    # they "each declare a theorem" -- was both false and
-                    # impossible to satisfy.
-                    theorems.add(name)
-                modules = holders.setdefault(name, [])
-                if module not in modules:
-                    modules.append(module)
-        # A lemma is still counted above, because a lemma in one module and a
-        # theorem in another DO collide -- the audit records both and a verdict
-        # is looked up by name. What is dropped is a collision no theorem is
-        # part of.
-        return {
-            name: found
-            for name, found in holders.items()
-            if len(found) > 1 and name in theorems
-        }
+        from hardy.workflows.interactive.evidence import shared_names
+        return shared_names(self.lean_workspace.sources() if sources is None else sources, theorem_only=True)
 
     def _tex_sources(self) -> dict[str, str]:
         return self.documents._tex_sources()
@@ -2304,20 +2257,26 @@ class MathematicsSession:
         return used
 
     def _obligations(
-        self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None
+        self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None,
+        *, signatures: dict[str, str] | None = None
     ) -> tuple[completion.Obligation, ...]:
-        written = self._tex_sources() if tex is None else tex
         sources = self.lean_workspace.sources() if sources is None else sources
+        if signatures is None:
+            try:
+                signatures = self.lean_workspace.current_signatures(sources)
+            except ImportCycle:
+                signatures = None
+        written = self._tex_sources() if tex is None else tex
         state = self.record.snapshot_of("names", "assumptions")
-        opened = self._open_theorems(sources)
+        opened = self._open_theorems(sources, signatures=signatures)
         facts = FormalDocumentFacts(
-            statements=self._saved_statements(sources),
+            statements=self._saved_statements(sources, signatures=signatures),
             saved_statements=self._theorem_statements(sources),
             used_assumptions=self._used_assumptions(sources),
             shared_names=self._shared_names(sources),
             unreadable=self._unreadable_modules(sources),
             open_theorems=opened,
-            audit_gaps=tuple(self._audit_gaps(self._saved_theorems(sources) - opened, sources)),
+            audit_gaps=tuple(self._audit_gaps(self._saved_theorems(sources) - opened, sources, signatures=signatures)),
         )
         return self.documents._obligations(
             facts=facts, registry=state["names"], assumptions=state["assumptions"],
@@ -2371,9 +2330,9 @@ class MathematicsSession:
         return bool(self._saved_theorems())
 
     def _current_audit(
-        self, sources: dict[str, str] | None = None
+        self, sources: dict[str, str] | None = None, *, signatures: dict[str, str] | None = None
     ) -> dict[str, dict[str, Any]]:
-        return self.formal._current_audit(sources, stored=self.record.snapshot_of("audit").get("audit", {}))
+        return self.formal._current_audit(sources, signatures=signatures, stored=self.record.snapshot_of("audit").get("audit", {}))
 
     def summary(self) -> summary_module.Summary:
         """This session, read off the workspace rather than remembered (#100).
@@ -2424,6 +2383,10 @@ class MathematicsSession:
         # "kernel-verified" for a theorem whose imports changed underneath it.
         self._refresh_shared_identity()
         sources = self.lean_workspace.sources()
+        try:
+            signatures = self.lean_workspace.current_signatures(sources)
+        except ImportCycle:
+            signatures = None
         tex = self._tex_sources()
         from hardy.workflows.interactive.project_summary import with_project
         from hardy.workflows.ledger.store import LedgerStore
@@ -2432,10 +2395,10 @@ class MathematicsSession:
             goal=self.goal(),
             assumptions=list(self.state["assumptions"]),
             registry=list(self.state["names"]),
-            audit=self._current_audit(sources),
+            audit=self._current_audit(sources, signatures=signatures),
             theorems=self._theorem_statements(sources),
-            open_theorems=self._open_theorems(sources),
-            obligations=self._obligations(sources, tex),
+            open_theorems=self._open_theorems(sources, signatures=signatures),
+            obligations=self._obligations(sources, tex, signatures=signatures),
             failed=summary_module.attempts(entry.event() for entry in self.record.history().path()),
             modules=sorted(sources),
             # Already computed for the obligations, and needed here for the
@@ -3076,6 +3039,12 @@ class MathematicsSession:
             # is that an undocumented theorem can always be walked away from.
             lost = self._missing_registered_names(shadow.sources(), committed)
             commit()
+            try:
+                notes = self.owners.reconcile(self.lean_workspace.sources())
+            except (ValueError, OSError, LockTimeout) as error:
+                notes = [f"project ledger: deletion reconciliation failed: {error}"]
+            for note in notes:
+                self._notify(note)
             # The audit record goes with the module. Left behind it would
             # describe declarations the workspace no longer has.
             if self.state.get("audit", {}).pop(module, None) is not None:
@@ -3908,6 +3877,7 @@ class MathematicsSession:
             paper_statements=self._paper_statements,
             cite=self.papers.bibliography.cite,
             write_module=self._write_papers_module,
+            mapping_refusal=self.record.mapping_refusal,
         )
 
     @property
@@ -4822,7 +4792,8 @@ class MathematicsSession:
             )
         ]
 
-    def _open_declarations(self, sources: dict[str, str] | None = None) -> set[str]:
+    def _open_declarations(self, sources: dict[str, str] | None = None,
+                           *, signatures: dict[str, str] | None = None) -> set[str]:
         """Every saved declaration Lean reported resting on a hole.
 
         Read from the stored audit records, which are stamped with the build
@@ -4832,7 +4803,8 @@ class MathematicsSession:
         reports a stale record as its own obligation, so nothing is lost here.
         """
         try:
-            signatures = self.lean_workspace.current_signatures(sources)
+            if signatures is None:
+                signatures = self.lean_workspace.current_signatures(sources)
         except ImportCycle:
             # `_audit_gaps` reports the cycle. Answering "nothing is open" for a
             # tree that does not order would be a claim, and this has none.
@@ -4869,7 +4841,8 @@ class MathematicsSession:
             )
         return found
 
-    def _open_theorems(self, sources: dict[str, str] | None = None) -> set[str]:
+    def _open_theorems(self, sources: dict[str, str] | None = None,
+                       *, signatures: dict[str, str] | None = None) -> set[str]:
         """The open declarations that are theorems, which is what is reportable.
 
         An open `lemma` is reported to the model by the save's own audit note,
@@ -4877,10 +4850,11 @@ class MathematicsSession:
         hole. The obligations answer a narrower question -- what stands between
         this workspace and a report -- and a lemma was never reportable.
         """
-        return self._open_declarations(sources) & self._saved_theorems(sources)
+        return self._open_declarations(sources, signatures=signatures) & self._saved_theorems(sources)
 
     def _audit_gaps(
-        self, names: Iterable[str], snapshot: dict[str, str] | None = None
+        self, names: Iterable[str], snapshot: dict[str, str] | None = None,
+        *, signatures: dict[str, str] | None = None
     ) -> list[completion.Obligation]:
         """Claimed theorems with no current audit behind them.
 
@@ -4894,7 +4868,8 @@ class MathematicsSession:
         from text alone.
         """
         try:
-            signatures = self.lean_workspace.current_signatures(snapshot)
+            if signatures is None:
+                signatures = self.lean_workspace.current_signatures(snapshot)
         except ImportCycle as error:
             return [completion.Obligation("lean", "", f"the workspace does not order: {error}")]
         stored = self.state.get("audit", {})

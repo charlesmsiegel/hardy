@@ -52,6 +52,7 @@ class AdmissionOperations:
     paper_statements: Callable[[str], Any]
     cite: Callable[[Any], Any]
     write_module: Callable[..., str | ToolResult]
+    mapping_refusal: Callable[[dict[str, str]], str | None] = lambda mapping: None
 
 class AssumptionAdmission:
     def __init__(self):
@@ -97,6 +98,11 @@ class AssumptionAdmission:
         # above, returns without spending anything: it refused before any of
         # this request's evidence was looked at.
         try:
+            if any(item["formal_name"] == proposal["formal_name"] for item in operations.assumptions()):
+                return ToolResult(False, f"`{proposal['formal_name']}` is already approved; restating an assumption needs a new formal_name.")
+            refusal = operations.mapping_refusal(proposal)
+            if refusal:
+                return ToolResult(False, refusal)
             decision = self.policy.check_global(
                 proposal["formal_name"], proposal["lean_statement"], operations.probes
             )
@@ -153,8 +159,9 @@ class AssumptionAdmission:
             # is not enough on its own -- it records the asking, not the answer.
             record["approved_at"] = datetime.now(UTC).isoformat()
             mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}
-            if operations.admit(record, mapping):
-                operations.persist()
+            if not operations.admit(record, mapping):
+                return ToolResult(False, "The approval could not be recorded: the assumption name or label is already mapped. Use a new formal_name and latex_name.")
+            operations.persist()
             return ToolResult(
                 True,
                 f"User approved. Declare exactly `{declaration}`, disclose source "
@@ -253,6 +260,10 @@ class AssumptionAdmission:
         kind: str,
         *, operations: AdmissionOperations, source_evidence: SourceEvidence | None = None,
     ) -> ToolResult:
+        refusal = operations.mapping_refusal({"formal_name": qualified,
+                                              "latex_name": request.get("latex_name") or f"assumption:{request['formal_name']}"})
+        if refusal:
+            return ToolResult(False, refusal)
         statement = request["lean_statement"].strip()
         decision = self.policy.check_paper(
             request["formal_name"], qualified, statement, kind, operations.probes
@@ -365,6 +376,8 @@ class AssumptionAdmission:
         if source_evidence is not None:
             durable["paper"]["source_artifact"] = source_evidence.artifact.model_dump(mode="json")
         fresh = operations.admit(durable, mapping)
+        if not fresh:
+            return ToolResult(False, "The approval could not be recorded: the assumption name or label is already mapped.")
         if fresh:
             # Recorded BEFORE the module is written, because the module is
             # saved through the ordinary path and that path refuses an axiom

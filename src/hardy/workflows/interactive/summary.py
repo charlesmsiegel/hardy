@@ -344,8 +344,7 @@ def assemble(
     # supplies `open_theorems` from the same records, so the two agree -- but a
     # theorem whose own axioms name a hole belongs under `Open` whichever list
     # noticed, and one whose verdict has expired belongs under neither heading
-    # as a result: it goes under `Proved` carrying "no longer established",
-    # which is exactly what a reader has to see rather than a silent promotion.
+    # as a result: it goes under `Not established` with its recorded reason.
     opened = set(open_theorems)
     proved: list[str] = []
     still_open: list[str] = []
@@ -359,12 +358,14 @@ def assemble(
         # audit never ran, has expired, or cannot be told from a namesake is
         # not proved and is not open either -- and printing it under `Proved`
         # put the heading in contradiction with the line beneath it.
-        if status.kind in audit_module.UNESTABLISHED:
+        if status.kind in audit_module.UNESTABLISHED or status.kind == "unapproved":
             unestablished.append(line)
         elif status.kind == "open":
             still_open.append(line)
-        else:
+        elif status.kind in {"assumed", "verified"}:
             proved.append(line)
+        else:
+            raise ValueError(f"unknown declaration status: {status.kind}")
     return Summary(
         (
             Section("Goal", (goal,) if goal.strip() else (), empty="not set (/goal)"),
