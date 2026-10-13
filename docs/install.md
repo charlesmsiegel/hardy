@@ -388,7 +388,9 @@ likely wants.
 POSIX private uv/uvx and versioned Tectonic executables are removed only when
 the installer recorded their ownership and their file digests still match.
 Pre-existing or subsequently replaced tools and unrelated siblings remain;
-shared `bin/` and `tools/` directories are removed only when empty.
+shared `bin/` and `tools/` directories are removed only when empty. The
+record also binds the prefix's physical directory identity; changed roots and
+files behind replaced directory symlinks are left untouched.
 
 Only the PATH lines carrying the installer's own marker comment are
 stripped; a line you wrote yourself for the same directory is left alone.

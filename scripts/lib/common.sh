@@ -109,10 +109,27 @@ install_pinned_uv() (
 	record_managed_tool bin/uvx
 )
 
+directory_identity() {
+	stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1" 2>/dev/null
+}
+
 # Only newly installed private leaves are owned. Digests prevent uninstall
 # from removing a tool the user replaced later; no generic bin/tools ownership.
 record_managed_tool() {
 	local relative="$1" digest temporary manifest="$HARDY_HOME/managed-tools"
+	local root_marker="$HARDY_HOME/managed-tools-root" canonical identity
+	canonical="$(cd "$HARDY_HOME" && pwd -P)" || fail "could not resolve owned tool prefix"
+	identity="$(directory_identity "$canonical")" || fail "could not identify owned tool prefix"
+	if [ -e "$root_marker" ]; then
+		[ ! -L "$root_marker" ] && [ "$(sed -n '1p' "$root_marker")" = "$canonical" ] &&
+			[ "$(sed -n '2p' "$root_marker")" = "$identity" ] || fail "owned tool prefix changed; refusing to extend ownership"
+	else
+		temporary="$(mktemp "$HARDY_HOME/managed-tools-root.XXXXXX")" || fail "could not record owned tool prefix"
+		printf '%s\n%s\n' "$canonical" "$identity" >"$temporary"
+		mv "$temporary" "$root_marker"
+		# Old records without root identity cannot confer ownership here.
+		rm -f "$manifest"
+	fi
 	digest="$(file_sha256 "$HARDY_HOME/$relative")" || fail "could not record owned tool $relative"
 	temporary="$(mktemp "$HARDY_HOME/managed-tools.XXXXXX")" || fail "could not record owned tools"
 	if [ -f "$manifest" ]; then awk -v path="$relative" '$2 != path' "$manifest" >"$temporary"; fi
@@ -857,9 +874,18 @@ write_config() {
 	local model="${HARDY_MODEL:-}"
 	if [ -e "$HARDY_CONFIG" ]; then
 		say "config already exists; leaving your model and key untouched"
-		if [ "$SKIP_MATHLIB" = 0 ] && ! grep -q '^[[:space:]]*lean_project' "$HARDY_CONFIG"; then
-			printf 'lean_project = "%s"\n' "$(toml_escape "$LEAN_PROJECT")" >>"$HARDY_CONFIG"
-			say "recorded lean_project = $LEAN_PROJECT"
+		if [ "$SKIP_MATHLIB" = 0 ]; then
+			"$VENV/bin/python" -c '
+import os
+import sys
+from pathlib import Path
+from hardy.app.config import read_file, write_setting
+path = Path(sys.argv[1])
+values = read_file(path)
+if not values.get("lean_project") and not os.environ.get("HARDY_LEAN_PROJECT", "").strip():
+    write_setting(path, "lean_project", sys.argv[2])
+    print(f"    recorded lean_project = {sys.argv[2]}")
+' "$HARDY_CONFIG" "$LEAN_PROJECT" || fail "could not update the existing config without changing its settings"
 		fi
 		return
 	fi

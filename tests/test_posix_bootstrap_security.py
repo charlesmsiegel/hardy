@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -333,3 +334,64 @@ def test_existing_private_uv_skips_bootstrap_and_is_not_owned_or_removed(tmp_pat
     removed = run_script('uninstall.sh', tmp_path, ['--yes'])
     assert removed.returncode == 0, removed.stdout + removed.stderr
     assert uv.read_text() == original
+
+
+@pytest.mark.parametrize('relative', ['bin/uv', 'tools/tectonic/0.16.9/tectonic'])
+def test_uninstall_refuses_replaced_managed_tool_parent_symlink(relative, tmp_path):
+    prefix = tmp_path / 'prefix'
+    owned = prefix / relative
+    owned.parent.mkdir(parents=True)
+    owned.write_text('identical executable')
+    environment = dict(os.environ, HOME=str(tmp_path), HARDY_HOME=str(prefix))
+    subprocess.run(['bash', '-c', '. "$1"; record_managed_tool "$2"', 'test', str(SCRIPTS / 'lib/common.sh'), relative],
+                   env=environment, capture_output=True, text=True, check=True)
+    shared = tmp_path / 'shared'
+    shared.mkdir()
+    external = shared / owned.name
+    external.write_text('identical executable')
+    owned.unlink()
+    owned.parent.rmdir()
+    owned.parent.symlink_to(shared, target_is_directory=True)
+    result = run_script('uninstall.sh', tmp_path, ['--yes'])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert external.read_text() == 'identical executable'
+
+
+@pytest.mark.parametrize('replacement', ['symlink', 'directory'])
+def test_uninstall_refuses_replaced_ownership_root(tmp_path, replacement):
+    prefix = tmp_path / 'prefix'
+    owned = prefix / 'bin/uv'
+    owned.parent.mkdir(parents=True)
+    owned.write_text('identical executable')
+    subprocess.run(['bash', '-c', '. "$1"; record_managed_tool bin/uv', 'test', str(SCRIPTS / 'lib/common.sh')],
+                   env=dict(os.environ, HOME=str(tmp_path), HARDY_HOME=str(prefix)), capture_output=True, text=True, check=True)
+    original = tmp_path / 'prefix-original'
+    prefix.rename(original)
+    shared = tmp_path / 'shared'
+    (shared / 'bin').mkdir(parents=True)
+    (shared / 'bin/uv').write_text('identical executable')
+    for marker in original.glob('managed-tools*'):
+        shutil.copyfile(marker, shared / marker.name)
+    if replacement == 'symlink':
+        prefix.symlink_to(shared, target_is_directory=True)
+    else:
+        shared.rename(prefix)
+        shared = prefix
+    result = run_script('uninstall.sh', tmp_path, ['--yes'])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (shared / 'bin/uv').read_text() == 'identical executable'
+    assert (original / 'bin/uv').read_text() == 'identical executable'
+
+
+def test_original_prefix_alias_can_remove_its_owned_tools(tmp_path):
+    physical = tmp_path / 'physical-prefix'
+    owned = physical / 'bin/uv'
+    owned.parent.mkdir(parents=True)
+    owned.write_text('owned executable')
+    prefix = tmp_path / 'prefix'
+    prefix.symlink_to(physical, target_is_directory=True)
+    subprocess.run(['bash', '-c', '. "$1"; record_managed_tool bin/uv', 'test', str(SCRIPTS / 'lib/common.sh')],
+                   env=dict(os.environ, HOME=str(tmp_path), HARDY_HOME=str(prefix)), capture_output=True, text=True, check=True)
+    result = run_script('uninstall.sh', tmp_path, ['--yes'])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not owned.exists()

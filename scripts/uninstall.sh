@@ -124,9 +124,17 @@ drop() {
 }
 
 remove_managed_tools() {
-	local digest relative extra actual version path
+	local digest relative extra actual version path parent symlink_parent canonical identity
 	local manifest="$HARDY_HOME/managed-tools"
 	[ -f "$manifest" ] || return 0
+	local root_marker="$HARDY_HOME/managed-tools-root"
+	canonical="$(cd "$HARDY_HOME" && pwd -P)" || return 0
+	identity="$(directory_identity "$canonical")" || return 0
+	if [ ! -f "$root_marker" ] || [ -L "$root_marker" ] ||
+		[ "$(sed -n '1p' "$root_marker")" != "$canonical" ] || [ "$(sed -n '2p' "$root_marker")" != "$identity" ]; then
+		keeping "private tools with changed or unrecorded prefix identity" "$HARDY_HOME"
+		return 0
+	fi
 	while read -r digest relative extra; do
 		[ -z "$extra" ] && [ "${#digest}" = 64 ] || continue
 		case "$digest" in *[!0-9a-f]*) continue ;; esac
@@ -140,6 +148,15 @@ remove_managed_tools() {
 		*) continue ;;
 		esac
 		path="$HARDY_HOME/$relative"
+		# lstat each parent beneath the recorded root. A digest-identical tool
+		# beyond a replaced directory link is not ours to remove.
+		parent="${path%/*}"
+		symlink_parent=0
+		while [ "$parent" != "$HARDY_HOME" ]; do
+			if [ -L "$parent" ]; then symlink_parent=1; break; fi
+			parent="${parent%/*}"
+		done
+		if [ "$symlink_parent" = 1 ]; then keeping "private tool behind a directory link" "$path"; continue; fi
 		[ -f "$path" ] || continue
 		actual="$(file_sha256 "$path")" || { keeping "unverified private tool" "$path"; continue; }
 		if [ "$actual" = "$digest" ]; then
@@ -157,6 +174,7 @@ remove_managed_tools() {
 		fi
 	done <"$manifest"
 	drop "the private tool ownership record" "$manifest"
+	drop "the private tool prefix identity" "$root_marker"
 }
 
 keeping() {
