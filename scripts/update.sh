@@ -175,14 +175,18 @@ update_source() {
 		return 0
 	fi
 	have git || fail "git is required to update a checkout"
-	local before after
+	local before after pull_output pull_status=0
 	before="$(git -C "$SOURCE_TREE" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 	if ! git -C "$SOURCE_TREE" diff --quiet 2>/dev/null; then
 		warn "$SOURCE_TREE has uncommitted changes"
 		confirm "Pull anyway? Your changes are left in place and may conflict." ||
 			fail "stopped: commit or stash your changes, then re-run"
 	fi
-	git -C "$SOURCE_TREE" pull --ff-only || fail "git pull failed in $SOURCE_TREE"
+	# A stored fork origin can carry credentials. Capture both streams before
+	# displaying git diagnostics, including successful pull messages.
+	pull_output="$(git -C "$SOURCE_TREE" pull --ff-only 2>&1)" || pull_status=$?
+	printf '%s\n' "$pull_output" | sed -e 's#://[^/@]*@#://***@#g' >&2
+	[ "$pull_status" = 0 ] || fail "git pull failed in $SOURCE_TREE"
 	after="$(git -C "$SOURCE_TREE" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 	if [ "$before" = "$after" ]; then
 		say "already up to date ($before)"

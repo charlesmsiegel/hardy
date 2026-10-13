@@ -216,3 +216,30 @@ def test_install_verdict_classifies_doctor_checks_and_always_prints_summary(
     assert 'Hardy is installed.' in result.stdout
     if checks[0][0] == 'claude login':
         assert 'claude login' in result.stdout
+
+
+@pytest.mark.parametrize('pull_status', [0, 7])
+def test_update_redacts_credentialed_git_origin_on_success_and_failure(pull_status, tmp_path):
+    source = tmp_path / 'source'
+    (source / '.git').mkdir(parents=True)
+    (source / 'pyproject.toml').write_text('[project]\nname = "test"\n')
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    git = tools / 'git'
+    git.write_text('#!/bin/sh\ncase "$3" in\n'
+                   'rev-parse) echo current ;;\n'
+                   'diff) exit 0 ;;\n'
+                   'pull) echo "https://u:SECRET@example.test/fork"; '
+                   'echo "fatal: https://u:SECRET@example.test/fork https://u:SECRET@example.test/again" >&2; '
+                   f'exit {pull_status} ;;\nesac\n')
+    git.chmod(0o755)
+    uv = tools / 'uv'
+    uv.write_text('#!/bin/sh\nexit 0\n')
+    uv.chmod(0o755)
+    result = run_script('update.sh', tmp_path, ['--yes', '--source', str(source)],
+                        {'PATH': str(tools) + os.pathsep + os.environ['PATH']})
+    assert result.returncode == (1 if pull_status else 0), result.stdout + result.stderr
+    assert 'SECRET' not in result.stdout + result.stderr
+    assert 'https://***@example.test/fork' in result.stdout + result.stderr
+    if pull_status:
+        assert 'git pull failed' in result.stderr
