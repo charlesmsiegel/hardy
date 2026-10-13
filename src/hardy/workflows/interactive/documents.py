@@ -60,6 +60,7 @@ class DocumentPolicy:
     stamp_writeup: Callable[[str | None, str | None], None]
     registry: Callable[[], list[dict[str, str]]]
     owed_note: Callable[[], str]
+    committed: Callable[[str], None] = lambda path: None
 
 @dataclass(frozen=True)
 class FormalDocumentFacts:
@@ -180,6 +181,7 @@ class DocumentService:
             return ToolResult(False, str(error), source)
         if not result.ok:
             return result
+        policy.committed(relative)
         # Stamped after the write, on a compile that succeeded, only when what
         # was compiled is the writeup itself, and only when the PDF was
         # actually replaced. Saving a fragment the root does not include yet is

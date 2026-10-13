@@ -1264,7 +1264,7 @@ class MathematicsSession:
         return None
 
     def _final_gates(self, source: str) -> ToolResult | None:
-        return self.formal._final_gates(source, self.record.snapshot())
+        return self.formal._final_gates(source, self.record.snapshot_of("assumptions"))
 
     def _run_lean_source(self, source: str, timeout: float | None = None) -> ToolResult:
         return self.lean.run_source(
@@ -1323,10 +1323,10 @@ class MathematicsSession:
         return self.formal._automation_probe(proposed, probes=self.PROBES, probe_seconds=PROBE_SECONDS, run_source=self._probe_lean_source)
 
     def _refresh_automation(self) -> str:
-        return self.formal._refresh_automation(current=self._theorem_statements(), stored=self.record.snapshot().get("automation", {}), environment=self._probe_environment(), probe=self._automation_probe, publish=self.record.publish_automation)
+        return self.formal._refresh_automation(current=self._theorem_statements(), stored=self.record.snapshot_of("automation").get("automation", {}), environment=self._probe_environment(), probe=self._automation_probe, publish=self.record.publish_automation)
 
     def _automation_closed(self, sources: dict[str, str] | None = None) -> dict[str, str]:
-        return self.formal._automation_closed(stored=self.record.snapshot().get("automation", {}), current=lambda: self._theorem_statements(sources), environment=self._probe_environment)
+        return self.formal._automation_closed(stored=self.record.snapshot_of("automation").get("automation", {}), current=lambda: self._theorem_statements(sources), environment=self._probe_environment)
 
     def automation_closed(self) -> dict[str, str]:
         """The same answer, for `/status`: which saved theorems fall to one
@@ -1788,6 +1788,7 @@ class MathematicsSession:
             refresh_automation=self._refresh_automation,
             persist=self._save_state,
             owed_note=self._owed_note,
+            committed=lambda path: self._supersede_import(f"lean/{path}"),
         )
 
     def _save_lean(self, path: str, source: str) -> ToolResult:
@@ -2270,7 +2271,8 @@ class MathematicsSession:
         self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None
     ) -> tuple[completion.Obligation, ...]:
         written = self._tex_sources() if tex is None else tex
-        state = self.record.snapshot()
+        sources = self.lean_workspace.sources() if sources is None else sources
+        state = self.record.snapshot_of("names", "assumptions")
         opened = self._open_theorems(sources)
         facts = FormalDocumentFacts(
             statements=self._saved_statements(sources),
@@ -2335,7 +2337,7 @@ class MathematicsSession:
     def _current_audit(
         self, sources: dict[str, str] | None = None
     ) -> dict[str, dict[str, Any]]:
-        return self.formal._current_audit(sources, stored=self.record.snapshot().get("audit", {}))
+        return self.formal._current_audit(sources, stored=self.record.snapshot_of("audit").get("audit", {}))
 
     def summary(self) -> summary_module.Summary:
         """This session, read off the workspace rather than remembered (#100).
@@ -2741,27 +2743,32 @@ class MathematicsSession:
         # stops the next skeleton either. It is still owed -- it stays in the
         # obligations, on the screen, and in what `report_result` refuses over
         # the moment the open theorem is named.
-        disclosed = self._rests_on(self._settled_declarations())
+        candidate = declarations(source)["theorem"]
+        if not candidate:
+            return None
+        sources = self.lean_workspace.sources()
+        existing = self._saved_theorems(sources)
+        introduced = [name for name in candidate if name not in existing]
+        if not introduced:
+            return None
+        written = self._tex_sources()
+        disclosed = self._rests_on(self._settled_declarations(sources))
         owed = [
             item
-            for item in self._obligations()
+            for item in self._obligations(sources, written)
             if item.kind != "open"
             and not (item.kind in {"appendix", "assumption"} and item.subject not in disclosed)
         ]
-        if owed and self._stale_only_from_holes():
+        if owed and self._stale_only_from_holes(sources, written):
             # A banner out of date only because a theorem opened is not a
             # writeup this save is running ahead of. It is still reported --
             # the compiled PDF counts an open theorem out of "machine-checked",
             # so one compiled before the hole appeared overstates -- but
             # counting it here made every second skeleton wait on a LaTeX
             # recompile that no obligation about a closed theorem asked for.
-            stale = self._stale_writeup()
+            stale = self._stale_writeup(sources, written)
             owed = [item for item in owed if item not in stale]
         if not owed:
-            return None
-        existing = self._saved_theorems()
-        introduced = [name for name in declarations(source)["theorem"] if name not in existing]
-        if not introduced:
             return None
         return (
             f"the workspace owes the human-readable half of its work before a new theorem "
@@ -2777,8 +2784,9 @@ class MathematicsSession:
             stamp=self._stamp,
             vouch=self._vouched_references,
             stamp_writeup=self._stamp_writeup,
-            registry=lambda: self.record.snapshot()["names"],
+            registry=lambda: self.record.snapshot_of("names")["names"],
             owed_note=self._owed_note,
+            committed=lambda path: self._supersede_import(f"tex/{path}"),
         )
 
     def _check_latex(self, path: str, source: str) -> ToolResult:
@@ -3214,7 +3222,7 @@ class MathematicsSession:
         with self._gate:
             try:
                 return self._triage_pile(pile)
-            except (LayoutError, OSError) as error:
+            except (LayoutError, OSError, RuntimeError) as error:
                 return ToolResult(False, f"could not triage {pile}: {error}")
 
     def _triage_pile(self, pile: Path) -> ToolResult:
@@ -3620,7 +3628,7 @@ class MathematicsSession:
             if not origin.is_file():
                 return ToolResult(False, f"{source_path} is not a regular file; Hardy will not read it")
             content = origin.read_bytes()
-        except OSError as error:
+        except (OSError, RuntimeError) as error:
             return ToolResult(False, f"{source_path} cannot be read: {error}")
         # Not from this problem's own tree. "Imported" is a provenance claim
         # -- this arrived from outside -- and recording the problem's own
@@ -3678,6 +3686,13 @@ class MathematicsSession:
         self._save_state()
         self._record({"type": "imported", **entry})
         return entry
+
+    def _supersede_import(self, path: str) -> None:
+        """Retire external provenance only after an authored source committed."""
+        if not any(item.get("path") == path for item in self.state.get("imported", ())):
+            return
+        self._forget_import(path)
+        self._record({"type": "imported", "reason": "superseded", "path": path})
 
     def _forget_import(self, path: str) -> None:
         """Drop the imported-provenance entry for a path that was deleted.
@@ -3834,7 +3849,7 @@ class MathematicsSession:
             confirm=self.confirm,
             goal=self.goal,
             event=self._record,
-            assumptions=lambda: self.record.snapshot()["assumptions"],
+            assumptions=lambda: self.record.snapshot_of("assumptions")["assumptions"],
             admit=self.record.admit_assumption,
             revoke=self.record.revoke_assumption,
             locate=self.record.locate_assumption,
@@ -4224,7 +4239,9 @@ class MathematicsSession:
         """
         if not summary.strip():
             return ToolResult(False, "a report needs a summary of what was established")
-        saved = self._theorem_statements()
+        sources = self.lean_workspace.sources()
+        written = self._tex_sources()
+        saved = self._theorem_statements(sources)
         if not saved:
             return ToolResult(
                 False,
@@ -4256,7 +4273,7 @@ class MathematicsSession:
                 f"{unknown} does not name exactly one saved theorem, so it cannot be "
                 f"reported. A lemma is not reportable either. Saved theorems: {sorted(saved)}",
             )
-        owed = self._obligations()
+        owed = self._obligations(sources, written)
         # Everything about a claimed theorem, every assumption obligation
         # whoever it belongs to -- an appendix that does not say what the work
         # rests on makes *this* report unbelievable, not somebody else's -- and
@@ -4282,7 +4299,7 @@ class MathematicsSession:
         # standing against the workspace. Partial is not a discount on the
         # writeup: a reader who cannot see the statement of the theorem that is
         # still open cannot tell which half of the work was done.
-        opened = sorted(self._open_theorems() & set(resolved))
+        opened = sorted(self._open_theorems(sources) & set(resolved))
         if opened:
             blocking += list(
                 completion.outstanding(
@@ -4290,8 +4307,8 @@ class MathematicsSession:
                     registry=self.state["names"],
                     labels=self._labels(),
                     assumptions=self.state["assumptions"],
-                    used=self._used_assumptions(),
-                    tex=self._tex_sources(),
+                    used=self._used_assumptions(sources),
+                    tex=written,
                     # The whole tree, not the claimed subset: with `A.t` claimed
                     # and `B.t` saved beside it, a subset made the leaf `t` look
                     # unique and accepted one label as documenting a theorem the
@@ -4529,7 +4546,7 @@ class MathematicsSession:
             # missing. The flag clearing -- a strengthened statement, whose
             # verdict expires with it -- changes what the banner says as well,
             # and the signature cannot tell the two directions apart.
-            "automation": sorted(self._automation_closed().items()),
+            "automation": sorted(self._automation_closed(sources).items()),
             # A theorem that was closed when the PDF was compiled and has since
             # been reopened is the overstating direction: the banner goes on
             # calling it machine-checked. The signature cannot tell the two
@@ -4711,7 +4728,7 @@ class MathematicsSession:
         self.state["tex_signature"] = ""
         self._save_state()
 
-    def _stale_only_from_holes(self) -> bool:
+    def _stale_only_from_holes(self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None) -> bool:
         """Whether the compiled writeup is out of date *only* because a theorem
         opened or closed since it was compiled.
 
@@ -4723,7 +4740,7 @@ class MathematicsSession:
         stamped = self.state.get("tex_signature")
         if not stamped:
             return False
-        return bool(stamped == self._tex_signature(self.state.get("tex_open", [])))
+        return bool(stamped == self._tex_signature(self.state.get("tex_open", []), sources=sources, tex=tex))
 
     def _stale_writeup(
         self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None
@@ -4776,7 +4793,7 @@ class MathematicsSession:
                 found.update(audit.open_declarations(current))
         return found
 
-    def _settled_declarations(self) -> set[str]:
+    def _settled_declarations(self, sources: dict[str, str] | None = None) -> set[str]:
         """Every audited declaration that does *not* rest on a hole.
 
         The counterpart of `_open_declarations`, and read the same way: from
@@ -4785,7 +4802,7 @@ class MathematicsSession:
         unfinished work, which are owed at different moments.
         """
         try:
-            signatures = self.lean_workspace.current_signatures()
+            signatures = self.lean_workspace.current_signatures(sources)
         except ImportCycle:
             return set()
         found: set[str] = set()

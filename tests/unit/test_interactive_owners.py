@@ -267,3 +267,18 @@ def test_record_appends_from_many_threads_stay_whole_lines(tmp_path):
     events = list(record._recorded())
     assert len(events) == 400
     assert all(event["payload"] == payload for event in events)
+
+
+def test_selected_record_snapshot_detaches_only_requested_values(tmp_path):
+    class Unrelated:
+        def __deepcopy__(self, memo):
+            raise AssertionError("unrelated history copied")
+
+    record = SessionRecord(tmp_path)
+    record.load()
+    record.state["quarantine"] = Unrelated()
+    record.state["names"] = [{"formal_name": "original"}]
+    selected = record.snapshot_of("names", "missing")
+    selected["names"][0]["formal_name"] = "changed"
+    assert record.state["names"] == [{"formal_name": "original"}]
+    assert "missing" not in selected

@@ -177,6 +177,7 @@ class SavePolicy:
     refresh_automation: Callable[[], str]
     persist: Callable[[], None]
     owed_note: Callable[[], str]
+    committed: Callable[[str], None] = lambda path: None
 
 class FormalWorkspaceService:
     SAVE_STREAK_LIMIT = 3
@@ -312,6 +313,7 @@ class FormalWorkspaceService:
             # the time it is asked.
             audited = shadow.sources()
             commit()
+            policy.committed(str(relative))
         finally:
             LeanWorkspace.discard(shadow)
         return self._publish_saved_audit(module, source, records, note, seen, policy=policy, audited=audited)
