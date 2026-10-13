@@ -20,6 +20,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from pydantic import ValidationError
 
@@ -48,10 +49,12 @@ from hardy.workflows.contracts import (
 from hardy.workflows.recorded.common import (
     VERIFIED_GRADES,
     _exact_source,
+    _required_text,
     _toolchain_issues,
     _usage_issues,
     permitted_axioms,
 )
+from hardy.workflows.storage import TrajectoryEvent, artifact_bytes, artifact_paths
 
 
 def grades_agree(recorded: Any, manifest_grades: Grades) -> bool:
@@ -86,7 +89,7 @@ def _declared(run_dir: Path) -> tuple[DeclaredAssumption, ...] | None:
     if not path.is_file():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(_required_text(path))
         if not isinstance(payload, list):
             return None
         return tuple(DeclaredAssumption.model_validate(item) for item in payload)
@@ -181,7 +184,7 @@ def _verification_record_issues(
     """Check `lean/verification.json` against the evidence the grade names."""
     try:
         verification = VerificationResult.model_validate_json(
-            verification_path.read_text(encoding="utf-8")
+            _required_text(verification_path)
         )
     except ValidationError:
         # The record derives its own digest, so one that will not load is
@@ -254,7 +257,7 @@ def _verified_run_issues(
     if not main.exists():
         issues.append("verified run has no lean/Main.lean")
         return issues
-    main_bytes = main.read_bytes()
+    main_bytes = artifact_bytes(main)
     if hashlib.sha256(main_bytes).hexdigest() != evidence.source_sha256:
         issues.append("Lean source hash differs from verification")
     if claim is not None:
@@ -344,7 +347,7 @@ def _faithfulness_issues(
     else:
         try:
             saved = FaithfulnessVerdict.model_validate_json(
-                verdict_path.read_text(encoding="utf-8")
+                _required_text(verdict_path)
             )
         except ValidationError:
             issues.append("faithfulness.json is not a self-consistent verdict")
@@ -353,7 +356,7 @@ def _faithfulness_issues(
                 issues.append("graded faithfulness review differs from faithfulness.json")
     if not prompt_path.exists():
         issues.append("faithfulness review names a prompt the run did not keep")
-    elif hashlib.sha256(prompt_path.read_bytes()).hexdigest() != graded.prompt_sha256:
+    elif hashlib.sha256(artifact_bytes(prompt_path)).hexdigest() != graded.prompt_sha256:
         issues.append("faithfulness prompt hash differs from faithfulness-prompt.md")
     # The response contract, on the same terms as the prompt. Recorded and
     # never rechecked, it would be one more number taken on trust -- and the
@@ -362,7 +365,7 @@ def _faithfulness_issues(
         issues.append("faithfulness review records no response schema identity")
     elif not schema_path.exists():
         issues.append("faithfulness review names a schema the run did not keep")
-    elif hashlib.sha256(schema_path.read_bytes()).hexdigest() != graded.response_schema_sha256:
+    elif hashlib.sha256(artifact_bytes(schema_path)).hexdigest() != graded.response_schema_sha256:
         issues.append("faithfulness schema hash differs from faithfulness-schema.json")
     if claim is None:
         issues.append("faithfulness review names no Frozen Claim in this run")
@@ -371,7 +374,7 @@ def _faithfulness_issues(
     return issues
 
 
-def _trajectory_events(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
+def _trajectory_events(path: Path, *, run_id: UUID | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     """Read damaged rows as findings, preserving their position in the log."""
     text, error = _exact_source(path, label="trajectory.jsonl")
     if error is not None:
@@ -390,27 +393,38 @@ def _trajectory_events(path: Path) -> tuple[list[dict[str, Any]], list[str]]:
             issues.append(f"trajectory.jsonl line {number} has a non-object payload")
             events.append({})
         else:
+            try:
+                envelope = TrajectoryEvent.model_validate(event)
+            except ValidationError:
+                issues.append(f"trajectory.jsonl line {number} has an invalid event envelope")
+                events.append({})
+                continue
+            if envelope.sequence != number - 1 or type(event.get("sequence")) is not int:
+                issues.append(f"trajectory.jsonl line {number} has an invalid sequence")
+            if run_id is not None and envelope.run_id != run_id:
+                issues.append(f"trajectory.jsonl line {number} names a different run")
             events.append(event)
     return events, issues
 
 
 def _recorded_claim(path: Path) -> FrozenClaim | None:
     try:
-        return FrozenClaim.model_validate_json(path.read_text(encoding="utf-8"))
+        return FrozenClaim.model_validate_json(_required_text(path))
     except (OSError, ValueError):
         return None
 
 
-def validate_run_consistency(
+def _validate_run_consistency(
     run_dir: Path, manifest: RunManifest,
     *, _trajectory: tuple[list[dict[str, Any]], list[str]] | None = None,
+    _issues: list[str] | None = None,
 ) -> tuple[str, ...]:
     """Report every way a run's artifacts disagree with each other."""
-    issues = []
+    issues = _issues if _issues is not None else []
     manifest_path = run_dir / "manifest.json"
     if not manifest_path.exists():
         return ("manifest.json is missing",)
-    saved_manifest = RunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+    saved_manifest = RunManifest.model_validate_json(_required_text(manifest_path))
     if saved_manifest != manifest:
         issues.append("provided manifest differs from manifest.json")
     for relative, expected in manifest.artifacts.items():
@@ -418,15 +432,19 @@ def validate_run_consistency(
         if not path.exists():
             issues.append("missing artifact: " + relative)
             continue
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            actual = hashlib.sha256(artifact_bytes(path)).hexdigest()
+        except (OSError, ValueError) as error:
+            issues.append(f"{relative} could not be read: {error}")
+            continue
         if actual != expected:
             issues.append("hash mismatch: " + relative)
-    from hardy.workflows.storage import artifact_paths
-
     for path in artifact_paths(run_dir):
         relative = path.relative_to(run_dir).as_posix()
         if relative not in manifest.artifacts:
             issues.append("unlisted artifact: " + relative)
+        if path.is_symlink() or not path.is_file():
+            issues.append(relative + " is not a regular file")
     if (run_dir / ASSUMPTIONS_FILE).exists() and _declared(run_dir) is None:
         issues.append("assumptions.json is not a valid declared-assumption list")
     claim_path = run_dir / "formalization.json"
@@ -449,7 +467,7 @@ def validate_run_consistency(
     if not trajectory.exists():
         issues.append("trajectory.jsonl is missing")
     else:
-        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory)
+        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory, run_id=manifest.run_id)
         issues.extend(trajectory_issues)
         if not events or events[-1].get("kind") != "workflow.terminal":
             issues.append("trajectory has no final terminal event")
@@ -495,20 +513,21 @@ def validate_run_consistency(
     elif (
         tex.exists()
         and claim is not None
-        and claim.content_hash not in tex.read_text(encoding="utf-8")
+        and claim.content_hash not in _required_text(tex)
     ):
         issues.append("paper.tex does not identify the Frozen Claim")
     if manifest.grades.document is DocumentStatus.TEX_COMPILED:
-        if not pdf.exists() or not pdf.read_bytes().startswith(b"%PDF-"):
+        if not pdf.exists() or not artifact_bytes(pdf).startswith(b"%PDF-"):
             issues.append("compiled document has no valid PDF artifact")
     elif pdf.exists():
         issues.append("failed document unexpectedly has a PDF artifact")
     return tuple(issues)
 
 
-def _live_staged_issues(
+def _live_staged_issues_unchecked(
     run_dir: Path, manifest: RunManifest,
     *, _trajectory: tuple[list[dict[str, Any]], list[str]] | None = None,
+    _issues: list[str] | None = None,
 ) -> list[str]:
     """What a recorded staged run owes beyond self-consistency.
 
@@ -517,7 +536,7 @@ def _live_staged_issues(
     as the fresh verifier captured it -- the check is required to have *run*,
     and the axiom set it printed is compared with the one the grade rests on.
     """
-    issues: list[str] = []
+    issues = _issues if _issues is not None else []
     if manifest.environment is None:
         issues.append("manifest names no toolchain")
     else:
@@ -527,7 +546,7 @@ def _live_staged_issues(
     trajectory = run_dir / "trajectory.jsonl"
     events = []
     if trajectory.exists():
-        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory)
+        events, trajectory_issues = _trajectory if _trajectory is not None else _trajectory_events(trajectory, run_id=manifest.run_id)
         if _trajectory is None:
             issues.extend(trajectory_issues)
     kinds = [event.get("kind") for event in events]
@@ -549,7 +568,7 @@ def _live_staged_issues(
         evidence = manifest.grades.verification_evidence
         if verification_path.exists() and evidence is not None:
             try:
-                verification = VerificationResult.model_validate_json(verification_path.read_text(encoding="utf-8"))
+                verification = VerificationResult.model_validate_json(_required_text(verification_path))
             except ValidationError:
                 verification = None
             if verification is not None:
@@ -597,7 +616,7 @@ def _live_staged_issues(
     if manifest.grades.document is DocumentStatus.TEX_COMPILED:
         log = run_dir / "writeup" / "compile.log"
         if log.exists():
-            log_text = log.read_text(encoding="utf-8", errors="replace")
+            log_text = _required_text(log)
             dropped = dropped_glyphs(log_text)
             if dropped:
                 issues.append(
@@ -611,7 +630,7 @@ def _live_staged_issues(
     if manifest.grades.document is DocumentStatus.TEX_COMPILED and manifest.environment is not None:
         tex = run_dir / "writeup" / "paper.tex"
         if tex.exists():
-            text = tex.read_text(encoding="utf-8")
+            text = _required_text(tex)
             for line in (f"Lean: {manifest.environment.lean_version}", f"Mathlib: {manifest.environment.mathlib_revision}"):
                 if line not in text:
                     issues.append(f"paper.tex does not carry the identity line {line!r}")
@@ -629,3 +648,26 @@ def _live_staged_issues(
             if "Tectonic: unrecorded" in text:
                 issues.append("paper.tex says its compiler was not identified")
     return issues
+
+
+def validate_run_consistency(
+    run_dir: Path, manifest: RunManifest,
+    *, _trajectory: tuple[list[dict[str, Any]], list[str]] | None = None,
+) -> tuple[str, ...]:
+    """Report invalid artifacts, including filesystem and decoding failures."""
+    issues: list[str] = []
+    try:
+        return _validate_run_consistency(run_dir, manifest, _trajectory=_trajectory, _issues=issues)
+    except (OSError, ValueError) as error:
+        return (*issues, f"run artifact could not be read or validated: {error}")
+
+
+def _live_staged_issues(
+    run_dir: Path, manifest: RunManifest,
+    *, _trajectory: tuple[list[dict[str, Any]], list[str]] | None = None,
+) -> list[str]:
+    issues: list[str] = []
+    try:
+        return _live_staged_issues_unchecked(run_dir, manifest, _trajectory=_trajectory, _issues=issues)
+    except (OSError, ValueError) as error:
+        return [*issues, f"recorded artifact could not be read or validated: {error}"]

@@ -506,6 +506,16 @@ class ProveWorkflow:
             )
         return None
 
+    def _formalization_expired(self, run: _InFlight) -> bool:
+        if self._active_elapsed(run) < self._config.limits.active_seconds:
+            return False
+        run.grades = Grades(
+            formal=FormalStatus.NOT_FORMALIZED,
+            known_gaps=("The active budget expired before a formalization was approved.",),
+        )
+        run.state.transition(RunPhase.CANCELLED)
+        return True
+
     def _approve(self, run: _InFlight) -> _Approved | TerminalReason:
         """Open the runtime, then formalize until a claim is approved, read and probed.
 
@@ -540,13 +550,7 @@ class ProveWorkflow:
         revision = ""
         for proposal_number in range(self._config.limits.formalization_proposals):
             self._refuse_if_cancelled()
-            active_elapsed = self._active_elapsed(run)
-            if active_elapsed >= self._config.limits.active_seconds:
-                run.grades = Grades(
-                    formal=FormalStatus.NOT_FORMALIZED,
-                    known_gaps=("The active budget expired before a formalization was approved.",),
-                )
-                state.transition(RunPhase.CANCELLED)
+            if self._formalization_expired(run):
                 return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             formalization_input = StandaloneFormalizationInput(text=request.text)
             prompt = formalization_prompt(formalization_input, revision)
@@ -567,6 +571,8 @@ class ProveWorkflow:
                 # was graded MALFORMED_MODEL_OUTPUT, blaming the model for
                 # the interruption.
                 self._refuse_if_cancelled()
+                if self._formalization_expired(run):
+                    return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
                 store.append(
                     "formalization.malformed",
                     {"proposal": proposal_number, "message": str(error)},
@@ -574,6 +580,15 @@ class ProveWorkflow:
                 )
                 revision = "Return a valid structured formalization."
                 continue
+            except Exception:
+                # The outer failure handler records an interrupted exchange's
+                # cancellation event; retain that evidence before considering time.
+                if not self._cancelled.is_set() and self._formalization_expired(run):
+                    return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+                raise
+            self._refuse_if_cancelled()
+            if self._formalization_expired(run):
+                return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             if self._environment is None:
                 raise RuntimeError("no Lean environment identity to freeze a claim under")
             # A statement that does not elaborate is not a statement, so it
@@ -594,6 +609,8 @@ class ProveWorkflow:
             # interrupted elaboration fails -- was graded as malformed
             # model output, blaming the model for the interruption.
             self._refuse_if_cancelled()
+            if self._formalization_expired(run):
+                return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             terminal.show_formalization(proposal, elaboration)
             # And again after the display. Unlike the faithfulness verdict
             # below, nothing here is lost by honouring a press that lands
@@ -792,6 +809,9 @@ class ProveWorkflow:
             state.transition(RunPhase.PROVING)
             break
         if run.approved_claim is None:
+            self._refuse_if_cancelled()
+            if self._formalization_expired(run):
+                return TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
             run.grades = Grades(
                 formal=FormalStatus.NOT_FORMALIZED,
                 known_gaps=("formalization proposal budget exhausted",),
@@ -1126,10 +1146,10 @@ class ProveWorkflow:
 
 
 def _artifact_hashes(run_dir: Path) -> dict[str, str]:
-    from hardy.workflows.storage import artifact_paths
+    from hardy.workflows.storage import artifact_bytes, artifact_paths
 
     artifacts = {}
     for path in artifact_paths(run_dir):
         relative = path.relative_to(run_dir).as_posix()
-        artifacts[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        artifacts[relative] = hashlib.sha256(artifact_bytes(path)).hexdigest()
     return artifacts

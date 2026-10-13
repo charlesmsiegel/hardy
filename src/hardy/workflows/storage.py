@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -158,9 +159,21 @@ def _redact(value: Any) -> Any:
 
 
 def artifact_paths(run_dir: Path) -> list[Path]:
-    """The exhaustive regular-file inventory published and checked for a run."""
+    """Inventory files and nonregular entries, without following directory links.
+
+    Ordinary directories carry no artifact bytes; links and special files must
+    be returned so publication and validation can explicitly refuse them.
+    """
     return sorted(
         (path for path in run_dir.rglob("*")
-         if path.is_file() and path.relative_to(run_dir).as_posix() != "manifest.json"),
+         if (path.is_symlink() or not path.is_dir())
+         and path.relative_to(run_dir).as_posix() != "manifest.json"),
         key=lambda path: path.relative_to(run_dir).as_posix(),
     )
+
+
+def artifact_bytes(path: Path) -> bytes:
+    """Read only a regular artifact, refusing links and special-file handles."""
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError(f"{path} is not a regular file")
+    return path.read_bytes()
