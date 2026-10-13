@@ -106,12 +106,13 @@ jobs:
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
         run: |
           set -euo pipefail
           tag="$TAG"
           declared="$(python3 -c \
             'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
-          if [ "$DRY_RUN" != true ] && [ "$tag" != "v$declared" ]; then
+          if { [ "$DRY_RUN" != true ] || [ -z "$CANDIDATE_REF" ]; } && [ "$tag" != "v$declared" ]; then
             echo "error: tag $tag does not match version $declared in pyproject.toml" >&2
             exit 1
           fi
@@ -157,6 +158,7 @@ jobs:
     permissions:
       contents: write
     env:
+      GH_REPO: ${{ github.repository }}
       version: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/download-artifact@v4
