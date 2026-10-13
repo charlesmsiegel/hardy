@@ -1570,3 +1570,71 @@ def test_refusals_fill_all_fifty_slots_and_count_each_omission(
         assert f'{lost_denials} older SDK-refused requests' in listed
     if lost_failures:
         assert f'{lost_failures} older failed tool calls' in listed
+
+
+@pytest.mark.parametrize('key', ['DB__PASSWORD', 'db.password', 'db..password', 'service--token', 'db password'])
+def test_config_separator_credentials_are_removed_before_export_write(tmp_path, key):
+    from hardy.workflows.storage import _redact
+
+    secret = 'private-config-value'
+    payload = {'nested': {key: secret, 'public': 'visible'}}
+    assert _redact(payload) == {'nested': {key: '[REDACTED]', 'public': 'visible'}}
+    assert export.prepare(payload) == {'nested': {key: '[REDACTED]', 'public': 'visible'}}
+    message = f'{key}="{secret}", public: visible'
+    source = f'theorem {key.replace(".", "_").replace("-", "_").replace(" ", "_")} : True := by trivial'
+    page_material = material(
+        transcript=[{'type': 'user', 'message': {'content': message}}],
+        lean={'Main.lean': source},
+    )
+    destination = export.write(page_material, tmp_path / 'report.html')
+    page = destination.read_text(encoding='utf-8')
+    assert secret not in page
+    assert key in page and 'public: visible' in page
+    assert source in page
+
+
+def test_separator_word_fragments_are_public_and_workspace_names_stay_intact():
+    text = 'db.secretary="Alice"\ndb.tokenize = True'
+    assert export.redact(text) == text
+    from hardy.workflows.storage import _redact
+
+    assert _redact({'db.secretary': 'Alice', 'db.tokenize': True}) == {
+        'db.secretary': 'Alice', 'db.tokenize': True,
+    }
+    source = 'theorem db__password : True := by trivial'
+    assert export.prepare({'theorems': {'db__password': source}})['theorems'] == {
+        'db__password': source,
+    }
+
+
+def test_redacting_ordinary_prose_does_not_rescan_every_following_word():
+    import time
+
+    prose = 'ordinary prose ' * 2000
+    started = time.monotonic()
+    cleaned = export.redact(prose)
+    elapsed = time.monotonic() - started
+    assert cleaned == prose
+    assert elapsed < 1.0, f'30 KB of ordinary prose took {elapsed:.2f}s to redact'
+
+
+@pytest.mark.parametrize('key', ['DB__PASSWORD', 'db.password', 'service--token'])
+@pytest.mark.parametrize('value', ['token hunter2', 'Basic hunter2', 'apikey hunter2', 'negotiate hunter2'])
+def test_scheme_words_in_passwords_are_removed_before_export_write(tmp_path, key, value):
+    message = f'{key}={value}\nPublic context remains.'
+    page_material = material(transcript=[{'type': 'user', 'message': {'content': message}}])
+    destination = export.write(page_material, tmp_path / 'report.html')
+    page = destination.read_text(encoding='utf-8')
+    assert 'hunter2' not in page
+    assert key in page and 'Public context remains.' in page
+
+
+def test_authorization_redaction_preserves_the_scheme_on_repeat():
+    for original in (
+        'service..authorization: Basic hunter2',
+        'Authorization="Digest response=private-value"',
+    ):
+        once = export.redact(original)
+        assert 'hunter2' not in once and 'private-value' not in once
+        assert export.redact(once) == once
+        assert ('Basic' in once if 'Basic' in original else 'Digest' in once)

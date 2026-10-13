@@ -46,7 +46,7 @@ from typing import Any
 from hardy.formal.audit import DeclarationStatus, declaration_status
 from hardy.foundation.locking import replace_with_retry
 from hardy.foundation.truncation import truncate
-from hardy.workflows.storage import SECRET_KEY
+from hardy.workflows.storage import SECRET_KEY, SECRET_NAME, SECRET_PREFIX
 from hardy.workflows.storage import _redact as redact_payload
 
 #: Token shapes worth removing from free text. Deliberately narrow: a pattern
@@ -99,7 +99,7 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # rule matching `"[^"]*"` stopped, leaving the response field standing.
     (
         re.compile(
-            r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*authorization)"
+            r"(?i)(?<![A-Za-z0-9_.-])(" + SECRET_PREFIX + r"authorization)"
             r"([\"\']?\s*[:=]\s*)([\"\'])"
             r"((?:basic|bearer|digest|negotiate|token|apikey)\s+)"
             r"(?:\\.|[^\r\n])*?\3"
@@ -120,7 +120,7 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # and does not run past the end of it into the rest of the payload.
     (
         re.compile(
-            r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*authorization)(\s*[:=]\s*)"
+            r"(?i)(?<![A-Za-z0-9_.-])(" + SECRET_PREFIX + r"authorization)(\s*[:=]\s*)"
             r"(basic|bearer|digest|negotiate|token|apikey)\s+[^\r\n]+"
         ),
         r"\1\2\3 [REDACTED-KEY]",
@@ -138,17 +138,18 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # because the snippet is one string rather than a key of its own.
     (
         re.compile(
-            r"(?i)(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*"
-            r"(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|"
-            r"secret(?:[_-]?access)?(?:[_-]?key)?|password|passwd|token))"
+            r"(?i)(?<![A-Za-z0-9_.-])"
+            # Only authorization headers have schemes. Earlier rules have
+            # already removed their values; keep that scheme and placeholder.
+            r"(?!" + SECRET_PREFIX
+            + r"authorization[\"']?\s*[:=]\s*[\"']?"
+            r"(?:basic|bearer|digest|negotiate|token|apikey)\s+\[REDACTED)"
+            r"(" + SECRET_NAME + r")"
             # Not a value some earlier pattern has already replaced: the
             # scheme rule above leaves `Authorization: Basic [REDACTED-KEY]`,
             # and without this the generic rule matched it again and ate the
             # scheme the earlier rule had deliberately kept.
             r"([\"']?\s*[:=]\s*)(?!\[REDACTED)"
-            # Nor the scheme word the rule above deliberately kept, which is
-            # followed by its own redaction and is not itself a secret.
-            r"(?!(?:basic|bearer|digest|negotiate|token|apikey)\s)"
             # Escapes consumed whole, as the authorization rule above does:
             # `{"api_key": "he\\"re"}` ended the value at the escaped quote,
             # so the redaction replaced the prefix and left the rest of the
@@ -168,14 +169,8 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
             # once the file is sent. Quoted values are matched first, so JSON
             # and a quoted YAML scalar still stop at their closing quote and
             # keep whatever follows on the line.
-            # The unquoted value may not START with a space, which is what
-            # keeps the scheme guard above working. `\s*[:=]\s*` can give back
-            # its trailing space, and a value allowed to begin with one then
-            # matched " Basic <token>" from a separator of just ":" -- sliding
-            # past the `(?!basic\s)` lookahead and eating the scheme word the
-            # authorization rule deliberately kept. `\S+` could not begin with
-            # a space, so this only became reachable when the value was
-            # widened; the class below restores the property explicitly.
+            # An unquoted value starts at its first non-space character;
+            # separator whitespace remains outside the replaced value.
             r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s\r\n][^\r\n]*)"
         ),
         r"\1\2[REDACTED]",
