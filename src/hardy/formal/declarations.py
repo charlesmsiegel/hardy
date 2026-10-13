@@ -62,7 +62,14 @@ from hardy.formal.lean import (
     DeclarationSearch,
     LeanDiagnostic,
 )
-from hardy.formal.syntax import ANY_NAME, QUALIFIED_NAME, WRAPPER, parse_imports, strip_comments
+from hardy.formal.syntax import (
+    QUALIFIED_NAME,
+    WRAPPER,
+    identifier_tokens,
+    parse_imports,
+    strip_comments,
+)
+from hardy.formal.syntax.scopes import _prefix_at, _scopes
 
 # One declaration head. The keyword list is Lean's surface grammar for named
 # declarations; `example` is deliberately absent (anonymous by construction)
@@ -88,20 +95,6 @@ _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|ins
 DECLARATION = re.compile(
     rf"(?m)^[ \t]*{WRAPPER}{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
 )
-
-# Scope lines. `namespace Foo.Bar` opens one scope per component, because that
-# is how Lean closes them: `end Foo.Bar` closes both while `end Bar` closes
-# only the inner one. Components are read with `ANY_NAME` rather than split on
-# `.`, because `namespace «my scope»` is one component whose name may contain
-# anything. A `section` may carry a name and may be `noncomputable`; a
-# `mutual` block ends with a bare `end` that must not pop anything else.
-_NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
-# Anchored to the whole line: a line that merely begins with the word must not
-# push a scope whose phantom `end` then swallows a real namespace close.
-_SECTION = re.compile(rf"^\s*(?:noncomputable\s+)?section(?:\s+{QUALIFIED_NAME})?\s*$")
-_MUTUAL = re.compile(r"^\s*mutual\s*$")
-_END = re.compile(rf"^\s*end(?:\s+({QUALIFIED_NAME}))?\s*$")
-_COMPONENT = re.compile(ANY_NAME)
 
 # The same bound `retrieval.py` puts on a signature a model reads, restated
 # here so this module does not import the one that imports it.
@@ -129,7 +122,9 @@ _BODY = re.compile(r":=|\bwhere\b|\bderiving\b")
 # lines, so the text this index reads changed again.
 # /4: the view it reads shows every character any reading calls code, a
 # delimiter one reading uses included.
-INDEX_ALGORITHM = "hardy-declaration-index/4"
+# /5: namespace tracking shares the token-based scope walk, including modified
+# sections, and declaration heads recognise public/meta visibility.
+INDEX_ALGORITHM = "hardy-declaration-index/5"
 
 # Root files that are not module sources; same reasoning as `modules.py`.
 _NOT_A_SOURCE = frozenset({"lakefile.lean"})
@@ -342,31 +337,7 @@ class DeclarationIndex:
         raw = source.splitlines()
         blanked_source = strip_comments(source)
         blanked = blanked_source.splitlines()
-        # First pass: the namespace prefix in effect at each line. scopes
-        # holds namespace components as strings and None for any scope
-        # (`section`, `mutual`) that contributes nothing to a name.
-        scopes: list[str | None] = []
-        prefixes: list[tuple[str, ...]] = []
-        for line in blanked:
-            prefixes.append(tuple(part for part in scopes if part is not None))
-            opened = _NAMESPACE.match(line)
-            if opened:
-                scopes.extend(_COMPONENT.findall(opened.group(1)))
-            elif _SECTION.match(line) or _MUTUAL.match(line):
-                scopes.append(None)
-            else:
-                closed = _END.match(line)
-                if closed:
-                    # An `end` naming components closes that many namespace
-                    # frames -- unless the innermost scope is a `section` or
-                    # `mutual` (a None entry), which is one frame whatever its
-                    # name looks like: `end Foo.Bar` after `section Foo.Bar`
-                    # closes the section alone, not the namespace around it.
-                    if not closed.group(1) or (scopes and scopes[-1] is None):
-                        depth = 1
-                    else:
-                        depth = len(_COMPONENT.findall(closed.group(1)))
-                    del scopes[max(0, len(scopes) - depth) :]
+        prefixes = _scopes(blanked_source, identifier_tokens(blanked_source))
         # Second pass: declarations, over the whole blanked source rather than
         # line by line -- Lean allows a newline between the keyword and the
         # name, and `syntax.declarations` records losing exactly
@@ -385,7 +356,7 @@ class DeclarationIndex:
             if written.startswith("_root_."):
                 name = written[len("_root_.") :]
             else:
-                name = ".".join((*prefixes[number - 1], written))
+                name = ".".join((*_prefix_at(prefixes, head.start(2)), written))
             found.append(
                 (name, name.lower(), _signature(raw, blanked, number - 1), module, number)
             )

@@ -66,6 +66,10 @@ def _audit_line_report(process, spec, data, *, line=None):
     (
         'by sorry',
         'by admit',
+        'by exact ⟨sorry, sorry⟩',
+        'by exact ·sorry',
+        'by exact ←sorry',
+        'by exact sorry⟩',
         'by?',
         'by exact sorryAx _ true',
         'by\n  axiom invented : False\n  trivial',

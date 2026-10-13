@@ -204,7 +204,7 @@ class VerificationEvidence(FrozenModel):
 # places that had to be taught so -- the head grammar in `hardy.formal.lean` never saw
 # a decorated declaration, because this refused it first.
 DECLARATION_KEYWORD = re.compile(
-    r"^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"
+    r"^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local|public|meta)\s+)*"
     r"(?:theorem|lemma|example)(?:\s|$)"
 )
 

@@ -70,7 +70,8 @@ def test_real_lean_names_a_standard_axiom_the_proof_actually_used(lean_project: 
 
 
 @pytest.mark.real_toolchain
-def test_real_lean_reports_sorry_ax_and_the_audit_names_it_a_hole(lean_project: Path) -> None:
+@pytest.mark.parametrize('constant', ['sorryAx', '«sorryAx»'])
+def test_real_lean_reports_sorry_ax_and_the_audit_names_it_a_hole(lean_project: Path, constant) -> None:
     """`sorry` reaches the kernel as an axiom. This is the case the whole gate
     exists for, and the only place it can be confirmed is against real Lean.
 
@@ -82,9 +83,8 @@ def test_real_lean_reports_sorry_ax_and_the_audit_names_it_a_hole(lean_project: 
     requires a clean grade, which is every unattended one.
     """
     tools = _tools('theorem HardyTarget : 1 = 2', lean_project)
-    # Past the textual hole check on purpose: `sorryAx` is not `sorry`, and the
-    # audit rather than the regex is what has to stop this.
-    result = tools.check_proof('by exact sorryAx _ true', final=True)
+    # Bypass the textual pre-gate deliberately to exercise Lean's own report.
+    result = tools.run_source(f'import Init\ntheorem HardyTarget : 1 = 2 := by exact {constant} _ true\n', audit=('axioms HardyTarget',))
 
     assert result.ok, result.output
     reports = parse(result.report, ('HardyTarget',))

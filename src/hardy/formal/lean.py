@@ -38,7 +38,7 @@ from hardy.workflows.contracts import RunLimits
 if TYPE_CHECKING:
     from hardy.formal.modules import ModuleIndex
 
-HOLE = re.compile(r"\b(sorry|admit)\b")
+HOLE = re.compile(r"(?<![\w'!?«»])(sorryAx|sorry|admit)(?![\w'!?«»])|«(sorryAx)»")
 # Lean's report for an import it cannot resolve. It names the `.olean` first,
 # which is why it reads as a damaged installation rather than as a wrong path.
 MISSING_MODULE = re.compile(r"object file '[^']*' of module ([\w.'!?«»]+) does not exist")
@@ -123,7 +123,7 @@ DECLARATION_NAME = re.compile(QUALIFIED_NAME)
 # `]` simply fails to match, leaving the previous behaviour rather than a wrong
 # name.
 _ATTRIBUTES = r"(?:@\[[^\]]*\]\s*)*"
-_MODIFIERS = r"(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"
+_MODIFIERS = r"(?:(?:private|protected|public|meta|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"
 DECLARATION_HEAD = re.compile(
     rf"\s*{_ATTRIBUTES}{_MODIFIERS}(?:theorem|lemma)\s+({DECLARATION_NAME.pattern})"
 )
@@ -157,7 +157,8 @@ def scannable(source: str) -> str:
     name, and a proof entitled to call a lemma so named was being told it had a
     hole it does not have -- which then kept a complete candidate in the record
     as an explicitly partial one. Blanked rather than removed, because every
-    position this feeds is reported against the original text.
+    position this feeds is reported against the original text. The escaped
+    kernel constant `«sorryAx»` stays visible because it still introduces a hole.
 
     Syntax quotations go too, but only where their extent is certain: a
     quotation is data, not execution -- `` `(tactic| sorry) `` builds a piece
@@ -186,21 +187,28 @@ def scannable(source: str) -> str:
     # proof that has none. Only a name every reading opens is blanked: a `«`
     # one reading opens and Lean may not (`('«')`) would blank Lean's code up
     # to the next `»`, and did, hiding a `sorry` from every gate.
+    # The escaped spelling of the kernel hole axiom is still that axiom,
+    # unlike an ordinary lemma named «sorry». Keep its offsets visible.
+    hole_names = {
+        index
+        for match in re.finditer(r"«sorryAx»", quoted)
+        for index in range(match.start(), match.end())
+    }
     return "".join(
-        " " if character != "\n" and lexed.certain_name(index) else character
+        " " if character != "\n" and lexed.certain_name(index) and index not in hole_names else character
         for index, character in enumerate(quoted)
     )
 
 
 class Hole(FrozenModel):
-    """One `sorry` or `admit`, and where it stands in the source.
+    """One `sorry`, `admit`, or `sorryAx`, and where it stands in the source.
 
     Positions are 1-based lines and 0-based columns, which is how the rest of
     this module reports a position, and they are offsets into the source as
     written rather than into the blanked copy the scan reads.
     """
 
-    keyword: Literal["sorry", "admit"]
+    keyword: Literal["sorry", "admit", "sorryAx"]
     line: int
     column: int
 
@@ -754,7 +762,7 @@ class LeanTools:
             before = blanked[: match.start()]
             line = before.count("\n") + 1
             column = match.start() - (before.rfind("\n") + 1)
-            found.append(Hole(keyword=match.group(1), line=line, column=column))
+            found.append(Hole(keyword=match.group(1) or match.group(2), line=line, column=column))
         return tuple(found)
 
     def run_source(
