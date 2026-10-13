@@ -1082,3 +1082,46 @@ def test_the_block_order_a_digest_covers_is_the_one_recorded() -> None:
     assert block_order((thinking, *blocks)) != block_order((thinking, blocks[1], blocks[0], blocks[2]))
     # Nothing here writes down what Hardy declines to publish.
     assert "sig" not in json.dumps(observed)
+
+
+def test_compacted_abandoned_call_retains_only_its_own_input():
+    loop, _, seen = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_lean", {"src": "A"}),)),
+        ProviderTurn(tool_calls=(ToolCall("c2", "check_lean", {"src": "B"}),)),
+    ], compact=lambda messages: [Message("user", text="summary")] if len(messages) >= 3 else None)
+    stream = loop.run("go")
+    for event in stream:
+        if event.kind == "tool_use" and event.call_id == "c2":
+            stream.close()
+            break
+    abandoned = [event for event in seen if event["type"] == "abandoned_tool"]
+    assert [(event["call_id"], event["input"]) for event in abandoned] == [("c2", {"src": "B"})]
+
+
+def test_completed_tool_batch_releases_pending_before_next_provider_call():
+    loop, _, _ = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_lean", {}),)),
+        lambda: _assert_no_pending(loop),
+    ])
+    _drain(loop, "go")
+
+
+def _assert_no_pending(loop):
+    assert loop._pending == []
+    return ProviderTurn(text="done")
+
+
+@pytest.mark.parametrize("first_call", [False, True])
+def test_spend_refusal_reports_failed_exchange_without_counting_unasked_turn(first_call):
+    from hardy.agents.spend_budget import SpendLimitReached
+    script = [] if first_call else [ProviderTurn(
+        tool_calls=(ToolCall("c1", "noop", {}),), usage={"input_tokens": 10},
+    )]
+    loop, _, seen = _loop([*script, SpendLimitReached("token_limit")])
+    with pytest.raises(SpendLimitReached):
+        _drain(loop, "go")
+    result = next(event for event in seen if event["type"] == "result")
+    assert result["is_error"] is True
+    assert result["error"] == "SpendLimitReached: token_limit"
+    assert result["turns"] == (0 if first_call else 1)
+    assert result.get("provider_unasked", False) is first_call

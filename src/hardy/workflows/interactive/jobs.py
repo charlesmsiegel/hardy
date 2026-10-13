@@ -17,10 +17,12 @@ over the turn's own children; `/cancel` reaches them by the job's thread.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,12 +87,18 @@ class ComputationJobs:
     def __init__(self, *, detach_after: float, gate: threading.Lock, record: Callable[[dict[str, Any]], int],
                  recorded: Callable[[], Iterator[dict[str, Any]]], delegations: Any,
                  notify: Callable[[str], None], tally: Callable[[str, bool], None],
-                 cas_session: Callable[[], Any], cancelled: Callable[[], bool] = lambda: False) -> None:
+                 cas_session: Callable[[], Any], cancelled: Callable[[], bool] = lambda: False,
+                 events_since: Callable[[tuple[int, int] | None], tuple[tuple[int, int], bool, list[dict[str, Any]]]] | None = None) -> None:
         self.detach_after = detach_after
         self._gate = gate
         self._cancelled = cancelled
         self._record = record
         self._recorded = recorded
+        self._events_since = events_since
+        self._event_cursor: tuple[int, int] | None = None
+        self._pending: dict[str, dict[str, Any]] = {}
+        self._delivered: set[str] = set()
+        self._delivery_lock = threading.Lock()
         self._delegations = delegations
         self._notify = notify
         self._tally = tally
@@ -136,7 +144,7 @@ class ComputationJobs:
         try:
             delegation = self._delegations.attach_computation(objective=job.objective, handle=handle)
             job.id = delegation.id
-        except Exception:
+        except BaseException:
             # The controller would not take it (it is closing, say). The call
             # fails in the turn, the gate stays the dispatcher's to release,
             # and it is released only once the work has actually stopped, so
@@ -152,8 +160,13 @@ class ComputationJobs:
         with self._lock:
             self._running[job.id] = job
         job.attached.set()
-        self._notify(f"detached {job.objective} as background job {job.id}; its result arrives as a notice "
-                     "and at the model's next turn")
+        try:
+            self._notify(f"detached {job.objective} as background job {job.id}; its result arrives as a notice "
+                         "and at the model's next turn")
+        except Exception:
+            # Ownership already transferred. A broken host notice must not
+            # send the dispatcher down its gate-release exception path.
+            logging.getLogger(__name__).exception("Background job notice failed for %s", job.id)
         return Detached(ToolResult(True, (
             f"detached: {job.objective} is still running as background job {job.id}. Its result "
             "reaches you at your next turn, so end this turn rather than waiting for it, and do not "
@@ -175,8 +188,9 @@ class ComputationJobs:
         if not detached:
             job.done.set()
             return
-        # Detached: the dispatcher has returned and this thread owns the gate.
-        job.attached.wait(5)
+        # Attachment decides ownership. Both success and failure signal the
+        # outcome; elapsed time cannot transfer the dispatcher-owned gate.
+        job.attached.wait()
         with job.lock:
             orphaned = job.orphaned
         if orphaned:
@@ -266,15 +280,23 @@ class ComputationJobs:
 
     def owed(self) -> list[dict[str, Any]]:
         """Job events no `job_delivered` event has named yet, oldest first."""
-        delivered: set[str] = set()
-        events: dict[str, dict[str, Any]] = {}
-        for event in self._recorded():
-            kind = event.get("type")
-            if kind == "job":
-                events[str(event.get("job_id"))] = event
-            elif kind == "job_delivered":
-                delivered.update(str(id) for id in event.get("job_ids", ()))
-        return [event for id, event in events.items() if id not in delivered]
+        with self._delivery_lock:
+            if self._events_since is None:
+                # Compatibility for callers without a versioned record owner.
+                reset, events = True, self._recorded()
+            else:
+                cursor, reset, events = self._events_since(self._event_cursor)
+                self._event_cursor = cursor
+            if reset:
+                self._pending.clear()
+                self._delivered.clear()
+            for event in events:
+                kind = event.get("type")
+                if kind == "job":
+                    self._pending[str(event.get("job_id"))] = event
+                elif kind == "job_delivered":
+                    self._delivered.update(str(id) for id in event.get("job_ids", ()))
+            return deepcopy([event for id, event in self._pending.items() if id not in self._delivered])
 
     def render(self) -> str:
         """The results block for the next provider request, and remember what it carries."""

@@ -94,28 +94,21 @@ class TurnCoordinator:
         the artifacts on disk implied a conversation that had already taken
         place.
         """
-        offset = persistence.event(event)
         if event.get("type") != "result":
+            persistence.event(event)
             return
-        persistence.remember_thread()
-        if not persistence.current_turn():
-            # A report the consumer already gave up waiting for. It is kept in
-            # the transcript -- it happened -- but folding it would corrupt the
-            # ledger rather than improve it: every figure in it is
-            # session-to-date, and a *later* turn has since reported a larger
-            # one, so this smaller figure is not new spend but an older view of
-            # spend already counted. Differencing against it would read as a
-            # counter restart and add the whole thing a second time. The
-            # exchange it belongs to is in the ledger already, recorded as
-            # unreported by its own teardown.
-            #
-            # The cursor still advances past it. Skipping is a decision, and a
-            # replay after a crash must make the same one rather than folding
-            # what this deliberately did not.
-            self._skip_spend(offset, persistence)
-            return
-        self._reported.set()
-        self._remember_spend(event, offset, persistence=persistence)
+        # The append and accounting decision share the teardown's lock. The
+        # durable marker lets a fresh ledger recover the same skip decision.
+        with self._spend:
+            unfolded = not persistence.current_turn() or self._reported.is_set()
+            recorded = {**event, "usage_unfolded": True} if unfolded else event
+            offset = persistence.event(recorded)
+            persistence.remember_thread()
+            if unfolded:
+                persistence.mark_read(offset)
+                return
+            self._reported.set()
+            persistence.publish_usage(persistence.read_usage().record(event), offset)
 
 
     def _tally(self, name: str, ok: bool) -> None:
@@ -442,6 +435,9 @@ class TurnCoordinator:
             if unreported:
                 if self._reported.is_set():
                     return
+                # A teardown without a report is still one exchange. Keep
+                # that unknown liability in the transcript for ledger recovery.
+                offset = persistence.event({"type": "exchange_unreported"})
                 self._reported.set()
             persistence.publish_usage(persistence.read_usage().record(event), offset)
 

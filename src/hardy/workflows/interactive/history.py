@@ -57,7 +57,7 @@ class HistorySnapshot:
         # Result events are provider accounting, deliberately withheld from
         # model context. Prior replay envelopes are excluded to avoid nesting.
         events = [event for entry in self.path()
-                  if (event := entry.event()).get("type") not in {"branch_context", "result"}]
+                  if (event := entry.event()).get("type") not in {"branch_context", "result", "exchange_unreported"}]
         superseded = _superseded(events)
         text = encoded([event for index, event in enumerate(events) if index not in superseded])
         if len(text.encode("utf-8")) > REPLAY_LIMIT:

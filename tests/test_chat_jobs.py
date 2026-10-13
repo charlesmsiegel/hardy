@@ -431,3 +431,42 @@ def test_jobs_close_preserves_interrupt_error_when_worker_times_out():
         release.set()
         if job is not None:
             assert job.done.wait(5)
+def test_owed_reuses_unchanged_transcript_and_returns_independent_events(tmp_path, monkeypatch):
+    chat = session(tmp_path, FakeChatRuntime([]))
+    try:
+        chat._record({'type': 'job', 'job_id': 'd1', 'result': {'ok': True, 'output': 'first'}})
+        assert chat.jobs.owed()[0]['job_id'] == 'd1'
+        reads = []
+        original = chat.record._recorded
+
+        def read(*args):
+            reads.append(args)
+            return original(*args)
+
+        monkeypatch.setattr(chat.record, '_recorded', read)
+        snapshot = chat.jobs.owed()
+        snapshot[0]['result']['output'] = 'mutated'
+        assert 'first' in chat.jobs.render()
+        assert reads == []
+    finally:
+        chat.close()
+
+
+def test_owed_rebuilds_after_external_append_truncation_and_replacement(tmp_path):
+    chat = session(tmp_path, FakeChatRuntime([]))
+    path = tmp_path / 'transcript.jsonl'
+    try:
+        chat._record({'type': 'job', 'job_id': 'd1', 'result': {'ok': True, 'output': 'old'}})
+        assert [event['job_id'] for event in chat.jobs.owed()] == ['d1']
+        # Legacy externally written events are supported by the history owner.
+        with path.open('a', encoding='utf-8') as handle:
+            handle.write(json.dumps({'type': 'job_delivered', 'job_ids': ['d1']}) + '\n')
+        assert chat.jobs.owed() == []
+        path.write_text('', encoding='utf-8')
+        assert chat.jobs.owed() == []
+        replacement = tmp_path / 'replacement.jsonl'
+        replacement.write_text(json.dumps({'type': 'job', 'job_id': 'd2', 'result': {'output': 'new'}}) + '\n')
+        replacement.replace(path)
+        assert [event['job_id'] for event in chat.jobs.owed()] == ['d2']
+    finally:
+        chat.close()

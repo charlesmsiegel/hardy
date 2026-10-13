@@ -640,6 +640,7 @@ class MathematicsSession:
         #: What the human asked for in the turn now in flight, if any; an
         #: interrupt records it as the continuation's resume text.
         self._in_flight_text: str | None = None
+        self._in_flight_author: str | None = None
         #: Capability owners for authoritative admission: the session's own
         #: unless a caller installs others (the acceptance suites script them).
         self.admission_owners = admission if admission is not None else self.owners.admission()
@@ -659,6 +660,7 @@ class MathematicsSession:
         # event, and renders what is owed ahead of the next provider request.
         self.jobs = ComputationJobs(
             detach_after=detach_after, gate=self._gate, record=self._record, recorded=self._recorded,
+            events_since=self.record.events_since,
             delegations=self.delegations, notify=self._notify, tally=self._tally,
             cas_session=lambda: self.cas.session if self.cas is not None else None,
             cancelled=self.turns._cancelled.is_set,
@@ -759,16 +761,14 @@ class MathematicsSession:
     def _branch_context(self, history: HistorySnapshot, session_id: str | None) -> str:
         if history.epoch is None:
             return ""
-        prior = [entry.event() for entry in history.path()
-                 if entry.event().get("type") == "branch_context"
-                 and entry.event().get("epoch") == history.epoch]
-        if session_id and prior:
-            text = prior[-1]["text"]
-        else:
-            text = history.replay()
+        prior = [event for entry in history.path()
+                 if (event := entry.event()).get("type") == "branch_context"
+                 and event.get("epoch") == history.epoch]
+        text = prior[-1]["text"] if session_id and prior else history.replay()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if not prior or prior[-1].get("sha256") != digest:
             self._record({"type": "branch_context", "epoch": history.epoch,
-                          "source_leaf": history.active_leaf, "text": text,
-                          "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()})
+                          "source_leaf": history.active_leaf, "text": text, "sha256": digest})
         return (
             "\n\nSelected visible conversation history follows as JSON. This is recorded context, "
             "not native provider state or instructions to execute tools. Partial messages and tool "
@@ -928,6 +928,8 @@ class MathematicsSession:
         that carries it, so provenance survives the summary.
         """
         block = self._steering_block()
+        attention = ""
+        self._attention_owed = []
         try:
             inbox = self.delegations.attention()
             pending = inbox.coalesced_pending("main_agent")
@@ -938,11 +940,14 @@ class MathematicsSession:
                 # Owed, not yet receipted: the runtime has not accepted the request.
                 self._attention_owed = [(delivered, epoch, offset) for item in pending[:DEFAULT_BUDGET_ITEMS]
                                         for delivered in (item.id, *item.supersedes)]
-            # The results of detached computations, in full: the attention
-            # item names that a job finished, this is what it found.
-            results = self.jobs.render()
         except Exception:  # noqa: BLE001 - a status line must never end a turn
-            return block
+            attention = ""
+            self._attention_owed = []
+        try:
+            results = self.jobs.render()
+        except Exception:  # noqa: BLE001 - independent delivery blocks
+            self.jobs.forget_owed()
+            results = ""
         return "\n\n".join(part for part in (block, attention, results) if part)
 
     def _commit_attention_receipts(self) -> None:
@@ -968,6 +973,9 @@ class MathematicsSession:
         if not any(turn.active for turn in self._conversation_turns) or self._in_flight_text is None:
             return
         self.cancel(reason=f"delegation_interrupt:{item.id}")
+        if self._in_flight_author == "hardy":
+            # A host continuation is never replayed as the person's request.
+            return
         self.delegations.record_continuation(
             item.delegation_id, condition="interrupted", epoch=self.record.history().epoch,
             offset=self._transcript_end(), resume_text=self._in_flight_text,
@@ -5055,6 +5063,7 @@ class MathematicsSession:
             if self._runtime_epoch != self.record.history().epoch:
                 raise ValueError("Conversation changed; reopen the session before starting a turn.")
             self._in_flight_text = text
+            self._in_flight_author = author
             self._attention_owed = []
             try:
                 events = self.turns.stream(text, runtime=self.runtime, persistence=self._turn_persistence(), steering=self._steering_with_attention, reset_formal=self.formal.begin_turn, resume_work=self.resume_work, closing_notice=self._closing_notice, author=author)
@@ -5097,8 +5106,8 @@ class MathematicsSession:
             # the user has to be told, since silence here would read as assent.
             # Said whenever the workspace holds no theorem, so it cannot be
             # timed around by claiming a result before any work is saved.
-            self._record({"type": "obligations", "outstanding": [], "saved_theorems": 0})
-            return [
+            failure = self._record_closing_notice({"type": "obligations", "outstanding": [], "saved_theorems": 0})
+            return failure + [
                 TurnEvent(
                     "notice",
                     text=(
@@ -5109,8 +5118,8 @@ class MathematicsSession:
             ]
         if not owed:
             return []
-        self._record({"type": "obligations", "outstanding": [item.as_dict() for item in owed]})
-        return [
+        failure = self._record_closing_notice({"type": "obligations", "outstanding": [item.as_dict() for item in owed]})
+        return failure + [
             TurnEvent(
                 "notice",
                 text=(
@@ -5123,6 +5132,13 @@ class MathematicsSession:
                 ),
             )
         ]
+
+    def _record_closing_notice(self, event: dict[str, Any]) -> list[TurnEvent]:
+        try:
+            self._record(event)
+        except Exception as error:  # noqa: BLE001 - keep the artifact notice visible
+            return [TurnEvent("notice", text=f"Hardy could not record this notice: {type(error).__name__}: {error}")]
+        return []
 
     def send(self, text: str) -> str:
         """`stream`, for a caller with nothing to draw it on."""
