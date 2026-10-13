@@ -257,3 +257,48 @@ def test_overview_reads_a_named_chats_transcript_not_the_main_one(tmp_path: Path
     assert rows[chat.id]["turns"] == 1
     assert rows[chat.id]["last_activity"] == 5.0
     assert rows["main"]["turns"] is None
+
+
+def test_overview_caches_unchanged_transcripts_and_detects_changes(tmp_path, monkeypatch):
+    transcript = tmp_path / 'transcript.jsonl'
+    transcript.write_text('{"type":"user","timestamp":1}\n')
+    original = chats.read_text
+    reads = []
+    def counted(*args, **kwargs):
+        reads.append(args)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(chats, 'read_text', counted)
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    assert len(reads) == 1
+    transcript.write_text('{"type":"user","timestamp":1}\n' * 2)
+    assert chats.overview(tmp_path)[0]['turns'] == 2
+    transcript.write_text('bad\n')
+    assert chats.overview(tmp_path)[0]['turns'] is None
+    replacement = tmp_path / 'replacement'
+    replacement.write_text('{"type":"user","timestamp":3}\n')
+    replacement.replace(transcript)
+    assert chats.overview(tmp_path)[0]['last_activity'] == 3
+
+
+def test_activity_cache_detects_same_size_edit_with_restored_mtime(tmp_path):
+    transcript = tmp_path / 'transcript.jsonl'
+    transcript.write_text('{"type":"user","timestamp":1}\n')
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    info = transcript.stat()
+    transcript.write_text('{"type":"note","timestamp":2}\n')
+    os.utime(transcript, ns=(info.st_atime_ns, info.st_mtime_ns))
+    assert transcript.stat().st_size == info.st_size
+    assert chats.overview(tmp_path)[0]['turns'] == 0
+    assert chats.overview(tmp_path)[0]['last_activity'] == 2
+
+
+def test_activity_cache_does_not_hide_replaced_symlink(tmp_path):
+    transcript = tmp_path / 'transcript.jsonl'
+    transcript.write_text('{"type":"user"}\n')
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    transcript.unlink()
+    outside = tmp_path / 'outside'
+    outside.write_text('{"type":"user"}\n')
+    transcript.symlink_to(outside)
+    assert chats.overview(tmp_path)[0]['turns'] is None

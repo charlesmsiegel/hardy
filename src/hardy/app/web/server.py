@@ -25,11 +25,12 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty
+from threading import Lock
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from hardy.app.web import chats, panels, uploads
-from hardy.app.web.host import Busy, NoProject, WebHost
+from hardy.app.web.host import Busy, FileConflict, NoProject, WebHost
 from hardy.foundation.files import LayoutError
 from hardy.workflows.layout import validate_slug
 
@@ -83,6 +84,9 @@ class WebServer(ThreadingHTTPServer):
         self.host = host
         self.static = static
         self.token = secrets.token_urlsafe(32)
+        self.environment_lock = Lock()
+        self.environment_config = None
+        self.environment_panel = None
         # One declaration index for the server's life, over the project the
         # host was configured with. Constructed, not read: the scan it will
         # eventually do walks every source file the installed packages ship,
@@ -250,7 +254,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, host.models())
             return
         if name == "environment":
-            self._json(200, panels.environment(host.config))
+            with self.server.environment_lock:
+                config = host.config
+                key = tuple(getattr(config, name) for name in (
+                    "lean_project", "lean_command", "latex_command", "tectonic",
+                    "cas_backend", "cas_command", "limits", "model", "backend"))
+                if (self.server.environment_panel is None
+                        or self.server.environment_config != key
+                        or query.get("refresh", [""])[0] == "1"):
+                    self.server.environment_panel = panels.environment(config)
+                    self.server.environment_config = key
+                answer = self.server.environment_panel
+            self._json(200, answer)
             return
         if name == "runs":
             self._json(200, panels.runs(host.config))
@@ -274,6 +289,12 @@ class Handler(BaseHTTPRequestHandler):
                               "kind": ("builtin" if c.template is None
                                        else "shortcut" if c.template.bundled else "project")}
                              for c in host.registry])
+            return
+        if name not in {"transcript", "summary", "tree", "jobs", "files", "file", "pdf",
+                        "sources", "graph", "uploads", "cas/cells", "record", "ledger",
+                        "ledger/item", "ledger/export", "results", "publications", "checkpoints",
+                        "spend", "chats"}:
+            self._json(404, {"error": "unknown endpoint"})
             return
         session, problem = host.session, self._problem()
         if name == "transcript":
@@ -482,9 +503,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/file":
                 relative = str(data.get("path", ""))
                 panels.confine(self._problem(), relative)
-                self._json(200, self.server.host.save_file(relative, str(data.get("source", ""))))
+                options = {"base_sha256": data["base_sha256"]} if "base_sha256" in data else {}
+                self._json(200, self.server.host.save_file(relative, str(data.get("source", "")), **options))
             else:
                 self._json(404, {"error": "unknown action"})
+        except FileConflict as error:
+            current = panels.file_text(self._problem(), relative)
+            self._json(409, {**current, "error": str(error), "conflict": True})
         except (Busy, NoProject) as error:
             self._json(409, {"error": str(error)})
         except RuntimeError:

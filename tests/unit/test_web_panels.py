@@ -1661,3 +1661,50 @@ def test_a_bare_ledger_name_one_declaration_owns_still_matches(tmp_path: Path) -
     row = next(r for r in panels.results(problem)["theorems"] if r["name"] == "A.solo")
     assert row["record"] is not None
     assert row["record"]["statement"] == "Something about solo."
+
+
+def test_pdf_read_does_not_enumerate_workspace(tmp_path, monkeypatch):
+    from hardy.app.web.panels import workspace
+    problem = make_problem(tmp_path)
+    (problem / 'writeup.pdf').write_bytes(b'%PDF')
+    publication = problem / 'publications' / 'x'
+    publication.mkdir(parents=True)
+    (publication / 'writeup.pdf').write_bytes(b'%PDF publication')
+    monkeypatch.setattr(workspace, 'files', lambda *_: pytest.fail('enumerated workspace'))
+    assert workspace.pdf_bytes(problem, 'writeup.pdf') == b'%PDF'
+    assert workspace.pdf_bytes(problem, 'publications/x/writeup.pdf') == b'%PDF publication'
+
+
+def test_file_text_uses_bounded_read(tmp_path, monkeypatch):
+    problem = make_problem(tmp_path)
+    (problem / 'lean' / 'A.lean').write_bytes(b'abcdef')
+    monkeypatch.setattr(panels, 'TEXT_LIMIT', 3)
+    monkeypatch.setattr(Path, 'read_bytes', lambda *_: pytest.fail('read whole file'))
+    opened = Path.open
+    requests = []
+    class BoundedReader:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.handle.close()
+        def read(self, size=-1):
+            requests.append(size)
+            assert 0 <= size <= 4
+            return self.handle.read(size)
+    monkeypatch.setattr(Path, 'open', lambda path, *args, **kwargs: BoundedReader(opened(path, *args, **kwargs)))
+    out = panels.file_text(problem, 'lean/A.lean')
+    assert out['text'] == 'abc' and out['truncated'] is True and out['sha256'] is None
+    assert requests == [4]
+
+
+def test_file_text_reports_complete_digest_and_missing(tmp_path):
+    import hashlib
+    problem = make_problem(tmp_path)
+    path = problem / 'lean' / 'Digest.lean'
+    path.write_bytes(b'example : True := trivial\n')
+    assert panels.file_text(problem, 'lean/Digest.lean')['sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+    path.unlink()
+    out = panels.file_text(problem, 'lean/Digest.lean')
+    assert out['missing'] is True and out['sha256'] is None and out['text'] == ''

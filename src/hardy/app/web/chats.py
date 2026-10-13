@@ -7,9 +7,10 @@ import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
-from hardy.foundation.files import LayoutError, guard_for, read_text
+from hardy.foundation.files import LayoutError, guard_for, read_text, resolve_named_child
 from hardy.workflows.layout import CHAT_META, CHATS_DIR, DEFAULT_CHAT, TRANSCRIPT, validate_chat
 
 SCHEMA = "hardy.chat/v1"
@@ -156,6 +157,20 @@ def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
     a later, larger one was on a line this function could not read.
     """
     relative = TRANSCRIPT if chat_id == DEFAULT_CHAT else f"{CHATS_DIR}/{chat_id}/{TRANSCRIPT}"
+    try:
+        guard, name = guard_for(problem, relative)
+        path = resolve_named_child(guard.path(name), guard.directory)
+        info = path.stat()
+        # inode catches replacement; ctime catches edits that restore size/mtime.
+        # Re-prove the guarded path even on a cache hit so planted links fail.
+        identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        return _cached_activity(problem, relative, identity)
+    except (LayoutError, OSError):
+        return None, None
+
+
+@lru_cache(maxsize=512)
+def _cached_activity(problem: Path, relative: str, identity: tuple[int, ...]) -> tuple[int | None, float | None]:
     try:
         text = read_text(problem, relative)
     except (LayoutError, OSError):
