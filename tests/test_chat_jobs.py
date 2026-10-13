@@ -397,3 +397,37 @@ def test_cancel_token_failure_still_releases_waiting_worker():
     finally:
         release.set()
         worker.join(5)
+
+
+def test_jobs_close_preserves_interrupt_error_when_worker_times_out():
+    from types import SimpleNamespace
+
+    import pytest
+
+    from hardy.workflows.interactive.jobs import ComputationJobs, Detached
+
+    release = threading.Event()
+    def attach(**kwargs):
+        return SimpleNamespace(id='pending-cas')
+    def interrupt():
+        raise OSError('CAS interrupt failed')
+    gate = threading.Lock()
+    jobs = ComputationJobs(
+        detach_after=.01, gate=gate, record=lambda _: 0, recorded=lambda: iter(()),
+        delegations=SimpleNamespace(attach_computation=attach, finish_computation=lambda *args, **kwargs: None),
+        notify=lambda _: None, tally=lambda *_: None, cas_session=lambda: SimpleNamespace(interrupt=interrupt),
+    )
+    gate.acquire()
+    job = None
+    try:
+        result = jobs.call('cas_run', {}, lambda *args: (release.wait(5), ToolResult(True, 'done'))[1], 'one')
+        assert isinstance(result, Detached)
+        job = jobs._running['pending-cas']
+        with pytest.raises(OSError, match='CAS interrupt failed') as error:
+            jobs.close(timeout=0)
+        assert 'Background jobs still running: pending-cas' in error.value.__notes__
+        assert not job.done.is_set()
+    finally:
+        release.set()
+        if job is not None:
+            assert job.done.wait(5)

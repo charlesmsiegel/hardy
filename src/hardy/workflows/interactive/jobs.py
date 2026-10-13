@@ -259,8 +259,6 @@ class ComputationJobs:
                     errors[0].add_note(note)
             if running:
                 errors[0].add_note(f"Background jobs still running: {', '.join(running)}")
-                for note in getattr(error, "__notes__", ()):
-                    errors[0].add_note(note)
             raise errors[0]
         return running
 
