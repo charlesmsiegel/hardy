@@ -306,7 +306,11 @@ function Save-ReleaseAsset($suffix, $directory, $required = $true) {
         try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
         catch {
             $status = $null
-            if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            $responseProperty = $_.Exception.PSObject.Properties['Response']
+            if ($responseProperty -and $responseProperty.Value) {
+                $statusProperty = $responseProperty.Value.PSObject.Properties['StatusCode']
+                if ($statusProperty) { $status = [int]$statusProperty.Value }
+            }
             if (-not $required -and $status -eq 404) { return $null }
             Stop-Install "could not fetch $base/SHA256SUMS: $($_.Exception.Message)"
         }
