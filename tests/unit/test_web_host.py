@@ -974,3 +974,126 @@ def test_web_admission_preserves_safe_reads_and_stops_recorded_after_admission(t
     finally:
         host.stop()
         session.close()
+
+
+@pytest.mark.parametrize("destination", ["same", "other", "failed"])
+def test_queued_input_is_settled_after_project_reopen(tmp_path: Path, destination: str) -> None:
+    from hardy.app.web import chats
+
+    host = _host(tmp_path)
+    old = host.session
+    opener = BlockingOpener(tmp_path)
+    host.opener = opener
+    if destination == "other":
+        target = make_problem(tmp_path, "frobenius")
+        host.projects_registry.add(target)
+        chat = "main"
+    else:
+        target = tmp_path / "sylow"
+        chat = chats.create_chat(target, "Another chat").id
+    if destination == "failed":
+        opener.fail_with = ValueError("open refused")
+    errors = []
+
+    def opening():
+        try:
+            host.open_project(str(target), chat)
+        except ValueError as error:
+            errors.append(str(error))
+
+    worker = threading.Thread(target=opening)
+    sub = host.subscribe()
+    try:
+        worker.start()
+        assert opener.entered.wait(5)
+        assert host.submit("first")["kind"] == "queued"
+        assert host.submit("second")["kind"] == "queued"
+        opener.release.set()
+        worker.join(5)
+        assert not worker.is_alive()
+        if destination == "other":
+            assert host.state()["queued"] == 0
+            assert host.session.sent == [] and old.sent == []
+            seen = _drain(sub, {"changed"})
+            assert any("queued" in event.get("text", "").lower() for event in seen)
+        else:
+            _drain(sub, {"turn_end"})
+            assert host.session.sent == ["first\n\nsecond"]
+            assert host.state()["queued"] == 0
+        assert errors == (["open refused"] if destination == "failed" else [])
+    finally:
+        opener.release.set()
+        worker.join(5)
+        host.stop()
+
+
+def test_open_registered_project_with_missing_record_never_calls_opener(tmp_path: Path) -> None:
+    import shutil
+
+    host = _host(tmp_path)
+    target = make_problem(tmp_path, "missing")
+    host.projects_registry.add(target)
+    shutil.rmtree(target)
+    try:
+        with pytest.raises(ValueError, match="record is missing"):
+            host.open_project(str(target))
+        assert host.opener.calls == []
+        assert not target.exists()
+        assert host.state()["slug"] == "sylow"
+    finally:
+        host.stop()
+
+
+def test_editor_save_conflict_never_reaches_authored_save(tmp_path: Path) -> None:
+    import hashlib
+
+    from hardy.app.web.host import FileConflict
+    from hardy.foundation.values import ToolResult
+
+    host = _host(tmp_path)
+    path = tmp_path / "sylow" / "lean" / "Main.lean"
+    path.write_text("old", encoding="utf-8")
+    base = hashlib.sha256(b"old").hexdigest()
+    saved = []
+    host.session.save_authored = lambda path, source: saved.append((path, source)) or ToolResult(True, "saved")
+    try:
+        path.write_text("external", encoding="utf-8")
+        with pytest.raises(FileConflict):
+            host.save_file("lean/Main.lean", "my edit", base_sha256=base)
+        assert saved == [] and path.read_text() == "external"
+        path.unlink()
+        with pytest.raises(FileConflict):
+            host.save_file("lean/Main.lean", "my edit", base_sha256=base)
+        assert saved == []
+        host.save_file("lean/Main.lean", "recreate", base_sha256=None)
+        assert saved == [("lean/Main.lean", "recreate")]
+    finally:
+        host.stop()
+
+
+def test_save_queue_drains_before_later_input(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    sub = host.subscribe()
+
+    def save():
+        entered.set()
+        assert release.wait(5)
+
+    worker = threading.Thread(target=lambda: host.run_exclusive(save))
+    try:
+        worker.start()
+        assert entered.wait(5)
+        host.submit("first")
+        host.submit("second")
+        release.set()
+        worker.join(5)
+        _drain(sub, {"turn_end"})
+        host.submit("third")
+        _drain(sub, {"turn_end"})
+        assert host.session.sent == ["first\n\nsecond", "third"]
+        assert host.state()["queued"] == 0
+    finally:
+        release.set()
+        worker.join(5)
+        host.stop()
