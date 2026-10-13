@@ -1126,3 +1126,15 @@ def test_version_probe_bills_start_and_cell(cas_session, monkeypatch) -> None:
         assert session._kernel is None
     finally:
         session.close()
+
+
+def test_zero_session_and_cell_limits_refuse_without_running(cas_session) -> None:
+    session = cas_session(cas_session_seconds=0, cas_cell_seconds=0)
+    try:
+        with pytest.raises(CasError, match="budget exhausted"):
+            session.execute("a")
+        assert session._kernel is None
+        assert session.records() == ()
+        assert not session.log_path.exists()
+    finally:
+        session.close()
