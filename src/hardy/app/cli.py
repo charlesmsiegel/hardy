@@ -28,7 +28,7 @@ from hardy.app.commands.latency import DEFAULT_PROBE_TIMEOUT, run_latency
 from hardy.app.commands.latency import MAX_CALLS as MAX_CALLS
 from hardy.app.commands.prove import run_prove
 from hardy.app.commands.setup import run_setup
-from hardy.app.commands.web import _web, _web_target
+from hardy.app.commands.web import _port, _web, _web_target
 from hardy.app.project_registry import Entry, ProjectRegistry
 from hardy.app.projects import offer_registration as offer_registration
 from hardy.app.projects import prepare_layout as prepare_layout
@@ -173,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="a registered project to open first, by name or path (default: the last one opened in the browser)",
     )
     web.add_argument("--chat", help=f"which chat of that project to open first (default {layout.DEFAULT_CHAT})")
-    web.add_argument("--port", type=int, default=0, help="port to listen on (default: an ephemeral one)")
+    web.add_argument("--port", type=_port, default=0, help="port to listen on (default: an ephemeral one)")
     web.add_argument("--open", action="store_true", help="open the page in the default browser")
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")

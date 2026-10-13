@@ -108,3 +108,47 @@ def test_web_has_no_root_flag_and_chat_needs_a_project(home, served, tmp_path, m
     with pytest.raises(SystemExit) as refused:
         _run(monkeypatch, "web", "--chat", "lean-proof", "--port", "0")
     assert refused.value.code == 2 and "--chat" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('port', ['70000', '-1'])
+def test_invalid_port_is_usage_error_before_launch(monkeypatch, port, capsys):
+    monkeypatch.setattr(launch_command, '_launch', lambda *_a, **_k: pytest.fail('launched'))
+    with pytest.raises(SystemExit) as error:
+        _run(monkeypatch, 'web', '--port', port)
+    assert error.value.code == 2
+    assert 'port' in capsys.readouterr().err
+
+
+def test_bind_failure_is_one_sentence(home, monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise OSError(98, 'Address already in use')
+    monkeypatch.setattr('hardy.app.web.server.serve', fail)
+    assert _run(monkeypatch, 'web', '--port', '8123') == 1
+    assert 'Could not listen on 127.0.0.1:8123: Address already in use' in capsys.readouterr().out
+
+
+def test_explicit_missing_registered_record_is_refused(home, served, tmp_path, monkeypatch, capsys):
+    problem = make_problem(tmp_path, 'missing')
+    ProjectRegistry().add(problem)
+    (problem / 'session.json').unlink()
+    with pytest.raises(SystemExit) as error:
+        _run(monkeypatch, 'web', '--project', 'missing')
+    assert error.value.code == 2
+    assert 'missing' in capsys.readouterr().err
+    assert not (problem / 'session.json').exists()
+    assert not served
+
+
+def test_record_disappearing_after_selection_is_refused_before_scaffold(home, served, tmp_path, monkeypatch):
+    problem = make_problem(tmp_path, 'missing')
+    ProjectRegistry().add(problem)
+    select = cli._web_target
+    def disappear(*args):
+        entry = select(*args)
+        (entry.path / 'session.json').unlink()
+        return entry
+    monkeypatch.setattr(cli, '_web_target', disappear)
+    with pytest.raises(SystemExit) as error:
+        _run(monkeypatch, 'web', '--project', 'missing')
+    assert error.value.code == 2
+    assert not (problem / 'session.json').exists() and not served
