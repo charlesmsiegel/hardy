@@ -59,6 +59,12 @@ $ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $HOM
 $script:Removed = 0
 $script:Kept = 0
 $script:Failed = 0
+# These are the roots explicitly selected for this run. A root may itself be
+# redirected intentionally, but a linked child below it is not an owned path.
+# Prefix precedes BinDir so replacing the default prefix/bin does not silently
+# turn it into a separately approved root.
+$script:RemovalRoots = @($Prefix, $BinDir, $ElanHome, (Split-Path -Parent $ConfigPath),
+    [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))
 
 function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
 function Write-Detail($message) { Write-Host "    $message" }
@@ -99,8 +105,37 @@ function Set-UserPathRaw($value, $kind) {
     [Environment]::SetEnvironmentVariable('HARDY_PATH_REFRESH', $null, 'User')
 }
 
+function Find-LinkedRemovalPath($path, $roots) {
+    $full = [IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $boundary = ''
+    foreach ($root in $roots) {
+        if (-not $root) { continue }
+        $candidate = [IO.Path]::GetFullPath($root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ($full -ieq $candidate -or $full.StartsWith($candidate + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            $boundary = $candidate
+            break
+        }
+    }
+    $current = $full
+    while ($current -and $current -ine $boundary) {
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $current }
+        $parent = [IO.Path]::GetDirectoryName($current)
+        if ($parent -eq $current) { break }
+        $current = $parent
+    }
+    return $null
+}
+
 function Remove-Part($what, $path) {
     if (Test-Path -LiteralPath $path) {
+        $roots = Get-Variable -Name RemovalRoots -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $linked = Find-LinkedRemovalPath $path $roots
+        if ($linked) {
+            Write-Warning "refusing to remove $what ($path): linked path $linked lies below the selected root. Restore the owned path, then rerun."
+            $script:Failed++
+            return
+        }
         $reason = 'path remains on disk'
         try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
         catch { $reason = $_.Exception.Message }
