@@ -666,3 +666,42 @@ def test_the_recovered_count_accumulates_rather_than_being_overwritten(tmp_path:
     reopened = spending(tmp_path)
     assert reopened.usage.turns == 3
     assert stored_local(tmp_path)["usage_recovered_turns"] == 3
+
+
+def test_durable_result_survives_thread_binding_failure_without_second_unknown_exchange(tmp_path):
+    c = spending(tmp_path)
+    original = c._remember_thread
+    failed = False
+
+    def fail_once():
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("local thread write failed")
+        original()
+
+    c._remember_thread = fail_once
+    with pytest.raises(OSError, match="local thread write failed"):
+        c._observed({"type": "result", "cost_usd": 0.5, "session_id": "s"})
+    c._remember_spend({}, c._transcript_end(), unreported=True)
+    assert c.usage.turns == 1 and c.usage.cost_usd == 0.5
+    c.record.local.pop("usage", None)
+    c.record.local.pop("usage_cursor", None)
+    recovered = c._recover_spend()
+    assert recovered.turns == 1 and recovered.cost_usd == 0.5
+    assert not any(e["type"] == "exchange_unreported" for e in c._recorded())
+
+
+def test_thread_binding_failure_on_unreported_teardown_preserves_unknown_liability(tmp_path):
+    c = spending(tmp_path)
+    c.runtime = FakeChatRuntime([])
+    c.runtime.context = {"observe": c._observed}
+    c._remember_thread = lambda: (_ for _ in ()).throw(OSError("local thread write failed"))
+    with pytest.raises(OSError, match="local thread write failed"):
+        c.send("go")
+    assert c.usage.turns == 1 and c.usage.cost_usd is None
+    c.record.local.pop("usage", None)
+    c.record.local.pop("usage_cursor", None)
+    recovered = c._recover_spend()
+    assert recovered.turns == 1 and recovered.cost_usd is None
+    assert len([event for event in c._recorded() if event["type"] == "exchange_unreported"]) == 1

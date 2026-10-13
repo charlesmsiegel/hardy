@@ -480,7 +480,6 @@ class AgentLoop:
                     budget.spent -= 1  # Admission refused before any actual provider call.
                 self._failure = f"SpendLimitReached: {error.limit}"
                 self._budget_refused = True
-                self._failure = f"SpendLimitReached: {error.limit}"
                 self._observe({"type": "budget_limit", "limit": error.limit})
                 raise
             except ProviderRequestTimeout as error:

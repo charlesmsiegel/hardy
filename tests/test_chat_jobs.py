@@ -470,3 +470,94 @@ def test_owed_rebuilds_after_external_append_truncation_and_replacement(tmp_path
         assert [event['job_id'] for event in chat.jobs.owed()] == ['d2']
     finally:
         chat.close()
+
+
+def test_lazy_api_budget_refusal_preserves_owed_jobs_until_request_runs(tmp_path):
+    import pytest
+    from test_chat import FakeChatRuntime, session
+
+    from hardy.agents.api import ApiRuntime
+    from hardy.agents.loop import ProviderTurn
+    from hardy.agents.spend_budget import SpendLimitReached
+
+    class Provider:
+        model = "fixture"
+        refuse = True
+
+        def complete(self, **kwargs):
+            if self.refuse:
+                raise SpendLimitReached("token_limit")
+            return ProviderTurn(text="received")
+
+    chat = session(tmp_path, FakeChatRuntime([]))
+    provider = Provider()
+    chat.runtime = ApiRuntime("fixture", system_prompt="", specs=[], dispatch=chat._dispatch,
+                              observe=chat._observed, provider=provider)
+    chat._record({"type": "job", "job_id": "queued", "name": "check_lean",
+                  "result": {"ok": True, "output": "finding"}, "seconds": 1})
+    stream = chat.stream("first")
+    assert [e["job_id"] for e in chat.jobs.owed()] == ["queued"]
+    with pytest.raises(SpendLimitReached):
+        list(stream)
+    assert [e["job_id"] for e in chat.jobs.owed()] == ["queued"]
+    assert not any(e["type"] == "job_delivered" for e in chat._recorded())
+    provider.refuse = False
+    chat.send("second")
+    assert chat.jobs.owed() == []
+    assert len([e for e in chat._recorded() if e["type"] == "job_delivered"]) == 1
+
+
+def test_failed_or_declined_api_exchange_does_not_receipt_queued_job(tmp_path):
+    import pytest
+    from test_chat import FakeChatRuntime, session
+
+    from hardy.agents.api import ApiRuntime
+
+    class PermanentFailure:
+        model = "fixture"
+        def complete(self, **kwargs):
+            raise RuntimeError("401 authentication rejected")
+
+    for mode in ("rejected", "declined"):
+        chat = session(tmp_path / mode, FakeChatRuntime([]))
+        chat.runtime = ApiRuntime("fixture", system_prompt="", specs=[], dispatch=chat._dispatch,
+                                  observe=chat._observed, provider=PermanentFailure())
+        if mode == "declined":
+            chat.runtime.attach_gate(lambda messages: "nothing to ask")
+        chat._record({"type": "job", "job_id": "queued", "result": {"ok": True, "output": "finding"}})
+        if mode == "rejected":
+            with pytest.raises(RuntimeError, match="401"):
+                chat.send("go")
+        else:
+            chat.send("go")
+        assert [event["job_id"] for event in chat.jobs.owed()] == ["queued"]
+        assert not any(event["type"] == "job_delivered" for event in chat._recorded())
+
+
+def test_eager_provider_response_receipts_jobs_without_waiting_for_consumer(tmp_path):
+    class Eager(FakeChatRuntime):
+        def stream(self, text):
+            self.context["observe"]({"type": "assistant", "message": {"content": "Noted"}})
+            return iter(())
+
+    chat = session(tmp_path, Eager([]))
+    chat._record({"type": "job", "job_id": "queued", "result": {"ok": True, "output": "finding"}})
+    stream = chat.stream("go")
+    assert chat.jobs.owed() == []
+    list(stream)
+    assert len([event for event in chat._recorded() if event["type"] == "job_delivered"]) == 1
+
+
+def test_sdk_error_result_followed_by_empty_reply_preserves_owed_job(tmp_path):
+    from hardy.agents.contracts import TurnEvent
+
+    class Rejected(FakeChatRuntime):
+        def stream(self, text):
+            self.context["observe"]({"type": "result", "turns": 1, "is_error": True,
+                                      "error": "authentication rejected"})
+            yield TurnEvent("reply", text="")
+
+    chat = session(tmp_path, Rejected([]))
+    chat._record({"type": "job", "job_id": "queued", "result": {"ok": True, "output": "finding"}})
+    chat.send("go")
+    assert [event["job_id"] for event in chat.jobs.owed()] == ["queued"]

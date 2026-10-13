@@ -5056,6 +5056,7 @@ class MathematicsSession:
             publish_usage=self.record.publish_usage,
             mark_read=self._mark_ledger_read,
             end=self._transcript_end,
+            request_accepted=self._commit_attention_receipts,
         )
 
     def stream(self, text: str, *, author: str | None = None) -> Iterator[TurnEvent]:
@@ -5072,7 +5073,6 @@ class MathematicsSession:
                 self._attention_owed = []
                 self.jobs.forget_owed()
                 raise
-            self._commit_attention_receipts()
             turn = _ConversationTurn(events)
             self._conversation_turns.add(turn)
             return turn
