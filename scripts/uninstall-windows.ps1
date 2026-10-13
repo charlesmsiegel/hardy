@@ -54,10 +54,11 @@ Set-StrictMode -Version Latest
 $Venv = Join-Path $Prefix 'venv'
 $LeanProject = Join-Path $Prefix 'lean'
 $SourceTree = Join-Path $Prefix 'src'
-$ElanHome = Join-Path $env:USERPROFILE '.elan'
+$ElanHome = if ($env:ELAN_HOME) { $env:ELAN_HOME } else { Join-Path $env:USERPROFILE '.elan' }
 $ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $HOME '.hardy\config.toml' }
 $script:Removed = 0
 $script:Kept = 0
+$script:Failed = 0
 
 function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
 function Write-Detail($message) { Write-Host "    $message" }
@@ -71,9 +72,43 @@ function Confirm-Step($question) {
 
 # Removing twice, or after an install that stopped halfway, has to end cleanly
 # rather than fail on the first missing directory.
+# Compare complete entries after expansion; preserve every unrelated raw entry.
+function Test-PathEntry($pathValue, $directory) {
+    $want = [Environment]::ExpandEnvironmentVariables($directory).TrimEnd('\')
+    foreach ($entry in ($pathValue -split ';')) {
+        if ($entry -and [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -ieq $want) { return $true }
+    }
+    return $false
+}
+
+function Get-UserPathRaw {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try {
+        $value = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+        return @{ Value = $value; Kind = $kind }
+    }
+    finally { $key.Close() }
+}
+
+function Set-UserPathRaw($value, $kind) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try { $key.SetValue('Path', $value, $kind) }
+    finally { $key.Close() }
+    [Environment]::SetEnvironmentVariable('HARDY_PATH_REFRESH', '1', 'User')
+    [Environment]::SetEnvironmentVariable('HARDY_PATH_REFRESH', $null, 'User')
+}
+
 function Remove-Part($what, $path) {
     if (Test-Path -LiteralPath $path) {
-        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+        $reason = 'path remains on disk'
+        try { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+        catch { $reason = $_.Exception.Message }
+        if (Test-Path -LiteralPath $path) {
+            Write-Warning "could not remove $what ($path): $reason. Close Hardy and terminals in that folder, then re-run."
+            $script:Failed++
+            return
+        }
         Write-Detail "removed $what ($path)"
         $script:Removed++
     }
@@ -103,13 +138,12 @@ function Get-FolderSize($path) {
     catch { return 'unknown size' }
 }
 
-function Remove-PathEntry {
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (-not $userPath) { return }
-    $kept = @($userPath -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ne $BinDir.TrimEnd('\')) })
-    if ($kept.Count -eq ($userPath -split ';' | Where-Object { $_ }).Count) { return }
-    [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User')
-    Write-Detail "removed $BinDir from your user PATH"
+function Remove-PathEntry($directory = $BinDir) {
+    $raw = Get-UserPathRaw
+    if (-not (Test-PathEntry $raw.Value $directory)) { return }
+    $kept = @($raw.Value -split ';' | Where-Object { -not (Test-PathEntry $_ $directory) })
+    Set-UserPathRaw ($kept -join ';') $raw.Kind
+    Write-Detail "removed $directory from your user PATH"
     $script:Removed++
 }
 
@@ -126,6 +160,7 @@ Remove-Part 'the hardy command' (Join-Path $BinDir 'hardy.cmd')
 Remove-Part 'the Desktop launcher' (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hardy.lnk')
 Remove-Part 'the Start Menu launcher' (Join-Path ([Environment]::GetFolderPath('Programs')) 'Hardy.lnk')
 Remove-Part 'the virtual environment' $Venv
+Remove-Part 'the Hardy-managed tools' (Join-Path $Prefix 'tools')
 Remove-Part 'the fetched source tree' $SourceTree
 # What a release install leaves behind instead of a source tree.
 Remove-Part 'the fetched installers' (Join-Path $Prefix 'installers')
@@ -149,8 +184,10 @@ elseif (Test-Path -LiteralPath $ConfigPath) { Keep-Part 'the config' $ConfigPath
 
 if (Test-Wanted $RemoveToolchain "Remove elan and the Lean toolchain at ${ElanHome}? Other Lean projects on this machine use it too." $ElanHome) {
     Remove-Part 'elan and the Lean toolchain' $ElanHome
+    if (-not (Test-Path -LiteralPath $ElanHome)) { Remove-PathEntry (Join-Path $ElanHome 'bin') }
 }
 elseif (Test-Path -LiteralPath $ElanHome) { Keep-Part 'elan and the Lean toolchain' $ElanHome }
+if ($RemoveToolchain -and -not (Test-Path -LiteralPath $ElanHome)) { Remove-PathEntry (Join-Path $ElanHome 'bin') }
 
 # Only when empty: -Prefix may name a directory that was not Hardy's alone.
 if ((Test-Path -LiteralPath $Prefix) -and -not (Get-ChildItem -Force -LiteralPath $Prefix)) {
@@ -162,7 +199,10 @@ if ((Test-Path -LiteralPath $BinDir) -and -not (Get-ChildItem -Force -LiteralPat
 }
 
 Write-Host ''
-if ($script:Removed -eq 0 -and $script:Kept -eq 0) {
+if ($script:Failed -gt 0) {
+    Write-Warning 'Hardy was only partly uninstalled; remaining paths are listed above.'
+}
+elseif ($script:Removed -eq 0 -and $script:Kept -eq 0) {
     Write-Detail "nothing to remove: Hardy was not installed at $Prefix"
 }
 else {
@@ -171,3 +211,5 @@ else {
 }
 Write-Detail 'MiKTeX, TeX Live, Node, and the Claude Code CLI were left alone.'
 Write-Host 'Open a new terminal so the removed PATH entry stops applying.'
+
+if ($script:Failed -gt 0) { exit 1 }

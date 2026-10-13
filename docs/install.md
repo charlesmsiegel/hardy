@@ -418,3 +418,21 @@ work, and what the trust boundary is and is not;
 [Trust boundary](design/trust-boundary.md) carries the design argument.
 [isolation.md](isolation.md)
 tracks the confinement work that will narrow this boundary.
+
+On Windows, the installer provisions Tectonic from the pinned, digest-checked
+recipe and records its executable in the config unless `-NoConfig` or an
+existing `tectonic` setting is present. `-SkipLatex` skips it. Subscription
+sign-in remains a next step (`claude login`); a pending sign-in does not make
+an otherwise successful installation fail. Other required doctor failures
+still produce a nonzero exit after the installation summary.
+
+Windows release downloads use TLS 1.2 and suppress download progress. Only a
+missing manifest (HTTP 404) can select the unreleased development branch, with
+a notice and confirmation; transport and other HTTP errors stop the install.
+Windows PowerShell uses the system proxy configuration. For an authenticated
+corporate proxy, configure the system proxy credentials before downloading.
+
+The Windows uninstaller reports paths that remain locked and exits nonzero
+after a partial removal. Close Hardy and terminals using those folders and
+rerun it. Removing elan honors `ELAN_HOME` and removes its PATH entry only
+after the toolchain directory has actually been removed.
