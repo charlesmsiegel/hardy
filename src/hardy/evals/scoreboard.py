@@ -198,6 +198,7 @@ def _totals(rows: list[Row]) -> Totals:
 def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
     true_rows = [r for r in rows if r.expected == "true"]
     twins = [r for r in rows if r.expected == "false"]
+    measured_twins = [r for r in twins if r.outcome != "invalid"]
     solved = [r for r in true_rows if r.outcome == "solved"]
     n = len(true_rows)
     medians: dict[str, float | None] = {}
@@ -208,6 +209,8 @@ def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
     return TierAggregate(
         n=n, solved=len(solved), solved_other=sum(1 for r in true_rows if r.outcome == "solved_other"),
         unsolved=sum(1 for r in true_rows if r.outcome == "unsolved"), invalid=sum(1 for r in rows if r.outcome == "invalid"),
+        invalid_true=sum(1 for r in true_rows if r.outcome == "invalid"),
+        invalid_twins=len(twins) - len(measured_twins), measured_twins=len(measured_twins),
         solve_rate=len(solved) / n if n else None, interval=wilson(len(solved), n),
         refused=refused, exhausted=sum(1 for r in twins if r.outcome == "exhausted"), graded=sum(1 for r in twins if r.outcome == "graded"),
         mechanically_false=sum(
@@ -215,7 +218,7 @@ def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
             if (entry := baseline.entries.get(r.id)) is not None
             and entry.negation is not None and entry.negation.closed_by
         ),
-        refusal_rate=refused / len(twins) if twins else None,
+        refusal_rate=refused / len(measured_twins) if measured_twins else None,
         medians=medians, unreported_costs=sum(1 for r in solved if r.cost_usd is None),
     )
 

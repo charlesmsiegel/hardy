@@ -118,7 +118,7 @@ changed, or (for a twin) with a row that has no negation sweep. It also
 includes any entry, active or not, whose row has an attempt recorded
 `not_run`, because a run refuses such a row wherever it sits in the file.
 When the tier file was swept under another environment or procedure
-digest (a Mathlib upgrade, another machine, or an edit to one of the six
+digest (a Mathlib upgrade, another machine, or an edit to one of the
 deciding sources), the default is instead every entry the file holds plus
 the active entries it does not, and the command says why on stderr. If
 there is nothing to sweep, it refuses with exit `2` and names `--only` as
@@ -279,7 +279,7 @@ boards pool only when both say they measured the same procedure against
 the same environment.
 
 `run_procedure_digest` moves whenever anything the run's outcome depends on
-changes. That includes the code: editing anything under `src/hardy/` that
+changes. That includes the code: editing Python code or prompt templates under `src/hardy/` that
 is not in the denylist in `src/hardy/evals/identity.py` moves it, and a
 moved digest orphans every scoreboard already on disk, so boards stop
 pooling with each other and `evals todo` reports `boards_counted: 0` for
@@ -289,7 +289,7 @@ models that plainly have boards. It also includes the condition itself:
 `repeats`, `reviewer_model`, and the staged strategy and history mode, so
 two boards run under different models or budgets never pool together
 either, by design rather than by omission. The corresponding digest for the
-baseline, `procedure_digest`, moves the same way when one of the six
+baseline, `procedure_digest`, moves the same way when one of the
 `DECIDING_SOURCES` in `src/hardy/evals/sweep.py` changes, and that stales
 the whole tier file rather than one entry.
 
@@ -435,3 +435,17 @@ hand before drawing a ranking conclusion from either command's output. See
 [the evaluation design](../design/evaluation.md) for the full reasoning
 and for why this reporting layer is smaller than the data it could
 support.
+
+The summary keeps each model's distinct procedure/environment pooling keys as
+separate rows, naming the full keys and source boards. Only compatible boards
+are combined; duplicate attempt slots and unreadable evidence still refuse a
+report. Pool label order does not affect rows, totals or the default output
+location (the alphabetically first label). Naming a label twice is refused.
+
+Corpus manifests now use `hardy-corpus-manifest-v2`: case-sensitive POSIX
+relative paths and exact file bytes are independently length-framed under a
+versioned domain prefix. New corpus releases record `- scheme
+hardy-corpus-manifest-v2` after their manifest digest in the changelog heading.
+Unmarked historical release heads retain legacy-v1 verification for their
+original published bytes; they are not rewritten. New run identities always
+use the framed digest, so historical measurement evidence is not restamped.

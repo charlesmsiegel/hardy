@@ -1,19 +1,8 @@
-"""`hardy evals summary`: a Markdown report over every scoreboard, one row per model.
+"""A reproducible Markdown report, one row per compatible pooling group.
 
-Read-only and derived, exactly like `pool.py`: every figure this writes can be
-recomputed from the scoreboards it names, and the file it produces is
-regenerated wholesale from them, never hand-edited.
-
-`evals pool`'s pooling key includes the model (`run_procedure_digest_of` hashes
-it in), so one pool is always one model. This report spans models, so it sits
-a level above `pool`: it discovers every scoreboard under a root, groups them
-by the model their own `condition` names, and calls `pool.pool` once per
-model. That is a deliberate reuse, not a coincidence -- `pool.pool` already
-does everything a group of boards for one model must satisfy before their
-rows can be trusted together (each board's own self-audit, the
-`(run_procedure_digest, environment_digest)` agreement with its by-field
-refusal, and the duplicate-`(id, repeat)` refusal), and repeating any of that
-here would be a second implementation to keep in step with the first.
+Boards are grouped by model and their recorded procedure/environment key.
+Each group uses the same self-audit and duplicate-slot refusal as `pool`.
+Different keys remain independent measurements, even for the same model.
 """
 from __future__ import annotations
 
@@ -45,59 +34,49 @@ def discover_boards(scoreboards_root: Path) -> list[Path]:
     """
     if not scoreboards_root.exists():
         return []
-    return [path.parent for path in sorted(scoreboards_root.glob("*/scoreboard.json"))]
+    return [path.parent for path in sorted(scoreboards_root.glob("*/scoreboard.json"), key=lambda path: path.relative_to(scoreboards_root).as_posix())]
 
 
-def _peek_model(board_dir: Path) -> str | None:
-    """The model a board's own `condition` names, read without validating it.
+def _peek_group(board_dir: Path) -> tuple[str, str, str, str]:
+    """Tolerantly read grouping metadata; `pool` remains the authority."""
+    from hardy.evals.outstanding import environment_digest_of_board
 
-    Only used to decide which group a board is pooled in; a board that cannot
-    even be parsed this far is placed in a group of its own (keyed by its
-    directory name, not by `None`, so two unreadable boards are never
-    accidentally merged) and `pool.pool` reports the real problem once that
-    group is pooled.
-    """
     try:
         board = json.loads((board_dir / "scoreboard.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    model = (board.get("condition") or {}).get("model")
-    return model if isinstance(model, str) else None
+        condition = board["condition"]
+        model = condition["model"]
+        mode = condition["mode"]
+        run = condition.get("run_procedure_digest")
+        environment = environment_digest_of_board(board)
+        if not all(isinstance(value, str) for value in (model, mode, environment)):
+            raise ValueError("malformed grouping metadata")
+        if run is not None and not isinstance(run, str):
+            raise ValueError("malformed procedure digest")
+        return model, mode, run or "", environment
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return f"(unreadable: {board_dir.name})", "", "", ""
 
 
 def build(scoreboards_root: Path, *, problems_path: Path, baseline_path: Path) -> dict[str, Any]:
-    """Every discovered board, pooled once per model.
+    """Pool each distinct model/procedure/environment group independently.
 
-    Returns `{"scoreboards_root": str, "models": [...]}`, each model entry
-    carrying `model`, `boards` (the labels `pool.pool` combined), its
-    `pooling_key`, and its combined `rows` (the same row dicts `pool.pool`
-    returns). Models are sorted by name for a deterministic report.
-
-    Raises `SummaryRefused` -- naming the model and re-stating `pool.pool`'s
-    own message -- when one model's boards do not share a pooling key, when
-    the same `(id, repeat)` is claimed twice within them, or when one of them
-    fails its own audit. Two different models are never compared against each
-    other: each is pooled, and can only be refused, on its own.
+    Bad evidence and duplicate slots within a group still refuse the report.
+    Multiple keys for one model are preserved as separate deterministic rows.
     """
-    groups: dict[str, list[Path]] = {}
+    groups: dict[tuple[str, str, str, str], list[Path]] = {}
     for board_dir in discover_boards(scoreboards_root):
-        model = _peek_model(board_dir)
-        key = model if model is not None else f"(unreadable: {board_dir.name})"
-        groups.setdefault(key, []).append(board_dir)
+        groups.setdefault(_peek_group(board_dir), []).append(board_dir)
     models = []
-    for model in sorted(groups):
+    for key in sorted(groups):
+        model, mode, _, _ = key
         try:
-            pooled = pool_boards(groups[model], problems_path=problems_path, baseline_path=baseline_path)
+            pooled = pool_boards(groups[key], problems_path=problems_path, baseline_path=baseline_path)
         except PoolRefused as error:
             raise SummaryRefused(f"model {model!r}: {error}") from error
         models.append({
-            "model": model, "boards": pooled["boards"],
+            "model": model, "mode": mode, "boards": pooled["boards"],
             "pooling_key": pooled["pooling_key"], "rows": pooled["rows"],
         })
-    # POSIX-rendered: this string lands in a committed Markdown file, and a
-    # backslash-separated path would make the same data regenerate differently
-    # on Windows than elsewhere -- a noise diff on a file whose whole contract
-    # is that unchanged input reproduces it byte for byte.
     return {"scoreboards_root": scoreboards_root.as_posix(), "models": models}
 
 
@@ -107,9 +86,8 @@ def row_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     `solved` and `rate` are computed over rows whose entry has
     `expected == "true"` and whose `outcome` is not `"invalid"`: an invalid
     row is a run the audit could not make sense of, not a proof attempt that
-    failed, and `outcome == "invalid"` rows are never produced for a `false`
-    (twin) entry's own outcome logic -- but they are still excluded here by
-    the same test, rather than by assuming which `expected` they carry.
+    failed. Unreadable twins can also be invalid; both labels are excluded
+    from their respective rates and reported separately.
     `solved_other` (solved by a route other than the expected one, `staged`
     mode's disputed-canonical case) is deliberately excluded from the
     numerator and given its own column instead, so it is not invisible.
@@ -163,12 +141,15 @@ def twin_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     A twin is supposed to be refused; that is why it is excluded from
     `row_stats`'s completion rate rather than folded into it, and reported
-    here instead.
+    here instead. Invalid twins are missing measurements: their count is
+    visible, while `twins` is the measured denominator used for the rate.
     """
     twins = [r for r in rows if r.get("expected") == "false"]
     refused = sum(1 for r in twins if r.get("outcome") == "refused")
-    n = len(twins)
-    return {"refused": refused, "twins": n, "rate": (refused / n * 100.0) if n else None}
+    invalid = sum(1 for r in twins if r.get("outcome") == "invalid")
+    n = len(twins) - invalid
+    return {"refused": refused, "twins": n, "invalid_twins": invalid,
+            "rate": (refused / n * 100.0) if n else None}
 
 
 def classify(entry: Any, root: Path) -> tuple[str, str]:
@@ -264,7 +245,16 @@ def render(data: dict[str, Any], *, problems: Any, root: Path) -> str:
     `data`, `problems` and `root` always render the same bytes, so
     regenerating the file with unchanged scoreboards produces no diff.
     """
-    models = sorted(data["models"], key=lambda m: m["model"])
+    models = sorted(data["models"], key=lambda m: (
+        m["model"], m.get("mode", ""), m["pooling_key"]["run_procedure_digest"],
+        m["pooling_key"]["environment_digest"],
+    ))
+    repeated_models = {m["model"] for m in models if sum(x["model"] == m["model"] for x in models) > 1}
+    def label(m):
+        if m["model"] not in repeated_models:
+            return m["model"]
+        pk = m["pooling_key"]
+        return f"{m['model']} [{m.get('mode', 'unknown')}; {pk['run_procedure_digest']}; {pk['environment_digest']}]"
     lines = [
         "# Hardy Evals Summary",
         "",
@@ -316,7 +306,7 @@ def render(data: dict[str, Any], *, problems: Any, root: Path) -> str:
 
     lines.append("## Table 1: Overall")
     lines.append("")
-    lines.extend(_table((), [([m["model"]], row_stats(m["rows"])) for m in models]))
+    lines.extend(_table((), [([label(m)], row_stats(m["rows"])) for m in models]))
     lines.append("")
 
     lines.append("## Table 2: By MSC (primary, first two digits)")
@@ -325,8 +315,8 @@ def render(data: dict[str, Any], *, problems: Any, root: Path) -> str:
     for m in models:
         buckets = _group_by(m["rows"], problems, root, 0)
         for code in sorted(buckets):
-            label = msc_label(code, root) if code != "unknown" else "unknown"
-            msc_rows.append(([m["model"], label], row_stats(buckets[code])))
+            msc_name = msc_label(code, root) if code != "unknown" else "unknown"
+            msc_rows.append(([label(m), msc_name], row_stats(buckets[code])))
     lines.extend(_table(("MSC",), msc_rows))
     lines.append("")
 
@@ -336,17 +326,17 @@ def render(data: dict[str, Any], *, problems: Any, root: Path) -> str:
     for m in models:
         buckets = _group_by(m["rows"], problems, root, 1)
         for category in sorted(buckets):
-            arxiv_rows.append(([m["model"], category], row_stats(buckets[category])))
+            arxiv_rows.append(([label(m), category], row_stats(buckets[category])))
     lines.extend(_table(("arXiv",), arxiv_rows))
     lines.append("")
 
     lines.append("## Table 4: Twins (expected false; refused is correct)")
     lines.append("")
-    lines.append("| Model | Refused | Twins | Refusal rate |")
-    lines.append("|---|---|---|---|")
+    lines.append("| Model | Refused | Measured twins | Invalid twins | Refusal rate |")
+    lines.append("|---|---|---|---|---|")
     for m in models:
         stats = twin_stats(m["rows"])
-        lines.append(f"| {m['model']} | {stats['refused']} | {stats['twins']} | {_fmt_rate(stats['rate'])} |")
+        lines.append(f"| {label(m)} | {stats['refused']} | {stats['twins']} | {stats['invalid_twins']} | {_fmt_rate(stats['rate'])} |")
     lines.append("")
 
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -365,5 +355,7 @@ def write(scoreboards_root: Path, *, problems_path: Path, baseline_path: Path, o
     # newline="\n": the same repository-evidence integrity concern as the
     # baseline, scoreboard and pool writes -- Path.write_text's default would
     # check this in as CRLF on Windows.
-    out_path.write_text(text, encoding="utf-8", newline="\n")
+    from hardy.foundation.locking import atomic_write_bytes
+
+    atomic_write_bytes(out_path, text.encode("utf-8"))
     return out_path

@@ -34,7 +34,7 @@ CONTENT_FILES = ("sources.json", "analysis-plan.json", "tombstones.json")
 # published version non-reproducible (spec §3). CHANGELOG.md is not itself a
 # content file, so writing the digest into it is a fixed point.
 HEAD = re.compile(
-    r"^## (\d+\.\d+\.\d+)\s+-\s+(\S+)(?:\s+-\s+manifest\s+([0-9a-f]{64}))?\s*$",
+    r"^## (\d+\.\d+\.\d+)\s+-\s+(\S+)(?:\s+-\s+manifest\s+([0-9a-f]{64})(?:\s+-\s+scheme\s+(\S+))?)?\s*$",
     re.MULTILINE,
 )
 SEMVER = r"^\d+\.\d+\.\d+$"
@@ -62,12 +62,18 @@ def shard_path(root: Path, code: str) -> Path:
 
 
 def load_corpus(root: Path) -> ProblemSet:
+    """Read and validate the complete corpus against its own taxonomy."""
+    return _load_corpus(root)[0]
+
+
+def _load_corpus(root: Path) -> tuple[ProblemSet, set[str]]:
     """Concatenate the shards into one validated set.
 
     The filename must agree with `entry.shard`, or the derivation of the shard
     from `msc[0][:2]` is a fiction nobody checks.
     """
     entries: list[Entry] = []
+    versions: set[str] = set()
     seen: dict[str, Path] = {}
     # The whole load is scoped, `ProblemSet` construction included: entries
     # validate their own codes and pydantic revalidates them on the way into
@@ -75,7 +81,9 @@ def load_corpus(root: Path) -> ProblemSet:
     # corpus against Hardy's own bundled tables (see `taxonomy.using`).
     with taxonomy.using(root):
         for path in _shards(root):
-            for entry in _load_shard(path).entries:
+            shard = _load_shard(path)
+            versions.add(shard.corpus_version)
+            for entry in shard.entries:
                 if entry.id in seen:
                     raise CorpusError(
                         f"duplicate id {entry.id!r} in {path.name} and {seen[entry.id].name}"
@@ -92,7 +100,7 @@ def load_corpus(root: Path) -> ProblemSet:
             # `_load_shard`, because each shard is individually valid. Raw,
             # this is a pydantic `ValidationError` that walks straight out of
             # `corpus check`, whose job is to report exactly this.
-            return ProblemSet(entries=tuple(entries))
+            return ProblemSet(entries=tuple(entries)), versions
         except ValidationError as error:
             raise CorpusError(f"the shards do not form one valid corpus: {error}") from error
 
@@ -111,7 +119,11 @@ def _shards(root: Path) -> list[Path]:
                 f"missing taxonomy table: {root / 'taxonomy' / name}. The MSC tables are corpus "
                 "data covered by the manifest; entries cannot be classified without them"
             )
-    shards = sorted((root / "problems").glob("*.json"))
+    try:
+        taxonomy.validate(root)
+    except taxonomy.MalformedTaxonomy as error:
+        raise CorpusError(str(error)) from error
+    shards = sorted((root / "problems").glob("*.json"), key=lambda path: path.relative_to(root).as_posix())
     if not shards:
         raise CorpusError(f"no problem shards under {root / 'problems'}")
     return shards
@@ -131,8 +143,6 @@ def _load_shard(path: Path) -> Shard:
     """
     try:
         return Shard.model_validate_json(path.read_text(encoding="utf-8"))
-    except taxonomy.MalformedTaxonomy as error:
-        raise CorpusError(str(error)) from error
     except (ValidationError, ValueError, OSError) as error:
         raise CorpusError(f"{path.name} is not a readable shard: {error}") from error
 
@@ -226,21 +236,27 @@ def tombstone_issues(problems: ProblemSet, issued: dict[str, str]) -> list[str]:
 def _content_paths(root: Path) -> list[Path]:
     paths = [root / name for name in CONTENT_FILES if (root / name).exists()]
     for directory in CONTENT_DIRS:
-        paths.extend(sorted((root / directory).rglob("*.json")))
-    return sorted(paths)
+        paths.extend((root / directory).rglob("*.json"))
+    return sorted(paths, key=lambda path: path.relative_to(root).as_posix())
 
 
-def manifest_digest(root: Path) -> str:
+MANIFEST_DIGEST_SCHEME = "hardy-corpus-manifest-v2"
+
+
+def manifest_digest(root: Path, *, scheme: str = MANIFEST_DIGEST_SCHEME) -> str:
     """A hash over every content file. `measurements/` is deliberately absent."""
+    if scheme not in (MANIFEST_DIGEST_SCHEME, "legacy-v1"):
+        raise CorpusError(f"unknown corpus manifest scheme: {scheme}")
     hasher = hashlib.sha256()
+    if scheme == MANIFEST_DIGEST_SCHEME:
+        hasher.update(MANIFEST_DIGEST_SCHEME.encode("ascii") + b"\0")
     for path in _content_paths(root):
-        # `.as_posix()`, not `str`: `str(Path)` yields backslashes on Windows,
-        # so an unchanged corpus would hash differently per platform -- the
-        # committed changelog would fail `corpus check` on Windows, and a
-        # scoreboard made there could not carry the same corpus identity
-        # anywhere else.
-        hasher.update(path.relative_to(root).as_posix().encode("utf-8"))
-        hasher.update(path.read_bytes())
+        name = path.relative_to(root).as_posix().encode("utf-8")
+        data = path.read_bytes()
+        for field in (name, data):
+            if scheme == MANIFEST_DIGEST_SCHEME:
+                hasher.update(len(field).to_bytes(8, "big"))
+            hasher.update(field)
     return hasher.hexdigest()
 
 
@@ -274,7 +290,13 @@ def release_issues(root: Path, prior_changelog: str) -> list[str]:
     prior_version, _, prior_manifest = head_of(prior_changelog)
     version = corpus_version(root)
     manifest = manifest_digest(root)
-    if prior_manifest is None or manifest == prior_manifest:
+    prior_scheme = HEAD.search(prior_changelog).group(4)
+    if prior_scheme not in (None, MANIFEST_DIGEST_SCHEME):
+        raise CorpusError(f"unknown corpus manifest scheme: {prior_scheme}")
+    unchanged = prior_manifest == manifest
+    if prior_scheme is None and prior_manifest is not None:
+        unchanged = unchanged or prior_manifest == manifest_digest(root, scheme="legacy-v1")
+    if prior_manifest is None or unchanged:
         return []
     if version == prior_version:
         return [
@@ -308,10 +330,15 @@ def corpus_version(root: Path) -> str:
     return versions.pop()
 
 
-def version_issues(root: Path) -> list[str]:
+def version_issues(root: Path, *, versions: set[str] | None = None) -> list[str]:
     """The release gate: the declared version, the changelog head, and the
     manifest digest the head binds must all agree."""
-    declared = corpus_version(root)
+    if versions is None:
+        declared = corpus_version(root)
+    elif len(versions) != 1:
+        raise CorpusError(f"shards disagree on corpus_version: {sorted(versions)}")
+    else:
+        declared = next(iter(versions))
     head, _, bound = changelog_head(root)
     issues = []
     if declared != head:
@@ -322,7 +349,14 @@ def version_issues(root: Path) -> list[str]:
             "the taxonomy, a fixture or tombstones.json verifies clean (spec section 3); "
             f"write `## {declared} - <date> - manifest {manifest_digest(root)}`"
         )
-    elif bound != (actual := manifest_digest(root)):
+    else:
+        actual = manifest_digest(root)
+        scheme = HEAD.search((root / "CHANGELOG.md").read_text(encoding="utf-8")).group(4)
+        if scheme not in (None, MANIFEST_DIGEST_SCHEME):
+            raise CorpusError(f"unknown corpus manifest scheme: {scheme}")
+        if bound == actual or (scheme is None and bound == manifest_digest(root, scheme="legacy-v1")):
+            return issues
+
         issues.append(
             f"the changelog head binds manifest digest {bound}, but the corpus on disk hashes "
             f"to {actual}: content changed without a version and changelog entry"
@@ -383,7 +417,7 @@ def release(root: Path, version: str, notes: list[str], *, today: str) -> list[s
     changelog = root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
     entry = "\n".join(f"- {note}" for note in notes) or "- (no note given)"
-    section = f"## {version} - {today} - manifest {manifest_digest(root)}\n\n{entry}\n\n"
+    section = f"## {version} - {today} - manifest {manifest_digest(root)} - scheme {MANIFEST_DIGEST_SCHEME}\n\n{entry}\n\n"
     at = text.index(f"## {current}")
     changelog.write_text(text[:at] + section + text[at:], encoding="utf-8", newline="\n")
     return check_issues(root)
@@ -392,13 +426,13 @@ def release(root: Path, version: str, notes: list[str], *, today: str) -> list[s
 def check_issues(root: Path) -> list[str]:
     """Every mechanical objection to the corpus on disk, gathered not raised."""
     try:
-        problems = load_corpus(root)
+        problems, versions = _load_corpus(root)
     except CorpusError as exc:
         return [str(exc)]
     issues: list[str] = []
     _gathered(issues, "tombstones.json", lambda: tombstone_issues(problems, load_tombstones(root)))
     _gathered(issues, "sources.json", lambda: source_issues(problems, load_sources(root)))
-    _gathered(issues, "CHANGELOG.md", lambda: version_issues(root))
+    _gathered(issues, "CHANGELOG.md", lambda: version_issues(root, versions=versions))
     _gathered(issues, "taxonomy", lambda: _code_issues(problems, root))
     return sorted(issues)
 

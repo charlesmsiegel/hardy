@@ -43,6 +43,11 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     from hardy.evals.scoreboard import active_ids, aggregate, scoreboard_self_issues
     from hardy.evals.sweep import Baseline
 
+    names = [path.name for path in labels]
+    if len(names) != len(set(names)):
+        duplicate = next(name for name in names if names.count(name) > 1)
+        raise PoolRefused(f"label {duplicate!r} named twice")
+    labels = sorted(labels, key=lambda path: path.name)
     problems = load_corpus(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
 
