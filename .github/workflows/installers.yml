@@ -23,6 +23,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Immutable commit to check; defaults to the caller ref"
+        required: false
+        type: string
+        default: ""
 
 defaults:
   run:
@@ -48,6 +55,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -160,6 +169,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -168,8 +179,8 @@ jobs:
       # The PowerShell the rest of this job runs. Parsing it first turns a
       # syntax error into one clear failure rather than an installer that dies
       # halfway through a real machine.
-      - name: The installer scripts parse
-        shell: pwsh
+      - name: The installer scripts parse under Windows PowerShell 5.1
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           foreach ($script in @('install-windows.ps1', 'update-windows.ps1', 'uninstall-windows.ps1')) {

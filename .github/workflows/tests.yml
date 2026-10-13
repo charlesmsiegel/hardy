@@ -10,15 +10,24 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Immutable commit to check; defaults to the caller ref"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   hermetic:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - name: Hermetic suite, with coverage
-        run: uv run --extra test pytest -q --cov --cov-report=xml --cov-report=html --cov-report=term
+        run: uv run --extra test pytest -q -m "not real_toolchain and not live" --cov --cov-report=xml --cov-report=html --cov-report=term
       - name: Lint
         run: uvx ruff check src tests
       # The manifest gate inside the tree can only compare two values from that
@@ -75,6 +84,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - name: Build and exercise the installed wheel outside the checkout
         run: |
@@ -94,15 +105,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - name: Install Lean
         run: |
           set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
+          source scripts/lib/common.sh
           # `stable` rather than a pin, deliberately. This job exists to notice
           # when Lean's `#print axioms` wording moves; pinning would hide the
           # very change it is here to catch. A failure is a real answer.
-          sh elan-init.sh -y --default-toolchain leanprover/lean4:stable
+          install_pinned_elan -y --default-toolchain leanprover/lean4:stable
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Provision the Lean project
         run: |
@@ -138,6 +151,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
         with:
@@ -230,11 +245,12 @@ jobs:
   hermetic-windows:
     name: hermetic suite on windows-latest
     runs-on: windows-latest
-    continue-on-error: true   # remove once green
     timeout-minutes: 45
     steps:
       - run: git config --global core.autocrlf true
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - name: Hermetic suite
         shell: pwsh

@@ -23,30 +23,93 @@ on:
     inputs:
       tag:
         description: "Existing tag to release from (e.g. v0.1.0)"
-        required: true
+        required: false
+      dry-run:
+        description: "Run the release gates and build, without publishing"
+        type: boolean
+        default: true
+      candidate-ref:
+        description: "Commit/ref to validate (dry runs only; defaults to tag)"
+        required: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
+  # Resolve once: a dispatch runs from the selected workflow branch, which can
+  # differ from its requested tag. Every gate and the build consume this SHA.
+  resolve:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.tag.outputs.sha }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - name: Resolve the existing release tag
+        id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          CANDIDATE_REF: ${{ inputs.candidate-ref }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = true ] && [ -n "$CANDIDATE_REF" ]; then
+            sha="$(git rev-parse --verify --end-of-options "$CANDIDATE_REF^{commit}")"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$CANDIDATE_REF" ]; then
+            echo "error: candidate-ref is permitted only for a dry run" >&2
+            exit 1
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "error: release tags must start with v" >&2; exit 1 ;;
+          esac
+          git check-ref-format "refs/tags/$TAG"
+          sha="$(git rev-parse --verify --end-of-options "refs/tags/$TAG^{commit}")"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: resolve
+    uses: ./.github/workflows/tests.yml
+    with:
+      checkout-ref: ${{ needs.resolve.outputs.sha }}
+
+  installers:
+    needs: resolve
+    uses: ./.github/workflows/installers.yml
+    with:
+      checkout-ref: ${{ needs.resolve.outputs.sha }}
+
+  publish:
+    needs: [resolve, tests, installers]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
       - uses: astral-sh/setup-uv@v5
 
       # A tag that disagrees with pyproject.toml would publish a wheel whose
       # version is not the one anyone asked for, and the mismatch would only
       # surface later as an installer downloading something unexpected.
-      - name: The tag and pyproject.toml must agree
+      - name: Read the version and validate the release tag
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
         run: |
           set -euo pipefail
-          tag="${{ inputs.tag || github.ref_name }}"
+          tag="$TAG"
           declared="$(python3 -c \
             'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
-          if [ "$tag" != "v$declared" ]; then
+          if [ "$DRY_RUN" != true ] && [ "$tag" != "v$declared" ]; then
             echo "error: tag $tag does not match version $declared in pyproject.toml" >&2
             exit 1
           fi
@@ -82,20 +145,27 @@ jobs:
       # would attach artifacts built from that branch to a tag pointing
       # somewhere else — a release whose recorded source is a fiction.
       - name: The ref released from must already be a tag
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           set -euo pipefail
+          current="$(gh api "repos/${{ github.repository }}/commits/$TAG" --jq .sha)"
+          if [ "$current" != "${{ needs.resolve.outputs.sha }}" ]; then
+            echo "error: $TAG moved after its release gates ran." >&2
+            exit 1
+          fi
           gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1 || {
             echo "error: $TAG is not a tag in this repository; releases are cut from tags only." >&2
             exit 1
           }
 
       - name: Publish the release
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -115,9 +185,10 @@ jobs:
       # The published release is what every installer will download, so read it
       # back rather than trusting that the upload did what it said.
       - name: Read the release back
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           set -euo pipefail
           published="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
@@ -128,3 +199,7 @@ jobs:
             printf '%s\n' "$published" | grep -qx "$required" ||
               { echo "error: $required is missing from the release" >&2; exit 1; }
           done
+
+      - name: Dry run passed without publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.dry-run
+        run: echo "All release gates passed for ${{ needs.resolve.outputs.sha }}; no release or assets were published."
