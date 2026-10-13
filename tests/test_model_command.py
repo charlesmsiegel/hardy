@@ -291,3 +291,18 @@ async def test_declining_to_save_does_not_pretend_to_revert(tmp_path: Path):
     result = await handlers.handle_model(ui, "claude-sonnet-5", state(tmp_path, session))
     assert result.config.model == "claude-sonnet-5"
     assert session.models == ["claude-sonnet-5"]
+
+
+async def test_refused_default_save_retains_the_live_model_state(tmp_path):
+    path = tmp_path / 'config.toml'
+    path.write_text('model = "old"\n')
+    initial = configuration.load(path)
+    original = b'model = "unfinished\n'
+    path.write_bytes(original)
+    session = Recorder()
+    ui = ScriptedUi(confirmations=[True])
+    result = await handlers.handle_model(ui, 'custom-model', State(config=initial, session=session))
+    assert session.models == ['custom-model']
+    assert result.config.model == 'custom-model'
+    assert path.read_bytes() == original
+    assert any(style == 'error' and 'Could not write' in text for style, text in ui.written)

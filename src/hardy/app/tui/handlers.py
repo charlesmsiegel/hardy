@@ -332,7 +332,7 @@ async def handle_model(ui: Ui, argument: str, state: State) -> State:
             configuration.write_setting(destination, "model", entry.identifier)
             ui.write(f"Saved to {destination}.")
             config = dataclasses.replace(config, path=destination)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             ui.write(f"Could not write {destination}: {error}", style="error")
     return dataclasses.replace(state, config=config)
 
