@@ -73,7 +73,7 @@ def _plan(board: Scoreboard, entries: Any, budget: CertificationBudget) -> dict[
 
 def _files(directory: Path) -> dict[str, str]:
     files = {}
-    for path in sorted(directory.rglob("*")):
+    for path in sorted(directory.rglob("*"), key=lambda p: p.relative_to(directory).as_posix()):
         if path.is_symlink():
             raise ValueError("certification artifacts cannot be symbolic links")
         if path.is_file():

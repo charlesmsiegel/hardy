@@ -232,18 +232,22 @@ def host_info() -> dict[str, Any]:
     import os
     import platform
 
-    return {"platform": platform.platform(), "machine": platform.machine(), "cpu_count": os.cpu_count()}
+    return {"platform": platform.platform(), "system": platform.system(), "machine": platform.machine(), "processor": platform.processor(), "cpu_count": os.cpu_count()}
 
 
 def environment_digest_of(environment: EnvironmentIdentity, host: dict[str, Any]) -> str:
-    """Lean version, Mathlib revision, lake manifest, and the host (spec §3).
+    """Lean identity and coarse host compatibility, with a versioned scheme.
+
+    Full platform detail remains provenance; kernel and libc patches do not
+    move the compatibility key.
 
     The host is in here rather than merely recorded beside the measurement:
     machine speed turns the sweep's process backstop into `timed_out`
     attempts, and a tactic that times out on a slow machine and closes on a
     fast one gives the same statement two different tiers.
     """
-    return digests.environment_digest({"identity": environment.model_dump(mode="json"), "host": host})
+    compatibility_host = {key: host.get(key) for key in ("system", "machine", "processor", "cpu_count")}
+    return digests.environment_digest({"scheme": "host-compatibility-v2", "identity": environment.model_dump(mode="json"), "host": compatibility_host})
 
 
 # The modules whose logic decides what a measurement *means*: the sweep and its
@@ -253,6 +257,9 @@ DECIDING_SOURCES = (
     str(Path(__file__).resolve()),
     str(Path(__file__).resolve().parents[1] / "formal" / "audit.py"),
     str(Path(__file__).resolve().parents[1] / "formal" / "lean.py"),
+    str(Path(__file__).resolve().parents[1] / "formal" / "contracts.py"),
+    str(Path(__file__).resolve().parents[1] / "foundation" / "process.py"),
+    str(Path(__file__).resolve().parents[1] / "foundation" / "truncation.py"),
     # The Lean grammar is a package, and every module in it decides: a scan
     # that reads a statement differently changes what elaborates. Globbed
     # rather than listed, so a module added to it counts without anyone

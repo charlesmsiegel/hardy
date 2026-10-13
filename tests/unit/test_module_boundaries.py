@@ -224,6 +224,8 @@ def test_run_identity_keeps_relocated_owners_and_excludes_unreachable_cli(import
     commands = {name for name in import_graph if name.startswith('hardy.app.commands')}
     digested = set()
     for relative in included:
+        if not relative.endswith(".py"):
+            continue
         parts = list(Path(relative).with_suffix('').parts)
         if parts[-1] == '__init__':
             parts.pop()

@@ -100,7 +100,7 @@ class ExtractionLog:
         if not directory.is_dir() or directory.is_symlink():
             return ()
         found = []
-        for path in sorted(directory.glob("*.json")):
+        for path in sorted(directory.glob("*.json"), key=lambda p: p.relative_to(directory).as_posix()):
             try:
                 found.append(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):

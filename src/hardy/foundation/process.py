@@ -458,8 +458,8 @@ def tracked(child: subprocess.Popen):
         arriving_into = _STOP_LEVEL
     if arriving_into and not entry.detached:
         # A detached job's child arriving into a stop is not what the stop
-        # was pressed for; `tracked` is inside the lock's shadow no longer,
-        # but `detached` reads the set under it.
+        # was pressed for. Outside the lock, `detached` observes set membership
+        # and may see either side of a concurrent detach.
         # Signalled regardless -- a group can outlive its leader -- but only
         # *recorded* as stopped if it was still running. A child that finished
         # between the spawn and this line produced a real result, and marking

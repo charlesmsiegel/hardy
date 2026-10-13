@@ -181,7 +181,7 @@ def _manifest(root: Path, profile: Profile, benchmark: str, revision: str, diges
         if not (root / name).is_file():
             issues.append(f"missing local support source: {name}")
     for pattern in profile.inputs:
-        paths = sorted(root.glob(pattern))
+        paths = sorted(root.glob(pattern), key=lambda p: p.relative_to(root).as_posix())
         if not paths:
             issues.append(f"missing benchmark input: {pattern}")
         for path in paths:
@@ -268,7 +268,7 @@ def import_archive(archive: Path, *, benchmark: str, revision: str, expected_sha
                 # JSON round-trip makes tuple-valued profile fields match the
                 # durable manifest returned after a restart.
                 serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
-                (payload / "manifest.json").write_text(serialized + "\n", encoding="utf-8")
+                (payload / "manifest.json").write_text(serialized + "\n", encoding="utf-8", newline="\n")
                 os.rename(payload, output)
                 return json.loads(serialized)
     except (OSError, ValueError, LockTimeout) as error:

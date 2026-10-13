@@ -126,7 +126,7 @@ def _delivery_payload(result: RetrievalResult) -> str:
 
 def _run_artifacts(directory: Path) -> dict[str, str]:
     artifacts = {}
-    for path in sorted(directory.rglob("*")):
+    for path in sorted(directory.rglob("*"), key=lambda p: p.relative_to(directory).as_posix()):
         if path.is_file() and path.name in {"result.json", "manifest.json", "trajectory.json", "trajectory.jsonl"}:
             relative = path.relative_to(directory).as_posix()
             artifacts[relative] = sha256(_artifact(directory, relative).read_bytes()).hexdigest()

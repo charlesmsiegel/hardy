@@ -500,7 +500,7 @@ class TreeStore:
         directory = self.root / artifact_sha256
         if not directory.is_dir() or directory.is_symlink():
             return ()
-        trees = [self.get(artifact_sha256, p.stem) for p in sorted(directory.iterdir()) if p.suffix == ".json" and p.stem.startswith("tree-") and not p.is_symlink()]
+        trees = [self.get(artifact_sha256, p.stem) for p in sorted(directory.iterdir(), key=lambda p: p.relative_to(directory).as_posix()) if p.suffix == ".json" and p.stem.startswith("tree-") and not p.is_symlink()]
         return tuple(sorted(trees, key=lambda t: (t.version, t.built_at, t.id)))
 
     def node(self, artifact_sha256: str, tree_id: str, node_id: str) -> SourceNode:

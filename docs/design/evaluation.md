@@ -306,7 +306,7 @@ the compute been available.**
 The pooling key is `(run_procedure_digest, environment_digest)`.
 
 **The source set is a denylist, not an allowlist.** `run_source_paths`
-(`identity.py`) digests every `src/hardy/**/*.py` except an explicit exclusion
+(`identity.py`) digests every `src/hardy/**/*.py` and `prompts/**/*.j2` except an explicit exclusion
 list, with line endings normalised so a CRLF checkout of one commit does not
 disagree with an LF one. Two alternatives were tried and rejected on evidence.
 A hand-written allowlist drawn from the obvious imports omitted `closers`, which
@@ -322,10 +322,12 @@ reads finished boards, so it can change nothing about a run, and including it
 moved the key and orphaned every scoreboard on disk: boards stopped pooling and
 `hardy evals todo` reported `boards_counted: 0` for models that plainly had
 boards. The rule that keeps the exclusions honest is testable rather than
-editorial: nothing the digest covers may import a module the digest excludes.
+editorial: no module reached by the run entry points may be excluded. A fresh-process
+import probe checks that every loaded Hardy module is covered.
 
-The prompt templates stay separate keys rather than folding into the source
-digest, so a changed digest says which input moved. The `prompts/` Python that
+Named prompt sets remain separate keys identifying their instructions. All
+prompt templates also count in the source digest, including compaction and tool
+result templates outside those sets. The `prompts/` Python that
 renders and interpolates those templates is in neither prompt hash and is picked
 up by the source denylist, which is the reason the source set cannot be replaced
 by a list of prompt files.
@@ -633,3 +635,10 @@ except from a reading somebody scripted, which is exactly why the fixture
 measures recorded structure rather than referee performance. A lexical inventory
 and a complete recorded graph cannot establish that a real manuscript has no
 further semantic defects or hidden dependencies.
+
+The environment compatibility scheme `host-compatibility-v2` binds the Lean
+identity and the host system, architecture, processor and CPU count. Full kernel
+and libc version strings remain recorded host provenance and do not govern reuse.
+The named code and template source scheme is `named-code-and-templates-v2`.
+These scheme changes require new measurements; historical evidence is never
+restamped.

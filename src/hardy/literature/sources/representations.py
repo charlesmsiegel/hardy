@@ -132,7 +132,7 @@ class RepresentationStore:
         if not directory.is_dir() or directory.is_symlink():
             return ()
         records = []
-        for child in sorted(directory.iterdir()):
+        for child in sorted(directory.iterdir(), key=lambda p: p.relative_to(directory).as_posix()):
             if child.is_symlink() or not (child / RECORD).is_file():
                 continue
             record = self.get(artifact_sha256, child.name)
@@ -175,7 +175,7 @@ class RepresentationStore:
             directory = self._dir(artifact_sha256, record.id) / MAPPINGS
             if not directory.is_dir():
                 continue
-            for child in sorted(directory.iterdir()):
+            for child in sorted(directory.iterdir(), key=lambda p: p.relative_to(directory).as_posix()):
                 if child.suffix != ".json" or child.is_symlink():
                     continue
                 mapping = RepresentationMapping.model_validate_json(read_text(self.root, f"{artifact_sha256}/{record.id}/{MAPPINGS}/{child.name}"))

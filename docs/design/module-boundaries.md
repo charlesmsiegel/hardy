@@ -197,7 +197,8 @@ one of them is conservative.
 - The sweep's `procedure_digest` covers the deciding sources named in
   `DECIDING_SOURCES` in `evals/sweep.py`: the sweep itself, `formal/audit.py`,
   `formal/lean.py`, every module in `formal/syntax/`, `corpus/problems.py` and
-  `corpus/identity.py`. That is an allowlist extended by hand; only the
+  `corpus/identity.py`, `formal/contracts.py`, `foundation/process.py`, and
+`foundation/truncation.py`. That is an allowlist extended by hand; only the
   syntax package is counted whole, by directory.
   A module that starts deciding what a sweep outcome means is not covered until
   someone adds it there, which is the failure the run digest was deliberately
