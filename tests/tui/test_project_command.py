@@ -801,3 +801,45 @@ async def test_checkpoint_cancellation_waits_for_copy_and_reopen(ui, root, monke
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+def test_checkpoint_inner_cancellation_unwinds_without_spinning():
+    import subprocess
+    import sys
+
+    script = '''
+import asyncio
+from hardy.app.tui.handlers import _finish_checkpoint
+class Ui:
+    def write(self, *args, **kwargs): pass
+async def cancelled():
+    raise asyncio.CancelledError
+async def main():
+    try:
+        await _finish_checkpoint(Ui(), cancelled())
+    except asyncio.CancelledError:
+        return
+    raise AssertionError("inner cancellation was swallowed")
+asyncio.run(main())
+'''
+    result = subprocess.run([sys.executable, '-c', script], timeout=3, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('operation', ['save', 'restore'])
+async def test_cancelled_checkpoint_worker_ends_unusable_session(ui, root, monkeypatch, operation):
+    import asyncio
+
+    from hardy.workflows import checkpoints
+
+    _live_problem(root, 'sylow')
+    config = _settings(root, 'sylow')
+    saved = checkpoints.save(config.layout)
+    def cancelled(*args, **kwargs):
+        raise asyncio.CancelledError
+    monkeypatch.setattr(checkpoints, operation, cancelled)
+    state = State(config=config, session=object(), reopen=Reopener(root))
+    ui.confirmations = [True]
+    after = await handlers.handle_checkpoint(ui, '' if operation == 'save' else f'restore {saved.id}', state)
+    assert after.session is None and after.done
+    assert 'restart `hardy chat`' in ui.text
