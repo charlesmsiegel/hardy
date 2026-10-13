@@ -287,3 +287,24 @@ def test_cli_interrupted_pool_write_preserves_previous_output(tmp_path, monkeypa
         commands.run_pool(args)
     assert out.read_bytes() == b"previous result"
     assert not any(path.name.startswith("tmp") for path in tmp_path.iterdir())
+def test_unknown_host_scheme_refuses_pool_and_cli(tmp_path, monkeypatch, capsys):
+    from argparse import Namespace
+
+    from hardy.app.evals import run_pool
+    from hardy.evals import sweep
+
+    def recorded_digest(board):
+        return sweep.environment_digest_of(EnvironmentIdentity.model_validate(board['environment']), board['host'])
+
+    monkeypatch.setattr(outstanding, 'environment_digest_of_board', recorded_digest)
+    board = _board(tmp_path / 'future-board', ids=['t'], run_digest='r', env_digest='e')
+    path = board / 'scoreboard.json'
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    payload['host']['environment_identity_scheme'] = 'host-compatibility-v3'
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    with pytest.raises(pool.PoolRefused, match='future-board.*unsupported environment identity scheme'):
+        pool.pool([board], problems_path=PROBLEMS, baseline_path=BASELINE)
+    assert run_pool(Namespace(corpus=PROBLEMS, baseline=BASELINE, scoreboards=tmp_path,
+                              labels=['future-board'], out=tmp_path / 'pool.json')) == 2
+    assert 'future-board' in capsys.readouterr().err
+    assert not (tmp_path / 'pool.json').exists()

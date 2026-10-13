@@ -216,7 +216,12 @@ def compare(left: Path, right: Path, *, varying: Iterable[str], problems_path: P
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise ComparisonRefused(str(error)) from error
     shared_slots = {(row["id"], row["repeat"]) for row in sides["left"]} & {(row["id"], row["repeat"]) for row in sides["right"]}
-    controls = [_controls(board, sides[name], shared_slots) for board, name in zip(boards, ("left", "right"), strict=True)]
+    controls = []
+    for board, name, path in zip(boards, ("left", "right"), (left, right), strict=True):
+        try:
+            controls.append(_controls(board, sides[name], shared_slots))
+        except (ValueError, KeyError, TypeError) as error:
+            raise ComparisonRefused(f"{path.name} has invalid comparison controls: {error}") from error
     comparisons = {}
     for field in CONTROL_FIELDS:
         a, b = (values[field] for values in controls)
