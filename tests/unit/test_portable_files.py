@@ -122,7 +122,9 @@ def test_cas_append_repins_recreated_directory(tmp_path, cas_session, monkeypatc
     active = cas_session(directory)
     try:
         record = active.execute('a')
-        active._lease.__exit__(None, None, None)
+        # Stop the child whose cwd is cas before replacing that directory.
+        # Windows forbids renaming a directory held by a running process.
+        active.close()
         directory.rename(tmp_path / 'old-cas')
         directory.mkdir()
         # Exercise the append's re-proof independently of the separate writer
