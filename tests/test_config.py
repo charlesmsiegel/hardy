@@ -1044,3 +1044,38 @@ def test_write_setting_rejects_original_raw_control_character_unchanged(tmp_path
     with pytest.raises(ValueError):
         config.write_setting(path, 'tectonic', '/tools/tectonic')
     assert path.read_bytes() == original.encode()
+
+
+def test_write_setting_replaces_crlf_assignment(tmp_path):
+    path = tmp_path / 'config.toml'
+    path.write_bytes(b'lake = "old"\r\nmodel = "chosen"\r\n')
+    config.write_setting(path, 'lake', '/tools/lake')
+    assert config.read_file(path) == {'lake': '/tools/lake', 'model': 'chosen'}
+
+
+def test_write_setting_appends_before_crlf_table(tmp_path):
+    import tomllib
+
+    path = tmp_path / 'config.toml'
+    path.write_bytes(b'model = "chosen"\r\n[unrelated]\r\nx = 1\r\n')
+    config.write_setting(path, 'lake', '/tools/lake')
+    assert tomllib.loads(path.read_text()) == {
+        'model': 'chosen', 'lake': '/tools/lake', 'unrelated': {'x': 1},
+    }
+
+
+def test_write_setting_refuses_valid_but_wrong_scope_output(tmp_path, monkeypatch):
+    path = write(tmp_path / 'config.toml', 'model = "chosen"\n')
+    original = path.read_bytes()
+    monkeypatch.setattr(config, '_upsert', lambda *_: ['[unrelated]', 'lake = "/tools/lake"'])
+    with pytest.raises(ValueError, match='top-level lake'):
+        config.write_setting(path, 'lake', '/tools/lake')
+    assert path.read_bytes() == original
+
+
+def test_project_writer_handles_crlf_without_altering_unicode_value(tmp_path):
+    path = tmp_path / '.hardy' / 'config.toml'
+    path.parent.mkdir()
+    path.write_bytes('project = "old"\r\nmodel = "chosen\u2028identity"\r\n'.encode())
+    config.write_project_setting(tmp_path, 'project', 'new')
+    assert config.read_file(path) == {'project': 'new', 'model': 'chosen\u2028identity'}
