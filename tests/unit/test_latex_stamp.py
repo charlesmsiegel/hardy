@@ -172,3 +172,22 @@ def test_stamp_counts_and_obligations_share_one_source_snapshot(session, monkeyp
     stamp = session._stamp()
     assert "0 theorems machine-checked by Lean" in stamp
     assert len(reads) == 1
+
+
+def test_fragment_refuses_non_utf8_root_with_file_name(tmp_path):
+    tree = tmp_path / "tex"
+    tree.mkdir()
+    (tree / "writeup.tex").write_bytes(DOCUMENT.encode() + b"%\xe9")
+    result = LatexTools(COMMAND).check("Section.", path="one.tex", tree=tree, stamp="Stamp")
+    assert not result.ok
+    assert "writeup.tex" in result.output and "UTF-8" in result.output
+
+
+def test_fragment_probe_keeps_preamble_after_commented_opener():
+    from hardy.documents.latex import _probe_root
+
+    root = "% \\begin{document}\n\\documentclass{article}\n\\newcommand{\\name}{Name}\n" + DOCUMENT
+    probe = _probe_root(root, "one.tex")
+    assert r"\newcommand{\name}{Name}" in probe
+    assert r"\input{one}" in probe
+    assert "Hello" not in probe
