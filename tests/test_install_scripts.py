@@ -2217,3 +2217,83 @@ def test_windows_write_config_upserts_quoted_lean_project(tmp_path, existing):
     assert values['lean_project'] == (existing or str(lean))
     if existing:
         assert config.read_text(encoding='utf-8-sig') == original
+
+
+def test_windows_uninstaller_refuses_linked_parent(tmp_path):
+    prefix = tmp_path / 'prefix'
+    external = tmp_path / 'unrelated'
+    prefix.mkdir()
+    external.mkdir()
+    command = external / 'hardy.cmd'
+    command.write_text('unrelated command')
+    linked_bin = prefix / 'bin'
+    try:
+        linked_bin.symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip('directory symlinks unavailable')
+    result = run_installer_functions(
+        "$script:Failed = 0; $script:Removed = 0; "
+        f"$script:RemovalRoots = @('{prefix}', '{linked_bin}'); "
+        f"Remove-Part 'command' '{linked_bin / 'hardy.cmd'}'; "
+        "if ($script:Failed -ne 1 -or $script:Removed -ne 0) { exit 1 }",
+        SCRIPTS / 'uninstall-windows.ps1',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert command.read_text() == 'unrelated command'
+    assert 'linked path' in result.stdout + result.stderr
+
+
+def test_windows_uninstaller_accepts_real_custom_bin_directory(tmp_path):
+    external = tmp_path / 'custom-bin'
+    external.mkdir()
+    command = external / 'hardy.cmd'
+    command.write_text('owned shim')
+    result = run_installer_functions(
+        "$script:Failed = 0; $script:Removed = 0; "
+        f"Remove-Part 'command' '{command}'; "
+        "if ($script:Failed -ne 0 -or $script:Removed -ne 1) { exit 1 }",
+        SCRIPTS / 'uninstall-windows.ps1',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not command.exists()
+
+
+def test_windows_uninstaller_accepts_explicit_redirected_bin_root(tmp_path):
+    external = tmp_path / 'custom-target'
+    external.mkdir()
+    command = external / 'hardy.cmd'
+    command.write_text('owned shim')
+    custom_bin = tmp_path / 'custom-bin'
+    try:
+        custom_bin.symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip('directory symlinks unavailable')
+    result = run_installer_functions(
+        "$script:Failed = 0; $script:Removed = 0; "
+        f"$script:RemovalRoots = @('{tmp_path / 'prefix'}', '{custom_bin}'); "
+        f"Remove-Part 'command' '{custom_bin / 'hardy.cmd'}'; "
+        "if ($script:Failed -ne 0 -or $script:Removed -ne 1) { exit 1 }",
+        SCRIPTS / 'uninstall-windows.ps1',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not command.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows junction semantics require native Windows')
+def test_windows_uninstaller_refuses_replaced_child_junction(tmp_path):
+    prefix = tmp_path / 'prefix'
+    external = tmp_path / 'unrelated'
+    prefix.mkdir()
+    external.mkdir()
+    command = external / 'hardy.cmd'
+    command.write_text('unrelated command')
+    result = run_installer_functions(
+        f"$null = New-Item -ItemType Junction -Path '{prefix / 'bin'}' -Target '{external}'; "
+        "$script:Failed = 0; $script:Removed = 0; "
+        f"$script:RemovalRoots = @('{prefix}', '{prefix / 'bin'}'); "
+        f"Remove-Part 'command' '{prefix / 'bin' / 'hardy.cmd'}'; "
+        "if ($script:Failed -ne 1 -or $script:Removed -ne 0) { exit 1 }",
+        SCRIPTS / 'uninstall-windows.ps1', require_ps51=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert command.read_text() == 'unrelated command'
