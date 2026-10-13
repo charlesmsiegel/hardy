@@ -25,10 +25,18 @@ from hardy.foundation.locking import atomic_write_bytes as atomic_write_bytes
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.contracts import RunManifest, RunPhase
 
+# Free-text prefixes stop at whitespace; otherwise every prose word scans
+# the rest of its sentence looking for a credential suffix. Structural keys
+# have known boundaries and may include spaces between their components.
+SECRET_PREFIX = r"(?:[A-Za-z0-9]+[_.-]+)*"
+SECRET_SUFFIX = (
+    r"(?:authorization|api[_. \t-]*key|access[_. \t-]*token|"
+    r"refresh[_. \t-]*token|secret(?:[_. \t-]*access)?(?:[_. \t-]*key)?|"
+    r"password|passwd|token)"
+)
+SECRET_NAME = SECRET_PREFIX + SECRET_SUFFIX
 SECRET_KEY = re.compile(
-    r"^(?:[A-Za-z0-9]+[_-])*(?:authorization|api[_-]?key|access[_-]?token|"
-    r"refresh[_-]?token|secret(?:[_-]?access)?(?:[_-]?key)?|password|passwd|token)$",
-    re.IGNORECASE,
+    r"^(?:[A-Za-z0-9]+[_. \t-]+)*" + SECRET_SUFFIX + r"$", re.IGNORECASE,
 )
 
 
