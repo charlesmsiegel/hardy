@@ -270,3 +270,5 @@ Each import is bounded per file at 8 MiB of storage; ProofNet's own archive carr
 ## Exit codes
 
 What a run's own exit status does and does not tell you, and how it relates to the grades and `terminal_reason` fields above, is covered in [Invocation and exit codes](cli.md#invocation-and-exit-codes) rather than repeated here.
+
+The owned Messages API backend records `prompt_caching: true` in provider provenance. It requests ephemeral caching for the system/tool prefix and the final non-thinking block of the conversation. This records the billing configuration; it does not claim a cache hit. Cache creation and read token counters in provider usage report actual caching. Other transports omit the field when they do not state a caching policy.

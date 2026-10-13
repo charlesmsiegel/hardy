@@ -463,11 +463,11 @@ def test_an_explicit_rate_or_overload_rejection_settles_at_zero(tmp_path, budget
     """Owner decision 4: a 429 or 529 is the provider refusing before doing
     any work, and bills nothing -- the one failure that settles at zero."""
     module = budget_module
-    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote()))
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote() + 10))
     client = Client([Rejected(status), usage()])
     provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner)
     with pytest.raises(Rejected):
-        provider.complete(system="", messages=[], specs=[])
+        provider.complete(system="", messages=[], specs=[], timeout=0.5)
     settled = [json.loads(line)["payload"] for line in owner.path.read_text().splitlines()
                if json.loads(line)["kind"] == "settle"]
     assert settled[0]["reported"] == {name: 0 for name in usage()} and settled[0]["tokens"] == 0
@@ -480,11 +480,11 @@ def test_any_other_status_failure_is_charged_at_its_reservation(tmp_path, budget
     """Everything else may have done work before it failed, so it is charged
     under "never count less than was spent"."""
     module = budget_module
-    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote()))
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote() + 10))
     client = Client([Rejected(status), usage()])
     provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner)
     with pytest.raises(Rejected):
-        provider.complete(system="", messages=[], specs=[])
+        provider.complete(system="", messages=[], specs=[], timeout=0.5)
     with pytest.raises(module.SpendLimitReached, match="token_limit"):
         provider.complete(system="", messages=[], specs=[])
     assert owner.summary()["actual_tokens"] is None
@@ -593,10 +593,10 @@ class Unanswered(Exception):
 def test_only_a_status_error_with_its_response_settles_at_zero(tmp_path, budget_module, error):
     """#190 review M9: `_rejected`'s shape guard, at its edges."""
     module = budget_module
-    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote()))
+    owner = module.SpendBudget(tmp_path / "budget.jsonl", policy(module, token_limit=quote() + 10))
     client = Client([error, usage()])
     provider = AnthropicProvider("fixture", client=client, max_tokens=10, spend_budget=owner)
     with pytest.raises(type(error)):
-        provider.complete(system="", messages=[], specs=[])
+        provider.complete(system="", messages=[], specs=[], timeout=0.5)
     with pytest.raises(module.SpendLimitReached, match="token_limit"):
-        provider.complete(system="", messages=[], specs=[])
+        provider.complete(system="", messages=[], specs=[], timeout=0.5)

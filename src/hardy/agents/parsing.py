@@ -1,53 +1,37 @@
-"""Extract structured objects from model replies without interpreting them."""
+"""Extract structured objects from model replies."""
 from __future__ import annotations
+
+import json
+import re
 
 
 def json_object(text: str) -> str | None:
-    """Find the one JSON object in a model's reply, fence or no fence.
+    """Return the first valid object, preferring JSON fences, then other fences.
 
-    Here rather than in one caller because two of them need it and neither
-    owns it: the staged runtime reads structured proof submissions, and the
-    interactive session reads an independent reader's verdict. A model that
-    wraps its answer in a fence or a sentence has still answered; one that
-    returns no object at all has not, and both callers treat that as a
-    failure rather than as a default.
+    Mathematical braces are skipped. Each candidate examines at most 200 brace
+    positions to bound work on malformed replies. Unclosed fences are accepted.
     """
-    if not text:
-        return None
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        body = stripped.split("```")
-        for part in body:
-            candidate = part[4:] if part.startswith("json") else part
-            found = _balanced_object(candidate)
-            if found is not None:
-                return found
-    return _balanced_object(stripped)
+    fences = list(re.finditer(r'```([^\n`]*)\n(.*?)(?:```|\Z)', text, re.DOTALL))
+    candidates = [match[2] for match in fences if match[1].strip().lower() == 'json']
+    candidates.extend(match[2] for match in fences if match[1].strip().lower() != 'json')
+    candidates.append(text)
+    for candidate in candidates:
+        found = _balanced_object(candidate)
+        if found is not None:
+            return found
+    return None
 
 
 def _balanced_object(text: str) -> str | None:
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(text)):
-        character = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
+    """Compatibility entry point: scan for a valid JSON object."""
+    decoder = json.JSONDecoder()
+    for attempt, match in enumerate(re.finditer(r'\{', text)):
+        if attempt >= 200:
+            break
+        try:
+            value, end = decoder.raw_decode(text, match.start())
+        except ValueError:
             continue
-        if character == '"':
-            in_string = True
-        elif character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1]
+        if isinstance(value, dict):
+            return text[match.start():end]
     return None
