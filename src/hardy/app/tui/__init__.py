@@ -68,30 +68,23 @@ def run_session(
         raise
     except Exception as error:  # noqa: BLE001 - never end a session over rendering
         print(f"Falling back to the plain session: {error}", file=sys.stderr)
-        # `session_factory` reopens the problem this function was CALLED with,
-        # and closes over the computer algebra kernel built for it. After a
-        # `/project switch` both are wrong: the user is in another problem now,
-        # and that kernel was closed when they left. Falling back on them
-        # returns silently to the abandoned problem with a dead kernel, so the
-        # active one is reopened instead -- bound, this time, to the approval
-        # gate of the `Ui` that is about to exist rather than the one that has
-        # just failed.
+        # The launch factory captures launch config and kernel. Once a live
+        # session exists, the opener rebuilds from current model/chat and owns
+        # kernel replacement, even after returning to the launch problem.
         live_session = shell.state.session if shell is not None else None
         close = getattr(live_session, "close", None)
         if close is not None:
             with contextlib.suppress(Exception):
                 close()
         live = shell.state.config if shell is not None else config
-        if reopen is not None and live.layout.problem != config.layout.problem:
-            return _run_plain(
-                live,
-                lambda confirm: reopen(live.project, confirm, live)[1],
-                reopen=reopen,
-            )
+        if reopen is not None and (live_session is not None or live.layout.problem != config.layout.problem):
+            return _run_plain(live, session_factory, reopen=reopen, reopen_active=True)
         return _run_plain(config, session_factory, reopen=reopen)
 
 
-def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = None) -> int:
+def _run_plain(
+    config, session_factory: Callable[[Any], Any], *, reopen: Any = None, reopen_active: bool = False
+) -> int:
     from hardy.app.terminal import confirm_assumption
     from hardy.app.tui import plain as plain_mode
     from hardy.app.tui.handlers import build_registry, load_templates
@@ -101,8 +94,11 @@ def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = N
     def confirm(proposal: dict[str, str]) -> bool:
         return confirm_assumption(ui_holder["ui"])(proposal)
 
+    if reopen_active:
+        config, session = reopen(config.project, confirm, config, chat=config.chat)
+    else:
+        session = session_factory(confirm)
     templates, notices = load_templates(config)
-    session = session_factory(confirm)
     return plain_mode.run(
         config,
         session,

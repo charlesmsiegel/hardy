@@ -242,7 +242,7 @@ def test_the_plain_fallback_keeps_the_problem_the_shell_had_switched_to(settings
     switched = dataclasses.replace(settings, project="burnside")
     reopened: list[str] = []
 
-    def reopen(slug, confirm, current):
+    def reopen(slug, confirm, current, *, chat):
         reopened.append(slug)
         return switched, Recording(slug)
 
