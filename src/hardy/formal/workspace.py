@@ -16,6 +16,7 @@ import tempfile
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
+from hardy.formal.build_cache import publish_build, sweep_retired_builds
 from hardy.formal.syntax import ANY_NAME as ANY_NAME
 from hardy.formal.syntax import ASSUMPTION as ASSUMPTION
 from hardy.formal.syntax import AXIOM_KEYWORD as AXIOM_KEYWORD
@@ -40,8 +41,7 @@ from hardy.formal.syntax import (
     _olean_module,
     _olean_relative,
     build_order,
-    external_imports,
-    internal_imports,
+    import_table,
     module_name,
     module_path,
 )
@@ -58,6 +58,8 @@ from hardy.formal.syntax import assumptions as assumptions
 from hardy.formal.syntax import declarations as declarations
 from hardy.formal.syntax import declared_name as declared_name
 from hardy.formal.syntax import dependents as dependents
+from hardy.formal.syntax import external_imports as external_imports
+from hardy.formal.syntax import internal_imports as internal_imports
 from hardy.formal.syntax import name_aliases as name_aliases
 from hardy.formal.syntax import normalise_lean as normalise_lean
 from hardy.formal.syntax import parse_imports as parse_imports
@@ -88,6 +90,7 @@ class LeanWorkspace:
     ) -> None:
         self.root = root
         self.build = build
+        sweep_retired_builds(build)
         self._compile = compile
         # What a module imported from outside the workspace currently is. An
         # olean built against one version of a local Lake module stays valid
@@ -223,7 +226,8 @@ class LeanWorkspace:
         for relative in files_under(self.build, ".olean"):
             module = _olean_module(relative)
             if module not in keep:
-                self.forget(module)
+                guard, name = guard_for(self.build, relative)
+                guard.unlink(name, missing_ok=True)
                 removed.append(module)
         # The index as well as the artifacts: an entry naming a module with
         # neither source nor olean is a claim about a build that never
@@ -272,24 +276,28 @@ class LeanWorkspace:
         guard.mkdir()
         guard.write_bytes("index.json", (json.dumps(index, indent=2, sort_keys=True) + "\n").encode("utf-8"), sync=False)
 
-    def _signatures(self, sources: Mapping[str, str], order: tuple[str, ...]) -> dict[str, str]:
+    def _signatures(self, sources: Mapping[str, str], order: tuple[str, ...], imports: Mapping[str, tuple[str, ...]] | None = None) -> dict[str, str]:
         """What each module's build depends on, its dependencies included.
 
         A recursive digest means a change deep in the tree changes the
         signature of everything above it, so staleness needs no separate
         invalidation pass that could disagree with the graph.
         """
+        imports = import_table(sources) if imports is None else imports
         signatures: dict[str, str] = {}
+        stamps: dict[str, str] = {}
         for module in order:
             digest = hashlib.sha256(self._environment.encode("utf-8"))
             digest.update(b"\0")
             digest.update(sources[module].encode("utf-8"))
-            for dependency in sorted(internal_imports(sources[module], sources)):
+            for dependency in sorted(set(imports[module]) & sources.keys()):
                 digest.update(signatures[dependency].encode("ascii"))
             if self._external is not None:
-                for name in sorted(external_imports(sources[module], sources)):
+                for name in sorted(set(imports[module]) - sources.keys()):
                     digest.update(b"\0")
-                    digest.update(self._external(name).encode("utf-8"))
+                    if name not in stamps:
+                        stamps[name] = self._external(name)
+                    digest.update(stamps[name].encode("utf-8"))
             signatures[module] = digest.hexdigest()
         return signatures
 
@@ -312,7 +320,13 @@ class LeanWorkspace:
         sources = self.sources() if sources is None else sources
         if not sources:
             return {}
-        return self._signatures(sources, build_order(sources, tuple(sources)))
+        imports = import_table(sources)
+        return self._signatures(sources, build_order(sources, tuple(sources), imports=imports), imports)
+
+    def signature_snapshot(self) -> tuple[dict[str, str], dict[str, str]]:
+        """One fresh source read paired with signatures of those exact bytes."""
+        sources = self.sources()
+        return sources, self.current_signatures(sources)
 
     def build_modules(self, targets: Collection[str]) -> BuildFailure | None:
         """Compile `targets` and whatever they need, dependencies first.
@@ -326,8 +340,9 @@ class LeanWorkspace:
             return BuildFailure(
                 module=missing[0], output=f"no such workspace module: {missing[0]}"
             )
-        order = build_order(sources, targets)
-        signatures = self._signatures(sources, order)
+        imports = import_table(sources)
+        order = build_order(sources, targets, imports=imports)
+        signatures = self._signatures(sources, order, imports)
         index = self._index()
         for module in order:
             if index.get(module) == signatures[module] and self.olean(module).is_file():
@@ -360,50 +375,54 @@ class LeanWorkspace:
         reports only which module failed, not what a successful one printed.
         """
         temporary = Path(tempfile.mkdtemp(prefix="hardy-workspace-"))
-        shadow_root = temporary / "lean"
-        shadow_build = temporary / "build"
-        if self.root.is_dir():
-            # Proven before it is copied, not after. `copytree` follows a
-            # symlink by CONTENT, so a linked `lean/Imported.lean` arrives in
-            # the shadow as a real file with the host's bytes in it -- at which
-            # point every later check in the shadow is asking about a tree that
-            # nothing on disk actually is. `files_under` refuses a symlink
-            # anywhere beneath the root, which is the same walk `sources` does.
-            files_under(self.root, ".lean")
-            shutil.copytree(self.root, shadow_root)
-        else:
-            shadow_root.mkdir(parents=True)
-        if self.build.is_dir():
-            shutil.copytree(self.build, shadow_build)
-        else:
-            shadow_build.mkdir(parents=True)
-        shadow = LeanWorkspace(
-            shadow_root,
-            shadow_build,
-            compile or self._compile,
-            environment=self._environment,
-            external=self._external,
-        )
-        # Through a guard in the shadow as well as in `commit`, and for the
-        # same reason: the shadow is a `copytree` of the real tree, so a
-        # subdirectory the real tree links out of the project arrives here as
-        # a real directory holding whatever that link pointed at -- and a
-        # writer that trusted "it is only a temporary directory" would be
-        # trusting a shape a repository chose.
-        shadow_guard, shadow_name = guard_for(shadow_root, relative, create=True)
-        if source is None:
-            shadow_guard.unlink(shadow_name, missing_ok=True)
-            # The olean has to go with the source. Left behind, the module is
-            # absent from `sources()` -- so Hardy reads any later `import` of
-            # it as external and never builds it -- while Lean still resolves
-            # the stale artifact from LEAN_PATH. A saved proof would then
-            # depend on source that is no longer in the workspace.
-            shadow.forget(module_name(relative))
-        else:
-            # Not fsynced: every byte here lands in a scratch tree that is
-            # discarded (`discard`) once the caller either commits the real
-            # write below or decides against it.
-            shadow_guard.write_text(shadow_name, source, sync=False)
+        try:
+            shadow_root = temporary / "lean"
+            shadow_build = temporary / "build"
+            if self.root.is_dir():
+                # Proven before it is copied, not after. `copytree` follows a
+                # symlink by CONTENT, so a linked `lean/Imported.lean` arrives in
+                # the shadow as a real file with the host's bytes in it -- at which
+                # point every later check in the shadow is asking about a tree that
+                # nothing on disk actually is. `files_under` refuses a symlink
+                # anywhere beneath the root, which is the same walk `sources` does.
+                files_under(self.root, ".lean")
+                shutil.copytree(self.root, shadow_root)
+            else:
+                shadow_root.mkdir(parents=True)
+            if self.build.is_dir():
+                shutil.copytree(self.build, shadow_build)
+            else:
+                shadow_build.mkdir(parents=True)
+            shadow = LeanWorkspace(
+                shadow_root,
+                shadow_build,
+                compile or self._compile,
+                environment=self._environment,
+                external=self._external,
+            )
+            # Through a guard in the shadow as well as in `commit`, and for the
+            # same reason: the shadow is a `copytree` of the real tree, so a
+            # subdirectory the real tree links out of the project arrives here as
+            # a real directory holding whatever that link pointed at -- and a
+            # writer that trusted "it is only a temporary directory" would be
+            # trusting a shape a repository chose.
+            shadow_guard, shadow_name = guard_for(shadow_root, relative, create=True)
+            if source is None:
+                shadow_guard.unlink(shadow_name, missing_ok=True)
+                # The olean has to go with the source. Left behind, the module is
+                # absent from `sources()` -- so Hardy reads any later `import` of
+                # it as external and never builds it -- while Lean still resolves
+                # the stale artifact from LEAN_PATH. A saved proof would then
+                # depend on source that is no longer in the workspace.
+                shadow.forget(module_name(relative))
+            else:
+                # Not fsynced: every byte here lands in a scratch tree that is
+                # discarded (`discard`) once the caller either commits the real
+                # write below or decides against it.
+                shadow_guard.write_text(shadow_name, source, sync=False)
+        except BaseException:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
 
         def commit() -> None:
             # `guard_for`, not `self.root / relative`. `safe_relative` has
@@ -415,13 +434,12 @@ class LeanWorkspace:
             # `guard_for` proves each component against the one above it, so
             # the chain says something about `self.root`.
             guard, name = guard_for(self.root, relative, create=True)
-            if source is None:
-                guard.unlink(name, missing_ok=True)
-            else:
-                guard.write_text(name, source)
-            if self.build.is_dir():
-                shutil.rmtree(self.build)
-            shutil.copytree(shadow_build, self.build)
+            with publish_build(shadow_build, self.build):
+                if source is None:
+                    guard.unlink(name, missing_ok=True)
+                else:
+                    guard.write_text(name, source)
+
 
         return shadow, commit
 

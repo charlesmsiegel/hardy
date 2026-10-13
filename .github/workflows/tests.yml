@@ -56,6 +56,21 @@ jobs:
           # first, which is the one that says what actually went wrong.
           if-no-files-found: warn
 
+  windows-build-publication:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Native Windows open and mapped olean publication
+        run: uv run --extra test pytest -q --no-cov tests/unit/test_workspace_t5.py -k native_windows --junitxml=windows-build-publication.xml
+      - name: Keep native Windows publication results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-publication
+          path: windows-build-publication.xml
+          if-no-files-found: warn
+
   packaging:
     runs-on: ubuntu-latest
     steps:
