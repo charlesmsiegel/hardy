@@ -174,6 +174,7 @@ hardy_uninstall_main() {
 	drop "the Desktop launcher" "$(desktop_dir)/hardy.desktop"
 	drop "the Desktop launcher" "$(desktop_dir)/Hardy.command"
 	drop "the virtual environment" "$VENV"
+	drop "the private pinned tools" "$HARDY_HOME/tools"
 	drop "the private bootstrap tools" "$HARDY_HOME/bin"
 	drop "the fetched source tree" "$HARDY_HOME/src"
 	# What a release install leaves behind instead of a source tree: the

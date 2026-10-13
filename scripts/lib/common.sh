@@ -143,6 +143,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Normalize dot components as well as existing symlinks: /tmp/.. is root too.
 require_absolute_dir_option() {
 	case "$2" in
+	*/../* | */..) printf 'error: %s cannot contain parent traversal (..)\n' "$1" >&2; exit 1 ;;
 	/*) ;;
 	*) printf 'error: %s needs a non-empty absolute directory other than /\n' "$1" >&2; exit 1 ;;
 	esac
@@ -881,18 +882,66 @@ have_model() {
 
 verify() {
 	step "Verifying the installation"
-	# doctor checks the whole installation, so its verdict is only binding when
-	# nothing was deliberately skipped.
-	local strict=1
-	[ "$SKIP_LATEX" = 1 ] && strict=0
-	[ "$SKIP_MATHLIB" = 1 ] && strict=0
-	have_model || strict=0
-	if HARDY_CONFIG="$HARDY_CONFIG" "$VENV/bin/hardy" doctor; then
-		return 0
+	local advisory=()
+	# Login is completed by the user. Skips waive only their own checks, never
+	# an absent CLI, Python, or another installer responsibility.
+	have_model || advisory+=(model)
+	[ "$SKIP_LATEX" != 1 ] || advisory+=(latex tectonic)
+	[ "$SKIP_MATHLIB" != 1 ] || advisory+=(lean mathlib)
+	local verdict=0
+	if HARDY_CONFIG="$HARDY_CONFIG" "$VENV/bin/python" -c '
+import sys
+from hardy.app.config import load
+from hardy.app.doctor import run_checks
+skipped = set(sys.argv[1:]) | {"claude login"}
+checks = run_checks(load())
+for check in checks:
+    print(check.line())
+raise SystemExit(1 if any(c.required and not c.ok and c.name not in skipped for c in checks) else 0)
+' "${advisory[@]}"; then
+		:
+	else
+		verdict=1
+		warn "hardy doctor reported failures in installer responsibilities (see above)"
 	fi
-	[ "$strict" = 1 ] && fail "hardy doctor reported failures (see above)"
 	have_model || warn "no model configured yet: add one to $HARDY_CONFIG or export HARDY_MODEL"
-	warn "some checks did not pass; see what was skipped below"
+	say "run 'claude login' to complete subscription sign-in"
+	return "$verdict"
+}
+
+ensure_tectonic() {
+	[ "$SKIP_LATEX" != 1 ] || return 0
+	step "Installing pinned, digest-checked Tectonic"
+	local installed
+	if installed="$(HARDY_CONFIG="$HARDY_CONFIG" "$VENV/bin/python" - "$HARDY_HOME/tools" <<'TECTONIC_PY'
+import platform
+import sys
+from pathlib import Path
+from hardy.app.installers import install_tectonic, download_file
+architecture = {"arm64": "aarch64", "amd64": "x86_64"}.get(platform.machine().lower(), platform.machine().lower())
+platform_target = "apple-darwin" if platform.system() == "Darwin" else "unknown-linux-musl"
+result = install_tectonic(destination_root=Path(sys.argv[1]), confirmer=lambda _: True, downloader=download_file,
+                          target=f"{architecture}-{platform_target}")
+if not result.installed_path:
+    print(result.manual_instructions, file=sys.stderr)
+    raise SystemExit(1)
+print(result.installed_path)
+TECTONIC_PY
+)"; then
+		:
+	else
+		warn "Tectonic could not be installed; run hardy setup after resolving the download failure"
+		return 1
+	fi
+	# Respect a user's existing compiler choice, including --no-config installs.
+	if [ -z "${HARDY_TECTONIC:-}" ] && ! grep -q '^[[:space:]]*tectonic[[:space:]]*=' "$HARDY_CONFIG" 2>/dev/null; then
+		export HARDY_TECTONIC="$installed"
+	fi
+	if [ "$WRITE_CONFIG" = 1 ] && ! grep -q '^[[:space:]]*tectonic[[:space:]]*=' "$HARDY_CONFIG" 2>/dev/null; then
+		mkdir -p "$(dirname "$HARDY_CONFIG")"
+		(umask 077; printf 'tectonic = "%s"\n' "$(toml_escape "$installed")" >>"$HARDY_CONFIG")
+	fi
+	say "Tectonic installed at $installed"
 }
 
 summary() {
@@ -921,8 +970,8 @@ Other useful commands:
   hardy accept --force-budget-exhaustion-test
                           check the whole pipeline with no model and no network
 
-This installer sets up Lean, Mathlib and pdflatex. Staged \`hardy prove\` runs
-also build their documents with Tectonic against a checksum-pinned bundle:
+This installer sets up Lean, Mathlib, pdflatex and pinned Tectonic unless skipped.
+Staged \`hardy prove\` documents use a checksum-pinned bundle. For setup smoke tests:
 
   hardy setup             find, install and record the pinned toolchain
 EOF
@@ -950,6 +999,9 @@ hardy_install_main() {
 	ensure_latex
 	ensure_claude_cli
 	write_config
-	verify
+	local verification_status=0
+	ensure_tectonic || verification_status=1
+	verify || verification_status=1
 	summary
+	return "$verification_status"
 }
