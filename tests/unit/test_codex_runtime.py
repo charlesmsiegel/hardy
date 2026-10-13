@@ -1,13 +1,28 @@
 import importlib
 import json
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
-_codex = pytest.importorskip("openai_codex", reason="the Codex backend is an optional extra")
-ApprovalMode, Sandbox = _codex.ApprovalMode, _codex.Sandbox
+
+class ApprovalMode(Enum):
+    deny_all = 'deny_all'
+    auto_review = 'auto_review'
+
+
+class Sandbox(Enum):
+    read_only = 'read_only'
+    workspace_write = 'workspace_write'
+
+
+@pytest.fixture(autouse=True)
+def fake_sdk(monkeypatch):
+    from hardy.agents import codex
+    monkeypatch.setattr(codex, 'load_sdk', lambda: SimpleNamespace(ApprovalMode=ApprovalMode, Sandbox=Sandbox))
 
 FIXTURES = Path(__file__).parents[1] / 'fixtures' / 'codex'
 NOW = datetime(2026, 7, 24, tzinfo=UTC)

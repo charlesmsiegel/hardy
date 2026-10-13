@@ -652,9 +652,10 @@ def test_a_cancellation_during_startup_is_not_lost(tmp_path):
     class Slow(FakeClient):
         async def __aenter__(self):
             reached.set()
-            # Off the loop: the flag is set by the test's thread, and blocking
-            # the loop here is what holds the turn inside its startup window.
-            await asyncio.to_thread(proceed.wait, 5)
+            # Keep the client connecting until the test cancels the turn.
+            # No executor teardown is involved in this provider fake.
+            while not proceed.is_set():
+                await asyncio.sleep(0.001)
             return self
 
     live, client = wired(
@@ -887,3 +888,57 @@ def test_checkpoint_interval_never_writes_unchanged_text_again(monkeypatch):
 def test_invalid_checkpoint_interval_is_refused(interval):
     with pytest.raises(ValueError, match="checkpoint interval"):
         runtime(checkpoint_seconds=interval)
+
+
+def test_client_publication_and_new_worker_reset_share_ownership_lock():
+    """A new turn cannot reset ownership between an old check and publish."""
+    publishing = threading.Event()
+    contender = threading.Event()
+    release = threading.Event()
+    lock = threading.RLock()
+
+    class ObservedLock:
+        def __enter__(self):
+            if threading.current_thread().name == 'new-submission':
+                contender.set()
+            lock.acquire()
+
+        def __exit__(self, *args):
+            lock.release()
+
+    class PausedRuntime(claude_runtime.ClaudeAgentRuntime):
+        def __setattr__(self, name, value):
+            if name == '_client' and value is old:
+                publishing.set()
+                assert release.wait(2)
+            super().__setattr__(name, value)
+
+    old = FakeClient([ResultMessage()])
+    new = FakeClient([StreamEvent('new'), ResultMessage()], stall_after=1)
+    clients = iter([old, new])
+    live = PausedRuntime('test', system_prompt='', specs=[], dispatch=lambda *a: None)
+    live._state_lock = ObservedLock()
+    live._sdk = types.SimpleNamespace(ClaudeSDKClient=lambda options=None: next(clients))
+    live._options = lambda: None
+    first = live.stream('first')
+    assert publishing.wait(2)
+    streams = []
+    submit = threading.Thread(target=lambda: streams.append(live.stream('second')), name='new-submission')
+    submit.start()
+    try:
+        assert contender.wait(2)
+        release.set()
+        submit.join(2)
+        assert not submit.is_alive()
+        second = streams[0]
+        assert next(second).text == 'new'
+        assert live._client is new
+        live.cancel()
+        list(second)
+        assert new.interrupted
+        assert not old.interrupted
+    finally:
+        release.set()
+        live.cancel()
+        first.close()
+        live.settle(2)

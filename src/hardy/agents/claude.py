@@ -290,6 +290,7 @@ class ClaudeAgentRuntime:
         # The turn in flight, if any. `cancel` reads all three from whatever
         # thread it is called on, so nothing here is ever mutated except by
         # `stream` starting a turn and `_exchange` running one.
+        self._state_lock = threading.RLock()
         self._cancelled = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client: Any | None = None
@@ -469,15 +470,6 @@ class ClaudeAgentRuntime:
         # Reset per turn, not in `cancel`: a turn cancelled a moment before
         # this one started must not leave the flag set over the new one. Safe
         # to do here precisely because "here" is turn-submission time.
-        self._cancelled = False
-        self._loop, self._client, self._called = None, None, {}
-        self._drawn, self._drawing = [], None
-        self._refused_tool_use_ids = set()
-        self._message_usage = {}
-        # The interval is counted from here, not from the first delta: the
-        # first checkpoint of a turn lands one interval in, like every other.
-        self._checkpointed_at = time.monotonic()
-
         def pump() -> None:
             try:
                 asyncio.run(self._within_budget(text, outbox))
@@ -487,7 +479,17 @@ class ClaudeAgentRuntime:
                 outbox.put(_FINISHED)
 
         worker = threading.Thread(target=pump, name="hardy-turn", daemon=True)
-        self._worker = worker
+        with self._state_lock:
+            self._cancelled = False
+            self._loop, self._client, self._called = None, None, {}
+            self._drawn, self._drawing = [], None
+            self._refused_tool_use_ids = set()
+            self._message_usage = {}
+            # The interval is counted from here, not from the first delta: the
+            # first checkpoint of a turn lands one interval in, like every other.
+            self._checkpointed_at = time.monotonic()
+
+            self._worker = worker
         worker.start()
         return self._consume(outbox, worker)
 
@@ -524,8 +526,9 @@ class ClaudeAgentRuntime:
         Tool work already running is not unwound; `MathematicsSession.cancel`
         is where that limit is stated and kept.
         """
-        self._cancelled = True
-        loop, client = self._loop, self._client
+        with self._state_lock:
+            self._cancelled = True
+            loop, client = self._loop, self._client
         if loop is None or client is None or loop.is_closed():
             return
         # Suppressed rather than handled: the loop can stop between the check
@@ -613,11 +616,12 @@ class ClaudeAgentRuntime:
         await asyncio.wait({exchange})
 
     async def _exchange(self, text: str, outbox: queue.Queue) -> None:
-        if threading.current_thread() is not self._worker:
-            return
+        with self._state_lock:
+            if threading.current_thread() is not self._worker:
+                return
+            self.failure = None
+            self._loop = asyncio.get_running_loop()
         spoken: list[str] = []
-        self.failure = None
-        self._loop = asyncio.get_running_loop()
         checkpoints = asyncio.create_task(self._checkpoint_loop())
         try:
             await self._ask(text, outbox, spoken)
@@ -657,11 +661,11 @@ class ClaudeAgentRuntime:
         async with self._loaded().ClaudeSDKClient(options=self._options()) as client:
             # Cancellation may finish connecting after its caller has already
             # started another turn. Only the current worker owns these fields.
-            if threading.current_thread() is not self._worker:
-                return
-            # Published only once the client is connected: `cancel` reaches for
-            # it from another thread and must never find a half-built one.
-            self._client = client
+            with self._state_lock:
+                if threading.current_thread() is not self._worker:
+                    return
+                # Publish under the same lock that starts a new worker.
+                self._client = client
             try:
                 # Read after publishing the client, and before asking anything.
                 # Esc can land in the same input batch as the Enter that began
@@ -679,8 +683,9 @@ class ClaudeAgentRuntime:
                         for event in self._note(message, spoken):
                             outbox.put(event)
             finally:
-                if self._client is client:
-                    self._client = None
+                with self._state_lock:
+                    if self._client is client:
+                        self._client = None
 
     def _settle_drawn(self) -> str:
         """Text that was drawn and that no completed block ever superseded.
@@ -873,7 +878,13 @@ class ClaudeAgentRuntime:
             # number wearing the same name.
             self.turns = getattr(message, "num_turns", None)
             if getattr(message, "is_error", False):
-                self.failure = getattr(message, "subtype", None) or getattr(message, "result", None) or "unknown"
+                subtype = getattr(message, "subtype", None)
+                if subtype and subtype != "success":
+                    self.failure = subtype
+                else:
+                    status = getattr(message, "api_error_status", None)
+                    details = "; ".join(getattr(message, "errors", None) or []) or getattr(message, "result", None) or "unknown"
+                    self.failure = (f"api_error {status}: {details}" if status is not None else details)[:500]
             reported = _counts(getattr(message, "usage", None))
             own: dict[str, int] = {}
             for held in self._message_usage.values():
@@ -894,6 +905,8 @@ class ClaudeAgentRuntime:
                 # turn still resumes the same session (`_options`).
                 "usage": reported,
                 "is_error": getattr(message, "is_error", None),
+                **({"api_error_status": message.api_error_status} if getattr(message, "api_error_status", None) is not None else {}),
+                **({"errors": message.errors} if getattr(message, "errors", None) else {}),
                 # What this exchange's own messages moved, whether the report
                 # above states more than that, and the `modelUsage` counters
                 # that share the cost's lifecycle. Together they let the ledger
