@@ -47,10 +47,11 @@ from hardy.workflows.storage import RunStore
 # as a name here because readers and tests reach for it; `hardy.formal.audit` owns the
 # set, so the three surfaces cannot drift into disagreeing about it.
 ALLOWED_AXIOMS = audit.STANDARD
+_NOT_IDENT_BEFORE = r"(?<![\w'!?.«])"
+_NOT_IDENT_AFTER = r"(?![\w'!?»])"
 FORBIDDEN_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_-￿])"
-    r"(sorryAx|sorry|admit|axiom|opaque|by\?)"
-    r"(?![A-Za-z0-9_-￿])"
+    rf"{_NOT_IDENT_BEFORE}(sorryAx|sorry|admit|axiom|opaque){_NOT_IDENT_AFTER}"
+    rf"|{_NOT_IDENT_BEFORE}by\?"
 )
 # A word that starts a Lean command rather than continuing a term or a tactic
 # block. The proof body is pasted after `:=`, so a body holding one of these has
@@ -103,9 +104,9 @@ HASH_COMMANDS = frozenset({
 _BITVEC_WIDTH = 2
 ESCAPED_HOLE = re.compile(r"«\s*sorryAx\s*»")
 UNAUTHORIZED_SIGNATURE_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_-￿])"
-    r"(axiom|opaque|theorem|lemma|def|abbrev|example|instance|import|namespace|section|end)"
-    r"(?![A-Za-z0-9_-￿])"
+    _NOT_IDENT_BEFORE
+    + r"(axiom|opaque|theorem|lemma|def|abbrev|example|instance|import|namespace|section|end)"
+    + _NOT_IDENT_AFTER
 )
 
 

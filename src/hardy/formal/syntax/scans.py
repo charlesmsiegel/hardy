@@ -50,7 +50,7 @@ WRAPPER = r"(?:(?:set_option|open|attribute|universe|variable|section)\b[^\n]*?\
 # from the keyword; attributes before them change nothing here.
 DECLARATION_KINDS = frozenset({"theorem", "lemma"})
 _DECLARATION_NAME = re.compile(rf"(?:\s+|(?=«))({QUALIFIED_NAME})")
-_HEAD_MODIFIERS = frozenset({"private", "protected", "nonrec", "noncomputable"})
+_HEAD_MODIFIERS = frozenset({"private", "protected", "nonrec", "noncomputable", "public", "meta"})
 _LINE_PREFIX = re.compile(rf"[ \t]*{WRAPPER}")
 
 
@@ -155,7 +155,7 @@ def _keyword_matches(
 # a scanner blind to it let a quarantined name be declared under the one
 # spelling this feature mints.
 ASSUMPTION = re.compile(
-    rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
+    rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local|public|meta)\s+)*"
     rf"(?:axiom|constant|opaque)\s+({QUALIFIED_NAME})\s*:(.*)$"
 )
 # The keyword itself, for finding an axiom this pattern cannot read. The
@@ -311,7 +311,7 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
 # Repr for X` would declare `Repr`), which is the loose direction for it.
 ANY_DECLARATION = re.compile(
     rf"(?m)^[ \t]*{WRAPPER}(?:@\[[^\]]*\]\s*)*"
-    rf"((?:(?:private|protected|nonrec|noncomputable|partial|unsafe|local|scoped)\s+)*)"
+    rf"((?:(?:private|protected|nonrec|noncomputable|partial|unsafe|local|scoped|public|meta)\s+)*)"
     rf"(theorem|lemma|def|abbrev|axiom|structure|inductive|class|instance|opaque|constant)"
     rf"\s+({QUALIFIED_NAME})"
 )

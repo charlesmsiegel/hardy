@@ -7,7 +7,7 @@ A path from a tool argument is refused here rather than at the filesystem.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import PurePosixPath
 
 from hardy.formal.syntax.lexer import strip_comments
@@ -112,3 +112,8 @@ def internal_imports(source: str, known: Collection[str]) -> tuple[str, ...]:
     already resolves and which this module must not try to build.
     """
     return tuple(name for name in parse_imports(source) if name in known)
+
+
+def import_table(sources: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    """Parse each module once for a workspace graph and its external stamps."""
+    return {module: parse_imports(source) for module, source in sources.items()}
