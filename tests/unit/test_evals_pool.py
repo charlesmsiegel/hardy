@@ -234,3 +234,56 @@ def test_duplicate_labels_are_refused_explicitly(tmp_path):
     a = _board(tmp_path / "a", ids=["t"], run_digest="r", env_digest="e")
     with pytest.raises(pool.PoolRefused, match="label.*a.*twice"):
         pool.pool([a, a], problems_path=PROBLEMS, baseline_path=BASELINE)
+
+
+def test_cli_default_path_is_label_order_independent(tmp_path, monkeypatch):
+    import argparse
+
+    from hardy.app import evals as commands
+
+    _board(tmp_path / "boards" / "a", ids=["t"], run_digest="r", env_digest="e")
+    _board(tmp_path / "boards" / "b", ids=["u"], run_digest="r", env_digest="e")
+    monkeypatch.setattr(commands, "DEFAULT_POOLS", tmp_path / "pools")
+    args = argparse.Namespace(labels=["b", "a"], scoreboards=tmp_path / "boards",
+                              corpus=PROBLEMS, baseline=BASELINE, out=None)
+    assert commands.run_pool(args) == 0
+    out = tmp_path / "pools" / "a" / "pool.json"
+    before = out.read_bytes()
+    args.labels.reverse()
+    assert commands.run_pool(args) == 0
+    assert out.read_bytes() == before
+    assert not (tmp_path / "pools" / "b").exists()
+
+
+def test_cli_duplicate_labels_refuse_before_publication(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from hardy.app import evals as commands
+
+    _board(tmp_path / "boards" / "a", ids=["t"], run_digest="r", env_digest="e")
+    monkeypatch.setattr(commands, "DEFAULT_POOLS", tmp_path / "pools")
+    args = argparse.Namespace(labels=["a", "a"], scoreboards=tmp_path / "boards",
+                              corpus=PROBLEMS, baseline=BASELINE, out=None)
+    assert commands.run_pool(args) == 2
+    assert "duplicate scoreboard labels" in capsys.readouterr().err
+    assert not (tmp_path / "pools").exists()
+
+
+def test_cli_interrupted_pool_write_preserves_previous_output(tmp_path, monkeypatch):
+    import argparse
+
+    from hardy.app import evals as commands
+    from hardy.foundation import locking
+
+    _board(tmp_path / "boards" / "a", ids=["t"], run_digest="r", env_digest="e")
+    out = tmp_path / "pool.json"
+    out.write_bytes(b"previous result")
+    def interrupted(*args):
+        raise OSError("interrupted temporary write")
+    monkeypatch.setattr(locking.os, "fsync", interrupted)
+    args = argparse.Namespace(labels=["a"], scoreboards=tmp_path / "boards",
+                              corpus=PROBLEMS, baseline=BASELINE, out=out)
+    with pytest.raises(OSError, match="interrupted temporary write"):
+        commands.run_pool(args)
+    assert out.read_bytes() == b"previous result"
+    assert not any(path.name.startswith("tmp") for path in tmp_path.iterdir())
