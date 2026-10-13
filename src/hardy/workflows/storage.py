@@ -155,3 +155,12 @@ def _redact(value: Any) -> Any:
         return [_redact(item) for item in value]
     json.dumps(value)
     return value
+
+
+def artifact_paths(run_dir: Path) -> list[Path]:
+    """The exhaustive regular-file inventory published and checked for a run."""
+    return sorted(
+        (path for path in run_dir.rglob("*")
+         if path.is_file() and path.relative_to(run_dir).as_posix() != "manifest.json"),
+        key=lambda path: path.relative_to(run_dir).as_posix(),
+    )

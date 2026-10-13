@@ -3453,6 +3453,10 @@
     }
    ],
    [
+    "user.revision",
+    "awaiting_approval"
+   ],
+   [
     "workflow.transition",
     "formalizing",
     {

@@ -496,7 +496,7 @@ def test_transition_table_is_exact_and_never_skips_user_approval() -> None:
 
     expected = {
         domain.RunPhase.SETUP: {domain.RunPhase.FORMALIZING},
-        domain.RunPhase.FORMALIZING: {domain.RunPhase.AWAITING_APPROVAL},
+        domain.RunPhase.FORMALIZING: {domain.RunPhase.AWAITING_APPROVAL, domain.RunPhase.CANCELLED},
         domain.RunPhase.AWAITING_APPROVAL: {
             domain.RunPhase.FORMALIZING,
             domain.RunPhase.PROVING,

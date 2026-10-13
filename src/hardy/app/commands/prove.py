@@ -43,6 +43,10 @@ def run_prove(
         # failed run would bury it in a manifest.
         print(f"The declared assumptions could not be read: {error}")
         return 2
+    if config.provider_budget is not None:
+        print("Provider budgets are unsupported for staged prove/accept runs; "
+              "unset provider_budget or HARDY_PROVIDER_BUDGET for this command.")
+        return 2
     # Through `tui.prove`, which `/prove` uses too: the run directory a claim
     # lands in must not depend on which surface asked for it.
     from hardy.app.tui.prove import problem_slug

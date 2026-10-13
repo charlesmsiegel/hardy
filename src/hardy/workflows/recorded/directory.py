@@ -7,7 +7,11 @@ from pydantic import ValidationError
 
 from hardy.workflows.contracts import RunManifest
 from hardy.workflows.recorded.batch import validate_batch_consistency
-from hardy.workflows.recorded.staged import _live_staged_issues, validate_run_consistency
+from hardy.workflows.recorded.staged import (
+    _live_staged_issues,
+    _trajectory_events,
+    validate_run_consistency,
+)
 
 
 def validate_recorded_run(run_dir: Path) -> tuple[str, ...]:
@@ -20,7 +24,10 @@ def validate_recorded_run(run_dir: Path) -> tuple[str, ...]:
             manifest = RunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
         except ValidationError as error:
             return (f"manifest.json does not validate: {error.error_count()} error(s)",)
-        return tuple(validate_run_consistency(run_dir, manifest)) + tuple(_live_staged_issues(run_dir, manifest))
+        trajectory = run_dir / "trajectory.jsonl"
+        parsed = _trajectory_events(trajectory) if trajectory.exists() else ([], [])
+        return (validate_run_consistency(run_dir, manifest, _trajectory=parsed)
+                + tuple(_live_staged_issues(run_dir, manifest, _trajectory=parsed)))
     if (run_dir / "result.json").exists():
         return validate_batch_consistency(run_dir)
     # A staged run is written under `runs_root/<timestamp>-<slug>-<id>/`, so

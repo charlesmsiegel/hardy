@@ -53,6 +53,10 @@ def run_accept(args: argparse.Namespace) -> int:
         )
         return 0 if passed else 1
 
+    if config.provider_budget is not None:
+        print("Provider budgets are unsupported for staged prove/accept runs; "
+              "unset provider_budget or HARDY_PROVIDER_BUDGET for this command.")
+        return 2
     payload = json.loads(
         files("hardy.workflows").joinpath("acceptance_problems.json").read_text(encoding="utf-8")
     )
@@ -65,13 +69,13 @@ def run_accept(args: argparse.Namespace) -> int:
     ):
         print("The checked-in acceptance problem set is invalid.")
         return 2
+    workflow = build_prove_workflow(
+        config, config_path, backend=getattr(args, "backend", "claude")
+    )
     all_passed = True
     for problem in problems:
         problem_id = problem["id"]
         print(f"\nAcceptance problem: {problem_id}")
-        workflow = build_prove_workflow(
-            config, config_path, backend=getattr(args, "backend", "claude")
-        )
         manifest = workflow.run(
             ProveRequest(
                 text=problem["input"],
