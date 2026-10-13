@@ -328,3 +328,20 @@ def test_sigint_during_checkpoint_restore_finishes_before_next_turn(settings, mo
         assert old.sent == []
     finally:
         released.set()
+
+
+def test_forced_checkpoint_interrupt_exits_instead_of_reusing_old_session(settings):
+    from hardy.app.tui.commands import Command
+
+    async def forced_interrupt(ui, argument, state):
+        raise KeyboardInterrupt
+    session = FakeSession()
+    replies = iter(['/checkpoint restore abc', 'must not run'])
+    written = []
+    def read(prompt):
+        try:
+            return next(replies)
+        except StopIteration:
+            raise EOFError from None
+    assert plain.run(settings, session, registry=[Command('checkpoint', '', forced_interrupt)], read=read, out=written.append) == 0
+    assert session.sent == []

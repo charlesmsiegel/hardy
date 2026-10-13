@@ -229,6 +229,9 @@ def run(
                 state = asyncio.run(outcome.command.handler(ui, outcome.argument, state))
             except KeyboardInterrupt:
                 ui.write("Command interrupted.")
+                if outcome.command.name == "checkpoint":
+                    ui.write("Restart `hardy chat` before continuing from the checkpoint operation.")
+                    return 0
                 continue
             if state.queued_text is None:
                 continue

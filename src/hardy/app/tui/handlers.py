@@ -1218,6 +1218,9 @@ async def handle_checkpoint(ui: Ui, argument: str, state: State) -> State:
             return await _restore_checkpoint(ui, rest.strip(), state)
         name = argument.strip()
         checkpoint = await _finish_checkpoint(ui, asyncio.to_thread(checkpoints.save, paths, name=name))
+    except asyncio.CancelledError:
+        ui.write("Checkpoint operation stopped; leave and restart `hardy chat` before continuing.", style="error")
+        return dataclasses.replace(state, session=None, done=True)
     except (checkpoints.CheckpointError, layout.LayoutError, OSError) as error:
         ui.write(f"Checkpoint failed: {error}", style="error")
         return state
@@ -1250,6 +1253,8 @@ async def _finish_checkpoint(ui: Ui, operation):
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
+            if task.done():
+                raise
             if not notified:
                 ui.write("Checkpoint operation already started; finishing it before continuing.", style="warning")
                 notified = True
