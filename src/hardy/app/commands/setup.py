@@ -61,14 +61,15 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
     if not statuses["elan"].healthy:
         winget = shutil.which("winget")
         if winget:
-            print(
-                install_elan(
-                    winget=Path(winget),
-                    cwd=Path.cwd(),
-                    confirmer=confirmer,
-                    runner=run_process,
-                ).manual_instructions
+            outcome = install_elan(
+                winget=Path(winget),
+                cwd=Path.cwd(),
+                confirmer=confirmer,
+                runner=run_process,
             )
+            print(outcome.manual_instructions)
+            if outcome.status == "installed":
+                print("Open a new terminal to refresh PATH for the installed tools.")
         else:
             print(
                 "elan was not found. Install it with the platform installer under scripts/, "

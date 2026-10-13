@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import shlex
+import sys
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -640,7 +642,7 @@ def load(
     # what the layer accepts is enough to end that hunt.
     dropped = len(project_file) - len(project_values)
     if dropped:
-        print(f"ignoring {dropped} settings in {project_path}; a project config may only set: {', '.join(sorted(PROJECT_SETTINGS))}")
+        print(f"ignoring {dropped} settings in {project_path}; a project config may only set: {', '.join(sorted(PROJECT_SETTINGS))}", file=sys.stderr)
     values.update(project_values)
     origins.update({key: (f"{key} in {project_path}", True) for key in project_values})
     for key, variable in SETTINGS.items():
@@ -694,6 +696,11 @@ def load(
         lean_timeout = float(values.get("lean_timeout", DEFAULT_LEAN_TIMEOUT))
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
+
+    if isinstance(values.get("lean_timeout"), bool) or not math.isfinite(lean_timeout) or lean_timeout <= 0:
+        raise ValueError(
+            f"lean_timeout must be a finite, positive number of seconds, not {values.get('lean_timeout')!r}"
+        )
 
     def flag(key: str, default: bool) -> bool:
         """A boolean setting, spelled the way each layer can spell it.
@@ -763,9 +770,13 @@ def load(
     if cas_backend not in CAS_BACKENDS:
         raise ValueError(f"cas_backend must be one of {list(CAS_BACKENDS)}, not {cas_backend!r}")
 
+    lake = location("lake") or Path(DEFAULT_LAKE)
     return Config(
         model=str(values["model"]) if values.get("model") else DEFAULT_MODEL,
-        lean_command=command("lean_command", DEFAULT_LEAN_COMMAND),
+        lean_command=(
+            command("lean_command", DEFAULT_LEAN_COMMAND)
+            if "lean_command" in values else (str(lake), "env", "lean")
+        ),
         lean_project=location("lean_project"),
         lean_timeout=lean_timeout,
         latex_command=command("latex_command", DEFAULT_LATEX_COMMAND),
@@ -778,7 +789,7 @@ def load(
         faithfulness_model=(
             str(values["faithfulness_model"]) if values.get("faithfulness_model") else None
         ),
-        lake=location("lake") or Path(DEFAULT_LAKE),
+        lake=lake,
         elan=location("elan") or Path(DEFAULT_ELAN),
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
         tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),

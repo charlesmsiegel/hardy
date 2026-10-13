@@ -351,3 +351,19 @@ def test_setup_creates_and_records_the_shared_lean_project_outside_the_checkout(
     assert (shared / 'lakefile.toml').exists()
     assert config_module.load(config_path).lean_project == shared
     assert seen[0] is None and seen[-1] == shared
+
+
+@pytest.mark.parametrize('logged_in', [False, True])
+def test_claude_probe_checks_login(monkeypatch, logged_in):
+    from importlib import metadata
+
+    from hardy.app import claude_auth
+    setup = importlib.import_module('hardy.app.setup')
+    monkeypatch.setattr(metadata, 'version', lambda _: '1.0')
+    monkeypatch.setattr(setup.shutil, 'which', lambda _: '/bin/claude')
+    monkeypatch.setattr(claude_auth, 'check_login', lambda _: (
+        logged_in, 'signed in' if logged_in else 'not signed in; run claude login'))
+    ok, detail = setup.probe_claude()
+    assert ok is logged_in
+    if not logged_in:
+        assert 'claude login' in detail

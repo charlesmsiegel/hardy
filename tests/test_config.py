@@ -451,7 +451,9 @@ def test_a_project_config_says_how_many_settings_it_dropped(tmp_path: Path, caps
     )
     settings = config.load(tmp_path / "absent.toml", root=tmp_path)
     assert settings.model == config.DEFAULT_MODEL
-    said = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    said = captured.err
     assert "ignoring 1 settings" in said
     assert "may only set: project" in said
 
@@ -934,3 +936,29 @@ def test_a_bad_config_file_is_named_when_the_cli_reads_it(tmp_path: Path, capsys
     err = capsys.readouterr().err
     assert str(bad) in err
     assert "single quotes" in err
+
+
+@pytest.mark.parametrize('raw', ['nan', 'inf', '-inf', '0', '-5', 'true'])
+def test_lean_timeout_refuses_unusable_deadlines(tmp_path, raw):
+    with pytest.raises(ValueError, match='lean_timeout'):
+        config.load(write(tmp_path / 'config.toml', f'lean_timeout = {raw}\n'))
+
+
+def test_default_lean_command_uses_recorded_lake_verbatim(tmp_path):
+    lake = tmp_path / 'elan bin' / 'lake.exe'
+    settings = config.load(tmp_path / 'absent.toml', lake=str(lake))
+    assert settings.lean_command == (str(lake), 'env', 'lean')
+    explicit = config.load(tmp_path / 'absent.toml', lake=str(lake), lean_command=['lean', '--json'])
+    assert explicit.lean_command == ('lean', '--json')
+
+
+@pytest.mark.parametrize('raw', ['nan', 'inf', '-inf', '0', '-5'])
+def test_lean_timeout_environment_refuses_unusable_deadlines(tmp_path, monkeypatch, raw):
+    monkeypatch.setenv('HARDY_LEAN_TIMEOUT', raw)
+    with pytest.raises(ValueError, match='finite, positive number of seconds'):
+        config.load(tmp_path / 'absent.toml')
+
+
+@pytest.mark.parametrize('raw', ['"90"', '90.5'])
+def test_lean_timeout_accepts_positive_finite_seconds(tmp_path, raw):
+    assert config.load(write(tmp_path / 'config.toml', f'lean_timeout = {raw}\n')).lean_timeout > 0

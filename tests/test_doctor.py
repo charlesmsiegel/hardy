@@ -282,3 +282,22 @@ def test_the_codex_backend_is_asked_whether_it_is_signed_in(tmp_path: Path, proj
 
     login = named(checks, "codex login")
     assert not login.ok and "not signed in" in login.detail
+
+
+def test_recorded_lake_works_without_path(tmp_path, monkeypatch):
+    lake = fake_tool(tmp_path / 'elan bin', 'lake')
+    (tmp_path / 'lean').mkdir()
+    cfg = configuration(tmp_path, lean_command=(str(lake), 'env', 'lean'), lake=lake)
+    monkeypatch.setattr(doctor.shutil, 'which', lambda _: None)
+    checks = doctor.run_checks(cfg)
+    assert next(check for check in checks if check.name == 'lean').ok
+
+
+def test_windows_install_hints_name_setup_and_powershell(tmp_path, monkeypatch):
+    monkeypatch.setattr(doctor, 'os', types.SimpleNamespace(name='nt'))
+    monkeypatch.setattr(doctor.shutil, 'which', lambda _: None)
+    checks = doctor.run_checks(configuration(tmp_path))
+    for name in ('lean', 'latex'):
+        detail = next(check.detail for check in checks if check.name == name)
+        assert 'hardy setup' in detail
+        assert 'install-windows.ps1' in detail

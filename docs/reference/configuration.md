@@ -48,7 +48,7 @@ nothing.
 | --- | --- | --- | --- |
 | `model` | `HARDY_MODEL` | `claude-opus-5` | The model identity a run or session uses. |
 | `faithfulness_model` | `HARDY_FAITHFULNESS_MODEL` | unset, falls back to the run's own model | Who reads a formalization's translation back before proof search, on a thread of its own. |
-| `lean_command` | `HARDY_LEAN_COMMAND` | `lake env lean` | The command that elaborates a Lean file. A string is split into a program and its arguments the way the platform's own shell would (see [Windows paths](#windows-paths)); a TOML array (`["/opt/lean/bin/lean", "--json"]`) is taken as the argv verbatim. |
+| `lean_command` | `HARDY_LEAN_COMMAND` | the configured `lake`, followed by `env lean` | The command that elaborates a Lean file. A string is split into a program and its arguments the way the platform's own shell would (see [Windows paths](#windows-paths)); a TOML array (`["/opt/lean/bin/lean", "--json"]`) is taken as the argv verbatim. |
 | `lean_project` | `HARDY_LEAN_PROJECT` | unset | The Lake project whose imports Lean should resolve. Staged work (`prove`, a live `accept`, `evals baseline`/`run`) refuses to start without it. |
 | `lean_timeout` | `HARDY_LEAN_TIMEOUT` | `180` (seconds) | How long a single Lean call may run before it is treated as failed. |
 | `latex_command` | `HARDY_LATEX_COMMAND` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. Split the same way as `lean_command`, and a TOML array is accepted the same way. |
@@ -69,9 +69,10 @@ nothing.
 | `delegation_workers` | `HARDY_DELEGATION_WORKERS` | `4` | How many background delegation workers an interactive session runs at once. Each worker is its own provider context and its own computer algebra kernel; the pool is a slot count, not a spend limit, and the session's Lean-check and active-time ceilings are what every worker draws from. There is no upper bound here: the machine and the provider set it. |
 | `compute_detach_seconds` | `HARDY_COMPUTE_DETACH_SECONDS` | `10` (seconds) | How long a Lean check or save, a LaTeX check or save, or a computer algebra cell may hold an interactive turn before it is detached into a background job under `/jobs` and the turn goes on without it; the result reaches the model at its next turn. `0` disables detaching, so every such call blocks the turn until it finishes. |
 
-Five settings are constrained beyond their type, and a config file or
+Seven settings are constrained beyond their type, and a config file or
 environment value outside the constraint is refused where the file is read:
 
+- `lean_timeout` must be finite and strictly positive; booleans are refused.
 - `context_window` must be greater than `8192`. That is the largest reply the
   API transport will ask for, so a window at or below it would leave no room
   for a request even to be answered.
@@ -140,7 +141,8 @@ into tests that spend a real subscription or hit a live service, and
 
 `<root>/.hardy/config.toml` is committed with the checkout, and it may set
 only `project`. Every other key present there is dropped, with a line printed
-naming the file, the count dropped, and which keys the layer accepts.
+naming the file, the count dropped, and which keys the layer accepts. The notice
+goes to stderr, including during MCP stdio startup.
 
 The restriction is deliberate rather than an oversight: this file arrives
 with any clone, and Hardy runs the configured computer algebra executable

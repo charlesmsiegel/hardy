@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from uuid import UUID
@@ -247,7 +248,8 @@ def rank_premises(goal: str, limit: int = 10) -> PremiseRanking:
 
 
 def main() -> None:
-    load_runtime(os.environ)
+    with contextlib.redirect_stdout(sys.stderr):
+        load_runtime(os.environ)
     mcp.run(transport="stdio")
 
 

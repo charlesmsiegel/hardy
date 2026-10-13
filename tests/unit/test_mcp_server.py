@@ -305,3 +305,29 @@ async def test_the_loader_serves_cas_alone_before_a_claim_exists(tmp_path) -> No
         for name in ('lean_check_proof', 'lean_check_scratch', 'lean_inspect_declarations',
                      'lean_search_declarations', 'rank_premises'):
             server.mcp.add_tool(getattr(server, name))
+
+
+def test_mcp_main_redirects_setup_diagnostics_to_stderr(monkeypatch, capsys):
+    server = importlib.import_module('hardy.app.mcp')
+    monkeypatch.setattr(server, 'load_runtime', lambda _: print('setup notice'))
+    monkeypatch.setattr(server.mcp, 'run', lambda **_: None)
+    server.main()
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert captured.err == 'setup notice\n'
+
+
+
+def test_mcp_load_runtime_project_notice_never_reaches_stdout(tmp_path, monkeypatch, capsys):
+    server = importlib.import_module('hardy.app.mcp')
+    (tmp_path / '.hardy').mkdir()
+    (tmp_path / '.hardy' / 'config.toml').write_text('model = "ignored"\n')
+    config_path = tmp_path / 'global.toml'
+    config_path.write_text('')
+    monkeypatch.setenv('HARDY_ROOT', str(tmp_path))
+    monkeypatch.setattr(server, '_withdraw_lean_tools', lambda: None)
+    monkeypatch.setattr(server, '_serve_cas', lambda *_: None)
+    assert server.load_runtime({'HARDY_RUN_DIR': str(tmp_path), 'HARDY_CONFIG': str(config_path)}) is None
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ignoring 1 settings' in captured.err
