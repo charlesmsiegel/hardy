@@ -699,3 +699,48 @@ async def test_checkpoint_restore_asks_first_and_refuses_an_unknown_id(ui, root)
     same = await handlers.handle_checkpoint(ui, f"restore {saved.id}", state)
     assert same is state and "Nothing restored" in ui.text
     assert dispatch.classify("/checkpoint", handlers.build_registry(), turn_running=True).kind == "refused"
+
+
+@pytest.mark.parametrize('reopen_failure', [False, True])
+async def test_failed_checkpoint_restore_never_retains_closed_session(ui, root, monkeypatch, reopen_failure):
+    from hardy.workflows import checkpoints
+    _live_problem(root, 'sylow')
+    config = _settings(root, 'sylow')
+    saved = checkpoints.save(config.layout)
+    class Session:
+        closed = False
+        def close(self):
+            self.closed = True
+    old = Session()
+    opener = Reopener(root, fail=RuntimeError('open failed') if reopen_failure else None)
+    fresh = Session()
+    opener.session = fresh
+    state = State(config=config, session=old, reopen=opener)
+    def fail(*args):
+        raise OSError('disk full')
+    monkeypatch.setattr(checkpoints, 'restore', fail)
+    ui.confirmations = [True]
+    after = await handlers.handle_checkpoint(ui, f'restore {saved.id}', state)
+    assert old.closed
+    assert after.session is (None if reopen_failure else fresh)
+    assert 'Reopening sylow as it stands' in ui.text
+
+
+@pytest.mark.parametrize('operation', ['save', 'restore'])
+async def test_checkpoint_copy_runs_off_event_loop(ui, root, monkeypatch, operation):
+    import asyncio
+    import threading
+
+    from hardy.workflows import checkpoints
+    _live_problem(root, 'sylow')
+    config = _settings(root, 'sylow')
+    saved = checkpoints.save(config.layout)
+    loop_thread = threading.get_ident()
+    original = getattr(checkpoints, operation)
+    def copy(*args, **kwargs):
+        assert threading.get_ident() != loop_thread, 'checkpoint copy blocks the UI loop'
+        return original(*args, **kwargs)
+    monkeypatch.setattr(checkpoints, operation, copy)
+    state = State(config=config, session=object(), reopen=Reopener(root))
+    ui.confirmations = [True]
+    await asyncio.wait_for(handlers.handle_checkpoint(ui, f'restore {saved.id}' if operation == 'restore' else '', state), 5)

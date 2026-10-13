@@ -38,8 +38,6 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory, InMemoryHistory
-from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
-from prompt_toolkit.input.vt100_parser import _IS_PREFIX_OF_LONGER_MATCH_CACHE
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -87,14 +85,16 @@ _TURN_OVER = object()
 # `Keys` is a real `enum.Enum` -- extending it at runtime needs a third-party
 # dependency (`aenum`) this project does not otherwise carry.
 _SHIFT_ENTER = ""
-ANSI_SEQUENCES["\x1b[27;2;13~"] = _SHIFT_ENTER  # vt100/xterm modifyOtherKeys
-ANSI_SEQUENCES["\x1b[13;2u"] = _SHIFT_ENTER  # kitty keyboard protocol
-# The parser's own prefix-ambiguity cache is a lazily-filled, process-global
-# dict keyed by partial byte sequences. Clearing it forces every prefix to be
-# recomputed against the table above, rather than risking a stale answer some
-# earlier, unrelated parsing (in this process, or an earlier test) cached
-# before this module -- and the patch above -- had run.
-_IS_PREFIX_OF_LONGER_MATCH_CACHE.clear()
+try:
+    from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
+    from prompt_toolkit.input.vt100_parser import _IS_PREFIX_OF_LONGER_MATCH_CACHE
+except ImportError:
+    _SHIFT_ENTER_AVAILABLE = False
+else:
+    ANSI_SEQUENCES["\x1b[27;2;13~"] = _SHIFT_ENTER
+    ANSI_SEQUENCES["\x1b[13;2u"] = _SHIFT_ENTER
+    _IS_PREFIX_OF_LONGER_MATCH_CACHE.clear()
+    _SHIFT_ENTER_AVAILABLE = True
 
 STYLE = Style.from_dict(
     {
@@ -218,6 +218,8 @@ class Shell:
         # here so it lands after the banner, in the scrollback, where every
         # other startup line is.
         self._notices = tuple(notices)
+        if not _SHIFT_ENTER_AVAILABLE:
+            self._notices += ("Shift+Enter newline is unavailable with this prompt_toolkit; use a trailing backslash.",)
         self._input, self._output = input, output
         # Whether the turn currently running (if any) has been walked away
         # from with Esc. Read by `_run_turn` when its reply lands, so the
@@ -473,7 +475,10 @@ class Shell:
                 return [("class:hint", f"  /{found[0].name} {found[0].argument_hint}"[:limit])]
         # Exactly `_chrome_limit()` (38) at full width -- there is no room to
         # spare, so this is not the design doc's mock verbatim ("for newline").
-        return [("class:hint", "  / for commands · shift+enter newline"[:limit])]
+        hint = "  / for commands"
+        if _SHIFT_ENTER_AVAILABLE:
+            hint += " · shift+enter newline"
+        return [("class:hint", hint[:limit])]
 
     def write(self, text: str, *, style: str = "system") -> None:
         if style == "clear":
@@ -631,9 +636,10 @@ class Shell:
         # any longer match is even considered, so that window is gone.
         keys = KeyBindings()
 
-        @keys.add(_SHIFT_ENTER)
-        def _newline(event) -> None:
-            event.current_buffer.insert_text("\n")
+        if _SHIFT_ENTER_AVAILABLE:
+            @keys.add(_SHIFT_ENTER)
+            def _newline(event) -> None:
+                event.current_buffer.insert_text("\n")
 
         @keys.add("enter")
         def _submit_key(event) -> None:
@@ -1178,7 +1184,10 @@ class Shell:
         Skipped while suspended; the resume path (`in_terminal.__aexit__`,
         run_in_terminal.py:108-112) re-reads the size and repaints anyway.
         """
-        original = self._app._on_resize
+        original = getattr(self._app, "_on_resize", None)
+        if original is None:
+            self._notices += ("prompt_toolkit resize guard unavailable.",)
+            return
 
         def on_resize() -> None:
             if not self._app._running_in_terminal:

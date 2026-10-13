@@ -1217,7 +1217,7 @@ async def handle_checkpoint(ui: Ui, argument: str, state: State) -> State:
                 return state
             return await _restore_checkpoint(ui, rest.strip(), state)
         name = argument.strip()
-        checkpoint = checkpoints.save(paths, name=name)
+        checkpoint = await asyncio.to_thread(checkpoints.save, paths, name=name)
     except (checkpoints.CheckpointError, layout.LayoutError, OSError) as error:
         ui.write(f"Checkpoint failed: {error}", style="error")
         return state
@@ -1249,8 +1249,14 @@ async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
     cas = getattr(state.reopen, "cas", None)
     if cas is not None:
         cas.session.close()
-    restored, kept = checkpoints.restore(paths, chosen.id)
-    ui.write(f"Restored {restored.id}; what was there is kept as checkpoint {kept.id}.")
+    restored = None
+    try:
+        restored, kept = await asyncio.to_thread(checkpoints.restore, paths, chosen.id)
+    except (checkpoints.CheckpointError, layout.LayoutError, OSError) as error:
+        ui.write(f"Restore failed: {error}. Reopening {paths.slug} as it stands.", style="error")
+    else:
+        ui.write(f"Restored {restored.id}; what was there is kept as checkpoint {kept.id}.")
+    chat = restored.chat if restored is not None else paths.chat
     try:
         arm = getattr(state.reopen, "arm", None)
         if arm is not None:
@@ -1259,16 +1265,16 @@ async def _restore_checkpoint(ui: Ui, id: str, state: State) -> State:
         # checkpoint is the problem as it stood, and where the person was in
         # it is part of that. A reopen with no chat named would land on `main`.
         config, session = await asyncio.to_thread(
-            state.reopen, paths.slug, confirm_assumption(ui), state.config, chat=restored.chat
+            state.reopen, paths.slug, confirm_assumption(ui), state.config, chat=chat
         )
     except Exception as error:  # noqa: BLE001 - the tree is restored; the reopen is what failed
-        ui.write(f"Restored the tree but could not reopen {paths.slug}: {error}. "
+        ui.write(f"Could not reopen {paths.slug}: {error}. "
                  "Leave and start `hardy chat` again to continue from it.", style="error")
-        return state
+        return dataclasses.replace(state, session=None)
     if hasattr(session, "on_notice"):
         session.on_notice = lambda text: ui.write(f"Hardy: {text}")
-    if restored.chat != paths.chat:
-        ui.write(f"Reopened on chat {restored.chat}, where the checkpoint was taken.")
+    if chat != paths.chat:
+        ui.write(f"Reopened on chat {chat}, where the checkpoint was taken.")
     ui.write(f"  {status_line(config)}")
     return dataclasses.replace(state, config=config, session=session)
 

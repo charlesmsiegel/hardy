@@ -786,3 +786,25 @@ async def test_a_goal_that_cannot_be_saved_is_a_line_not_a_traceback(ui, setting
     assert await handlers.handle_goal(ui, "a new goal", state) is state
     assert "Could not save the goal" in ui.text
     assert "read-only file system" in ui.text
+
+
+def test_missing_resize_hook_keeps_shell_available(settings, monkeypatch):
+    from prompt_toolkit.application import Application
+    monkeypatch.delattr(Application, '_on_resize')
+    instance = shell.Shell(settings, None, handlers.build_registry())
+    assert any('resize guard unavailable' in notice for notice in instance._notices)
+
+
+def test_missing_vt100_private_tables_keeps_shell_importable(settings, monkeypatch):
+    import importlib.util
+
+    import prompt_toolkit.input.ansi_escape_sequences as sequences
+    import prompt_toolkit.input.vt100_parser as parser
+    monkeypatch.delattr(sequences, 'ANSI_SEQUENCES')
+    monkeypatch.delattr(parser, '_IS_PREFIX_OF_LONGER_MATCH_CACHE')
+    spec = importlib.util.spec_from_file_location('hardy.app.tui.shell_compat_test', shell.__file__)
+    isolated = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(isolated)
+    instance = isolated.Shell(settings, None, handlers.build_registry())
+    assert any('Shift+Enter newline is unavailable' in notice for notice in instance._notices)
+    assert 'shift+enter' not in str(instance._hint())

@@ -225,7 +225,11 @@ def run(
             ui.write(outcome.message, style="error")
             continue
         if outcome.kind == "command":
-            state = asyncio.run(outcome.command.handler(ui, outcome.argument, state))
+            try:
+                state = asyncio.run(outcome.command.handler(ui, outcome.argument, state))
+            except KeyboardInterrupt:
+                ui.write("Command interrupted.")
+                continue
             if state.queued_text is None:
                 continue
             # The handler asked for a turn: submitted here exactly as a typed line would be.

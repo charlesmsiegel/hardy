@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from collections.abc import Callable
@@ -75,6 +76,11 @@ def run_session(
         # active one is reopened instead -- bound, this time, to the approval
         # gate of the `Ui` that is about to exist rather than the one that has
         # just failed.
+        live_session = shell.state.session if shell is not None else None
+        close = getattr(live_session, "close", None)
+        if close is not None:
+            with contextlib.suppress(Exception):
+                close()
         live = shell.state.config if shell is not None else config
         if reopen is not None and live.layout.problem != config.layout.problem:
             return _run_plain(
