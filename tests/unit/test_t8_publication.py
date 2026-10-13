@@ -134,7 +134,10 @@ def test_source_revision_handles_utf8_git_output_in_ascii_locale(tmp_path):
     subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "--allow-empty", "-m", "fixture"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(repo), "config", "core.quotepath", "false"], check=True)
-    (repo / "notes-ℝ.md").write_bytes(b"fixture")
+    # Bytes name also permits constructing the fixture when this test itself
+    # runs with an ASCII filesystem codec on POSIX. Git emits UTF-8 either way.
+    with open(os.fsencode(repo) + b"/notes-\xe2\x84\x9d.md", "wb") as stream:
+        stream.write(b"fixture")
     script = "from pathlib import Path; from hardy.evals import runner; runner._source_anchor=lambda: Path(" + ascii(str(repo)) + "); print(runner.source_revision())"
     result = subprocess.run([sys.executable, "-X", "utf8=0", "-c", script], env={**os.environ, "LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}, capture_output=True, encoding="utf-8")
     assert result.returncode == 0, result.stderr
