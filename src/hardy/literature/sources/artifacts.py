@@ -167,7 +167,7 @@ class ArtifactStore:
         if not directory.is_dir() or directory.is_symlink():
             return ()
         records = []
-        for child in sorted(directory.iterdir()):
+        for child in sorted(directory.iterdir(), key=lambda p: p.relative_to(directory).as_posix()):
             if child.suffix != ".json" or child.is_symlink():
                 continue
             records.append(ImportProvenance.model_validate_json(read_text(self.root, f"{sha256}/{PROVENANCE_DIR}/{child.name}")))

@@ -50,11 +50,11 @@ def fixture_set_digest(resolved: tuple[str, ...]) -> str:
 def prompt_digest(*, statement: str, input: str, expected: str, twin_of: str | None) -> str:
     """Governs the B-group.
 
-    `input` reaches the model as `informal_claim` (`runner.py:252`), so
+    `input` reaches the model as `informal_claim` in `evals.runner.run_set`, so
     rewording it can change solve behaviour while the Lean is untouched.
     `expected` and `twin_of` *shape the run* rather than describe it: under a
     staged condition true entries run staged and twins run batch under separate
-    limits (`runner.py:219-225`).
+    limits in `evals.runner.run_set`.
     """
     return _digest("prompt", [statement, input, expected, twin_of])
 

@@ -56,7 +56,7 @@ def matching_boards(scoreboards_root: Path, *, key: tuple[str | None, str]) -> l
     if not scoreboards_root.exists():
         return []
     matched: list[str] = []
-    for board_path in sorted(scoreboards_root.glob("*/scoreboard.json")):
+    for board_path in sorted(scoreboards_root.glob("*/scoreboard.json"), key=lambda p: p.relative_to(scoreboards_root).as_posix()):
         try:
             board = json.loads(board_path.read_text(encoding="utf-8"))
             condition = board.get("condition") or {}

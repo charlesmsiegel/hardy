@@ -181,7 +181,7 @@ def _manifest(root: Path, profile: Profile, benchmark: str, revision: str, diges
         if not (root / name).is_file():
             issues.append(f"missing local support source: {name}")
     for pattern in profile.inputs:
-        paths = sorted(root.glob(pattern))
+        paths = sorted(root.glob(pattern), key=lambda p: p.relative_to(root).as_posix())
         if not paths:
             issues.append(f"missing benchmark input: {pattern}")
         for path in paths:

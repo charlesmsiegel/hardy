@@ -251,11 +251,11 @@ def _prompt_set_payload() -> dict[str, str]:
     enumerates the directory rather than trusting this list.
 
     The other templates stay out, and that is a decision rather than an
-    oversight. `chat`, `chat_cas` and `cas_spill` serve an interactive session,
+    oversight. `chat` and `chat_cas` serve an interactive session,
     which is not a comparable experimental unit and writes no manifest.
     `batch/system` and `batch/task` do govern graded runs, but the one-shot
-    batch runner (`src/hardy/runner.py`) records no prompt-set hash at all (it
-    writes `provenance()`, which is model and endpoint), so there is no field
+    batch workflow (`src/hardy/workflows/batch.py`) records no prompt-set
+    hash at all (it writes `provenance()`, which is model and endpoint), so there is no field
     for their absence to falsify; folding them in here would instead churn the
     staged hash for edits no staged run ever saw. The evals set runner does
     record a hash over what it actually sends in batch mode, but as its own
@@ -263,7 +263,7 @@ def _prompt_set_payload() -> dict[str, str]:
 
     One asymmetry this does not close, recorded so it is not mistaken for
     coverage: the Codex backend hands the response schema to the SDK as
-    `output_schema` (`codex_runtime.py:117`) and never appends
+    `output_schema` in `agents.providers.codex_turn` and never appends
     `STRUCTURE_INSTRUCTION`, so a `--backend codex` run records a hash over a
     template it was not sent, and `RunManifest` carries no backend field to
     tell the two apart. That is the conservative direction of the same error --

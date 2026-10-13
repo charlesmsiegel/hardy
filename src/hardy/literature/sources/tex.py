@@ -77,7 +77,7 @@ def pack_directory(directory: Path, *, limits: archives.Limits = archives.DEFAUL
     if not root.is_dir() or root.is_symlink():
         raise ExtractionRefused(f"{root} is not a directory")
     members: list[tuple[str, Path]] = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
         relative = path.relative_to(root).as_posix()
         if any(part in {".git", ".hg", ".svn", "__pycache__"} for part in path.relative_to(root).parts):
             continue

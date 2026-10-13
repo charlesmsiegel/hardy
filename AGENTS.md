@@ -112,7 +112,8 @@ exactly when the edits that move them land:
 
 - Editing any of the deciding sources named in `src/hardy/evals/sweep.py`
   (the sweep itself, `formal/audit.py`, `formal/lean.py`, every module in
-  `formal/syntax/`, `corpus/problems.py`, `corpus/identity.py`) moves
+  `formal/syntax/`, `corpus/problems.py`, `corpus/identity.py`, `formal/contracts.py`, `foundation/process.py`, and
+`foundation/truncation.py`) moves
   `procedure_digest` and makes the whole tier file non-reusable; the next sweep
   re-elaborates every entry.
 - Editing anything under `src/hardy/` not excluded by the denylist in

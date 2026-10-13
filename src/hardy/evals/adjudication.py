@@ -77,7 +77,7 @@ class ReviewAudit(FrozenModel):
 
 def _artifacts(guard: WriteGuard) -> tuple[Artifact, ...]:
     artifacts = []
-    for path in sorted(guard.directory.rglob("*")):
+    for path in sorted(guard.directory.rglob("*"), key=lambda p: p.relative_to(guard.directory).as_posix()):
         if path.is_symlink():
             raise ValueError(f"artifact is a symbolic link: {path}")
         if not path.is_file():

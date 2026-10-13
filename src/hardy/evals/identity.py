@@ -31,6 +31,10 @@ RUN_SOURCE_EXCLUDED_FILES = frozenset({
     "cli.py",
     "app/cli.py",        # argument parsing; construction lives in wiring.py
     "app/corpus_viewer.py",    # the corpus review viewer
+    # Interactive UI, installation and registry adapters: the fresh-process
+    # run import-closure regression establishes these are not loaded.
+    "app/terminal.py", "app/setup.py", "app/library.py", "app/projects.py",
+    "app/project_registry.py", "app/mcp.py", "app/installers.py", "app/catalog.py",
     "evals/summary.py",   # reads finished boards; cannot reach a run
     "evals/compare.py",   # reads paired finished boards; cannot reach a run
     "evals/history.py",   # orders audited finished boards; cannot reach a run
@@ -38,13 +42,15 @@ RUN_SOURCE_EXCLUDED_FILES = frozenset({
 # `app/commands/` holds the command adapters `app/cli.py` dispatches to, moved
 # out of it whole: excluded for the reason `app/cli.py` is, and checked the
 # same way -- no module the digest covers may import one.
-RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/", "app/commands/")
+RUN_SOURCE_EXCLUDED_DIRS = ("app/tui/", "app/commands/", "app/web/")
 
 
 def run_source_paths() -> tuple[Path, ...]:
-    """Every module whose bytes can change what a run does, in a stable order."""
+    """Run code and prompt templates, ordered by portable relative names."""
     found = []
-    for path in RUN_SOURCE_ROOT.rglob("*.py"):
+    for path in RUN_SOURCE_ROOT.rglob("*"):
+        if not path.is_file() or not (path.suffix == ".py" or (path.suffix == ".j2" and path.relative_to(RUN_SOURCE_ROOT).as_posix().startswith("prompts/"))):
+            continue
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(RUN_SOURCE_ROOT).as_posix()
@@ -67,9 +73,8 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
     tell that two measurements came from the same code.
 
     The prompt-set hashes stay separate keys rather than folding into
-    `source`, so a changed digest says which input moved. They cover template
-    *text* only -- never the `prompts/` code that renders it, which
-    `run_source_paths` picks up.
+    `source`, so a changed digest says which input moved. They identify named template sets; `run_source_paths` additionally covers
+    every packaged prompt template and the code that renders it.
 
     `repeats` is part of the key, not provenance beside it. The bar a pool
     has to clear is that the combined result be indistinguishable from one
@@ -82,7 +87,8 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
 
     return digests.procedure_digest({
         "hardy_version": __version__,
-        "source": [digests.source_digest(p.read_bytes()) for p in run_source_paths()],
+        "source_identity_scheme": "named-code-and-templates-v2",
+        "source": {p.relative_to(RUN_SOURCE_ROOT).as_posix(): digests.source_digest(p.read_bytes()) for p in run_source_paths()},
         "staged_prompt_set_sha256": PROMPT_SET_SHA256,
         "batch_prompt_set_sha256": BATCH_PROMPT_SET_SHA256,
         "model": model,

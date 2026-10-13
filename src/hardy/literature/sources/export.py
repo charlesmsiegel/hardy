@@ -87,7 +87,7 @@ def _copy(source: Path, into: Path, relative: str, files: list[tuple[str, str]])
 def _copy_tree(root: Path, into: Path, prefix: str, files: list[tuple[str, str]], *, suffixes: tuple[str, ...] = (".json",)) -> None:
     if not root.is_dir():
         return
-    for path in sorted(root.rglob("*")):
+    for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
         if path.is_file() and not path.is_symlink() and path.suffix in suffixes and not path.name.endswith(".lock"):
             _copy(path, into, f"{prefix}/{path.relative_to(root).as_posix()}", files)
 
@@ -233,7 +233,7 @@ def _import_journal(root: Path, bundle: Path, owner: str, entries: list[tuple[st
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staging, target)
             return None
-        for path in sorted(staging.iterdir()):
+        for path in sorted(staging.iterdir(), key=lambda p: p.relative_to(staging).as_posix()):
             os.replace(path, target / path.name)
         return None
     finally:
