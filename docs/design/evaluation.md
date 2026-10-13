@@ -638,7 +638,10 @@ further semantic defects or hidden dependencies.
 
 The environment compatibility scheme `host-compatibility-v2` binds the Lean
 identity and the host system, architecture, processor and CPU count. Full kernel
-and libc version strings remain recorded host provenance and do not govern reuse.
+and libc version strings remain recorded host provenance and do not govern reuse
+for hosts marked `environment_identity_scheme: host-compatibility-v2`. Historical
+unmarked hosts retain their exact recorded-host digest, including platform
+detail. Reading old evidence never upgrades its compatibility scheme.
 The named code and template source scheme is `named-code-and-templates-v2`.
 These scheme changes require new measurements; historical evidence is never
 restamped.
