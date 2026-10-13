@@ -56,7 +56,7 @@ and `live` markers declared in `pyproject.toml`.
 They are the default: a bare `pytest -m "not real_toolchain and not live"`
 runs only these. CI's `Tests` workflow runs them with coverage on Ubuntu, for
 every push to `main` and every pull request, then lints with ruff, and for pull
-requests also checks any corpus release against the merge base. A non-blocking
+requests also checks any corpus release against the merge base. A blocking
 hermetic suite also runs on Windows.
 
 **Real toolchain** tests invoke a real installed binary: Lean, Tectonic,
@@ -186,7 +186,20 @@ version fail to verify.
 
 A release is cut by pushing a tag matching `v<version>`, where `<version>` is
 the `project.version` declared in `pyproject.toml`; the `Release` workflow
-refuses to publish when the tag and the declared version disagree. It builds
+refuses to publish when the tag and the declared version disagree. Before
+publishing, it resolves the existing tag to one commit and requires the
+`Tests` and `Installers` workflows to pass on that exact commit. This gate
+includes the Ubuntu and Windows hermetic suites, lint, the installed-wheel
+packaging smoke, and the native Linux, macOS, and Windows installer matrix.
+Windows installers run through Windows PowerShell 5.1. A failing or skipped
+gate prevents release creation and asset upload. A manual dispatch checks the
+requested tag rather than the workflow branch, and a tag that moves during
+the checks is refused. A manual dispatch defaults to a dry run, which runs
+the same gates and builds the assets without publishing. Its optional
+`candidate-ref` checks a commit or branch without needing a release tag;
+that override is refused when publishing is enabled. A failed candidate
+skips the dependent publish job, so failure gating can be exercised without
+creating a release. It builds
 the wheel and source distribution, bundles `scripts/` into
 `hardy-installers.tar.gz` so a standalone installer can fetch the rest of
 itself, and publishes all three alongside a `SHA256SUMS` manifest as four
