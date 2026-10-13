@@ -139,3 +139,170 @@ def test_late_interrupt_failure_cannot_write_after_the_turn_returns():
         assert any(e[0] == 'codex.interrupt_pending' for e in events)
     finally:
         release.set()
+
+
+def test_handle_published_after_deadline_is_interrupted_when_caller_was_descheduled(monkeypatch):
+    from hardy.agents import codex
+
+    clock = [0.0]
+    entered = threading.Event()
+    released = threading.Event()
+    interrupted = threading.Event()
+    calls = []
+
+    class Handle:
+        def stream(self):
+            entered.set()
+            released.wait(2)
+            return iter(())
+
+        def interrupt(self):
+            calls.append('interrupt')
+            interrupted.set()
+            released.set()
+
+    def turn(*args, **kwargs):
+        clock[0] = 2.0  # startup finishes after the one-second deadline
+        return Handle()
+
+    original_start = threading.Thread.start
+
+    def descheduled_start(worker):
+        original_start(worker)
+        if worker.name == 'hardy-codex-turn':
+            # Caller resumes only after the late handle was queued and the
+            # stream entered; no real sleeps or scheduling guesses.
+            assert entered.wait(1)
+
+    monkeypatch.setattr(codex, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(threading.Thread, 'start', descheduled_start)
+    rt, events = runtime()
+    thread = AgentThread(SimpleNamespace(turn=turn), wall_seconds=1)
+    try:
+        with pytest.raises(TimeoutError):
+            rt.run_structured(thread, 'proof', 'p', Answer)
+        assert interrupted.wait(1), 'the rejected late handle must remain reachable for cancellation'
+        assert calls == ['interrupt']
+        assert thread.active_turn is None
+        assert any(event[0] == 'codex.interrupt_requested' for event in events)
+    finally:
+        released.set()
+
+
+def test_handle_created_after_caller_returns_is_interrupted_once_without_late_journaling(monkeypatch):
+    from hardy.agents import codex
+
+    started = threading.Event()
+    create_handle = threading.Event()
+    interrupted = threading.Event()
+    interrupt_done = threading.Event()
+    release_interrupt = threading.Event()
+    calls = []
+
+    class Handle:
+        def stream(self):
+            pytest.fail('an abandoned startup must not open the stream')
+
+        def interrupt(self):
+            calls.append('interrupt')
+            interrupted.set()
+            try:
+                assert release_interrupt.wait(2)
+                raise RuntimeError('late transport failure')
+            finally:
+                interrupt_done.set()
+
+    def turn(*args, **kwargs):
+        started.set()
+        assert create_handle.wait(2)
+        return Handle()
+
+    original_queue = codex.queue.Queue
+
+    class DeadlineQueue(original_queue):
+        def get(self, *args, **kwargs):
+            assert started.wait(1)
+            raise codex.queue.Empty
+
+    monkeypatch.setattr(codex, 'queue', SimpleNamespace(Queue=DeadlineQueue, Empty=codex.queue.Empty))
+    rt, events = runtime()
+    thread = AgentThread(SimpleNamespace(turn=turn), wall_seconds=1)
+    try:
+        with pytest.raises(TimeoutError):
+            rt.run_structured(thread, 'proof', 'p', Answer)
+        saved = list(events)
+        create_handle.set()
+        assert interrupted.wait(1)
+        assert calls == ['interrupt']
+        release_interrupt.set()
+        assert interrupt_done.wait(1)
+        assert events == saved
+        assert thread.active_turn is None
+    finally:
+        create_handle.set()
+        release_interrupt.set()
+
+
+@pytest.mark.parametrize('failed_write', ['event', 'deadline_request'])
+def test_journal_failure_preserves_error_and_interrupts_abandoned_handle_once(monkeypatch, failed_write):
+    from hardy.agents import codex
+
+    entered = threading.Event()
+    release = threading.Event()
+    interrupted = threading.Event()
+    ended = threading.Event()
+    calls = []
+    failure = OSError('disk full')
+
+    class Handle:
+        def stream(self):
+            try:
+                entered.set()
+                if failed_write == 'event':
+                    yield {'method': 'item/completed', 'payload': {}}
+                assert release.wait(2)
+            finally:
+                ended.set()
+
+        def interrupt(self):
+            calls.append('interrupt')
+            interrupted.set()
+            release.set()
+
+    if failed_write == 'deadline_request':
+        original_queue = codex.queue.Queue
+
+        class DeadlineQueue(original_queue):
+            def get(self, *args, **kwargs):
+                assert entered.wait(1)
+                raise codex.queue.Empty
+
+        monkeypatch.setattr(codex, 'queue', SimpleNamespace(Queue=DeadlineQueue, Empty=codex.queue.Empty))
+
+    def append(*args, **kwargs):
+        raise failure
+
+    rt = CodexRuntime(client=None, store=SimpleNamespace(append=append), config_path=None)
+    thread = AgentThread(SimpleNamespace(turn=lambda *a, **k: Handle()), wall_seconds=1)
+    try:
+        with pytest.raises(OSError) as caught:
+            rt.run_structured(thread, 'proof', 'p', Answer)
+        assert caught.value is failure
+        assert interrupted.wait(1), 'journal failure must not bypass provider cleanup'
+        assert ended.wait(1)
+        rt.cancel(thread)
+        assert calls == ['interrupt']
+        assert thread.active_turn is None
+    finally:
+        release.set()
+
+
+def test_normally_completed_stream_does_not_request_interruption():
+    calls = []
+    handle = SimpleNamespace(
+        stream=lambda: iter([{'payload': {'item': {'type': 'agentMessage', 'text': '{"a":1}'}}}]),
+        interrupt=lambda: calls.append('interrupt'),
+    )
+    rt, _ = runtime()
+    assert rt.run_structured(AgentThread(SimpleNamespace(turn=lambda *a, **k: handle)), 'proof', 'p', Answer) == Answer(a=1)
+    assert calls == []

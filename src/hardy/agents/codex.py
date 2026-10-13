@@ -198,20 +198,43 @@ class CodexRuntime:
         phase = _phase_for_stage(stage)
         outbox: queue.Queue = queue.Queue()
         abandoned = threading.Event()
+        publication = threading.Lock()
+        published_handle = None
+        interrupt_claimed = False
         handle = None
         final_response: T | None = None
         malformed = False
 
+        def start_interrupt(sdk_handle: Any) -> tuple[threading.Thread, list[str]]:
+            # Daemons never journal: the caller can return and seal the run
+            # while SDK startup or interruption is still blocked.
+            failures: list[str] = []
+
+            def interrupt() -> None:
+                try:
+                    sdk_handle.interrupt()
+                except Exception as error:
+                    failures.append(str(error))
+
+            worker = threading.Thread(target=interrupt, name="hardy-codex-interrupt", daemon=True)
+            worker.start()
+            return worker, failures
+
         def pump() -> None:
+            nonlocal published_handle, interrupt_claimed
             # Both SDK startup and stream reads can block. Only this daemon
             # touches the SDK; the caller owns the deadline and the record.
             try:
                 sdk_handle = thread.sdk_thread.turn(
                     prompt, output_schema=output_type.model_json_schema()
                 )
-                if abandoned.is_set():
-                    with contextlib.suppress(Exception):
-                        sdk_handle.interrupt()
+                with publication:
+                    published_handle = sdk_handle
+                    late = abandoned.is_set()
+                    if late:
+                        interrupt_claimed = True
+                if late:
+                    start_interrupt(sdk_handle)
                     return
                 outbox.put(("handle", sdk_handle, time.monotonic()))
                 for event in sdk_handle.stream():
@@ -225,6 +248,8 @@ class CodexRuntime:
 
         threading.Thread(target=pump, name="hardy-codex-turn", daemon=True).start()
         expired = False
+        stream_finished = False
+        interruption = None
         try:
             while True:
                 remaining = None if deadline is None else max(0, deadline - time.monotonic())
@@ -254,24 +279,28 @@ class CodexRuntime:
                 elif kind == "error":
                     raise value
                 else:
+                    stream_finished = True
                     break
         finally:
-            abandoned.set()
+            with publication:
+                abandoned.set()
+                interrupt_handle = None
+                if not stream_finished and published_handle is not None and not interrupt_claimed:
+                    interrupt_claimed = True
+                    interrupt_handle = published_handle
+            # Cleanup must not depend on optional record writes: event
+            # processing can fail while the SDK stream is still blocked, and
+            # the deadline's own journal writes can fail as well.
+            if interrupt_handle is not None:
+                interruption = start_interrupt(interrupt_handle)
             if thread.active_turn is handle:
                 thread.active_turn = None
         if expired:
-            if handle is not None:
-                failures: list[str] = []
-                def interrupt() -> None:
-                    try:
-                        handle.interrupt()
-                    except Exception as error:
-                        failures.append(str(error))
+            if interruption is not None:
                 # A transport's interrupt may itself stall. Wait only briefly
                 # for its outcome; the daemon never writes to the run record.
                 self._store.append("codex.interrupt_requested", {}, phase=phase)
-                interrupter = threading.Thread(target=interrupt, name="hardy-codex-interrupt", daemon=True)
-                interrupter.start()
+                interrupter, failures = interruption
                 interrupter.join(timeout=0.01)
                 if failures:
                     self._store.append("codex.interrupt_failed", {"error": failures[0]}, phase=phase)
