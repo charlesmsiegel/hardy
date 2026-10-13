@@ -95,3 +95,33 @@ def test_a_merged_singular_banner_after_unterminated_stdout_is_recognised() -> N
     assert backend_for("singular").classify(
         "progress...   ? undefined symbol\n"
     ) == "error"
+
+
+def test_long_clean_macaulay2_output_is_classified_within_a_bound():
+    """A normal captured line must not trigger retries from every character.
+
+    Isolate classification so a regression cannot freeze pytest itself. The
+    generous process deadline includes interpreter startup; the input is only
+    one quarter of the default capture limit.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "from hardy.algebra.backends import Macaulay2Backend; assert Macaulay2Backend().classify('x' * 65536) == 'ok'"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("prefix", ["stdio", "helper.m2", "/tmp/with spaces/helper.m2", "progress...helper.m2"])
+@pytest.mark.parametrize("depth", ["", ":[1]"])
+def test_macaulay2_source_prefixes_keep_supported_error_banners(prefix, depth):
+    assert backend_for("macaulay2").classify(f"{prefix}:3:1:(3){depth}: error: x") == "error"
+
+
+@pytest.mark.parametrize("prefix", ["", "\n", "\r"])
+def test_macaulay2_banner_requires_a_source_before_its_position(prefix):
+    assert backend_for("macaulay2").classify(f"{prefix}:3:1:(3): error: x") == "ok"
