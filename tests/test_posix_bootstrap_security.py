@@ -261,12 +261,14 @@ def test_uninstall_preserves_unrelated_shared_prefix_tools(tmp_path):
 def test_real_backend_auth_checks_are_advisory_but_sdk_failure_is_binding(backend, sdk_present, tmp_path):
     import sys
 
+    from hardy.app import doctor
+
     venv = tmp_path / 'prefix/venv'
     (venv / 'bin').mkdir(parents=True)
     worker = venv / 'bin/python'
     worker.write_text('#!' + sys.executable + '\n'
                       'import builtins, sys\nfrom types import SimpleNamespace\n'
-                      'from hardy.app import doctor\n'
+                      'from hardy.app import doctor\nfrom hardy.foundation.process import GuardedResult\n'
                       f'sdk = "anthropic" if {backend!r} == "api" else "claude_agent_sdk"\n'
                       f'if {sdk_present!r}: sys.modules[sdk] = SimpleNamespace(__version__="test")\n'
                       'original_import = builtins.__import__\n'
@@ -275,7 +277,7 @@ def test_real_backend_auth_checks_are_advisory_but_sdk_failure_is_binding(backen
                       ' return original_import(name, *args, **kwargs)\n'
                       'builtins.__import__ = checked_import\n'
                       'doctor.shutil.which = lambda _: "/test/claude"\n'
-                      'doctor.run_guarded = lambda *args, **kwargs: SimpleNamespace(interrupted=False, timed_out=False, stdout=\'{"loggedIn": false}\')\n'
+                      'doctor.run_guarded = lambda *args, **kwargs: GuardedResult(returncode=0, stdout=\'{"loggedIn": false}\')\n'
                       'doctor.run_checks = lambda config: doctor._backend_checks(config.backend)\n'
                       'program=sys.argv[2]; sys.argv=sys.argv[2:]; exec(program)\n')
     worker.chmod(0o755)
@@ -283,7 +285,7 @@ def test_real_backend_auth_checks_are_advisory_but_sdk_failure_is_binding(backen
     config.write_text(f'backend = "{backend}"\n')
     environment = {key: value for key, value in os.environ.items() if key not in {'ANTHROPIC_API_KEY', 'HARDY_BACKEND'}}
     environment.update(HOME=str(tmp_path), HARDY_HOME=str(tmp_path / 'prefix'), HARDY_CONFIG=str(config),
-                       PYTHONPATH=str(SCRIPTS.parent / 'src'))
+                       PYTHONPATH=str(Path(doctor.__file__).resolve().parents[2]))
     result = subprocess.run(['bash', '-c', '. "$1"; verify', 'test', str(SCRIPTS / 'lib/common.sh')],
                             env=environment, capture_output=True, text=True, timeout=15)
     assert result.returncode == (0 if sdk_present else 1), result.stdout + result.stderr
