@@ -310,7 +310,8 @@ def fake_lean(session, monkeypatch):
 
     fake = Fake()
     monkeypatch.setattr(session, "_run_lean_source", fake)
-    # The automation probe runs through its own entry point, with no workspace
-    # LEAN_PATH; the same fake answers both, and `sources` records every call.
+    # Admission and automation probes use the isolated entry point without
+    # workspace LEAN_PATH; workspace checks still need the ordinary runner.
+    # The same fake answers both, and `sources` records every call.
     monkeypatch.setattr(session, "_probe_lean_source", fake)
     return fake
