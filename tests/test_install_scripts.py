@@ -2048,7 +2048,7 @@ def test_windows_tectonic_uses_effective_toml_settings(tmp_path, monkeypatch, ca
         assert outcome['latex_env']
 
 
-@pytest.mark.parametrize('function_name', ['Install-Tectonic', 'Test-Installation'])
+@pytest.mark.parametrize('function_name', ['Install-Tectonic', 'Test-Installation', 'Write-Config'])
 def test_windows_python_probe_uses_stdin_for_ps51_quotes(function_name):
     source = POWERSHELL_SCRIPT.read_text()
     function = source.split('function ' + function_name + ' {', 1)[1].split('\nfunction ', 1)[0]
@@ -2079,7 +2079,8 @@ sys.modules["hardy.app.installers"] = installers
         require_ps51=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert ('pending login' if function_name == 'Test-Installation' else 'tectonic.exe') in result.stdout
+    expected = {'Test-Installation': 'pending login', 'Install-Tectonic': 'tectonic', 'Write-Config': 'recorded lean_project'}
+    assert expected[function_name] in result.stdout
     assert "-InputObject $program" in source
     assert "(@('-') + $advisory) -InputObject $program" in source
 
@@ -2187,3 +2188,32 @@ def test_windows_auth_policy_uses_real_api_doctor_checks(tmp_path, monkeypatch, 
     output = capsys.readouterr().out
     assert 'ANTHROPIC_API_KEY' in output
     assert 'claude login' not in output
+
+
+@posix_only
+@pytest.mark.parametrize('existing', ['existing project', ''])
+def test_windows_write_config_upserts_quoted_lean_project(tmp_path, existing):
+    import json
+    import shlex
+
+    from hardy.app.config import read_file
+
+    venv = tmp_path / 'venv'
+    python = venv / 'Scripts' / 'python.exe'
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+    python.chmod(0o755)
+    config = tmp_path / 'config.toml'
+    original = f'"lean_project" = {json.dumps(existing)}\nmodel = "test"\n'
+    config.write_text(original, encoding='utf-8-sig')
+    lean = tmp_path / 'managed lean'
+    result = run_installer_functions(
+        "$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest; "
+        "$SkipMathlib=$false; $NoConfig=$false; "
+        f"$ConfigPath='{config}'; $Venv='{venv}'; $LeanProject='{lean}'; Write-Config"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    values = read_file(config)
+    assert values['lean_project'] == (existing or str(lean))
+    if existing:
+        assert config.read_text(encoding='utf-8-sig') == original
