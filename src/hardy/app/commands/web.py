@@ -12,6 +12,16 @@ from hardy.workflows import layout
 from hardy.workflows.interactive.session import SchemaError
 
 
+def _port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("port must be an integer between 0 and 65535") from error
+    if not 0 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 0 and 65535")
+    return port
+
+
 def _web_target(
     args: argparse.Namespace, parser: argparse.ArgumentParser, registry: ProjectRegistry,
 ) -> Entry | None:
@@ -33,6 +43,8 @@ def _web_target(
                     f"no registered project named {wanted!r} (registered: {names}); "
                     "projects are created and added in the browser"
                 )
+            if not (entry.path / layout.RECORD).is_file():
+                parser.error(f"registered project record is missing: {entry.path / layout.RECORD}")
             return entry
         return registry.last_opened()
     except ValueError as error:
@@ -74,6 +86,8 @@ def _web(
             parser.error(str(error))
 
     if entry is not None:
+        if not config.layout.record.is_file():
+            parser.error(f"registered project record is missing: {config.layout.record}")
         try:
             prepare_layout(config)
         except layout.LayoutError as error:
@@ -97,7 +111,11 @@ def _web(
                 registry.touch(config.layout.problem)
             except (OSError, ValueError) as error:
                 print(f"Could not record {config.layout.problem} in the project registry: {error}")
-        serve(host, port=args.port, open_browser=args.open)
+        try:
+            serve(host, port=args.port, open_browser=args.open)
+        except OSError as error:
+            print(f"Could not listen on 127.0.0.1:{args.port}: {error.strerror or error}")
+            return 1
     finally:
         # Suppressed, not asserted: a host that never finished starting is
         # already stopped, and a teardown that raised here would skip the
