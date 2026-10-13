@@ -740,7 +740,7 @@ class DelegationController:
                 node = tree.delegations.get(id)
                 if node is not None and node.state is DelegationState.QUEUED and node.parent_id is not None:
                     taken[node.parent_id] = taken.get(node.parent_id, 0) + node.spec.concurrency.slots
-            for chosen in self._scheduler().choose(free):
+            for chosen in self._scheduler().choose(free, candidates=set(self._pending), submitted=set(self._handles)):
                 launch = self._pending.get(chosen.id)
                 if launch is None:
                     continue
@@ -748,7 +748,7 @@ class DelegationController:
                 parent = chosen.parent_id or ROOT_ID
                 if ledger.slots_available(parent) - taken.get(parent, 0) < wanted:
                     continue
-                pushed = FindingLedger(self.store).consume_pushes(chosen.id)
+                pushed = FindingLedger(self.store).pending_pushes(chosen.id)
                 if pushed:
                     # The launch is the recipient's first provider boundary.
                     launch = dataclasses.replace(launch, prompt=f"{render_pushes(pushed)}\n\n{launch.prompt}")
@@ -758,6 +758,8 @@ class DelegationController:
                 except RuntimeError:
                     # The executor is gone; the work stays queued for a restart to relaunch.
                     return
+                if pushed:
+                    FindingLedger(self.store).acknowledge_pushes(chosen.id, tuple(f.id for f in pushed))
                 self._pending.pop(chosen.id, None)
                 self._handles[chosen.id] = handle
                 taken[parent] = taken.get(parent, 0) + wanted
@@ -874,6 +876,15 @@ class DelegationController:
                 except Exception as error:  # noqa: BLE001 - a job's crash is a journaled failure
                     reason = f"{type(error).__name__}: {error}"
                 if reason is not None:
+                    started = any(e.delegation_id == id and e.kind == "delegation.started" for e in tree.events)
+                    reported = any(e.delegation_id == id and e.kind == "usage.reported" for e in tree.events)
+                    if started and not reported and id not in self._computations:
+                        budget = self._budgets.get(id)
+                        unknown = ("cost_usd", "tokens", "provider_calls", "active_seconds")
+                        if budget is None:
+                            unknown = (*unknown, "official_checks")
+                        usage = ResourceUsage(official_checks=budget.checks if budget else 0, unknown=unknown)
+                        self.store.append(id, "usage.reported", {"usage": usage.model_dump(mode="json")})
                     kind = "delegation.cancelled" if reason == "cancelled" else "delegation.failed"
                     event = self.store.append(id, kind, {"reason": reason})
                     self._after_terminal(id, event)

@@ -187,3 +187,13 @@ def test_a_promotion_that_would_disclose_a_hidden_subject_is_refused(tmp_path):
             ledger.promote(finding.id, recipient="blind", mode="push", selector="human", authorized_by="A", reason="r")
     ledger.promote(harmless.id, recipient="blind", mode="discoverable", selector="human", authorized_by="A", reason="r")
     assert [f.id for f in ledger.visible_to("blind")] == [harmless.id]
+
+
+def test_partial_push_receipt_preserves_findings_not_included(tmp_path):
+    store = _tree(DelegationStore(tmp_path))
+    ledger = FindingLedger(store)
+    for n in range(2):
+        finding = ledger.propose(_finding("a1", n))
+        ledger.promote(finding.id, recipient="a2", mode="push", selector="human", authorized_by="A", reason="read")
+    store.append("a2", "context.pushes_consumed", {"findings": ["a1:finding:0"]})
+    assert [f.id for f in ledger.pending_pushes("a2")] == ["a1:finding:1"]

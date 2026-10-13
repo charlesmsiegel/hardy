@@ -10,7 +10,7 @@ urgency orders work inside a lane without ever becoming evidence.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from decimal import Decimal
 from enum import Enum
 from typing import Literal
@@ -155,10 +155,12 @@ class Scheduler:
     def _forbidden(self, id: str) -> bool:
         return any(p.delegation_id == id and p.kind == "forbid_spend" for p in self.pins)
 
-    def ready(self) -> tuple[Delegation, ...]:
+    def ready(self, *, candidates: set[str] | None = None, submitted: Collection[str] = ()) -> tuple[Delegation, ...]:
         """Queued leaves whose ancestors are live and unexhausted and which nobody forbade."""
         ready = []
         for delegation in self.tree.delegations.values():
+            if candidates is not None and delegation.id not in candidates:
+                continue
             if delegation.state is not DelegationState.QUEUED or delegation.parent_id is None:
                 continue
             if self._forbidden(delegation.id) or self.ledger.exhausted(delegation.id):
@@ -168,7 +170,11 @@ class Scheduler:
             # A leaf is runnable only where its parent can still seat it. The
             # parent's own seats were granted under its parent in turn, so the
             # chain above is already accounted for in that one reservation.
-            if self.ledger.slots_available(delegation.parent_id) < delegation.spec.concurrency.slots:
+            waiting_seats = sum(node.spec.concurrency.slots for id in submitted
+                                if (node := self.tree.delegations.get(id)) is not None
+                                and node.parent_id == delegation.parent_id
+                                and node.state is DelegationState.QUEUED)
+            if self.ledger.slots_available(delegation.parent_id) - waiting_seats < delegation.spec.concurrency.slots:
                 continue
             ready.append(delegation)
         return tuple(ready)
@@ -182,12 +188,13 @@ class Scheduler:
                     delegation.id)
         return sorted(delegations, key=key)
 
-    def choose(self, free_slots: int) -> tuple[Delegation, ...]:
+    def choose(self, free_slots: int, *, candidates: set[str] | None = None,
+               submitted: Collection[str] = ()) -> tuple[Delegation, ...]:
         """Which ready leaves take the free slots: pins, then blockers, then lanes under their floors."""
         if free_slots <= 0:
             return ()
         by_lane: dict[Lane, list[Delegation]] = {lane: [] for lane in Lane}
-        for delegation in self.ready():
+        for delegation in self.ready(candidates=candidates, submitted=submitted):
             by_lane[self.lane(delegation)].append(delegation)
         for lane in by_lane:
             by_lane[lane] = self._ordered(by_lane[lane])
@@ -220,7 +227,7 @@ class Scheduler:
         # counts toward it: only the deficit is taken from the free ones.
         running: dict[Lane, int] = {lane: 0 for lane in Lane}
         for delegation in self.tree.delegations.values():
-            if (delegation.parent_id is not None and delegation.state in HOLDING_SLOTS
+            if (delegation.parent_id is not None and (delegation.state in HOLDING_SLOTS or delegation.id in submitted)
                     and not delegation.spawn.can_spawn):
                 running[self.lane(delegation)] += delegation.spec.concurrency.slots
         # A `reserve_exploration` pin holds `value` slots for exploration on top of the floor.

@@ -98,7 +98,18 @@ class CoordinationView(FrozenModel):
 
     @property
     def digest(self) -> str:
-        """Over the substance the coordinator saw; the journal position is provenance, not content."""
+        """Safety charter identity; live spend and states are checked mechanically per action."""
+        return json_digest({"schema": "hardy.delegation/CoordinationCharter/v2",
+                            "value": {"subtree": self.subtree, "objective": self.objective,
+                                      "authority": self.authority.model_dump(mode="json"),
+                                      "isolation": self.isolation.model_dump(mode="json"),
+                                      "children": [child.id for child in self.children],
+                                      "pins": [pin.model_dump(mode="json") for pin in self.pins]}})
+
+
+    @property
+    def observed_digest(self) -> str:
+        """Full model view retained as provenance, independent of the safety charter."""
         return json_digest({"schema": "hardy.delegation/CoordinationView/v1",
                             "value": self.model_dump(mode="json", exclude={"revision", "events_since"})})
 
@@ -256,7 +267,7 @@ def _spawn(controller: DelegationController, subtree: str, action: PlanAction, a
 
 
 def apply_plan(controller: DelegationController, subtree: str, plan: CoordinationPlan,
-               authority: CoordinatorAuthority) -> tuple[ActionOutcome, ...]:
+               authority: CoordinatorAuthority, *, observed_view_digest: str | None = None) -> tuple[ActionOutcome, ...]:
     """Validate every action against the authority envelope, then the mechanical layers."""
     current = build_view(controller, subtree, authority=authority)
     outcomes: list[ActionOutcome] = []
@@ -288,6 +299,8 @@ def apply_plan(controller: DelegationController, subtree: str, plan: Coordinatio
                 outcomes.append(_refused(action, "authority: may_allocate_within_reserve is not granted"))
             elif problem:
                 outcomes.append(_refused(action, problem))
+            elif action.target == subtree:
+                outcomes.append(_refused(action, "authority: growing its own reserve requires its parent"))
             else:
                 checks = _checks(action)
                 if isinstance(checks, str):
@@ -365,6 +378,7 @@ def apply_plan(controller: DelegationController, subtree: str, plan: Coordinatio
             outcomes.append(_refused(action, f"unknown action {kind}"))
     controller.store.append(subtree, "coordinator.plan_applied", {
         "view_digest": plan.view_digest,
+        "observed_view_digest": observed_view_digest,
         "outcomes": [o.model_dump(mode="json") for o in outcomes]})
     return tuple(outcomes)
 
@@ -387,7 +401,7 @@ class ModelCoordinator:
         view = build_view(controller, subtree, authority=self.authority,
                           since=self.last_seen if since is None else since)
         controller.store.append(subtree, "coordinator.invoked", {
-            "view_digest": view.digest, "authority": self.authority.model_dump(mode="json")})
+            "view_digest": view.digest, "observed_view_digest": view.observed_digest, "authority": self.authority.model_dump(mode="json")})
         payload = {**view.model_dump(mode="json"), "digest": view.digest}
         answer = self._ask(render("delegation_coordinator", view=json.dumps(payload, ensure_ascii=False, indent=1)))
         plan = self._parse(answer, view.digest)
@@ -396,7 +410,7 @@ class ModelCoordinator:
             plan = CoordinationPlan(view_digest=view.digest, actions=(PlanAction(action="noop"),),
                                     rationale="the coordinator's answer was not a plan; continuing")
         controller.store.append(subtree, "coordinator.plan_proposed", {"plan": plan.model_dump(mode="json")})
-        outcomes = apply_plan(controller, subtree, plan, self.authority)
+        outcomes = apply_plan(controller, subtree, plan, self.authority, observed_view_digest=view.observed_digest)
         self.last_seen = view.revision
         return plan, outcomes
 

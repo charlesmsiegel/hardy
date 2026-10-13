@@ -342,3 +342,83 @@ def test_the_coordinator_view_bounds_its_structural_map(tmp_path):
     finally:
         release.set()
         controller.shutdown()
+
+
+def test_coordinator_cannot_grow_its_own_reserve(tmp_path):
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=EXPEDITION)
+        outcomes = apply_plan(controller, cell.id, CoordinationPlan(view_digest=view.digest, actions=(
+            PlanAction(action="tranche", target=cell.id, args={"checks": 1}),)), EXPEDITION)
+        assert not outcomes[0].applied
+        assert "reserve" in " ".join(outcomes[0].refused_because)
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_child_usage_progress_does_not_void_coordinator_plan(tmp_path):
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        assert started.wait(5)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        from hardy.workflows.delegation.contracts import ResourceUsage
+        controller.store.append(children[0].id, "usage.reported", {"usage": ResourceUsage(official_checks=1).model_dump(mode="json")})
+        outcomes = apply_plan(controller, cell.id, CoordinationPlan(view_digest=view.digest, actions=(
+            PlanAction(action="human_decision", args={"question": "continue?"}),
+            PlanAction(action="pause", target=children[6].id))), ASSISTED)
+        assert all(outcome.applied for outcome in outcomes)
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_plan_survives_child_completion_but_refuses_changed_target_state(tmp_path):
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        assert started.wait(5)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        release.set()
+        controller.wait(children[0].id, timeout=5)
+        outcomes = apply_plan(controller, cell.id, CoordinationPlan(view_digest=view.digest, actions=(
+            PlanAction(action="noop"), PlanAction(action="pause", target=children[0].id),
+            PlanAction(action="spawn", args={"objective": "new route", "checks": 1}))), ASSISTED)
+        assert [outcome.applied for outcome in outcomes] == [True, False, True]
+        assert "queued" in " ".join(outcomes[1].refused_because)
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_changed_children_or_authority_refuse_entire_plan(tmp_path):
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        plan = CoordinationPlan(view_digest=view.digest, actions=(PlanAction(action="noop"),))
+        assert not apply_plan(controller, cell.id, plan, EXPEDITION)[0].applied
+        controller.delegate(_spec(tmp_path, "new child"), parent_id=cell.id)
+        assert not apply_plan(controller, cell.id, plan, ASSISTED)[0].applied
+    finally:
+        release.set()
+        controller.shutdown()
+
+
+def test_charter_transition_preserves_legacy_view_identity_and_refuses_old_plan(tmp_path):
+    from hardy.foundation.values import json_digest
+    controller, started, release = _controller(tmp_path)
+    try:
+        cell, children = _eight_worker_cell(tmp_path, controller)
+        view = build_view(controller, cell.id, authority=ASSISTED)
+        legacy = json_digest({"schema": "hardy.delegation/CoordinationView/v1",
+                              "value": view.model_dump(mode="json", exclude={"revision", "events_since"})})
+        assert view.observed_digest == legacy
+        assert view.digest != legacy
+        plan = CoordinationPlan(view_digest=legacy, actions=(PlanAction(action="noop"),))
+        assert not apply_plan(controller, cell.id, plan, ASSISTED)[0].applied
+    finally:
+        release.set()
+        controller.shutdown()
