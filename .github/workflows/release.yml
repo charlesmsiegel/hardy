@@ -86,21 +86,23 @@ jobs:
     with:
       checkout-ref: ${{ needs.resolve.outputs.sha }}
 
-  publish:
+  build:
     needs: [resolve, tests, installers]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v5
 
       # A tag that disagrees with pyproject.toml would publish a wheel whose
       # version is not the one anyone asked for, and the mismatch would only
       # surface later as an installer downloading something unexpected.
       - name: Read the version and validate the release tag
+        id: version
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
@@ -114,6 +116,7 @@ jobs:
             exit 1
           fi
           echo "version=$declared" >> "$GITHUB_ENV"
+          echo "version=$declared" >> "$GITHUB_OUTPUT"
 
       - name: Build the wheel and the source distribution
         run: uv build --out-dir dist
@@ -134,6 +137,36 @@ jobs:
                     hardy-installers.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Keep the gated release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Dry run passed without publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.dry-run
+        run: echo "All release gates passed for ${{ needs.resolve.outputs.sha }}; no release or assets were published."
+
+  # Candidate code never runs with a release token. This job only downloads
+  # the artifacts built under read-only permissions, verifies and publishes.
+  publish:
+    needs: [resolve, tests, installers, build]
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      version: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Verify the gated asset checksums
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+
       # Published assets are immutable. `scripts/update.sh` decides whether
       # there is anything to do by comparing the release's version against the
       # installed one, so a tag whose wheel changed underneath it would leave
@@ -145,7 +178,6 @@ jobs:
       # would attach artifacts built from that branch to a tag pointing
       # somewhere else — a release whose recorded source is a fiction.
       - name: The ref released from must already be a tag
-        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -162,7 +194,6 @@ jobs:
           }
 
       - name: Publish the release
-        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -185,7 +216,6 @@ jobs:
       # The published release is what every installer will download, so read it
       # back rather than trusting that the upload did what it said.
       - name: Read the release back
-        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -199,7 +229,3 @@ jobs:
             printf '%s\n' "$published" | grep -qx "$required" ||
               { echo "error: $required is missing from the release" >&2; exit 1; }
           done
-
-      - name: Dry run passed without publishing
-        if: github.event_name == 'workflow_dispatch' && inputs.dry-run
-        run: echo "All release gates passed for ${{ needs.resolve.outputs.sha }}; no release or assets were published."

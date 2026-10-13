@@ -198,8 +198,10 @@ the checks is refused. A manual dispatch defaults to a dry run, which runs
 the same gates and builds the assets without publishing. Its optional
 `candidate-ref` checks a commit or branch without needing a release tag;
 that override is refused when publishing is enabled. A failed candidate
-skips the dependent publish job, so failure gating can be exercised without
-creating a release. It builds
+skips the dependent asset-build job, so failure gating can be exercised
+without creating a release. Candidate builds and checks have read-only
+repository permissions. Only a separate publishing job gets write access;
+it downloads the gated artifacts and verifies their checksums before upload. It builds
 the wheel and source distribution, bundles `scripts/` into
 `hardy-installers.tar.gz` so a standalone installer can fetch the rest of
 itself, and publishes all three alongside a `SHA256SUMS` manifest as four
