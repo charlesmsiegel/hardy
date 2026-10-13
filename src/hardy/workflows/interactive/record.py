@@ -65,6 +65,10 @@ class SessionRecord:
     def snapshot(self, *without: str) -> dict[str, Any]:
         return deepcopy({key: value for key, value in self.state.items() if key not in without})
 
+    def snapshot_of(self, *keys: str) -> dict[str, Any]:
+        """Detach only the selected record entries for one operation."""
+        return deepcopy({key: self.state[key] for key in keys if key in self.state})
+
     def local_snapshot(self) -> dict[str, Any]:
         return deepcopy(self.local)
 

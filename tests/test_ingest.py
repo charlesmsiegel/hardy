@@ -633,3 +633,93 @@ def test_an_unreadable_tex_reason_reaches_the_report(tmp_path: Path):
     result = chat.triage_pile(pile)
     assert result.ok, result.output
     assert "not UTF-8 text" in result.output
+
+
+@pytest.mark.parametrize("lane", ["import_lean", "import_reference", "import_tex", "triage_pile"])
+def test_import_lanes_refuse_symlink_loop(tmp_path, lane):
+    first, second = tmp_path / "a", tmp_path / "b"
+    try:
+        first.symlink_to(second)
+        second.symlink_to(first)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    chat = make_session(tmp_path / "problem")
+    result = getattr(chat, lane)(first)
+    assert not result.ok
+    assert not chat.state.get("imported")
+
+
+@pytest.mark.parametrize("kind,filename,original,replacement", [
+    ("lean", "Original.lean", CLEAN, CLEAN.replace("pileFact", "authoredFact")),
+    ("tex", "writeup.tex", DOCUMENT, PLAIN_ROOT),
+])
+def test_committed_authored_save_supersedes_import_provenance(tmp_path, kind, filename, original, replacement):
+    pile = pile_with(tmp_path, {filename: original})
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert getattr(chat, f"import_{kind}")(pile / filename).ok
+    assert chat.state["imported"]
+    result = chat.save_authored(f"{kind}/{filename}", replacement)
+    assert result.ok, result.output
+    assert not chat.state.get("imported")
+    assert not json.loads((problem / "session.json").read_text()).get("imported")
+    assert any(event.get("reason") == "superseded" and event.get("path") == f"{kind}/{filename}"
+               for event in events(problem))
+
+
+def test_refused_authored_save_preserves_import_provenance(tmp_path):
+    pile = pile_with(tmp_path, {"Original.lean": CLEAN})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_lean(pile / "Original.lean").ok
+    before = chat.record.snapshot_of("imported") if hasattr(chat.record, "snapshot_of") else chat.record.snapshot()
+    assert not chat.save_authored("lean/Original.lean", BROKEN).ok
+    assert chat.state["imported"] == before["imported"]
+
+
+def test_obligations_reads_one_lean_tree_and_rechecks_external_edits(tmp_path, monkeypatch):
+    chat = make_session(tmp_path / "problem")
+    original = chat.lean_workspace.sources
+    reads = []
+    def counting():
+        reads.append(True)
+        return original()
+    monkeypatch.setattr(chat.lean_workspace, "sources", counting)
+    assert chat._obligations() == ()
+    assert len(reads) == 1
+    (chat.workspace / "lean").mkdir(exist_ok=True)
+    (chat.workspace / "lean" / "External.lean").write_text(THEOREM)
+    reads.clear()
+    owed = chat._obligations()
+    assert any(item.subject == "pileResult" for item in owed)
+    assert len(reads) == 1
+
+
+def test_lemma_documentation_gate_never_reads_the_tree(tmp_path, monkeypatch):
+    chat = make_session(tmp_path / "problem")
+    def forbidden():
+        raise AssertionError("lemma save read the whole Lean tree")
+    monkeypatch.setattr(chat.lean_workspace, "sources", forbidden)
+    assert chat._documentation_gate(CLEAN) is None
+
+
+def test_latex_save_avoids_whole_record_snapshots(tmp_path, monkeypatch):
+    chat = make_session(tmp_path / "problem")
+    copies = []
+    original = chat.record.snapshot
+    def counting(*without):
+        copies.append(True)
+        return original(*without)
+    monkeypatch.setattr(chat.record, "snapshot", counting)
+    result = chat.save_authored("tex/writeup.tex", PLAIN_ROOT)
+    assert result.ok, result.output
+    assert len(copies) <= 1
+
+
+def test_refused_tex_authored_save_preserves_import_provenance(tmp_path):
+    pile = pile_with(tmp_path, {"writeup.tex": DOCUMENT})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_tex(pile / "writeup.tex").ok
+    before = chat.record.snapshot_of("imported")
+    failed = chat.save_authored("tex/writeup.tex", "\\documentclass{article}\n\\begin{document}\\input{missing}\\end{document}\n")
+    assert not failed.ok
+    assert chat.state["imported"] == before["imported"]
