@@ -234,3 +234,27 @@ def test_native_windows_scoreboard_publication_with_open_reader(tmp_path, monkey
     finally:
         release.set()
         reader.join(timeout=5)
+
+
+@pytest.mark.parametrize('declaration,proof', [
+    ('theorem HardyTarget :\r\n  True', 'by\n  sorry'),
+    ('theorem HardyTarget : True', 'by\r\n  sorry'),
+])
+def test_crlf_partial_sketch_keeps_consistent_lf_evidence(tmp_path, declaration, proof):
+    from test_recorded_runs import FAKE_LEAN, IDENTITY, _Runtime
+
+    from hardy.formal.contracts import Request
+    from hardy.formal.lean import LeanTools
+    from hardy.workflows import batch
+    from hardy.workflows.recorded import validate_recorded_run
+
+    request = Request.from_dict({'declaration': declaration, 'informal_claim': 'True is true.'})
+    lean = LeanTools(request, (sys.executable, str(FAKE_LEAN)))
+    script = [('sketch_proof', {'proof': proof})]
+    output = tmp_path / 'partial'
+    result = batch.run(request, lambda model=None, **context: _Runtime(script, **context),
+                       lean, output, max_turns=3, toolchain=IDENTITY)
+    assert result.terminal_reason != 'verified'
+    assert result.sketch is not None
+    assert b'\r' not in (output / 'writeup.md').read_bytes()
+    assert validate_recorded_run(output) == ()

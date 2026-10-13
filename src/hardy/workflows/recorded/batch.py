@@ -317,7 +317,7 @@ def _sketch_source(trajectory: dict[str, Any], proof: str, *, audited: bool = Fa
     if not declaration or not isinstance(imports, list) or not imports:
         return None
     header = "\n".join(f"import {name}" for name in imports)
-    body = f"{header}\n\n{declaration} := {proof.strip()}\n"
+    body = normalize_newlines(f"{header}\n\n{declaration} := {proof.strip()}\n")
     if not audited:
         return body
     # Named the way Lean names it back, which is what `LeanTools.target_name`
@@ -504,7 +504,7 @@ def _sketch_issues(
                 issues.append("the kept sketch does not hash to the source Lean recorded")
     if not carried:
         issues.append("writeup.md does not carry the sketch the record kept")
-    elif sketch_section(sketch) not in writeup:
+    elif normalize_newlines(sketch_section(sketch)) not in writeup:
         # The whole section, not the code block alone. Checking only that the
         # skeleton appears somewhere let an honest writeup be edited from
         # "1 hole" to "0 holes" with the Lean untouched -- and the writeup is
