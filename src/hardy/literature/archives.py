@@ -42,6 +42,7 @@ import io
 import re
 import shutil
 import tarfile
+import unicodedata
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -194,12 +195,12 @@ def extract(data: bytes, into: Path, *, limits: Limits = DEFAULT_LIMITS) -> Extr
         if head[TAR_MAGIC_OFFSET : TAR_MAGIC_OFFSET + len(TAR_MAGIC)] == TAR_MAGIC:
             return Extraction("tar", _extract_tar(stream, into, limits))
         return Extraction("gzip", (_write_whole(into, SINGLE_FILE_NAME, stream, limits),))
-    except (tarfile.TarError, zipfile.BadZipFile) as error:
-        _clear(into)
-        raise ArchiveError(f"the archive is corrupt: {error}") from error
     except ArchiveError:
         _clear(into)
         raise
+    except (tarfile.TarError, zipfile.BadZipFile, RuntimeError, EOFError, zlib.error, ValueError) as error:
+        _clear(into)
+        raise ArchiveError(f"the archive is corrupt: {error}") from error
     except OSError as error:
         # The path bounds above are what should stop this, but the filesystem
         # has the last word on what it will take, and an `OSError` out of here
@@ -242,6 +243,13 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
         raise ArchiveError(f"the member path {name!r} climbs out of the archive root")
     if not parts:
         raise ArchiveError(f"the member path {name!r} names nothing")
+    reserved = {"con", "prn", "aux", "nul", "conin$", "conout$"} | {
+        f"{prefix}{digit}" for prefix in ("com", "lpt") for digit in "123456789¹²³"
+    }
+    for part in parts:
+        if (part.endswith((".", " ")) or any(c in ':*?"<>|' or ord(c) < 32 for c in part)
+                or part.partition(".")[0].rstrip(" ").casefold() in reserved):
+            raise ArchiveError(f"the member path {name!r} is not portable")
     if len(parts) > limits.max_depth:
         raise ArchiveError(f"the member path {name!r} is nested too deep")
     if any(len(part.encode("utf-8")) > limits.max_component_bytes for part in parts):
@@ -256,12 +264,16 @@ def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[Extracte
     files: list[ExtractedFile] = []
     written: set[str] = set()
     directories: set[str] = set()
+    spellings: dict[str, str] = {}
     total = 0
     # Stream mode: members are read in order and never seeked back to, which
     # is what lets the bounded reader above be the only source of bytes.
     with tarfile.open(fileobj=stream, mode="r|") as tar:
         for member in tar:
+            if member.isdir() and _root_directory(member.name):
+                continue
             path = member_path(member.name, limits)
+            _portable_spelling(path, spellings)
             if member.isdir():
                 _no_file_on_the_way(path, written, include_self=True)
                 if len(files) + len(directories) + 1 > limits.max_files:
@@ -330,10 +342,14 @@ def _extract_zip(data: bytes, into: Path, limits: Limits) -> tuple[ExtractedFile
     files: list[ExtractedFile] = []
     written: set[str] = set()
     directories: set[str] = set()
+    spellings: dict[str, str] = {}
     total = 0
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         for member in archive.infolist():
+            if member.is_dir() and _root_directory(member.filename):
+                continue
             path = member_path(member.filename, limits)
+            _portable_spelling(path, spellings)
             mode = (member.external_attr >> 16) & 0o170000
             if member.is_dir():
                 _no_file_on_the_way(path, written, include_self=True)
@@ -365,6 +381,21 @@ def _extract_zip(data: bytes, into: Path, limits: Limits) -> tuple[ExtractedFile
     if not files:
         raise ArchiveError("the archive holds no files")
     return tuple(sorted(files, key=lambda item: item.path))
+
+
+def _root_directory(name: str) -> bool:
+    return bool(name) and not name.startswith("/") and all(
+        part in ("", ".") for part in name.split("/")
+    )
+
+
+def _portable_spelling(path: str, spellings: dict[str, str]) -> None:
+    for prefix in _prefixes(path):
+        key = unicodedata.normalize("NFC", prefix).casefold()
+        previous = spellings.get(key)
+        if previous is not None and previous != prefix:
+            raise ArchiveError(f"the archive names {prefix!r} twice (aliases {previous!r})")
+        spellings[key] = prefix
 
 
 def _prefixes(path: str) -> list[str]:
@@ -411,7 +442,7 @@ def _write(
     # second read.
     decoder = codecs.getincrementaldecoder("utf-8")()
     textual = True
-    with open(target, "wb") as handle:
+    with open(target, "xb") as handle:
         while True:
             chunk = stream.read(READ_CHUNK_BYTES)
             if not chunk:

@@ -54,10 +54,14 @@ Controlled:
 - **No extension surface.** Nothing can register a tool, sit on a tool result,
   or supply a summary of a session.
 - **A faithfulness reader with no tools**, described below.
+- **arXiv redirects stay within the HTTPS origin.** Metadata and source
+  downloads refuse redirects to another host, another port, or HTTP.
 - **Bounded archive unpacking.** `literature/archives.py` unpacks tar, gzip
   and zip (an EPUB is a zip) under one rule set: it normalises every
   member path to a relative POSIX path, refuses `..`, a leading separator, a
   drive letter, a backslash and a NUL byte, bounds path depth, refuses
+  nonportable Windows names and case- or Unicode-normalisation aliases
+  (including directory prefixes), and refuses
   symlinks, hardlinks, devices and FIFOs rather than skipping them, and
   enforces file-count, per-file and total quotas on the *decompressed* stream
   rather than on what the headers claim. The extraction is staged beside its

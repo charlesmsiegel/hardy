@@ -20,6 +20,7 @@ from hardy.literature.metadata import (
     SOURCE_MANIFEST,
     ArxivError,
     ArxivId,
+    Download,
     PaperRecord,
     SourceFile,
     SourceManifest,
@@ -186,7 +187,7 @@ class PaperLibrary:
         # another machine. Comparing the rebuilt content digest covers every
         # field `_entry` reads in one comparison.
         try:
-            reparsed = _entries(response, record.source_url, record.fetched_at)
+            reparsed = _entries(Download(response, record.resolved_url), record.source_url, record.fetched_at)
         except ArxivError as error:
             raise ArxivError(
                 f"the stored response for {identifier} can no longer be read as the feed "
@@ -390,6 +391,7 @@ class PaperLibrary:
                 archive_sha256=hashlib.sha256(archive).hexdigest(),
                 archive_bytes=len(archive),
                 source_url=source_url,
+                resolved_url=getattr(archive, "resolved_url", ""),
                 fetched_at=fetched_at,
                 files=tuple(
                     SourceFile(path=item.path, size=item.size, sha256=item.sha256, text=item.text)
@@ -513,7 +515,7 @@ class PaperLibrary:
         # throttle treats the same jump as "no idea"; so does this.
         if age < 0 or age > ttl:
             return None
-        return body.encode("utf-8"), fetched
+        return Download(body.encode("utf-8"), str(payload.get("resolved_url", ""))), fetched
 
     def query_lock(self, key: str) -> Path:
         """The lock for one cache entry, with the directory holding it proven.
@@ -550,7 +552,8 @@ class PaperLibrary:
             guard.write_bytes(
                 name,
                 json.dumps(
-                    {"fetched_at": now, "body": body.decode("utf-8", errors="replace")},
+                    {"fetched_at": now, "body": body.decode("utf-8", errors="replace"),
+                     "resolved_url": getattr(body, "resolved_url", "")},
                     ensure_ascii=False,
                 ).encode("utf-8"),
             )
