@@ -20,12 +20,14 @@ import json
 import re
 import tarfile
 import tempfile
+from bisect import bisect_left
 from datetime import UTC, datetime
 from pathlib import Path
 
+from hardy.documents import completion
 from hardy.foundation.values import json_digest
 from hardy.literature import archives
-from hardy.literature.statements import AssumeError, _pages, root_of
+from hardy.literature.statements import AssumeError, root_of
 
 from .adapters import ExtractionBudget, ExtractionRefused, ExtractionResult
 from .contracts import (
@@ -45,7 +47,7 @@ from .contracts import (
 from .representations import TEXT_PAYLOAD, payload_digest
 
 NAME = "hardy.tex.native"
-VERSION = "1"
+VERSION = "2"
 SOURCES_PAYLOAD = "sources.json"
 MANIFEST_PAYLOAD = "files.json"
 FILE_SEPARATOR = "\f"
@@ -110,6 +112,56 @@ def pack_directory(directory: Path, *, limits: archives.Limits = archives.DEFAUL
     return buffer.getvalue()
 
 
+def _reading_pages(files: dict[str, str], root: str) -> list[tuple[str, str, tuple[tuple[int, int, int], ...]]]:
+    """Walk inclusions with exact runs into each original admitted file."""
+    seen: set[str] = set()
+    pages = []
+    stack = []
+
+    def open_file(path: str) -> None:
+        if not path or path in seen or path not in files:
+            return
+        seen.add(path)
+        displayed = completion.displayed(files[path])
+        executed = displayed.executed
+        # The displayed scanner masks definitions in place. Keep only source
+        # characters that it emitted unchanged; synthetic/masked characters
+        # have no native counterpart and are left unmapped.
+        runs = []
+        for start, raw, length in displayed.runs:
+            if executed[start:start + length] == files[path][raw:raw + length]:
+                runs.append((start, raw, length))
+                continue
+            begin = None
+            for offset in range(length):
+                equal = raw + offset < len(files[path]) and executed[start + offset] == files[path][raw + offset]
+                if equal and begin is None:
+                    begin = offset
+                if begin is not None and (not equal or offset == length - 1):
+                    end = offset + 1 if equal else offset
+                    runs.append((start + begin, raw + begin, end - begin))
+                    begin = None
+        stack.append((path, executed, tuple(runs), tuple(run[0] for run in runs), 0, iter(completion.INCLUSION.finditer(executed))))
+
+    open_file(root)
+    while stack:
+        path, executed, runs, run_starts, consumed, pending = stack.pop()
+        match = next(pending, None)
+        end = match.start() if match else len(executed)
+        selected = []
+        first = max(0, bisect_left(run_starts, consumed) - 1)
+        last = bisect_left(run_starts, end)
+        for start, raw, length in runs[first:last]:
+            left, right = max(start, consumed), min(start + length, end)
+            if left < right:
+                selected.append((left - consumed, raw + left - start, right - left))
+        pages.append((path, executed[consumed:end], tuple(selected)))
+        if match:
+            stack.append((path, executed, runs, run_starts, match.end(), pending))
+            open_file(completion.target(match.group(1), files))
+    return pages
+
+
 class TexAdapter:
     name = NAME
     version = VERSION
@@ -126,11 +178,11 @@ class TexAdapter:
         texts = {path: text for path, text in files.items()}
         try:
             root = root_of(texts)
-            pages = _pages(texts, root)
+            pages = _reading_pages(texts, root)
         except AssumeError as error:
             diagnostics.append(Diagnostic(code="no_document_root", detail=str(error), severity="warning"))
             root = None
-            pages = [(path, texts[path]) for path in sorted(texts)]
+            pages = [(path, texts[path], ((0, 0, len(texts[path])),)) for path in sorted(texts)]
         if not pages:
             raise ExtractionRefused("the source tree holds no readable TeX")
         native_payload = {
@@ -148,22 +200,28 @@ class TexAdapter:
         assembled_parts: list[str] = []
         pairs: list[tuple[NativeSourceSpan, RepresentationSpan]] = []
         offset = 0
-        for index, (path, text) in enumerate(pages):
+        separators: list[int] = []
+        for index, (path, text, runs) in enumerate(pages):
             start = offset
             assembled_parts.append(text)
             offset += len(text)
-            pairs.append((NativeSourceSpan(representation=native_id, path=path, start=0, end=len(text)),
-                          RepresentationSpan(representation=assembled_id, start=start, end=offset)))
+            for executed_start, raw_start, length in runs:
+                pairs.append((NativeSourceSpan(representation=native_id, path=path, start=raw_start, end=raw_start + length),
+                              RepresentationSpan(representation=assembled_id, start=start + executed_start, end=start + executed_start + length)))
             if index + 1 < len(pages):
+                separators.append(offset)
                 assembled_parts.append(FILE_SEPARATOR)
                 offset += 1
         assembled_text = "".join(assembled_parts)
         if len(assembled_text.encode("utf-8")) > budget.max_text_bytes:
             raise ExtractionRefused(f"assembled source exceeds the {budget.max_text_bytes} byte bound")
         assembled_payload = {TEXT_PAYLOAD: assembled_text.encode("utf-8")}
-        unread = sorted(set(texts) - {path for path, _ in pages})
+        unread = sorted(set(texts) - {path for path, _, _ in pages})
         if unread:
             diagnostics.append(Diagnostic(code="files_not_reached", detail=f"{len(unread)} text file(s) are not reached from the root: {', '.join(unread[:8])}", severity="info"))
+        unmapped = sum(len(text) for _, text, _ in pages) - sum(right.end - right.start for _, right in pairs)
+        if unmapped:
+            diagnostics.append(Diagnostic(code="unmapped_synthetic_text", detail=f"{unmapped} assembled character(s) are masked or synthesized and have no exact native counterpart", severity="info"))
         assembled = DerivedRepresentation(
             id=assembled_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.NORMALIZED_TEXT, extractor=self.name, extractor_version=self.version,
             configuration=(("assembly", "root-and-inputs"), ("root", root or "")), inputs=(native_id,), output_sha256=payload_digest(assembled_payload),
@@ -171,8 +229,8 @@ class TexAdapter:
             access=artifact.access, payload_files=tuple(assembled_payload),
         )
         mapping = RepresentationMapping(id=f"map-{native_id}-{assembled_id}", artifact_sha256=artifact.sha256, left=native_id, right=assembled_id,
-                                        pairs=tuple(pairs), partial=bool(unread), producer=f"{self.name}/{self.version}")
-        observations = observe_tex(assembled, assembled_text, artifact.sha256)
+                                        pairs=tuple(pairs), partial=bool(unread) or bool(unmapped), producer=f"{self.name}/{self.version}")
+        observations = observe_tex(assembled, assembled_text, artifact.sha256, separators=tuple(separators))
         metadata = _metadata(assembled_text)
         return ExtractionResult(representations=((native, native_payload), (assembled, assembled_payload)), mappings=(mapping,),
                                 observations=observations, metadata=metadata, diagnostics=tuple(diagnostics))
@@ -208,7 +266,7 @@ class TexAdapter:
         return texts, manifest
 
 
-def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha256: str) -> tuple[StructuralObservation, ...]:
+def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha256: str, *, separators: tuple[int, ...] | None = None) -> tuple[StructuralObservation, ...]:
     """Observations from TeX's own structure over the assembled reading."""
     rep = representation.id
     found: list[StructuralObservation] = []
@@ -222,46 +280,49 @@ def observe_tex(representation: DerivedRepresentation, text: str, artifact_sha25
 
     for match in SECTION.finditer(text):
         add(ObservationKind.HEADING, match.start(), match.end(), (("level", LEVELS[match.group("level")]), ("number", ""), ("title", match.group("title").strip())), "sectioning command")
+    labels = list(LABEL.finditer(text))
+    label_starts = [m.start() for m in labels]
+    environment_tokens = list(re.finditer(r"\\(?:begin|end)\{[A-Za-z*]+\}", text))
+    token_starts = [m.start() for m in environment_tokens]
+
+    def own_label(start: int) -> str:
+        index = bisect_left(label_starts, start)
+        token = bisect_left(token_starts, start)
+        limit = token_starts[token] if token < len(token_starts) else len(text)
+        return labels[index].group("label") if index < len(labels) and labels[index].start() < limit else ""
+
     open_envs: list[tuple[str, int, int, str | None]] = []
     for match in re.finditer(r"\\begin\{(?P<env>[A-Za-z*]+)\}(?:\[(?P<name>[^\]]*)\])?|\\end\{(?P<env2>[A-Za-z*]+)\}", text):
         if match.group("env") is not None:
             env = match.group("env")
             base = ALIASES.get(env.rstrip("*"), env.rstrip("*"))
             if base in STATEMENT_ENVS:
-                label = LABEL.search(text, match.end(), min(len(text), match.end() + 400))
+                label = own_label(match.end())
                 add(ObservationKind.STATEMENT_START, match.start(), match.end(),
                     (("kind", ALIASES.get(base, base)), ("number", ""), ("number_origin", "none"), ("name", match.group("name") or ""),
-                     ("label", label.group("label") if label else ""), ("environment", env)), "theorem-like environment")
+                     ("label", label), ("environment", env)), "theorem-like environment")
             elif base == "proof":
                 add(ObservationKind.PROOF_START, match.start(), match.end(), (("label", "Proof"), ("environment", env)), "proof environment")
             elif env in DISPLAY_ENVS:
-                open_envs.append((env, match.start(), match.end(), None))
+                open_envs.append((env, match.start(), match.end(), own_label(match.end())))
         else:
             env = match.group("env2")
             if env == "proof":
                 add(ObservationKind.PROOF_END, match.start(), match.end(), (("marker", "\\end{proof}"),), "proof environment end")
             elif env in DISPLAY_ENVS and open_envs and open_envs[-1][0] == env:
-                _, start, _, _ = open_envs.pop()
+                _, start, _, label = open_envs.pop()
                 kind = "figure" if env.startswith("figure") else "table" if env.startswith("table") else "diagram" if env == "tikzcd" else "equation"
-                add(ObservationKind.ENVIRONMENT, start, match.end(), (("kind", kind), ("environment", env)), "display environment")
+                add(ObservationKind.ENVIRONMENT, start, match.end(), (("kind", kind), ("environment", env), ("label", label or "")), "display environment")
     for match in LABEL.finditer(text):
         add(ObservationKind.LABEL, match.start(), match.end(), (("label", match.group("label")),), "label command")
     for match in REF.finditer(text):
         add(ObservationKind.REFERENCE, match.start(), match.end(), (("kind", "label"), ("number", match.group("label"))), "reference command", 0.9)
     for match in CITE.finditer(text):
         add(ObservationKind.REFERENCE, match.start(), match.end(), (("kind", "citation"), ("number", match.group("keys"))), "citation command", 0.9)
-    for index, _ in enumerate(text.split(FILE_SEPARATOR)):
-        if index > 0:
-            position = _nth_separator(text, index)
-            add(ObservationKind.PAGE_BREAK, position, position + 1, (("file_boundary", str(index)),), "file boundary in the assembled reading")
+    # Only the assembly operation knows which form feeds separate files.
+    for index, position in enumerate(separators or (), 1):
+        add(ObservationKind.PAGE_BREAK, position, position + 1, (("file_boundary", str(index)),), "file boundary in the assembled reading")
     return tuple(sorted(found, key=lambda o: (o.anchor.locator.start, o.kind.value)))  # type: ignore[union-attr]
-
-
-def _nth_separator(text: str, n: int) -> int:
-    position = -1
-    for _ in range(n):
-        position = text.find(FILE_SEPARATOR, position + 1)
-    return position
 
 
 def _metadata(text: str) -> tuple[tuple[str, str], ...]:

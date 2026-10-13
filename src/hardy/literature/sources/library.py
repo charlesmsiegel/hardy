@@ -37,6 +37,7 @@ from .contracts import (
     Diagnostic,
     GroupingProposal,
     IdentityEvidence,
+    ObservationKind,
     PageRegion,
     RepresentationKind,
     SourceFormat,
@@ -263,12 +264,26 @@ class ManagedLibrary:
         text = self.representations.text(sha256, record.id)
         set_id = f"{PRODUCER}-{PRODUCER_VERSION}-{record.id}".replace(".", "_")
         text_observations = self.observations.get(sha256, set_id) or self.observations.admit(sha256, set_id, observe_text(record, text))
-        native = tuple(o for name in self.observations.sets(sha256) if name != set_id for o in self.observations.get(sha256, name))
+        native = tuple(
+            o for name in self.observations.sets(sha256) if name != set_id
+            for o in self.observations.get(sha256, name)
+            if o.producer != PRODUCER
+        )
+        if artifact.format is SourceFormat.TEX_TREE:
+            # TeX's adapter records actual inserted file boundaries. Literal
+            # form feeds in an admitted file are not pages or file boundaries.
+            text_observations = tuple(
+                o for o in text_observations if o.kind is not ObservationKind.PAGE_BREAK
+            )
         page_spans: dict = {}
         for mapping in self.representations.mappings(sha256, left=record.id):
             page_spans.update(page_spans_from(mapping))
         previous = self.trees.preferred(sha256)
         tree = build_tree(artifact, record, text, tuple(native) + tuple(text_observations), page_spans=page_spans, previous=previous)
+        if previous is not None and tree.id == previous.id:
+            # Replaying the same current observations is the same revision,
+            # rather than a new revision claiming to supersede itself.
+            tree = tree.model_copy(update={"version": previous.version, "supersedes": previous.supersedes})
         texts = self.representations.texts(sha256)
         representations = {r.id: r for r in self.representations.list(sha256)}
         return self.trees.admit(tree, representations, texts)
