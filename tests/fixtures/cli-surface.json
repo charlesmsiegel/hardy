@@ -320,7 +320,7 @@
     "nargs": null,
     "const": null,
     "default": "0",
-    "type": "int",
+    "type": "_port",
     "choices": null,
     "required": false,
     "help": "port to listen on (default: an ephemeral one)",
