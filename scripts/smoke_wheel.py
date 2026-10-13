@@ -46,7 +46,7 @@ class FakeLean:
 def serve(directory):
     from hardy.app import mcp as server
 
-    claim = FrozenClaim.model_validate_json((directory / 'claim.json').read_text())
+    claim = FrozenClaim.model_validate_json((directory / 'claim.json').read_text(encoding="utf-8"))
     server.configure_runtime(LeanToolRuntime(
         claim=claim, service=FakeLean(), store=RunStore(directory, UUID(int=0)),
         official_checks=1, observation_bytes=1024,
@@ -78,7 +78,7 @@ async def transport(directory, claim):
             result = valid.structuredContent
             assert result['success'] and result['observation_truncated']
             assert result['output_artifact'] == 'process/mcp-lean-0.json'
-            saved = json.loads((directory / result['output_artifact']).read_text())
+            saved = json.loads((directory / result['output_artifact']).read_text(encoding="utf-8"))
             assert saved['process']['stdout'] == 'x' * 10_000
             exhausted = await session.call_tool('lean_check_proof', {'claim_id': claim.content_hash, 'proof_body': 'by rfl'})
             assert exhausted.isError
@@ -99,7 +99,7 @@ def smoke(directory):
         assert files('hardy').joinpath(resource).read_bytes(), resource
     for module in ('hardy', 'hardy.cli', 'hardy.app.cli'):
         completed = subprocess.run([sys.executable, '-m', module, 'prove', '--help'],
-                                   cwd=directory, capture_output=True, text=True, timeout=30)
+                                   cwd=directory, capture_output=True, encoding="utf-8", errors="replace", timeout=30)
         assert completed.returncode == 0, completed.stderr
         assert 'prove' in completed.stdout
     config = Config(model='deterministic-no-model', lean_command=('fake-lean',),

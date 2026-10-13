@@ -71,7 +71,7 @@ class _Store:
         self.run_id = uuid4()
 
     def append(self, kind: str, payload: dict[str, Any], *, phase: RunPhase) -> None:
-        with (self._path / "canonical-trajectory.jsonl").open("a", encoding="utf-8") as sink:
+        with (self._path / "canonical-trajectory.jsonl").open("a", encoding="utf-8", newline="\n") as sink:
             sink.write(json.dumps({"kind": kind, "phase": phase.value, "payload": payload}, ensure_ascii=False) + "\n")
 
 
@@ -88,7 +88,7 @@ def compare_canonical(entry: Entry, run_dir: Path, row_dir: Path, *, runtime_fac
     if not claim_path.exists():
         verdict = CanonicalVerdict(claim_sha256=None, model_signature=None, reviewer_backend="unknown", prompt_sha256=None,
                                    response_schema_sha256=None, outcome="unavailable", detail="the run has no formalization.json to compare", **base)
-        (row_dir / "canonical.json").write_text(json.dumps(verdict.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        (row_dir / "canonical.json").write_text(json.dumps(verdict.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
         return verdict
     claim = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8"))
     signature = claim_signature(claim)
@@ -112,7 +112,7 @@ def compare_canonical(entry: Entry, run_dir: Path, row_dir: Path, *, runtime_fac
     else:
         verdict = CanonicalVerdict(outcome="agreed" if review.agrees else "disputed", review=review, **identity)
     verdict = verdict.model_copy(update={"usage": dict(getattr(runtime, "usage", {}) or {})})
-    (row_dir / "canonical.json").write_text(json.dumps(verdict.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (row_dir / "canonical.json").write_text(json.dumps(verdict.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     return verdict
 
 

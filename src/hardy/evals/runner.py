@@ -27,6 +27,7 @@ from hardy.evals.scoreboard import Row, active_ids, aggregate, batch_row, staged
 from hardy.evals.selection import select
 from hardy.evals.sweep import Baseline, host_info, staleness
 from hardy.formal.contracts import EnvironmentIdentity
+from hardy.foundation.locking import atomic_write_bytes
 from hardy.workflows.attempt_context import evaluation_attempt
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
@@ -82,7 +83,7 @@ def source_revision() -> str | None:
     if root is None:
         return None
     try:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     if head.returncode != 0:
@@ -91,7 +92,7 @@ def source_revision() -> str | None:
     if not revision:
         return None
     try:
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=10)
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return revision
     if status.returncode == 0 and status.stdout.strip():
@@ -100,14 +101,7 @@ def source_revision() -> str | None:
 
 
 def _write(path: Path, board: Scoreboard) -> None:
-    tmp = path.with_suffix(".json.tmp")
-    # newline="\n": the same repository-evidence integrity concern as
-    # commands.py's baseline write -- Path.write_text's default would
-    # checkin a scoreboard as CRLF on Windows despite `.gitattributes`
-    # marking evals/scoreboards/** -text so its bytes stay the ones any
-    # digest is taken over.
-    tmp.write_text(json.dumps(board.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
-    tmp.replace(path)
+    atomic_write_bytes(path, (json.dumps(board.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
 def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards_root: Path, condition: Condition,

@@ -408,6 +408,9 @@ def test_source_revision_is_none_when_the_anchor_has_no_git_above_it(monkeypatch
     does -- must be `None`, not a crash or a `git` invocation.
     """
     monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
+    # The execution host may itself put a .git marker above the temp root.
+    exists = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda path: False if path.name == ".git" else exists(path))
     ran = []
     monkeypatch.setattr(runner.subprocess, "run", lambda *a, **kw: ran.append(a))
     assert runner.source_revision() is None

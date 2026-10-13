@@ -98,7 +98,7 @@ def test_changed_artifacts_are_refused_against_frozen_task_and_trajectory(tmp_pa
     if target.suffix == ".lean":
         target.write_text("theorem changed : True := by trivial")
     else:
-        record = json.loads(target.read_text())
+        record = json.loads(target.read_text(encoding="utf-8"))
         if path == "task.json":
             record["declared_assumptions"] = [{"name": "assumeEverything", "statement": "False",
                 "source": "invented", "justification": "not authorized"}]
@@ -139,11 +139,11 @@ def test_record_replay_preserves_mode_exact_text_and_append_only_provenance(tmp_
     compact = replay_history(store, task, mode="compact")
     second = record_replay(store, compact)
     assert artifact.relative_path != second.relative_path
-    saved = json.loads((store.path / artifact.relative_path).read_text())
+    saved = json.loads((store.path / artifact.relative_path).read_text(encoding="utf-8"))
     assert saved["mode"] == "full" and saved["text"] == full.text
     assert saved["source_artifacts"]
     assert saved["trajectory_prefix_sha256"] == full.trajectory_prefix_sha256
-    events = [json.loads(line) for line in store.trajectory_path.read_text().splitlines()]
+    events = [json.loads(line) for line in store.trajectory_path.read_text(encoding="utf-8").splitlines()]
     assert events[-1]["kind"] == "strategy.history_replay"
     assert events[-1]["payload"]["mode"] == "compact"
 
@@ -155,7 +155,7 @@ def test_record_replay_rechecks_sources_before_provider_receives_it(tmp_path, mu
     if mutate == "artifact":
         (store.path / "best_first/candidates/1/source.lean").write_text("by changed")
     elif mutate == "prefix":
-        store.trajectory_path.write_text(store.trajectory_path.read_text().replace("first", "other"))
+        store.trajectory_path.write_text(store.trajectory_path.read_text(encoding="utf-8").replace("first", "other"))
     else:
         store = RunStore.create(tmp_path, "foreign", now=datetime.now(UTC), run_id=uuid4())
     with pytest.raises(ValueError):
@@ -164,7 +164,7 @@ def test_record_replay_rechecks_sources_before_provider_receives_it(tmp_path, mu
 
 def test_replay_refuses_check_event_paths_that_escape_the_store(tmp_path):
     store, task = _run(tmp_path)
-    events = [json.loads(line) for line in store.trajectory_path.read_text().splitlines()]
+    events = [json.loads(line) for line in store.trajectory_path.read_text(encoding="utf-8").splitlines()]
     check = next(event for event in events if event["kind"] == "best_first.check")
     check["payload"]["result_artifact"] = "../../foreign.json"
     store.write_text(PurePosixPath("trajectory.jsonl"),
@@ -215,7 +215,7 @@ def test_replay_can_be_recorded_after_append_but_cannot_inject_invented_lessons(
 @pytest.mark.parametrize("fault", ["sequence", "missing_candidate", "duplicate_check", "missing_file"])
 def test_broken_recorded_lineage_is_refused(tmp_path, fault):
     store, task = _run(tmp_path)
-    events = [json.loads(line) for line in store.trajectory_path.read_text().splitlines()]
+    events = [json.loads(line) for line in store.trajectory_path.read_text(encoding="utf-8").splitlines()]
     if fault == "sequence":
         events[0]["sequence"] = 10
     elif fault == "missing_candidate":

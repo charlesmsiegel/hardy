@@ -41,7 +41,7 @@ fixtures._batch(Path(sys.argv[1]), [])
 
 def test_completed_attempt_materializes_every_tool_and_usage_event(tmp_path):
     output = fixtures._verified(tmp_path)
-    trajectory = json.loads((output / "trajectory.json").read_text())
+    trajectory = json.loads((output / "trajectory.json").read_text(encoding="utf-8"))
     assert "attempt_receipt" in trajectory
     report = recording().read_attempt(output)
     assert report["status"] == "complete" and report["issues"] == []
@@ -62,12 +62,12 @@ def test_completed_reader_rejects_missing_or_changed_declared_attempt(tmp_path, 
         journal.write_bytes(journal.read_bytes().replace(b'"input_tokens":5', b'"input_tokens":6'))
     elif attack == "manifest":
         path = output / "attempt.json"
-        value = json.loads(path.read_text())
+        value = json.loads(path.read_text(encoding="utf-8"))
         value["plan"]["limits"]["max_turns"] = 99
         path.write_text(json.dumps(value))
     elif attack == "result":
         path = output / "result.json"
-        value = json.loads(path.read_text())
+        value = json.loads(path.read_text(encoding="utf-8"))
         value["model_response"] = "altered"
         path.write_text(json.dumps(value))
     elif attack == "tail":
@@ -75,7 +75,7 @@ def test_completed_reader_rejects_missing_or_changed_declared_attempt(tmp_path, 
             stream.write(b'{"torn":')
     else:
         path = output / "trajectory.json"
-        value = json.loads(path.read_text())
+        value = json.loads(path.read_text(encoding="utf-8"))
         if attack in {"removed_receipt", "erased_journal"}:
             value.pop("attempt_receipt")
             if attack == "erased_journal":
@@ -102,7 +102,7 @@ def test_reusing_an_attempt_directory_refuses_before_a_second_model_call(tmp_pat
 def test_legacy_unjournaled_attempt_is_explicitly_unknown(tmp_path):
     output = fixtures._verified(tmp_path)
     trajectory_path = output / "trajectory.json"
-    trajectory = json.loads(trajectory_path.read_text())
+    trajectory = json.loads(trajectory_path.read_text(encoding="utf-8"))
     trajectory.pop("attempt_receipt")
     trajectory["schema_version"] = 1
     trajectory_path.write_text(json.dumps(trajectory))

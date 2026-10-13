@@ -48,7 +48,7 @@ def _uncommented(text: str) -> str:
     return "\n".join(kept)
 
 path = pathlib.Path(sys.argv[-1])
-source = path.read_text()
+source = path.read_text(encoding="utf-8")
 
 # `% write-tex: NAME` makes the stand-in write a `.tex` file of its own, which
 # is what a document with a loop over a TeX write stream does. BEFORE the

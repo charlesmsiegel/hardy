@@ -23,6 +23,7 @@ from hardy.formal.verifier import (
     axiom_report_line,
     proof_body_violation,
 )
+from hardy.foundation.files import normalize_newlines
 from hardy.workflows.recorded.common import _exact_source, _toolchain_issues, _usage_issues
 
 # Batch terminal reasons that describe a run which produced no proof, honestly.
@@ -657,7 +658,7 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     # And the statement itself: a writeup swapped in from another run on the
     # same toolchain would otherwise pass on its grade marker alone.
     claim_block = f"## Claim\n\n{request.get('informal_claim', '')}\n\n## Exact Lean statement\n\n```lean\n{declaration}\n```"
-    if claim_block not in writeup:
+    if normalize_newlines(claim_block) not in writeup:
         issues.append("writeup.md does not state the recorded claim and Lean statement")
     issues.extend(_usage_issues(result.get("usage"), "result"))
     if result.get("usage") != trajectory.get("usage"):
