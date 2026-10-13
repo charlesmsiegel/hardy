@@ -69,6 +69,19 @@ export default function usePanel(path, revision) {
   //: `-1` on the first run means "nothing fetched yet", so the initial
   //: mount is never treated as a reload.
   const fetchedNonce = useRef(-1);
+  const active = useRef(null);
+  // An explicit probe publishes under the canonical URL, so other consumers
+  // and later mounts see the same answer. Stale scopes cannot republish it.
+  const publish = useCallback((value) => {
+    if (!path || active.current?.path !== path || active.current?.revision !== revision) return false;
+    const cached = shared.get(path);
+    if (cached && cached.revision !== revision) return false;
+    shared.set(path, {revision, promise: Promise.resolve(value)});
+    if (shared.size > LIMIT) shared.delete(shared.keys().next().value);
+    setData(value);
+    setError('');
+    return true;
+  }, [path, revision]);
 
   useEffect(() => {
     // A null path is a panel that has nothing to ask for right now -- the
@@ -76,22 +89,28 @@ export default function usePanel(path, revision) {
     // endpoint answers 409 then. Nothing is fetched and nothing is claimed.
     if (!path) return undefined;
     let live = true;
+    const scope = {path, revision};
+    active.current = scope;
     const isReload = fetchedNonce.current !== -1 && fetchedNonce.current !== nonce;
     fetchedNonce.current = nonce;
-    fetchShared(path, revision, isReload)
+    const request = fetchShared(path, revision, isReload);
+    request
       .then((value) => {
-        if (!live) return;
+        const cached = shared.get(path);
+        if (!live || (cached && cached.promise !== request)) return;
         setData(value);
         setError('');
       })
       .catch((failure) => {
-        if (!live) return;
+        const cached = shared.get(path);
+        if (!live || (cached && cached.promise !== request)) return;
         setError(String(failure?.message ?? failure));
       });
     return () => {
       live = false;
+      if (active.current === scope) active.current = null;
     };
   }, [path, revision, nonce]);
 
-  return {data, error, reload};
+  return {data, error, reload, publish};
 }
