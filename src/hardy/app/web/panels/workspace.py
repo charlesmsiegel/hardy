@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hardy.app.web.panels.record import file_verdicts
@@ -90,16 +91,17 @@ def files(problem: Path) -> dict[str, list[dict[str, Any]]]:
                 key=lambda row: row["path"],
             )
     top = problem / "writeup.pdf"
-    if top.is_file() and not top.is_symlink():
+    if _is_served_pdf(top.relative_to(problem).as_posix()) and top.is_file() and not top.is_symlink():
         out["pdf"].append(_row(problem, top))
     publications = problem / "publications"
-    if publications.is_dir():
+    if publications.is_dir() and not publications.is_symlink():
         out["pdf"].extend(
             sorted(
                 (
                     _row(problem, path)
                     for path in publications.glob("*/writeup.pdf")
-                    if path.is_file() and not path.is_symlink()
+                    if _is_served_pdf(path.relative_to(problem).as_posix())
+                    and path.is_file() and not path.is_symlink() and not path.parent.is_symlink()
                 ),
                 key=lambda row: row["path"],
             )
@@ -117,7 +119,7 @@ def files(problem: Path) -> dict[str, list[dict[str, Any]]]:
 def file_text(problem: Path, relative: str) -> dict[str, Any]:
     """A lean/ or tex/ source file's text, truncated and marked if it is too big.
 
-    Nothing outside `lean/` and `tex/` is served as text: not `session.json`,
+    Nothing outside `lean/`, `tex/` and `cas/` is served as text: not `session.json`,
     not a stray file dropped anywhere else in the problem directory.
     """
     if Path(relative).parts[:1] not in {(name,) for name in SERVED_TREES}:
@@ -125,14 +127,19 @@ def file_text(problem: Path, relative: str) -> dict[str, Any]:
     if Path(relative).parts[:1] == ("cas",) and (len(Path(relative).parts) < 2 or portable_key(Path(relative).parts[1]) in CAS_SKIPPED):
         raise ValueError("not a computer algebra file of this problem")
     path = confine(problem, relative)
-    data = path.read_bytes()
     # Imported here, not at module level, so a test's `monkeypatch.setattr(panels,
     # "TEXT_LIMIT", ...)` on the re-exporting package is what this reads -- the
     # same indirection the pre-split module gave for free by being one file.
     from hardy.app.web import panels
 
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(panels.TEXT_LIMIT + 1)
+    except FileNotFoundError:
+        return {"path": relative, "text": "", "truncated": False, "missing": True, "sha256": None}
     truncated = len(data) > panels.TEXT_LIMIT
-    return {"path": relative, "text": data[: panels.TEXT_LIMIT].decode("utf-8", errors="replace"), "truncated": truncated}
+    return {"path": relative, "text": data[: panels.TEXT_LIMIT].decode("utf-8", errors="replace"), "truncated": truncated,
+            "missing": False, "sha256": None if truncated else hashlib.sha256(data).hexdigest()}
 
 
 def cas_cells(problem: Path) -> dict[str, Any]:
@@ -176,11 +183,19 @@ def cas_cells(problem: Path) -> dict[str, Any]:
     return {"cells": cells, "segment": segment, "total": len(records), "truncated": len(records) > CELLS_LIMIT}
 
 
+def _is_served_pdf(relative: str) -> bool:
+    parts = PurePosixPath(relative).parts
+    return parts == ("writeup.pdf",) or (len(parts) == 3 and parts[0] == "publications"
+                                          and parts[1] not in {".", ".."} and parts[2] == "writeup.pdf")
+
+
 def pdf_bytes(problem: Path, relative: str) -> bytes:
     """One compiled PDF's bytes, refusing anything `files` did not list as one."""
-    if relative not in {row["path"] for row in files(problem)["pdf"]}:
+    if not _is_served_pdf(relative):
         raise ValueError("not a compiled PDF of this problem")
     path = confine(problem, relative)
+    if not path.is_file():
+        raise ValueError("not a compiled PDF of this problem")
     if path.stat().st_size > PDF_LIMIT:
         raise ValueError("PDF is larger than the browser limit")
     return path.read_bytes()

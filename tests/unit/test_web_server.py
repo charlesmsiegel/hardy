@@ -639,3 +639,45 @@ def test_an_editor_body_past_the_editor_limit_is_still_refused(server) -> None:
     status, *_ = _call(server, "PUT", "/api/file", raw=b"x" * ((4 << 20) + 1),
                        headers={"Content-Type": "application/json"})
     assert status == 413
+
+
+def test_unknown_endpoint_without_project_is_404(empty_server):
+    assert _call(empty_server, 'GET', '/api/nonsense', token=False)[0] == 404
+    assert _call(empty_server, 'GET', '/api/files', token=False)[0] == 409
+
+
+def test_environment_probe_cached_until_explicit_refresh(server, monkeypatch):
+    from hardy.app import doctor
+    calls = []
+    def checks(config, **kwargs):
+        calls.append(config)
+        return [doctor.Check('python', True, str(len(calls)), required=True)]
+    monkeypatch.setattr(doctor, 'run_checks', checks)
+    for _ in range(3):
+        status, _, body = _call(server, 'GET', '/api/environment', token=False)
+        assert status == 200 and json.loads(body)['checks'][0]['detail'] == '1'
+    assert len(calls) == 1
+    from dataclasses import replace
+    server.host.config = replace(server.host.config, project='another')
+    assert _call(server, 'GET', '/api/environment', token=False)[0] == 200
+    assert len(calls) == 1
+    status, _, body = _call(server, 'GET', '/api/environment?refresh=1', token=False)
+    assert status == 200 and json.loads(body)['checks'][0]['detail'] == '2'
+
+
+def test_file_save_detects_external_edit_and_deletion(server):
+    path = server.host.session.workspace / 'lean' / 'Conflict.lean'
+    path.write_text('old')
+    _, _, body = _call(server, 'GET', '/api/file?path=lean/Conflict.lean', token=False)
+    base = json.loads(body)['sha256']
+    path.write_text('external')
+    status, _, body = _call(server, 'PUT', '/api/file',
+                            {'path': 'lean/Conflict.lean', 'source': 'mine', 'base_sha256': base})
+    out = json.loads(body)
+    assert status == 409 and out['conflict'] is True and out['text'] == 'external'
+    assert path.read_text() == 'external' and server.host.session.saved == []
+    path.unlink()
+    status, _, body = _call(server, 'PUT', '/api/file',
+                            {'path': 'lean/Conflict.lean', 'source': 'mine', 'base_sha256': base})
+    assert status == 409 and json.loads(body)['missing'] is True
+    assert not path.exists()
