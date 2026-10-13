@@ -460,12 +460,14 @@ class CasSession:
         """
         with self._lock:
             self._require_owner()
-            if self._kernel is None:
-                self._start()
+            started = time.monotonic()
             try:
+                if self._kernel is None:
+                    self._start()
                 outcome = self._send(self.backend.version_source)
             finally:
                 self._discard_kernel()
+                self.charge(time.monotonic() - started)
             if outcome.status != "ok":
                 raise CasError(
                     f"{self.backend.name} kernel did not answer a version query: "
@@ -727,7 +729,11 @@ class CasSession:
         if reply is TIMED_OUT:
             return incomplete(
                 status="timeout",
-                stderr=f"cell exceeded its {limit:g}s limit",
+                stderr=(
+                    f"the session budget ended this cell after {limit:g}s"
+                    if limit < self.limits.cas_cell_seconds
+                    else f"cell exceeded its {limit:g}s limit"
+                ),
             )
         if reply is None or reply is DESYNCHRONISED:
             # A stream that desynchronised cannot be trusted to be answering
@@ -935,7 +941,7 @@ class CasSession:
                 f"{self.backend.name} is configured. Reset the session to start a "
                 "clean segment, or restore the original cas_backend setting."
             )
-        if self.spent_seconds >= self.limits.cas_session_seconds:
+        if self.remaining_seconds < min(0.1, self.limits.cas_cell_seconds / 10):
             raise CasError("CAS session budget exhausted")
 
     def execute(self, source: str, *, author: str = "model", path: str = "") -> CellRecord:
@@ -1190,6 +1196,7 @@ class CasSession:
             if not reproduces(record, outcome):
                 diverged.append(record.seq)
         if diverged:
+            self._drop_kernel()
             self.state = "poisoned"
             raise CasError(
                 "could not rebuild CAS state faithfully: cell(s) "

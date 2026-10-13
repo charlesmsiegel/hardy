@@ -773,3 +773,36 @@ def test_a_kernel_that_stopped_reading_can_still_be_escalated(cas_session) -> No
         assert session.state == "dead"
     finally:
         session.close()
+
+
+def test_stop_during_capture_preserves_completed_cell_output(monkeypatch) -> None:
+    import signal
+    from hardy.algebra import driver
+
+    class Capture:
+        def begin(self):
+            return "marker"
+
+        def settle(self, marker):
+            signal.raise_signal(signal.SIGINT)
+            return "hi\n", "", False
+
+    old_handler = signal.getsignal(signal.SIGINT)
+    namespace = {}
+    driver.PENDING_INTERRUPT = False
+    try:
+        driver._handle_stops_by(signal.default_int_handler)
+        try:
+            reply = driver.run_cell("x = 42; 7", namespace, 4096, Capture())
+        except KeyboardInterrupt:
+            pytest.fail("stop during capture escaped and discarded completed output")
+        assert namespace["x"] == 42
+        assert reply["status"] == "interrupted"
+        assert reply["stdout"] == "hi\n"
+        assert reply["value_repr"] == "7"
+        assert "before the cell ran" not in reply["stderr"]
+        assert "output was being collected" in reply["stderr"]
+        assert driver.PENDING_INTERRUPT is False
+    finally:
+        signal.signal(signal.SIGINT, old_handler)
+        driver.PENDING_INTERRUPT = False
