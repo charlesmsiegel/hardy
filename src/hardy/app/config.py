@@ -864,9 +864,18 @@ def write_setting(path: Path, key: str, value: str) -> None:
     if key not in SETTINGS:
         raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
     header = ["# Written by Hardy. Every value can be overridden by a", "# HARDY_* environment variable or a command-line flag."]
-    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else list(header)
-    _parse_toml("\n".join(lines), path)
-    _rewrite(path, _upsert(lines, key, value))
+    original = path.read_bytes().decode("utf-8-sig") if path.exists() else "\n".join(header)
+    parsed = _parse_toml(original, path)
+    if isinstance(parsed.get(key), dict):
+        raise ValueError(f"{path}: {key} is a table; cannot replace it with a scalar setting")
+    # TOML's line terminator is LF (optionally preceded by CR), not Python's
+    # broader Unicode splitlines: those separators may occur inside strings.
+    lines = original.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    updated = _upsert(lines, key, value)
+    _parse_toml("\n".join(updated) + "\n", path)
+    _rewrite(path, updated)
 
 
 PROJECT_HEADER = (
