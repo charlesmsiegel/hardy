@@ -36,7 +36,20 @@ def test_real_console_close_event(tmp_path):
         user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
         user32.PostMessageW.restype = ctypes.c_bool
         assert user32.PostMessageW(hwnd, 0x0010, 0, 0), ctypes.get_last_error()  # WM_CLOSE
-        child.wait(timeout=10)
+        timed_out = False
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        evidence = {
+            "hwnd": hwnd,
+            "visible": bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd))),
+            "exit": child.poll(),
+            "timed_out": timed_out,
+            "files": {path.name: path.read_text(encoding="utf-8") for path in tmp_path.glob("*.json")},
+        }
+        print(f"native console transport diagnostics: {evidence}", flush=True)
+        assert not timed_out, "WM_CLOSE accepted but the console process did not terminate; inspect native event evidence"
         observed = tmp_path / "native-event.json"
         assert observed.exists(), "WM_CLOSE did not deliver a console event on this Windows runner"
         event = json.loads(observed.read_text(encoding="utf-8"))
