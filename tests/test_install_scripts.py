@@ -1792,6 +1792,9 @@ def test_windows_messages_hide_url_credentials(script):
 
 def test_windows_transport_failure_never_becomes_source(tmp_path):
     result = run_installer_functions(
+        "Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'; "
+        "$env:HARDY_RELEASE_BASE_URL = ''; $env:HARDY_RELEASE_MANIFEST = ''; "
+        "$env:HARDY_REPO_URL = 'https://u:SECRET@host/repo'; "
         "function Invoke-WebRequest { throw 'TLS connection failed for https://u:SECRET@host/repo' }; "
         "$RepoUrl = 'https://u:SECRET@host/repo'; $ReleaseVersion = ''; "
         f"Save-ReleaseAsset '.whl' '{tmp_path}' $false; exit 99"
@@ -1799,6 +1802,8 @@ def test_windows_transport_failure_never_becomes_source(tmp_path):
     assert result.returncode == 1
     assert 'TLS connection failed' in result.stdout + result.stderr
     assert 'SECRET' not in result.stdout + result.stderr
+    assert 'Response' not in result.stdout + result.stderr
+    assert not (tmp_path / 'src').exists()
 
 
 def test_windows_failed_remove_reports_remaining_path(tmp_path):
