@@ -917,3 +917,48 @@ def test_a_newboolean_conditional_nests_inside_a_false_branch() -> None:
 
     assert unreached_fragments(sources) == ["x.tex"]
     assert uncertain_conditionals(sources) == []
+
+
+def test_refused_publisher_cannot_rollback_another_publishers_labels(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from hardy.documents.latex import _publish
+
+    aux = tmp_path / "aux"
+    aux.mkdir()
+    (aux / "writeup.aux").write_text("old labels")
+    source = tmp_path / "writeup.tex"
+    source.write_text("old source")
+    works = []
+    for name in ("A", "B"):
+        work = tmp_path / name
+        work.mkdir()
+        (work / "writeup.aux").write_text(name + " labels")
+        (work / "writeup.pdf").write_text(name + " PDF")
+        works.append(work)
+    a_committing, b_started, b_finished = Event(), Event(), Event()
+
+    def refuse_a():
+        a_committing.set()
+        assert b_started.wait(2)
+        # B should wait for A's entire transaction, including its rollback.
+        b_finished.wait(0.2)
+        raise PermissionError("A refused")
+
+    def publish_b():
+        assert a_committing.wait(2)
+        b_started.set()
+        result = _publish(works[1], tmp_path, aux, lambda: source.write_text("B source"))
+        b_finished.set()
+        return result
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a = pool.submit(_publish, works[0], tmp_path, aux, refuse_a)
+        b = pool.submit(publish_b)
+        with pytest.raises(PermissionError, match="A refused"):
+            a.result(timeout=3)
+        assert b.result(timeout=3) is None
+    assert source.read_text() == "B source"
+    assert (tmp_path / "writeup.pdf").read_text() == "B PDF"
+    assert (aux / "writeup.aux").read_text() == "B labels"

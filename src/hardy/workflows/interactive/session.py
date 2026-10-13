@@ -12,6 +12,7 @@ import threading
 import weakref
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import uuid4
@@ -27,7 +28,13 @@ from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from hardy.documents import completion
-from hardy.documents.latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented
+from hardy.documents.latex import (
+    ROOT_DOCUMENT,
+    LatexTools,
+    compiles_document,
+    publication_lock,
+    uncommented,
+)
 from hardy.documents.writeup import escape_tex_text
 from hardy.formal import audit, refute
 from hardy.formal.contracts import Request
@@ -64,6 +71,7 @@ from hardy.foundation.files import (
     read_bytes,
     read_text,
 )
+from hardy.foundation.locking import FileLock, LockTimeout, LockUnavailable
 from hardy.foundation.paths import HARDY_DIR, global_build, global_lean
 from hardy.foundation.truncation import truncate
 from hardy.foundation.values import ToolResult
@@ -3083,6 +3091,18 @@ class MathematicsSession:
         return ToolResult(True, f"deleted {path}")
 
     def _delete_tex(self, target: Path, path: str) -> ToolResult:
+        with ExitStack() as stack:
+            try:
+                lock = stack.enter_context(publication_lock(self.workspace))
+            except LockUnavailable as error:
+                return ToolResult(False, f"{path} was not deleted: publication lock unavailable; "
+                                  f"check the lock path and filesystem permissions: {error}")
+            except LockTimeout as error:
+                return ToolResult(False, f"{path} was not deleted: another publication holds the lock; "
+                                  f"retry after it finishes: {error}")
+            return self._delete_tex_locked(target, path, lock)
+
+    def _delete_tex_locked(self, target: Path, path: str, lock: FileLock) -> ToolResult:
         """Remove a writeup file, unless the document stops compiling without it.
 
         A fragment pulled in with `\\input` cannot simply be dropped: the root
@@ -3183,6 +3203,7 @@ class MathematicsSession:
                     # invented `\bibitem` that resolves.
                     vouched=self._vouched_references,
                     published=_mark_published,
+                    _publication_lock=lock,
                 )
             except BaseException:
                 # The stamp is already gone -- dropped before the unlink, for

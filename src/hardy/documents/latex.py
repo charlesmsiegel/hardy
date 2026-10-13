@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path, PurePosixPath
 
 from hardy.documents import references
@@ -51,7 +52,7 @@ from hardy.foundation.files import (
     normalize_newlines,
     read_bytes,
 )
-from hardy.foundation.locking import FileInUse
+from hardy.foundation.locking import FileInUse, FileLock
 from hardy.foundation.process import GuardedResult, run_guarded
 from hardy.foundation.values import ToolResult
 
@@ -210,9 +211,16 @@ def _diagnostics(work: Path, outcome: GuardedResult) -> str:
     return text + outcome.stdout + outcome.stderr
 
 
+def publication_lock(output_dir: Path) -> FileLock:
+    """One cross-process lease for source, derived outputs, and their stamp."""
+    guard = WriteGuard(output_dir, create=True)
+    return FileLock(guard.reserve(".writeup-publication.lock"))
+
+
 def _publish(
     work: Path, output_dir: Path, aux_dir: Path | None,
     commit: Callable[[], None] | None = None,
+    *, lock: FileLock | None = None,
 ) -> Path | None:
     """Publish labels, commit source, then publish the PDF through guards.
 
@@ -220,44 +228,48 @@ def _publish(
     refuses, restore the previous aux data. A held PDF leaves committed source
     and matching labels, but never releases the caller's publication stamp.
     """
-    guard = WriteGuard(output_dir, create=True)
-    guard.reserve("writeup.pdf")
-    aux_guard = WriteGuard(aux_dir, create=True) if aux_dir is not None else None
-    previous = work / "hardy-previous-writeup.aux"
-    had_aux = False
-    if aux_guard is not None:
-        old = aux_guard.reserve("writeup.aux")
-        had_aux = old.exists()
-        try:
-            if had_aux:
-                shadow_guard = WriteGuard(work)
-                shadow_guard.write_from(previous.name, old, sync=False)
-            aux = work / "writeup.aux"
-            if aux.exists():
-                aux_guard.write_from("writeup.aux", aux)
-            else:
-                # A nofiles compile creates no labels: old aux must go.
-                aux_guard.unlink("writeup.aux", missing_ok=True)
-        except PermissionError as error:
-            if isinstance(error, FileInUse) or getattr(error, "winerror", None) in {5, 32, 33}:
-                return aux_guard.path("writeup.aux")
-            raise
-    try:
-        if commit is not None:
-            commit()
-    except Exception:
+    lease = publication_lock(output_dir)
+    if lock is not None and (not lock.held or lock.path != lease.path):
+        raise ValueError("publication requires the held lock for this workspace")
+    with nullcontext(lock) if lock is not None else lease:
+        guard = WriteGuard(output_dir, create=True)
+        guard.reserve("writeup.pdf")
+        aux_guard = WriteGuard(aux_dir, create=True) if aux_dir is not None else None
+        previous = work / "hardy-previous-writeup.aux"
+        had_aux = False
         if aux_guard is not None:
-            if had_aux:
-                aux_guard.write_from("writeup.aux", previous)
-            else:
-                aux_guard.unlink("writeup.aux", missing_ok=True)
-        raise
-    # Streamed: PDFs have no size bound, and need not fit in memory.
-    try:
-        guard.write_from("writeup.pdf", work / "writeup.pdf")
-    except FileInUse:
-        return output_dir / "writeup.pdf"
-    return None
+            old = aux_guard.reserve("writeup.aux")
+            had_aux = old.exists()
+            try:
+                if had_aux:
+                    shadow_guard = WriteGuard(work)
+                    shadow_guard.write_from(previous.name, old, sync=False)
+                aux = work / "writeup.aux"
+                if aux.exists():
+                    aux_guard.write_from("writeup.aux", aux)
+                else:
+                    # A nofiles compile creates no labels: old aux must go.
+                    aux_guard.unlink("writeup.aux", missing_ok=True)
+            except PermissionError as error:
+                if isinstance(error, FileInUse) or getattr(error, "winerror", None) in {5, 32, 33}:
+                    return aux_guard.path("writeup.aux")
+                raise
+        try:
+            if commit is not None:
+                commit()
+        except Exception:
+            if aux_guard is not None:
+                if had_aux:
+                    aux_guard.write_from("writeup.aux", previous)
+                else:
+                    aux_guard.unlink("writeup.aux", missing_ok=True)
+            raise
+        # Streamed: PDFs have no size bound, and need not fit in memory.
+        try:
+            guard.write_from("writeup.pdf", work / "writeup.pdf")
+        except FileInUse:
+            return output_dir / "writeup.pdf"
+        return None
 
 
 class LatexTools:
@@ -280,6 +292,7 @@ class LatexTools:
         stamp: str | None = None,
         vouched: Callable[[tuple[str, ...]], str] | None = None,
         published: Callable[[], None] | None = None,
+        _publication_lock: FileLock | None = None,
     ) -> ToolResult:
         r"""Compile a candidate against the documents already saved.
 
@@ -434,7 +447,7 @@ class LatexTools:
             # create, from a document nobody will ever read.
             pdf_note = ""
             if actual and resolved and output_dir is not None and pdf.exists():
-                held = _publish(work, output_dir, aux_dir, commit)
+                held = _publish(work, output_dir, aux_dir, commit, lock=_publication_lock)
                 if held is None:
                     if published is not None:
                         published()
