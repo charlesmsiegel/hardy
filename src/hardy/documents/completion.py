@@ -32,6 +32,8 @@ from hardy.documents.syntax import (
     Conditionals,
     _executed_line,
     _MacroState,
+    _next_conditional,
+    _tex_lines,
     read_conditionals,
     uncommented,
 )
@@ -207,11 +209,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
         ran.append(part)
         position += len(part)
 
-    for raw_match in re.finditer(r"[^\n]*(?:\n|$)", source):
-        raw_line = raw_match.group(0)
-        if not raw_line:
-            continue
-        raw = raw_line.rstrip("\r\n")
+    for raw, ending in _tex_lines(source):
         line = raw
         line_cursor = 0
         while True:
@@ -234,7 +232,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
                 # `% \fi` while it skips.
                 visible = uncommented(line)
                 cursor = 0
-                while skipping and (found := conditionals.pattern.search(visible, cursor)) is not None:
+                while skipping and (found := _next_conditional(visible, conditionals, cursor)) is not None:
                     cursor = found.end()
                     if found.group(2) == "fi":
                         skipping -= 1
@@ -296,7 +294,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
             line_cursor += opening.end()
             line = line[opening.end() :]
         emit("\n", at=raw_offset + len(raw))
-        raw_offset += len(raw_line)
+        raw_offset += len(raw) + len(ending)
     return Displayed("".join(ran), tuple(blocks), tuple(uncertain), tuple(runs))
 
 

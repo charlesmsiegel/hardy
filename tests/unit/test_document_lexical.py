@@ -108,3 +108,99 @@ def test_literal_form_feed_is_not_a_line_ending():
 def test_transforming_inline_listing_cannot_credit_a_quotation():
     source = r'\lstinline[literate={True}{{False}}4]|theorem t : True|'
     assert completion.quoted_lean(completion.displayed(source)) == ()
+
+
+def test_verb_bracket_delimiter_has_no_optional_arguments():
+    tex = {
+        'writeup.tex': r'\begin{document}\verb[demo]|x| \input{ghost}[\label{t}\end{document}',
+        'ghost.tex': r'\begin{verbatim}theorem t : True\end{verbatim}',
+    }
+    assert syntax.reached_fragments(tex) == {'writeup.tex'}
+    assert completion.quoted_lean(completion.assemble(tex)) == (r'demo]|x| \input{ghost}',)
+    obligations = completion.outstanding(
+        theorems={'t': 'theorem t : True'},
+        registry=[{'formal_name': 't', 'latex_name': 't'}],
+        labels={'t'}, assumptions=[], used=set(), tex=tex,
+    )
+    assert tuple(item.kind for item in obligations) == ('statement',)
+
+
+def test_starred_verb_accepts_alphabetic_and_star_delimiters():
+    for delimiter in ('A', '*'):
+        tex = {
+            'writeup.tex': rf'\begin{{document}}\verb*{delimiter}\input{{ghost}}{delimiter}\label{{t}}\end{{document}}',
+            'ghost.tex': r'\begin{verbatim}theorem t : True\end{verbatim}',
+        }
+        assert syntax.reached_fragments(tex) == {'writeup.tex'}
+        assert completion.quoted_lean(completion.assemble(tex)) == (r'\input{ghost}',)
+
+
+def test_braced_lstinline_preserves_following_live_theorem():
+    source = r'\lstinline{code}\newtheorem{theorem}{Theorem}\begin{theorem}Claim\end{theorem}'
+    displayed = completion.displayed(source)
+    assert completion.quoted_lean(displayed) == ('code',)
+    assert completion.asserted_theorems(displayed) == (('theorem', ''),)
+    obligations = completion.outstanding(
+        theorems={}, registry=[], labels=set(), assumptions=[], used=set(),
+        tex={'writeup.tex': source},
+    )
+    assert tuple(item.kind for item in obligations) == ('theorem',)
+
+
+def test_braced_lstinline_quotes_literal_command_and_reaches_live_include():
+    tex = {
+        'writeup.tex': r'\lstinline{\input ghost}\input{live}',
+        'ghost.tex': r'\begin{verbatim}theorem ghost : True\end{verbatim}',
+        'live.tex': r'\begin{verbatim}theorem live : True\end{verbatim}',
+    }
+    assert syntax.reached_fragments(tex) == {'writeup.tex', 'live.tex'}
+    assert completion.quoted_lean(completion.assemble(tex)) == (r'\input ghost', 'theorem live : True')
+
+
+def test_braced_lstinline_closes_after_literal_backslash():
+    source = r'\lstinline{\}\newtheorem{theorem}{Theorem}\begin{theorem}Claim\end{theorem}'
+    assert completion.asserted_theorems(completion.displayed(source)) == (('theorem', ''),)
+
+
+def test_braced_lstinline_treats_opening_brace_as_literal_content():
+    source = r'\lstinline{{code}\newtheorem{theorem}{Theorem}\begin{theorem}Claim\end{theorem}'
+    displayed = completion.displayed(source)
+    assert completion.quoted_lean(displayed) == ('{code',)
+    assert completion.asserted_theorems(displayed) == (('theorem', ''),)
+
+
+def test_escaped_fi_never_ends_a_false_branch():
+    tex = {
+        'writeup.tex': r'\iffalse\\fi\input{ghost}\fi\input{live}',
+        'ghost.tex': r'\begin{verbatim}theorem ghost : True\end{verbatim}',
+        'live.tex': r'\begin{verbatim}theorem live : True\end{verbatim}',
+    }
+    assert syntax.reached_fragments(tex) == {'writeup.tex', 'live.tex'}
+    assert completion.quoted_lean(completion.assemble(tex)) == ('theorem live : True',)
+
+
+def test_dormant_inline_command_never_swallows_macro_closing_brace():
+    for command in ('verb', 'lstinline'):
+        prefix = rf'\def\x{{\{command}|}}|'
+        source = prefix + r'\newtheorem{theorem}{Theorem}\begin{theorem}Claim\end{theorem}\input{live}'
+        tex = {'writeup.tex': source, 'live.tex': 'Live.'}
+        assert syntax.reached_fragments(tex) == set(tex)
+        assert completion.asserted_theorems(completion.displayed(source)) == (('theorem', ''),)
+
+
+def test_dormant_let_never_swallows_macro_closing_brace():
+    source = r'\newtheorem{theorem}{Theorem}\def\x{\let\y}\begin{theorem}Claim\end{theorem}\input{live}'
+    tex = {'writeup.tex': source, 'live.tex': r'\begin{verbatim}theorem t : True\end{verbatim}'}
+    assert completion.asserted_theorems(completion.displayed(source)) == (('theorem', ''),)
+    assert completion.quoted_lean(completion.assemble(tex)) == ('theorem t : True',)
+
+
+def test_cr_and_crlf_are_tex_line_endings_with_original_marker_offsets():
+    for ending in ('\r', '\r\n', '\n'):
+        root = '% comment' + ending + r'\input{live}' + ending
+        tex = {'writeup.tex': root, 'live.tex': 'Live.'}
+        assert syntax.reached_fragments(tex) == set(tex)
+        assert 'Live.' in completion.assemble(tex).executed
+        source = '% fake \\begin{document}' + ending + r'\begin{document}Body'
+        marker = syntax.executed_begin_document(source)
+        assert marker is not None and marker.start() == source.rindex(r'\begin{document}')
