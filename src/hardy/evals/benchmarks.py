@@ -268,7 +268,7 @@ def import_archive(archive: Path, *, benchmark: str, revision: str, expected_sha
                 # JSON round-trip makes tuple-valued profile fields match the
                 # durable manifest returned after a restart.
                 serialized = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
-                (payload / "manifest.json").write_text(serialized + "\n", encoding="utf-8")
+                (payload / "manifest.json").write_text(serialized + "\n", encoding="utf-8", newline="\n")
                 os.rename(payload, output)
                 return json.loads(serialized)
     except (OSError, ValueError, LockTimeout) as error:
