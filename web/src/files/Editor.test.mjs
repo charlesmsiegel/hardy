@@ -187,3 +187,61 @@ test('switching Files paths never presents the previous file as the new buffer',
   assert.equal(showedPreviousBuffer, false, 'wait for B rather than label A text as B');
   assert.equal(buffer(), 'second file');
 });
+test('explicit environment refresh survives leaving and reopening page', async () => {
+  const {default: Environment} = await server.ssrLoadModule('/src/pages/Environment.jsx');
+  const {SessionContext} = await server.ssrLoadModule('/src/session/SessionProvider.jsx');
+  const reads=[];
+  globalThis.fetch=async(url)=>{reads.push(url);return new Response(JSON.stringify({checks:[{name:'lean',ok:true,detail:url.includes('refresh=1')?'new toolchain':'old toolchain'}]}));};
+  const mount=async()=>act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:{revision:9001}},React.createElement(Environment)));await new Promise(r=>setTimeout(r,20));});
+  await mount(); await click('Re-probe');
+  assert.match(document.body.textContent,/new toolchain/);
+  await act(()=>root.render(null)); await mount();
+  assert.match(document.body.textContent,/new toolchain/);
+});
+test('late environment re-probe cannot replace a newer configuration revision', async () => {
+  const {default: Environment} = await server.ssrLoadModule('/src/pages/Environment.jsx');
+  const {SessionContext} = await server.ssrLoadModule('/src/session/SessionProvider.jsx');
+  let finish;
+  globalThis.fetch = async (url) => url.endsWith('?refresh=1')
+    ? new Promise((resolve) => { finish = () => resolve(new Response(JSON.stringify({checks:[{name:'lean',ok:true,detail:'old re-probe'}]}))); })
+    : new Response(JSON.stringify({checks:[{name:'lean',ok:true,detail:'current config'}]}));
+  const page = async (revision) => act(async () => {
+    root.render(React.createElement(SessionContext.Provider, {value:{revision}}, React.createElement(Environment)));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  await page(601);
+  await click('Re-probe');
+  await page(602);
+  await act(async () => { finish(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await act(() => root.render(null));
+  await page(602);
+  assert.match(document.body.textContent, /current config/);
+  assert.doesNotMatch(document.body.textContent, /old re-probe/);
+});
+for (const status of [200, 500]) {
+test(`re-probe supersedes a pending canonical read (status ${status}) and survives remount`, async () => {
+  const {default: Environment} = await server.ssrLoadModule('/src/pages/Environment.jsx');
+  const {SessionContext} = await server.ssrLoadModule('/src/session/SessionProvider.jsx');
+  let finish;
+  let normalReads = 0;
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('?refresh=1')) return new Response(JSON.stringify({checks:[{name:'lean',ok:true,detail:'new probe'}]}));
+    if (++normalReads === 2) return new Promise((resolve) => { finish = () => resolve(new Response(JSON.stringify({checks:[{name:'lean',ok:true,detail:'older read'}],error:'older read failure'}), {status})); });
+    return new Response(JSON.stringify({checks:[{name:'lean',ok:true,detail:'initial read'}]}));
+  };
+  const page = async (revision) => act(async () => {
+    root.render(React.createElement(SessionContext.Provider, {value:{revision}}, React.createElement(Environment)));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  await page(701);
+  await page(702);
+  await click('Re-probe');
+  await act(async () => { finish(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  assert.match(document.body.textContent, /new probe/);
+  assert.doesNotMatch(document.body.textContent, /older read failure/);
+  await act(() => root.render(null));
+  await page(702);
+  assert.match(document.body.textContent, /new probe/);
+  assert.equal(normalReads, 2);
+});
+}
