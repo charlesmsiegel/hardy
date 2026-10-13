@@ -39,14 +39,15 @@ class SympyBackend:
     # The display helper reproduces the driver's module-global `_`, unlike
     # Python's displayhook, which binds builtins._. Capture the namespace and
     # repr/print operations before a cell can rebind their global names.
-    preamble = (
-        "from sympy import *\nimport sys\n"
+    preamble = "\n".join((
+        "from sympy import *",
+        "import sys",
         '_hardy_display = lambda value, namespace=globals(), '
         'write=__import__("builtins").print, representation=repr, output=sys: '
         'None if value is None else '
         '(namespace.__setitem__("_", value), '
-        'write(representation(value), file=output.stdout))'
-    )
+        'write(representation(value), file=output.stdout))',
+    ))
     # Both halves, because both bear on a result. The digest is derived from
     # `repr` output and the exported script is executed by an interpreter, so
     # a different Python can change a representation, an ordering, or a
