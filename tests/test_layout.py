@@ -730,6 +730,7 @@ GUARDED_MODULES = (
 GUARD_BINDINGS = frozenset({
     "guard",
     "shadow_guard",
+    "aux_guard",
     "self._guard",
     "self._log",
     "session._log",

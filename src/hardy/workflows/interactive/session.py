@@ -3739,6 +3739,12 @@ class MathematicsSession:
             del self.state["imported"]
         self._save_state()
 
+    def _committed_authored_save(self, path: str) -> None:
+        """Supersede import provenance only after authored bytes reach disk."""
+        if any(item.get("path") == path for item in self.state.get("imported", [])):
+            self._forget_import(path)
+            self._record({"type": "imported", "reason": "superseded", "path": path})
+
     def _resolve(self, path: str) -> tuple[Path, str, str] | ToolResult:
         """Where a tool path lives: the Lean tree or the writeup tree.
 
