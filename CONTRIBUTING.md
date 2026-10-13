@@ -197,7 +197,9 @@ requested tag rather than the workflow branch, and a tag that moves during
 the checks is refused. A manual dispatch defaults to a dry run, which runs
 the same gates and builds the assets without publishing. Its optional
 `candidate-ref` checks a commit or branch without needing a release tag;
-that override is refused when publishing is enabled. A failed candidate
+that override is refused when publishing is enabled. Tag-only dry runs
+check tag/version agreement; only a dry run with a candidate override skips
+that comparison. A failed candidate
 skips the dependent asset-build job, so failure gating can be exercised
 without creating a release. Candidate builds and checks have read-only
 repository permissions. Only a separate publishing job gets write access;
