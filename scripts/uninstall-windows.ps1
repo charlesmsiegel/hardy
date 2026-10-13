@@ -160,7 +160,6 @@ Remove-Part 'the hardy command' (Join-Path $BinDir 'hardy.cmd')
 Remove-Part 'the Desktop launcher' (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hardy.lnk')
 Remove-Part 'the Start Menu launcher' (Join-Path ([Environment]::GetFolderPath('Programs')) 'Hardy.lnk')
 Remove-Part 'the virtual environment' $Venv
-Remove-Part 'the Hardy-managed tools' (Join-Path $Prefix 'tools')
 Remove-Part 'the fetched source tree' $SourceTree
 # What a release install leaves behind instead of a source tree.
 Remove-Part 'the fetched installers' (Join-Path $Prefix 'installers')
