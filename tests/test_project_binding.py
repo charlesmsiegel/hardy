@@ -165,3 +165,59 @@ def test_report_distinguishes_missing_audit_from_audited_zero_axioms(tmp_path):
     assert chat.project_inspect(target.id)['formal_proof']['axioms'] is None
     bind(chat, target, translation, saved)
     assert chat.project_inspect(target.id)['formal_proof']['axioms'] == []
+
+
+@pytest.mark.parametrize('include_formal', [False, True])
+def test_selected_scope_does_not_import_native_checked_binding_or_review(tmp_path, include_formal):
+    from hardy.workflows.interactive.semantic_operations import SemanticOperations
+    from hardy.workflows.interactive.semantic_records import AssessmentRequest
+    chat, target, formal, saved = setup_pair(tmp_path)
+    ops = SemanticOperations(tmp_path, owners=chat.owners)
+    audit = ops.scope('audit', must_prove=(target.ref, formal.ref) if include_formal else (target.ref,))
+    # Native binding/review still works when another scope includes the pair.
+    bind(chat, target, formal, saved)
+    ops.assess(AssessmentRequest(subject=target.ref, scope=audit.ref, dimension='statement', verdict='supported',
+        reviewer='audit reader', conditions='exact audit scope', reason='Separate audit judgment'))
+    native = ops.report(target.ref)
+    selected = ops.report(target.ref, scope=audit.ref)
+    assert native['scope']['id'] == 'Target:scope'
+    assert native['formal_proof']['status'] == 'kernel_verified'
+    assert native['translation']['status'] == 'approved'
+    assert native['statement']['status'] == 'supported_by_reviewed_formal_proof'
+    assert selected['scope']['id'] == audit.id
+    assert selected['formal_proof']['status'] == 'unresolved'
+    assert selected['translation']['status'] == 'unresolved'
+    assert selected['formal_proof']['evidence'] == []
+    assert selected['translation']['reviews'] == []
+    assert selected['bindings'] == [] and selected['obligations'] == []
+    assert selected['statement']['status'] == 'supported_by_review'
+    assert selected['statement']['reason'] == 'Separate audit judgment'
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_checked_binding_captures_later_semantic_dependencies(tmp_path, legacy):
+    from hardy.foundation.journal import record_digest
+    from hardy.foundation.values import json_digest
+    from hardy.workflows.interactive.evidence import CheckedBinding
+    from hardy.workflows.interactive.semantic_operations import SemanticOperations
+    from hardy.workflows.interactive.semantic_records import ItemRequest
+    from hardy.workflows.ledger.contracts import Relation
+    chat, target, formal, saved = setup_pair(tmp_path)
+    binding = bind(chat, target, formal, saved)
+    if legacy:
+        payload = binding.model_dump(mode='json')
+        payload.pop('inputs')
+        payload['id'] = 'legacy-checked-binding'
+        old_digest = json_digest({'schema': 'hardy.journal/CheckedBinding/v1', 'value': payload})
+        binding = CheckedBinding.model_validate(payload)
+        assert record_digest(binding) == old_digest
+        chat.owners._append(binding)
+    reference = chat.owners.binding_reference(binding)
+    assert chat.owners.read_evidence(reference) is not None
+    ops = SemanticOperations(tmp_path, owners=chat.owners)
+    definition = ops.item(ItemRequest(id='late-definition', name='D', kind='definition', statement='Meaning changed'))
+    snapshot = ops.store.read()
+    ops.store.append((Relation(id='target-depends-on-D', kind='depends_on', source=target.ref, target=definition.ref),),
+        expected_revision=snapshot.revision, validate=chat.owners.policy.validate)
+    assert chat.owners.read_evidence(reference) is None
+    assert chat.project_inspect(target.id)['translation']['status'] == 'stale'

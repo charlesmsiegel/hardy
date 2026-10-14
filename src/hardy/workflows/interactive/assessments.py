@@ -8,7 +8,15 @@ from hardy.foundation.journal import record_digest
 from hardy.workflows.interactive.semantic_owner import SemanticOwner
 from hardy.workflows.interactive.semantic_records import AssessmentRequest
 from hardy.workflows.interactive.semantic_versions import relevant_versions
-from hardy.workflows.ledger.contracts import ProjectItem, ProjectItemKind, Scope, Text, VersionRef
+from hardy.workflows.ledger.contracts import (
+    EvidenceKind,
+    ObligationKind,
+    ProjectItem,
+    ProjectItemKind,
+    Scope,
+    Text,
+    VersionRef,
+)
 from hardy.workflows.ledger.state import LedgerSnapshot
 
 
@@ -42,9 +50,7 @@ class AssessmentOperations:
             context_members = {ref for c in LedgerGraph(snapshot).context_chain(subject.context) for ref in c.declarations}
         if not set(request.assumptions).issubset(set(scope.allowed_background + scope.allowed_interfaces) | context_members):
             raise ValueError("assessment assumptions are outside exact permitted scope/context")
-        for evidence in request.evidence:
-            if self.owners.read_evidence_at(snapshot, evidence) is None:
-                raise ValueError("assessment evidence cannot be authenticated")
+        self._check_evidence(snapshot, request, context=subject.context)
         inputs = relevant_versions(self.owners.problem, snapshot, request.subject,
                                    (*request.relevant, request.scope, *request.assumptions))
         record = MathematicalAssessment(**request.model_dump(), id=f"assessment:{uuid4().hex}",
@@ -68,11 +74,45 @@ class AssessmentOperations:
                                        (*record.relevant, record.scope, *record.assumptions))
             if inputs != record.inputs:
                 return None
-            if any(self.owners.read_evidence_at(snapshot, reference) is None for reference in record.evidence):
+            subject = snapshot.get(record.subject)
+            if not isinstance(subject, ProjectItem) or subject.context != record.context:
                 return None
+            self._check_evidence(snapshot, record, context=record.context)
         except (ValueError, OSError):
             return None
         return record
+
+    def _check_evidence(self, snapshot: LedgerSnapshot, request: AssessmentRequest, *,
+                        context: VersionRef | None) -> None:
+        statement_kinds = {ObligationKind.FORMALIZE, ObligationKind.CRITIQUE, ObligationKind.RESOLVE_AMBIGUITY}
+        subject = snapshot.get(request.subject)
+        if isinstance(subject, ProjectItem):
+            if subject.kind in {ProjectItemKind.DEFINITION, ProjectItemKind.STANDARD_OBJECT}:
+                statement_kinds.update({ObligationKind.DEFINE, ObligationKind.RESOLVE_DECLARATION})
+            elif subject.kind == ProjectItemKind.DECLARATION:
+                statement_kinds.add(ObligationKind.RESOLVE_DECLARATION)
+            elif subject.kind == ProjectItemKind.REPRESENTATION:
+                statement_kinds.update({ObligationKind.RESOLVE_REPRESENTATION,
+                    ObligationKind.CONSTRUCT_INTERFACE, ObligationKind.REFINE_REPRESENTATION})
+        argument_kinds = {ObligationKind.CHECK_INFORMAL_STEP, ObligationKind.CRITIQUE,
+                          ObligationKind.REPAIR}
+        for reference in request.evidence:
+            value = self.owners.read_evidence_at(snapshot, reference)
+            if (value is None or value.reference != reference or reference.subject != request.subject
+                    or value.scope != request.scope or value.context != context or value.hypothesis is not None):
+                raise ValueError("assessment evidence must bind the exact subject, scope and context")
+            allowed = statement_kinds if request.dimension == "statement" else argument_kinds
+            faithful = (reference.kind == EvidenceKind.FAITHFULNESS and value.outcome == "faithful"
+                        and value.obligation_kinds is not None
+                        and bool(allowed.intersection(value.obligation_kinds)))
+            kernel = (request.dimension == "statement" and reference.kind == EvidenceKind.FORMAL
+                      and value.outcome == "kernel_proof"
+                      and (value.obligation_kinds is None or bool({ObligationKind.PROVE,
+                           ObligationKind.RESOLVE_GOAL}.intersection(value.obligation_kinds))))
+            if not faithful and not kernel:
+                raise ValueError("evidence outcome and purpose do not support this assessment dimension")
+            if not set(value.used_assumptions).issubset(request.assumptions):
+                raise ValueError("assessment must disclose the evidence's actual assumptions")
 
     def report(self, snapshot: LedgerSnapshot, subject: VersionRef, scope: VersionRef,
                dimension: str) -> dict[str, Any]:

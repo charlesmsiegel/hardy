@@ -24,6 +24,7 @@ from hardy.workflows.ledger.contracts import (
 )
 from hardy.workflows.ledger.policy import AuthenticatedEvidence
 from hardy.workflows.ledger.state import LedgerSnapshot
+from hardy.workflows.ledger.validation import references
 
 PRODUCER = "hardy.semantic-judgments"
 URI = "hardy-semantic-judgment:"
@@ -48,6 +49,18 @@ class SemanticJudgments:
     def __init__(self, owners: SemanticOwner):
         self.owners = owners
 
+    @staticmethod
+    def _extra(request: JudgmentRequest) -> tuple[VersionRef, ...]:
+        return (*request.relevant, request.scope,
+                *((request.citation,) if request.citation else ()),
+                *tuple(references(request.citation_use)))
+
+    def _source_matches(self, contract: CitationContract, request: JudgmentRequest) -> bool:
+        reading = self.owners._find(SemanticJudgment, URI, contract.source_statement)
+        return bool(reading is not None and reading.purpose == "source_read"
+                    and reading.subject == request.subject and reading.scope == request.scope
+                    and reading.sources and reading.sources == request.sources)
+
     def record(self, request: JudgmentRequest) -> SemanticJudgment:
         from hardy.workflows.interactive.semantic_records import stamp
         from hardy.workflows.ledger.store import LedgerStore
@@ -57,11 +70,24 @@ class SemanticJudgments:
         subject, scope = snapshot.get(request.subject), snapshot.get(request.scope)
         if not isinstance(subject, ProjectItem) or not isinstance(scope, Scope):
             raise ValueError("semantic review requires exact item and scope")
-        extra = (*request.relevant, request.scope, *((request.citation,) if request.citation else ()))
+        extra = self._extra(request)
+        if request.purpose == "citation" and request.citation is None and request.citation_use is None:
+            raise ValueError("applicability review requires an exact citation or frozen citation_use proposal")
+        if request.citation_use is not None and request.citation_use.required_claim != request.subject:
+            raise ValueError("citation proposal must name the exact reviewed subject")
+        if request.citation is not None:
+            contract = snapshot.get(request.citation)
+            if (not isinstance(contract, CitationContract) or contract.required_claim != request.subject
+                    or request.citation_use is not None and not request.citation_use.matches(contract)):
+                raise ValueError("judgment must bind the exact citation subject and use")
+            if request.purpose in {"citation", "source_read"} and not self._source_matches(contract, request):
+                raise ValueError("citation review sources do not match its exact source receipt")
         if request.purpose in {"source_read", "citation"} and not request.sources:
             raise ValueError("source and citation judgments require an actual exact source read")
         for region in request.sources:
-            read_region(self.owners.problem, snapshot, region)
+            text = read_region(self.owners.problem, snapshot, region)
+            if request.purpose in {"citation", "source_read"} and request.verdict == "approved" and not text.strip():
+                raise ValueError("an approved source reading requires nonempty source material")
         inputs = relevant_versions(self.owners.problem, snapshot, request.subject, extra, sources=request.sources)
         record = SemanticJudgment(**request.model_dump(), id=f"semantic-judgment:{uuid4().hex}",
                                   context=subject.context, inputs=inputs, recorded_at=stamp())
@@ -82,23 +108,46 @@ class SemanticJudgments:
             return None
         try:
             matching = [value for value in self.owners.journal.read().of(SemanticJudgment)
-                        if (value.subject, value.scope, value.purpose, value.citation)
-                        == (record.subject, record.scope, record.purpose, record.citation)]
+                        if (value.subject, value.scope, value.purpose, value.citation, value.citation_use)
+                        == (record.subject, record.scope, record.purpose, record.citation, record.citation_use)]
             if not matching or matching[-1] != record:
                 return None
             inputs = relevant_versions(self.owners.problem, snapshot, record.subject,
-                (*record.relevant, record.scope, *((record.citation,) if record.citation else ())), sources=record.sources)
+                self._extra(record), sources=record.sources)
             if inputs != record.inputs:
                 return None
+            if record.purpose in {"citation", "source_read"}:
+                if not record.sources or any(not read_region(self.owners.problem, snapshot, region).strip()
+                                             for region in record.sources):
+                    return None
+                if record.citation is not None:
+                    contract = snapshot.get(record.citation)
+                    if (not isinstance(contract, CitationContract) or not self._source_matches(contract, record)
+                            or contract.required_claim != record.subject
+                            or record.citation_use is not None and not record.citation_use.matches(contract)):
+                        return None
         except (ValueError, OSError):
             return None
         citation = record.citation
+        if record.purpose == "citation" and citation is None and record.citation_use is None:
+            return None
         if record.purpose in {"source_read", "citation"}:
             bindings = [value for value in self.owners.journal.read().of(CitationEvidenceBinding)
                         if reference in value.evidence]
             if bindings:
+                if len({binding.citation for binding in bindings}) != 1:
+                    return None
                 binding = bindings[-1]
+                if record.citation is not None and record.citation != binding.citation:
+                    return None
                 try:
+                    contract = snapshot.get(binding.citation)
+                    if (not isinstance(contract, CitationContract) or contract.required_claim != record.subject
+                            or contract.evidence != binding.evidence
+                            or not self._source_matches(contract, record)
+                            or record.citation_use is not None and not record.citation_use.matches(contract)
+                            or record.purpose == "source_read" and contract.source_statement != reference.artifact):
+                        return None
                     if relevant_versions(self.owners.problem, snapshot, binding.citation,
                             tuple(ref for ref in binding.inputs if ref != binding.citation)) != binding.inputs:
                         return None
@@ -125,8 +174,21 @@ class SemanticJudgments:
         checked = []
         source_regions = []
         for reference in evidence:
-            value = self.read(snapshot, reference)
             record = self.owners._find(SemanticJudgment, URI, reference.artifact)
+            prior = [binding for binding in self.owners.journal.read().of(CitationEvidenceBinding)
+                     if reference in binding.evidence]
+            if record is not None and (
+                record.citation is not None and record.citation != citation
+                or any(binding.citation != citation for binding in prior)
+                or record.citation_use is not None and not record.citation_use.matches(contract)
+            ):
+                raise ValueError("receipt reviewed or was already bound to a different citation")
+            if (record is not None and record.purpose == "citation"
+                    and record.citation is None and record.citation_use is None):
+                raise ValueError("legacy applicability receipt did not freeze this citation use")
+            if record is not None and not self._source_matches(contract, record):
+                raise ValueError("citation sources do not match the source/applicability review")
+            value = self.read(snapshot, reference)
             if (value is None or record is None or reference.subject != contract.required_claim
                     or record.purpose not in {"source_read", "citation"}):
                 raise ValueError("citation evidence must be authenticated source/applicability readings")

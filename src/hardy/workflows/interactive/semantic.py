@@ -32,6 +32,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         TranslationReview,
     )
 
+    requested_scope = scope
     snapshot = LedgerStore(problem).read()
     target = _selected(snapshot, selector, ProjectItem)
     owner = owners or ProjectOwners.reading(problem)
@@ -40,7 +41,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
     if ("role", "semantic_target") not in target.semantics:
         scopes = [value for value in snapshot.current(Scope) if target.ref in value.must_prove]
         selected_scope = snapshot.get(scope) if scope else scopes[0] if len(scopes) == 1 else None
-        if not isinstance(selected_scope, Scope):
+        if not isinstance(selected_scope, Scope) or snapshot.head(selected_scope.id).ref != selected_scope.ref:
             raise ValueError("Inspection requires one exact scope or an explicit scope selection.")
         statement = assessments.report(snapshot, target.ref, selected_scope.ref, "statement")
         if statement["status"] == "unassessed":
@@ -65,13 +66,19 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
     formal = snapshot.get(links[0].source)
     if not isinstance(formal, ProjectItem):
         raise ValueError("The proposed formalization is not an item.")
-    _, _, link, scope = owner._proposal_pair(snapshot, target.ref, formal.ref)
+    _, _, link, proposal_scope = owner._proposal_pair(snapshot, target.ref, formal.ref)
+    scope = snapshot.get(requested_scope) if requested_scope is not None else proposal_scope
+    if not isinstance(scope, Scope) or snapshot.head(scope.id).ref != scope.ref:
+        raise ValueError("Inspection requires the selected exact current scope.")
     journal = owner.journal.read()
-    reviews = [r for r in journal.of(TranslationReview) if r.subject == target.ref and r.translation == formal.ref]
-    bindings = [b for b in journal.of(CheckedBinding) if b.target == target.ref and b.translation == formal.ref]
+    reviews = [r for r in journal.of(TranslationReview) if r.subject == target.ref and r.translation == formal.ref
+               and r.scope == scope.ref and r.context == target.context]
+    bindings = [b for b in journal.of(CheckedBinding) if b.target == target.ref and b.translation == formal.ref
+                and b.scope == scope.ref and b.context == target.context]
     latest = reviews[-1] if reviews else None
     faithful = latest is not None and owner.read_evidence_at(snapshot, owner.review_reference(latest)) is not None
-    work = {o.kind: o for o in snapshot.current(Obligation) if o.item in {target.ref, formal.ref}}
+    work = {o.kind: o for o in snapshot.current(Obligation) if o.item in {target.ref, formal.ref}
+            and o.scope.ref == scope.ref and o.context == target.context}
     proof = work.get(ObligationKind.PROVE)
     formalization = work.get(ObligationKind.FORMALIZE)
     verified = (proof is not None and proof.resolution is not None
@@ -89,7 +96,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
     translation_status = ("approved" if faithful else "stale" if latest and latest.verdict == "approved"
                           else latest.verdict if latest else "unresolved")
     formal_reason = (None if verified else "Recorded proof cannot be authenticated against the current build."
-                     if proof and proof.resolution else "No checked save is bound to this exact formal statement.")
+                     if proof and proof.resolution else "No checked save is bound to this exact formal statement in the selected scope.")
     context = LedgerViews(snapshot).context(target.context) if target.context else None
     candidates = []
     for item in snapshot.current(ProjectItem):
@@ -105,7 +112,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
                          "reason": None if statement_ready else "Requires current correspondence and a bound checked proof, or an explicit statement assessment."})
     return {
         "project": str(problem),
-        "saved_candidates": candidates,
+        "saved_candidates": candidates if scope.ref == proposal_scope.ref else [],
         "context_hypotheses": [h.model_dump(mode="json") for h in context.local_hypotheses] if context else [],
         "schema": "hardy.semantic-target-report/v1", "revision": snapshot.revision,
         "target": {**target.ref.model_dump(), "statement": target.statement},
@@ -113,7 +120,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         "context": target.context.model_dump() if target.context else None,
         "scope": scope.model_dump(mode="json"), "relation": link.ref.model_dump(),
         "translation": {"status": translation_status, "formalization_accepted": bool(translated),
-                        "reason": latest.reason if latest else "No correspondence review is recorded.",
+                        "reason": latest.reason if latest else "No correspondence review is recorded for the selected exact scope.",
                         "reviews": [r.model_dump(mode="json") for r in reviews]},
         "formal_proof": {"status": "kernel_verified" if verified else "stale" if proof and proof.resolution else "unresolved",
                          "reason": formal_reason, "axioms": axioms, "evidence": evidence,

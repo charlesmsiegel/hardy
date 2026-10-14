@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.ledger.contracts import (
+    CitationContract,
     EvidenceRef,
+    HypothesisMapping,
     ObligationKind,
     ProjectItemKind,
     ProjectOrigin,
@@ -76,6 +78,27 @@ PURPOSE_KINDS: dict[str, tuple[ObligationKind, ...]] = {
 }
 
 
+class CitationReviewUse(FrozenModel):
+    """Prospective citation meaning frozen before receipt digests can exist."""
+
+    id: StableId
+    use_site: VersionRef
+    required_claim: VersionRef
+    paper_id: Text
+    paper_version: Text
+    conclusion: Text
+    source_hypotheses: tuple[Text, ...] = ()
+    hypothesis_mapping: tuple[HypothesisMapping, ...] = ()
+    formal_declaration: Text | None = None
+
+    def matches(self, contract: CitationContract) -> bool:
+        return all(getattr(self, name) == getattr(contract, name) for name in type(self).model_fields)
+
+    @classmethod
+    def from_contract(cls, contract: CitationContract) -> Self:
+        return cls.model_validate({name: getattr(contract, name) for name in cls.model_fields})
+
+
 class JudgmentRequest(FrozenModel):
     subject: VersionRef
     scope: VersionRef
@@ -87,6 +110,13 @@ class JudgmentRequest(FrozenModel):
     relevant: tuple[VersionRef, ...] = ()
     sources: tuple[SourceRegion, ...] = ()
     citation: VersionRef | None = None
+    citation_use: CitationReviewUse | None = None
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        data = super().model_dump(**kwargs)
+        if self.citation_use is None:
+            data.pop("citation_use", None)
+        return data
 
 
 class AssessmentRequest(FrozenModel):
