@@ -430,7 +430,7 @@ Prints, as JSON, the evaluation counts the library's own records support: artifa
 
 ## Project publication commands
 
-These run inside the interactive session, through the `/project` and `/publish` prompt commands, rather than as `hardy` subcommands.
+These run inside the interactive session through the structured `/project` command, rather than as `hardy` subcommands. The bundled `/publish` shortcut expands a prompt; it is not itself a publication operation.
 
 ```text
 /project link Example illustrates Main

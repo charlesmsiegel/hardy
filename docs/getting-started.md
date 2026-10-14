@@ -189,3 +189,51 @@ and nothing else, not even the Lean toolchain `doctor` asked for above.
 - [Trust boundary](design/trust-boundary.md) for the design argument behind
   that boundary.
 - [Hardy roadmap](roadmap.md) for what is built, in progress, or not started.
+
+
+## Record a semantic target
+
+In the interactive session or the browser workbench's composer, enter:
+
+```text
+/project target Nonnegative "Every natural number is nonnegative" --formal "lemma nonnegative (n : Nat) : 0 ≤ n"
+```
+
+The ledger now contains the informal target, its proposed Lean statement, a
+scope admitting no background and separate open review/proof obligations. The
+command prints the target's exact reference; the formal proposal's ID is
+`Nonnegative:formal`. These records survive closing and reopening the project.
+Creation does not run Lean or establish correspondence. The exact-version
+human review command is documented in [session commands](reference/session-commands.md#project).
+The connected Research and Referee application workflows remain planned in
+[the roadmap](roadmap.md#application-integration-of-semantic-workflows).
+
+
+In the browser Ledger page, the new target has a side-by-side review card.
+Record the correspondence judgment and its actual conditions. In Files, save a
+Lean file containing:
+
+```lean
+import Mathlib
+
+lemma nonnegative (n : Nat) : 0 ≤ n := Nat.zero_le n
+```
+
+The editor runs the ordinary checked-save and axiom-audit path. Back in Ledger,
+choose `nonnegative` under **Checked result**, then **Bind checked save**. The
+formal-proof field and correspondence judgment remain separate. An approved
+current translation and bound checked proof support the statement; this does
+not assess an original supplied argument or a repair.
+
+Use **Report export name** to save `reports/NAME.json`, or inspect and export
+from the session:
+
+```text
+/project inspect Nonnegative
+/project export Nonnegative --output nonnegative-review
+```
+
+Reopen the same project to recover the same target, judgments, binding and
+report. If Lean source or build inputs change, check and save again, then bind
+the fresh checked evidence. Read [session commands](reference/session-commands.md#project)
+for explicit ID/digest selectors and stale-review refusals.

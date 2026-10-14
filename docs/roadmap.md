@@ -1799,3 +1799,46 @@ One project can support, over one mathematical graph and scoped mathematical con
 - **Explore:** begin from concepts/questions/conjectures or declarations like `Let X be a smooth manifold`, build/fork local mathematical context naturally, introduce notation, perform justified WLOG/transport, retain mathematical dead ends, create/refine representations incrementally, and move among the other operations interactively.
 
 That is the target architecture.
+
+
+## Application integration of semantic workflows
+
+The engineering handoff separates application readiness on controlled examples
+from the planned Schottky counting, Riemann–Roch and EGH mathematical trials.
+Existing ledger, formal-save evidence, manuscript inventory and workflow owners
+remain the integration foundation.
+
+- Implemented: `/project target` records separate informal/formal proposals,
+  a required empty-premise scope and open translation/proof obligations. Exact
+  supersession preserves earlier targets without transferring evidence.
+- Implemented: `/project review` journals exact human translation judgments
+  with reviewer, actual conditions and reason. Its reader refuses stale,
+  superseded, disputed and unresolved judgments. Review evidence is restricted
+  to formalization work and grants no kernel-proof grade.
+- Implemented: `/project bind` explicitly connects the exact proposal pair to
+  authenticated checked-save evidence. Statement, source inputs, saved-proof
+  revision and build signature are revalidated. Formal proof and approved
+  correspondence discharge their separate obligations through existing policy.
+- Implemented: `/project inspect` and `/project export` provide distinct
+  statement, translation and formal-proof fields with exact records and gaps.
+  Original arguments, intermediate claims and repairs remain unassessed.
+  Report snapshots survive restart and refuse output overwrite; they are not
+  standalone model-free replay bundles.
+- Implemented: Ledger controls create targets, display statements and contexts,
+  record attributed judgments, select exact checked saves and export reports.
+  Structured browser operations and command adapters share session owners and
+  policy, including exact project/version checks.
+- Validated: a controlled real-Lean save/review/bind/export/restart slice,
+  including unchecked-source invalidation. Chromium exercised target creation,
+  review, editing and checking through Files, binding, export, refresh and
+  keyboard tab navigation. The correspondence judgment was a synthetic fixture;
+  no provider model was invoked. A real screenshot of this controlled example
+  appears in the README.
+- Pending: model semantic and literature review readers; argument/repair graph
+  and assessment integration; human admission/scope authorization; live
+  Research, Explore, Repair and Referee construction; reviewable semantic
+  manuscript intake; replay bundles and live model application acceptance.
+- Baseline reconciled: upstream main is `b40ade623a52af9b545039eb27ef787b6bf1fd74`.
+
+The controlled semantic-target slice is only part of ENG-1 through ENG-6. Full
+engineering readiness and the substantive mathematical trials remain separate.

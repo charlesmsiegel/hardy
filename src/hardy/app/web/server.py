@@ -236,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._api_get(path[len("/api/"):], query)
             else:
                 self._static(path)
-        except NoProject as error:
+        except (Busy, NoProject) as error:
             self._json(409, {"error": str(error)})
         except RuntimeError:
             self._json(503, {"error": GONE})
@@ -330,7 +330,9 @@ class Handler(BaseHTTPRequestHandler):
         elif name == "ledger":
             self._json(200, panels.ledger_list(problem))
         elif name == "ledger/item":
-            self._json(200, panels.ledger_item(problem, query.get("id", [""])[0]))
+            if "project" in query and query["project"][0] != str(problem):
+                raise Busy("The open project changed. Reload the target before reviewing it.")
+            self._json(200, panels.ledger_item(problem, query.get("id", [""])[0], owners=getattr(session, "owners", None)))
         elif name == "ledger/export":
             self._json(200, panels.ledger_export(problem, query.get("id", [""])[0]))
         elif name == "results":
@@ -437,6 +439,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(409, {**result, "error": result["message"]})
                 else:
                     self._json(200, result)
+            elif path == "/api/project":
+                if not isinstance(data.get("project"), str) or not data["project"]:
+                    raise ValueError("Project operations require the exact open project path.")
+                problem = self._editor_problem(data)
+                self._json(200, host.project_operation(data, expected_problem=problem))
             elif path == "/api/answer":
                 if host.answer(str(data.get("prompt_id", "")), data.get("value")):
                     self._json(200, {"ok": True})

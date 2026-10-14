@@ -1285,3 +1285,32 @@ def test_failed_checkpoint_restore_drops_queue_explicitly_and_can_reopen(tmp_pat
         assert host.session.sent == ['fresh question']
     finally:
         host.stop()
+
+
+def test_browser_composer_creates_and_reviews_real_project_records(tmp_path):
+    from test_chat import FakeChatRuntime, session
+
+    from hardy.workflows.interactive.evidence import TranslationReview
+    from hardy.workflows.ledger.store import LedgerStore
+
+    config = make_config(tmp_path)
+    chat = session(config.layout.problem, FakeChatRuntime([]))
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda confirm, cfg: chat, projects=registry)
+    host.start()
+    try:
+        sub = host.subscribe()
+        assert host.submit('/project target T "True" --formal "theorem T : True"')["kind"] == "command"
+        _drain(sub, {"changed"})
+        snapshot = LedgerStore(config.layout.problem).read()
+        target, formal = snapshot.head("T"), snapshot.head("T:formal")
+        assert host.submit(f'/project review T@{target.digest} T:formal@{formal.digest} '
+                           '--verdict unresolved --reviewer "human tester" '
+                           '--conditions "side by side" --reason "Needs a closer reading"')["kind"] == "command"
+        _drain(sub, {"changed"})
+        reviews = chat.owners.journal.read().of(TranslationReview)
+        assert len(reviews) == 1 and reviews[0].verdict == "unresolved"
+        assert chat.owners.read_evidence(chat.owners.review_reference(reviews[0])) is None
+    finally:
+        host.stop()

@@ -681,3 +681,61 @@ def test_file_save_detects_external_edit_and_deletion(server):
                             {'path': 'lean/Conflict.lean', 'source': 'mine', 'base_sha256': base})
     assert status == 409 and json.loads(body)['missing'] is True
     assert not path.exists()
+
+
+def test_semantic_project_operations_use_exact_project_and_real_session(tmp_path):
+    from test_chat import FakeChatRuntime, session
+
+    config = make_config(tmp_path)
+    chat = session(config.layout.problem, FakeChatRuntime([]))
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda confirm, cfg: chat, projects=registry)
+    for srv in _serve(host, _static(tmp_path)):
+        project = str(config.layout.problem)
+        status, _, body = _call(srv, 'POST', '/api/project', {'operation': 'target', 'project': project,
+                                                         'identity': 'T', 'statement': 'True', 'formal': 'lemma saved_fact : True'})
+        assert status == 200, body
+        status, _, body = _call(srv, 'GET', '/api/ledger/item?id=T')
+        assert status == 200
+        report = json.loads(body)['semantic']
+        assert report['formal']['statement'] == 'lemma saved_fact : True'
+        target, formal = report['target'], report['formal']
+        request = {'operation': 'review', 'project': project, 'target': f"T@{target['digest']}",
+                   'translation': f"{formal['id']}@{formal['digest']}", 'verdict': 'unresolved',
+                   'reviewer': 'test operator', 'conditions': 'synthetic fixture', 'reason': 'Needs review'}
+        assert _call(srv, 'POST', '/api/project', request)[0] == 200
+        assert _call(srv, 'POST', '/api/project', {**request, 'project': str(tmp_path / 'other')})[0] == 409
+        status, _, body = _call(srv, 'GET', '/api/ledger/item?id=T')
+        assert json.loads(body)['semantic']['translation']['status'] == 'unresolved'
+
+
+def test_http_binding_export_and_stale_review_preserve_distinct_assessments(tmp_path):
+    from test_project_binding import setup_pair
+
+    config = make_config(tmp_path)
+    chat, target, formal, saved = setup_pair(config.layout.problem)
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda confirm, cfg: chat, projects=registry)
+    for srv in _serve(host, _static(tmp_path)):
+        project = str(config.layout.problem)
+        pair = {'target': f'{target.id}@{target.digest}', 'translation': f'{formal.id}@{formal.digest}'}
+        status, _, body = _call(srv, 'POST', '/api/project', {'operation':'bind','project':project,**pair,
+                                                         'saved':f'{saved.id}@{saved.digest}'})
+        assert status == 200, body
+        status, _, body = _call(srv, 'GET', f'/api/ledger/item?id=Target&project={project}')
+        report = json.loads(body)['semantic']
+        assert status == 200 and report['formal_proof']['status'] == 'kernel_verified'
+        assert report['statement']['status'] == 'supported_by_reviewed_formal_proof'
+        assert report['original_proof']['status'] == 'unassessed'
+        request = {'operation':'export','project':project,'target':pair['target'],'output':'http-review'}
+        status, _, body = _call(srv, 'POST', '/api/project', request)
+        assert status == 200, body
+        exported = Path(json.loads(body)['record'])
+        assert json.loads(exported.read_text(encoding='utf-8')) == report
+        assert _call(srv, 'POST', '/api/project', request)[0] == 400
+        assert _call(srv, 'GET', '/api/ledger/item?id=Target&project=/other')[0] == 409
+        stale = {**pair,'operation':'review','project':project,'target':f'{target.id}@' + '0'*64,
+                 'verdict':'approved','reviewer':'test operator','conditions':'stale fixture','reason':'must refuse'}
+        assert _call(srv, 'POST', '/api/project', stale)[0] == 400
