@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import subprocess
 import threading
 import time
@@ -18,6 +19,7 @@ from hardy.foundation.process import (
     kill_group,
     signal_interrupt,
     terminate_group,
+    tree_has_members,
 )
 
 
@@ -297,6 +299,15 @@ class _Kernel:
                     self.process.wait(timeout=2)
         # SIGTERM taking the leader is not proof its helpers stopped.
         kill_group(self.process)
+        if os.name == "nt" and not immediate:
+            # TerminateJobObject returns before its members have released their
+            # handles. The venv launcher exiting is not proof its interpreter
+            # has released cwd; close must settle that job before a rename.
+            deadline = time.monotonic() + 2
+            while tree_has_members(self.process) is True and time.monotonic() < deadline:
+                time.sleep(0.01)
+            for _, reader in self._readers:
+                reader.join(timeout=max(0, deadline - time.monotonic()))
         # Closing a BufferedReader still owned by read1 would wait without a
         # deadline. Its daemon reader closes it itself when the holder exits.
         with self._input_lock:
