@@ -1314,3 +1314,80 @@ def test_browser_composer_creates_and_reviews_real_project_records(tmp_path):
         assert chat.owners.read_evidence(chat.owners.review_reference(reviews[0])) is None
     finally:
         host.stop()
+
+
+def test_structured_workflow_retains_host_and_stop_until_actual_provider_teardown(tmp_path, monkeypatch):
+    import json
+
+    from test_live_project_workflows import ControlledModel, live, target
+
+    release, entered = threading.Event(), threading.Event()
+    runtimes = []
+    original = ControlledModel.ask
+    def deadline(self, prompt):
+        if json.loads(prompt)['stage'] != 'research.identify':
+            return original(self, prompt)
+        runtimes.append(self)
+        self.worker = threading.Thread(target=lambda: release.wait(5))
+        self.worker.start()
+        self.settle = lambda timeout: (self.worker.join(timeout) or not self.worker.is_alive())
+        entered.set()
+        raise TimeoutError('Deadline before actual worker teardown')
+    monkeypatch.setattr(ControlledModel, 'ask', deadline)
+    config = make_config(tmp_path)
+    chat, _, ops = live(config.layout.problem, monkeypatch)
+    claim, scope = target(ops)
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda *_: chat, projects=registry)
+    host.start()
+    result, errors = [], []
+    request = {'operation': 'research', 'project': str(chat.workspace),
+               'request': {'id': 'deadline', 'target': claim.ref.model_dump(), 'scope': scope.ref.model_dump()}}
+    def invoke():
+        try:
+            result.append(host.project_operation(request, expected_problem=chat.workspace))
+        except Exception as error:
+            errors.append(error)
+    worker = threading.Thread(target=invoke)
+    worker.start()
+    try:
+        assert entered.wait(3)
+        assert host.state()['command_running'] and host.state()['provider_active']
+        with pytest.raises(Busy):
+            host.open_project(str(chat.workspace))
+        with pytest.raises(Busy):
+            host.close_project()
+        assert host.submit('/project target Late "True" --formal "lemma late : True"')['kind'] == 'refused'
+        assert worker.is_alive(), 'A durable timeout must retain the actual worker ownership'
+        assert host.cancel()['stopped'] == 1
+        assert runtimes[0].stopped.is_set()
+    finally:
+        release.set()
+        worker.join(5)
+        host.stop()
+    assert not worker.is_alive() and not errors
+    assert result[0]['record']['status'] == 'blocked'
+
+
+def test_project_state_remains_readable_while_actual_session_conversation_gate_is_owned(tmp_path):
+    from test_chat import FakeChatRuntime, session
+
+    config = make_config(tmp_path)
+    chat = session(config.layout.problem, FakeChatRuntime([]))
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda *_: chat, projects=registry)
+    host.start()
+    result = []
+    try:
+        with chat._conversation_gate:
+            worker = threading.Thread(target=lambda: result.append(host.project_state(expected_problem=chat.workspace)))
+            worker.start()
+            worker.join(1)
+            assert not worker.is_alive(), 'A read-only status must not wait for the provider conversation gate'
+            assert result[0]['project'] == str(chat.workspace)
+            assert 'capabilities' in result[0]['workflow'] and 'proposals' in result[0]['intake']
+    finally:
+        worker.join(3)
+        host.stop()

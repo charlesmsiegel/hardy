@@ -56,7 +56,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         lanes = argument_assessments(snapshot, target.ref, selected_scope.ref, operations=assessments, original=original, repaired=repaired)
         result = {"schema": "hardy.semantic-target-report/v1", "project": str(problem), "revision": snapshot.revision,
                 "target": {**target.ref.model_dump(), "statement": target.statement},
-                "scope": selected_scope.model_dump(mode="json"), "statement": statement,
+                "scope": selected_scope.model_dump(mode="json"), "scope_ref": selected_scope.ref.model_dump(mode="json"), "statement": statement,
                 "formal_proof": {"status": "unresolved", "reason": "No checked formalization binding is recorded."},
                 "translation": {"status": "unresolved", "reason": "No exact translation review is recorded."},
                 "citation_review": {"status": "unassessed", "reason": "Citation evidence remains a separate capability."},
@@ -193,7 +193,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         "target": {**target.ref.model_dump(), "statement": target.statement},
         "formal": {**formal.ref.model_dump(), "statement": formal.statement},
         "context": target.context.model_dump() if target.context else None,
-        "scope": scope.model_dump(mode="json"), "relation": link.ref.model_dump(),
+        "scope": scope.model_dump(mode="json"), "scope_ref": scope.ref.model_dump(mode="json"), "relation": link.ref.model_dump(),
         "translation": {"status": translation_status, "formalization_accepted": bool(translated),
                         "reason": latest.reason if latest else "No correspondence review is recorded for the selected exact scope.",
                         "reviews": [r.model_dump(mode="json") for r in reviews]},

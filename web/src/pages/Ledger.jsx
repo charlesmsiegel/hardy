@@ -1,112 +1,7 @@
-// Ledger, list + graph + item: `/api/ledger` (a row per current head, for the
-// list and its filter pills) and `/api/graph` (the family-coloured,
-// staleness-aware drawing) share this page and its one right-hand item
-// detail pane, driven by `arg` -- the ledger id in `#/ledger/<id>`, the same
-// convention `Peek.jsx` and `pages/Results.jsx`'s "§ record says › ledger"
-// link already write to. Selecting a row, clicking a graph node, or landing
-// here from a link all do the same thing: set `arg`, which fetches
-// `/api/ledger/item?id=` and renders it on the right. There is no separate
-// local "which node is open" state any more -- an earlier pass of this page
-// kept a small inline drawer under the graph for that, before the item page
-// existed to hold it; that drawer is gone, folded into the one item pane
-// both views now share.
-//
-// `family` (per node/list row) and `style` (per edge) are read straight off
-// the payload and turned into a CSS variable lookup, never recomputed from
-// `kind`: `panels/vocabulary.py` is the one place that classification is
-// allowed to happen, and `family`'s five values (`result`, `research`,
-// `concept`, `document`, `other`) are exactly the five design tokens
-// (`--result`, `--research`, `--concept`, `--document`, `--other`) by
-// construction, so `var(--${family})` is the whole mapping. A `style` this
-// page does not recognise (only `solid` and `dashed` exist today) falls
-// back to solid, the same "print the word, never guess a family" shape
-// `Pill.jsx`'s own fallback uses.
-//
-// A stale edge is drawn in `--error`. The stale line below names real
-// versions -- "recorded against v3; order_40 is now v5", the design's own
-// copy (`Hardy Workbench.dc.html:393`) -- exactly when `panels/record.py:
-// graph` had them to give: `expected_version`/`current_version` come from
-// `LedgerViews.stale_artifacts()` (`ledger/views.py:158`), which only knows
-// about a `documents`/`formalizes` relation whose *target* moved. An edge
-// stale for any other reason -- a `depends_on` relation, or one stale
-// because its *source* moved rather than its target -- has no entry there,
-// so both fields come back `null` and the line stays the generic one this
-// page always printed: "recorded against a version of one of these items
-// that has since been revised... not known to be false, and not known to
-// still hold." Never a fabricated version number in that case.
-//
-// **List filters are client-side.** `/api/ledger` returns every head
-// unfiltered (`panels/record.py: ledger_list`'s own docstring: "a round trip
-// per pill would cost more than it saves"), so the five prototype pills --
-// `kind`, `origin`, `evidence`, `open obligations`, `stale only` -- all run
-// against the already-fetched list in the browser; nothing here adds a query
-// parameter. Four of the five read fields `/api/ledger` already carries.
-// `stale only` is the exception: no per-item staleness lives in that list at
-// all, only per-*edge* staleness in `/api/graph`'s `edges[].stale` -- which
-// this page already fetches for the graph half regardless of which view is
-// showing. `staleIds` below is a set of every item id touched by a stale
-// edge, as source or target, read off that same payload; filtering against
-// it costs nothing this page was not already paying, and adds no new
-// endpoint. `openObligations` reads the literal `ObligationStatus.OPEN`
-// count, not a broader "still outstanding" bucket that would also catch
-// `investigating`/`blocked` -- the pill's own word is "open", and the enum
-// already has a value spelled exactly that, so matching it literally invents
-// nothing. A defensible judgement call, not a transcribed fact; revisit if a
-// reviewer reads the pill differently.
-//
-// **The item page's `versions` list is `LedgerSnapshot`'s central promise in
-// one grid**: "advancing a logical item never changes what an earlier
-// theorem referenced" (`workflows/ledger/state.py:2-3`). Every prior
-// revision stays addressable -- clicking an older `v` previews its own
-// `statement`/`origin`/`evidence`/`artifacts`/`research`, the same fields
-// `graph()`'s own nodes carry (`_item_summary`'s own docstring: "mirrors
-// `graph()`'s node fields -- same names") -- while `obligations` and
-// `relations` stay the *current* head's throughout, exactly as
-// `ledger_item`'s own docstring says they must: those are themselves
-// versioned records with their own heads, not a history of this item.
-// Rendered as inline markup, not a pickable `Table` -- Shipment 1's review
-// found `Table`'s `rows: [{key, cells}]` shape does not fit a version list
-// (there is no one natural "cell grid" for a revision; the head one is
-// highlighted and clickable, the rest are not rows of equal weight).
-//
-// Two things the prototype's own item page draws that this one does not,
-// because the data to back them honestly is not in `/api/ledger/item`'s
-// payload -- printed here rather than left to be rediscovered by grep:
-//   - No inline Lean source. `_item_summary` carries `artifacts` (bare
-//     URIs) but never Lean text or a signature -- unlike `/api/results`,
-//     which resolves a theorem to its own Lean module. A `.lean`-suffixed
-//     artifact URI is instead a link into Files (`#/files/<uri>`, the same
-//     viewer `pages/Results.jsx`'s own "open in the editor →" already
-//     points at), reusing that page's real content rather than fabricating
-//     a second Lean pane here.
-//   - No "double-click a node to jump to Results". The prototype's own
-//     graph note claims this; nothing in `/api/graph` or `/api/ledger/item`
-//     ties a ledger item id to the `module:name` id `/api/results` actually
-//     keys its rows by (that link only runs the other way, from a Results
-//     row's own `record.id`). Guessing one would be exactly the kind of
-//     invented command this task's brief rules out, so it is left undone.
-//
-// **The Export proof card (Task 10, `ExportCard`)** folds into this same
-// `ItemDetail`, rather than reviving the prototype's separate graph-only
-// `gsel`/`gx` selection state (`Hardy Workbench.dc.html:394-412`): this file
-// already unified "which item is open" into one `arg`-driven pane for both
-// the list and the graph (see above), and an export view of an item is a
-// view of that same item, not a second one. It reads
-// `/api/ledger/export?id=`, which computes a publication closure against a
-// throwaway sentinel `Scope` when no real scope names the item
-// (`panels/record.py`'s `_UNSCOPED`) -- so `ready` and each row's
-// `unestablished` come back `null`, not a computed `false`, and are rendered
-// as genuinely unasked rather than "not ready". `writeup.words` and
-// `writeup.reader_agreed` are always `null` too, for a different reason: no
-// such field exists anywhere in the ledger contracts, so they print as
-// `unreported`, never guessed from a verdict. Several scopes can name the
-// same item; the card says so rather than silently picking the first. The
-// design's generated `/export proof ...` command does not exist
-// (`handlers.py:1529` has no `proof` subcommand), so the control is
-// permanently disabled with the reason printed as visible text, not only a
-// tooltip -- see `ExportCard`'s own comment for which of this file's two
-// existing disabled-control patterns (`Tree.jsx`'s Resume/Compare vs.
-// `Files.jsx`'s Import) it follows and why.
+// The current ledger list, graph and exact item detail share one selection.
+// Structured project controls reuse the same session operations as /project.
+// Status filters preserve literal backend states; source history never becomes
+// a current action choice merely because its bytes remain readable.
 
 import {useMemo, useState} from 'react';
 import dagre from 'dagre';
@@ -120,6 +15,8 @@ import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
 import {NewTarget, TargetReview} from '../workbench/SemanticTarget.jsx';
+import ProjectWorkflow from '../workbench/ProjectWorkflow.jsx';
+import {IntakeReview,RefereeControl,AdmissionReview,HumanSemanticReview,ArgumentEditor,SelectedAssessment,SourceNavigation,ContextDetails} from '../workbench/ProjectReview.jsx';
 
 const VIEW_W = 760;
 const VIEW_H = 420;
@@ -312,34 +209,8 @@ function writeupCell(writeup) {
   );
 }
 
-/** The Export proof card (Task 10): `/api/ledger/export?id=`'s dependency
- *  closure for whichever item `ItemDetail` has open, plus the control the
- *  prototype shows generating `/export proof X --deps --writeups --lean
- *  --verdicts --format pdf` (`Hardy Workbench.dc.html:396-411`).
- *
- *  That command does not exist. `handlers.py:1529` registers `/export` with
- *  no `proof` subcommand and none of those flags -- it writes one shareable
- *  HTML account of the whole session, not a per-theorem PDF -- and
- *  `ledger_export`'s own `export_command` field already reports why in place
- *  of the invented syntax. This project's rule (this task's own brief):
- *  offer an action when its outcome is genuinely unknown, state the outcome
- *  when it is not. This one is not, so the button below is permanently
- *  disabled with the reason printed as ordinary text beside it, not only in
- *  a tooltip -- `Tree.jsx`'s Resume/Compare pattern (`disabled` +
- *  `title` + a visible `panel__note` repeating the same sentence), chosen
- *  over `Files.jsx`'s Import buttons because the two are answering
- *  different questions: Files' `/import` is a real command whose *outcome*
- *  is unknown until it runs (issue #165), so it stays enabled and sends
- *  nothing until reviewed; here there is no real command at all, the same
- *  shape `/resume` and `/fork --name` are missing for Tree.
- *
- *  The design's include-toggles (writeups/Lean/verdicts/Mathlib) and format
- *  tabs (pdf/tex/md) exist only to build that same fabricated command --
- *  with the command gone, so is anything those controls would do. Drawing
- *  interactive-looking checkboxes with nothing behind them would misstate
- *  the control exactly as the invented command text would, so they are not
- *  drawn; the closure they would have configured is shown in full below
- *  instead, which is the one part of the card backed by real data. */
+/** Read the existing publication/dependency closure. Exact selected-result
+ *  export controls live beside the selected assessment below. */
 function ExportCard({id, revision}) {
   const exportPanel = usePanel(`/api/ledger/export?id=${encodeURIComponent(id)}`, revision);
 
@@ -438,12 +309,7 @@ function ExportCard({id, revision}) {
         </div>
       ) : null}
 
-      <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap'}}>
-        <button type="button" className="button" disabled title={data.export_command.reason}>
-          Export proof…
-        </button>
-      </div>
-      <div className="panel__note">{data.export_command.reason}</div>
+      <p className="panel__note">Choose exact scope and argument versions in the selected-result bundle control to export this result.</p>
     </div>
   );
 }
@@ -452,7 +318,7 @@ function ExportCard({id, revision}) {
  *  one navigates here (a row pick, a node click, a `§ record says` link)
  *  lands on the same `arg`-driven pane. `key={id}` on the caller resets
  *  `viewVersion` when a different item is opened. */
-function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, project, disabled}) {
+function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, project, disabled, catalog={}}) {
   const itemPanel = usePanel(`/api/ledger/item?id=${encodeURIComponent(id)}&project=${encodeURIComponent(project)}`, revision);
   //: Which version's own fields (kind/name/statement/origin/evidence/
   //: artifacts/research) are previewed above -- `null` means the head.
@@ -530,6 +396,8 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, projec
       {/* A missing `statement` is an absence with no recorded cause, and
           `Absent.jsx`'s note rules that prose, not an `Absent` kind. */}
       <div style={{fontSize: 14}}>{shown.statement || <span className="panel__note">No statement recorded.</span>}</div>
+      <SourceNavigation item={shown} catalog={catalog}/>
+      <ContextDetails context={shown.context} catalog={catalog}/>
 
       <div className="wb-card">
         <Facts
@@ -621,7 +489,7 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, projec
         <Label>{`versions · ${head.versions.length}`}</Label>
         <div style={{display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, fontFamily: 'var(--mono)'}}>
           {[...head.versions].reverse().map((version) => (
-            <div
+            <button type="button"
               key={version.version}
               className="wb-ledger__version-row"
               style={{color: version.version === shown.version ? 'var(--fg)' : 'var(--muted)'}}
@@ -631,14 +499,17 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, projec
               {kindBadge(version.kind, version.family)}
               <span>{version.name}</span>
               <span>{version.digest.slice(0, 8)}</span>
-            </div>
+            </button>
           ))}
         </div>
       </div>
 
-      {head.semantic && !historical ? <TargetReview
+      {head.semantic?.formal && !historical ? <TargetReview
         key={`${project}:${head.semantic.target.digest}:${head.semantic.formal.digest}`}
         project={project} report={head.semantic} disabled={disabled} onDone={itemPanel.reload}
+      /> : null}
+      {!historical && shown.statement && !['source','argument','proof_step','critique','declaration'].includes(shown.kind) ? <SelectedAssessment
+        key={`${project}:${shown.digest}`} project={project} target={shown} catalog={catalog} disabled={disabled} onDone={itemPanel.reload}
       /> : null}
       <ExportCard id={id} revision={revision} />
 
@@ -665,12 +536,13 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, projec
 }
 
 export default function Ledger({arg}) {
-  const {revision, setDraft, status} = useSession();
+  const {revision, setDraft, status, cancel} = useSession();
   const project = status.path;
-  const disabled = status.turn_running || status.command_running;
+  const disabled = status.turn_running || status.command_running || status.provider_active;
   const [, go] = useHash();
   const ledgerPanel = usePanel('/api/ledger', revision);
   const graphPanel = usePanel('/api/graph', revision);
+  const projectPanel = usePanel(project ? `/api/project-state?project=${encodeURIComponent(project)}` : null,revision);
   const [view, setView] = useState('list');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
@@ -683,6 +555,20 @@ export default function Ledger({arg}) {
   if (!ledgerPanel.data) return <p className="panel__note">Reading the ledger...</p>;
 
   const {items} = ledgerPanel.data;
+  const state=projectPanel.data?.project === project ? projectPanel.data : {};
+  const catalog=state.catalog || {};
+  const refresh=() => {ledgerPanel.reload();graphPanel.reload();projectPanel.reload();};
+  const controls=<section key={project} aria-label="Project actions">
+    {projectPanel.error ? <p role="alert" className="panel__error">{projectPanel.error}</p> : null}
+    {(state.errors || []).map((error) => <p role="alert" key={error}>{error}</p>)}
+    <NewTarget project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
+    <ProjectWorkflow project={project} catalog={catalog} workflow={state.workflow} intake={state.intake} disabled={disabled} onDone={refresh} onCancel={cancel} go={go}/>
+    <IntakeReview project={project} catalog={catalog} intake={state.intake} disabled={disabled} onDone={refresh}/>
+    <RefereeControl project={project} catalog={catalog} intake={state.intake} referee={state.referee} disabled={disabled} onDone={refresh} onCancel={cancel}/>
+    <AdmissionReview project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
+    <HumanSemanticReview project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
+    <ArgumentEditor project={project} catalog={catalog} disabled={disabled} onDone={refresh}/>
+  </section>;
 
   if (items.length === 0) {
     return (
@@ -691,7 +577,7 @@ export default function Ledger({arg}) {
           <span className="page-title">Ledger</span>
           <span className="wb-page-subtitle">fresh project · nothing recorded</span>
         </div>
-        <NewTarget key={project} project={project} disabled={disabled} onDone={ledgerPanel.reload}/>
+        {controls}
         <Empty
           title="Ledger is empty"
           line="0 items · 0 relations · revision 0. Items appear when a theorem is saved, an assumption approved, or a research note recorded."
@@ -739,7 +625,7 @@ export default function Ledger({arg}) {
         </span>
       </div>
 
-      <NewTarget key={project} project={project} disabled={disabled} onDone={ledgerPanel.reload}/>
+      {controls}
       <div className="wb-ledger__toggle">
         <button
           type="button"
@@ -842,6 +728,8 @@ export default function Ledger({arg}) {
                         className="wb-ledger__node"
                         transform={`translate(${x - width / 2} ${y - height / 2})`}
                         onClick={() => go({page: 'ledger', arg: node.id})}
+                        role="button" tabIndex="0" aria-label={`Open ${node.name || node.id}`}
+                        onKeyDown={(event) => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault();go({page:'ledger',arg:node.id});}}}
                       >
                         <rect
                           width={width}
@@ -980,6 +868,7 @@ export default function Ledger({arg}) {
               id={arg}
               project={project}
               disabled={disabled}
+              catalog={catalog}
               revision={revision}
               nodeName={nodeName}
               go={go}

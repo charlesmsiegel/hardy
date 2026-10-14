@@ -819,22 +819,20 @@ class MathematicsSession:
         return self._run_project_workflow(self.manuscript.review, IntakeReviewRequest.model_validate(request))
 
     def project_intake_status(self, id=None):
-        with self._conversation_gate, self._gate:
-            self._project_operations()
-            return {**self.manuscript.status(id), "attempts": self.live.status(id)["attempts"]}
+        # Atomic owner snapshots remain readable while a provider owns the
+        # conversation; these reads neither mutate nor accept a mapping.
+        return {**self.manuscript.status(id), "attempts": self.live.status(id)["attempts"]}
 
     def project_referee(self, request):
         from hardy.workflows.interactive.manuscript_records import RefereeRunRequest
         return self._run_project_workflow(self.live.manuscript, "referee", RefereeRunRequest.model_validate(request), self.referee.run)
 
     def project_referee_report(self, id=None):
-        with self._conversation_gate, self._gate:
-            self._project_operations()
-            report = self.referee.report(id)
-            identities = {value["receipt"]["request"]["id"] for value in report["reports"]}
-            attempts = self.live.status()["attempts"]
-            return {**report, "attempts": [value for value in attempts if value["kind"] == "referee"
-                and (id is None or value["request_id"] == id or value["request_id"] in identities)]}
+        report = self.referee.report(id)
+        identities = {value["receipt"]["request"]["id"] for value in report["reports"]}
+        attempts = self.live.status()["attempts"]
+        return {**report, "attempts": [value for value in attempts if value["kind"] == "referee"
+            and (id is None or value["request_id"] == id or value["request_id"] in identities)]}
 
     @property
     def state(self) -> dict[str, Any]:
@@ -1201,8 +1199,27 @@ class MathematicsSession:
             return self._project_operations().target(identity, statement, formal=formal,
                                                       context=context, supersedes=supersedes)
 
+    def project_semantic(self, operation: str, request):
+        """Human structured edits use the same live owners and session gates."""
+        from hardy.workflows.interactive.project_application import ProjectApplication
+
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            self._refresh_shared_identity()
+            return ProjectApplication(self.workspace, owners=self.owners).execute(operation, request)
+
+    def project_catalog(self):
+        """Read exact immutable choices without taking a provider's conversation gate."""
+        from hardy.workflows.interactive.project_application import ProjectApplication
+
+        result = ProjectApplication(self.workspace, owners=self.owners).catalog()
+        result["operations"] = {operation: {"available": callable(getattr(self, method, None)),
+            "reason": None if callable(getattr(self, method, None)) else f"This session does not provide {method}."}
+            for operation, method in (("bundle", "project_export_bundle"), ("referee-export", "project_export_referee"))}
+        return result
+
     def project_review(self, target: str, translation: str, *, verdict: str, reviewer: str,
-                       conditions: str, reason: str):
+                       conditions: str, reason: str, scope: str | None = None):
         from hardy.workflows.ledger.contracts import VersionRef
 
         def exact(selector: str) -> VersionRef:
@@ -1214,7 +1231,8 @@ class MathematicsSession:
         with self._conversation_gate, self._gate:
             self._project_operations()  # Refuse active provider work, as for other human edits.
             return self.owners.review_translation(exact(target), exact(translation), verdict=verdict,
-                                                  reviewer=reviewer, conditions=conditions, reason=reason)
+                                                  reviewer=reviewer, conditions=conditions, reason=reason,
+                                                  scope=exact(scope) if scope else None)
 
     def project_inspect(self, target: str):
         from hardy.workflows.interactive.semantic import target_report
@@ -1232,7 +1250,7 @@ class MathematicsSession:
             self._refresh_shared_identity()
             return export_target(self.workspace, target, output=output, owners=self.owners)
 
-    def project_bind(self, target: str, translation: str, *, saved: str):
+    def project_bind(self, target: str, translation: str, *, saved: str, scope: str | None = None):
         from hardy.workflows.ledger.contracts import VersionRef
 
         def exact(selector: str) -> VersionRef:
@@ -1244,7 +1262,7 @@ class MathematicsSession:
         with self._conversation_gate, self._gate:
             self._project_operations()
             self._refresh_shared_identity()
-            return self.owners.bind_saved(exact(target), exact(translation), exact(saved))
+            return self.owners.bind_saved(exact(target), exact(translation), exact(saved), scope=exact(scope) if scope else None)
 
     def project_mark(self, item: str, visibility: str):
         with self._conversation_gate, self._gate:

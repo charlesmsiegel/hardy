@@ -41,7 +41,7 @@ test('target creation preserves both statements and its selected project', async
 test('review starts unresolved and stale submissions never display an approval', async () => {
   assert.equal(typeof TargetReview, 'function', 'semantic review control is available');
   const report = {project:'/p/first',target:{id:'T',digest:'a'.repeat(64),statement:'True'},
-    formal:{id:'F',digest:'b'.repeat(64),statement:'lemma saved_fact : True'},scope:{must_prove:[],allowed_background:[],allowed_interfaces:[]},
+    formal:{id:'F',digest:'b'.repeat(64),statement:'lemma saved_fact : True'},scope:{must_prove:[],allowed_background:[],allowed_interfaces:[]},scope_ref:{id:'S',digest:'c'.repeat(64)},
     context:null,context_hypotheses:[],translation:{status:'unresolved',reviews:[]},
     formal_proof:{status:'unresolved',reason:'No proof',axioms:[]},statement:{status:'unresolved'},
     original_proof:{status:'unassessed',reason:'No supplied proof'},repaired_proof:{status:'unassessed',reason:'No repair'},
@@ -54,6 +54,7 @@ test('review starts unresolved and stale submissions never display an approval',
   await act(() => document.querySelector('form[data-review]').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));
   assert.equal(request.target, `T@${'a'.repeat(64)}`);
   assert.equal(request.translation, `F@${'b'.repeat(64)}`);
+  assert.equal(request.scope, `S@${'c'.repeat(64)}`);
   assert.match(document.body.textContent,/Cannot review stale/);
   assert.match(document.body.textContent,/Original supplied proof/);
   assert.match(document.body.textContent,/unassessed/i);

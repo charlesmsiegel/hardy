@@ -148,8 +148,8 @@ class LiveReferee:
         return ReviewPass(subject=review_input.subject.ref, scope=review_input.scope.ref,
             revision=snapshot.revision, findings=tuple(findings))
 
-    def _validate(self, request):
-        review, proposal = self.intake.reviewed(request.review)
+    def _validate(self, request, *, refresh_changed=True):
+        review, proposal = self.intake.reviewed(request.review, refresh_changed=refresh_changed)
         snapshot = self.store.read()
         scope = snapshot.get(request.scope)
         if not isinstance(scope, Scope) or snapshot.head(scope.id).ref != request.scope or request.scope != review.scope:
@@ -400,7 +400,7 @@ class LiveReferee:
                 continue
             current, reason, fresh = True, None, None
             try:
-                review, _, _ = self._validate(receipt.request)
+                review, _, _ = self._validate(receipt.request, refresh_changed=False)
                 if self._inputs(receipt.request, review) != receipt.inputs:
                     raise ValueError("Referee report inputs changed")
                 snapshot = self.store.read()

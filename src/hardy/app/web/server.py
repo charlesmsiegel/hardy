@@ -299,11 +299,15 @@ class Handler(BaseHTTPRequestHandler):
         if name not in {"transcript", "summary", "tree", "jobs", "files", "file", "pdf",
                         "sources", "graph", "uploads", "cas/cells", "record", "ledger",
                         "ledger/item", "ledger/export", "results", "publications", "checkpoints",
-                        "spend", "chats"}:
+                        "spend", "chats", "project-state"}:
             self._json(404, {"error": "unknown endpoint"})
             return
         session, problem = host.session, self._problem()
-        if name == "transcript":
+        if name == "project-state":
+            if query.get("project", [None])[0] != str(problem):
+                raise Busy("The open project changed. Reload project workflow choices.")
+            self._json(200, host.project_state(expected_problem=problem))
+        elif name == "transcript":
             self._json(200, panels.transcript(session))
         elif name == "summary":
             self._json(200, panels.summary(session))
@@ -427,7 +431,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(200, uploads.stage(self._problem(), self.headers.get("X-Hardy-Filename", ""), raw))
                 return
-            data = self._json_body(MAX_EDIT_BODY if path == "/api/check" else MAX_BODY)
+            data = self._json_body(MAX_EDIT_BODY if path in {"/api/check", "/api/project"} else MAX_BODY)
             if data is None:
                 return
             if path == "/api/input":

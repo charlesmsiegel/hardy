@@ -65,7 +65,7 @@ async def test_cancelled_publication_signals_children_and_clears_ui_stop(ui, set
         calls.append("interrupt")
         released.set()
     monkeypatch.setattr(process, "interrupt_children", interrupt)
-    state = State(config=settings, session=SimpleNamespace(project_publish=publish))
+    state = State(config=settings, session=SimpleNamespace(project_publish=publish, workspace=settings.layout.problem))
     running = asyncio.create_task(handlers.handle_project(ui, "publish Main --scope scope --output draft", state))
     try:
         for _ in range(100):

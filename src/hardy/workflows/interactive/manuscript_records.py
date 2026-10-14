@@ -1,9 +1,9 @@
 """Immutable manuscript proposals, explicit mapping reviews and source-bound audits."""
 from __future__ import annotations
 
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import model_validator
+from pydantic import Field, StrictInt, model_validator
 
 from hardy.foundation.values import FrozenModel
 from hardy.workflows.context import BindingSpec, DeclarationSpec
@@ -77,7 +77,7 @@ class IntakeRequest(FrozenModel):
     id: StableId
     sources: tuple[SelectedTexSource, ...]
     scope_id: StableId
-    citation_depth: Literal[0, 1, 2] = 0
+    citation_depth: Annotated[StrictInt, Field(ge=0, le=2)] = 0
     target_papers: tuple[Text, ...] = ()
 
     @model_validator(mode="after")
@@ -145,7 +145,7 @@ class RefereeRunRequest(FrozenModel):
     required_internal: tuple[VersionRef, ...] = ()
     original: tuple[VersionRef, ...] = ()
     repaired: tuple[VersionRef, ...] = ()
-    citation_depth: Literal[0, 1, 2] = 0
+    citation_depth: Annotated[StrictInt, Field(ge=0, le=2)] = 0
     citation_max_nodes: int = 32
 
     @model_validator(mode="after")
