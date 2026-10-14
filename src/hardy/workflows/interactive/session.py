@@ -570,9 +570,8 @@ class MathematicsSession:
             final_gates=self._final_gates, missing_names=self._missing_registered_names,
             head_sources=lambda: self.lean_workspace.sources()),
             build_snapshot=self._project_build_snapshot)
-        from hardy.formal.replay import capture_replay_environment
-        self.owners.configure_replay(environment=lambda: capture_replay_environment(self._lean_project, self._lean_command),
-            shared_sources=lambda: self._shared_sources())
+        self.owners.configure_replay(environment=self._capture_replay_environment,
+            shared_sources=lambda sources: self._shared_sources(dict(sources)))
         self._save_streak = self.formal._save_streak
         # Streak key -> sha256 hex digests of sources that passed `check_lean`
         # on that path this turn. A green check on a path lifts the brake only
@@ -1181,10 +1180,23 @@ class MathematicsSession:
         They must not rebind its environment or silently reuse its cached
         shared-source identity. Commands refresh under the session gates.
         """
-        if (self._discover_shared() != self.shared_roots or self._shared_digest() != self._shared_stamp
-                or _toolchain_identity(self._lean_command, self._lean_project) != self._toolchain):
+        if not self._project_environment_current():
             return {}, {}
         return self.lean_workspace.signature_snapshot()
+
+    def _project_environment_current(self) -> bool:
+        return (self._discover_shared() == self.shared_roots and self._shared_digest() == self._shared_stamp
+                and _toolchain_identity(self._lean_command, self._lean_project) == self._toolchain)
+
+    def _capture_replay_environment(self):
+        from hardy.formal.replay import capture_replay_environment
+
+        if not self._project_environment_current():
+            raise ValueError("Checked replay environment changed before source retention")
+        captured = capture_replay_environment(self._lean_project, self._lean_command)
+        if not self._project_environment_current():
+            raise ValueError("Checked replay environment changed during source retention")
+        return captured
 
     def _project_operations(self):
         """Named ledger operations; called while both session gates are held."""
@@ -2508,11 +2520,12 @@ class MathematicsSession:
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return ""
 
-    def _used_assumptions(self, sources: dict[str, str] | None = None) -> set[str]:
+    def _used_assumptions(self, sources: dict[str, str] | None = None, *,
+                          signatures: dict[str, str] | None = None) -> set[str]:
         """Actual current axiom audits, separate from merely declared premises."""
         used: set[str] = set()
         snapshot = self.lean_workspace.sources() if sources is None else sources
-        for record in self._current_audit(snapshot).values():
+        for record in self._current_audit(snapshot, signatures=signatures).values():
             if record.get("stale"):
                 continue
             used.update(str(name) for name in record.get("assumed", ()))
@@ -2534,7 +2547,7 @@ class MathematicsSession:
         facts = FormalDocumentFacts(
             statements=self._saved_statements(sources, signatures=signatures),
             saved_statements=self._theorem_statements(sources),
-            used_assumptions=self._used_assumptions(sources),
+            used_assumptions=self._used_assumptions(sources, signatures=signatures),
             shared_names=self._shared_names(sources),
             unreadable=self._unreadable_modules(sources),
             open_theorems=opened,
@@ -4881,7 +4894,8 @@ class MathematicsSession:
         ]
         if not trees:
             return {}
-        shadowed = set(self.shadowed_modules())
+        mine = self.lean_workspace.sources() if sources is None else sources
+        shadowed = set(mine)
 
         def resolve(name: str, depth: int) -> tuple[int, Path, Path] | None:
             """Where an import from a module in tree `depth` actually lands."""
@@ -4897,7 +4911,6 @@ class MathematicsSession:
                     return index, source, modules[name]
             return None
 
-        mine = self.lean_workspace.sources() if sources is None else sources
         found: dict[str, str] = {}
         seen: set[tuple[str, int]] = set()
         # The saved sources import at depth 0: they see every shared tree.

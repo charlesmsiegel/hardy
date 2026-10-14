@@ -218,7 +218,7 @@ class LiveCapabilities:
         sources, signatures = self.owners._build_snapshot() if self.owners._build_snapshot else ({}, {})
         if module not in sources or module not in signatures:
             raise ValueError("Checked save has no current exact source/build snapshot to retain")
-        shared = dict(self.owners._replay_shared())
+        shared = dict(self.owners._replay_shared(sources))
         shared_closure = tuple(name for name in build_order({**shared, **sources}, (module,)) if name in shared and name not in sources)
         names = {value.name: ref for value, ref in zip(allowed, refs, strict=True)}
         record = FrozenFormalEvidence(id=uuid4().hex, subject=work.item, scope=work.scope.ref, context=work.context,

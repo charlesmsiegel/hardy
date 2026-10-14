@@ -336,7 +336,7 @@ class ProjectOwners:
         self._gates = gates
         self._build_snapshot = build_snapshot
         self._replay_environment: Callable[[], tuple[dict[str, Any], Mapping[str, bytes]]] | None = None
-        self._replay_shared: Callable[[], Mapping[str, str]] = dict
+        self._replay_shared: Callable[[Mapping[str, str]], Mapping[str, str]] = lambda _sources: {}
         self.judgments = SemanticJudgments(self)
         self.scoped_admissions = ScopedAdmissions(self)
         from hardy.workflows.interactive.live_evidence import LiveEvidence
@@ -350,7 +350,7 @@ class ProjectOwners:
         self.canonical_citations = CanonicalCitationOwner(self)
 
     def configure_replay(self, *, environment: Callable[[], tuple[dict[str, Any], Mapping[str, bytes]]],
-                         shared_sources: Callable[[], Mapping[str, str]] = dict) -> None:
+                         shared_sources: Callable[[Mapping[str, str]], Mapping[str, str]] = lambda _sources: {}) -> None:
         """Install actual small environment/shared-source projections, never a proof callback."""
         self._replay_environment, self._replay_shared = environment, shared_sources
 
@@ -677,10 +677,10 @@ class ProjectOwners:
         unavailable = "Native replay environment capture is not configured"
         if self._replay_environment is not None:
             try:
-                current, signatures = self._build_snapshot() if self._build_snapshot is not None else ({}, {})
-                if signatures.get(module) != signature or source_inputs(module, current) != source_inputs(module, sources):
-                    raise ValueError("Audited build moved before native environment/source retention")
-                shared = dict(self._replay_shared())
+                # The trusted save/verification port already supplies the
+                # actual audited bytes and their paired build signature. A
+                # second live-tree observation could describe a later edit.
+                shared = dict(self._replay_shared(sources))
                 combined = {**shared, **sources}
                 shared_retained = tuple((name, self._retain("source.lean", shared[name].encode(), locator=name))
                     for name in build_order(combined, (module,)) if name not in sources)
