@@ -69,6 +69,20 @@ from hardy.foundation.journal import Journal, JournalError, StaleRevision, recor
 from hardy.foundation.locking import LockTimeout
 from hardy.foundation.values import FrozenModel, ToolResult
 from hardy.workflows.delegation.admission import AdmissionOwners, VerificationRequest
+from hardy.workflows.interactive.assessments import MathematicalAssessment
+from hardy.workflows.interactive.judgments import (
+    CitationEvidenceBinding,
+    SemanticJudgment,
+    SemanticJudgments,
+)
+from hardy.workflows.interactive.scoped_admission import (
+    AdmissionGateRecord,
+    HumanScopeCommit,
+    HumanScopeDecision,
+    ScopedAdmissionRequest,
+    ScopedAdmissions,
+)
+from hardy.workflows.interactive.semantic_versions import relevant_versions
 from hardy.workflows.ledger.contracts import (
     ArtifactRef,
     EvidenceKind,
@@ -226,7 +240,9 @@ class CheckedBinding(FrozenModel):
 BINDING_URI = "hardy-checked-binding:"
 REVIEW_URI = "hardy-translation-review:"
 _TYPES = {"FormalEvidence": FormalEvidence, "Decision": Decision, "TranslationReview": TranslationReview,
-          "CheckedBinding": CheckedBinding}
+          "CheckedBinding": CheckedBinding,
+          **{value.__name__: value for value in (SemanticJudgment, CitationEvidenceBinding, MathematicalAssessment,
+              ScopedAdmissionRequest, AdmissionGateRecord, HumanScopeDecision, HumanScopeCommit)}}
 
 
 def item_id(name: str) -> str:
@@ -291,8 +307,11 @@ class ProjectOwners:
         self._audit = audit
         self._gates = gates
         self._build_snapshot = build_snapshot
+        self.judgments = SemanticJudgments(self)
+        self.scoped_admissions = ScopedAdmissions(self)
         self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision,
-                                   read_evidence_at=self.read_evidence_at)
+                                   read_evidence_at=self.read_evidence_at,
+                                   read_scope_change_at=self.scoped_admissions.read_scope_change_at)
 
     @classmethod
     def reading(cls, problem: Path) -> ProjectOwners:
@@ -361,6 +380,7 @@ class ProjectOwners:
             if any(snapshot.head(ref.id).ref != ref
                    for ref in (record.subject, record.translation, record.relation, record.scope)):
                 return None
+            relevant_versions(self.problem, snapshot, record.subject, (record.translation, record.scope))
             # The latest judgment supersedes earlier approval of the same exact proposal.
             reviews = self.journal.read().of(TranslationReview)
             latest = [review for review in reviews if review.subject == record.subject
@@ -392,6 +412,7 @@ class ProjectOwners:
             if snapshot is None:
                 snapshot = LedgerStore(self.problem).read()
             target, formal, link, scope = self._proposal_pair(snapshot, binding.target, binding.translation)
+            relevant_versions(self.problem, snapshot, target.ref, (formal.ref,))
             if (link.ref != binding.relation or scope.ref != binding.scope or target.context != binding.context
                     or any(snapshot.head(ref.id).ref != ref for ref in (binding.saved, binding.saved_proof))):
                 return None
@@ -593,6 +614,8 @@ class ProjectOwners:
 
     def read_evidence_at(self, snapshot: LedgerSnapshot, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """Authenticate against the policy's locked snapshot without reacquiring its ledger lock."""
+        if reference.producer == "hardy.semantic-judgments":
+            return self.judgments.read(snapshot, reference)
         if reference.kind == EvidenceKind.FAITHFULNESS:
             return self._read_review(reference, snapshot=snapshot)
         if reference.artifact.uri.startswith(BINDING_URI):
@@ -601,6 +624,8 @@ class ProjectOwners:
 
     def read_evidence(self, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """What the owner's record behind a reference established, if it still reads and rests on nothing forbidden."""
+        if reference.producer == "hardy.semantic-judgments":
+            return self.judgments.read(LedgerStore(self.problem).read(), reference)
         if reference.kind == EvidenceKind.FAITHFULNESS:
             return self._read_review(reference)
         if reference.artifact.uri.startswith(BINDING_URI):
@@ -634,7 +659,7 @@ class ProjectOwners:
 
     # -- the journal ----------------------------------------------------------------------
 
-    def _append(self, record: FormalEvidence | Decision | TranslationReview | CheckedBinding) -> None:
+    def _append(self, record: FrozenModel) -> None:
         for _attempt in range(5):
             try:
                 self.journal.append((record,), expected_revision=self.journal.read().revision)
