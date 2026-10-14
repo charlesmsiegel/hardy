@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build && node notices.mjs",
     "smoke": "npm test && node smoke.mjs",
-    "test": "node --test --test-isolation=none src/markdown.test.mjs src/files/Editor.test.mjs"
+    "test": "node --test src/markdown.test.mjs src/files/Editor.test.mjs"
   },
   "dependencies": {
     "dagre": "^0.8.5",
