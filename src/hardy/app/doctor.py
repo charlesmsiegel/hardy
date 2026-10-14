@@ -43,6 +43,9 @@ def _probe(command: list[str], *, cwd: Path | None = None, timeout: float = 120)
         return False, f"{command[0]} not found on PATH"
     except NotADirectoryError:
         return False, f"working directory not usable: {cwd}"
+    except OSError as error:
+        directory = f" (working directory {cwd})" if cwd is not None else ""
+        return False, f"could not run {command[0]}{directory}: {error}"
     output = (process.stdout + process.stderr).strip().splitlines()
     if process.output_overflow:
         return False, "probe output exceeded its byte limit"
