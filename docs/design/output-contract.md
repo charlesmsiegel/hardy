@@ -10,6 +10,31 @@ and the shape of every record on disk are
 [the artifacts reference](../reference/artifacts.md). What follows is the
 reasoning those fields implement.
 
+## Project assessments are separate questions
+
+A project assessment names its exact target, selected scope, context, source
+versions and argument versions. It reports the theorem statement, original
+supplied argument, intermediate claims and selected repaired argument
+separately. Each lane names its evidence level, actual assumptions, coverage,
+unresolved work and historical assessments. A missing or stale receipt leaves
+an explicit gap.
+
+An independent proof of a conclusion does not assess the original argument. A
+repaired argument is a distinct source-bound item with its own steps and review;
+the conclusion proof alone cannot fill missing replacement-step coverage.
+Refuting an intermediate claim does not refute the main conclusion unless
+separate evidence establishes that conclusion's negation. Model critique is
+heuristic review unless actual formal counterevidence supports the particular
+subject and claim.
+
+Correspondence, premise admission, citation applicability, kernel proof and
+document compilation also remain distinct. Admission changes the allowed scope
+only after its exact gates and human decision; it proves no premise. A formal
+grade reports the axioms the selected proof actually used, separately from
+declarations it was merely allowed to use. The staged grades below describe
+staged artifacts; project reports preserve their own independent assessment
+lanes.
+
 ## Two artifacts, two grades
 
 A full run aims to produce two linked artifacts:
@@ -39,6 +64,24 @@ unproved assumption stated in an appendix in both languages. Whether the work is
 finished is therefore computed from the artifacts rather than asserted by the
 model, which is the same principle as grading on the axioms Lean reports rather
 than on an exit code, applied to the human-readable half.
+
+## Snapshots and selected-artifact replay
+
+A JSON report snapshot freezes the computed assessment and its exact
+references. A selected-result bundle additionally retains source/evidence bytes
+and, when the selected formal artifact has an available exact closure,
+executable model-free replay. Replay checks pinned toolchain/environment and
+file identities, then performs a fresh named axiom audit. A missing, duplicated
+or truncated audit cannot pass; `sorryAx` remains forbidden. Replaying a formal
+artifact supplies no new correspondence or argument judgment.
+
+A Referee bundle freezes its exact source-mapped report, actual layer
+conditions, assessments and gaps. Unavailable bytes and replay remain explicit.
+Neither export operation accepts obligations. Dependency source and compiled
+library inventories are captured at export; their hashes do not independently
+establish that the compiled libraries were derived from those sources. The
+replay runs Lean in the selected environment under the existing
+[trust boundary](trust-boundary.md).
 
 ## The formal grade comes from the audit, not the exit code
 

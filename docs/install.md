@@ -295,7 +295,7 @@ against a fake Lean service. MCP stays on the supported v1 API (`>=1.28,<2`);
 v2 removed the `FastMCP` import this transport uses.
 
 ```sh
-hardy doctor          # Python, lake, the Lean project, pdflatex, model, SDK, CLI, login
+hardy doctor          # Python, Lean/project, interactive TeX, Tectonic, CAS and selected backend/auth
 hardy doctor --deep   # also compiles `import Mathlib` + `norm_num`, which is slow
 ```
 
@@ -306,6 +306,14 @@ fails here rather than on your first question. With `backend = "api"` it
 means the `anthropic` package is importable and `ANTHROPIC_API_KEY` is set,
 whether one is set, never what it is, since a doctor report is something
 people paste into issues.
+
+The two TeX checks serve different paths: `latex_command`, normally pdflatex,
+compiles interactive cells; Tectonic compiles staged documents. `doctor` probes
+compiler versions, and `--deep` checks Mathlib elaboration. Neither establishes
+that a full document and its packages compile or that Tectonic can retrieve its
+bundle. Run a small document through the path you intend to use before a long
+proof run. Authentication checks likewise establish the selected backend's
+configured credentials, not a completed provider request.
 
 ## Updating
 

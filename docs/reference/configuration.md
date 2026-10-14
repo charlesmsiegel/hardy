@@ -143,6 +143,20 @@ itself: `HARDY_LIVE` and `HARDY_ARXIV_LIVE`/`HARDY_LOOGLE_LIVE` opt a machine
 into tests that spend a real subscription or hit a live service, and
 `HARDY_RECORD_DIR` names where such a test writes what it recorded.
 
+## Live project workflows
+
+Research, Explore, Repair, manuscript intake and Referee use the interactive
+session's selected `backend`, actual `model`, configured Lean project/commands
+and provider budget. Each runtime call records these identities, prompts,
+reported tools/isolation and actual or unavailable usage. A fresh context is a
+new provider conversation; it is not mathematical independence. A missing
+provider or capability remains explicit blocked/pending work. No setting turns
+model prose, scope admission or document compilation into kernel evidence.
+
+Interactive document tools use `latex_command`; staged documents use
+`tectonic`. Their version probes establish executable readiness, while actual
+compilation also depends on the selected document and TeX packages/bundle.
+
 ## The project layer
 
 `<root>/.hardy/config.toml` is committed with the checkout, and it may set

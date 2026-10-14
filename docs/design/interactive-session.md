@@ -132,6 +132,22 @@ then. That is cheaply survivable, because Hardy recognises its own bare
 scaffold, so the name can be created again rather than being burned by the
 attempt.
 
+## Project workflow lifetime
+
+Live project workflows share the session's provider budget, tool/save gate,
+cancellation and durable evidence owners. Each structured call starts a
+recorded fresh runtime context with its allowed tool set. Workflow model
+responses cannot write trust or save records directly. Exact requests and
+attempts survive restart; the same request ID resumes the same mathematical
+inputs, while changed inputs require a different identity.
+
+Cancellation records an attempt and interrupts active child work. A runtime
+whose teardown has not completed retains ownership of the provider/tool
+boundary, so new work cannot race a late response. Late reported usage is
+retained. Missing model or capability work produces blocked/pending records,
+rather than an empty successful stage. These receipts remain distinct from
+ordinary chat conversation turns and do not reset the project's spend.
+
 ## Streaming and cancellation
 
 The terminal draws deltas as they arrive; the record holds whole blocks. That

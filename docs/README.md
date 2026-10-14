@@ -6,12 +6,12 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 
 ## Start here
 
-- [Getting started](getting-started.md): walks a fresh clone through installing Hardy, checking the machine, and looking at a first proof.
+- [Getting started](getting-started.md): walks through installation/authentication, a durable project, research/repair/manuscript review, selected exports and a recorded proof.
 - [Install](install.md): gets a working `hardy` command onto your machine and explains what each installer does and where things go.
 
 ## Guides
 
-- [Interactive session](guides/interactive-session.md): walks through the things you do inside a running `hardy chat` session.
+- [Interactive session](guides/interactive-session.md): walks through a running `hardy chat` session and the shared project research, intake, referee and review operations.
 - [Proving](guides/proving.md): walks one claim from plain language to a verified, written-up result with `hardy prove`.
 - [Evaluation](guides/evaluation.md): walks through `hardy evals`, from checking the corpus to reading what a scoreboard says.
 - [Running safely](guides/running-safely.md): states what Hardy's trust boundary actually is today and how to put a real boundary around it.
@@ -23,7 +23,7 @@ The documentation is organized in four layers: a tutorial and guides that walk t
 - [Session commands](reference/session-commands.md): names every `/` command the prompt inside `hardy chat` accepts.
 - [Configuration](reference/configuration.md): names every setting Hardy reads and where each one comes from.
 - [On-disk layout](reference/on-disk-layout.md): names every directory and file Hardy reads or writes on a real filesystem.
-- [Artifacts](reference/artifacts.md): names every record Hardy writes to disk and what its fields mean.
+- [Artifacts](reference/artifacts.md): names staged records, exact project evidence/assessments and selected replay bundles.
 
 ## Design
 

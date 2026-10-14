@@ -441,6 +441,19 @@ These run inside the interactive session through the structured `/project` comma
 
 Item and scope selectors are stable ids or `ID@FULL_SHA256`, never a guessed name. `--scope` and `--output` are both required on `/project publish`; the output is a single validated child name under the active workspace's `publications/` directory. A fresh bundle contains the frozen plan and draft in `publication.json`, `writeup.tex` and `compile.log`; the existing document owner publishes its PDF on successful compilation, and a compilation failure retains the draft and its diagnostics. An existing bundle at that output name is refused, including after restart, so a later publication cannot overwrite one already made.
 
+Publication authenticates establishment of the exact selected item, separately
+from the target report's correspondence support. In a native checked-save/bind
+slice for `Nonnegative`, select `Nonnegative:formal` under `Nonnegative:scope`
+for the item carrying direct proof evidence. Selecting the informal
+`Nonnegative` can leave an unresolved draft even when its report says
+`supported_by_reviewed_formal_proof`: the formalization relation grants no
+automatic proof transport or premise authorization. A compiled PDF does not
+change that policy result or register a native Results theorem. Selecting proof
+evidence also leaves the ordinary linked-exposition and document checks in
+force. A Research
+target with authenticated proof authority of its own can instead be selected
+directly under its reviewed scope.
+
 `/project link SOURCE illustrates|documents TARGET` records that one item bears on another: `documents` requires an exposition or document-fragment source, `illustrates` requires an example, and both preserve the exact endpoint references. Repeated identical marks and links do not append redundant transactions, including links whose source or target moved only through presentation metadata; a changed prose statement is a distinct link, and keeps its own exact new source reference.
 
 `/project mark ITEM internal|public|omitted` sets an item's visibility. Changing the visibility of an item already admitted (used as trusted background or interface) is refused, because the existing trust policy pins that item's exact digest and this command does not migrate trust; a background item whose visibility needs to change has to be re-admitted instead.
