@@ -811,7 +811,12 @@ class MathematicsSession:
         return self._run_project_workflow(self.live.repair, request, max_attempts=max_attempts)
 
     def project_workflow_status(self, id=None):
-        return self.live.status(id)
+        with self.project_read_projection():
+            return self.live.status(id)
+
+    def project_read_projection(self):
+        """Pure nested reads share one freshly verified evidence journal."""
+        return self.owners.read_projection()
 
     def project_intake(self, request):
         from hardy.workflows.interactive.manuscript_records import IntakeRequest
@@ -824,18 +829,20 @@ class MathematicsSession:
     def project_intake_status(self, id=None):
         # Atomic owner snapshots remain readable while a provider owns the
         # conversation; these reads neither mutate nor accept a mapping.
-        return {**self.manuscript.status(id), "attempts": self.live.status(id)["attempts"]}
+        with self.project_read_projection():
+            return {**self.manuscript.status(id), "attempts": self.live.status(id)["attempts"]}
 
     def project_referee(self, request):
         from hardy.workflows.interactive.manuscript_records import RefereeRunRequest
         return self._run_project_workflow(self.live.manuscript, "referee", RefereeRunRequest.model_validate(request), self.referee.run)
 
     def project_referee_report(self, id=None):
-        report = self.referee.report(id)
-        identities = {value["receipt"]["request"]["id"] for value in report["reports"]}
-        attempts = self.live.status()["attempts"]
-        return {**report, "attempts": [value for value in attempts if value["kind"] == "referee"
-            and (id is None or value["request_id"] == id or value["request_id"] in identities)]}
+        with self.project_read_projection():
+            report = self.referee.report(id)
+            identities = {value["receipt"]["request"]["id"] for value in report["reports"]}
+            attempts = self.live.status()["attempts"]
+            return {**report, "attempts": [value for value in attempts if value["kind"] == "referee"
+                and (id is None or value["request_id"] == id or value["request_id"] in identities)]}
 
     @property
     def state(self) -> dict[str, Any]:
@@ -1198,10 +1205,13 @@ class MathematicsSession:
             raise ValueError("Checked replay environment changed during source retention")
         return captured
 
-    def _project_operations(self):
+    def _project_operations(self, *, read_only: bool = False):
         """Named ledger operations; called while both session gates are held."""
         from hardy.workflows.interactive.project import ProjectOperations
         from hardy.workflows.publish import PublishWorkflow
+
+        if not read_only:
+            self.owners.journal.assert_writable()
 
         worker = getattr(self.runtime, "worker", None)
         if (any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive())
@@ -1220,19 +1230,26 @@ class MathematicsSession:
         from hardy.workflows.interactive.project_application import ProjectApplication
 
         with self._conversation_gate, self._gate:
-            self._project_operations()
-            self._refresh_shared_identity()
-            return ProjectApplication(self.workspace, owners=self.owners).execute(operation, request)
+            read_only = operation == "report"
+            self._project_operations(read_only=read_only)
+            if not self.owners.journal.in_read_projection:
+                self._refresh_shared_identity()
+            application = ProjectApplication(self.workspace, owners=self.owners)
+            if read_only:
+                with self.project_read_projection():
+                    return application.execute(operation, request)
+            return application.execute(operation, request)
 
     def project_catalog(self):
         """Read exact immutable choices without taking a provider's conversation gate."""
         from hardy.workflows.interactive.project_application import ProjectApplication
 
-        result = ProjectApplication(self.workspace, owners=self.owners).catalog()
-        result["operations"] = {operation: {"available": callable(getattr(self, method, None)),
-            "reason": None if callable(getattr(self, method, None)) else f"This session does not provide {method}."}
-            for operation, method in (("bundle", "project_export_bundle"), ("referee-export", "project_export_referee"))}
-        return result
+        with self.project_read_projection():
+            result = ProjectApplication(self.workspace, owners=self.owners).catalog()
+            result["operations"] = {operation: {"available": callable(getattr(self, method, None)),
+                "reason": None if callable(getattr(self, method, None)) else f"This session does not provide {method}."}
+                for operation, method in (("bundle", "project_export_bundle"), ("referee-export", "project_export_referee"))}
+            return result
 
     def project_review(self, target: str, translation: str, *, verdict: str, reviewer: str,
                        conditions: str, reason: str, scope: str | None = None):
@@ -1254,9 +1271,11 @@ class MathematicsSession:
         from hardy.workflows.interactive.semantic import target_report
 
         with self._conversation_gate, self._gate:
-            self._project_operations()
-            self._refresh_shared_identity()
-            return target_report(self.workspace, target, owners=self.owners)
+            self._project_operations(read_only=True)
+            if not self.owners.journal.in_read_projection:
+                self._refresh_shared_identity()
+            with self.project_read_projection():
+                return target_report(self.workspace, target, owners=self.owners)
 
     def project_export(self, target: str, *, output: str):
         from hardy.workflows.interactive.semantic import export_target
@@ -2084,6 +2103,7 @@ class MathematicsSession:
         return self.formal._streak_refusal(path, source)
 
     def _formal_save_policy(self, verify_commit: Callable[[], None] | None = None) -> SavePolicy:
+        self.owners.journal.assert_writable()
         return SavePolicy(
             generated_refusal=self._generated_module_refusal,
             result_gate=self._result_gate,
@@ -2686,7 +2706,8 @@ class MathematicsSession:
             # theorem the sections beside it do not have.
             automation=self._automation_closed(sources),
         )
-        return with_project(assembled, LedgerStore(self.workspace).read(), policy=self.owners.policy)
+        with self.project_read_projection():
+            return with_project(assembled, LedgerStore(self.workspace).read(), policy=self.owners.policy)
 
     def export_material(self) -> dict[str, Any]:
         """Everything one exportable account of this session needs (#105).
@@ -4045,6 +4066,7 @@ class MathematicsSession:
         return ToolResult(False, f"not a workspace file: {path!r}")
 
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        self.owners.journal.assert_writable()
         if name == "check_lean":
             path = str(arguments.get("path") or DEFAULT_LEAN_PATH)
             source = str(arguments["source"])
@@ -5456,6 +5478,7 @@ class MathematicsSession:
         record can say the file changed and how it went without the line
         reading as something the person typed into the composer.
         """
+        self.owners.journal.assert_writable()
         inner = _workspace_relative(path)
         if inner is None:
             return ToolResult(False, f"only .lean and .tex files are saved through the editor: {path!r}")

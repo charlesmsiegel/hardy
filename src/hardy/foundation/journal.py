@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
@@ -56,6 +58,12 @@ class JournalSnapshot:
 
 
 Validator = Callable[[JournalSnapshot, JournalSnapshot], None]
+
+
+@dataclass
+class _ReadProjection:
+    snapshot: JournalSnapshot
+    active: bool = True
 
 
 def record_digest(record: BaseModel) -> str:
@@ -105,11 +113,44 @@ class Journal:
         self.directory = Path(directory)
         self._types = dict(types)
         self._lock_timeout = lock_timeout
+        self._projection: ContextVar[_ReadProjection | None] = ContextVar("hardy_journal_read_projection", default=None)
+
+    def assert_writable(self) -> None:
+        if self.in_read_projection:
+            raise JournalError("Cannot mutate a journal during a read-only evidence projection")
+
+    @property
+    def in_read_projection(self) -> bool:
+        projection = self._projection.get()
+        return projection is not None and projection.active
+
+    @contextmanager
+    def read_projection(self):
+        """One fully verified snapshot for one pure read, without retaining its lock.
+
+        Nested readers share only this request's records. A new outer read
+        verifies disk again; copied contexts cannot retain an expired scope.
+        Source/artifact/environment readers remain live and independent.
+        """
+        held = self._projection.get()
+        if held is not None and held.active:
+            yield held.snapshot
+            return
+        projection = _ReadProjection(self.read())
+        token = self._projection.set(projection)
+        try:
+            yield projection.snapshot
+        finally:
+            projection.active = False
+            self._projection.reset(token)
 
     def _guard(self, *, create: bool) -> WriteGuard:
         return WriteGuard(self.directory, create=create)
 
     def read(self) -> JournalSnapshot:
+        projection = self._projection.get()
+        if projection is not None and projection.active:
+            return projection.snapshot
         if not self.directory.exists():
             if self.directory.is_symlink():
                 self._guard(create=False)
@@ -160,6 +201,7 @@ class Journal:
     def append(
         self, records: Iterable[BaseModel], *, expected_revision: int, validate: Validator | None = None,
     ) -> JournalSnapshot:
+        self.assert_writable()
         values: list[BaseModel] = []
         for record in records:
             record_type = self._types.get(type(record).__name__)

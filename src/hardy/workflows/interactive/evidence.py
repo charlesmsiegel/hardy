@@ -354,6 +354,10 @@ class ProjectOwners:
         """Install actual small environment/shared-source projections, never a proof callback."""
         self._replay_environment, self._replay_shared = environment, shared_sources
 
+    def read_projection(self):
+        """Share verified journal records within one pure capability projection."""
+        return self.journal.read_projection()
+
     def _retain(self, name: str, data: bytes, *, locator: str | None = None) -> ArtifactRef:
         checksum = sha256(data).hexdigest()
         relative = f"workflow-artifacts/{checksum}/{name}"
