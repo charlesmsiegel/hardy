@@ -1468,6 +1468,63 @@ def test_checkpoints_reshapes_list_checkpoints_oldest_first(tmp_path: Path) -> N
 # -- publications --
 
 
+def native_publication_pair(problem: Path):
+    """Real session policy establishes the formal claim, without transporting it to the informal target."""
+    from test_project_binding import bind, setup_pair
+
+    from hardy.workflows.interactive.semantic_operations import SemanticOperations
+    from hardy.workflows.interactive.semantic_records import ItemRequest
+    from hardy.workflows.ledger.store import LedgerStore
+
+    chat, target, formal, saved = setup_pair(problem)
+    bind(chat, target, formal, saved)
+    operations = SemanticOperations(problem, owners=chat.owners)
+    for subject in (target, formal):
+        prose = operations.item(ItemRequest(id=f"{subject.id}:prose", name="Exposition", kind="exposition",
+                                            statement="The exact authored explanation."))
+        chat.project_mark(prose.id, "public")
+        chat.project_link(prose.id, "documents", subject.id)
+    return chat, target, formal, LedgerStore(problem).read().head("Target:scope")
+
+
+@pytest.mark.parametrize("used", [False, True])
+def test_publication_panels_use_supplied_exact_policy_without_authorizing_directory_reads(tmp_path, used):
+    from test_project_publication_evidence import controlled_project
+
+    from hardy.workflows.interactive.evidence import ProjectOwners
+    from hardy.workflows.interactive.project import ProjectOperations
+
+    store, main, premise, unused, scope, policy = controlled_project(tmp_path, used)
+    owners = ProjectOwners.reading(tmp_path)
+    owners.policy = policy
+    plan = ProjectOperations(tmp_path, lambda plan, **_kw: plan, policy=policy).publish(
+        main.id, scope=scope.id, output="preview-only")
+    assert plan.ready and plan.allowed_premises == (premise, unused)
+    assert plan.used_assumptions == ((premise.ref,) if used else ())
+    before = store.read()
+    with owners.read_projection():
+        preview = panels.publications(tmp_path, owners=owners)["candidates"][0]
+        export = panels.ledger_export(tmp_path, main.id, owners=owners)
+    assert preview["item"] == main.id and preview["scope"] == scope.id
+    assert preview["ready"] is True and preview["gaps"] == []
+    assert export["ready"] is True and export["obligations"] == []
+    assert next(row for row in export["rows"] if row["id"] == main.id)["unestablished"] is False
+    assert panels.publications(tmp_path)["candidates"][0]["ready"] is False
+    assert panels.ledger_export(tmp_path, main.id)["ready"] is False
+    assert store.read() == before and not (tmp_path / "publications").exists()
+
+
+@pytest.mark.parametrize("panel", ["publications", "ledger_export"])
+def test_publication_panels_refuse_owners_from_another_project(tmp_path, panel):
+    from hardy.workflows.interactive.evidence import ProjectOwners
+
+    problem = make_problem(tmp_path)
+    owners = ProjectOwners.reading(tmp_path / "other-project")
+    arguments = (problem, "Target") if panel == "ledger_export" else (problem,)
+    with pytest.raises(ValueError, match="another project"):
+        getattr(panels, panel)(*arguments, owners=owners)
+
+
 def test_publications_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) -> None:
     problem = make_problem(tmp_path)
     out = panels.publications(problem)
