@@ -69,6 +69,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
       - name: Native Windows open and mapped olean publication
         run: uv run --extra test pytest -q --no-cov tests/unit/test_workspace_t5.py -k native_windows --junitxml=windows-build-publication.xml
