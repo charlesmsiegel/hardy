@@ -717,3 +717,302 @@ def test_process_exit_during_manuscript_call_recovers_exact_attempt(tmp_path, mo
     assert json.loads(attempt["request_json"])["id"] == identifier
     restored = session.project_intake_status(identifier) if kind == "intake" else session.project_referee_report(identifier)
     assert restored["attempts"][0]["status"] == "interrupted"
+
+
+def revised_mapping_review(intake, accepted, *, rejected=(), verdict="disputed", internal=("middle",)):
+    from hardy.workflows.interactive.manuscript_records import IntakeReviewRequest, MappingDecision
+    proposal_ref = VersionRef.model_validate(accepted["review"]["proposal"])
+    proposal = intake.proposal(proposal_ref)
+    return intake.review(IntakeReviewRequest(proposal=proposal_ref,
+        decisions=tuple(MappingDecision(key=value.key,
+            verdict=verdict if value.key in rejected else "approved", reason="Read the exact mapping again")
+            for value in proposal.mappings), reviewer="mapping reviewer", conditions="Exact retained source",
+        reason="Revise source interpretation", main_results=("main",), required_internal=internal,
+        scope=VersionRef.model_validate(accepted["scope"])))
+
+
+@pytest.mark.parametrize("key", ["original", "step"])
+def test_latest_mapping_withdrawal_controls_referee_subjects_and_shared_report(tmp_path, key):
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    old = flow.run(request)
+    revised = revised_mapping_review(intake, accepted, rejected=(key,))
+    result = flow.run(request.model_copy(update={"id": "withdrawn", "review": VersionRef.model_validate(revised["ref"])}))
+    subjects = [subject["ref"] for call in result["report"]["model_calls"] if call["stage"] == "referee.adversarial"
+        for subject in json.loads(call["user_prompt"])["input"]["subjects"]]
+    assert accepted["bindings"][key] not in subjects
+    assert accepted["bindings"]["step"] not in subjects
+    if key == "original":
+        assert result["report"]["targets"][0]["original_proof"]["status"] == "unassessed"
+        report = intake.operations.report(VersionRef.model_validate(accepted["bindings"]["main"]), scope=request.scope)
+        assert report["original_proof"]["status"] == "unassessed"
+        with pytest.raises(ValueError, match="original"):
+            flow.run(request.model_copy(update={"id": "withdrawn-explicit", "review": VersionRef.model_validate(revised["ref"]),
+                "original": (VersionRef.model_validate(accepted["bindings"]["original"]),)}))
+    historical, = flow.report(old["receipt"]["id"])["reports"]
+    assert not historical["current"]
+    assert historical["historical_report"]["targets"][0]["original_proof"]["status"] == "defective"
+
+
+def test_withdrawn_dependency_is_not_a_current_source_critical_path(tmp_path):
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    revised = revised_mapping_review(intake, accepted, rejected=("dependency",), internal=())
+    result = flow.run(request.model_copy(update={"review": VersionRef.model_validate(revised["ref"]), "required_internal": ()}))
+    assert accepted["bindings"]["middle"] not in result["report"]["referee"]["critical_path"]
+    # The authoritative relationship and required work are retained, never erased.
+    snapshot = intake.store.read()
+    assert snapshot.get(VersionRef.model_validate(accepted["bindings"]["dependency"]))
+    assert VersionRef.model_validate(accepted["bindings"]["middle"]) in snapshot.get(request.scope).must_prove
+
+
+@pytest.mark.parametrize("key", ["original", "step", "dependency", "middle"])
+@pytest.mark.parametrize("verdict", ["disputed", "unresolved"])
+def test_reapproval_reuses_exact_historical_mapping_identities(tmp_path, key, verdict):
+    _, _, intake, _, accepted = referee_fixture(tmp_path)
+    revised = revised_mapping_review(intake, accepted, rejected=(key,), verdict=verdict,
+        internal=() if key == "middle" else ("middle",))
+    assert key not in revised["bindings"]
+    before = intake.store.read().records
+    restored = revised_mapping_review(intake, revised)
+    assert restored["bindings"] == accepted["bindings"]
+    from hardy.workflows.ledger.contracts import Obligation
+    assert tuple(value for value in intake.store.read().records if not isinstance(value, Obligation)) == tuple(
+        value for value in before if not isinstance(value, Obligation))
+    assert len(intake.status("paper")["reviews"]) == 3
+
+
+def test_withdrawal_preserves_explicit_independent_arguments_and_repairs(tmp_path):
+    from hardy.workflows.interactive.semantic_records import ArgumentRequest
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    revised = revised_mapping_review(intake, accepted, rejected=("original",))
+    target = VersionRef.model_validate(accepted["bindings"]["main"])
+    original = intake.operations.argument(ArgumentRequest(id="independent-original", target=target, text="Independently supplied proof"))
+    repair = intake.operations.argument(ArgumentRequest(id="independent-repair", target=target, text="Explicit repair", original=original.ref))
+    # New independent mathematics changes the review closure; record the exact review again.
+    revised = revised_mapping_review(intake, revised, rejected=("original",))
+    result = flow.run(request.model_copy(update={"review": VersionRef.model_validate(revised["ref"]),
+        "original": (original.ref,), "repaired": (repair.ref,)}))
+    lane = result["report"]["targets"][0]
+    assert lane["original_proof"]["subject"] == original.ref.model_dump(mode="json")
+    assert lane["repaired_proof"]["subject"] == repair.ref.model_dump(mode="json")
+
+
+def test_withdrawn_citation_is_unmapped_and_reapproval_restores_its_exact_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from hardy.workflows.interactive.live_referee import LiveReferee
+    from hardy.workflows.interactive.manuscript_records import (
+        IntakeRequest,
+        RefereeRunRequest,
+        SelectedTexSource,
+    )
+    text = TEX.replace("hence $1=1$.", r"hence $1=1$ by \cite{background}.")
+    payload = proposals(text)
+    cited, = inventory({"main.tex": text}).citations
+    payload["mappings"].append(dict(key="citation", kind="citation", name="Background theorem", source="step",
+        span=quoted(text, cited.key_span.start, cited.key_span.end), required_statement="An externally required premise"))
+    intake, files, owners = owner(tmp_path, lambda stage, _: payload if stage == "manuscript.extract" else {"assessments": []})
+    files["main.tex"] = text
+    proposed = intake.propose(IntakeRequest(id="citation", scope_id="scope", sources=(
+        SelectedTexSource(path="main.tex", digest=sha256(text.encode()).hexdigest()),)))
+    accepted = review(intake, proposed)
+    caps = SimpleNamespace(owners=owners, calls=intake.calls, store=intake.store,
+        ports=SimpleNamespace(problem=tmp_path, check_cancelled=lambda: None), prepare=None)
+    flow = LiveReferee(caps, intake=intake)
+    revised = revised_mapping_review(intake, accepted, rejected=("citation",))
+    request = RefereeRunRequest(id="without-citation", review=VersionRef.model_validate(revised["ref"]),
+        scope=VersionRef.model_validate(revised["scope"]),
+        main_results=tuple(VersionRef.model_validate(value) for value in revised["main_results"]),
+        required_internal=tuple(VersionRef.model_validate(value) for value in revised["required_internal"]))
+    result = flow.run(request)
+    core = result["report"]["referee"]
+    assert accepted["bindings"]["citation"] not in core["critical_path"]
+    assert len(core["unmapped_citations"]) == 1
+    assert core["citations"] == []
+    restored = revised_mapping_review(intake, revised)
+    assert restored["bindings"] == accepted["bindings"]
+
+
+def test_stale_retained_mapping_cannot_regain_authority_through_reapproval(tmp_path):
+    _, _, intake, _, accepted = referee_fixture(tmp_path)
+    revised = revised_mapping_review(intake, accepted, rejected=("middle",), internal=())
+    retained = VersionRef.model_validate(accepted["bindings"]["middle"])
+    intake.operations.revise(retained, statement="A revised independent claim")
+    with pytest.raises(ValueError, match="stale|superseded"):
+        revised_mapping_review(intake, revised)
+    assert "middle" not in intake.status("paper")["reviews"][-1]["review"]["bindings"]
+
+
+def test_source_relation_selection_keeps_authoritative_policy_snapshot(tmp_path, monkeypatch):
+    from hardy.workflows.ledger.contracts import Relation
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    revised = revised_mapping_review(intake, accepted, rejected=("dependency",), internal=())
+    dependency = VersionRef.model_validate(accepted["bindings"]["dependency"])
+    observed = []
+    premise_allowed = intake.owners.policy.premise_allowed
+    def checked(snapshot, *args, **kwargs):
+        observed.append(dependency in {edge.ref for edge in snapshot.current(Relation)})
+        return premise_allowed(snapshot, *args, **kwargs)
+    monkeypatch.setattr(intake.owners.policy, "premise_allowed", checked)
+    flow.run(request.model_copy(update={"review": VersionRef.model_validate(revised["ref"]), "required_internal": ()}))
+    assert observed and all(observed)
+
+
+@pytest.mark.parametrize("change", ["scope", "source"])
+def test_stale_latest_mapping_review_does_not_restore_an_older_interpretation(tmp_path, change):
+    from hardy.workflows.interactive.semantic_records import ItemRequest
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    flow.run(request)
+    if change == "scope":
+        extra = intake.operations.item(ItemRequest(id="extra-required", kind="lemma", name="Extra", statement="Extra work"))
+        old_scope = intake.store.read().get(request.scope)
+        scope = intake.operations.scope(old_scope.id, must_prove=(*old_scope.must_prove, extra.ref)).ref
+    else:
+        proposal = intake.proposal(VersionRef.model_validate(accepted["review"]["proposal"]))
+        intake.operations.source(proposal.sources[0].source.id, TEX + "Changed source version")
+        scope = request.scope
+    report = intake.operations.report(VersionRef.model_validate(accepted["bindings"]["main"]), scope=scope)
+    assert report["original_proof"]["status"] == "unassessed"
+    assert not report["intermediate_claims"]
+
+
+def test_independent_relationship_survives_withdrawal_of_a_source_dependency(tmp_path):
+    from hardy.workflows.ledger.contracts import Relation
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    revised = revised_mapping_review(intake, accepted, rejected=("dependency",), internal=())
+    snapshot = intake.store.read()
+    link = Relation(id="deliberate-independent-dependency", kind="depends_on",
+        source=VersionRef.model_validate(accepted["bindings"]["main"]),
+        target=VersionRef.model_validate(accepted["bindings"]["middle"]))
+    intake.store.append((link,), expected_revision=snapshot.revision, validate=intake.owners.policy.validate)
+    revised = revised_mapping_review(intake, revised, rejected=("dependency",), internal=())
+    result = flow.run(request.model_copy(update={"review": VersionRef.model_validate(revised["ref"]), "required_internal": ()}))
+    assert accepted["bindings"]["middle"] in result["report"]["referee"]["critical_path"]
+
+
+def test_withdrawn_intermediate_mapping_is_not_a_current_shared_argument_lane(tmp_path):
+    flow, request, intake, _, accepted = referee_fixture(tmp_path)
+    flow.run(request)
+    revised_mapping_review(intake, accepted, rejected=("middle",), internal=())
+    report = intake.operations.report(VersionRef.model_validate(accepted["bindings"]["main"]), scope=request.scope)
+    assert not report["intermediate_claims"]
+
+
+@pytest.mark.parametrize("invalid", ["cycle", "context-kind", "argument-context", "claim-containment", "claim-argument-kind", "identity-collision", "declaration-reference", "duplicate-declaration", "blank-proof", "context-requirement", "dependency-requirement"])
+def test_invalid_mapping_construction_writes_nothing_and_same_proposal_can_be_corrected(tmp_path, invalid):
+    payload = proposals()
+    text = "Unmapped mathematical convention."
+    offset = TEX.index(text)
+    span = quoted(TEX, offset, offset + len(text))
+    extra = [dict(key="bad-a", kind="context", name="Proposed context", span=span)]
+    if invalid == "cycle":
+        extra[0]["context"] = "bad-b"
+        extra.append(dict(key="bad-b", kind="context", name="Other proposed context", span=span, context="bad-a"))
+    elif invalid == "context-kind":
+        payload["mappings"][1]["context"] = "middle"
+        extra = []
+    elif invalid == "argument-context":
+        payload["mappings"][0]["context"] = "bad-a"
+        payload["mappings"][1]["context"] = "bad-b"
+        extra.append(dict(key="bad-b", kind="context", name="A different context", span=span))
+    elif invalid in {"claim-containment", "claim-argument-kind"}:
+        if invalid == "claim-containment":
+            payload["mappings"][0]["context"] = "bad-a"
+        payload["mappings"][3]["argument"] = "original" if invalid == "claim-containment" else "bad-a"
+    elif invalid == "blank-proof":
+        proof = inventory({"main.tex": TEX}).environments[1]
+        payload["mappings"][1]["span"] = quoted(TEX, proof.opening.end, proof.opening.end + 1)
+        extra = []
+    elif invalid == "context-requirement":
+        extra[0]["requirements"] = [dict(kind="resolve_declaration", reason="Missing local declaration")]
+    elif invalid == "dependency-requirement":
+        payload["mappings"][4]["requirements"] = [dict(kind="resolve_declaration", reason="Missing local declaration")]
+        extra = []
+    elif invalid == "identity-collision":
+        extra[0].update(key="original:conclusion", declarations=[dict(id="n", symbol="n", semantic_type="Nat")])
+    else:
+        spec = dict(id="n", symbol="n", semantic_type="Nat")
+        if invalid == "declaration-reference":
+            spec["dependencies"] = [dict(id="missing-declaration", digest="0" * 64)]
+        extra[0]["declarations"] = [spec, spec.copy()] if invalid == "duplicate-declaration" else [spec]
+    payload["mappings"].extend(extra)
+    intake, _, _ = owner(tmp_path, lambda *_: payload)
+    proposed = start(intake)
+    before = intake.store.read()
+    with pytest.raises(ValueError):
+        review(intake, proposed)
+    assert intake.store.read() == before
+    assert not intake.status("paper")["reviews"]
+    rejected = (("dependency",) if invalid == "dependency-requirement" else
+        ("middle",) if invalid in {"claim-containment", "claim-argument-kind"} else
+        ("original",) if invalid in {"context-kind", "blank-proof"} else ("original", "bad-b") if invalid == "argument-context"
+        else tuple(value["key"] for value in extra))
+    corrected = review(intake, proposed, rejected=rejected, internal=() if "middle" in rejected else ("middle",))
+    expected = ({"main", "middle", "original", "step"} if invalid == "dependency-requirement" else
+        {"main", "original", "step", "bad-a"} if invalid in {"claim-containment", "claim-argument-kind"} else
+        {"main", "middle", "dependency"} if invalid in {"context-kind", "blank-proof"} else
+        {"main", "middle", "dependency", "bad-a"} if invalid == "argument-context" else
+        {"main", "middle", "original", "step", "dependency"})
+    assert set(corrected["bindings"]) == expected
+
+
+def test_blank_citation_requirement_is_refused_before_any_mapping_write(tmp_path):
+    from hardy.workflows.interactive.manuscript_records import IntakeRequest, SelectedTexSource
+    text = TEX.replace("hence $1=1$.", r"hence $1=1$ by \cite{background}.")
+    payload = proposals(text)
+    cited, = inventory({"main.tex": text}).citations
+    payload["mappings"].append(dict(key="citation", kind="citation", name="Background", source="step",
+        span=quoted(text, cited.key_span.start, cited.key_span.end), required_statement=" \n"))
+    intake, files, _ = owner(tmp_path, lambda *_: payload)
+    files["main.tex"] = text
+    proposed = intake.propose(IntakeRequest(id="blank-citation", scope_id="scope", sources=(
+        SelectedTexSource(path="main.tex", digest=sha256(text.encode()).hexdigest()),)))
+    before = intake.store.read()
+    with pytest.raises(ValueError, match="statement"):
+        review(intake, proposed)
+    assert intake.store.read() == before
+    assert "citation" not in review(intake, proposed, rejected=("citation",))["bindings"]
+
+
+def test_committed_mapping_batch_without_review_journal_requires_fresh_exact_recovery(tmp_path, monkeypatch):
+    from hardy.workflows.interactive.manuscript_records import IntakeReview
+    intake, _, owners = owner(tmp_path)
+    proposed = start(intake)
+    append = owners._append
+    def interrupted(record):
+        if isinstance(record, IntakeReview):
+            raise OSError("Injected failure after ledger commit and before review journal")
+        append(record)
+    monkeypatch.setattr(owners, "_append", interrupted)
+    before = intake.store.read()
+    with pytest.raises(OSError, match="Injected failure"):
+        review(intake, proposed)
+    committed = intake.store.read()
+    assert committed.revision == before.revision + 1
+    target = committed.head(proposed["proposal"]["id"] + ":main").ref
+    scope = committed.head("paper-scope").ref
+    assert not intake.status("paper")["reviews"]
+    assert intake.operations.report(target, scope=scope)["original_proof"]["status"] == "unassessed"
+    restarted, _, _ = owner(tmp_path)
+    recovered = review(restarted, proposed, gateway=lambda request: restarted.review(request.model_copy(update={"scope": scope})))
+    assert recovered["bindings"]["main"] == target.model_dump(mode="json")
+    assert set(restarted.store.read().get(VersionRef.model_validate(recovered["scope"])).must_prove) == set(committed.get(scope).must_prove)
+    assert not restarted.store.read().get(VersionRef.model_validate(recovered["scope"])).allowed_background
+    assert tuple(value for value in restarted.store.read().current(ProjectItem)) == committed.current(ProjectItem)
+
+
+def test_recovery_refuses_same_prefix_with_different_current_mathematics(tmp_path, monkeypatch):
+    from hardy.workflows.interactive.manuscript_records import IntakeReview
+    intake, _, owners = owner(tmp_path)
+    proposed = start(intake)
+    append = owners._append
+    monkeypatch.setattr(owners, "_append", lambda record: (_ for _ in ()).throw(OSError("Interrupted")) if isinstance(record, IntakeReview) else append(record))
+    with pytest.raises(OSError):
+        review(intake, proposed)
+    snapshot = intake.store.read()
+    middle = snapshot.head(proposed["proposal"]["id"] + ":middle")
+    intake.operations.revise(middle.ref, statement="Different current mathematics")
+    scope = snapshot.head("paper-scope").ref
+    before = intake.store.read()
+    with pytest.raises(ValueError, match="different current content|stale"):
+        review(intake, proposed, gateway=lambda request: intake.review(request.model_copy(update={"scope": scope})))
+    assert intake.store.read() == before

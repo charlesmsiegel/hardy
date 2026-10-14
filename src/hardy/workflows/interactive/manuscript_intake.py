@@ -30,7 +30,16 @@ from hardy.workflows.interactive.manuscript_records import (
     RetainedTexSource,
     SelectedTexSource,
 )
-from hardy.workflows.interactive.semantic_operations import SemanticOperations
+from hardy.workflows.interactive.manuscript_views import claim_use_key, current_mapping_relations
+from hardy.workflows.interactive.semantic_operations import (
+    SemanticOperations,
+    argument_records,
+    context_records,
+    item_records,
+    obligation_records,
+    prepared_records,
+    scope_records,
+)
 from hardy.workflows.interactive.semantic_records import (
     ArgumentRequest,
     ItemRequest,
@@ -44,7 +53,10 @@ from hardy.workflows.ledger.contracts import (
     Scope,
     VersionRef,
 )
+from hardy.workflows.ledger.graph import LedgerGraph
+from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
+from hardy.workflows.ledger.validation import validate_structure
 
 
 @dataclass(frozen=True)
@@ -123,6 +135,11 @@ class ManuscriptIntake:
         self.problem, self.owners, self.calls, self.sources = Path(problem), owners, calls, sources
         self.store = LedgerStore(problem)
         self.operations = SemanticOperations(problem, owners=owners)
+
+    def graph(self, snapshot):
+        graph = LedgerGraph(snapshot)
+        graph.relations = current_mapping_relations(snapshot, self.owners.journal.read())
+        return graph
 
     def source_choices(self) -> list[dict[str, str]]:
         choices = [{"path": path, "digest": sha256(text.encode()).hexdigest()}
@@ -206,16 +223,7 @@ class ManuscriptIntake:
 
     @staticmethod
     def claim_use_key(key, mappings):
-        visited = set()
-        while key not in visited:
-            visited.add(key)
-            value = mappings.get(key)
-            if value is None:
-                break
-            if value.kind == "claim":
-                return key
-            key = value.target if value.kind == "argument" else value.argument if value.kind == "step" else None
-        raise ValueError("citation use must name a claim or an exact argument/step supporting a claim")
+        return claim_use_key(key, mappings)
 
     @staticmethod
     def _validate_mapping(mapping: ManuscriptMapping, sources, scanned, all_mappings):
@@ -340,6 +348,19 @@ class ManuscriptIntake:
             refs.update(relevant_versions(self.problem, snapshot, ref))
         return tuple(sorted(refs, key=lambda value: (value.id, value.digest)))
 
+    @staticmethod
+    def _construction_order(mapping, approved, bindings):
+        remaining, available, order = set(approved) - bindings.keys(), set(bindings), []
+        while remaining:
+            ready = sorted(key for key in remaining if all(ref in available for ref in
+                (mapping[key].context, mapping[key].argument, mapping[key].target, mapping[key].source) if ref))
+            if not ready:
+                raise ValueError("cyclic semantic mapping construction; contexts/argument containment require an acyclic order")
+            order.extend(ready)
+            available.update(ready)
+            remaining.difference_update(ready)
+        return order
+
     def review(self, request: IntakeReviewRequest) -> dict[str, Any]:
         request = IntakeReviewRequest.model_validate(request.model_dump())
         proposal = self.proposal(request.proposal)
@@ -378,8 +399,27 @@ class ManuscriptIntake:
             raise ValueError("accepted background requires prior exact authenticated scoped admission")
         prefix = proposal.id + ":"
         prior = [value for value in self.owners.journal.read().of(IntakeReview) if value.proposal == request.proposal]
-        previous = prior[-1].bindings if prior else {}
+        previous = {}
+        for value in prior:
+            for key, ref in value.bindings.items():
+                if key in previous and previous[key] != ref:
+                    raise ValueError("historical mapping has ambiguous exact identities; create a new proposal")
+                previous[key] = ref
         bindings = {key: ref for key, ref in previous.items() if key in approved}
+        # Reapproval restores the same interpretation of retained bytes, never a
+        # recreated item or an implicitly advanced dependency/version.
+        for ref in bindings.values():
+            relevant_versions(self.problem, snapshot, ref)
+        order = self._construction_order(mapping, approved, bindings)
+        prospective = snapshot
+        def stage(records, *, activate=None):
+            nonlocal prospective
+            records = prepared_records(prospective, records, reuse_exact=True)
+            after = LedgerSnapshot((*prospective.records, *records), prospective.revision,
+                activate if activate is not None else prospective.active_context)
+            validate_structure(prospective, after)
+            self.owners.policy.validate(prospective, after)
+            prospective = after
         source_refs = {value.path: value.source for value in proposal.sources}
         from hardy.literature.metadata import parse_id
         target_papers = {parse_id(value).stem for value in (*proposal.request.target_papers,
@@ -387,72 +427,68 @@ class ManuscriptIntake:
         self_citations = set()
         def region(value):
             return SourceRegion(source=source_refs[value.span.path], start=value.span.start, end=value.span.end)
-        pending = set(approved) - set(bindings)
-        while pending:
-            progressed = False
-            for key in sorted(pending):
-                value = mapping[key]
-                refs = [v for v in (value.context, value.argument, value.target, value.source) if v]
-                if any(ref not in bindings for ref in refs):
-                    continue
-                context = bindings.get(value.context)
-                identity = prefix + key
-                if value.kind in {"context", "notation"}:
-                    if context is None:
-                        root = self.operations.context(id=identity + ":root", label=value.name)
-                        context = root.ref
-                    if value.declarations or value.bindings:
-                        result = self.operations.context(id=identity, label=value.name, parent=context,
-                            declarations=tuple(spec.model_copy(update={"id": identity + ":" + spec.id}) for spec in value.declarations),
-                            bindings=tuple(spec.model_copy(update={"id": identity + ":" + spec.id}) for spec in value.bindings))
-                    else:
-                        result = self.store.read().get(context)
-                elif value.kind == "claim":
-                    result = self.operations.item(ItemRequest(id=identity, kind=value.claim_kind, name=value.name,
-                        statement=value.span.quote, origin="target_paper", context=context, source=region(value),
-                        target=bindings.get(value.target), argument=bindings.get(value.argument)))
-                elif value.kind == "argument":
-                    result = self.operations.argument(ArgumentRequest(id=identity, target=bindings[value.target],
-                        text=value.span.quote, source=region(value), context=context))
-                elif value.kind == "step":
-                    argument = self.store.read().get(bindings[value.argument])
-                    result = self.operations.step(ItemRequest(id=identity, kind="proof_step", name=value.name,
-                        statement=value.span.quote, origin="target_paper", context=argument.context,
-                        source=region(value), argument=argument.ref))
-                elif value.kind == "dependency":
-                    result = Relation(id=identity, kind="depends_on", source=bindings[value.source], target=bindings[value.target])
-                    records = [result]
-                    before = self.store.read()
-                    use, prerequisite = before.get(result.source), before.get(result.target)
-                    claim_kinds = {"theorem", "lemma", "proposition", "corollary", "claim", "conjecture"}
-                    if (isinstance(use, ProjectItem) and isinstance(prerequisite, ProjectItem)
-                            and use.kind in claim_kinds and prerequisite.kind in claim_kinds
-                            and prerequisite.origin == "target_paper"
-                            and not any(edge.kind == "supports" and edge.source == prerequisite.ref and edge.target == use.ref
-                                        for edge in before.current(Relation))):
-                        records.append(Relation(id=identity + ":intermediate", kind="supports", source=prerequisite.ref, target=use.ref))
-                    self.store.append(records, expected_revision=before.revision, validate=self.owners.policy.validate)
+        for key in order:
+            value = mapping[key]
+            context = bindings.get(value.context)
+            identity = prefix + key
+            if value.kind in {"context", "notation"}:
+                if context is None:
+                    root, records = context_records(prospective, id=identity + ":root", label=value.name, reuse_exact=True)
+                    stage(records, activate=root.ref)
+                    context = root.ref
+                if value.declarations or value.bindings:
+                    result, records = context_records(prospective, id=identity, label=value.name, parent=context,
+                        declarations=tuple(spec.model_copy(update={"id": identity + ":" + spec.id}) for spec in value.declarations),
+                        bindings=tuple(spec.model_copy(update={"id": identity + ":" + spec.id}) for spec in value.bindings), reuse_exact=True)
+                    stage(records, activate=result.ref)
                 else:
-                    original_use = self.store.read().get(bindings[value.source])
-                    use = self.store.read().get(bindings[self.claim_use_key(value.source, mapping)])
-                    result = self.operations.item(ItemRequest(id=identity, kind="external_result", name=value.name,
-                        statement=value.required_statement,
-                        origin="target_paper" if value.paper_id and parse_id(value.paper_id).stem in target_papers else "background_paper",
-                        context=use.context, source=region(value)))
-                    if result.origin == "target_paper":
-                        self_citations.add(result.ref)
-                    relation = Relation(id=identity + ":use", kind="depends_on", source=use.ref, target=result.ref,
-                        mappings=(("exact-source-use", original_use.ref.model_dump_json()),))
-                    self.store.append((relation,), expected_revision=self.store.read().revision, validate=self.owners.policy.validate)
-                bindings[key] = result.ref
-                pending.remove(key)
-                progressed = True
-            if not progressed:
-                raise ValueError("cyclic semantic mapping construction; contexts/argument containment require an acyclic order")
+                    result = prospective.get(context)
+            elif value.kind == "claim":
+                result, records = item_records(self.problem, prospective, ItemRequest(id=identity, kind=value.claim_kind, name=value.name,
+                    statement=value.span.quote, origin="target_paper", context=context, source=region(value),
+                    target=bindings.get(value.target), argument=bindings.get(value.argument)), reuse_exact=True)
+                stage(records)
+            elif value.kind == "argument":
+                result, records = argument_records(self.problem, prospective, ArgumentRequest(id=identity, target=bindings[value.target],
+                    text=value.span.quote, source=region(value), context=context), reuse_exact=True)
+                stage(records)
+            elif value.kind == "step":
+                argument = prospective.get(bindings[value.argument])
+                result, records = item_records(self.problem, prospective, ItemRequest(id=identity, kind="proof_step", name=value.name,
+                    statement=value.span.quote, origin="target_paper", context=argument.context,
+                    source=region(value), argument=argument.ref), reuse_exact=True)
+                stage(records)
+            elif value.kind == "dependency":
+                result = Relation(id=identity, kind="depends_on", source=bindings[value.source], target=bindings[value.target])
+                records = [result]
+                use, prerequisite = prospective.get(result.source), prospective.get(result.target)
+                claim_kinds = {"theorem", "lemma", "proposition", "corollary", "claim", "conjecture"}
+                if (isinstance(use, ProjectItem) and isinstance(prerequisite, ProjectItem)
+                        and use.kind in claim_kinds and prerequisite.kind in claim_kinds
+                        and prerequisite.origin == "target_paper"
+                        and not any(edge.kind == "supports" and edge.source == prerequisite.ref and edge.target == use.ref
+                                    for edge in prospective.current(Relation))):
+                    records.append(Relation(id=identity + ":intermediate", kind="supports", source=prerequisite.ref, target=use.ref))
+                stage(records)
+            else:
+                original_use = prospective.get(bindings[value.source])
+                use = prospective.get(bindings[self.claim_use_key(value.source, mapping)])
+                result, records = item_records(self.problem, prospective, ItemRequest(id=identity, kind="external_result", name=value.name,
+                    statement=value.required_statement,
+                    origin="target_paper" if value.paper_id and parse_id(value.paper_id).stem in target_papers else "background_paper",
+                    context=use.context, source=region(value)), reuse_exact=True)
+                stage(records)
+                if result.origin == "target_paper":
+                    self_citations.add(result.ref)
+                relation = Relation(id=identity + ":use", kind="depends_on", source=use.ref, target=result.ref,
+                    mappings=(("exact-source-use", original_use.ref.model_dump_json()),))
+                stage((relation,))
+            bindings[key] = result.ref
         main = tuple(bindings[key] for key in request.main_results)
         internal = tuple(bindings[key] for key in request.required_internal)
         required = tuple(dict.fromkeys((*(old_scope.must_prove if old_scope else ()), *main, *internal, *sorted(self_citations, key=lambda value: value.id))))
-        scope = self.operations.scope(proposal.request.scope_id, must_prove=required)
+        scope, records = scope_records(self.problem, prospective, proposal.request.scope_id, must_prove=required, policy=self.owners.policy)
+        stage(records)
         gaps = list(proposal.gaps)
         for key, value in mapping.items():
             if key not in approved:
@@ -462,14 +498,18 @@ class ManuscriptIntake:
         for key in approved:
             value = mapping[key]
             for requirement in value.requirements:
-                self.operations.obligation(bindings[key], kind=requirement.kind, scope=scope.ref, reason=requirement.reason)
+                _, records = obligation_records(self.problem, prospective, bindings[key], kind=requirement.kind, scope=scope.ref, reason=requirement.reason)
+                stage(records)
             if value.kind in {"claim", "step"}:
-                self.operations.obligation(bindings[key], kind="check_informal_step" if value.kind == "step" else "prove",
+                _, records = obligation_records(self.problem, prospective, bindings[key], kind="check_informal_step" if value.kind == "step" else "prove",
                     scope=scope.ref, reason="Reviewed source mapping remains mathematically unestablished.")
+                stage(records)
         review = IntakeReview(id=f"manuscript-review:{uuid4().hex}", request=request, proposal=request.proposal,
             decisions=tuple(decisions.get(key, MappingDecision(key=key, verdict="unresolved", reason="Not reviewed")) for key in mapping),
             bindings=bindings, scope=scope.ref, main_results=main, required_internal=internal, gaps=tuple(gaps),
-            inputs=self._inputs(self.store.read(), bindings.values(), scope.ref), recorded_at=stamp())
+            inputs=self._inputs(prospective, bindings.values(), scope.ref), recorded_at=stamp())
+        self.store.append(prospective.records[len(snapshot.records):], expected_revision=snapshot.revision,
+            activate=prospective.active_context, validate=self.owners.policy.validate)
         self.owners._append(review)
         return self._review_data(review)
 

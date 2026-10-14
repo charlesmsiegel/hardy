@@ -64,6 +64,157 @@ def formalization_records(snapshot: LedgerSnapshot, subject: VersionRef, *, id: 
     return item, link
 
 
+def prepared_records(snapshot: LedgerSnapshot, records, *, reuse_exact=False):
+    """Recover only independently reconstructed, byte-identical current records."""
+    new = []
+    for record in records:
+        old = snapshot.head_or_none(record.id)
+        if old is not None:
+            if not reuse_exact or old != record:
+                raise ValueError("prepared record identity is occupied by different current content")
+        else:
+            new.append(record)
+    return tuple(new)
+
+
+def context_records(snapshot: LedgerSnapshot, *, id: str, label: str, parent: VersionRef | None = None,
+                    declarations: tuple[DeclarationSpec, ...] = (), bindings: tuple[BindingSpec, ...] = (),
+                    supersedes: VersionRef | None = None, reuse_exact=False):
+    """Prepare the exact ordinary context operation without persistence."""
+    if snapshot.head_or_none(id) is not None and not reuse_exact:
+        raise ValueError("context requires a distinct identity")
+    if supersedes is not None:
+        old = snapshot.get(supersedes)
+        if not isinstance(old, MathematicalContext) or snapshot.head(old.id).ref != supersedes:
+            raise ValueError("context revision must name a current mathematical context")
+    if parent is None:
+        if declarations or bindings:
+            raise ValueError("create a root, then extend it with local declarations/bindings")
+        result = MathematicalContext(id=id, label=label, origin=ProjectOrigin.HUMAN_AUTHORED)
+        records = (result,)
+    else:
+        result, records = ContextManager._extension(snapshot, parent, id=id, label=label,
+            declarations=declarations, bindings=bindings, origin=ProjectOrigin.HUMAN_AUTHORED)
+    if supersedes is not None:
+        records = (*records, Relation(id=f"{id}:supersedes", kind=RelationKind.SUPERSEDES,
+                                     source=result.ref, target=supersedes))
+    return result, prepared_records(snapshot, records, reuse_exact=reuse_exact)
+
+
+def scope_records(problem: Path, snapshot: LedgerSnapshot, id: str, *, must_prove: tuple[VersionRef, ...], policy):
+    """Prepare a scope through the same required-target/admission checks."""
+    old = snapshot.head_or_none(id)
+    if old is not None and not isinstance(old, Scope):
+        raise ValueError("scope identity belongs to another record kind")
+    for ref in must_prove:
+        value = snapshot.get(ref)
+        if not isinstance(value, ProjectItem):
+            raise ValueError("must_prove requires exact project items")
+        relevant_versions(problem, snapshot, ref)
+    if old is not None:
+        if not set(old.must_prove).issubset(must_prove):
+            raise ValueError("scope revision cannot drop or replace protected required targets")
+        policy._current_scope(snapshot, old)
+    selected = Scope(id=id, must_prove=must_prove,
+                     allowed_background=old.allowed_background if old else (),
+                     allowed_interfaces=old.allowed_interfaces if old else ())
+    if selected == old:
+        return old, ()
+    return selected, (selected,)
+
+
+def item_records(problem: Path, snapshot: LedgerSnapshot, request: ItemRequest, *, reuse_exact=False):
+    """Validate the real typed item request and prepare its exact records."""
+    request = ItemRequest.model_validate(request.model_dump())
+    if request.kind in {ProjectItemKind.SOURCE, ProjectItemKind.ARGUMENT, ProjectItemKind.DECLARATION}:
+        raise ValueError("sources, arguments and declarations use their focused operations")
+    if snapshot.head_or_none(request.id) is not None and not reuse_exact:
+        raise ValueError("item creation requires a distinct identity")
+    if request.context:
+        relevant_versions(problem, snapshot, request.context)
+    semantics = []
+    if request.source:
+        read_region(problem, snapshot, request.source)
+        relevant_versions(problem, snapshot, request.source.source)
+        semantics.append(("source-region", request.source.model_dump_json()))
+    item = ProjectItem(id=request.id, kind=request.kind, name=request.name, statement=request.statement,
+        context=request.context, origin=request.origin, semantics=tuple(semantics))
+    records = [item]
+    for index, ref in enumerate(request.dependencies):
+        relevant_versions(problem, snapshot, ref)
+        records.append(Relation(id=f"{request.id}:dependency:{index}", kind=RelationKind.DEPENDS_ON,
+                                source=item.ref, target=ref))
+    if request.target:
+        target = snapshot.get(request.target)
+        if not isinstance(target, ProjectItem) or snapshot.head(target.id).ref != target.ref:
+            raise ValueError("item target must be a current exact item")
+        records.append(Relation(id=f"{request.id}:supports", kind=RelationKind.SUPPORTS,
+                                source=item.ref, target=request.target))
+    if request.argument:
+        argument = snapshot.get(request.argument)
+        if (not isinstance(argument, ProjectItem) or argument.kind != ProjectItemKind.ARGUMENT
+                or snapshot.head(argument.id).ref != argument.ref or argument.context != item.context):
+            raise ValueError("containing argument must be exact, current and share the context")
+        records.append(Relation(id=f"{request.id}:contained", kind=RelationKind.CONTAINS,
+                                source=argument.ref, target=item.ref))
+    if request.obligation:
+        if request.scope is None:
+            raise ValueError("an obligation requires its exact scope")
+        scope = snapshot.get(request.scope)
+        if not isinstance(scope, Scope) or snapshot.head(scope.id).ref != scope.ref:
+            raise ValueError("item work requires a current scope")
+        records.append(Obligation(id=f"{request.id}:work", item=item.ref, kind=request.obligation,
+                                  scope=scope, context=item.context, reason="Semantic proposal remains unestablished."))
+    return item, prepared_records(snapshot, records, reuse_exact=reuse_exact)
+
+
+def argument_records(problem: Path, snapshot: LedgerSnapshot, request: ArgumentRequest, *, reuse_exact=False):
+    """Validate the real typed argument request and prepare its exact records."""
+    request = ArgumentRequest.model_validate(request.model_dump())
+    target = snapshot.get(request.target)
+    if not isinstance(target, ProjectItem) or snapshot.head(target.id).ref != target.ref:
+        raise ValueError("argument must name a current exact conclusion")
+    context = request.context if request.context is not None else target.context
+    if context != target.context:
+        raise ValueError("argument and conclusion require the same exact context")
+    semantics = [("argument-role", "repaired" if request.original else "original")]
+    if request.source:
+        read_region(problem, snapshot, request.source)
+        relevant_versions(problem, snapshot, request.source.source)
+        semantics.append(("source-region", request.source.model_dump_json()))
+    if snapshot.head_or_none(request.id) is not None and not reuse_exact:
+        raise ValueError("argument version requires a distinct identity")
+    argument = ProjectItem(id=request.id, kind=ProjectItemKind.ARGUMENT, name=request.id,
+        statement=request.text, context=context, origin=request.origin,
+        semantics=tuple(semantics), research=ResearchState(status="proposed", reason=request.reason))
+    records = [argument, Relation(id=f"{request.id}:conclusion", kind=RelationKind.SUPPORTS,
+                                  source=argument.ref, target=target.ref)]
+    if request.original:
+        original = snapshot.get(request.original)
+        conclusions = [r.target for r in snapshot.current(Relation)
+                       if r.source == request.original and r.kind == RelationKind.SUPPORTS]
+        if (not isinstance(original, ProjectItem) or original.kind != ProjectItemKind.ARGUMENT
+                or target.ref not in conclusions or original.context != context):
+            raise ValueError("repaired argument must name an original argument for the same exact conclusion")
+        # REFINES records lineage; SUPERSEDES would withdraw the original's
+        # current assessment, which a repair must never erase.
+        records.append(Relation(id=f"{request.id}:original", kind=RelationKind.REFINES,
+                                source=argument.ref, target=request.original))
+    return argument, prepared_records(snapshot, records, reuse_exact=reuse_exact)
+
+
+def obligation_records(problem: Path, snapshot: LedgerSnapshot, subject: VersionRef, *,
+                       kind: ObligationKind, scope: VersionRef, reason: str):
+    """Prepare ordinary scoped work; a context/relation cannot masquerade as an item."""
+    item, selected_scope = snapshot.get(subject), snapshot.get(scope)
+    if not isinstance(item, ProjectItem) or not isinstance(selected_scope, Scope):
+        raise ValueError("obligation requires item and scope")
+    relevant_versions(problem, snapshot, subject, (scope,))
+    work = Obligation(id=f"{item.id}:work:{uuid4().hex}", item=subject, kind=kind,
+                      scope=selected_scope, context=item.context, reason=reason)
+    return work, (work,)
+
+
 class SemanticOperations:
     def __init__(self, problem: Path, *, owners: ProjectOwners | None = None):
         self.problem = Path(problem)
@@ -103,25 +254,8 @@ class SemanticOperations:
                 supersedes: VersionRef | None = None) -> MathematicalContext:
         """Extend/fork exact contexts; revision never mutates a declaration or binding."""
         snapshot = self.store.read()
-        if snapshot.head_or_none(id) is not None:
-            raise ValueError("context requires a distinct identity")
-        if supersedes is not None:
-            old = snapshot.get(supersedes)
-            if not isinstance(old, MathematicalContext) or snapshot.head(old.id).ref != supersedes:
-                raise ValueError("context revision must name a current mathematical context")
-        if parent is None:
-            if declarations or bindings:
-                raise ValueError("create a root, then extend it with local declarations/bindings")
-            result = MathematicalContext(id=id, label=label, origin=ProjectOrigin.HUMAN_AUTHORED)
-            records = (result,)
-        else:
-            result, records = self.contexts._extension(snapshot, parent, id=id, label=label,
-                declarations=declarations, bindings=bindings, origin=ProjectOrigin.HUMAN_AUTHORED)
-        if supersedes is not None:
-            records = (*records, Relation(id=f"{id}:supersedes", kind=RelationKind.SUPERSEDES,
-                                         source=result.ref, target=supersedes))
-        self.store.append(records, expected_revision=snapshot.revision, activate=result.ref,
-                          validate=self.owners.policy.validate)
+        result, records = context_records(snapshot, id=id, label=label, parent=parent, declarations=declarations, bindings=bindings, supersedes=supersedes)
+        self.store.append(records, expected_revision=snapshot.revision, activate=result.ref, validate=self.owners.policy.validate)
         return result
 
     def target(self, id: str, statement: str, *, formal: str, context: VersionRef | None = None,
@@ -152,68 +286,14 @@ class SemanticOperations:
         survive only under their original, reauthenticated admission history.
         """
         snapshot = self.store.read()
-        old = snapshot.head_or_none(id)
-        if old is not None and not isinstance(old, Scope):
-            raise ValueError("scope identity belongs to another record kind")
-        for ref in must_prove:
-            value = snapshot.get(ref)
-            if not isinstance(value, ProjectItem):
-                raise ValueError("must_prove requires exact project items")
-            relevant_versions(self.problem, snapshot, ref)
-        if old is not None:
-            if not set(old.must_prove).issubset(must_prove):
-                raise ValueError("scope revision cannot drop or replace protected required targets")
-            self.owners.policy._current_scope(snapshot, old)
-        selected = Scope(id=id, must_prove=must_prove,
-                         allowed_background=old.allowed_background if old else (),
-                         allowed_interfaces=old.allowed_interfaces if old else ())
-        if selected == old:
-            return old
-        self.store.append((selected,), expected_revision=snapshot.revision, validate=self.owners.policy.validate)
+        selected, records = scope_records(self.problem, snapshot, id, must_prove=must_prove, policy=self.owners.policy)
+        if records:
+            self.store.append(records, expected_revision=snapshot.revision, validate=self.owners.policy.validate)
         return selected
 
     def item(self, request: ItemRequest) -> ProjectItem:
-        request = ItemRequest.model_validate(request.model_dump())
-        if request.kind in {ProjectItemKind.SOURCE, ProjectItemKind.ARGUMENT, ProjectItemKind.DECLARATION}:
-            raise ValueError("sources, arguments and declarations use their focused operations")
         snapshot = self.store.read()
-        if snapshot.head_or_none(request.id) is not None:
-            raise ValueError("item creation requires a distinct identity")
-        if request.context:
-            relevant_versions(self.problem, snapshot, request.context)
-        semantics = []
-        if request.source:
-            read_region(self.problem, snapshot, request.source)
-            relevant_versions(self.problem, snapshot, request.source.source)
-            semantics.append(("source-region", request.source.model_dump_json()))
-        item = ProjectItem(id=request.id, kind=request.kind, name=request.name, statement=request.statement,
-            context=request.context, origin=request.origin, semantics=tuple(semantics))
-        records = [item]
-        for index, ref in enumerate(request.dependencies):
-            relevant_versions(self.problem, snapshot, ref)
-            records.append(Relation(id=f"{request.id}:dependency:{index}", kind=RelationKind.DEPENDS_ON,
-                                    source=item.ref, target=ref))
-        if request.target:
-            target = snapshot.get(request.target)
-            if not isinstance(target, ProjectItem) or snapshot.head(target.id).ref != target.ref:
-                raise ValueError("item target must be a current exact item")
-            records.append(Relation(id=f"{request.id}:supports", kind=RelationKind.SUPPORTS,
-                                    source=item.ref, target=request.target))
-        if request.argument:
-            argument = snapshot.get(request.argument)
-            if (not isinstance(argument, ProjectItem) or argument.kind != ProjectItemKind.ARGUMENT
-                    or snapshot.head(argument.id).ref != argument.ref or argument.context != item.context):
-                raise ValueError("containing argument must be exact, current and share the context")
-            records.append(Relation(id=f"{request.id}:contained", kind=RelationKind.CONTAINS,
-                                    source=argument.ref, target=item.ref))
-        if request.obligation:
-            if request.scope is None:
-                raise ValueError("an obligation requires its exact scope")
-            scope = snapshot.get(request.scope)
-            if not isinstance(scope, Scope) or snapshot.head(scope.id).ref != scope.ref:
-                raise ValueError("item work requires a current scope")
-            records.append(Obligation(id=f"{request.id}:work", item=item.ref, kind=request.obligation,
-                                      scope=scope, context=item.context, reason="Semantic proposal remains unestablished."))
+        item, records = item_records(self.problem, snapshot, request)
         self.store.append(records, expected_revision=snapshot.revision, validate=self.owners.policy.validate)
         return item
 
@@ -233,37 +313,8 @@ class SemanticOperations:
         return revised
 
     def argument(self, request: ArgumentRequest) -> ProjectItem:
-        request = ArgumentRequest.model_validate(request.model_dump())
         snapshot = self.store.read()
-        target = snapshot.get(request.target)
-        if not isinstance(target, ProjectItem) or snapshot.head(target.id).ref != target.ref:
-            raise ValueError("argument must name a current exact conclusion")
-        context = request.context if request.context is not None else target.context
-        if context != target.context:
-            raise ValueError("argument and conclusion require the same exact context")
-        semantics = [("argument-role", "repaired" if request.original else "original")]
-        if request.source:
-            read_region(self.problem, snapshot, request.source)
-            relevant_versions(self.problem, snapshot, request.source.source)
-            semantics.append(("source-region", request.source.model_dump_json()))
-        if snapshot.head_or_none(request.id) is not None:
-            raise ValueError("argument version requires a distinct identity")
-        argument = ProjectItem(id=request.id, kind=ProjectItemKind.ARGUMENT, name=request.id,
-            statement=request.text, context=context, origin=request.origin,
-            semantics=tuple(semantics), research=ResearchState(status="proposed", reason=request.reason))
-        records = [argument, Relation(id=f"{request.id}:conclusion", kind=RelationKind.SUPPORTS,
-                                      source=argument.ref, target=target.ref)]
-        if request.original:
-            original = snapshot.get(request.original)
-            conclusions = [r.target for r in snapshot.current(Relation)
-                           if r.source == request.original and r.kind == RelationKind.SUPPORTS]
-            if (not isinstance(original, ProjectItem) or original.kind != ProjectItemKind.ARGUMENT
-                    or target.ref not in conclusions or original.context != context):
-                raise ValueError("repaired argument must name an original argument for the same exact conclusion")
-            # REFINES records lineage; SUPERSEDES would withdraw the original's
-            # current assessment, which a repair must never erase.
-            records.append(Relation(id=f"{request.id}:original", kind=RelationKind.REFINES,
-                                    source=argument.ref, target=request.original))
+        argument, records = argument_records(self.problem, snapshot, request)
         self.store.append(records, expected_revision=snapshot.revision, validate=self.owners.policy.validate)
         return argument
 
@@ -280,13 +331,8 @@ class SemanticOperations:
     def obligation(self, subject: VersionRef, *, kind: ObligationKind, scope: VersionRef,
                    reason: str) -> Obligation:
         snapshot = self.store.read()
-        item, selected_scope = snapshot.get(subject), snapshot.get(scope)
-        if not isinstance(item, ProjectItem) or not isinstance(selected_scope, Scope):
-            raise ValueError("obligation requires item and scope")
-        relevant_versions(self.problem, snapshot, subject, (scope,))
-        work = Obligation(id=f"{item.id}:work:{uuid4().hex}", item=subject, kind=kind,
-                          scope=selected_scope, context=item.context, reason=reason)
-        self.store.append((work,), expected_revision=snapshot.revision, validate=self.owners.policy.validate)
+        work, records = obligation_records(self.problem, snapshot, subject, kind=kind, scope=scope, reason=reason)
+        self.store.append(records, expected_revision=snapshot.revision, validate=self.owners.policy.validate)
         return work
 
     def representation(self, request: RepresentationRequest, *, resolver: RepresentationResolver) -> RepresentationResult:

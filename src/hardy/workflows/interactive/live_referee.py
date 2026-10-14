@@ -44,7 +44,6 @@ from hardy.workflows.ledger.contracts import (
     Scope,
     VersionRef,
 )
-from hardy.workflows.ledger.graph import LedgerGraph
 from hardy.workflows.ledger.views import LedgerViews
 from hardy.workflows.referee import CitationUse, ManuscriptClaim, RefereeRequest, RefereeWorkflow
 
@@ -76,7 +75,8 @@ class LiveReferee:
         self.operations = intake.operations
 
     def _subjects(self, snapshot, target, repairs, originals=()):
-        arguments = [snapshot.get(edge.source) for edge in snapshot.current(Relation)
+        relations = self.intake.graph(snapshot).relations
+        arguments = [snapshot.get(edge.source) for edge in relations
             if edge.kind == "supports" and edge.target == target
             and isinstance(snapshot.get(edge.source), ProjectItem) and snapshot.get(edge.source).kind == "argument"]
         original_arguments = [value for value in arguments if ("argument-role", "original") in value.semantics]
@@ -86,7 +86,7 @@ class LiveReferee:
         arguments = [value for value in arguments if value in chosen or value.ref in repairs]
         result = [snapshot.get(target), *arguments]
         for argument in arguments:
-            result.extend(snapshot.get(edge.target) for edge in snapshot.current(Relation)
+            result.extend(snapshot.get(edge.target) for edge in relations
                 if edge.kind == "contains" and edge.source == argument.ref
                 and isinstance(snapshot.get(edge.target), ProjectItem))
         return tuple(dict.fromkeys(result))
@@ -100,7 +100,7 @@ class LiveReferee:
                    "context": _json(LedgerViews(snapshot, self.owners.policy).context(review_input.subject.context))
                         if review_input.subject.context else None,
                    "dependencies": [snapshot.get(ref).model_dump(mode="json") for ref in
-                        LedgerGraph(snapshot).dependency_closure(review_input.subject.ref)]}
+                        self.intake.graph(snapshot).dependency_closure(review_input.subject.ref)]}
         response = self.calls.structured("referee.adversarial", payload, AdversarialReview,
             system="Audit the exact supplied mathematics adversarially. Assess theorem conclusions, original supplied arguments, "
             "proof steps and an explicitly selected repair separately. A defective proof does not refute its conclusion. "
@@ -165,11 +165,12 @@ class LiveReferee:
         if (not set(selected) <= claims or not set(selected) <= set(scope.must_prove)
                 or set(request.main_results).intersection(request.required_internal)):
             raise ValueError("referee main/internal selection requires exact reviewed protected claims")
-        closure = set(LedgerGraph(snapshot).dependency_closure(selected, include_roots=True))
+        closure = set(self.intake.graph(snapshot).dependency_closure(selected, include_roots=True))
+        relations = self.intake.graph(snapshot).relations
         original_targets = set()
         for ref in request.original:
             item = snapshot.get(ref)
-            conclusions = [edge.target for edge in snapshot.current(Relation) if edge.kind == "supports" and edge.source == ref]
+            conclusions = [edge.target for edge in relations if edge.kind == "supports" and edge.source == ref]
             if (not isinstance(item, ProjectItem) or item.kind != "argument" or snapshot.head(item.id).ref != ref
                     or ("argument-role", "original") not in item.semantics or len(conclusions) != 1
                     or conclusions[0] not in closure or conclusions[0] in original_targets):
@@ -177,7 +178,7 @@ class LiveReferee:
             original_targets.add(conclusions[0])
             relevant_versions(self.intake.problem, snapshot, ref)
         for target in claims.intersection(closure):
-            originals = [edge.source for edge in snapshot.current(Relation) if edge.kind == "supports" and edge.target == target
+            originals = [edge.source for edge in relations if edge.kind == "supports" and edge.target == target
                 and isinstance(snapshot.get(edge.source), ProjectItem)
                 and ("argument-role", "original") in snapshot.get(edge.source).semantics]
             if len(originals) > 1 and target not in original_targets:
@@ -188,9 +189,9 @@ class LiveReferee:
             if (not isinstance(item, ProjectItem) or item.kind != "argument" or snapshot.head(item.id).ref != ref
                     or ("argument-role", "repaired") not in item.semantics
                     or not any(edge.kind == "supports" and edge.source == ref and edge.target in claims
-                               for edge in snapshot.current(Relation))):
+                               for edge in relations)):
                 raise ValueError("selected repaired argument must be exact and belong to a reviewed claim")
-            conclusions = [edge.target for edge in snapshot.current(Relation) if edge.kind == "supports" and edge.source == ref]
+            conclusions = [edge.target for edge in relations if edge.kind == "supports" and edge.source == ref]
             if len(conclusions) != 1 or conclusions[0] in repair_targets or conclusions[0] not in closure:
                 raise ValueError("select one exact repaired argument per audited conclusion")
             repair_targets.add(conclusions[0])
@@ -246,7 +247,7 @@ class LiveReferee:
                 uses.append(CitationUse(span=span_value(value.span), use_site=review.bindings[self.intake.claim_use_key(value.source, mappings)], required_claim=ref))
         roots = (*request.main_results, *request.required_internal)
         snapshot = self.store.read()
-        selected = set(LedgerGraph(snapshot).dependency_closure(roots, include_roots=True))
+        selected = set(self.intake.graph(snapshot).dependency_closure(roots, include_roots=True))
         layers, executed, defects, prepared_runs = [], [], [], []
         status, detail, core = "completed", "Audit completed; remaining proof and citation work is reported explicitly", None
         try:
@@ -313,7 +314,7 @@ class LiveReferee:
                     conditions="Statement elaboration and semantic review cannot establish kernel proof"))
             engine = RefereeWorkflow(self.store, critique=CritiqueOperations(), policy=self.owners.policy,
                 resolve_citation=self.citations.resolve if self.citations else None,
-                expand_citation=self.citations.expand if self.citations else None)
+                expand_citation=self.citations.expand if self.citations else None, graph=self.intake.graph)
             core = engine.run(RefereeRequest(sources=texts, scope=scope.ref, main_results=roots,
                 claims=tuple(claims), citations=tuple(uses), citation_depth=request.citation_depth,
                 citation_max_nodes=request.citation_max_nodes))
@@ -383,7 +384,7 @@ class LiveReferee:
         if isinstance(value, dict):
             if {"use", "obligation", "contracts", "checked", "outstanding"} <= value.keys():
                 use = value["use"]
-                engine = RefereeWorkflow(self.store, critique=CritiqueOperations(), policy=self.owners.policy)
+                engine = RefereeWorkflow(self.store, critique=CritiqueOperations(), policy=self.owners.policy, graph=self.intake.graph)
                 audit = engine._citation_audit(snapshot, CitationUse(SourceSpan(**use["span"]),
                     VersionRef.model_validate(use["use_site"]), VersionRef.model_validate(use["required_claim"])),
                     VersionRef.model_validate(value["obligation"]))
