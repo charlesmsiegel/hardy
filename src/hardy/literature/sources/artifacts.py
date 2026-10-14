@@ -18,6 +18,7 @@ import hashlib
 import os
 import secrets
 import shutil
+import stat
 import tempfile
 import time
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from hardy.foundation.files import LayoutError, WriteGuard, guard_for, read_bytes, read_text
 from hardy.foundation.locking import FileLock, LockTimeout
+from hardy.literature.file_identity import change_token
 
 from .contracts import (
     RESTRICTION,
@@ -111,6 +113,7 @@ class ArtifactStore:
     def __init__(self, root: Path, *, clock: Callable[[], float] = time.time) -> None:
         self.root = Path(root)
         self._clock = clock
+        self._verified: dict[str, tuple[tuple[int | None, ...], ArtifactAvailability]] = {}
 
     # --- paths ------------------------------------------------------------
 
@@ -151,17 +154,41 @@ class ArtifactStore:
             raise ArtifactError(f"artifact {sha256} is {availability.status}: {availability.detail}")
         return read_bytes(self.root, f"{sha256}/{CONTENT}")
 
+    def _content_identity(self, sha256: str) -> tuple[int | None, ...]:
+        guard, name = guard_for(self.root, f"{sha256}/{CONTENT}")
+        info = (guard.directory / name).lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise LayoutError("managed artifact content is not a regular file")
+        parent = guard.directory.stat()
+        return (parent.st_dev, parent.st_ino, info.st_dev, info.st_ino,
+                info.st_size, info.st_mtime_ns, change_token(guard.directory / name, info))
+
     def availability(self, sha256: str) -> ArtifactAvailability:
         if not self.holds(sha256):
+            self._verified.pop(sha256, None)
             return ArtifactAvailability(sha256=sha256, status="unavailable", detail="no managed copy of these bytes on this machine")
         try:
+            identity = self._content_identity(sha256)
+            cached = self._verified.get(sha256)
+            if identity[-1] is not None and cached is not None and cached[0] == identity:
+                return cached[1]
             content = read_bytes(self.root, f"{sha256}/{CONTENT}")
+            after = self._content_identity(sha256)
         except (OSError, LayoutError) as error:
+            self._verified.pop(sha256, None)
             return ArtifactAvailability(sha256=sha256, status="corrupt", detail=str(error))
         actual = hashlib.sha256(content).hexdigest()
         if actual != sha256:
-            return ArtifactAvailability(sha256=sha256, status="corrupt", detail=f"stored bytes digest to {actual}")
-        return ArtifactAvailability(sha256=sha256, status="available")
+            result = ArtifactAvailability(sha256=sha256, status="corrupt", detail=f"stored bytes digest to {actual}")
+        elif after != identity:
+            result = ArtifactAvailability(sha256=sha256, status="corrupt", detail="stored bytes changed during verification")
+        else:
+            result = ArtifactAvailability(sha256=sha256, status="available")
+        if identity[-1] is not None and after == identity:
+            self._verified[sha256] = (identity, result)
+        else:
+            self._verified.pop(sha256, None)
+        return result
 
     def provenance(self, sha256: str) -> tuple[ImportProvenance, ...]:
         directory = self._dir(sha256) / PROVENANCE_DIR

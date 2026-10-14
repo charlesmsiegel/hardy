@@ -734,3 +734,172 @@ def test_a_refused_archive_is_reported_as_a_tool_answer(tmp_path: Path):
 
     assert not result.ok
     assert "gzip, tar, zip, or PDF" in result.output
+
+
+def test_paged_source_reuses_verified_record_and_archive(tmp_path: Path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    from hardy.literature import library
+
+    runtime = _sourced(tmp_path)
+    runtime.call("fetch_paper", {"paper_id": "math/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math/0211159v1"})
+    runtime.library = arxiv.PaperLibrary(runtime.library.root)
+    reads = []
+    parses = []
+    original_read = library.read_bytes
+    original_entries = library._entries
+
+    def read(base, relative):
+        reads.append(str(relative))
+        return original_read(base, relative)
+
+    def entries(*args):
+        parses.append(True)
+        return original_entries(*args)
+
+    monkeypatch.setattr(library, "read_bytes", read)
+    monkeypatch.setattr(library, "_entries", entries)
+    for line in range(1, 6):
+        assert runtime.call("read_paper", {
+            "paper_id": "math/0211159v1", "file": "main.tex", "start_line": line,
+        }).ok
+    assert sum(path.endswith("archive.bin") for path in reads) == 1
+    assert len(parses) <= 1
+    assert sum(path.endswith("main.tex") for path in reads) == 5
+
+
+def test_cached_pages_refuse_edited_archive_and_record(tmp_path: Path):
+    import os
+
+    for name in ("source/archive.bin", "record.json", "content.txt", "response.xml"):
+        runtime = _sourced(tmp_path / name.replace("/", "_"))
+        paper_id = "math/0211159v1"
+        assert runtime.call("fetch_paper", {"paper_id": paper_id}).ok
+        assert runtime.call("fetch_source", {"paper_id": paper_id}).ok
+        args = {"paper_id": paper_id, "file": "main.tex"}
+        assert runtime.call("read_paper", args).ok
+        path = runtime.library.path_for(arxiv.parse_id(paper_id)) / name
+        before = path.stat()
+        data = path.read_bytes()
+        path.write_bytes(b"!" + data[1:])
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert not runtime.call("read_paper", args).ok
+
+
+def test_cached_models_are_independent_snapshots(tmp_path: Path):
+    runtime = _sourced(tmp_path)
+    paper_id = "math/0211159v1"
+    runtime.call("fetch_paper", {"paper_id": paper_id})
+    runtime.call("fetch_source", {"paper_id": paper_id})
+    identifier = arxiv.parse_id(paper_id)
+    first = runtime.library.read(identifier)
+    original = first.model_copy(deep=True)
+    object.__setattr__(first, "authors", ("invented",))
+    assert runtime.library.read(identifier) == original
+    manifest = runtime.library.source_manifest(identifier)
+    original_manifest = manifest.model_copy(deep=True)
+    object.__setattr__(manifest, "files", ())
+    assert runtime.library.source_manifest(identifier) == original_manifest
+
+
+def test_cached_pages_refuse_replaced_truncated_or_symlinked_archive(tmp_path: Path):
+    import os
+
+    for change in ("replace", "truncate", "leaf_link", "parent_link"):
+        runtime = _sourced(tmp_path / change)
+        paper_id = "math/0211159v1"
+        runtime.call("fetch_paper", {"paper_id": paper_id})
+        runtime.call("fetch_source", {"paper_id": paper_id})
+        args = {"paper_id": paper_id, "file": "main.tex"}
+        assert runtime.call("read_paper", args).ok
+        path = runtime.library.path_for(arxiv.parse_id(paper_id)) / "source/archive.bin"
+        before = path.stat()
+        if change == "replace":
+            replacement = path.with_name("replacement")
+            replacement.write_bytes(b"!" * before.st_size)
+            os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+            replacement.replace(path)
+        elif change == "truncate":
+            path.write_bytes(b"")
+        elif change == "leaf_link":
+            target = path.with_name("original")
+            path.rename(target)
+            path.symlink_to(target)
+        else:
+            target = path.parent.with_name("original_source")
+            path.parent.rename(target)
+            path.parent.symlink_to(target, target_is_directory=True)
+        assert not runtime.call("read_paper", args).ok
+
+
+def test_windows_change_clock_invalidates_paper_cache(tmp_path, monkeypatch):
+    import os
+
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    runtime = _sourced(tmp_path)
+    paper_id = 'math/0211159v1'
+    runtime.call('fetch_paper', {'paper_id': paper_id})
+    runtime.call('fetch_source', {'paper_id': paper_id})
+    args = {'paper_id': paper_id, 'file': 'main.tex'}
+    assert runtime.call('read_paper', args).ok
+    path = runtime.library.path_for(arxiv.parse_id(paper_id)) / 'source/archive.bin'
+    before = path.stat()
+    data = path.read_bytes()
+    path.write_bytes(b'!' + data[1:])
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert not runtime.call('read_paper', args).ok
+
+
+def test_cached_paper_reader_survives_concurrent_lru_eviction(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    import inspect
+    import sys
+    import threading
+
+    from hardy.literature.library import PaperLibrary
+
+    identifiers = [f"math/0211159v{version}" for version in range(1, 34)]
+    runtime = _runtime(tmp_path, *(_feed(identifier) for identifier in identifiers))
+    for identifier in identifiers:
+        assert runtime.call("fetch_paper", {"paper_id": identifier}).ok
+    library = PaperLibrary(runtime.library.root)
+    for identifier in identifiers[:-1]:
+        library.read(arxiv.parse_id(identifier))
+    lines, start = inspect.getsourcelines(PaperLibrary._verified_read)
+    promotion = start + next(i for i, line in enumerate(lines) if "self._verified.move_to_end(key)" in line)
+    paused, resume = threading.Event(), threading.Event()
+    results, errors = [], []
+
+    def trace(frame, event, _arg):
+        if frame.f_code is PaperLibrary._verified_read.__code__ and event == "line" and frame.f_lineno == promotion:
+            paused.set()
+            assert resume.wait(5)
+        return trace
+
+    def reader():
+        sys.settrace(trace)
+        try:
+            results.append(library.read(arxiv.parse_id(identifiers[0])))
+        except Exception as error:
+            errors.append(error)
+        finally:
+            sys.settrace(None)
+
+    worker = threading.Thread(target=reader)
+    worker.start()
+    try:
+        assert paused.wait(5)
+        library.read(arxiv.parse_id(identifiers[-1]))
+    finally:
+        resume.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert len(results) == 1
+    assert results[0].identifier == arxiv.parse_id(identifiers[0])

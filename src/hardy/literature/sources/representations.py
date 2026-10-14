@@ -2,9 +2,9 @@
 
 A representation is admitted with its payload files and never rewritten; an
 improved extraction is a new representation with a new id, and the old one
-stays readable for every span that named it. Payload reads re-hash the bytes
-against the record's output digest, so a representation is served only as
-the exact reading it was recorded as. Page labels come from a page manifest
+stays readable for every span that named it. Payload reads verify the bytes
+against the record's output digest and reuse verification while guarded file
+identities stay unchanged, so only the recorded reading is served. Page labels come from a page manifest
 representation and are answered separately from page indices.
 """
 from __future__ import annotations
@@ -13,12 +13,16 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import tempfile
+from collections import OrderedDict
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 
-from hardy.foundation.files import LayoutError, WriteGuard, read_bytes, read_text
+from hardy.foundation.files import LayoutError, WriteGuard, guard_for, read_bytes, read_text
 from hardy.foundation.values import json_digest
+from hardy.literature.file_identity import change_token
 
 from .contracts import DerivedRepresentation, RepresentationKind, RepresentationMapping
 
@@ -40,6 +44,22 @@ def payload_digest(payloads: Mapping[str, bytes]) -> str:
 class RepresentationStore:
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
+        self._verified: OrderedDict[tuple[str, str], tuple[tuple, dict[str, bytes]]] = OrderedDict()
+        self._verified_bytes = 0
+        self._decoded: dict[tuple[str, str], str] = {}
+
+    def _signature(self, relative: str) -> tuple[int | None, ...]:
+        guard, name = guard_for(self.root, relative)
+        path = guard.path(name)
+        leaf = path.lstat()
+        if not stat.S_ISREG(leaf.st_mode):
+            raise LayoutError(f"{path} is not a regular file")
+        parent = path.parent.stat()
+        return (parent.st_dev, parent.st_ino, leaf.st_dev, leaf.st_ino,
+                leaf.st_size, leaf.st_mtime_ns, change_token(path, leaf))
+
+    def _payload_signature(self, artifact: str, id: str, record: DerivedRepresentation) -> tuple:
+        return tuple(self._signature(f"{artifact}/{id}/{name}") for name in (RECORD, *record.payload_files))
 
     def _dir(self, artifact_sha256: str, id: str) -> Path:
         return self.root / artifact_sha256 / id
@@ -144,14 +164,44 @@ class RepresentationStore:
         record = self.get(artifact_sha256, id)
         if name not in record.payload_files:
             raise RepresentationError(f"representation {id} has no payload {name!r}")
-        data = read_bytes(self.root, f"{artifact_sha256}/{id}/{name}")
+        key = (artifact_sha256, id)
+        signature = self._payload_signature(artifact_sha256, id, record)
+        reusable = all(part[-1] is not None for part in signature)
+        cached = self._verified.get(key)
+        if reusable and cached is not None and cached[0] == signature:
+            # Eviction after lookup does not invalidate the captured bytes.
+            with suppress(KeyError):
+                self._verified.move_to_end(key)
+            return cached[1][name]
         held = {n: read_bytes(self.root, f"{artifact_sha256}/{id}/{n}") for n in record.payload_files}
         if payload_digest(held) != record.output_sha256:
             raise RepresentationError(f"representation {id} payloads no longer digest to their record")
-        return data
+        if self._payload_signature(artifact_sha256, id, record) != signature:
+            raise RepresentationError(f"representation {id} changed during payload verification")
+        self._decoded.pop(key, None)
+        previous = self._verified.pop(key, None)
+        if previous is not None:
+            self._verified_bytes -= sum(map(len, previous[1].values()))
+        size = sum(map(len, held.values()))
+        # Keep a bounded process-local working set; larger readings remain usable.
+        if reusable and size <= 64 * 1024 * 1024:
+            self._verified[key] = (signature, held)
+            self._verified_bytes += size
+            while self._verified_bytes > 64 * 1024 * 1024 or len(self._verified) > 64:
+                evicted_key, (_, evicted) = self._verified.popitem(last=False)
+                self._decoded.pop(evicted_key, None)
+                self._verified_bytes -= sum(map(len, evicted.values()))
+        return held[name]
 
     def text(self, artifact_sha256: str, id: str) -> str:
-        return self.payload(artifact_sha256, id, TEXT_PAYLOAD).decode("utf-8")
+        data = self.payload(artifact_sha256, id, TEXT_PAYLOAD)
+        key = (artifact_sha256, id)
+        text = self._decoded.get(key)
+        if text is None:
+            text = data.decode("utf-8")
+            if key in self._verified:
+                self._decoded[key] = text
+        return text
 
     def texts(self, artifact_sha256: str) -> dict[str, str]:
         """Every text-bearing representation of an artifact, by id, for span resolution."""

@@ -307,3 +307,48 @@ def test_tree_heading_scans_are_linear(monkeypatch):
     tree = build_tree(artifact, rep, text, observations)
     assert len([n for n in tree.nodes if n.kind is NodeKind.SECTION]) == 100
     assert accesses < 2000
+
+
+def test_superseded_text_observer_sets_are_not_native_evidence(tmp_path):
+    lib = library(tmp_path)
+    sha = imported(lib, outline=book_outline())
+    before = lib.build_tree(sha)
+    record = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[-1]
+    text = lib.representations.text(sha, record.id)
+    lib.observations.admit(sha, 'old-observer', observe_text(record, text, producer_version='old'))
+    after = lib.build_tree(sha)
+    assert after.nodes == before.nodes
+    assert after.edges == before.edges
+    assert any(n.kind is NodeKind.CHAPTER and n.title == 'Groups' for n in after.nodes)
+
+
+def test_rebuilding_unchanged_tree_reuses_admitted_version(tmp_path):
+    lib = library(tmp_path)
+    sha = imported(lib)
+    tree = lib.build_tree(sha)
+    assert lib.build_tree(sha) == tree
+
+
+def test_rebuilding_tree_preserves_new_unlocated_outline_diagnostic(tmp_path):
+    from hardy.literature.sources.contracts import (
+        ObservationKind,
+        PageRegion,
+        SourceAnchor,
+        StructuralObservation,
+    )
+
+    lib = library(tmp_path)
+    sha = imported(lib)
+    first = lib.build_tree(sha)
+    observation = StructuralObservation(
+        id="outline-extra", artifact_sha256=sha, kind=ObservationKind.OUTLINE_ENTRY,
+        anchor=SourceAnchor(artifact_sha256=sha, locator=PageRegion(page_index=99, precision="page"), derivation="native adapter"),
+        payload=(("title", "Appendix"),), producer="native-new", producer_version="2",
+    )
+    lib.observations.admit(sha, "native-new-2", (observation,))
+    second = lib.build_tree(sha)
+    assert any(d.code == "outline_unlocated" and d.page_index == 99 for d in second.diagnostics)
+    assert second.id != first.id
+    assert second.supersedes == first.id
+    assert lib.build_tree(sha) == second
+    assert lib.trees.get(sha, first.id) == first

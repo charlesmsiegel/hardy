@@ -275,6 +275,8 @@ class ManagedLibrary:
             page_spans.update(page_spans_from(mapping))
         previous = self.trees.preferred(sha256)
         tree = build_tree(artifact, record, text, tuple(native) + tuple(text_observations), page_spans=page_spans, previous=previous)
+        if previous is not None and tree.id == previous.id:
+            return previous
         existing = next((stored for stored in self.trees.list(sha256) if stored.id == tree.id), None)
         if existing is not None:
             # Replaying any held identity reuses its immutable revision. The

@@ -6,12 +6,16 @@ import json
 import math
 import os
 import shutil
+import stat
 import tempfile
+from collections import OrderedDict
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from hardy.foundation.files import LayoutError, guard_for, read_bytes, read_text
 from hardy.foundation.locking import FileLock
+from hardy.literature.file_identity import change_token
 from hardy.literature.metadata import (
     LOCK_SECONDS,
     QUERY_TTL_SECONDS,
@@ -40,6 +44,7 @@ class PaperLibrary:
     """
 
     def __init__(self, root: Path, *, throttle: Path | None = None) -> None:
+        self._verified: OrderedDict[tuple[str, str], tuple[tuple, Any]] = OrderedDict()
         self.root = root
         self.records = root / "records"
         self.queries = root / "queries"
@@ -96,12 +101,62 @@ class PaperLibrary:
     def holds(self, identifier: ArxivId) -> bool:
         return identifier.versioned and (self.path_for(identifier) / "record.json").is_file()
 
+    def _signatures(self, relatives: tuple[str, ...]) -> tuple:
+        """Prove parents and leaves even when verification can be reused."""
+        signatures = []
+        for relative in relatives:
+            guard, name = guard_for(self.root, relative)
+            path = guard.path(name)
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                raise LayoutError(f"{path} is not a regular file; refusing to read it")
+            signatures.append((info.st_dev, info.st_ino, info.st_size,
+                               info.st_mtime_ns, change_token(path, info)))
+        return tuple(signatures)
+
+    def _verified_read(self, kind: str, identifier: ArxivId, relatives: tuple[str, ...],
+                       verify: Any) -> Any:
+        key = (kind, identifier.storage_name)
+        try:
+            before = self._signatures(relatives)
+        except (OSError, LayoutError):
+            self._verified.pop(key, None)
+            return verify(identifier)
+        cached = self._verified.get(key)
+        if all(part[-1] is not None for part in before) and cached is not None and cached[0] == before:
+            # Another reader may evict this entry after lookup. The captured
+            # verified snapshot remains valid for this read.
+            with suppress(KeyError):
+                self._verified.move_to_end(key)
+            return cached[1].model_copy(deep=True)
+        self._verified.pop(key, None)
+        value = verify(identifier)
+        # A concurrent edit must not turn a verified old snapshot into a
+        # cache entry bearing the new files' signatures.
+        try:
+            after = self._signatures(relatives)
+        except (OSError, LayoutError):
+            return value
+        if all(part[-1] is not None for part in before) and before == after:
+            self._verified[key] = (after, value.model_copy(deep=True))
+            if len(self._verified) > 32:
+                self._verified.popitem(last=False)
+        return value
+
     def read(self, identifier: ArxivId) -> PaperRecord:
+        """Verify current files, reusing the proof while their identities hold."""
+        held = f"records/{identifier.storage_name}"
+        return self._verified_read("record", identifier,
+                                   tuple(f"{held}/{name}" for name in
+                                         ("record.json", "content.txt", "response.xml")),
+                                   self._read_record)
+
+    def _read_record(self, identifier: ArxivId) -> PaperRecord:
         """The stored record, checked against its own digest.
 
-        Verified on every read rather than on admission alone: admission
-        proves what was written, and a citation is a claim about what is
-        there now. A record whose content has moved underneath it is refused
+        Guarded file identities are checked on every read. Unchanged files
+        reuse process-local verification; changed files are verified again,
+        because a citation is a claim about what is there now. A record whose content has moved underneath it is refused
         outright -- silently serving edited bytes under a digest that no
         longer describes them is exactly the failure the digest is for.
         """
@@ -232,6 +287,14 @@ class PaperLibrary:
         ).is_file()
 
     def source_manifest(self, identifier: ArxivId) -> SourceManifest:
+        """Verify the manifest and archive once for unchanged guarded files."""
+        held = f"records/{identifier.storage_name}/{SOURCE_DIR}"
+        return self._verified_read("source", identifier,
+                                   tuple(f"{held}/{name}" for name in
+                                         (SOURCE_MANIFEST, SOURCE_ARCHIVE)),
+                                   self._read_source_manifest)
+
+    def _read_source_manifest(self, identifier: ArxivId) -> SourceManifest:
         """The manifest for a held source tree, checked against its own archive.
 
         Three separate things are established here, and each of them was a way
