@@ -78,6 +78,7 @@ from hardy.workflows.interactive.judgments import (
     SemanticJudgments,
 )
 from hardy.workflows.interactive.live_records import LIVE_RECORDS
+from hardy.workflows.interactive.manuscript_records import MANUSCRIPT_RECORDS
 from hardy.workflows.interactive.scoped_admission import (
     AdmissionGateRecord,
     HumanScopeCommit,
@@ -259,7 +260,8 @@ REVIEW_URI = "hardy-translation-review:"
 _TYPES = {"FormalEvidence": FormalEvidence, "Decision": Decision, "TranslationReview": TranslationReview,
           "CheckedBinding": CheckedBinding,
           **{value.__name__: value for value in (SemanticJudgment, CitationEvidenceBinding, MathematicalAssessment,
-              ScopedAdmissionRequest, AdmissionGateRecord, HumanScopeDecision, HumanScopeCommit, *LIVE_RECORDS)}}
+              ScopedAdmissionRequest, AdmissionGateRecord, HumanScopeDecision, HumanScopeCommit,
+              *LIVE_RECORDS, *MANUSCRIPT_RECORDS)}}
 
 
 def item_id(name: str) -> str:
@@ -333,6 +335,8 @@ class ProjectOwners:
         self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision,
                                    read_evidence_at=self.read_evidence_at,
                                    read_scope_change_at=self.scoped_admissions.read_scope_change_at)
+        from hardy.workflows.interactive.canonical_citations import CanonicalCitationOwner
+        self.canonical_citations = CanonicalCitationOwner(self)
 
     @classmethod
     def reading(cls, problem: Path) -> ProjectOwners:
@@ -669,6 +673,8 @@ class ProjectOwners:
 
     def read_evidence_at(self, snapshot: LedgerSnapshot, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """Authenticate against the policy's locked snapshot without reacquiring its ledger lock."""
+        if reference.producer in {"hardy.literature.library", "hardy.workflows.faithfulness"}:
+            return self.canonical_citations.read(snapshot, reference)
         if reference.producer == "hardy.live-formal":
             return self.live_evidence.read(snapshot, reference)
         if reference.producer == "hardy.semantic-judgments":
@@ -681,6 +687,8 @@ class ProjectOwners:
 
     def read_evidence(self, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """What the owner's record behind a reference established, if it still reads and rests on nothing forbidden."""
+        if reference.producer in {"hardy.literature.library", "hardy.workflows.faithfulness"}:
+            return self.canonical_citations.read(LedgerStore(self.problem).read(), reference)
         if reference.producer == "hardy.live-formal":
             return self.live_evidence.read(LedgerStore(self.problem).read(), reference)
         if reference.producer == "hardy.semantic-judgments":

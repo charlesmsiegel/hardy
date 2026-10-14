@@ -62,6 +62,7 @@ def session_runtime(config: configuration.Config) -> Callable[..., Any]:
     """
     make = runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget)
     make.project_workflows_builder = build_project_workflows
+    make.project_manuscript_builder = build_project_manuscript
     return make
 
 
@@ -72,6 +73,12 @@ def build_project_workflows(model_ports, capability_ports, owners):
     from hardy.workflows.interactive.live_workflows import LiveWorkflows
 
     return LiveWorkflows(LiveCapabilities(capability_ports, owners=owners, calls=StructuredModelCalls(model_ports)))
+
+
+def build_project_manuscript(capabilities, source_ports):
+    """The exact-source intake and Referee construction used by normal sessions."""
+    from hardy.workflows.interactive.live_referee import build_manuscript_workflows
+    return build_manuscript_workflows(capabilities, source_ports)
 
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):

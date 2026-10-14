@@ -51,9 +51,9 @@ def build_literature_resolver(capabilities, model):
             "canonical_artifacts": [value.model_dump(mode="json") for value in source.artifacts]}, LiteratureComparison).value,
         prepare=capabilities.prepare, review=lambda claim: read_translation(capabilities, claim),
         request_admission=lambda _request, _source, _candidate: CheckDecision(
-            refusal="Exact source formalization and explicit human scoped admission remain required; canonical source retained"),
-        # C2's canonical arxiv provenance must not be replaced by a semantic
-        # judgment receipt. Until that exact binding is installed, the existing
-        # resolver retains typed citation/hypothesis/admission work and grants no
-        # literature acceptance.
+            refusal="Canonical source admission is pending postcommit exact formalization, real gates and an explicit human decision"),
+        # LiveCitations binds the canonical source/translation/use receipts to
+        # the prospective candidate refs, which authenticate after engine commit.
+        # Its postcommit finish prepares the shared real scoped-admission request.
+        # No callback mutates the ledger or silently widens the scope here.
         read_evidence=None, policy=capabilities.owners.policy)

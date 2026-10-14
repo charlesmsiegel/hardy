@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None = None,
-                  repaired: VersionRef | None = None, scope: VersionRef | None = None) -> dict[str, Any]:
+                  original: VersionRef | None = None, repaired: VersionRef | None = None, scope: VersionRef | None = None) -> dict[str, Any]:
     # Imported here because the evidence owner owns the journal's schema.
     from hardy.workflows.interactive.evidence import (
         CheckedBinding,
@@ -53,7 +53,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         statement = assessments.report(snapshot, target.ref, selected_scope.ref, "statement")
         if statement["status"] == "unassessed":
             statement["status"] = "unresolved"
-        lanes = argument_assessments(snapshot, target.ref, selected_scope.ref, operations=assessments, repaired=repaired)
+        lanes = argument_assessments(snapshot, target.ref, selected_scope.ref, operations=assessments, original=original, repaired=repaired)
         result = {"schema": "hardy.semantic-target-report/v1", "project": str(problem), "revision": snapshot.revision,
                 "target": {**target.ref.model_dump(), "statement": target.statement},
                 "scope": selected_scope.model_dump(mode="json"), "statement": statement,
@@ -173,7 +173,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         if any(o.item == item.ref and o.kind == ObligationKind.PROVE and o.resolution is not None
                and owner.policy.is_accepted(snapshot, o.resolution) for o in snapshot.current(Obligation)):
             candidates.append({**item.ref.model_dump(), "name": item.name})
-    lanes = argument_assessments(snapshot, target.ref, scope.ref, operations=assessments, repaired=repaired)
+    lanes = argument_assessments(snapshot, target.ref, scope.ref, operations=assessments, original=original, repaired=repaired)
     statement_assessment = assessments.report(snapshot, target.ref, scope.ref, "statement")
     statement_report = (statement_assessment if not statement_ready and statement_assessment["status"] != "unassessed" else
                         {**statement_assessment, "status": "supported_by_reviewed_formal_proof" if statement_ready else "unresolved",

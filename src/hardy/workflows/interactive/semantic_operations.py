@@ -300,6 +300,6 @@ class SemanticOperations:
     def assess(self, request: AssessmentRequest):
         return self.assessments.record(request)
 
-    def report(self, target: VersionRef, *, repaired: VersionRef | None = None, scope: VersionRef | None = None):
+    def report(self, target: VersionRef, *, original: VersionRef | None = None, repaired: VersionRef | None = None, scope: VersionRef | None = None):
         from hardy.workflows.interactive.semantic import target_report
-        return target_report(self.problem, f"{target.id}@{target.digest}", owners=self.owners, repaired=repaired, scope=scope)
+        return target_report(self.problem, f"{target.id}@{target.digest}", owners=self.owners, original=original, repaired=repaired, scope=scope)

@@ -680,9 +680,10 @@ class MathematicsSession:
         #: Model receipts owed for the attention block of the turn being started; committed
         #: only once the runtime has accepted the request.
         self._attention_owed: list[tuple[str, str | None, int]] = []
-        self._install_live_workflows(getattr(make_runtime, "project_workflows_builder", None))
+        self._install_live_workflows(getattr(make_runtime, "project_workflows_builder", None),
+            getattr(make_runtime, "project_manuscript_builder", None))
 
-    def _install_live_workflows(self, builder=None):
+    def _install_live_workflows(self, builder=None, manuscript_builder=None):
         from hardy.formal.declarations import DeclarationIndex
         from hardy.workflows.admission import ProbeOperations
         from hardy.workflows.interactive.live_capabilities import (
@@ -715,6 +716,12 @@ class MathematicsSession:
             search=lambda item: capabilities.search(item.statement or item.name),
             probes=ProbeOperations(elaborate=self._probe_lean_source, refute=self._probe_lean_source),
             environment=self._probe_environment))
+        from hardy.workflows.interactive.live_referee import build_manuscript_workflows
+        from hardy.workflows.interactive.manuscript_intake import managed_source_ports
+        source_ports = managed_source_ports(self._tex_sources,
+            library=self.sources.library, seeds=self.sources.seeds)
+        self.manuscript, self.referee = (manuscript_builder or build_manuscript_workflows)(
+            self.live.capabilities, source_ports)
 
     def _live_usage(self, event, offset):
         with self._spend:
@@ -802,6 +809,32 @@ class MathematicsSession:
 
     def project_workflow_status(self, id=None):
         return self.live.status(id)
+
+    def project_intake(self, request):
+        from hardy.workflows.interactive.manuscript_records import IntakeRequest
+        return self._run_project_workflow(self.live.manuscript, "intake", IntakeRequest.model_validate(request), self.manuscript.propose)
+
+    def project_intake_review(self, request):
+        from hardy.workflows.interactive.manuscript_records import IntakeReviewRequest
+        return self._run_project_workflow(self.manuscript.review, IntakeReviewRequest.model_validate(request))
+
+    def project_intake_status(self, id=None):
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            return {**self.manuscript.status(id), "attempts": self.live.status(id)["attempts"]}
+
+    def project_referee(self, request):
+        from hardy.workflows.interactive.manuscript_records import RefereeRunRequest
+        return self._run_project_workflow(self.live.manuscript, "referee", RefereeRunRequest.model_validate(request), self.referee.run)
+
+    def project_referee_report(self, id=None):
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            report = self.referee.report(id)
+            identities = {value["receipt"]["request"]["id"] for value in report["reports"]}
+            attempts = self.live.status()["attempts"]
+            return {**report, "attempts": [value for value in attempts if value["kind"] == "referee"
+                and (id is None or value["request_id"] == id or value["request_id"] in identities)]}
 
     @property
     def state(self) -> dict[str, Any]:
