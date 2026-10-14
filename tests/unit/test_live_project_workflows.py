@@ -492,22 +492,37 @@ def test_legacy_target_research_reuses_exact_formal_and_can_inspect_bind_restart
     assert reopened.project_inspect("target")["statement"]["status"] == "supported_by_reviewed_formal_proof"
 
 
-def test_pending_research_preserves_existing_authenticated_binding(tmp_path, monkeypatch):
+@pytest.mark.parametrize("generic", [False, True])
+@pytest.mark.parametrize("extra_proposal", [False, True])
+def test_pending_research_preserves_existing_authenticated_binding(tmp_path, monkeypatch, generic, extra_proposal):
+    from hardy.workflows.interactive.semantic_records import SourceRegion
+
     chat, models, ops = live(tmp_path, monkeypatch)
-    claim = chat.project_target("target", "The target is true", formal="lemma target_fact : True")
-    formal, scope = ops.store.read().head("target:formal"), ops.store.read().head("target:scope")
-    chat.owners.review_translation(claim.ref, formal.ref, verdict="approved", reviewer="operator",
+    if generic:
+        source = ops.source("source", "The target is true")
+        claim = ops.item(ItemRequest(id="target", kind="claim", name="Target", statement="The target is true",
+            source=SourceRegion(source=source.ref, start=0, end=18)))
+        scope = ops.scope("scope", must_prove=(claim.ref,))
+        formal = ops.formalization(claim.ref, id="translation", formal="lemma target_fact : True", scope=scope.ref)
+    else:
+        claim = chat.project_target("target", "The target is true", formal="lemma target_fact : True")
+        formal, scope = ops.store.read().head("target:formal"), ops.store.read().head("target:scope")
+    chat.owners.review_translation(claim.ref, formal.ref, scope=scope.ref, verdict="approved", reviewer="operator",
         conditions="Controlled human fixture", reason="Exact correspondence")
     assert chat.save_authored("Existing.lean", "import Mathlib\nlemma target_fact : True := by exact True.intro").ok
     saved = ops.store.read().head("lean:target_fact")
     chat.owners.bind_saved(claim.ref, formal.ref, saved.ref, scope=scope.ref)
-    assert chat.project_inspect("target")["formal_proof"]["status"] == "kernel_verified"
+    if extra_proposal:
+        ops.formalization(claim.ref, id="alternative", formal="lemma other_fact : False", scope=scope.ref)
+    assert ops.report(claim.ref, scope=scope.ref)["formal_proof"]["status"] == "kernel_verified"
     models.bad_proof = True
     assert chat.project_research(ResearchRequest(id="retry-bound", target=claim.ref, scope=scope.ref))["status"] == "pending"
-    report = chat.project_inspect("target")
+    report = ops.report(claim.ref, scope=scope.ref)
     assert report["formal_proof"]["status"] == "kernel_verified"
     assert report["translation"]["status"] == "approved"
     assert report["statement"]["status"] == "supported_by_reviewed_formal_proof"
+    assert report["formal"]["id"] == formal.id
+    assert any(work["id"] == "retry-bound:target" and work["status"] == "open" for work in report["obligations"])
 
 
 @pytest.mark.parametrize("review_kind", ["translation", "correspondence"])
