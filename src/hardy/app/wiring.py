@@ -60,7 +60,18 @@ def session_runtime(config: configuration.Config) -> Callable[..., Any]:
     session an unmetered factory while the configuration still reads as if a
     ceiling applied.
     """
-    return runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget)
+    make = runtime_factory(str(config.model), config.backend, spend_policy=config.provider_budget)
+    make.project_workflows_builder = build_project_workflows
+    return make
+
+
+def build_project_workflows(model_ports, capability_ports, owners):
+    """The live workflow construction used by ordinary sessions and reopens."""
+    from hardy.workflows.interactive.live_capabilities import LiveCapabilities
+    from hardy.workflows.interactive.live_runtime import StructuredModelCalls
+    from hardy.workflows.interactive.live_workflows import LiveWorkflows
+
+    return LiveWorkflows(LiveCapabilities(capability_ports, owners=owners, calls=StructuredModelCalls(model_ports)))
 
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):

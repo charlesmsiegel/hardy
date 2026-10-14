@@ -48,6 +48,7 @@ class RepairSaveRequest:
 class RepairSaveResult:
     result: ToolResult
     evidence: tuple[EvidenceRef, ...] = ()
+    effects: ArtifactRef | None = None
 
 
 @dataclass(frozen=True)
@@ -73,11 +74,13 @@ class RepairWorkflow:
                  save: Callable[[RepairSaveRequest], RepairSaveResult],
                  recheck: Callable[[LedgerSnapshot, VersionRef], RecheckResult],
                  decide: Callable[[LedgerSnapshot, Resolution], ArtifactRef | None],
-                 check_cancelled: Callable[[], None] = lambda: None):
+                 check_cancelled: Callable[[], None] = lambda: None,
+                 read_effects: Callable[[LedgerSnapshot, ArtifactRef], LedgerSnapshot] | None = None):
         self.store, self.policy = store, policy
         self.read_claim = read_claim
         self.save, self.recheck, self.decide = save, recheck, decide
         self.check_cancelled = check_cancelled
+        self.read_effects = read_effects
 
     def _validate(self, snapshot: LedgerSnapshot, request: RepairRequest) -> Obligation:
         work = snapshot.get(request.obligation)
@@ -143,6 +146,13 @@ class RepairWorkflow:
             return incomplete(outcome.detail or "No verified repair candidate")
         saved = self.save(RepairSaveRequest(active, snapshot.revision, outcome))
         self.check_cancelled()
+        if isinstance(saved, RepairSaveResult) and saved.effects is not None:
+            if self.read_effects is None:
+                return incomplete("Controlled save effects reader unavailable")
+            try:
+                snapshot = self.read_effects(snapshot, saved.effects)
+            except ValueError:
+                return incomplete("Unrecognized ledger edits during guarded save", overlap=True)
         if self.store.read().revision != snapshot.revision:
             return incomplete("Overlap during guarded save; saved artifacts require rechecking", overlap=True)
         if (not isinstance(saved, RepairSaveResult) or not isinstance(saved.result, ToolResult)
