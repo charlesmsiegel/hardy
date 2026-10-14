@@ -183,18 +183,21 @@ def test_late_timeout_reply_cannot_refund_unknown_liability(tmp_path, budget_mod
             self.messages = self
         def create(self, **kwargs):
             started.set()
-            assert release.wait(2)
+            assert release.wait(30)
             finished.set()
             return SimpleNamespace(content=[], usage=usage(), stop_reason="end_turn")
-    provider = AnthropicProvider("fixture", client=DelayedClient(), max_tokens=10, spend_budget=owner)
+    # Freeze admission time so slow journal I/O cannot exhaust the 20ms
+    # budget before the call starts. _within still bounds the actual worker.
+    provider = AnthropicProvider("fixture", client=DelayedClient(), max_tokens=10, spend_budget=owner,
+                                 clock=lambda: 0.0)
     try:
         with pytest.raises(TimeoutError):
             provider.complete(system="", messages=[], specs=[], timeout=0.02)
-        assert started.wait(1)
+        assert started.wait(10)
         before = owner.path.read_bytes()
     finally:
         release.set()
-    assert finished.wait(1)
+    assert finished.wait(10)
     assert owner.path.read_bytes() == before and owner.summary()["actual_tokens"] is None
     # The abandoned call stays charged at its quote: one more fits, a third does not.
     provider.complete(system="", messages=[], specs=[])

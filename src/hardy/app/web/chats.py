@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -168,9 +169,12 @@ def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
         identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
         if _WINDOWS:
             # Windows st_ctime is creation time, not the last metadata change.
-            # Query the guarded handle without rescanning unchanged transcripts.
+            # Validate the guarded handle before reusing parsed transcript counts.
             with guard.open(name, "rb") as handle:
-                identity += (_windows_change_time(handle),)
+                # Native change timestamps can collide for rapid edits. The
+                # digest keeps restored-size/mtime edits from reusing old counts.
+                identity += (_windows_change_time(handle),
+                             int.from_bytes(hashlib.file_digest(handle, "sha256").digest(), "big"))
         return _cached_activity(problem, relative, identity)
     except (LayoutError, OSError):
         return None, None

@@ -304,7 +304,8 @@ def test_activity_cache_does_not_hide_replaced_symlink(tmp_path):
     assert chats.overview(tmp_path)[0]['turns'] is None
 
 
-def test_windows_activity_cache_uses_change_time_when_stat_identity_is_unchanged(tmp_path, monkeypatch):
+@pytest.mark.parametrize("updated_change_time", [1, 2])
+def test_windows_activity_cache_uses_change_time_when_stat_identity_is_unchanged(tmp_path, monkeypatch, updated_change_time):
     from types import SimpleNamespace
 
     transcript = tmp_path / 'transcript.jsonl'
@@ -329,7 +330,7 @@ def test_windows_activity_cache_uses_change_time_when_stat_identity_is_unchanged
     assert chats.overview(tmp_path)[0]['turns'] == 1
     assert len(reads) == 1
     transcript.write_text('{"type":"note","timestamp":2}\n')
-    change_time[0] = 2
+    change_time[0] = updated_change_time
     assert chats.overview(tmp_path)[0]['turns'] == 0
     assert chats.overview(tmp_path)[0]['last_activity'] == 2
     assert len(reads) == 2
