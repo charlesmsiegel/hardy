@@ -33,12 +33,11 @@ def test_notebook_cell_ids_are_valid_unique_and_stable(tmp_path, cas_session):
 def test_parser_line_offsets_preserve_source(source):
     backend = SympyBackend()
     script = backend.preamble + "\n" + backend.render_cell(source)
-    # Python source is UTF-8; argv follows the host's filesystem encoding.
-    result = subprocess.run(
-        [sys.executable, "-"], input=script, capture_output=True, encoding="utf-8",
-    )
+    # Python source is UTF-8 even when the host cannot encode Unicode argv.
+    # Use bytes so the pipe also preserves CR, CRLF and Unicode separators.
+    result = subprocess.run([sys.executable, "-"], input=script.encode("utf-8"), capture_output=True)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() in {"1", repr("a\u2028b"), repr("a\u2029b")}
+    assert result.stdout.decode("utf-8").strip() in {"1", repr("a\u2028b"), repr("a\u2029b")}
 
 
 def test_unicode_separators_do_not_advance_file_line_numbers():
