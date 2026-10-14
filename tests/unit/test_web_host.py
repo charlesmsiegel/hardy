@@ -1097,3 +1097,156 @@ def test_save_queue_drains_before_later_input(tmp_path: Path) -> None:
         release.set()
         worker.join(5)
         host.stop()
+
+
+def _editor_handler(host, endpoint, base, **identity):
+    from types import SimpleNamespace
+
+    from hardy.app.web.server import Handler
+    handler = Handler.__new__(Handler)
+    handler.server = SimpleNamespace(host=host)
+    handler.path = endpoint
+    handler._allowed = lambda **kwargs: True
+    handler._json_body = lambda *_: {'path': 'lean/Main.lean', 'source': 'draft for origin', 'base_sha256': base, **identity}
+    answers, errors = [], []
+    handler._json = lambda status, body: answers.append((status, body))
+    def request():
+        try:
+            (handler.do_PUT if endpoint == '/api/file' else handler.do_POST)()
+        except Exception as error:
+            errors.append(error)
+    return request, answers, errors
+
+
+@pytest.mark.parametrize('action', ['switch', 'close'])
+def test_conflict_snapshot_survives_project_change_after_reservation(tmp_path, action):
+    import hashlib
+
+    from hardy.app.web.host import FileConflict
+    host = _host(tmp_path)
+    origin = tmp_path / 'sylow'
+    other = make_problem(tmp_path, 'other')
+    host.projects_registry.add(other)
+    (origin / 'lean/Main.lean').write_text('origin disk')
+    (other / 'lean/Main.lean').write_text('unrelated disk')
+    released, resume = threading.Event(), threading.Event()
+    original = host.save_file
+    def paused(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        except FileConflict:
+            released.set()
+            assert resume.wait(5)
+            raise
+    host.save_file = paused
+    request, answers, errors = _editor_handler(host, '/api/file', hashlib.sha256(b'old').hexdigest())
+    worker = threading.Thread(target=request)
+    try:
+        worker.start()
+        assert released.wait(5)
+        host.open_project(str(other)) if action == 'switch' else host.close_project()
+        resume.set()
+        worker.join(5)
+        assert not worker.is_alive() and errors == []
+        assert answers[0][0] == 409 and answers[0][1]['text'] == 'origin disk'
+        assert answers[0][1]['sha256'] == hashlib.sha256(b'origin disk').hexdigest()
+    finally:
+        resume.set()
+        worker.join(5)
+        host.stop()
+
+
+@pytest.mark.parametrize('endpoint', ['/api/file', '/api/check'])
+@pytest.mark.parametrize('action', ['switch', 'close'])
+def test_editor_request_never_retargets_after_path_validation(tmp_path, monkeypatch, endpoint, action):
+    import hashlib
+
+    from hardy.app.web import panels
+    host = _host(tmp_path)
+    origin = tmp_path / 'sylow'
+    other = make_problem(tmp_path, 'other')
+    host.projects_registry.add(other)
+    for project in (origin, other):
+        (project / 'lean/Main.lean').write_text('same source')
+    validated, resume = threading.Event(), threading.Event()
+    original = panels.confine
+    def paused(problem, relative):
+        answer = original(problem, relative)
+        validated.set()
+        assert resume.wait(5)
+        return answer
+    monkeypatch.setattr(panels, 'confine', paused)
+    request, answers, errors = _editor_handler(host, endpoint, hashlib.sha256(b'same source').hexdigest())
+    worker = threading.Thread(target=request)
+    try:
+        worker.start()
+        assert validated.wait(5)
+        host.open_project(str(other)) if action == 'switch' else host.close_project()
+        current = host.session
+        resume.set()
+        worker.join(5)
+        assert not worker.is_alive() and errors == []
+        assert answers[0][0] == 409
+        assert (origin / 'lean/Main.lean').read_text() == 'same source'
+        assert (other / 'lean/Main.lean').read_text() == 'same source'
+        if current is not None:
+            assert current.saved == [] and current.checked == []
+    finally:
+        resume.set()
+        worker.join(5)
+        host.stop()
+
+
+@pytest.mark.parametrize('endpoint', ['/api/file', '/api/check'])
+def test_loaded_project_identity_refuses_action_delivered_after_switch(tmp_path, endpoint):
+    import hashlib
+    host = _host(tmp_path)
+    origin = tmp_path / 'sylow'
+    other = make_problem(tmp_path, 'other')
+    host.projects_registry.add(other)
+    for project in (origin, other):
+        (project / 'lean/Main.lean').write_text('same source')
+    request, answers, errors = _editor_handler(host, endpoint, hashlib.sha256(b'same source').hexdigest(), project=str(origin))
+    try:
+        host.open_project(str(other))
+        request()
+        assert errors == [] and answers[0][0] == 409
+        assert not answers[0][1].get('conflict') and 'text' not in answers[0][1]
+        assert host.session.saved == [] and host.session.checked == []
+        assert (origin / 'lean/Main.lean').read_text() == (other / 'lean/Main.lean').read_text() == 'same source'
+    finally:
+        host.stop()
+
+
+def test_file_response_identity_belongs_to_its_bytes(tmp_path):
+    from types import SimpleNamespace
+
+    from hardy.app.web.server import Handler
+    host = _host(tmp_path)
+    (tmp_path / 'sylow/lean/Main.lean').write_text('origin source')
+    handler = Handler.__new__(Handler)
+    handler.server = SimpleNamespace(host=host)
+    answers = []
+    handler._json = lambda status, body: answers.append((status, body))
+    try:
+        handler._api_get('file', {'path': ['lean/Main.lean']})
+        assert answers[0][0] == 200
+        assert answers[0][1]['project'] == str(tmp_path / 'sylow')
+        assert answers[0][1]['text'] == (tmp_path / 'sylow/lean/Main.lean').read_text()
+    finally:
+        host.stop()
+
+
+def test_conflict_snapshot_read_failure_is_a_json_error(tmp_path, monkeypatch):
+    from hardy.app.web import panels
+    host = _host(tmp_path)
+    def unreadable(*args):
+        raise OSError('original snapshot unreadable')
+    monkeypatch.setattr(panels, 'file_text', unreadable)
+    request, answers, errors = _editor_handler(host, '/api/file', 'stale digest')
+    try:
+        request()
+        assert errors == []
+        assert answers == [(500, {'error': 'original snapshot unreadable'})]
+    finally:
+        host.stop()

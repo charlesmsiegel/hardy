@@ -98,6 +98,10 @@ class FileConflict(Busy):
 
     conflict = True
 
+    def __init__(self, message: str, current: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.current = current
+
 
 class Subscription:
     """One reader's view of the stream: a queue and the right to stop reading."""
@@ -689,7 +693,7 @@ class WebHost:
                 "they were not sent to the newly opened project.", style="error",
             )
 
-    def run_exclusive(self, fn: Callable[[], T]) -> T:
+    def run_exclusive(self, fn: Callable[[], T], *, expected_problem: Path | None = None) -> T:
         """Run `fn` on the calling thread while the session is held as if a command ran.
 
         For work the HTTP layer owns rather than a handler -- importing a
@@ -698,6 +702,11 @@ class WebHost:
         may block for as long as it likes without stalling the stream.
         """
         def begin() -> None:
+            if expected_problem is not None:
+                if self.session is None:
+                    raise NoProject()
+                if self.config.layout.problem != expected_problem:
+                    raise Busy("The open project changed. Reload the file before saving or checking it.")
             reason = self._busy(jobs=True)
             if reason:
                 raise Busy(reason)
@@ -720,6 +729,7 @@ class WebHost:
 
     def save_file(
         self, path: str, source: str, *, base_sha256: str | None | object = _UNSPECIFIED,
+        expected_problem: Path | None = None,
     ) -> dict[str, Any]:
         """One editor save, held exclusive, reported as the session reported it.
 
@@ -732,11 +742,15 @@ class WebHost:
         be refused for a dozen reasons, each with a sentence written for a
         reader; a generic "save failed" would throw all of them away.
         """
+        problem = self.config.layout.problem if expected_problem is None else expected_problem
+
         def go() -> dict[str, Any]:
-            from hardy.app.web.panels.workspace import confine
+            from hardy.app.web import panels
+
+            session = self.session
 
             def digest() -> str | None:
-                target = confine(self.config.layout.problem, path)
+                target = panels.confine(problem, path)
                 try:
                     with target.open("rb") as handle:
                         return hashlib.file_digest(handle, "sha256").hexdigest()
@@ -745,12 +759,16 @@ class WebHost:
 
             def validate_base() -> None:
                 if digest() != base_sha256:
-                    raise FileConflict("This file changed on disk. Choose whether to reload or keep your edits before saving.")
+                    current = {**panels.file_text(problem, path), "project": str(problem)}
+                    raise FileConflict(
+                        "This file changed on disk. Choose whether to reload or keep your edits before saving.",
+                        current,
+                    )
 
             guarded = base_sha256 is not _UNSPECIFIED
             if guarded:
                 validate_base()
-            save = getattr(self.session, "save_authored", None)
+            save = getattr(session, "save_authored", None)
             if save is None:
                 raise RuntimeError("this session cannot save files")
             result = save(path, source, verify_commit=validate_base) if guarded else save(path, source)
@@ -759,23 +777,26 @@ class WebHost:
                 response["sha256"] = digest()
             return response
 
-        return self.run_exclusive(go)
+        return self.run_exclusive(go, expected_problem=problem)
 
-    def check_file(self, path: str, source: str) -> dict[str, Any]:
+    def check_file(self, path: str, source: str, *, expected_problem: Path | None = None) -> dict[str, Any]:
         """One check that saves nothing, held exclusive for the same reason.
 
         Exclusive even though it writes nothing to the workspace: a check
         elaborates Lean against the tree the turn in flight may be saving
         into, and two of them racing is the same hazard a save is.
         """
+        problem = self.config.layout.problem if expected_problem is None else expected_problem
+
         def go() -> dict[str, Any]:
-            check = getattr(self.session, "check_authored", None)
+            session = self.session
+            check = getattr(session, "check_authored", None)
             if check is None:
                 raise RuntimeError("this session cannot check files")
             result = check(path, source)
             return {"ok": result.ok, "output": result.output, "path": path}
 
-        return self.run_exclusive(go)
+        return self.run_exclusive(go, expected_problem=problem)
 
     # -- input -----------------------------------------------------------
 
