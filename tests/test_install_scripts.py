@@ -109,7 +109,9 @@ def test_the_dispatcher_delegates_to_this_platforms_installer():
     assert "install-windows.ps1" in (SCRIPTS / "install.sh").read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "script", [*POWERSHELL_SCRIPTS, SCRIPTS / "ci" / "windows-full-install.ps1"], ids=lambda p: p.name
+)
 def test_powershell_installer_parses(script: Path):
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if powershell is None:
