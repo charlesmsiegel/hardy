@@ -396,6 +396,8 @@ def test_a_response_that_fails_mid_body_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
+    # Exercise the body failure independently of TLS setup or host scheduling.
+    monkeypatch.setattr(client_module.time, "monotonic", lambda: 0.0)
     monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", lambda *a, **k: Collapsing())
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
