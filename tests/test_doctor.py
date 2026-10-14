@@ -316,3 +316,17 @@ def test_failed_auth_status_does_not_authenticate(monkeypatch):
         return result.model_copy(update={"returncode": 1})
     monkeypatch.setattr(doctor, 'run_guarded', failed)
     assert not doctor._login_check('claude').ok
+
+
+@pytest.mark.parametrize('setting,check_name', [('lean_command', 'lean'), ('latex_command', 'latex')])
+def test_nonexecutable_explicit_tool_is_a_failed_check(tmp_path, monkeypatch, setting, check_name):
+    tool = tmp_path / 'nonexecutable'
+    tool.write_text('fixture', encoding='utf-8')
+    tool.chmod(0o644)
+    (tmp_path / 'lean').mkdir()
+    monkeypatch.setattr(doctor.shutil, 'which', lambda _: None)
+    config = configuration(tmp_path, **{setting: (str(tool),)})
+    check = next(check for check in doctor.run_checks(config) if check.name == check_name)
+    assert not check.ok
+    assert 'Permission denied' in check.detail
+    assert str(tool) in check.detail
