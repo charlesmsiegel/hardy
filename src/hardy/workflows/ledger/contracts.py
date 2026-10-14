@@ -55,6 +55,10 @@ class LedgerRecord(FrozenModel):
 
 
 class ProjectItemKind(str, Enum):
+    SOURCE = "source"
+    ARGUMENT = "argument"
+    PROOF_STEP = "proof_step"
+    CRITIQUE = "critique"
     CONCEPT = "concept"
     REPRESENTATION = "representation"
     DECLARATION = "declaration"

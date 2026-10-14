@@ -9,7 +9,13 @@ from hardy.foundation.files import WriteGuard
 from hardy.foundation.locking import FileLock
 from hardy.workflows.interactive.project import _selected
 from hardy.workflows.layout import validate_slug
-from hardy.workflows.ledger.contracts import Obligation, ObligationKind, ProjectItem
+from hardy.workflows.ledger.contracts import (
+    Obligation,
+    ObligationKind,
+    ProjectItem,
+    Scope,
+    VersionRef,
+)
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.ledger.views import LedgerViews
 
@@ -17,7 +23,8 @@ if TYPE_CHECKING:
     from hardy.workflows.interactive.evidence import ProjectOwners
 
 
-def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None = None) -> dict[str, Any]:
+def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None = None,
+                  repaired: VersionRef | None = None, scope: VersionRef | None = None) -> dict[str, Any]:
     # Imported here because the evidence owner owns the journal's schema.
     from hardy.workflows.interactive.evidence import (
         CheckedBinding,
@@ -27,9 +34,29 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
 
     snapshot = LedgerStore(problem).read()
     target = _selected(snapshot, selector, ProjectItem)
-    if ("role", "semantic_target") not in target.semantics:
-        raise ValueError("Inspection requires a semantic target.")
     owner = owners or ProjectOwners.reading(problem)
+    from hardy.workflows.interactive.assessments import AssessmentOperations, argument_assessments
+    assessments = AssessmentOperations(owner)
+    if ("role", "semantic_target") not in target.semantics:
+        scopes = [value for value in snapshot.current(Scope) if target.ref in value.must_prove]
+        selected_scope = snapshot.get(scope) if scope else scopes[0] if len(scopes) == 1 else None
+        if not isinstance(selected_scope, Scope):
+            raise ValueError("Inspection requires one exact scope or an explicit scope selection.")
+        statement = assessments.report(snapshot, target.ref, selected_scope.ref, "statement")
+        if statement["status"] == "unassessed":
+            statement["status"] = "unresolved"
+        lanes = argument_assessments(snapshot, target.ref, selected_scope.ref, operations=assessments, repaired=repaired)
+        return {"schema": "hardy.semantic-target-report/v1", "project": str(problem), "revision": snapshot.revision,
+                "target": {**target.ref.model_dump(), "statement": target.statement},
+                "scope": selected_scope.model_dump(mode="json"), "statement": statement,
+                "formal_proof": {"status": "unresolved", "reason": "No checked formalization binding is recorded."},
+                "translation": {"status": "unresolved", "reason": "No exact translation review is recorded."},
+                "citation_review": {"status": "unassessed", "reason": "Citation evidence remains a separate capability."},
+                "document_compilation": {"status": "unassessed", "reason": "Compilation does not assess mathematical arguments."},
+                "original_proof": lanes["original_proof"], "repaired_proof": lanes["repaired_proof"],
+                "intermediate_claims": lanes["intermediate_claims"],
+                "assumptions": statement["assumptions"] + lanes["argument_assumptions"],
+                "coverage_gaps": lanes["argument_coverage_gaps"]}
     from hardy.workflows.ledger.contracts import Relation, RelationKind
 
     links = [r for r in snapshot.current(Relation) if r.kind == RelationKind.FORMALIZES and r.target == target.ref]
@@ -71,6 +98,11 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         if any(o.item == item.ref and o.kind == ObligationKind.PROVE and o.resolution is not None
                and owner.policy.is_accepted(snapshot, o.resolution) for o in snapshot.current(Obligation)):
             candidates.append({**item.ref.model_dump(), "name": item.name})
+    lanes = argument_assessments(snapshot, target.ref, scope.ref, operations=assessments, repaired=repaired)
+    statement_assessment = assessments.report(snapshot, target.ref, scope.ref, "statement")
+    statement_report = (statement_assessment if not statement_ready and statement_assessment["status"] != "unassessed" else
+                        {**statement_assessment, "status": "supported_by_reviewed_formal_proof" if statement_ready else "unresolved",
+                         "reason": None if statement_ready else "Requires current correspondence and a bound checked proof, or an explicit statement assessment."})
     return {
         "project": str(problem),
         "saved_candidates": candidates,
@@ -87,12 +119,13 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
                          "reason": formal_reason, "axioms": axioms, "evidence": evidence,
                          "environment_revalidated": bool(verified),
                          "environment_revalidation_available": owner._build_snapshot is not None},
-        "statement": {"status": "supported_by_reviewed_formal_proof" if statement_ready else "unresolved",
-                      "reason": None if statement_ready else "Requires both current correspondence and a bound checked proof."},
-        "original_proof": {"status": "unassessed", "reason": "No supplied original argument has been assessed."},
-        "repaired_proof": {"status": "unassessed", "reason": "No repaired argument has been assessed."},
-        "intermediate_claims": [], "assumptions": [],
-        "coverage_gaps": ["Supplied arguments, intermediate claims and repairs have not been assessed."],
+        "statement": statement_report,
+        "original_proof": lanes["original_proof"], "repaired_proof": lanes["repaired_proof"],
+        "intermediate_claims": lanes["intermediate_claims"],
+        "assumptions": statement_report["assumptions"] + lanes["argument_assumptions"],
+        "coverage_gaps": lanes["argument_coverage_gaps"],
+        "citation_review": {"status": "unassessed", "reason": "Citation evidence remains a separate capability."},
+        "document_compilation": {"status": "unassessed", "reason": "Compilation does not assess mathematical arguments."},
         "bindings": [b.model_dump(mode="json") for b in bindings],
         "obligations": [{**o.model_dump(mode="json"), "authenticated": bool(o.resolution and owner.policy.is_accepted(snapshot, o.resolution))}
                         for o in work.values()],

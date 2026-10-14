@@ -158,11 +158,13 @@ class LedgerPolicy:
         read_decision: Callable[[ArtifactRef], AcceptanceDecision | None] | None = None,
         read_evidence_at: Callable[[LedgerSnapshot, EvidenceRef], AuthenticatedEvidence | None] | None = None,
         read_scope_change: Callable[[Scope | None, Scope], ScopeChangeDecision | None] | None = None,
+        read_scope_change_at: Callable[[LedgerSnapshot, Scope | None, Scope], ScopeChangeDecision | None] | None = None,
     ) -> None:
         self._read_evidence = read_evidence
         self._read_evidence_at = read_evidence_at
         self._read_decision = read_decision
         self._read_scope_change = read_scope_change
+        self._read_scope_change_at = read_scope_change_at
         self.digest = _policy_digest()
 
     def validate(self, before: LedgerSnapshot, after: LedgerSnapshot) -> None:
@@ -185,7 +187,7 @@ class LedgerPolicy:
                     raise ValueError("corrected conjecture requires a distinct superseding item")
             if isinstance(record, Scope):
                 self._check_scope(after, record)
-                self._authorize_scope(previous if isinstance(previous, Scope) else None, record)
+                self._authorize_scope(previous if isinstance(previous, Scope) else None, record, snapshot=after)
             if isinstance(record, Obligation):
                 self._check_scope(after, record.scope)
                 if after.head(record.scope.id).ref != record.scope.ref:
@@ -280,13 +282,20 @@ class LedgerPolicy:
                     used.update(self._evidence(reference, obligation, snapshot=snapshot).used_assumptions)
         return tuple(sorted(used, key=lambda ref: (ref.id, ref.digest)))
 
-    def _authorize_scope(self, old: Scope | None, new: Scope) -> None:
-        if old == new or (old is None and not new.allowed_background and not new.allowed_interfaces):
+    def _authorize_scope(self, old: Scope | None, new: Scope, *, snapshot: LedgerSnapshot | None = None) -> None:
+        # Adding required work without adding or changing any premise grants
+        # no trust. Required exact targets cannot be dropped or replaced here.
+        monotonic_work = (old is not None and set(old.must_prove).issubset(new.must_prove)
+                          and old.allowed_background == new.allowed_background
+                          and old.allowed_interfaces == new.allowed_interfaces)
+        if old == new or monotonic_work or (old is None and not new.allowed_background and not new.allowed_interfaces):
             return
-        if self._read_scope_change is None:
+        if self._read_scope_change is None and (self._read_scope_change_at is None or snapshot is None):
             raise ValueError("scope change requires authenticated policy/user authorization")
         try:
-            decision = self._read_scope_change(old, new)
+            decision = (self._read_scope_change_at(snapshot, old, new)
+                        if snapshot is not None and self._read_scope_change_at is not None
+                        else self._read_scope_change(old, new))
         except Exception as error:
             raise ValueError("scope authorization reader failed") from error
         if decision != ScopeChangeDecision(old.ref if old else None, new.ref, self.digest):
@@ -318,7 +327,7 @@ class LedgerPolicy:
         self._check_scope(snapshot, scope)
         history = [value for value in snapshot.records if isinstance(value, Scope) and value.id == scope.id]
         for index, value in enumerate(history):
-            self._authorize_scope(history[index - 1] if index else None, value)
+            self._authorize_scope(history[index - 1] if index else None, value, snapshot=snapshot)
 
     def _evidence(self, reference: EvidenceRef, obligation: Obligation, *,
                   hypothesis: str | None = None, snapshot: LedgerSnapshot | None = None) -> AuthenticatedEvidence:
