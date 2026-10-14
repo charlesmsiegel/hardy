@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from hardy.foundation.files import LayoutError, guard_for, read_text, resolve_na
 from hardy.workflows.layout import CHAT_META, CHATS_DIR, DEFAULT_CHAT, TRANSCRIPT, validate_chat
 
 SCHEMA = "hardy.chat/v1"
+_WINDOWS = sys.platform == "win32"
 
 
 @dataclass(frozen=True)
@@ -161,12 +163,47 @@ def _activity(problem: Path, chat_id: str) -> tuple[int | None, float | None]:
         guard, name = guard_for(problem, relative)
         path = resolve_named_child(guard.path(name), guard.directory)
         info = path.stat()
-        # inode catches replacement; ctime catches edits that restore size/mtime.
+        # inode catches replacement; POSIX ctime catches restored-size/mtime edits.
         # Re-prove the guarded path even on a cache hit so planted links fail.
         identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if _WINDOWS:
+            # Windows st_ctime is creation time, not the last metadata change.
+            # Query the guarded handle without rescanning unchanged transcripts.
+            with guard.open(name, "rb") as handle:
+                identity += (_windows_change_time(handle),)
         return _cached_activity(problem, relative, identity)
     except (LayoutError, OSError):
         return None, None
+
+
+def _windows_change_time(handle) -> int:
+    """FILE_BASIC_INFO.ChangeTime, which Windows stat does not expose.
+
+    Use the already guarded file descriptor rather than reopening a path with
+    native APIs. A failed query raises OSError: activity is then unreported,
+    rather than claiming that a potentially stale cached count is current.
+    """
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class FileBasicInfo(ctypes.Structure):
+        _fields_ = [
+            ("CreationTime", ctypes.c_longlong),
+            ("LastAccessTime", ctypes.c_longlong),
+            ("LastWriteTime", ctypes.c_longlong),
+            ("ChangeTime", ctypes.c_longlong),
+            ("FileAttributes", wintypes.DWORD),
+        ]
+
+    query = ctypes.WinDLL("kernel32", use_last_error=True).GetFileInformationByHandleEx
+    query.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    query.restype = wintypes.BOOL
+    info = FileBasicInfo()
+    # FileBasicInfo is FILE_INFO_BY_HANDLE_CLASS value 0 (Windows Vista+).
+    if not query(msvcrt.get_osfhandle(handle.fileno()), 0, ctypes.byref(info), ctypes.sizeof(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return info.ChangeTime
 
 
 @lru_cache(maxsize=512)

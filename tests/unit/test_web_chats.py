@@ -302,3 +302,72 @@ def test_activity_cache_does_not_hide_replaced_symlink(tmp_path):
     outside.write_text('{"type":"user"}\n')
     transcript.symlink_to(outside)
     assert chats.overview(tmp_path)[0]['turns'] is None
+
+
+def test_windows_activity_cache_uses_change_time_when_stat_identity_is_unchanged(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    transcript = tmp_path / 'transcript.jsonl'
+    transcript.write_text('{"type":"user","timestamp":1}\n')
+    info = transcript.stat()
+    # Windows ctime is creation time; a restored mtime leaves all stat fields unchanged.
+    original_resolve = chats.resolve_named_child
+    def frozen_stat(*args):
+        original_resolve(*args)  # Keep the real confinement proof.
+        return SimpleNamespace(stat=lambda: info)
+    monkeypatch.setattr(chats, 'resolve_named_child', frozen_stat)
+    monkeypatch.setattr(chats, '_WINDOWS', True, raising=False)
+    change_time = [1]
+    monkeypatch.setattr(chats, '_windows_change_time', lambda handle: change_time[0], raising=False)
+    original_read = chats.read_text
+    reads = []
+    def counted(*args):
+        reads.append(args)
+        return original_read(*args)
+    monkeypatch.setattr(chats, 'read_text', counted)
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    assert len(reads) == 1
+    transcript.write_text('{"type":"note","timestamp":2}\n')
+    change_time[0] = 2
+    assert chats.overview(tmp_path)[0]['turns'] == 0
+    assert chats.overview(tmp_path)[0]['last_activity'] == 2
+    assert len(reads) == 2
+
+
+def test_windows_change_time_queries_basic_info_for_existing_handle(monkeypatch, tmp_path):
+    import ctypes
+    import sys
+    from types import SimpleNamespace
+
+    transcript = tmp_path / 'transcript.jsonl'
+    transcript.write_bytes(b'')
+    calls = []
+    def query(handle, info_class, pointer, size):
+        info = pointer._obj
+        assert size == 40
+        assert type(info).ChangeTime.offset == 24
+        assert type(info).FileAttributes.offset == 32
+        calls.append((handle, info_class))
+        info.CreationTime = 10
+        info.ChangeTime = 123456789
+        return 1
+    def load(name, **options):
+        assert name == 'kernel32' and options == {'use_last_error': True}
+        return SimpleNamespace(GetFileInformationByHandleEx=query)
+    monkeypatch.setattr(ctypes, 'WinDLL', load, raising=False)
+    monkeypatch.setitem(sys.modules, 'msvcrt', SimpleNamespace(get_osfhandle=lambda fd: fd + 100))
+    with transcript.open('rb') as handle:
+        assert chats._windows_change_time(handle) == 123456789
+        assert calls == [(handle.fileno() + 100, 0)]
+
+
+def test_windows_activity_query_failure_does_not_return_cached_count(tmp_path, monkeypatch):
+    transcript = tmp_path / 'transcript.jsonl'
+    transcript.write_text('{"type":"user"}\n')
+    assert chats.overview(tmp_path)[0]['turns'] == 1
+    monkeypatch.setattr(chats, '_WINDOWS', True)
+    def failed(handle):
+        raise OSError('native metadata query failed')
+    monkeypatch.setattr(chats, '_windows_change_time', failed)
+    assert chats.overview(tmp_path)[0]['turns'] is None
