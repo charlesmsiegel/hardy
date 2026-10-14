@@ -735,13 +735,22 @@ def test_committed_tex_source_retires_import_before_late_publication_failure(tmp
     prior_stamp = chat.state["tex_signature"]
     if failure == "pdf_symlink":
         pdf = chat.workspace / "writeup.pdf"
-        pdf.unlink()
         outside = tmp_path / "outside.pdf"
         outside.write_bytes(b"outside PDF")
+        probe = tmp_path / "symlink-probe"
         try:
-            pdf.symlink_to(outside)
+            probe.symlink_to(outside)
+            probe.unlink()
         except OSError:
             pytest.skip("symlinks unavailable")
+        original = latex.WriteGuard.write_from
+        def replace_pdf_with_link(self, name, *args, **kwargs):
+            if str(name) == "writeup.pdf":
+                # A late publication failure: source has already committed.
+                pdf.unlink()
+                pdf.symlink_to(outside)
+            return original(self, name, *args, **kwargs)
+        monkeypatch.setattr(latex.WriteGuard, "write_from", replace_pdf_with_link)
         expected = LayoutError
     else:
         original = latex.WriteGuard.write_from
@@ -860,3 +869,30 @@ def test_existing_session_missing_record_never_initializes_fresh_problem(tmp_pat
                            (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
                            lambda proposal: False, require_existing=True)
     assert not (problem / "session.json").exists()
+
+
+def test_preexisting_pdf_symlink_refuses_before_source_or_import_changes(tmp_path):
+    from hardy.foundation.files import LayoutError
+
+    pile = pile_with(tmp_path, {"writeup.tex": DOCUMENT})
+    chat = make_session(tmp_path / "problem")
+    assert chat.import_tex(pile / "writeup.tex").ok
+    before = chat.record.snapshot_of("imported", "tex_signature")
+    source = chat.workspace / "tex" / "writeup.tex"
+    original_source = source.read_bytes()
+    aux = chat.workspace / ".build" / "tex" / "writeup.aux"
+    original_aux = aux.read_bytes()
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"outside PDF")
+    pdf = chat.workspace / "writeup.pdf"
+    pdf.unlink()
+    try:
+        pdf.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(LayoutError):
+        chat.save_authored("tex/writeup.tex", PLAIN_ROOT)
+    assert source.read_bytes() == original_source
+    assert aux.read_bytes() == original_aux
+    assert chat.record.snapshot_of("imported", "tex_signature") == before
+    assert outside.read_bytes() == b"outside PDF"
