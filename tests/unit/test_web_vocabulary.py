@@ -38,8 +38,12 @@ def test_families_are_assigned_not_defaulted() -> None:
     """`other` is a real answer for `example`, not a bucket for the unmapped."""
     assert vocabulary.family(ProjectItemKind.THEOREM) == "result"
     assert vocabulary.family(ProjectItemKind.RESEARCH_NOTE) == "research"
+    assert vocabulary.family(ProjectItemKind.ARGUMENT) == "research"
+    assert vocabulary.family(ProjectItemKind.PROOF_STEP) == "research"
+    assert vocabulary.family(ProjectItemKind.CRITIQUE) == "research"
     assert vocabulary.family(ProjectItemKind.REPRESENTATION) == "concept"
     assert vocabulary.family(ProjectItemKind.CHAPTER) == "document"
+    assert vocabulary.family(ProjectItemKind.SOURCE) == "document"
     assert vocabulary.family(ProjectItemKind.EXAMPLE) == "other"
     assert {k for k in ProjectItemKind if vocabulary.family(k) == "other"} == {ProjectItemKind.EXAMPLE}
 

@@ -535,6 +535,53 @@ def test_ledger_list_on_a_fresh_project_is_an_honest_empty_list(tmp_path: Path) 
     assert out == {"items": [], "revision": 0}
 
 
+def test_semantic_source_and_argument_work_render_without_formal_verdicts(tmp_path: Path) -> None:
+    """Retaining a manuscript and proposing its argument must leave every ledger panel readable."""
+    from hardy.workflows.interactive.semantic_operations import SemanticOperations
+    from hardy.workflows.interactive.semantic_records import (
+        ArgumentRequest,
+        ItemRequest,
+        SourceRegion,
+    )
+
+    problem = make_problem(tmp_path)
+    operations = SemanticOperations(problem)
+    text = "The result is true. The proposed proof needs a missing justification."
+    source = operations.source("manuscript", text)
+    target = operations.target("Result", "The result is true.", formal="lemma result : True")
+    region = SourceRegion(source=source.ref, start=20, end=len(text))
+    argument = operations.argument(ArgumentRequest(
+        id="original", target=target.ref, text=operations.region_text(region), source=region,
+    ))
+    step = operations.step(ItemRequest(
+        id="step", kind="proof_step", name="Proposed step", statement="Use the claimed implication.",
+        source=region, argument=argument.ref,
+    ))
+    critique = operations.critique(ItemRequest(
+        id="critique", kind="critique", name="Missing justification", statement="The implication is unproved.",
+        source=region, target=step.ref,
+    ))
+
+    expected = {source.id: ("source", "document"), argument.id: ("argument", "research"),
+                step.id: ("proof_step", "research"), critique.id: ("critique", "research")}
+    listed = {item["id"]: item for item in panels.ledger_list(problem)["items"]}
+    graph = panels.graph(problem)
+    nodes = {item["id"]: item for item in graph["nodes"]}
+    counts = panels.record_counts(problem)
+    for identity, (kind, family) in expected.items():
+        detail = panels.ledger_item(problem, identity)
+        for row in (listed[identity], nodes[identity], detail, detail["versions"][0]):
+            assert row["kind"] == kind and row["family"] == family
+            assert row["evidence"] == []
+        assert detail["semantic"] is None
+        assert counts["by_kind"][kind] == 1
+    assert counts["by_family"]["research"] == 3
+    assert counts["by_family"]["document"] == 1
+    assert {edge["kind"]: edge["style"] for edge in graph["edges"]
+            if edge["kind"] in {"supports", "contains"}} == {"supports": "dashed", "contains": "solid"}
+    json.dumps({"graph": graph, "counts": counts, "items": listed})
+
+
 # -- ledger_item(): one item, its version history, relations and obligations --
 
 
