@@ -430,6 +430,30 @@ def test_a_chunked_response_cut_short_is_an_arxiv_error(monkeypatch):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
 
+@pytest.mark.parametrize("received", [0, 1])
+def test_an_arxiv_response_stops_reading_when_its_deadline_expires(monkeypatch, received):
+    """Elapsed setup and earlier reads both count against the transfer deadline."""
+    reads = []
+
+    class Response:
+        def read(self, size: int) -> bytes:
+            reads.append(size)
+            return b"x"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    now = iter([100.0, *([101.0] * received), 106.0])
+    monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=lambda: next(now)))
+    monkeypatch.setattr(client_module.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=lambda *a, **k: Response()))
+    with pytest.raises(arxiv.ArxivError, match=f"exceeded its 5s deadline with {received} bytes read"):
+        arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
+    assert len(reads) == received
+
+
 def test_a_connection_that_never_opens_is_an_arxiv_error(monkeypatch):
     def refuse(*args, **kwargs):
         raise OSError("network unreachable")
