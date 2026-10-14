@@ -732,6 +732,41 @@ def test_structured_catalog_and_context_actions_use_exact_owner_refs(tmp_path):
         assert _call(srv, 'POST', '/api/project', {**request, 'request': {**request['request'], 'accept': True}})[0] == 400
 
 
+def test_retaining_pasted_manuscript_keeps_served_ledger_panels_readable(tmp_path):
+    from test_chat import FakeChatRuntime, session
+
+    config = make_config(tmp_path)
+    chat = session(config.layout.problem, FakeChatRuntime([]))
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda *_: chat, projects=registry)
+    text = r"\begin{theorem}The pasted result.\end{theorem}"
+    for srv in _serve(host, _static(tmp_path)):
+        project = str(chat.workspace)
+        status, _, body = _call(srv, 'POST', '/api/project', {
+            'operation': 'source', 'project': project, 'request': {'id': 'pasted-paper', 'text': text},
+        })
+        assert status == 200, body
+        source = json.loads(body)['record']
+        assert source['kind'] == 'source'
+        for route in ('/api/record', '/api/ledger', '/api/graph', '/api/ledger/item?id=pasted-paper'):
+            status, _, body = _call(srv, 'GET', route)
+            assert status == 200, (route, body)
+            payload = json.loads(body)
+            if route == '/api/record':
+                assert payload['by_family'] == {'document': 1}
+                assert payload['by_kind'] == {'source': 1}
+            else:
+                row = payload['items'][0] if route == '/api/ledger' else (
+                    payload['nodes'][0] if route == '/api/graph' else payload)
+                assert row['id'] == 'pasted-paper' and row['kind'] == 'source'
+                assert row['family'] == 'document' and row['evidence'] == []
+        status, _, body = _call(srv, 'GET', f'/api/project-state?project={project}')
+        assert status == 200, body
+        retained = json.loads(body)['catalog']['sources'][0]
+        assert retained['ref'] == source['ref'] and retained['text'] == text
+
+
 def test_http_binding_export_and_stale_review_preserve_distinct_assessments(tmp_path):
     from test_project_binding import setup_pair
 

@@ -31,12 +31,14 @@ _FAMILY: dict[ProjectItemKind, str] = {
 
     K.GOAL: "research", K.APPROACH: "research", K.QUESTION: "research",
     K.CONJECTURE: "research", K.RESEARCH_NOTE: "research",
+    K.ARGUMENT: "research", K.PROOF_STEP: "research", K.CRITIQUE: "research",
 
     K.CONCEPT: "concept", K.DEFINITION: "concept", K.REPRESENTATION: "concept",
     K.DECLARATION: "concept", K.STANDARD_OBJECT: "concept",
 
     K.EXPOSITION: "document", K.COMPUTATION: "document", K.SECTION: "document",
     K.CHAPTER: "document", K.BOOK: "document", K.DOCUMENT_FRAGMENT: "document",
+    K.SOURCE: "document",
 
     K.EXAMPLE: "other",
 }
