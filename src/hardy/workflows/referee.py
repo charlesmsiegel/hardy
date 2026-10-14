@@ -132,12 +132,16 @@ class RefereeWorkflow:
     def __init__(self, store: LedgerStore, *, critique: CritiqueOperations,
                  resolve_citation: Callable[[LedgerSnapshot, Obligation], ResolverResult] | None = None,
                  policy: LedgerPolicy | None = None,
-                 expand_citation: Callable[[LedgerSnapshot, CitationContract, Scope], CitationExpansion] | None = None):
+                 expand_citation: Callable[[LedgerSnapshot, CitationContract, Scope], CitationExpansion] | None = None,
+                 graph: Callable[[LedgerSnapshot], LedgerGraph] | None = None):
         self.store = store
         self.critique = critique
         self.resolve_citation = resolve_citation
         self.expand_citation = expand_citation
         self.policy = policy or LedgerPolicy()
+        # Interpretation may select current source-owned relations. Authority
+        # always receives the original snapshot, including every required premise.
+        self.graph = graph or LedgerGraph
 
     @staticmethod
     def _current(snapshot: LedgerSnapshot, ref: VersionRef, kind):
@@ -163,7 +167,7 @@ class RefereeWorkflow:
             raise ValueError("main results require inventoried claim bindings")
         if not set(request.main_results) <= set(scope.must_prove):
             raise ValueError("main manuscript results must be protected by must_prove scope")
-        graph = LedgerGraph(snapshot)
+        graph = self.graph(snapshot)
         for claim in request.claims:
             item = self._current(snapshot, claim.item, ProjectItem)
             if item.kind not in _CLAIM_KINDS:
@@ -198,7 +202,7 @@ class RefereeWorkflow:
     def _structural_findings(self, snapshot: LedgerSnapshot, claim: ManuscriptClaim,
                              scope: Scope) -> tuple[CritiqueFinding, ...]:
         item = snapshot.get(claim.item)
-        graph = LedgerGraph(snapshot)
+        graph = self.graph(snapshot)
         findings = [CritiqueFinding(kind=r.kind, reason=r.reason) for r in claim.requirements]
         # A dependency component names recorded circular reasoning, not a
         # semantic judgment inferred from the manuscript's prose.
@@ -330,7 +334,7 @@ class RefereeWorkflow:
         history = {record.ref for record in snapshot.records if isinstance(record, Obligation)
                    and record.id == work.id and (record.item, record.scope, record.kind, record.context)
                    == (work.item, work.scope, work.kind, work.context)}
-        graph = LedgerGraph(snapshot)
+        graph = self.graph(snapshot)
         contracts = tuple(dict.fromkeys(snapshot.get(relation.target) for relation in graph.relations
             if relation.kind == "cites" and relation.source in history
             and isinstance(snapshot.get(relation.target), CitationContract)))
@@ -348,7 +352,7 @@ class RefereeWorkflow:
         scanned = inventory(request.sources)
         snapshot = self.store.read()
         scope = self._validate(request, scanned, snapshot)
-        path = LedgerGraph(snapshot).dependency_closure(request.main_results, include_roots=True)
+        path = self.graph(snapshot).dependency_closure(request.main_results, include_roots=True)
         closure = set(path)
         selected = tuple(c.item for c in request.claims if c.item in closure)
         uses = tuple(use for use in request.citations if use.use_site in selected)
@@ -399,7 +403,7 @@ class RefereeWorkflow:
             critiques.append(result)
         snapshot = self.store.read()
         self._validate(request, scanned, snapshot)
-        if LedgerGraph(snapshot).dependency_closure(request.main_results, include_roots=True) != path:
+        if self.graph(snapshot).dependency_closure(request.main_results, include_roots=True) != path:
             raise ValueError("stale main dependency path changed during referee review")
         views = LedgerViews(snapshot, self.policy)
         verified = tuple(ref for ref in selected if self.policy.premise_allowed(
@@ -413,7 +417,7 @@ class RefereeWorkflow:
             self._citation_audit(snapshot, child.use, child.obligation)
             for child in node.children)) for node in recursive)
         unresolved = tuple(ref for ref in selected if ref not in verified or
-                           any(o.item in LedgerGraph(snapshot).dependency_closure(ref, include_roots=True) for o in pending))
+                           any(o.item in self.graph(snapshot).dependency_closure(ref, include_roots=True) for o in pending))
         report = RefereeReport(
             inventory=scanned, scope=scope.ref, main_results=request.main_results,
             recursive_citations=recursive, citation_depth=request.citation_depth,

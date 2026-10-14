@@ -137,8 +137,9 @@ def argument_assessments(snapshot: LedgerSnapshot, target: VersionRef, scope: Ve
                          operations: AssessmentOperations, original: VersionRef | None = None,
                          repaired: VersionRef | None = None) -> dict[str, Any]:
     """Select argument lanes explicitly; no conclusion inherits an argument's defects."""
-    from hardy.workflows.ledger.contracts import Relation, RelationKind
-    related = [snapshot.get(edge.source) for edge in snapshot.current(Relation)
+    from hardy.workflows.interactive.manuscript_views import current_mapping_relations
+    from hardy.workflows.ledger.contracts import RelationKind
+    related = [snapshot.get(edge.source) for edge in current_mapping_relations(snapshot, operations.owners.journal.read())
                if edge.target == target and edge.kind == RelationKind.SUPPORTS]
     originals = [item for item in related if isinstance(item, ProjectItem) and item.kind == ProjectItemKind.ARGUMENT
                  and ("argument-role", "original") in item.semantics]
