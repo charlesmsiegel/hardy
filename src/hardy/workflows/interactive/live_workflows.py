@@ -117,6 +117,9 @@ class LiveWorkflows:
         self.calls, self.owners = capabilities.calls, capabilities.owners
         self.store = capabilities.store
         self.operations = SemanticOperations(capabilities.ports.problem, owners=self.owners)
+        from hardy.workflows.interactive.live_citations import LiveCitations
+        self.owners.canonical_citations.library = capabilities.library
+        self.citations = LiveCitations(capabilities, owner=self.owners.canonical_citations)
         self.running = threading.Event()
         self._checks = 0
         self._started = 0.0
@@ -169,6 +172,17 @@ class LiveWorkflows:
                 "result": result, "detail": detail, "elapsed": time.monotonic() - self._started,
                 "recorded_at": stamp()}))
         return {"request_id": request.id, "attempt": attempt.attempt, "status": status, "detail": detail, **result}
+
+    def manuscript(self, kind, request, operation):
+        """Use the existing durable attempt/recovery owner for manuscript work."""
+        if kind not in {"intake", "referee"}:
+            raise ValueError("unsupported manuscript workflow kind")
+        def execute():
+            result = operation(request)
+            value = result["proposal"] if kind == "intake" else result["receipt"]
+            status = "completed" if value["status"] == "proposed" else value["status"]
+            return {**result, "status": status, "detail": value["detail"]}
+        return self._run(kind, request, 0, execute)
 
     def _checkpoint(self, **progress):
         self._progress.update(progress)
@@ -336,6 +350,7 @@ class LiveWorkflows:
     def research(self, request: ResearchRequest | dict, *, max_attempts=64):
         request = ResearchRequest.model_validate(request.model_dump() if isinstance(request, ResearchRequest) else request)
         def execute():
+            self.citations.begin()
             def identify(snapshot, selected):
                 plan = self.calls.structured("research.identify", {"request": selected.model_dump(mode="json"),
                     "target": snapshot.get(selected.target).model_dump(mode="json"),
@@ -361,7 +376,9 @@ class LiveWorkflows:
                     self.store.read().get(request.scope))), record_formalization=self._record_prepared, prove=self._prove,
                 refute=self._inspect_refute, compute=self._inspect_compute)
             report = flow.run(request, max_attempts=max_attempts)
-            return {"status": "completed" if report.completed else "pending", "report": _json(dataclasses.asdict(report))}
+            admissions = self.citations.finish()
+            return {"status": "completed" if report.completed else "pending", "report": _json(dataclasses.asdict(report)),
+                "citation_admissions": admissions}
         return self._run("research", request, max_attempts, execute)
 
     def _inspect_refute(self, snapshot, work, gap):
@@ -527,8 +544,7 @@ class LiveWorkflows:
         return self._run("repair", request, max_attempts, execute)
 
     def literature_resolver(self):
-        from hardy.workflows.interactive.live_literature import build_literature_resolver
-        return build_literature_resolver(self.capabilities, self._model())
+        return self.citations
 
 
 def _json(value):

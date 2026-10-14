@@ -57,7 +57,7 @@ class WorkflowAttempt(FrozenModel):
     id: Text
     attempt: Text
     request_id: StableId
-    kind: Literal["research", "explore", "repair"]
+    kind: Literal["research", "explore", "repair", "intake", "referee"]
     request_json: Text
     status: Literal["running", "completed", "pending", "failed", "blocked", "cancelled", "interrupted"]
     detail: str = ""

@@ -134,13 +134,19 @@ class AssessmentOperations:
 
 
 def argument_assessments(snapshot: LedgerSnapshot, target: VersionRef, scope: VersionRef, *,
-                         operations: AssessmentOperations, repaired: VersionRef | None = None) -> dict[str, Any]:
+                         operations: AssessmentOperations, original: VersionRef | None = None,
+                         repaired: VersionRef | None = None) -> dict[str, Any]:
     """Select argument lanes explicitly; no conclusion inherits an argument's defects."""
     from hardy.workflows.ledger.contracts import Relation, RelationKind
     related = [snapshot.get(edge.source) for edge in snapshot.current(Relation)
                if edge.target == target and edge.kind == RelationKind.SUPPORTS]
     originals = [item for item in related if isinstance(item, ProjectItem) and item.kind == ProjectItemKind.ARGUMENT
                  and ("argument-role", "original") in item.semantics]
+    if original is not None:
+        selected_original = snapshot.get(original)
+        if (selected_original not in originals or snapshot.head(original.id).ref != original):
+            raise ValueError("selected original must be an exact current supplied argument for this target")
+        originals = [selected_original]
     selected = None
     if repaired is not None:
         selected = snapshot.get(repaired)
