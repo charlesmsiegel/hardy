@@ -710,6 +710,28 @@ def test_semantic_project_operations_use_exact_project_and_real_session(tmp_path
         assert json.loads(body)['semantic']['translation']['status'] == 'unresolved'
 
 
+def test_structured_catalog_and_context_actions_use_exact_owner_refs(tmp_path):
+    from test_chat import FakeChatRuntime, session
+
+    config = make_config(tmp_path)
+    chat = session(config.layout.problem, FakeChatRuntime([]))
+    registry = make_registry(tmp_path)
+    registry.add(config.layout.problem)
+    host = WebHost(config, FakeOpener(tmp_path), lambda *_: chat, projects=registry)
+    for srv in _serve(host, _static(tmp_path)):
+        project = str(chat.workspace)
+        request = {'operation': 'context', 'project': project, 'request': {'id': 'C', 'label': 'Context'}}
+        status, _, body = _call(srv, 'POST', '/api/project', request)
+        assert status == 200, body
+        context = json.loads(body)['record']
+        assert context['ref'] == {'id': 'C', 'digest': context['digest']}
+        status, _, body = _call(srv, 'GET', f'/api/project-state?project={project}')
+        assert status == 200, body
+        assert json.loads(body)['catalog']['contexts'][0]['ref'] == context['ref']
+        assert _call(srv, 'GET', '/api/project-state?project=/other')[0] == 409
+        assert _call(srv, 'POST', '/api/project', {**request, 'request': {**request['request'], 'accept': True}})[0] == 400
+
+
 def test_http_binding_export_and_stale_review_preserve_distinct_assessments(tmp_path):
     from test_project_binding import setup_pair
 

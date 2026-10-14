@@ -14,7 +14,7 @@ This page names every `/` command the prompt inside `hardy chat` accepts, checke
 | `/goal` | `[text]` | States what this session is for, or prints the current goal. Shown beside every request to approve an assumption, so nobody approves an axiom with the assignment off-screen. |
 | `/assume` | `<paper-id> [ref ...]` | With no reference, lists a fetched paper's statements. Named references ask the model to assume exactly those statements, one call to `assume_statement` per statement, going through the same approval and independent read any lazily minted axiom does. The command itself mints nothing. |
 | `/import` | `[<dir>\|lean\|reference\|tex]` | Triages an existing pile of files, or promotes one into the project. See "/import" below. |
-| `/project` | `[list\|new\|switch\|target\|review\|bind\|inspect\|export\|publish\|link\|mark]` | Lists or opens the projects in this root, starts a new one, records and reviews semantic targets, or exports reports and publication drafts. See "/project" below. |
+| `/project` | `[list\|new\|switch\|target\|review\|bind\|inspect\|export\|research\|explore\|repair\|intake\|referee\|workflow-status\|intake-status\|referee-report\|catalog\|action\|publish\|link\|mark]` | Opens projects, runs mathematical workflows, reviews exact records, or exports reports and publication drafts. See "/project" below. |
 | `/status` | `[--full]` | Shows the project, model and paths, and the spend breakdown, all read from the workspace's own files. `--full` adds the workspace summary. See "/status --full" below. |
 | `/prove` | `[claim]` | Stages one claim from statement to document, without leaving the session, exactly as [`hardy prove`](cli.md#hardy-prove) does on the command line: a formalization the user approves or revises, an independent faithfulness read of the frozen statement, a proof search, and an independent verifier before anything is graded. With no claim given, it asks for one. |
 | `/export` | `[path]` | Writes one shareable HTML account of this session: results carry their own stored verdicts, not whatever the conversation around them claimed, and credentials matching known shapes are stripped from everything but the Lean, so it still hashes to what was checked. |
@@ -62,7 +62,7 @@ IDs (including the formal owner's reserved `project` and `lean:` identities), st
 refused without a ledger write. The session prints the target's exact reference.
 These commands also work in the browser composer through shared dispatch.
 
-`/project review TARGET@FULL_SHA256 FORMAL@FULL_SHA256 --verdict approved|disputed|unresolved --reviewer "NAME" --conditions "TEXT" --reason "TEXT"`
+`/project review TARGET@FULL_SHA256 FORMAL@FULL_SHA256 --verdict approved|disputed|unresolved --reviewer "NAME" --conditions "TEXT" --reason "TEXT" [--scope SCOPE@FULL_SHA256]`
 records a human correspondence judgment in the durable evidence journal. Both
 references must identify the current linked target and formal proposal in one
 exact scope. The reviewer label is supplied by the operator; conditions record
@@ -77,7 +77,7 @@ records correspondence only: elaboration and proof obligations remain open,
 and no kernel grade is granted. The journal survives restart alongside the
 ledger. Stale submissions and unrelated translation pairs are refused.
 
-`/project bind TARGET@FULL_SHA256 FORMAL@FULL_SHA256 --saved SAVED@FULL_SHA256`
+`/project bind TARGET@FULL_SHA256 FORMAL@FULL_SHA256 --saved SAVED@FULL_SHA256 [--scope SCOPE@FULL_SHA256]`
 binds an exact current proposal pair to a declaration recorded by the actual
 checked-save owner. The saved statement must match the proposed statement,
 including hypotheses; a proof of a weaker or different statement is refused.
@@ -116,6 +116,80 @@ require the exact open project path, use the same session operations and refuse
 stale version submissions. Review starts unresolved; the operator records their
 name, actual conditions and reason. Current assessments and review history are
 loaded from durable records after refresh or project switching.
+Browser review and binding always pin the report's owner-issued `scope_ref`.
+Commands can pin that same exact scope with `--scope`; omitting it preserves the
+legacy native-scope selection. A changed digest under the same scope ID rejects
+a captured exact review or binding.
+
+Research, Explore, Repair and manuscript intake/Referee share the workbench's
+structured session operations:
+
+```text
+/project research RUN TARGET@FULL_SHA256 --scope SCOPE@FULL_SHA256 [--operation prove|refute|compute] [--context CONTEXT@FULL_SHA256] [--max-attempts N]
+/project explore RUN --action context|concept|representation --text "DIRECTION" [--context REF] [--scope REF] [--concept REF] [--use-site REF]
+/project repair RUN OBLIGATION@FULL_SHA256 --original ARGUMENT@FULL_SHA256 [--max-attempts N]
+/project intake RUN --source PATH@FULL_SHA256 --scope-id ID [--retained SOURCE@FULL_SHA256] [--citation-depth 0|1|2] [--target-papers ID[,ID]]
+/project referee RUN --review REVIEW@FULL_SHA256 --scope SCOPE@FULL_SHA256 --main REF[,REF] [--internal REF[,REF]] [--original REF[,REF]] [--repaired REF[,REF]] [--citation-depth 0|1|2] [--citation-max-nodes N]
+/project workflow-status [RUN]
+/project intake-status [RUN]
+/project referee-report [RUN]
+/project catalog
+```
+
+`REF` is an exact `ID@FULL_SHA256` selector. Intake pins the selected TeX bytes;
+`--retained` selects a pasted source retained earlier. Multiple source files use
+the structured request below or the browser's source choices. Referee retains
+the exact reviewed scope, ordered main/internal results and citation depth.
+Changing those requires a new intake/review. Original arguments and repairs
+are selected independently. Blocked, failed and cancelled attempts retain their
+reasons; an HTTP success does not imply mathematical completion. Escape/Stop
+remains available until the actual provider and tool workers terminate.
+
+`/project action OPERATION JSON` accepts the operation's typed request. JSON is
+parsed directly, preserving TeX backslashes and quotes. The command fixes the
+operation and loaded project; reserved envelope fields cannot override them.
+Browser requests use `{operation,project,request}` for nested operations. Legacy
+target/review/bind/inspect/export/publish/link/mark retain their flat field shape
+and syntax. Unknown fields and primitive type coercions are refused by the
+shared adapter before either path dispatches to its named session operation.
+
+| Structured operation | Request fields |
+| --- | --- |
+| `context` | new `id`, `label`, optional exact `parent`, `supersedes`, declaration and binding lists |
+| `source` | `id`, `text`; earlier exact bytes remain readable |
+| `scope` | `id`, exact `must_prove` list; existing protected work cannot be removed |
+| `item`, `step`, `critique` | `id`, `kind`, `name`, `statement`; optional exact context, source region, dependencies, target, containing argument, scope and obligation kind |
+| `argument` | `id`, exact `target`, `text`; optional exact `original`, context, source region and reason |
+| `revise` | exact `subject`, replacement `statement`, optional unchanged context; targets and arguments use their focused revision operations |
+| `formalization` | exact `subject`, `scope`, new `id`, proposed `formal` statement |
+| `obligation` | exact `subject`, `scope`, `kind`, `reason` |
+| `judge` | exact `subject`, `scope`, purpose, verdict, reviewer, actual conditions, reason; optional exact relevant inputs and source regions |
+| `assess` | exact `subject`, `scope`, statement/argument dimension, verdict, reviewer, conditions, reason, evidence, actual assumptions, coverage and unresolved work |
+| `report` | exact `target`, optional exact `original`, `repaired`, `scope` |
+| `admission-request` | exact `subject`, `scope`, optional formalization, source regions and boolean interface selection |
+| `admission-gates` | owner request ID/`request_digest`, exact correspondence/applicability `faithfulness` evidence |
+| `admission-decide` | request ID/digest, reviewed `gate` ID/`gate_digest`, boolean `approved`, reviewer, conditions and reason |
+| `intake-review` | exact `proposal`, per-key verdict/reason decisions, reviewer/conditions/reason, main/internal mapping keys, previously admitted background and optional exact scope |
+| `bundle` | exact `target`, output name, optional exact `original`, `repaired`, `scope` and formal evidence |
+| `referee-export` | exact receipt ID, `receipt_digest`, output name |
+
+Nested exact references have `{id,digest}` fields. A source region adds
+`start`/`end` Unicode codepoint offsets. Evidence references retain their exact
+producer, subject, artifact and digest. Catalog/status responses supply these
+owner-issued identities. Admission approval rechecks the exact reviewed latest
+gate and current source/scope inputs; later adverse gates withdraw earlier
+authority. Ledger shows target, proposed premise, source passage, affected scope
+and actual review conditions before a decision, and disables approval while
+required gates are missing.
+
+The obligations work view includes open, investigating, blocked, resolved,
+dismissed and abandoned filters. Outstanding means the first three; the older
+open-obligations pill still means literal open. Conclusion, original argument,
+intermediate claims and selected repair retain separate evidence, assumptions
+and coverage. Correspondence status does not imply human approval: human and
+model records show their actual provenance. Selected-result/referee export
+controls invoke named owners when installed and show the missing capability
+when the current session cannot export them.
 
 `/project publish`, `/project link` and `/project mark` assemble and record a local publication draft from items already in the workspace. Their selector syntax, required options and what each verb refuses are documented once, in [Project publication commands](cli.md#project-publication-commands), rather than twice.
 

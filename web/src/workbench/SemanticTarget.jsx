@@ -1,5 +1,7 @@
-import {useEffect, useId, useRef, useState} from 'react';
-import {post} from '../api.js';
+import {useId} from 'react';
+import {Choice} from './ProjectWorkflow.jsx';
+import {CorrespondenceReview} from './ProjectReview.jsx';
+import {useProjectAction} from './projectForms.js';
 
 const ref = (record) => `${record.id}@${record.digest}`;
 const pre = {whiteSpace:'pre-wrap', overflowWrap:'anywhere', fontSize:13, margin:0, padding:6, background:'var(--bg)'};
@@ -8,28 +10,9 @@ const statusText = (status) => ({supported_by_reviewed_formal_proof:'Supported b
   kernel_verified:'Kernel verified',approved:'Approved',disputed:'Disputed',unresolved:'Unresolved',
   stale:'Stale',unassessed:'Unassessed'}[status] || status);
 
-function useAction(project, onDone) {
-  const current = useRef(project);
-  current.current = project;
-  const [pending,setPending] = useState(false);
-  const [message,setMessage] = useState('');
-  const [error,setError] = useState('');
-  useEffect(() => {setPending(false);setMessage('');setError('');},[project]);
-  async function submit(operation, fields) {
-    const selected = project;
-    setPending(true);setMessage('');setError('');
-    try {
-      const result = await post('/api/project',{operation,project:selected,...fields});
-      if (current.current !== selected) return;
-      setMessage(operation === 'export' ? `Report saved: ${result.record}` : 'Recorded.');
-      onDone?.();
-    } catch (failure) {
-      if (current.current === selected) setError(failure.message);
-    } finally {
-      if (current.current === selected) setPending(false);
-    }
-  }
-  return {submit,pending,message,error};
+function useAction(project, onDone, selection='') {
+  const action=useProjectAction(project,selection,onDone);
+  return {...action,submit:(operation,fields) => action.submit(operation,fields,false)};
 }
 function Feedback({action}) {
   return <><div role="status">{action.message}</div>{action.error ? <p role="alert" className="panel__error">{action.error}</p> : null}</>;
@@ -40,11 +23,11 @@ function Field({label,name,area=false,required=true,initial=''}) {
   return <label htmlFor={id} style={{display:'block',marginBottom:8}}>{label}{area ? <textarea {...props} rows={3}/> : <input {...props}/>}</label>;
 }
 
-export function NewTarget({project,disabled=false,onDone}) {
+export function NewTarget({project,catalog={},disabled=false,onDone}) {
   const action = useAction(project,onDone);
   return <details className="wb-card"><summary>Create semantic target</summary>
     <p>Record the intended statement and its proposed Lean version. Review and proof begin as open work.</p>
-    <form onSubmit={(event) => {
+    <form onChange={action.invalidate} onSubmit={(event) => {
       event.preventDefault();
       const fields = Object.fromEntries(new window.FormData(event.currentTarget));
       const request = {identity:fields.identity,statement:fields.statement,formal:fields.formal};
@@ -55,17 +38,18 @@ export function NewTarget({project,disabled=false,onDone}) {
       <Field label="Target ID" name="identity"/>
       <Field label="Informal statement" name="statement" area/>
       <Field label="Proposed Lean statement" name="formal" area/>
-      <Field label="Existing context ID (optional)" name="context" required={false}/>
-      <Field label="Exact target reference being revised (optional)" name="supersedes" required={false}/>
+      <Choice label="Mathematical context" name="context" required={false} empty="Standalone target" values={catalog.contexts || []}/>
+      <Choice label="Target being revised" name="supersedes" required={false} empty="New target" values={(catalog.items || []).filter((item) => item.semantics?.some(([key,value]) => key === 'role' && value === 'semantic_target'))}/>
       <button type="submit" className="button">Create target</button>
     </fieldset></form><Feedback action={action}/>
   </details>;
 }
 
 export function TargetReview({project,report,disabled=false,onDone}) {
-  const action = useAction(project,onDone);
-  const frozen = disabled || action.pending || report.project !== project;
-  const pair = {target:ref(report.target),translation:ref(report.formal)};
+  const scope=report.scope_ref;
+  const action = useAction(project,onDone,`${ref(report.target)}:${ref(report.formal)}:${scope ? ref(scope) : ''}`);
+  const frozen = disabled || action.pending || report.project !== project || !scope;
+  const pair = {target:ref(report.target),translation:ref(report.formal),...(scope ? {scope:ref(scope)} : {})};
   return <section className="wb-card" aria-label="Semantic target review">
     <h3 style={heading}>Statement and proof review</h3>
     <h4 style={heading}>Informal statement</h4><pre style={pre}>{report.target.statement}</pre>
@@ -81,9 +65,11 @@ export function TargetReview({project,report,disabled=false,onDone}) {
       <dt>External assumptions used</dt><dd>{report.assumptions.length ? report.assumptions.map(ref).join(', ') : 'none established by this report'}</dd>
       <dt>Kernel axioms recorded</dt><dd>{report.formal_proof.axioms == null ? 'not recorded' : report.formal_proof.axioms.join(', ') || 'none in recorded audit'}</dd>
     </dl>
+    <CorrespondenceReview translation={report.translation}/>
     {report.coverage_gaps.map((gap) => <p key={gap} className="panel__note">{gap}</p>)}
-    <form data-review onSubmit={(event) => {
+    <form data-review onChange={action.invalidate} onSubmit={(event) => {
       event.preventDefault();
+      if (!scope) return;
       action.submit('review',{...pair,...Object.fromEntries(new window.FormData(event.currentTarget))});
     }}><fieldset disabled={frozen} style={{border:0,padding:0}}>
       <label>Correspondence judgment <select name="verdict" defaultValue="unresolved">
@@ -94,6 +80,7 @@ export function TargetReview({project,report,disabled=false,onDone}) {
       <Field label="Reason" name="reason" area/>
       <button type="submit" className="button">Record translation review</button>
     </fieldset></form>
+    {!scope ? <p className="panel__note">Reload the report to obtain its exact reviewed scope before submitting a review or binding.</p> : null}
     <form onSubmit={(event) => {
       event.preventDefault();
       const saved = new window.FormData(event.currentTarget).get('saved');
@@ -113,8 +100,8 @@ export function TargetReview({project,report,disabled=false,onDone}) {
       <Field label="Report export name" name="output"/>
       <button type="submit" className="button">Export assessment report</button>
     </fieldset></form>
-    <details><summary>Review history · {report.translation.reviews.length}</summary>
-      {report.translation.reviews.map((review) => <div key={review.id} style={{marginTop:8}}>
+    <details><summary>Review history · {(report.translation.reviews || []).length}</summary>
+      {(report.translation.reviews || []).map((review) => <div key={review.id} style={{marginTop:8}}>
         <strong>{review.verdict}</strong> · {review.reviewer} · {review.recorded_at}
         <p>{review.conditions}</p><p>{review.reason}</p>
       </div>)}

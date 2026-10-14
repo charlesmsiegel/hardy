@@ -1130,7 +1130,8 @@ async def handle_project(ui: Ui, argument: str, state: State) -> State:
 async def _project(ui: Ui, argument: str, state: State) -> State:
     verb, _, name = argument.strip().partition(" ")
     verb, name = verb.lower(), name.strip()
-    if verb in {"publish", "link", "mark", "target", "review", "bind", "inspect", "export"}:
+    from hardy.app.project_actions import PROJECT_VERBS
+    if verb in PROJECT_VERBS:
         from hardy.app.tui.project import handle_publication
 
         return await handle_publication(ui, f"{verb} {name}", state)
@@ -1627,8 +1628,8 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
             argument_hint="[<dir>|lean|reference|tex]",
         ),
         Command(
-            "project", "open projects, link items, or assemble publication drafts", handle_project,
-            argument_hint="[list|new|switch|target|review|bind|inspect|export|publish|link|mark]",
+            "project", "open projects, run mathematical workflows, review exact records, or publish", handle_project,
+            argument_hint="[list|new|switch|target|review|bind|inspect|export|research|explore|repair|intake|referee|workflow-status|intake-status|referee-report|catalog|action|publish|link|mark]",
         ),
         Command(
             "status", "show the project, model, and paths", handle_status,

@@ -136,7 +136,7 @@ class ManuscriptIntake:
                     "digest": sha256(text.encode()).hexdigest(), "retained": value.ref.model_dump(mode="json")})
         return choices
 
-    def _texts(self, selection: tuple[SelectedTexSource, ...], *, retain=False) -> tuple[dict[str, str], tuple[RetainedTexSource, ...]]:
+    def _texts(self, selection: tuple[SelectedTexSource, ...], *, retain=False, refresh_changed=True) -> tuple[dict[str, str], tuple[RetainedTexSource, ...]]:
         available = self.sources.list_sources()
         texts, records = {}, []
         for selected in selection:
@@ -155,7 +155,7 @@ class ManuscriptIntake:
             source_id = "manuscript-source:" + sha256((selected.artifact or "workspace").encode() + b"\0" + selected.path.encode()).hexdigest()
             if selected.retained:
                 source = self.store.read().get(selected.retained)
-            elif retain or current_digest != selected.digest:
+            elif retain or (refresh_changed and current_digest != selected.digest):
                 source = self.operations.source(source_id, text)
             else:
                 source = self.store.read().head_or_none(source_id)
@@ -170,30 +170,30 @@ class ManuscriptIntake:
             raise ValueError("selected TeX sources exceed the two million byte intake bound")
         return texts, tuple(records)
 
-    def texts(self, proposal: IntakeProposal, *, current=True) -> dict[str, str]:
+    def texts(self, proposal: IntakeProposal, *, current=True, refresh_changed=True) -> dict[str, str]:
         if current:
-            texts, retained = self._texts(proposal.request.sources)
+            texts, retained = self._texts(proposal.request.sources, refresh_changed=refresh_changed)
             if retained != proposal.sources:
                 raise ValueError("stale source versions for manuscript proposal")
             return texts
         return {value.path: self.operations.source_text(value.source) for value in proposal.sources}
 
-    def proposal(self, ref: VersionRef, *, current=True) -> IntakeProposal:
+    def proposal(self, ref: VersionRef, *, current=True, refresh_changed=True) -> IntakeProposal:
         known = [value for value in self.owners.journal.read().of(IntakeProposal) if reference(value) == ref]
         if len(known) != 1:
             raise ValueError("unknown exact manuscript proposal")
         value = known[0]
         if current:
-            self.texts(value)
+            self.texts(value, refresh_changed=refresh_changed)
         return value
 
-    def reviewed(self, ref: VersionRef, *, current=True) -> tuple[IntakeReview, IntakeProposal]:
+    def reviewed(self, ref: VersionRef, *, current=True, refresh_changed=True) -> tuple[IntakeReview, IntakeProposal]:
         journal = self.owners.journal.read()
         known = [value for value in journal.of(IntakeReview) if reference(value) == ref]
         if len(known) != 1:
             raise ValueError("unknown exact manuscript review")
         review = known[0]
-        proposal = self.proposal(review.proposal, current=current)
+        proposal = self.proposal(review.proposal, current=current, refresh_changed=refresh_changed)
         if current:
             latest = [value for value in journal.of(IntakeReview) if value.proposal == review.proposal]
             if latest[-1] != review:
@@ -489,7 +489,7 @@ class ManuscriptIntake:
         for value in selected:
             reason = None
             try:
-                self.texts(value)
+                self.texts(value, refresh_changed=False)
                 current = True
             except (ValueError, OSError) as error:
                 current, reason = False, str(error)
@@ -500,7 +500,7 @@ class ManuscriptIntake:
             if value.proposal not in refs:
                 continue
             try:
-                self.reviewed(reference(value))
+                self.reviewed(reference(value), refresh_changed=False)
                 current, reason = True, None
             except (ValueError, OSError) as error:
                 current, reason = False, str(error)

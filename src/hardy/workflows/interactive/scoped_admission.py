@@ -14,12 +14,14 @@ from uuid import uuid4
 from hardy.formal.syntax.lexer import lex
 from hardy.formal.syntax.names import QUALIFIED_NAME
 from hardy.formal.syntax.scans import statements
+from hardy.foundation.journal import record_digest
 from hardy.foundation.values import FrozenModel, ToolResult
 from hardy.workflows.admission import AdmissionPolicy, ProbeOperations, refutation_probe
 from hardy.workflows.interactive.semantic_owner import SemanticOwner
 from hardy.workflows.interactive.semantic_records import SourceRegion
 from hardy.workflows.interactive.semantic_versions import read_region, relevant_versions
 from hardy.workflows.ledger.contracts import (
+    Digest,
     EvidenceRef,
     ProjectItem,
     Scope,
@@ -30,6 +32,7 @@ from hardy.workflows.ledger.policy import ScopeChangeDecision
 from hardy.workflows.ledger.store import LedgerStore
 
 _GATES = ("source", "correspondence", "search", "elaboration_and_triviality", "vacuity", "refutation", "environment")
+_UNSPECIFIED = object()
 
 
 class ScopedAdmissionRequest(FrozenModel):
@@ -77,6 +80,13 @@ class HumanScopeDecision(FrozenModel):
     reason: Text
     policy_digest: Text
     recorded_at: Text
+    gate_digest: Digest | None = None
+
+    def model_dump(self, **kwargs):
+        result = super().model_dump(**kwargs)
+        if self.gate_digest is None:
+            result.pop("gate_digest", None)
+        return result
 
 
 class HumanScopeCommit(FrozenModel):
@@ -266,7 +276,9 @@ class ScopedAdmissions:
         self.owners._append(record)
         return record
 
-    def decide(self, id: str, *, approved: bool, reviewer: str, conditions: str, reason: str) -> HumanScopeDecision:
+    def decide(self, id: str, *, approved: bool, reviewer: str, conditions: str, reason: str,
+               expected_gate_id: str | None | object = _UNSPECIFIED,
+               expected_gate_digest: str | None | object = _UNSPECIFIED) -> HumanScopeDecision:
         from hardy.workflows.interactive.semantic_records import stamp
         if type(approved) is not bool:
             raise ValueError("human admission decision must be a boolean")
@@ -277,6 +289,10 @@ class ScopedAdmissions:
             raise ValueError("admission decision has stale inputs")
         gates = [r for r in self.owners.journal.read().of(AdmissionGateRecord) if r.request == id]
         gate = gates[-1] if gates else None
+        if ((expected_gate_id is not _UNSPECIFIED or expected_gate_digest is not _UNSPECIFIED)
+                and ((gate.id if gate else None) != expected_gate_id
+                     or (record_digest(gate) if gate else None) != expected_gate_digest)):
+            raise ValueError("The reviewed admission gate changed; reload the exact latest gate before deciding.")
         if approved and (gate is None or not self._valid_gate(gate, snapshot)):
             raise ValueError("required authenticated admission gates are missing or stale")
         field = "allowed_interfaces" if request.interface else "allowed_background"
@@ -284,6 +300,8 @@ class ScopedAdmissions:
         record = HumanScopeDecision(id=f"human-scope:{uuid4().hex}", request=id, gates=gate.id if gate else None,
             before=before, after=after, approved=approved, reviewer=reviewer, conditions=conditions,
             reason=reason, policy_digest=self.owners.policy.digest, recorded_at=stamp())
+        if gate is not None:
+            record = record.model_copy(update={"gate_digest": record_digest(gate)})
         self.owners._append(record)
         if approved:
             self._pending = record
@@ -296,6 +314,9 @@ class ScopedAdmissions:
         return record
 
     def _valid_gate(self, gate: AdmissionGateRecord, snapshot=None) -> bool:
+        latest = [value for value in self.owners.journal.read().of(AdmissionGateRecord) if value.request == gate.request]
+        if not latest or latest[-1].id != gate.id or record_digest(latest[-1]) != record_digest(gate):
+            return False
         if gate.missing_gates or gate.policy_digest != self.owners.policy.digest or self.operations is None:
             return False
         if self.operations.environment() != gate.environment:
@@ -328,7 +349,8 @@ class ScopedAdmissions:
                     and (record.id in committed or record == self._pending)):
                 gates = [r for r in self.owners.journal.read().of(AdmissionGateRecord) if r.id == record.gates]
                 try:
-                    if len(gates) == 1 and self._valid_gate(gates[0], snapshot):
+                    if (len(gates) == 1 and (record.gate_digest is None or record.gate_digest == record_digest(gates[0]))
+                            and self._valid_gate(gates[0], snapshot)):
                         return ScopeChangeDecision(before.ref if before else None, after.ref, record.policy_digest)
                 except (ValueError, OSError):
                     return None

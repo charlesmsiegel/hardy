@@ -47,12 +47,20 @@ import functools
 import hashlib
 import queue
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
 from hardy.app.config import DEFAULT_BACKEND, authentication
+from hardy.app.project_actions import (
+    action_result,
+    execute_action,
+    project_stopper,
+    provider_active,
+    validate_action,
+)
 from hardy.app.project_registry import NO_PROJECT_OPEN, ProjectRegistry
 from hardy.app.terminal import confirm_assumption
 from hardy.app.tui import dispatch
@@ -363,6 +371,7 @@ class WebHost:
             "model": str(config.model),
             "turn_running": bool(state and state.turn_running),
             "command_running": self._commands_running > 0,
+            "provider_active": provider_active(self.session),
             "queued": len(self._queued),
             "prompts": self._prompts(),
         }
@@ -458,6 +467,8 @@ class WebHost:
             return "A turn is still running. Wait for it to finish."
         if self._commands_running:
             return "A command is still running. Wait for it to finish."
+        if provider_active(self.session):
+            return "A workflow provider is still running or shutting down. Stop it or wait for teardown to finish."
         running = getattr(getattr(self.session, "jobs", None), "running", None) if jobs else None
         if running is not None and running():
             return "A background job is still writing to this problem. Wait for it to finish."
@@ -522,6 +533,8 @@ class WebHost:
                 try:
                     close()
                 except Exception as error:  # noqa: BLE001 - leaving is not refused over cleanup
+                    if provider_active(session):
+                        raise Busy(f"Provider shutdown is still pending; the project remains open: {error}") from error
                     self.ui.write(f"Could not close the session cleanly: {error}", style="error")
             kernel = getattr(self.opener, "cas", None)
             if kernel is not None:
@@ -695,33 +708,47 @@ class WebHost:
 
     def project_operation(self, request: dict[str, Any], *, expected_problem: Path) -> dict[str, Any]:
         """Structured browser adapter to the same named operations as /project."""
-        operation = request.get("operation")
-        fields = {
-            "target": ({"identity", "statement", "formal"}, {"context", "supersedes"}),
-            "review": ({"target", "translation", "verdict", "reviewer", "conditions", "reason"}, set()),
-            "bind": ({"target", "translation", "saved"}, set()),
-            "export": ({"target", "output"}, set()),
-        }
-        if not isinstance(operation, str) or operation not in fields:
-            raise ValueError("Unknown project operation.")
-        required, optional = fields[operation]
-        options = {key: value for key, value in request.items() if key not in {"operation", "project"}}
-        if not required.issubset(options) or set(options) - required - optional:
-            raise ValueError("Project operation has missing or unexpected fields.")
-        if any(not isinstance(value, str) for value in options.values()):
-            raise ValueError("Project operation fields must be text.")
+        action = validate_action(request)
+        if action.project != str(expected_problem):
+            raise Busy("The open project changed. Reload the project before submitting this action.")
+        session = self.session
+        stop = project_stopper(session)
         def go():
-            method = getattr(self.session, f"project_{operation}", None)
-            if method is None:
-                raise ValueError("This session does not provide the requested project operation.")
-            result = method(**options)
-            if operation == "export":
-                return {"ok": True, "record": str(result)}
-            return {"ok": True, "record": result.model_dump(mode="json"),
-                    "digest": getattr(result, "digest", None)}
-        return self.run_exclusive(go, expected_problem=expected_problem)
+            try:
+                result = execute_action(session, action)
+                return {"ok": True, "record": action_result(result), "digest": getattr(result, "digest", None)}
+            finally:
+                # A deadline can finish its durable attempt before the actual
+                # provider/tool worker stops. Keep the host and Stop control
+                # owned until teardown, even when execute_action raised.
+                while self._running and provider_active(session):
+                    time.sleep(0.05)
+        return self.run_exclusive(go, expected_problem=expected_problem, cancel=stop, resume=True)
 
-    def run_exclusive(self, fn: Callable[[], T], *, expected_problem: Path | None = None) -> T:
+    def project_state(self, *, expected_problem: Path) -> dict[str, Any]:
+        """Current exact choices and durable workflow reports, read without a provider gate."""
+        def selected():
+            if self.session is None:
+                raise NoProject()
+            if self.config.layout.problem != expected_problem:
+                raise Busy("The open project changed. Reload project workflow choices.")
+            return self.session
+        session = self._call(selected)
+        result: dict[str, Any] = {"project": str(expected_problem), "errors": []}
+        for key, method_name in (("catalog", "project_catalog"), ("workflow", "project_workflow_status"),
+                                 ("intake", "project_intake_status"), ("referee", "project_referee_report")):
+            method = getattr(session, method_name, None)
+            if method is None:
+                result[key] = {}
+                result["errors"].append(f"This session does not provide {method_name}; reopen it with project workflow support.")
+            else:
+                result[key] = action_result(method())
+        if self._call(selected) is not session:
+            raise Busy("The open project changed. Reload project workflow choices.")
+        return result
+
+    def run_exclusive(self, fn: Callable[[], T], *, expected_problem: Path | None = None,
+                      cancel: Callable[[], bool] | None = None, resume: bool = False) -> T:
         """Run `fn` on the calling thread while the session is held as if a command ran.
 
         For work the HTTP layer owns rather than a handler -- importing a
@@ -739,10 +766,17 @@ class WebHost:
             if reason:
                 raise Busy(reason)
             self._commands_running += 1
+            if resume:
+                from hardy.foundation import process
+                process.resume_children()
+            if cancel is not None:
+                self.ui.stopping(cancel)
             self.emit({"type": "state", **self.state()})
 
         def end() -> None:
             self._commands_running -= 1
+            if cancel is not None:
+                self.ui.stopping(None)
             self.emit({"type": "state", **self.state()})
             self.emit({"type": "changed"})
             # A job that finished meanwhile looked for a turn to start while
@@ -843,7 +877,7 @@ class WebHost:
                 text,
                 self.registry,
                 turn_running=bool(self._state and self._state.turn_running),
-                command_running=self._commands_running > 0,
+                command_running=self._commands_running > 0 or provider_active(self.session),
             )
             if outcome.kind == "send":
                 self._start_turn(outcome.argument)
@@ -991,7 +1025,8 @@ class WebHost:
         submitted; with nothing queued, a finished background job whose
         result the model has not read starts a turn of Hardy's own.
         """
-        if not self._running or self._state is None or self._state.turn_running or self._commands_running:
+        if (not self._running or self._state is None or self._state.turn_running or self._commands_running
+                or provider_active(self.session)):
             return
         if self.session is None:
             if self._queued:

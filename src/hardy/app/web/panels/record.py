@@ -223,6 +223,7 @@ def _item_summary(item: ProjectItem) -> dict[str, Any]:
     return {
         "id": item.id,
         "digest": item.digest,
+        "ref": item.ref.model_dump(mode="json"),
         "kind": item.kind.value,
         "family": vocabulary.family(item.kind),
         "name": item.name,
@@ -231,6 +232,10 @@ def _item_summary(item: ProjectItem) -> dict[str, Any]:
         "evidence": sorted({evidence.kind.value for evidence in item.evidence}),
         "artifacts": [artifact.uri for artifact in item.artifacts],
         "research": item.research.status if item.research else None,
+        "context": item.context.model_dump(mode="json") if item.context else None,
+        "semantics": item.semantics,
+        "declaration": item.declaration.model_dump(mode="json") if item.declaration else None,
+        "evidence_refs": [reference.model_dump(mode="json") for reference in item.evidence],
     }
 
 

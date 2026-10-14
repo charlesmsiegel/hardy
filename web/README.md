@@ -87,3 +87,16 @@ refreshes the report read model. Keep the statement, translation, formal-proof
 and original/repaired-argument fields separate. `SemanticTarget.test.mjs` covers
 statement preservation and stale-review error states alongside the editor and
 Markdown regressions in `npm test`.
+
+Ledger also reads `/api/project-state?project=EXACT_PATH` for current exact
+context/scope/source/claim/argument choices and durable workflow/intake/referee
+reports. Its labelled controls share `app.project_actions` with `/project`.
+Nested requests are strictly typed; current choices carry owner-issued digests.
+Source history remains readable separately from current action choices.
+Correspondence, human attribution, model reports and kernel audit stay separate.
+Stop remains available while an expired provider is still tearing down.
+
+`npm test` invokes each test file directly with Node. In the current Node
+environment, `node --test` can report only a file wrapper without executing its
+named cases. Keep the direct invocations: the output must list the named DOM
+and Markdown assertions, and a failed assertion must exit nonzero.
