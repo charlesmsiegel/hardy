@@ -201,7 +201,6 @@ def run_uninstall(root: Path, *arguments: str) -> subprocess.CompletedProcess:
         "HARDY_HOME": str(root / "share/hardy"),
         "HARDY_BIN_DIR": str(root / "bin"),
         "HARDY_CONFIG": str(root / "config/hardy/config.toml"),
-        "ELAN_HOME": str(root / ".elan"),
     }
     return subprocess.run(
         ["bash", str(SCRIPTS / "uninstall.sh"), *arguments],
