@@ -1,4 +1,4 @@
-"""Human publication edits preserve exact mathematics and a frozen draft.
+"""Human project proposals and publication edits preserve exact mathematical history.
 
 The ledger owns links and visibility history; publication owns selection and
 compilation. This adapter resolves explicit IDs and delegates those operations,
@@ -14,6 +14,9 @@ from uuid import uuid4
 from hardy.foundation.files import WriteGuard
 from hardy.workflows.layout import validate_slug
 from hardy.workflows.ledger.contracts import (
+    MathematicalContext,
+    Obligation,
+    ObligationKind,
     ProjectItem,
     ProjectItemKind,
     PublicationVisibility,
@@ -23,6 +26,7 @@ from hardy.workflows.ledger.contracts import (
     VersionRef,
 )
 from hardy.workflows.ledger.graph import LedgerGraph
+from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.publication import (
@@ -50,6 +54,55 @@ class ProjectOperations:
         self.workspace = workspace
         self.store = LedgerStore(workspace)
         self._publish = publish
+
+    def target(self, identity: str, statement: str, *, formal: str,
+               context: str | None = None, supersedes: str | None = None) -> ProjectItem:
+        """Record a proposed translation and its work, without claiming correspondence.
+
+        Revisions are distinct targets linked to the exact previous proposal.
+        Neither old reviews nor proofs are transferred. The new scope admits
+        no premises; adding background remains the admission owner's job.
+        """
+        if identity == "project" or identity.startswith("lean:"):
+            raise ValueError("This identity is reserved for the formal save owner.")
+        snapshot = self.store.read()
+        selected_context = (_selected(snapshot, context, MathematicalContext)
+                            if context is not None else None)
+        previous = None
+        if supersedes is not None:
+            if "@" not in supersedes:
+                raise ValueError("Supersession requires an exact ID@FULL_SHA256.")
+            previous = _selected(snapshot, supersedes, ProjectItem)
+            if snapshot.head(previous.id).ref != previous.ref:
+                raise ValueError("Cannot supersede a stale target revision.")
+            if (previous.kind != ProjectItemKind.CLAIM
+                    or ("role", "semantic_target") not in previous.semantics):
+                raise ValueError("Supersession requires a semantic target.")
+        target = ProjectItem(id=identity, kind=ProjectItemKind.CLAIM, name=identity,
+                             origin="human_authored", statement=statement,
+                             context=selected_context.ref if selected_context else None,
+                             semantics=(("role", "semantic_target"),))
+        translation = ProjectItem(id=f"{identity}:formal", kind=ProjectItemKind.CLAIM,
+                                  name=f"{identity} proposed formal statement",
+                                  origin="human_authored", statement=formal, context=target.context,
+                                  semantics=(("role", "proposed_formalization"),))
+        scope = Scope(id=f"{identity}:scope", must_prove=(target.ref, translation.ref))
+        records = [target, translation, scope,
+                   Relation(id=f"{identity}:formalizes", kind=RelationKind.FORMALIZES,
+                            source=translation.ref, target=target.ref),
+                   Obligation(id=f"{identity}:translation-review", item=target.ref,
+                              kind=ObligationKind.FORMALIZE, scope=scope, context=target.context,
+                              reason="Proposed translation requires elaboration and correspondence review."),
+                   Obligation(id=f"{identity}:proof", item=translation.ref,
+                              kind=ObligationKind.PROVE, scope=scope, context=target.context,
+                              reason="The exact proposed formal statement has not been checked.")]
+        if previous is not None:
+            records.append(Relation(id=f"{identity}:supersedes", kind=RelationKind.SUPERSEDES,
+                                    source=target.ref, target=previous.ref))
+        if any(snapshot.head_or_none(record.id) is not None for record in records):
+            raise ValueError("Target or generated record identity already exists; use a new target ID.")
+        self.store.append(records, expected_revision=snapshot.revision, validate=LedgerPolicy().validate)
+        return target
 
     def mark(self, selector: str, visibility: str) -> ProjectItem:
         selected_visibility = PublicationVisibility(visibility)

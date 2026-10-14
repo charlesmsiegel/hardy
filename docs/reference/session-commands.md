@@ -14,7 +14,7 @@ This page names every `/` command the prompt inside `hardy chat` accepts, checke
 | `/goal` | `[text]` | States what this session is for, or prints the current goal. Shown beside every request to approve an assumption, so nobody approves an axiom with the assignment off-screen. |
 | `/assume` | `<paper-id> [ref ...]` | With no reference, lists a fetched paper's statements. Named references ask the model to assume exactly those statements, one call to `assume_statement` per statement, going through the same approval and independent read any lazily minted axiom does. The command itself mints nothing. |
 | `/import` | `[<dir>\|lean\|reference\|tex]` | Triages an existing pile of files, or promotes one into the project. See "/import" below. |
-| `/project` | `[list\|new\|switch\|publish\|link\|mark]` | Lists or opens the projects in this root, starts a new one, or assembles a local publication draft. See "/project" below. |
+| `/project` | `[list\|new\|switch\|target\|review\|bind\|inspect\|export\|publish\|link\|mark]` | Lists or opens the projects in this root, starts a new one, records and reviews semantic targets, or exports reports and publication drafts. See "/project" below. |
 | `/status` | `[--full]` | Shows the project, model and paths, and the spend breakdown, all read from the workspace's own files. `--full` adds the workspace summary. See "/status --full" below. |
 | `/prove` | `[claim]` | Stages one claim from statement to document, without leaving the session, exactly as [`hardy prove`](cli.md#hardy-prove) does on the command line: a formalization the user approves or revises, an independent faithfulness read of the frozen statement, a proof search, and an independent verifier before anything is graded. With no claim given, it asks for one. |
 | `/export` | `[path]` | Writes one shareable HTML account of this session: results carry their own stored verdicts, not whatever the conversation around them claimed, and credentials matching known shapes are stripped from everything but the Lean, so it still hashes to what was checked. |
@@ -47,6 +47,75 @@ A cell typed at `/cas` goes into the same log, under the same lock, as a cell th
 ### /project
 
 `/project`, or `/project list`, lists the problems in this root and marks the active one. `/project new <name>` starts a project; `/project switch <name>` opens one already there. Switching is a reopen, not a restart of the session: the process, the pinned Lake project and the Mathlib environment behind the search tools all survive it.
+
+`/project target ID "INFORMAL" --formal "LEAN" [--context CONTEXT] [--supersedes ID@FULL_SHA256]`
+records a semantic target and a proposed formal statement as separate ledger
+items. Both are required in a new scope with no admitted background; translation
+review and proof start open. The command records proposals, not elaboration,
+correspondence approval or a proof. `--context` selects an existing mathematical
+context by ID or exact reference; otherwise the target is standalone.
+
+A correction uses a new ID and the exact current target reference with
+`--supersedes`. It records a supersession edge while retaining the original
+items, scope and obligations. Evidence is not transferred. Duplicate or colliding
+IDs (including the formal owner's reserved `project` and `lean:` identities), stale supersession references, missing contexts and repeated options are
+refused without a ledger write. The session prints the target's exact reference.
+These commands also work in the browser composer through shared dispatch.
+
+`/project review TARGET@FULL_SHA256 FORMAL@FULL_SHA256 --verdict approved|disputed|unresolved --reviewer "NAME" --conditions "TEXT" --reason "TEXT"`
+records a human correspondence judgment in the durable evidence journal. Both
+references must identify the current linked target and formal proposal in one
+exact scope. The reviewer label is supplied by the operator; conditions record
+what the reviewer actually saw and did, not a claim of model isolation. A reason
+is required for every verdict. A newer judgment of the same proposal supersedes
+its earlier judgment without deleting it.
+
+The evidence reader authenticates an approval only while the exact statement,
+formal proposal and scope remain current and the journal still matches its
+recorded digest. Disputed and unresolved reviews establish nothing. Approval
+records correspondence only: elaboration and proof obligations remain open,
+and no kernel grade is granted. The journal survives restart alongside the
+ledger. Stale submissions and unrelated translation pairs are refused.
+
+`/project bind TARGET@FULL_SHA256 FORMAL@FULL_SHA256 --saved SAVED@FULL_SHA256`
+binds an exact current proposal pair to a declaration recorded by the actual
+checked-save owner. The saved statement must match the proposed statement,
+including hypotheses; a proof of a weaker or different statement is refused.
+The saved proof must have authenticated acceptance on standard kernel axioms,
+and its recorded source inputs and build signature must match the current
+workspace. This operation reuses the save's evidence; it is not another Lean
+run and does not manufacture correspondence from a declaration name.
+
+Binding closes the formal proposal's proof obligation through policy. If the
+latest exact correspondence judgment is approved, the checked save also
+supplies elaboration evidence to close the target's formalization obligation.
+Without that review, the formal proof can be recorded while correspondence
+remains unresolved. A later dispute withdraws correspondence without denying
+the formal proof. Source, imported-input, build-environment or saved-proof
+revision changes make affected binding acceptance stale; history remains.
+After a new checked save, bind its exact current version again.
+
+`/project inspect TARGET` prints the structured assessment report. It separates
+informal-target support, translation review and formal proof. Original supplied
+proofs, intermediate claims and repaired arguments remain explicitly unassessed
+when no such assessment was performed. Kernel axioms, context hypotheses,
+review conditions, binding references, coverage gaps and authenticated obligation
+state are reported from their owners, rather than inferred from conversation.
+A directory-only reader cannot revalidate the configured build environment and
+therefore cannot authenticate bound proof acceptance.
+
+`/project export TARGET --output NAME` freezes that same report in
+`reports/NAME.json` under the current problem. `NAME` must be a single safe child
+name; existing outputs are refused, including after restart. This exports an
+assessment snapshot with exact references, not a standalone Lean replay bundle
+or a claim that any supplied argument has been checked.
+
+The workbench's Ledger page provides equivalent target creation, side-by-side
+review, checked-save selection and report export controls. Browser mutations
+require the exact open project path, use the same session operations and refuse
+stale version submissions. Review starts unresolved; the operator records their
+name, actual conditions and reason. Current assessments and review history are
+loaded from durable records after refresh or project switching.
 
 `/project publish`, `/project link` and `/project mark` assemble and record a local publication draft from items already in the workspace. Their selector syntax, required options and what each verb refuses are documented once, in [Project publication commands](cli.md#project-publication-commands), rather than twice.
 

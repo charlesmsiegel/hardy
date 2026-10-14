@@ -696,6 +696,49 @@ committed with them. A result the kernel verified under an approved assumption
 stays an open obligation, because the ledger scope admits no assumption and
 widening it is a reader-authorized act the save path never performs.
 
+### Human correspondence review is versioned evidence, not a proof grade
+
+We chose to journal human translation judgments in the session's existing
+evidence owner, over treating a review command as a successful formalization.
+The record pins the semantic target, proposed formal statement, scope and
+context and preserves the operator's reviewer label, actual conditions, verdict
+and reason. Its reader authenticates only the latest approval of that exact
+pair while its versions remain current; a later dispute preserves the earlier
+record but withdraws its authority.
+
+The reviewer label is operator attribution in Hardy's local single-user trust
+boundary, not an independently authenticated human identity. A correspondence
+judgment supplies no elaboration or kernel proof. Its reader restricts its
+evidence to formalization work, so the same approval cannot establish a
+critique or another semantic obligation. Proposals create open work;
+corrections create distinct superseding targets with fresh scopes and no
+inherited evidence.
+
+During policy validation, the evidence reader uses the transaction's supplied
+snapshot instead of reacquiring the ledger lock. Direct inspection reads the
+current committed ledger through its normal owner.
+
+Cost: review and ledger histories are separate journals. Review submission does
+not resolve an obligation, and a record that becomes stale immediately after
+submission stays historical rather than approving the changed proposal.
+
+### Bind semantic proposals to the actual checked-save owner
+
+We chose an explicit exact-version binding, over matching a semantic target to
+a declaration's name. The binding pins the informal target, formal proposal,
+correspondence relation, scope, context, saved item, accepted saved-proof
+revision and the formal owner's evidence. Its reader checks the current
+statement, saved acceptance, source-input digests and build signature. The
+workspace supplies one source/signature snapshot so those values describe the
+same bytes. Standard-axiom proof evidence can discharge the formal proposal;
+the same checked declaration supplies elaboration to formalization work only
+alongside the exact approved correspondence judgment.
+
+Cost: a changed saved-proof revision requires rebinding. A reader with no live
+build environment cannot authenticate this binding, and says so. The exported
+report is a frozen assessment with exact references; it does not package a
+fresh independent Lean replay or establish an unassessed supplied argument.
+
 ### A callback result must be a boolean
 
 We chose to require boolean outcomes from the recheck and save callbacks, over

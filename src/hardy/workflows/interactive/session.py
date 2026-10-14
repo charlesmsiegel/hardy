@@ -567,7 +567,8 @@ class MathematicsSession:
         # ledger cannot accept anything without them.
         self.owners = ProjectOwners(workspace, audit=self._audit_tree, gates=SaveGates(
             final_gates=self._final_gates, missing_names=self._missing_registered_names,
-            head_sources=lambda: self.lean_workspace.sources()))
+            head_sources=lambda: self.lean_workspace.sources()),
+            build_snapshot=self._project_build_snapshot)
         self._save_streak = self.formal._save_streak
         # Streak key -> sha256 hex digests of sources that passed `check_lean`
         # on that path this turn. A green check on a path lifts the brake only
@@ -1009,6 +1010,18 @@ class MathematicsSession:
     def on_job_finished(self, callback: Callable[[], None] | None) -> None:
         self.jobs.on_finished = callback
 
+    def _project_build_snapshot(self):
+        """Read-only evidence check: an unadopted environment change authenticates nothing.
+
+        Browser readers can run while a turn owns the mutable workspace.
+        They must not rebind its environment or silently reuse its cached
+        shared-source identity. Commands refresh under the session gates.
+        """
+        if (self._discover_shared() != self.shared_roots or self._shared_digest() != self._shared_stamp
+                or _toolchain_identity(self._lean_command, self._lean_project) != self._toolchain):
+            return {}, {}
+        return self.lean_workspace.signature_snapshot()
+
     def _project_operations(self):
         """Named ledger operations; called while both session gates are held."""
         from hardy.workflows.interactive.project import ProjectOperations
@@ -1018,6 +1031,57 @@ class MathematicsSession:
         if any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive()):
             raise ValueError("A conversation turn or provider worker is still running.")
         return ProjectOperations(self.workspace, PublishWorkflow(self.latex).publish)
+
+    def project_target(self, identity: str, statement: str, *, formal: str,
+                       context: str | None = None, supersedes: str | None = None):
+        with self._conversation_gate, self._gate:
+            return self._project_operations().target(identity, statement, formal=formal,
+                                                      context=context, supersedes=supersedes)
+
+    def project_review(self, target: str, translation: str, *, verdict: str, reviewer: str,
+                       conditions: str, reason: str):
+        from hardy.workflows.ledger.contracts import VersionRef
+
+        def exact(selector: str) -> VersionRef:
+            if "@" not in selector:
+                raise ValueError("Review requires exact ID@FULL_SHA256 references.")
+            identity, digest = selector.rsplit("@", 1)
+            return VersionRef(id=identity, digest=digest)
+
+        with self._conversation_gate, self._gate:
+            self._project_operations()  # Refuse active provider work, as for other human edits.
+            return self.owners.review_translation(exact(target), exact(translation), verdict=verdict,
+                                                  reviewer=reviewer, conditions=conditions, reason=reason)
+
+    def project_inspect(self, target: str):
+        from hardy.workflows.interactive.semantic import target_report
+
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            self._refresh_shared_identity()
+            return target_report(self.workspace, target, owners=self.owners)
+
+    def project_export(self, target: str, *, output: str):
+        from hardy.workflows.interactive.semantic import export_target
+
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            self._refresh_shared_identity()
+            return export_target(self.workspace, target, output=output, owners=self.owners)
+
+    def project_bind(self, target: str, translation: str, *, saved: str):
+        from hardy.workflows.ledger.contracts import VersionRef
+
+        def exact(selector: str) -> VersionRef:
+            if "@" not in selector:
+                raise ValueError("Binding requires exact ID@FULL_SHA256 references.")
+            identity, digest = selector.rsplit("@", 1)
+            return VersionRef(id=identity, digest=digest)
+
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            self._refresh_shared_identity()
+            return self.owners.bind_saved(exact(target), exact(translation), exact(saved))
 
     def project_mark(self, item: str, visibility: str):
         with self._conversation_gate, self._gate:

@@ -52,6 +52,8 @@ class AuthenticatedEvidence:
     source_read means the exact source artifact was actually read; faithful
     means an authenticated semantic review agreed, not that Lean proved it.
     hypothesis is required for a proof discharging a citation's named premise.
+    obligation_kinds restricts a specialized reader to the work it actually
+    reviewed; None retains the category table for general capability readers.
     """
 
     reference: EvidenceRef
@@ -62,6 +64,7 @@ class AuthenticatedEvidence:
     citation: VersionRef | None = None
     used_assumptions: tuple[VersionRef, ...] = ()
     transport: tuple[VersionRef, ...] = ()
+    obligation_kinds: tuple[ObligationKind, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -153,9 +156,11 @@ class LedgerPolicy:
         self, *,
         read_evidence: Callable[[EvidenceRef], AuthenticatedEvidence | None] | None = None,
         read_decision: Callable[[ArtifactRef], AcceptanceDecision | None] | None = None,
+        read_evidence_at: Callable[[LedgerSnapshot, EvidenceRef], AuthenticatedEvidence | None] | None = None,
         read_scope_change: Callable[[Scope | None, Scope], ScopeChangeDecision | None] | None = None,
     ) -> None:
         self._read_evidence = read_evidence
+        self._read_evidence_at = read_evidence_at
         self._read_decision = read_decision
         self._read_scope_change = read_scope_change
         self.digest = _policy_digest()
@@ -272,7 +277,7 @@ class LedgerPolicy:
                     and obligation.status == ObligationStatus.RESOLVED and obligation.resolution
                     and self.is_accepted(snapshot, obligation.resolution)):
                 for reference in obligation.resolution.evidence:
-                    used.update(self._evidence(reference, obligation).used_assumptions)
+                    used.update(self._evidence(reference, obligation, snapshot=snapshot).used_assumptions)
         return tuple(sorted(used, key=lambda ref: (ref.id, ref.digest)))
 
     def _authorize_scope(self, old: Scope | None, new: Scope) -> None:
@@ -316,11 +321,13 @@ class LedgerPolicy:
             self._authorize_scope(history[index - 1] if index else None, value)
 
     def _evidence(self, reference: EvidenceRef, obligation: Obligation, *,
-                  hypothesis: str | None = None) -> AuthenticatedEvidence:
-        if self._read_evidence is None:
+                  hypothesis: str | None = None, snapshot: LedgerSnapshot | None = None) -> AuthenticatedEvidence:
+        if self._read_evidence is None and (self._read_evidence_at is None or snapshot is None):
             raise ValueError("capability evidence authentication is unavailable")
         try:
-            value = self._read_evidence(reference)
+            value = (self._read_evidence_at(snapshot, reference)
+                     if snapshot is not None and self._read_evidence_at is not None
+                     else self._read_evidence(reference))
         except Exception as error:
             raise ValueError("capability evidence reader failed") from error
         if not isinstance(value, AuthenticatedEvidence) or (
@@ -329,6 +336,8 @@ class LedgerPolicy:
             or value.outcome not in _OUTCOMES[reference.kind]
         ):
             raise ValueError("evidence does not authenticate exact subject, scope, context and outcome")
+        if value.obligation_kinds is not None and obligation.kind not in value.obligation_kinds:
+            raise ValueError("evidence does not authenticate this obligation category")
         if obligation.kind == ObligationKind.DISCHARGE_CITATION_HYPOTHESES and hypothesis is None:
             if not isinstance(value.hypothesis, str) or not value.hypothesis.strip():
                 raise ValueError("citation discharge evidence must name its hypothesis")
@@ -367,7 +376,7 @@ class LedgerPolicy:
                                       obligation.scope.ref, obligation.context, self.digest)
         if decision != expected:
             raise ValueError("acceptance decision does not match exact proposal and policy")
-        outcomes = {self._evidence(ref, obligation).outcome for ref in resolution.evidence}
+        outcomes = {self._evidence(ref, obligation, snapshot=snapshot).outcome for ref in resolution.evidence}
         # Generic acquisition can finish through a separately authenticated
         # typed proof/definition/interface, without inventing a paper citation.
         # The exact child remains authoritative on every later read.
@@ -531,7 +540,7 @@ class LedgerPolicy:
                 raise ValueError("transport justification belongs to a different source context")
         elif not isinstance(source, ProjectItem) or justification.item != source.ref:
             raise ValueError("transport justification belongs to a different source subject")
-        checked = [self._evidence(ref, justification) for ref in justification.resolution.evidence]
+        checked = [self._evidence(ref, justification, snapshot=snapshot) for ref in justification.resolution.evidence]
         outcomes = {value.outcome for value in checked if relation.ref in value.transport}
         if not _REQUIRED[ObligationKind.JUSTIFY_TRANSPORT].issubset(outcomes):
             raise ValueError("transport evidence does not authenticate exact endpoints and mappings")
@@ -543,7 +552,7 @@ class LedgerPolicy:
         if not citations:
             raise ValueError("citation acceptance requires an exact citation contract")
         for citation in citations:
-            checked = [self._evidence(ref, obligation) for ref in citation.evidence]
+            checked = [self._evidence(ref, obligation, snapshot=snapshot) for ref in citation.evidence]
             if any(value.citation != citation.ref for value in checked):
                 raise ValueError("citation evidence does not bind exact citation contract")
             if not any(value.outcome == "source_read" and value.reference.artifact == citation.source_statement
@@ -561,13 +570,13 @@ class LedgerPolicy:
                     if not isinstance(discharge, Obligation) or discharge.resolution is None or (
                         discharge.item != obligation.item or discharge.context != obligation.context
                     ) or not any(
-                        (checked := self._evidence(ref, discharge)).outcome == "kernel_proof"
+                        (checked := self._evidence(ref, discharge, snapshot=snapshot)).outcome == "kernel_proof"
                         and checked.hypothesis == hypothesis
                         for ref in discharge.resolution.evidence
                     ):
                         raise ValueError("citation discharge proves a different subject or hypothesis")
                 elif not mapping.evidence or not any(
-                    self._evidence(ref, obligation, hypothesis=hypothesis).outcome == "kernel_proof"
+                    self._evidence(ref, obligation, hypothesis=hypothesis, snapshot=snapshot).outcome == "kernel_proof"
                     for ref in mapping.evidence
                 ):
                     raise ValueError("citation hypothesis requires authenticated discharge")

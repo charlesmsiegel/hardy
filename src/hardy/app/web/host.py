@@ -693,6 +693,34 @@ class WebHost:
                 "they were not sent to the newly opened project.", style="error",
             )
 
+    def project_operation(self, request: dict[str, Any], *, expected_problem: Path) -> dict[str, Any]:
+        """Structured browser adapter to the same named operations as /project."""
+        operation = request.get("operation")
+        fields = {
+            "target": ({"identity", "statement", "formal"}, {"context", "supersedes"}),
+            "review": ({"target", "translation", "verdict", "reviewer", "conditions", "reason"}, set()),
+            "bind": ({"target", "translation", "saved"}, set()),
+            "export": ({"target", "output"}, set()),
+        }
+        if not isinstance(operation, str) or operation not in fields:
+            raise ValueError("Unknown project operation.")
+        required, optional = fields[operation]
+        options = {key: value for key, value in request.items() if key not in {"operation", "project"}}
+        if not required.issubset(options) or set(options) - required - optional:
+            raise ValueError("Project operation has missing or unexpected fields.")
+        if any(not isinstance(value, str) for value in options.values()):
+            raise ValueError("Project operation fields must be text.")
+        def go():
+            method = getattr(self.session, f"project_{operation}", None)
+            if method is None:
+                raise ValueError("This session does not provide the requested project operation.")
+            result = method(**options)
+            if operation == "export":
+                return {"ok": True, "record": str(result)}
+            return {"ok": True, "record": result.model_dump(mode="json"),
+                    "digest": getattr(result, "digest", None)}
+        return self.run_exclusive(go, expected_problem=expected_problem)
+
     def run_exclusive(self, fn: Callable[[], T], *, expected_problem: Path | None = None) -> T:
         """Run `fn` on the calling thread while the session is held as if a command ran.
 

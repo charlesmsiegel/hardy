@@ -162,3 +162,49 @@ async def test_plain_publication_resumes_at_its_direct_command_entry(settings, t
     state = State(config=settings, session=chat)
     await handlers.handle_project(ui, "publish Main --scope scope --output draft", state)
     assert observed == [False]
+
+
+async def test_target_command_records_proposal_without_acceptance(ui, settings, tmp_path):
+    from hardy.workflows.ledger.store import LedgerStore
+
+    chat = session(tmp_path, FakeChatRuntime([]))
+    state = State(config=settings, session=chat)
+    await handlers.handle_project(ui, 'target T "Every natural is nonnegative" --formal "theorem T (n : Nat) : n ≥ 0"', state)
+    snapshot = LedgerStore(tmp_path).read()
+    assert snapshot.head("T").statement == "Every natural is nonnegative"
+    assert snapshot.head("T:formal").statement == "theorem T (n : Nat) : n ≥ 0"
+    assert "Translation review and proof remain open" in ui.text
+    before = snapshot
+    await handlers.handle_project(ui, 'target Bad "True" --formal "True" --formal "False"', state)
+    assert LedgerStore(tmp_path).read() == before
+
+
+async def test_review_command_records_exact_human_judgment(ui, settings, tmp_path):
+    from hardy.workflows.interactive.evidence import TranslationReview
+    from hardy.workflows.ledger.store import LedgerStore
+
+    chat = session(tmp_path, FakeChatRuntime([]))
+    target = chat.project_target("T", "True", formal="theorem T : True")
+    formal = LedgerStore(tmp_path).read().head("T:formal")
+    state = State(config=settings, session=chat)
+    command = (f'review T@{target.digest} T:formal@{formal.digest} --verdict approved '
+               '--reviewer "human tester" --conditions "side by side" --reason "same claim"')
+    await handlers.handle_project(ui, command, state)
+    records = chat.owners.journal.read().of(TranslationReview)
+    assert len(records) == 1
+    assert records[0].reviewer == "human tester"
+    assert records[0].verdict == "approved"
+    assert "formal verification remains separate" in ui.text
+
+
+async def test_bind_and_inspect_commands_use_checked_save(ui, settings, tmp_path):
+    from test_project_binding import setup_pair
+
+    chat, target, formal, saved = setup_pair(tmp_path)
+    state = State(config=settings, session=chat)
+    command = f'bind {target.id}@{target.digest} {formal.id}@{formal.digest} --saved {saved.id}@{saved.digest}'
+    await handlers.handle_project(ui, command, state)
+    assert 'Checked-save binding:' in ui.text
+    await handlers.handle_project(ui, 'inspect Target', state)
+    assert 'supported_by_reviewed_formal_proof' in ui.text
+    assert 'original_proof' in ui.text and 'unassessed' in ui.text

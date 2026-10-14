@@ -234,7 +234,7 @@ def _item_summary(item: ProjectItem) -> dict[str, Any]:
     }
 
 
-def ledger_item(problem: Path, item_id: str) -> dict[str, Any]:
+def ledger_item(problem: Path, item_id: str, *, owners=None) -> dict[str, Any]:
     """One ledger item's head, plus every version history has ever held of it.
 
     `LedgerSnapshot`'s own promise (`state.py:2-3`) is that advancing a
@@ -282,7 +282,13 @@ def ledger_item(problem: Path, item_id: str) -> dict[str, Any]:
                 "reason": obligation.reason,
             })
 
+    semantic = None
+    if ("role", "semantic_target") in head.semantics:
+        from hardy.workflows.interactive.semantic import target_report
+
+        semantic = target_report(problem, item_id, owners=owners)
     return {
+        "semantic": semantic,
         **_item_summary(head),
         "version": len(history),
         "versions": versions,

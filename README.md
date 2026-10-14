@@ -5,21 +5,79 @@
 [![CAS backends](https://github.com/charlesmsiegel/hardy/actions/workflows/cas-backends.yml/badge.svg)](https://github.com/charlesmsiegel/hardy/actions/workflows/cas-backends.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Hardy is a harness for theorem proving in Lean 4. It puts a language model in a
-tight loop with the Lean kernel, gives the model proof tools, and keeps
-verification and reporting under the harness's control. The model proposes;
-Lean verifies; Hardy keeps an account of what actually succeeded and refuses to
-let anything claim more than its artifacts support.
+Hardy is an application for mathematical research, development, proof repair
+and paper auditing, built around Lean 4 and a durable mathematical project.
+Its intended workflow connects informal targets, definitions, representations,
+prerequisites and supplied arguments to the evidence that supports them.
+Versioned statements and contexts preserve what was actually asked; obligations
+keep missing work visible; authenticated evidence separates a checked proof
+from a translation judgment, an admitted premise or a compiled document.
+
+The supported entry points are the browser workbench, interactive session and
+staged single-theorem prover. Research, Explore, Repair and Referee also have
+workflow implementations; their presence in the package does not mean that
+these high-level workflows are constructed by the application. See the
+[roadmap](docs/roadmap.md) for application integration and remaining work.
 
 The name recalls G. H. Hardy's response to Ramanujan: recognize the insight,
 then demand the proof.
 
-## What it looks like
+## Work on a mathematical project
+
+Start the browser workbench with:
+
+```sh
+hardy web
+```
+
+Open or create a project through its registry. The workbench provides project
+files, a ledger graph, results and publication views. Its composer shares the
+session command path. Record a small semantic target there, or in `hardy chat`:
+
+```text
+/project target Nonnegative "Every natural number is nonnegative" --formal "lemma nonnegative (n : Nat) : 0 ≤ n"
+```
+
+This records two exact statements and an empty-premise scope, with open
+translation-review and proof obligations. In Ledger, read the statements side
+by side and record an approved, disputed or unresolved correspondence judgment,
+with the reviewer, actual conditions and reason. Save the exact Lean statement
+and proof through Files, then choose its checked result under **Bind checked
+save**. The command equivalents are `/project review`, `/project bind` and
+`/project inspect`; [session commands](docs/reference/session-commands.md) gives
+the exact-version syntax. `/project export` and the Ledger export control save
+an assessment snapshot with its evidence references and unresolved work.
+
+<details>
+<summary>Controlled review in the workbench</summary>
+
+![Ledger review card with separate statement, translation, formal-proof and supplied-argument assessments](docs/images/semantic-target.png)
+
+Controlled engineering example: Lean checked `True`; correspondence was a
+synthetic test judgment, and no provider model was invoked. Original and repaired
+arguments remain unassessed.
+
+</details>
+
+The report keeps correspondence, kernel proof and informal-target support
+separate. A checked Lean proof establishes its formal statement; linking it to
+the intended mathematics still needs correspondence review, exact hypotheses
+and assumption provenance. Proving a theorem by another argument also leaves
+the supplied proof to assess. Original arguments, intermediate claims and
+repairs are explicitly unassessed until that work is performed.
+
+The records survive restart. Correct a target under a new ID with
+`--supersedes ID@FULL_SHA256`; earlier versions and their evidence remain
+addressable. Changes to proof inputs or the configured build invalidate bound
+acceptance until fresh checked evidence is bound. High-level workflow
+integration and argument assessment remain in [the roadmap](docs/roadmap.md).
+
+## Prove one theorem
 
 <!-- A screenshot of the interactive session goes here once one is supplied:
      ![A Hardy session](docs/images/session.png) -->
 
-A staged proof, from a claim in ordinary language to a kernel-checked Lean
+A recorded staged proof, from a claim in ordinary language to a kernel-checked Lean
 file and a compiled writeup:
 
 ```sh
@@ -29,7 +87,7 @@ hardy prove "The real number sqrt(2) + sqrt(3) is irrational."
 Hardy freezes a formalization of the claim under a hash, has an independent
 reader confirm that the Lean statement and the English claim entail each
 other, and only then lets the model search for a proof. The recorded run
-under `acceptance/recorded/prove-verified/` ends with this Lean file:
+under `acceptance/recorded/prove-verified/` contains this Lean file (excerpt; omitted proof steps are shown as `...`):
 
 ```lean
 import Mathlib
@@ -161,12 +219,14 @@ Start with [getting started](docs/getting-started.md), then the guides to
 [evaluation](docs/guides/evaluation.md). Every command and flag is in
 [the command reference](docs/reference/cli.md).
 
-## Status
+## Current scope
 
 The interactive session, the staged prove workflow, batch runs, and the
 evaluation harness all work against a real Mathlib installation, and four
 recorded acceptance runs are rechecked without a model in CI. The corpus
 holds twenty classified statements, five of them deliberately false twins.
+The Schottky counting, Riemann–Roch and EGH trials remain planned mathematical
+acceptance work; engineering checks do not establish their conclusions.
 There are no benchmark numbers: no controlled measurement of what the harness
 contributes over a bare model has been run yet, and the pages here describe
 mechanism rather than performance. Execution is not confined. Planned work

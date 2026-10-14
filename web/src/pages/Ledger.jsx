@@ -119,6 +119,7 @@ import Table from '../components/Table.jsx';
 import useHash from '../session/useHash.js';
 import usePanel from '../session/usePanel.js';
 import useSession from '../session/useSession.js';
+import {NewTarget, TargetReview} from '../workbench/SemanticTarget.jsx';
 
 const VIEW_W = 760;
 const VIEW_H = 420;
@@ -451,8 +452,8 @@ function ExportCard({id, revision}) {
  *  one navigates here (a row pick, a node click, a `§ record says` link)
  *  lands on the same `arg`-driven pane. `key={id}` on the caller resets
  *  `viewVersion` when a different item is opened. */
-function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph}) {
-  const itemPanel = usePanel(`/api/ledger/item?id=${encodeURIComponent(id)}`, revision);
+function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph, project, disabled}) {
+  const itemPanel = usePanel(`/api/ledger/item?id=${encodeURIComponent(id)}&project=${encodeURIComponent(project)}`, revision);
   //: Which version's own fields (kind/name/statement/origin/evidence/
   //: artifacts/research) are previewed above -- `null` means the head.
   //: Obligations and relations never move with this: `ledger_item`'s own
@@ -635,6 +636,10 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph}) {
         </div>
       </div>
 
+      {head.semantic && !historical ? <TargetReview
+        key={`${project}:${head.semantic.target.digest}:${head.semantic.formal.digest}`}
+        project={project} report={head.semantic} disabled={disabled} onDone={itemPanel.reload}
+      /> : null}
       <ExportCard id={id} revision={revision} />
 
       <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
@@ -660,7 +665,9 @@ function ItemDetail({id, revision, nodeName, go, setDraft, onShowInGraph}) {
 }
 
 export default function Ledger({arg}) {
-  const {revision, setDraft} = useSession();
+  const {revision, setDraft, status} = useSession();
+  const project = status.path;
+  const disabled = status.turn_running || status.command_running;
   const [, go] = useHash();
   const ledgerPanel = usePanel('/api/ledger', revision);
   const graphPanel = usePanel('/api/graph', revision);
@@ -684,6 +691,7 @@ export default function Ledger({arg}) {
           <span className="page-title">Ledger</span>
           <span className="wb-page-subtitle">fresh project · nothing recorded</span>
         </div>
+        <NewTarget key={project} project={project} disabled={disabled} onDone={ledgerPanel.reload}/>
         <Empty
           title="Ledger is empty"
           line="0 items · 0 relations · revision 0. Items appear when a theorem is saved, an assumption approved, or a research note recorded."
@@ -731,6 +739,7 @@ export default function Ledger({arg}) {
         </span>
       </div>
 
+      <NewTarget key={project} project={project} disabled={disabled} onDone={ledgerPanel.reload}/>
       <div className="wb-ledger__toggle">
         <button
           type="button"
@@ -967,8 +976,10 @@ export default function Ledger({arg}) {
         <div className="wb-ledger__right">
           {arg ? (
             <ItemDetail
-              key={arg}
+              key={`${project}:${arg}`}
               id={arg}
+              project={project}
+              disabled={disabled}
               revision={revision}
               nodeName={nodeName}
               go={go}

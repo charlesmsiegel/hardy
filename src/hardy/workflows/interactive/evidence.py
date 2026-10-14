@@ -1,4 +1,4 @@
-"""The session's capability owners: formal evidence, its readers, and acceptance decisions.
+"""The session's formal evidence, human translation reviews and acceptance decisions.
 
 The ledger policy authenticates nothing itself. It asks readers, and an
 application that installs none cannot accept a resolution -- which is the
@@ -6,7 +6,7 @@ policy's own stance, and was the shipped application's state until #171: a
 theorem saved in a session had a kernel record and no ledger record, and the
 admission bridge for a worker's proof was reachable only from tests.
 
-This module is what the running session installs. It owns two things.
+This module is what the running session installs. It owns the following records.
 
 The **formal owner's durable record** is a journal at `<problem>/evidence/`
 in the same shape as `sources/` and the library journals: numbered,
@@ -18,6 +18,14 @@ the reference names exactly the subject, scope and context the record was
 minted for. A record that is missing, moved, or edited authenticates nothing.
 Nothing here trusts the caller's copy of a record.
 
+The **translation review journal** records an operator-attributed human
+judgment against an exact semantic target, proposed formal statement, scope
+and context, with the review conditions and reason. Its reader authenticates
+only the latest approval of that pair while those versions remain current.
+This authenticates the local owner's record, not the operator's claimed
+identity or the mathematical correctness of the judgment. A review is not
+elaboration or a kernel proof and cannot by itself resolve formalization.
+
 The **recording of saved results** is the save path's ledger half. After a
 save commits and its audit publishes, every public `theorem` and `lemma` the
 audit graded gets a project item named by its qualified Lean name and a
@@ -28,12 +36,12 @@ ledger's scope does not admit, leaves the obligation open with the reason
 named -- the kernel lane and the record lane then say different things about
 the same declaration, which is what the two lanes are for.
 
-Correspondence between a ledger item and a Lean declaration is not something
-the schema binds. A saved result is recorded under its qualified declaration
-name, and that is the whole of the link (`app/web/panels/record.py:_match_claim`
-reads it the same way); a worker's candidate is verified only when its name or
-its exact Lean statement picks out one audited declaration, and a change set
-whose declarations it does not pick out is refused rather than credited.
+Saved declarations retain their own ledger identities. An explicit
+`CheckedBinding` pins the exact semantic proposal pair, scope, context,
+saved-proof revision and audit evidence. Its reader revalidates source inputs
+and the current build environment before policy can use it. A worker's
+candidate still matches one audited declaration by name and exact statement;
+a change set that matches none is refused rather than credited.
 """
 from __future__ import annotations
 
@@ -44,6 +52,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
+from uuid import uuid4
 
 from hardy.formal import audit
 from hardy.formal.syntax import (
@@ -70,6 +79,8 @@ from hardy.workflows.ledger.contracts import (
     ProjectItem,
     ProjectItemKind,
     ProjectOrigin,
+    Relation,
+    RelationKind,
     Resolution,
     Scope,
     VersionRef,
@@ -181,7 +192,41 @@ class Decision(FrozenModel):
     recorded_at: str
 
 
-_TYPES = {"FormalEvidence": FormalEvidence, "Decision": Decision}
+class TranslationReview(FrozenModel):
+    """An attributed correspondence judgment; approval is never a kernel proof."""
+
+    id: str
+    subject: VersionRef
+    translation: VersionRef
+    relation: VersionRef
+    scope: VersionRef
+    context: VersionRef | None
+    verdict: Literal["approved", "disputed", "unresolved"]
+    reviewer: str
+    conditions: str
+    reason: str
+    recorded_at: str
+
+
+class CheckedBinding(FrozenModel):
+    """Explicit correspondence to the formal owner's exact saved proof, not a new kernel run."""
+
+    id: str
+    target: VersionRef
+    translation: VersionRef
+    relation: VersionRef
+    scope: VersionRef
+    context: VersionRef | None
+    saved: VersionRef
+    saved_proof: VersionRef
+    evidence: EvidenceRef
+    recorded_at: str
+
+
+BINDING_URI = "hardy-checked-binding:"
+REVIEW_URI = "hardy-translation-review:"
+_TYPES = {"FormalEvidence": FormalEvidence, "Decision": Decision, "TranslationReview": TranslationReview,
+          "CheckedBinding": CheckedBinding}
 
 
 def item_id(name: str) -> str:
@@ -239,12 +284,15 @@ def _corresponding(name: str | None, statement: str | None,
 class ProjectOwners:
     """The capability owners a session installs; nothing is minted or accepted without them."""
 
-    def __init__(self, problem: Path, *, audit: Audit, gates: SaveGates) -> None:
+    def __init__(self, problem: Path, *, audit: Audit, gates: SaveGates,
+                 build_snapshot: Callable[[], tuple[dict[str, str], dict[str, str]]] | None = None) -> None:
         self.problem = Path(problem)
         self.journal = Journal(self.problem / EVIDENCE_DIR, types=_TYPES)
         self._audit = audit
         self._gates = gates
-        self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision)
+        self._build_snapshot = build_snapshot
+        self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision,
+                                   read_evidence_at=self.read_evidence_at)
 
     @classmethod
     def reading(cls, problem: Path) -> ProjectOwners:
@@ -262,6 +310,173 @@ class ProjectOwners:
     def admission(self) -> AdmissionOwners:
         """What `AuthoritativeAdmission` speaks to."""
         return AdmissionOwners(verify=self.verify, policy=self.policy, decide=self.decide)
+
+    @staticmethod
+    def _proposal_pair(snapshot: LedgerSnapshot, subject: VersionRef, translation: VersionRef):
+        target, formal = snapshot.get(subject), snapshot.get(translation)
+        if not (isinstance(target, ProjectItem) and isinstance(formal, ProjectItem)
+                and ("role", "semantic_target") in target.semantics
+                and ("role", "proposed_formalization") in formal.semantics):
+            raise ValueError("Review requires a semantic target and its proposed formalization.")
+        if any(snapshot.head(ref.id).ref != ref for ref in (subject, translation)):
+            raise ValueError("Cannot review stale statement versions.")
+        links = [edge for edge in snapshot.current(Relation)
+                 if edge.kind == RelationKind.FORMALIZES and edge.source == translation and edge.target == subject]
+        if len(links) != 1:
+            raise ValueError("The proposed formalization does not belong to this target through one exact link.")
+        scopes = [scope for scope in snapshot.current(Scope)
+                  if subject in scope.must_prove and translation in scope.must_prove]
+        if len(scopes) != 1 or target.context != formal.context:
+            raise ValueError("Review requires one exact shared scope and context.")
+        return target, formal, links[0], scopes[0]
+
+    def review_translation(self, subject: VersionRef, translation: VersionRef, *,
+                           verdict: str, reviewer: str, conditions: str, reason: str) -> TranslationReview:
+        """Record a human review of the exact current proposal through application operations."""
+        snapshot = LedgerStore(self.problem).read()
+        target, formal, link, scope = self._proposal_pair(snapshot, subject, translation)
+        if not all(isinstance(value, str) and value.strip() for value in (reviewer, conditions, reason)):
+            raise ValueError("Review requires a reviewer, actual conditions and a reason.")
+        record = TranslationReview(id=f"translation-review:{uuid4().hex}", subject=subject,
+                                   translation=translation, relation=link.ref, scope=scope.ref, context=target.context,
+                                   verdict=verdict, reviewer=reviewer, conditions=conditions,
+                                   reason=reason, recorded_at=_stamp())
+        self._append(record)
+        return record
+
+    def review_reference(self, record: TranslationReview) -> EvidenceRef:
+        return EvidenceRef(kind=EvidenceKind.FAITHFULNESS, subject=record.subject, producer=PRODUCER,
+                           artifact=ArtifactRef(uri=REVIEW_URI + record.id, digest=record_digest(record)))
+
+    def _read_review(self, reference: EvidenceRef, *,
+                     snapshot: LedgerSnapshot | None = None) -> AuthenticatedEvidence | None:
+        if reference.kind != EvidenceKind.FAITHFULNESS or reference.producer != PRODUCER:
+            return None
+        record = self._find(TranslationReview, REVIEW_URI, reference.artifact)
+        if record is None or record.subject != reference.subject or record.verdict != "approved":
+            return None
+        try:
+            if snapshot is None:
+                snapshot = LedgerStore(self.problem).read()
+            if any(snapshot.head(ref.id).ref != ref
+                   for ref in (record.subject, record.translation, record.relation, record.scope)):
+                return None
+            # The latest judgment supersedes earlier approval of the same exact proposal.
+            reviews = self.journal.read().of(TranslationReview)
+            latest = [review for review in reviews if review.subject == record.subject
+                      and review.translation == record.translation and review.scope == record.scope]
+            if not latest or latest[-1] != record:
+                return None
+        except (ValueError, JournalError, OSError, LockTimeout):
+            return None
+        return AuthenticatedEvidence(reference, record.scope, record.context, "faithful",
+                                     obligation_kinds=(ObligationKind.FORMALIZE,))
+
+    def binding_reference(self, binding: CheckedBinding, *, elaboration: bool = False) -> EvidenceRef:
+        return EvidenceRef(kind=EvidenceKind.FORMAL,
+                           subject=binding.target if elaboration else binding.translation, producer=PRODUCER,
+                           artifact=ArtifactRef(uri=BINDING_URI + binding.id, digest=record_digest(binding),
+                                                locator="elaboration" if elaboration else "proof"))
+
+    def _read_binding(self, reference: EvidenceRef, *,
+                      snapshot: LedgerSnapshot | None = None) -> AuthenticatedEvidence | None:
+        if reference.kind != EvidenceKind.FORMAL or reference.producer != PRODUCER:
+            return None
+        binding = self._find(CheckedBinding, BINDING_URI, reference.artifact)
+        if binding is None or reference.artifact.locator not in {"proof", "elaboration"}:
+            return None
+        elaboration = reference.artifact.locator == "elaboration"
+        if reference.subject != (binding.target if elaboration else binding.translation):
+            return None
+        try:
+            if snapshot is None:
+                snapshot = LedgerStore(self.problem).read()
+            target, formal, link, scope = self._proposal_pair(snapshot, binding.target, binding.translation)
+            if (link.ref != binding.relation or scope.ref != binding.scope or target.context != binding.context
+                    or any(snapshot.head(ref.id).ref != ref for ref in (binding.saved, binding.saved_proof))):
+                return None
+            saved = snapshot.get(binding.saved)
+            proof = snapshot.get(binding.saved_proof)
+            if (not isinstance(saved, ProjectItem) or saved.context != binding.context
+                    or not isinstance(proof, Obligation) or proof.item != saved.ref
+                    or proof.kind != ObligationKind.PROVE or proof.status != ObligationStatus.RESOLVED
+                    or proof.resolution is None or binding.evidence not in proof.resolution.evidence
+                    or not self.policy.is_accepted(snapshot, proof.resolution)):
+                return None
+            checked = self.formal_record(binding.evidence)
+            if (checked is None or checked.subject != saved.ref
+                    or normalise_lean(checked.statement) != normalise_lean(formal.statement or "")
+                    or not set(checked.axioms).issubset(audit.STANDARD) or self._build_snapshot is None):
+                return None
+            sources, signatures = self._build_snapshot()
+            if (checked.inputs != source_inputs(checked.module, sources)
+                    or signatures.get(checked.module) != checked.signature):
+                return None
+        except (ValueError, JournalError, OSError, LockTimeout, ImportCycle):
+            return None
+        return AuthenticatedEvidence(reference, binding.scope, binding.context,
+                                     "elaborated" if elaboration else "kernel_proof",
+                                     obligation_kinds=(ObligationKind.FORMALIZE if elaboration else ObligationKind.PROVE,))
+
+    def bind_saved(self, target: VersionRef, translation: VersionRef, saved: VersionRef) -> CheckedBinding:
+        """Connect one exact proposed statement to an already checked save through existing policy."""
+        store = LedgerStore(self.problem)
+        snapshot = store.read()
+        subject, formal, link, scope = self._proposal_pair(snapshot, target, translation)
+        result = snapshot.get(saved)
+        if (not isinstance(result, ProjectItem) or result.id != item_id(result.name)
+                or snapshot.head(result.id).ref != saved or result.context != subject.context):
+            raise ValueError("Binding requires the current exact saved declaration in the same context.")
+        if normalise_lean(result.statement or "") != normalise_lean(formal.statement or ""):
+            raise ValueError("The saved statement differs from the exact proposed formal statement.")
+        candidates = [work for work in snapshot.current(Obligation) if work.item == saved
+                      and work.kind == ObligationKind.PROVE and work.status == ObligationStatus.RESOLVED
+                      and work.resolution is not None and self.policy.is_accepted(snapshot, work.resolution)]
+        if len(candidates) != 1:
+            raise ValueError("The saved declaration has no unique authenticated checked proof.")
+        proof = candidates[0]
+        references = [ref for ref in proof.resolution.evidence if self.formal_record(ref) is not None]
+        if len(references) != 1:
+            raise ValueError("The checked save has no unique formal evidence record.")
+        binding = CheckedBinding(id=f"checked-binding:{uuid4().hex}", target=target, translation=translation,
+                                 relation=link.ref, scope=scope.ref, context=subject.context, saved=saved,
+                                 saved_proof=proof.ref, evidence=references[0], recorded_at=_stamp())
+        # Validate against the current tree before making the record durable.
+        checked = self.formal_record(binding.evidence)
+        sources, signatures = self._build_snapshot() if self._build_snapshot is not None else ({}, {})
+        if (self._build_snapshot is None or checked is None or not checked.inputs
+                or not set(checked.axioms).issubset(audit.STANDARD)
+                or checked.inputs != source_inputs(checked.module, sources)
+                or signatures.get(checked.module) != checked.signature):
+            raise ValueError("Checked-save evidence is stale or its build environment cannot be revalidated.")
+        self._append(binding)
+        proof_ref = self.binding_reference(binding)
+        self._resolve_bound(store, snapshot, translation, ObligationKind.PROVE, (proof_ref,))
+        snapshot = store.read()
+        reviews = self.journal.read().of(TranslationReview)
+        faithful = [self.review_reference(review) for review in reviews
+                    if review.subject == target and review.translation == translation]
+        faithful = [ref for ref in faithful if self._read_review(ref, snapshot=snapshot) is not None]
+        if faithful:
+            self._resolve_bound(store, snapshot, target, ObligationKind.FORMALIZE,
+                                (self.binding_reference(binding, elaboration=True), faithful[-1]))
+        return binding
+
+    def _resolve_bound(self, store: LedgerStore, snapshot: LedgerSnapshot, subject: VersionRef,
+                       kind: ObligationKind, evidence: tuple[EvidenceRef, ...]) -> None:
+        candidates = [work for work in snapshot.current(Obligation) if work.item == subject and work.kind == kind]
+        if len(candidates) != 1:
+            raise ValueError("Binding requires one exact application obligation.")
+        work = candidates[0]
+        proposal = Resolution(id=f"{work.id}:resolution:{uuid4().hex}", obligation=work.ref, item=subject,
+                              evidence=evidence, explanation="Explicit binding to an authenticated checked save.")
+        receipt = self.decide(snapshot, proposal)
+        if receipt is None:
+            raise ValueError("Binding acceptance decision unavailable.")
+        accepted = self.policy.accept(snapshot, proposal, receipt)
+        closed = Obligation.model_validate({**work.model_dump(), "previous": work.ref,
+                                           "status": "resolved", "resolution": accepted, "reason": None})
+        store.append((closed,), expected_revision=snapshot.revision, validate=self.policy.validate)
 
     # -- the formal owner ----------------------------------------------------------------
 
@@ -376,8 +591,20 @@ class ProjectOwners:
             return None
         return record
 
+    def read_evidence_at(self, snapshot: LedgerSnapshot, reference: EvidenceRef) -> AuthenticatedEvidence | None:
+        """Authenticate against the policy's locked snapshot without reacquiring its ledger lock."""
+        if reference.kind == EvidenceKind.FAITHFULNESS:
+            return self._read_review(reference, snapshot=snapshot)
+        if reference.artifact.uri.startswith(BINDING_URI):
+            return self._read_binding(reference, snapshot=snapshot)
+        return self.read_evidence(reference)
+
     def read_evidence(self, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """What the owner's record behind a reference established, if it still reads and rests on nothing forbidden."""
+        if reference.kind == EvidenceKind.FAITHFULNESS:
+            return self._read_review(reference)
+        if reference.artifact.uri.startswith(BINDING_URI):
+            return self._read_binding(reference)
         record = self.formal_record(reference)
         if record is None or any(axiom in audit.FORBIDDEN for axiom in record.axioms):
             return None
@@ -407,7 +634,7 @@ class ProjectOwners:
 
     # -- the journal ----------------------------------------------------------------------
 
-    def _append(self, record: FormalEvidence | Decision) -> None:
+    def _append(self, record: FormalEvidence | Decision | TranslationReview | CheckedBinding) -> None:
         for _attempt in range(5):
             try:
                 self.journal.append((record,), expected_revision=self.journal.read().revision)

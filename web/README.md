@@ -75,3 +75,15 @@ references loads, opens the event stream, sends `hello`, waits for the reply
 event, and then drives the registry routes: opens the second project by
 path, closes, checks the one-sentence `409` with nothing open, and reopens
 the first. It prints `smoke ok`.
+
+
+## Semantic target review
+
+Ledger's target and review controls call the structured `/api/project` adapter,
+which requires the loaded project path and dispatches to the same session
+operations as `/project`. Reviews and bindings pin full record digests. A stale
+response never changes the displayed verdict optimistically; the control
+refreshes the report read model. Keep the statement, translation, formal-proof
+and original/repaired-argument fields separate. `SemanticTarget.test.mjs` covers
+statement preservation and stale-review error states alongside the editor and
+Markdown regressions in `npm test`.
