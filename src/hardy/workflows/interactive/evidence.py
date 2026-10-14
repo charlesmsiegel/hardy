@@ -220,6 +220,13 @@ class TranslationReview(FrozenModel):
     conditions: str
     reason: str
     recorded_at: str
+    inputs: tuple[VersionRef, ...] = ()
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        data = super().model_dump(**kwargs)
+        if not self.inputs:
+            data.pop("inputs", None)
+        return data
 
 
 class CheckedBinding(FrozenModel):
@@ -235,6 +242,13 @@ class CheckedBinding(FrozenModel):
     saved_proof: VersionRef
     evidence: EvidenceRef
     recorded_at: str
+    inputs: tuple[VersionRef, ...] = ()
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        data = super().model_dump(**kwargs)
+        if not self.inputs:
+            data.pop("inputs", None)
+        return data
 
 
 BINDING_URI = "hardy-checked-binding:"
@@ -345,9 +359,10 @@ class ProjectOwners:
             raise ValueError("The proposed formalization does not belong to this target through one exact link.")
         scopes = [scope for scope in snapshot.current(Scope)
                   if subject in scope.must_prove and translation in scope.must_prove]
-        if len(scopes) != 1 or target.context != formal.context:
+        owned_scope = next((scope for scope in scopes if scope.id == f"{target.id}:scope"), None)
+        if target.context != formal.context or (owned_scope is None and len(scopes) != 1):
             raise ValueError("Review requires one exact shared scope and context.")
-        return target, formal, links[0], scopes[0]
+        return target, formal, links[0], owned_scope or scopes[0]
 
     def review_translation(self, subject: VersionRef, translation: VersionRef, *,
                            verdict: str, reviewer: str, conditions: str, reason: str) -> TranslationReview:
@@ -359,7 +374,9 @@ class ProjectOwners:
         record = TranslationReview(id=f"translation-review:{uuid4().hex}", subject=subject,
                                    translation=translation, relation=link.ref, scope=scope.ref, context=target.context,
                                    verdict=verdict, reviewer=reviewer, conditions=conditions,
-                                   reason=reason, recorded_at=_stamp())
+                                   reason=reason, recorded_at=_stamp(),
+                                   inputs=relevant_versions(self.problem, snapshot, subject,
+                                       (translation, link.ref, scope.ref)))
         self._append(record)
         return record
 
@@ -380,7 +397,16 @@ class ProjectOwners:
             if any(snapshot.head(ref.id).ref != ref
                    for ref in (record.subject, record.translation, record.relation, record.scope)):
                 return None
-            relevant_versions(self.problem, snapshot, record.subject, (record.translation, record.scope))
+            inputs = relevant_versions(self.problem, snapshot, record.subject,
+                                       (record.translation, record.relation, record.scope))
+            if record.inputs:
+                if inputs != record.inputs:
+                    return None
+            elif set(inputs) != {record.subject, record.translation, record.relation, record.scope}:
+                # Legacy receipts preserve their bytes and retain the original
+                # empty-context/empty-dependency slice only. They cannot acquire
+                # authority for semantic inputs absent from their record.
+                return None
             # The latest judgment supersedes earlier approval of the same exact proposal.
             reviews = self.journal.read().of(TranslationReview)
             latest = [review for review in reviews if review.subject == record.subject
@@ -412,7 +438,14 @@ class ProjectOwners:
             if snapshot is None:
                 snapshot = LedgerStore(self.problem).read()
             target, formal, link, scope = self._proposal_pair(snapshot, binding.target, binding.translation)
-            relevant_versions(self.problem, snapshot, target.ref, (formal.ref,))
+            inputs = relevant_versions(self.problem, snapshot, target.ref,
+                (formal.ref, link.ref, scope.ref, binding.saved, binding.saved_proof))
+            if binding.inputs:
+                if inputs != binding.inputs:
+                    return None
+            elif set(inputs) != {binding.target, binding.translation, binding.relation,
+                                 binding.scope, binding.saved, binding.saved_proof}:
+                return None
             if (link.ref != binding.relation or scope.ref != binding.scope or target.context != binding.context
                     or any(snapshot.head(ref.id).ref != ref for ref in (binding.saved, binding.saved_proof))):
                 return None
@@ -461,7 +494,9 @@ class ProjectOwners:
             raise ValueError("The checked save has no unique formal evidence record.")
         binding = CheckedBinding(id=f"checked-binding:{uuid4().hex}", target=target, translation=translation,
                                  relation=link.ref, scope=scope.ref, context=subject.context, saved=saved,
-                                 saved_proof=proof.ref, evidence=references[0], recorded_at=_stamp())
+                                 saved_proof=proof.ref, evidence=references[0], recorded_at=_stamp(),
+                                 inputs=relevant_versions(self.problem, snapshot, target,
+                                     (translation, link.ref, scope.ref, saved, proof.ref)))
         # Validate against the current tree before making the record durable.
         checked = self.formal_record(binding.evidence)
         sources, signatures = self._build_snapshot() if self._build_snapshot is not None else ({}, {})

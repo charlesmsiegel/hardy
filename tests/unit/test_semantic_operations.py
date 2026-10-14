@@ -7,6 +7,7 @@ from hardy.workflows.interactive.semantic_operations import SemanticOperations
 from hardy.workflows.interactive.semantic_records import (
     ArgumentRequest,
     AssessmentRequest,
+    CitationReviewUse,
     ItemRequest,
     JudgmentRequest,
     SourceRegion,
@@ -200,7 +201,9 @@ def test_citation_receipts_bind_after_contract_without_cyclic_digests(tmp_path):
     common = dict(subject=item.ref, scope=scope.ref, verdict='approved', reviewer='citation reader',
                   conditions='read exact statement and applicability', reason='Source supports this use', sources=(region,))
     reading = ops.judge(JudgmentRequest(purpose='source_read', **common))
-    faithful = ops.judge(JudgmentRequest(purpose='citation', **common))
+    proposal_use = CitationReviewUse(id='citation', use_site=item.ref, required_claim=item.ref,
+        paper_id='fixture', paper_version='1', conclusion='Background proposition')
+    faithful = ops.judge(JudgmentRequest(purpose='citation', citation_use=proposal_use, **common))
     evidence = (ops.judgments.reference(reading), ops.judgments.reference(faithful))
     citation = CitationContract(id='citation', use_site=item.ref, required_claim=item.ref,
         paper_id='fixture', paper_version='1', source_statement=evidence[0].artifact,

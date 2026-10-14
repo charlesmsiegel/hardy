@@ -82,9 +82,9 @@ def relevant_versions(problem: Path, snapshot: LedgerSnapshot, subject: VersionR
                     and sha256(read_bytes(problem, artifact.uri)).hexdigest() != artifact.digest):
                 raise ValueError("citation source bytes changed")
         # Relationship edits and added dependencies are part of the judgment's
-        # inputs. CONTAINS covers every step of an argument, not its conclusion.
+        # inputs. CONTAINS covers argument steps; SUPPORTS pins its exact conclusion.
         for edge in graph.relations:
-            if edge.source == ref and edge.kind in DEPENDENCIES | {RelationKind.CONTAINS}:
+            if edge.source == ref and edge.kind in DEPENDENCIES | {RelationKind.CONTAINS, RelationKind.SUPPORTS}:
                 pending.extend((edge.ref, edge.target))
     for region in sources:
         read_region(problem, snapshot, region)

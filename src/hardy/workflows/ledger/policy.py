@@ -202,7 +202,7 @@ class LedgerPolicy:
             if isinstance(record, Resolution) and record.accepted_by:
                 self._check_resolution(after, record, frozenset())
             if isinstance(record, Relation) and isinstance(previous, Relation):
-                semantic = DEPENDENCIES | TRANSPORT | {RelationKind.INTERPRETS, RelationKind.REFINES}
+                semantic = DEPENDENCIES | TRANSPORT | {RelationKind.INTERPRETS, RelationKind.REFINES, RelationKind.SUPPORTS}
                 if (record.source != previous.source and (record.kind in semantic or previous.kind in semantic)
                         and after.head(record.source.id).ref != record.source):
                     raise ValueError("semantic relation source must advance to the current source revision")
@@ -213,6 +213,16 @@ class LedgerPolicy:
                         and any(getattr(record, field) != getattr(previous, field)
                                 for field in ("kind", "target", "justification", "mappings"))):
                     raise ValueError("semantic relation replacement requires an explicit source revision")
+            if isinstance(record, Relation) and record.kind == RelationKind.SUPPORTS:
+                source, target = after.get(record.source), after.get(record.target)
+                if isinstance(source, ProjectItem) and source.kind == ProjectItemKind.ARGUMENT:
+                    if (after.head(source.id).ref != source.ref or not isinstance(target, ProjectItem)
+                            or source.context != target.context):
+                        raise ValueError("argument conclusion requires its current exact source and context")
+                    conclusions = {edge.target for edge in after.current(Relation)
+                                   if edge.source == source.ref and edge.kind == RelationKind.SUPPORTS}
+                    if len(conclusions) != 1:
+                        raise ValueError("a changed argument conclusion requires an explicit source revision")
             if isinstance(record, Relation) and record.kind == RelationKind.INTERPRETS:
                 source, target = after.get(record.source), after.get(record.target)
                 if not (isinstance(source, ProjectItem) and source.kind == ProjectItemKind.REPRESENTATION
