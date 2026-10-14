@@ -121,8 +121,10 @@ record_managed_tool() {
 	canonical="$(cd "$HARDY_HOME" && pwd -P)" || fail "could not resolve owned tool prefix"
 	identity="$(directory_identity "$canonical")" || fail "could not identify owned tool prefix"
 	if [ -e "$root_marker" ]; then
-		[ ! -L "$root_marker" ] && [ "$(sed -n '1p' "$root_marker")" = "$canonical" ] &&
-			[ "$(sed -n '2p' "$root_marker")" = "$identity" ] || fail "owned tool prefix changed; refusing to extend ownership"
+		if [ -L "$root_marker" ] || [ "$(sed -n '1p' "$root_marker")" != "$canonical" ] ||
+			[ "$(sed -n '2p' "$root_marker")" != "$identity" ]; then
+			fail "owned tool prefix changed; refusing to extend ownership"
+		fi
 	else
 		temporary="$(mktemp "$HARDY_HOME/managed-tools-root.XXXXXX")" || fail "could not record owned tool prefix"
 		printf '%s\n%s\n' "$canonical" "$identity" >"$temporary"
