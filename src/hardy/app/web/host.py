@@ -965,6 +965,16 @@ class WebHost:
         """
         if not self._running or self._state is None or self._state.turn_running or self._commands_running:
             return
+        if self.session is None:
+            if self._queued:
+                count = len(self._queued)
+                self._queued = []
+                self.ui.write(
+                    f"Dropped {count} queued message(s): the project session closed; "
+                    "reopen the project and submit them again."
+                )
+                self.emit({"type": "state", **self.state()})
+            return
         if self._queued:
             text, self._queued = "\n\n".join(self._queued), []
             self._start_turn(text)
@@ -1015,7 +1025,10 @@ class WebHost:
             if self._state.done:
                 # `/exit` at a browser: the server is the user's to stop.
                 self._state = dataclasses.replace(self._state, done=False)
-                self.ui.write("The browser session stays open; stop `hardy web` with Ctrl+C to leave.")
+                if self.session is None:
+                    self.ui.write("The project session closed; reopen the project to continue.")
+                else:
+                    self.ui.write("The browser session stays open; stop `hardy web` with Ctrl+C to leave.")
         except Exception as error:  # noqa: BLE001 - a bad command must not end the host
             self.emit({"type": "error", "text": f"{type(error).__name__}: {error}"})
         finally:

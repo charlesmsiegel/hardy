@@ -1250,3 +1250,38 @@ def test_conflict_snapshot_read_failure_is_a_json_error(tmp_path, monkeypatch):
         assert answers == [(500, {'error': 'original snapshot unreadable'})]
     finally:
         host.stop()
+
+
+def test_failed_checkpoint_restore_drops_queue_explicitly_and_can_reopen(tmp_path, monkeypatch):
+    from hardy.workflows import checkpoints
+
+    host = _host(tmp_path)
+    sub = host.subscribe()
+    try:
+        checkpoint = checkpoints.save(host.config.layout)
+        def fail_close():
+            raise OSError('disk full during cancellation journal')
+        monkeypatch.setattr(host.session, 'close', fail_close)
+        assert host.submit('/checkpoint restore ' + checkpoint.id)['kind'] == 'command'
+        _drain(sub, {'prompt'})
+        assert host.submit('question awaiting restore')['kind'] == 'queued'
+        host.answer(host.state()['prompts'][0]['id'], True)
+        # Round-trip through the loop after the final state event, including
+        # its queue settlement, rather than racing the command_running flag.
+        events = []
+        while host.state()['command_running']:
+            events.extend(_drain(sub, {'state'}))
+        host._call(lambda: None)
+        while not sub.queue.empty():
+            events.append(sub.queue.get_nowait())
+        assert host.state()['open'] is False and host.state()['queued'] == 0
+        assert not any(event['type'] == 'error' for event in events)
+        assert not any(event['type'] == 'turn_end' for event in events)
+        assert any('Dropped 1 queued message' in event.get('text', '') for event in events)
+        assert any('reopen' in event.get('text', '').lower() for event in events)
+        host.open_project(_sylow(tmp_path))
+        host.submit('fresh question')
+        _drain(sub, {'turn_end'})
+        assert host.session.sent == ['fresh question']
+    finally:
+        host.stop()
