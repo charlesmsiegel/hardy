@@ -110,7 +110,9 @@ def test_the_dispatcher_delegates_to_this_platforms_installer():
 
 
 @pytest.mark.parametrize(
-    "script", [*POWERSHELL_SCRIPTS, SCRIPTS / "ci" / "windows-full-install.ps1"], ids=lambda p: p.name
+    "script",
+    [*POWERSHELL_SCRIPTS, SCRIPTS / "ci" / "windows-full-install.ps1", SCRIPTS / "ci" / "read-windows-console.ps1"],
+    ids=lambda p: p.name,
 )
 def test_powershell_installer_parses(script: Path):
     powershell = shutil.which("pwsh") or shutil.which("powershell")
@@ -123,6 +125,33 @@ def test_powershell_installer_parses(script: Path):
     )
     result = subprocess.run([powershell, "-NoProfile", "-Command", command], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Read-Host uses the native console")
+def test_acceptance_captures_real_read_host_with_redirected_stdout(tmp_path: Path):
+    powershell = shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("Windows PowerShell is not installed")
+    prompt = f"Hardy prompt {os.getpid()}"
+    child = tmp_path / "child.ps1"
+    child.write_text(f'$reply = Read-Host "{prompt}"\nif ($reply -ne "yes") {{ exit 9 }}\n', encoding="utf-8")
+    answers = tmp_path / "answers.txt"
+    answers.write_text("yes\n", encoding="utf-8")
+    capture = tmp_path / "capture.txt"
+    driver = tmp_path / "driver.ps1"
+    driver.write_text(
+        f". '{SCRIPTS / 'ci' / 'read-windows-console.ps1'}'\n"
+        f"if ((Read-AcceptanceConsole) -match [regex]::Escape('{prompt}')) {{ throw 'Preexisting prompt' }}\n"
+        f"$p = Start-Process powershell -NoNewWindow -Wait -PassThru "
+        f"-ArgumentList '-NoProfile', '-File', '\"{child}\"' "
+        f"-RedirectStandardInput '{answers}' -RedirectStandardOutput '{tmp_path / 'stdout.txt'}'\n"
+        "if ($p.ExitCode -ne 0) { throw 'Read-Host did not receive the real answer' }\n"
+        f"[IO.File]::WriteAllText('{capture}', (Read-AcceptanceConsole))\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run([powershell, "-NoProfile", "-File", str(driver)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert prompt in capture.read_text(encoding="utf-8-sig").replace("\n", "").replace("\r", "")
 
 
 # Tools the scripts drive, which need not be installed on whatever machine is

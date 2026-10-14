@@ -30,6 +30,9 @@ jobs:
               if path.name != 'SHA256SUMS':
                   print(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}')
           PY
+      - name: Capture real Windows Read-Host prompts with redirected stdout
+        shell: powershell
+        run: uv run --extra test pytest -q tests/test_install_scripts.py -k acceptance_captures
       - name: Full interactive install with Mathlib and launchers
         shell: powershell
         run: |

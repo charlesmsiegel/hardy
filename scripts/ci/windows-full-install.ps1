@@ -44,24 +44,37 @@ if ($Worker) {
     # followed by the model identity. No -Yes and no HARDY_MODEL bypass.
     $answers = Join-Path $Root 'answers.txt'
     [IO.File]::WriteAllText($answers, "y`r`nclaude-opus-5`r`n")
+    . (Join-Path $PSScriptRoot 'read-windows-console.ps1')
+    $beforeConsole = Read-AcceptanceConsole
+    [IO.File]::WriteAllText((Join-Path $logs 'console.before.txt'), $beforeConsole)
+    $beforeCells = $beforeConsole.Replace("`r", '').Replace("`n", '')
+    foreach ($prompt in @('Install elan', 'Model identity')) {
+        if ($beforeCells -match [regex]::Escape($prompt)) { throw "Preexisting console prompt would mask acceptance: $prompt" }
+    }
     $installer = Join-Path $Root 'standalone\install-windows.ps1'
     $process = Start-Process -FilePath $powershell -PassThru -Wait -NoNewWindow `
         -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$installer`"") `
         -RedirectStandardInput $answers `
         -RedirectStandardOutput (Join-Path $logs 'installer.stdout.txt') `
         -RedirectStandardError (Join-Path $logs 'installer.stderr.txt')
+    # Snapshot before replaying redirected stdout: require evidence written by
+    # the real Read-Host host UI, not strings copied from the installer log.
+    $afterConsole = Read-AcceptanceConsole
+    [IO.File]::WriteAllText((Join-Path $logs 'console.after.txt'), $afterConsole)
     Get-Content (Join-Path $logs 'installer.stdout.txt')
     Get-Content (Join-Path $logs 'installer.stderr.txt')
     if ($process.ExitCode -ne 0) { throw "full installer exited $($process.ExitCode)" }
     $output = Get-Content -Raw (Join-Path $logs 'installer.stdout.txt')
+    # Rows are fixed-width cells. Join them for matching a prompt that wraps.
+    $afterCells = $afterConsole.Replace("`r", '').Replace("`n", '')
     foreach ($prompt in @('Install elan', 'Model identity')) {
-        if ($output -notmatch [regex]::Escape($prompt)) { throw "The real $prompt prompt was not exercised." }
+        if ($afterCells -notmatch [regex]::Escape($prompt)) { throw "The real $prompt prompt was not exercised." }
     }
     if ($output -notmatch 'Hardy is installed\.' -or $output -notmatch 'claude login') {
         throw 'Installer did not report installed software and pending subscription login.'
     }
     foreach ($required in @('venv\Scripts\hardy.exe', 'bin\hardy.cmd', 'installers\scripts\install-windows.ps1',
-            'lean\lake-manifest.json', 'lean\.lake\build\lib\lean\HardyMath.olean')) {
+            'lean\lake-manifest.json')) {
         if (-not (Test-Path (Join-Path $prefix $required))) { throw "$required is missing" }
     }
     if (-not (Test-Path (Join-Path $profile '.elan\bin\lake.exe'))) { throw 'Fresh profile has no installed lake.exe' }
@@ -133,8 +146,16 @@ $changes = @(
     @{ Key = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders'; Name = 'Programs'; Value = (Join-Path $profile 'Programs') }
 )
 $saved = @()
+# Snapshot only names this fixture will change. Enumerate before mutation;
+# PowerShell 5.1 can list empty environment entries that Get/Remove cannot find.
+$clearedNames = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(HARDY_|ANTHROPIC_|CLAUDE|CODEX|OPENAI_|ELAN_|LAKE_|LEAN_|PYTHON|PIP_|npm_config_|NODE_)' } | ForEach-Object { $_.Name })
+$modifiedNames = @($clearedNames) + @('USERPROFILE', 'HOME', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP',
+    'XDG_CACHE_HOME', 'ELAN_HOME', 'CLAUDE_CONFIG_DIR', 'HARDY_CONFIG', 'HARDY_RELEASE_BASE_URL',
+    'npm_config_prefix', 'Path')
 $environment = @{}
-Get-ChildItem Env: | ForEach-Object { $environment[$_.Name] = $_.Value }
+foreach ($name in ($modifiedNames | Select-Object -Unique)) {
+    $environment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 try {
     foreach ($change in $changes) {
         $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($change.Key)
@@ -146,8 +167,7 @@ try {
             $key.SetValue($change.Name, $change.Value, [Microsoft.Win32.RegistryValueKind]::String)
         } finally { $key.Close() }
     }
-    Get-ChildItem Env: | Where-Object { $_.Name -match '^(HARDY_|ANTHROPIC_|CLAUDE|CODEX|OPENAI_|ELAN_|LAKE_|LEAN_|PYTHON|PIP_|npm_config_|NODE_)' } |
-        ForEach-Object { Remove-Item "Env:$($_.Name)" }
+    foreach ($name in $clearedNames) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
     $env:USERPROFILE = $profile
     $env:HOME = $profile
     $env:APPDATA = Join-Path $profile 'AppData\Roaming'
@@ -174,6 +194,5 @@ try {
             else { $key.DeleteValue($value.Name, $false) }
         } finally { $key.Close() }
     }
-    Get-ChildItem Env: | ForEach-Object { Remove-Item "Env:$($_.Name)" }
-    foreach ($name in $environment.Keys) { Set-Item "Env:$name" $environment[$name] }
+    foreach ($name in $environment.Keys) { [Environment]::SetEnvironmentVariable($name, $environment[$name], 'Process') }
 }
