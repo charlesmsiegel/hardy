@@ -33,6 +33,7 @@ One directory per machine, independent of any project root:
 ```
 ~/.hardy/library/
 ├── artifacts/<sha256>/          # one managed immutable source: content, artifact.json, provenance/<id>.json
+├── artifacts/.locks/<sha256>.lock # OS-level lock serializing admission, restoration and policy tightening
 ├── catalog/                     # journal of works, editions, grouping proposals and decisions
 ├── representations/<sha256>/    # derived text, layout and page records per artifact, write-once
 ├── trees/<sha256>/              # versioned SourceTrees per artifact, write-once
@@ -43,7 +44,11 @@ One directory per machine, independent of any project root:
 └── index/                       # rebuildable search structures; never authoritative
 ```
 
-Every entry under `artifacts/` is named by the SHA-256 of the bytes it holds, so identical files imported from two paths land once, and a file whose bytes changed lands as a second artifact. Nothing under `library/` is ever rewritten in place: artifacts and derived records are written once beside a staging directory and moved in with one rename, and the mutable state (which edition an artifact belongs to, which tree is preferred, which interpretation was admitted) is an append-only journal of numbered, hash-chained files. The design behind this layout is [the general literature sources design](../superpowers/specs/2026-09-10-general-literature-sources-design.md).
+Artifact directories under `artifacts/` are named by the SHA-256 of their bytes, so identical files imported from two paths land once, and changed bytes land as a second artifact. The `.locks/` directory holds machine-local rendezvous files that serialize imports of each digest. Source bytes and derived records are admitted beside a staging directory and moved in with one rename; a missing managed copy can be restored under its recorded digest. An artifact's access policy can be tightened by atomically replacing its record under the import lock. Other mutable state (which edition an artifact belongs to, which tree is preferred, which interpretation was admitted) is an append-only journal of numbered, hash-chained files. The design behind this layout is [the general literature sources design](../superpowers/specs/2026-09-10-general-literature-sources-design.md).
+
+OCR enrichment renders the requested PDF page or exact region with Poppler's `pdftoppm`, retaining the rendered PNG and the original image XObjects beside the OCR reading. Token boxes refer to that retained PNG. If rendering is unavailable or fails, the reading records a failed diagnostic. Portable exports list absent artifact copies in `missing_bytes` and omitted or absent derived payloads in `withheld_payloads`; those identities remain recorded even when their bytes are unavailable.
+
+An export to `<destination>` uses a sibling `.<destination>.export.lock` rendezvous file and a private `.<destination>.staging-*` directory. The complete bundle replaces a fresh or empty destination under that lock. A failed export removes only its staging directory; lock rendezvous files remain in place and are not part of the bundle.
 
 ## A root and its `.hardy/`
 
@@ -71,6 +76,8 @@ A **root** is any directory holding `.hardy/`; that is the whole of what makes i
 `.hardy/checkpoints/<slug>/<id>/` holds one whole-workspace checkpoint taken by `/checkpoint`: `checkpoint.json` (the id, the name given, the slug, the chat, when it was taken, and how many files and bytes it copied) beside `tree/`, a copy of the problem directory as it stood, less the `cas/` scratch trees and the writer lease files. A checkpoint is one machine's copy and is ignored by `.hardy/.gitignore`; `/checkpoint restore` puts its tree back in the problem's place after checkpointing what it replaces.
 
 `.hardy/papers/` is this root's arXiv library: the full text and metadata of every paper any problem in this root has fetched, shared so that fetching once serves every problem. It is machine-local and never committed. What travels with a clone instead is each problem's own `bibliography.json`, which records the sha256 of the bytes a citation was made against, so a clone with an empty library can still say what a citation is a citation of.
+
+Redirected arXiv acquisitions retain the requested `source_url` and final `resolved_url`. The latter is absent from historical content renderings when empty, so existing content digests remain unchanged; newly redirected readings include the final URL in their digested provenance.
 
 Hardy writes `.hardy/.gitignore` the first time it opens a project under this root, and appends to it (rather than overwriting) on every later open, so a rule already there from a user's own file is left alone. It opens with:
 

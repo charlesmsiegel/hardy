@@ -7,19 +7,23 @@ standard-library parser into block nodes with DOM paths and ids, and the
 normalized text is built from those blocks so every block's range maps to a
 `DOMLocator`. Headings, ids and same-document links become observations
 from the document's own structure, so a tree needs no model. A single HTML
-file is the same pipeline with one spine item. XML with a DOCTYPE is
+file is the same pipeline with one spine item. MathML is linearized using a
+TeX annotation when available, otherwise spaced tokens; original markup stays
+in the DOM payload and the quality diagnostics describe the linearization. XML with a DOCTYPE is
 refused rather than parsed, the same rule the arXiv feed reader applies.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit
 
 from hardy.foundation.values import json_digest
 from hardy.literature import archives
@@ -42,11 +46,12 @@ from .contracts import (
 from .representations import TEXT_PAYLOAD, payload_digest
 
 NAME = "hardy.epub.native"
-VERSION = "1"
+VERSION = "2"
 DOM_PAYLOAD = "dom.json"
 ITEM_SEPARATOR = "\f"
 BLOCKS = {"p", "div", "section", "article", "li", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "figure", "figcaption", "table", "dd", "dt", "aside", "header", "footer", "main"}
-SKIP = {"script", "style", "head", "title", "svg", "math"}
+SKIP = {"script", "style", "head", "title", "svg"}
+VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 HEADINGS = {"h1": "chapter", "h2": "section", "h3": "subsection", "h4": "subsection", "h5": "subsection", "h6": "subsection"}
 NUMBERED = re.compile(r"^(?:(?:Chapter|Part)\s+)?(?P<number>[0-9IVXLC]+(?:\.[0-9]+)*)\.?\s+(?P<title>.+)$")
 NS = {"c": "urn:oasis:names:tc:opendocument:xmlns:container", "opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
@@ -57,7 +62,7 @@ def _stamp() -> str:
 
 
 def _parse_xml(data: bytes, what: str) -> ET.Element:
-    head = data[:4096].lower()
+    head = data.replace(b"\x00", b"").lower()
     if b"<!doctype" in head or b"<!entity" in head:
         raise ExtractionRefused(f"{what} declares a DOCTYPE or entities; refusing to parse it")
     try:
@@ -79,6 +84,36 @@ class _Blocks(HTMLParser):
         self.open_blocks: list[dict] = []
         self.skipping = 0
         self.links: list[tuple[str, int]] = []
+        self.diagnostics: list[Diagnostic] = []
+        self.active: dict[str, int] = {}
+        self.math: dict | None = None
+
+    def _diagnose(self, code: str, detail: str, severity: str = "warning") -> None:
+        if not any(d.code == code for d in self.diagnostics):
+            self.diagnostics.append(Diagnostic(code=code, detail=detail, severity=severity))
+
+    def _emit(self, text: str) -> None:
+        if text:
+            self.text.append(text)
+            self.length += len(text)
+
+    def _pop(self) -> None:
+        tag = self.stack[-1][0]
+        if tag == "math" and self.math is not None and len(self.stack) == self.math["depth"]:
+            formula = "".join(self.math["tex"]).strip() or " ".join(self.math["tokens"])
+            self._emit(formula)
+            self.math = None
+        if tag == "annotation" and self.math is not None and len(self.stack) == self.math["annotation_depth"]:
+            if "".join(self.math["annotation_chunks"]).strip():
+                self.math["tex"] = self.math["annotation_chunks"]
+            self.math["annotation_depth"] = None
+            self.math["annotation_chunks"] = []
+        self._close_block()
+        self.stack.pop()
+        self.counts.pop()
+        self.active[tag] -= 1
+        if tag in SKIP:
+            self.skipping -= 1
 
     def _path(self) -> str:
         return "/".join(f"{tag}[{index}]" for tag, index in self.stack)
@@ -86,16 +121,38 @@ class _Blocks(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         counts = self.counts[-1]
         counts[tag] = counts.get(tag, 0) + 1
+        attributes = dict(attrs)
+        if tag in VOID:
+            if attributes.get("id"):
+                self.nodes.append({"path": f"{self._path()}/{tag}[{counts[tag]}]".lstrip("/"), "tag": tag,
+                                   "id": attributes["id"], "start": self.length, "end": self.length, "depth": len(self.stack) + 1})
+            if tag == "br" and not self.skipping and self.math is None:
+                self._emit("\n")
+            return
         self.stack.append((tag, counts[tag]))
         self.counts.append({})
+        self.active[tag] = self.active.get(tag, 0) + 1
         if tag in SKIP:
+            if tag == "svg" and not self.skipping:
+                self._diagnose("svg_omitted", "SVG text and graphics are omitted from normalized text; original markup is retained")
             self.skipping += 1
             return
-        attributes = dict(attrs)
+        if self.skipping:
+            return
+        if tag == "math" and self.math is None:
+            self.math = {"depth": len(self.stack), "tokens": [], "tex": [], "annotation_depth": None, "annotation_chunks": []}
+            self._diagnose("mathml_rendered_as_text", "MathML is linearized as token text or its TeX annotation; original markup is retained", "info")
+            return
+        if self.math is not None:
+            if (tag == "annotation" and not self.active.get("annotation-xml") and not self.math["tex"]
+                    and self.math["annotation_depth"] is None
+                    and attributes.get("encoding", "").lower() in {"application/x-tex", "application/x-latex"}):
+                self.math["annotation_depth"] = len(self.stack)
+            return
         if tag == "a" and attributes.get("href", "").startswith("#"):
             self.links.append((attributes["href"][1:], self.length))
         if tag in BLOCKS or attributes.get("id"):
-            if self.length and not "".join(self.text).endswith("\n"):
+            if self.length and not self.text[-1].endswith("\n"):
                 self.text.append("\n")
                 self.length += 1
             node = {"path": self._path(), "tag": tag, "id": attributes.get("id"), "start": self.length, "end": None, "depth": len(self.stack)}
@@ -106,28 +163,39 @@ class _Blocks(HTMLParser):
             self.length += 1
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in SKIP and self.skipping:
-            self.skipping -= 1
-        while self.stack and self.stack[-1][0] != tag:
-            self._close_block()
-            self.stack.pop()
-            self.counts.pop()
-        if self.stack and self.stack[-1][0] == tag:
-            self._close_block()
-            self.stack.pop()
-            self.counts.pop()
+        if tag in VOID:
+            return
+        if not self.active.get(tag):
+            self._diagnose("recovered_markup", f"ignored unmatched closing tag {tag}")
+            return
+        if self.stack[-1][0] != tag:
+            self._diagnose("recovered_markup", f"closed unfinished elements before {tag}")
+        while self.stack[-1][0] != tag:
+            self._pop()
+        self._pop()
 
     def _close_block(self) -> None:
         depth = len(self.stack)
         while self.open_blocks and self.open_blocks[-1]["depth"] >= depth:
             node = self.open_blocks.pop()
             node["end"] = self.length
-            if node["tag"] in BLOCKS and self.length and not "".join(self.text[-1:]).endswith("\n"):
+            if node["tag"] in BLOCKS and self.length and not self.text[-1].endswith("\n"):
                 self.text.append("\n")
                 self.length += 1
 
     def handle_data(self, data: str) -> None:
         if self.skipping:
+            return
+        if self.math is not None:
+            if self.active.get("annotation-xml"):
+                return
+            depth = self.math["annotation_depth"]
+            if depth is not None and len(self.stack) >= depth and self.active.get("annotation"):
+                self.math["annotation_chunks"].append(data)
+            elif not self.active.get("annotation"):
+                token = re.sub(r"\s+", " ", data).strip()
+                if token:
+                    self.math["tokens"].append(token)
             return
         cleaned = re.sub(r"\s+", " ", data)
         if not cleaned.strip():
@@ -137,14 +205,12 @@ class _Blocks(HTMLParser):
             return
         if self.text and self.text[-1].endswith("\n"):
             cleaned = cleaned.lstrip()
-        self.text.append(cleaned)
-        self.length += len(cleaned)
+        self._emit(cleaned)
 
     def finish(self) -> None:
         while self.stack:
-            self._close_block()
-            self.stack.pop()
-            self.counts.pop()
+            self._diagnose("recovered_markup", "closed unfinished elements at end of document")
+            self._pop()
         for node in self.nodes:
             if node["end"] is None:
                 node["end"] = self.length
@@ -186,7 +252,12 @@ class EpubAdapter:
         observations: list[StructuralObservation] = []
         offset = 0
         for index, (href, source) in enumerate(items):
-            text, nodes, links = scan_html(source)
+            parser = _Blocks()
+            parser.feed(source)
+            parser.close()
+            parser.finish()
+            text, nodes, links = "".join(parser.text), parser.nodes, parser.links
+            diagnostics.extend(parser.diagnostics)
             if len(text) + offset > budget.max_text_bytes:
                 raise ExtractionRefused(f"normalized text exceeds the {budget.max_text_bytes} byte bound")
             base = offset
@@ -218,11 +289,11 @@ class EpubAdapter:
         dom_payload = {DOM_PAYLOAD: json.dumps(dom_items, ensure_ascii=False, sort_keys=True).encode("utf-8")}
         text_payload = {TEXT_PAYLOAD: normalized_text.encode("utf-8")}
         dom = DerivedRepresentation(id=dom_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.DOM, extractor=self.name, extractor_version=self.version,
-                                    output_sha256=payload_digest(dom_payload), derived_at=stamp, quality=QualityProfile(status="ok", coverage=1.0, diagnostics=tuple(diagnostics)),
+                                    output_sha256=payload_digest(dom_payload), derived_at=stamp, quality=QualityProfile(status="partial" if any(d.severity == "warning" or d.code == "mathml_rendered_as_text" for d in diagnostics) else "ok", coverage=None if any(d.severity == "warning" or d.code == "mathml_rendered_as_text" for d in diagnostics) else 1.0, diagnostics=tuple(diagnostics)),
                                     access=artifact.access, payload_files=tuple(dom_payload))
         normalized = DerivedRepresentation(id=text_id, artifact_sha256=artifact.sha256, kind=RepresentationKind.NORMALIZED_TEXT, extractor=self.name,
                                            extractor_version=self.version, inputs=(dom_id,), output_sha256=payload_digest(text_payload), derived_at=stamp,
-                                           quality=QualityProfile(status="ok", coverage=1.0), access=artifact.access, payload_files=tuple(text_payload))
+                                           quality=dom.quality, access=artifact.access, payload_files=tuple(text_payload))
         mapping = RepresentationMapping(id=f"map-{dom_id}-{text_id}", artifact_sha256=artifact.sha256, left=dom_id, right=text_id, pairs=tuple(pairs),
                                         partial=True, producer=f"{self.name}/{self.version}")
         observations.sort(key=lambda o: (o.anchor.locator.start, o.kind.value))  # type: ignore[union-attr]
@@ -244,7 +315,10 @@ class EpubAdapter:
             rootfile = container.find(".//c:rootfile", NS)
             if rootfile is None or not rootfile.get("full-path"):
                 raise ExtractionRefused("the EPUB container names no package document")
-            opf_path = PurePosixPath(rootfile.get("full-path"))
+            try:
+                opf_path = PurePosixPath(_archive_url(rootfile.get("full-path"), "."))
+            except ValueError as error:
+                raise ExtractionRefused(f"invalid package document path: {error}") from error
             if opf_path.as_posix() not in members:
                 raise ExtractionRefused(f"the package document {opf_path} is not in the archive")
             package = _parse_xml((into / opf_path).read_bytes(), "the package document")
@@ -256,8 +330,11 @@ class EpubAdapter:
                 if href is None:
                     diagnostics.append(Diagnostic(code="spine_item_missing", detail=f"spine names {idref!r}, absent from the manifest", severity="warning"))
                     continue
-                relative = (opf_path.parent / href).as_posix() if opf_path.parent != PurePosixPath(".") else href
-                relative = PurePosixPath(relative).as_posix()
+                try:
+                    relative = _archive_url(href, opf_path.parent.as_posix())
+                except ValueError as error:
+                    diagnostics.append(Diagnostic(code="spine_item_unreadable", detail=f"{href}: {error}", severity="warning"))
+                    continue
                 if relative not in members or not members[relative].text:
                     diagnostics.append(Diagnostic(code="spine_item_unreadable", detail=f"{relative} is missing or not text", severity="warning"))
                     continue
@@ -276,6 +353,17 @@ class EpubAdapter:
                     else:
                         metadata.append((key, value))
         return items, tuple(metadata), diagnostics
+
+
+def _archive_url(href: str, base: str) -> str:
+    url = urlsplit(href)
+    path = unquote(url.path)
+    if url.scheme or url.netloc or path.startswith("/") or "\x00" in path or "\\" in path:
+        raise ValueError("not a relative archive path")
+    resolved = posixpath.normpath(posixpath.join(base, path))
+    if resolved == ".." or resolved.startswith("../"):
+        raise ValueError("path escapes the archive root")
+    return resolved
 
 
 def _observation(sha: str, kind: ObservationKind, rep: str, start: int, end: int, payload: tuple[tuple[str, str], ...], derivation: str, confidence: float = 1.0) -> StructuralObservation:

@@ -150,6 +150,8 @@ class SourceToolRuntime:
                 return self.region(str(arguments["source"]), str(arguments["node"]))
         except SourceUnavailable as error:
             return ToolResult(False, self._bounded(str(error)))
+        except OSError as error:
+            return ToolResult(False, self._bounded(f"the source library could not be read: {error}"))
         except (KeyError, TypeError, ValueError) as error:
             return ToolResult(False, self._bounded(f"{type(error).__name__}: {error}"))
         return ToolResult(False, f"unknown tool: {name}")
@@ -256,7 +258,7 @@ class SourceToolRuntime:
                 kinds = (NodeKind(kind.lower()),)
             except ValueError:
                 return ToolResult(False, f"unknown statement kind {kind!r}")
-        found = self.reader.find_statements(sha, kinds=kinds, number=number, query=query, limit=max(1, min(limit, 100)), tree=tree)
+        found = self.reader.find_statements(sha, kinds=kinds, number=number, query=query, limit=max(1, min(limit, 100)), tree=tree, restrict=scope)
         found = tuple(n for n in found if scope is None or n.id in scope)
         note = "" if found else "no matching unit was recovered from this source; the source may still contain one the extraction missed"
         if not found and scope is not None:
@@ -265,7 +267,7 @@ class SourceToolRuntime:
 
     def search(self, source: str, query: str, *, limit: int) -> ToolResult:
         sha, tree, scope = self._resolve(source)
-        hits = self.reader.search_text(sha, query, limit=max(1, min(limit, 50)), tree=tree)
+        hits = self.reader.search_text(sha, query, limit=max(1, min(limit, 50)), tree=tree, restrict=scope)
         hits = tuple(h for h in hits if scope is None or h.node in scope)
         return self._json({"artifact": sha, "tree": tree, "query": query, "hits": [h.model_dump(mode="json") for h in hits],
                            "note": "ranks 0-2 are exact (id, printed number, title); 3-4 are fuzzy word matches and are leads, not identity"})
@@ -276,14 +278,40 @@ class SourceToolRuntime:
         if part == "statement":
             delivery = self.reader.read_statement(sha, node, tree=tree)
         elif part == "proof":
+            if scope is not None:
+                proof = self.reader.proof_of(sha, node, tree=tree)
+                if proof is not None:
+                    self._within(scope, proof)
             delivery = self.reader.read_proof(sha, node, start=start, tree=tree)
         elif part == "context":
-            delivery = self.reader.read_context(sha, node, tree=tree)
+            delivery = self.reader.read_context(sha, node, tree=tree, clamp=self._context_bounds(sha, tree, scope, node))
         elif part == "node":
             delivery = self.reader.read_node(sha, node, start=start, tree=tree)
         else:
             return ToolResult(False, f"unknown part {part!r}; use statement, proof, node or context")
         return self._delivery(delivery, part)
+
+    def _context_bounds(self, sha: str, tree_id: str | None, scope: frozenset[str] | None, node: str) -> tuple[int, int] | None:
+        if scope is None:
+            return None
+        tree = self.library.trees.get(sha, tree_id) if tree_id else self.library.trees.preferred(sha)
+        if tree is None:
+            raise SourceUnavailable("the seeded tree is unavailable")
+        part = tree.node(node).span.ranges[0]
+        # Only widen through overlapping granted ranges in this representation.
+        # A min/max envelope could expose a gap between disjoint source spans.
+        start, end = part.start, part.end
+        ranges = [r for n in tree.nodes if n.id in scope for r in n.span.ranges if r.representation == part.representation]
+        changed = True
+        while changed:
+            changed = False
+            for grant in ranges:
+                if grant.start <= end and grant.end >= start:
+                    widened = min(start, grant.start), max(end, grant.end)
+                    if widened != (start, end):
+                        start, end = widened
+                        changed = True
+        return start, end
 
     def region(self, source: str, node: str) -> ToolResult:
         sha, tree, scope = self._resolve(source)

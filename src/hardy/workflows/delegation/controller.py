@@ -841,6 +841,7 @@ class DelegationController:
             if self.store.append_decided(id, "delegation.started", start) is None:
                 # Started by another session between the check above and this
                 # one, or ended or paused meanwhile; not this launch's to run.
+                self._pending.pop(id, None)
                 raise _StartedElsewhere(id)
         result = run_worker(launch, self._open_worker, token)
         with self._lock:

@@ -1418,6 +1418,9 @@ def test_a_worker_is_started_once_even_when_two_sessions_hold_its_launch(tmp_pat
         from hardy.workflows.delegation.controller import _StartedElsewhere
         with pytest.raises(_StartedElsewhere):
             first._run(stale, CancelToken())
+        # Refusing a launch relinquishes it immediately; cleanup cannot depend
+        # on a later settlement/dispatch racing the next session operation.
+        assert shared.id not in first._pending
         # `first` still holds a launch for it, but the journal says whose it is.
         assert set(first.cancel_all(reason="session closed")) == {running.id}
         assert first.wait(running.id, timeout=10).state is DelegationState.CANCELLED

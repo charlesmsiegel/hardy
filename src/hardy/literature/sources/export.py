@@ -5,7 +5,10 @@ artifact records and provenance, trees, the shared ledger, links,
 realizations, promotions: every identity and digest, no source bytes and no
 derived text of a private source), the user's own formal library (the shared
 Lean sources), and the private source cache (artifact bytes and every
-derived payload). The default portable state is the first class alone. A
+derived payload). Missing artifact bytes are named in missing_bytes; absent
+derived payloads remain named in withheld_payloads, including private-cache
+exports. Failed exports leave their fresh destination unchanged. The default
+portable state is the first class alone. A
 bundle imported on another machine restores refs and records; source reads
 there report unavailable until the exact digest is imported, at which point
 the historical identities resolve again without being reminted. Merging two
@@ -24,8 +27,9 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path, PurePosixPath
 
-from hardy.foundation.files import files_under
+from hardy.foundation.files import LayoutError, WriteGuard, files_under, guard_for, read_bytes
 from hardy.foundation.journal import JournalError, verify_chain
+from hardy.foundation.locking import FileLock, LockTimeout
 from hardy.foundation.values import FrozenModel, json_digest
 
 from .artifacts import CONTENT, PROVENANCE_DIR, RECORD
@@ -67,6 +71,7 @@ class ExportManifest(FrozenModel):
     files: tuple[tuple[str, str], ...]
     artifacts: tuple[str, ...]
     withheld_payloads: tuple[str, ...] = ()
+    missing_bytes: tuple[str, ...] = ()
     created_at: str
 
 
@@ -95,12 +100,37 @@ def _copy_tree(root: Path, into: Path, prefix: str, files: list[tuple[str, str]]
 def export_library(
     library: ManagedLibrary, *, classes: frozenset[ExportClass], into: Path, shared_lean: Path | None = None,
 ) -> ExportManifest:
-    into = Path(into)
-    if into.exists() and (not into.is_dir() or any(into.iterdir())):
-        raise ExportError(f"{into} is not an empty directory; an export needs a fresh destination so a bundle holds only what its manifest claims")
-    into.mkdir(parents=True, exist_ok=True)
+    into = Path(into).absolute()
+    parent = WriteGuard(into.parent, create=True)
+    try:
+        with FileLock(parent.reserve(f".{into.name}.export.lock")):
+            parent.reserve(into.name)
+            if into.exists() and (not into.is_dir() or any(into.iterdir())):
+                raise ExportError(f"{into} is not an empty directory; an export needs a fresh destination so a bundle holds only what its manifest claims")
+            staging = Path(tempfile.mkdtemp(prefix=f".{into.name}.staging-", dir=parent.directory))
+            removed_empty = False
+            try:
+                manifest = _export_library(library, classes=classes, into=staging, shared_lean=shared_lean)
+                parent.reserve(into.name)
+                if into.exists():
+                    into.rmdir()  # Refuses newly populated destinations; never recursively remove one.
+                    removed_empty = True
+                os.replace(staging, into)
+                return manifest
+            except BaseException:
+                if removed_empty and not into.exists():
+                    into.mkdir()
+                raise
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+    except LockTimeout as error:
+        raise ExportError(f"export destination {into} lock could not be taken: {error}") from error
+
+
+def _export_library(library: ManagedLibrary, *, classes: frozenset[ExportClass], into: Path, shared_lean: Path | None) -> ExportManifest:
     files: list[tuple[str, str]] = []
     withheld: list[str] = []
+    missing: list[str] = []
     digests = library.artifacts.stored()
     root = library.root
     if ExportClass.METADATA_SEMANTICS in classes:
@@ -117,7 +147,7 @@ def export_library(
                 # its artifact's: a policy tightened after extraction still holds.
                 portable = most_restrictive(artifact_access, record.access) not in PRIVATE or record.kind in PORTABLE_KINDS
                 for name in record.payload_files:
-                    if portable:
+                    if portable and (rep_dir / name).is_file():
                         _copy(rep_dir / name, into, f"{REPRESENTATIONS}/{sha}/{record.id}/{name}", files)
                     else:
                         withheld.append(f"{sha}/{record.id}/{name}")
@@ -130,31 +160,46 @@ def export_library(
             _copy(shared_lean / relative, into, f"lean/{relative.as_posix()}", files)
     if ExportClass.PRIVATE_SOURCE_CACHE in classes:
         for sha in digests:
-            _copy(root / ARTIFACTS / sha / CONTENT, into, f"{ARTIFACTS}/{sha}/{CONTENT}", files)
+            content = root / ARTIFACTS / sha / CONTENT
+            if content.is_file():
+                _copy(content, into, f"{ARTIFACTS}/{sha}/{CONTENT}", files)
+            else:
+                missing.append(sha)
             for record in library.representations.list(sha):
                 for name in record.payload_files:
                     relative = f"{REPRESENTATIONS}/{sha}/{record.id}/{name}"
                     if relative not in {f for f, _ in files}:
-                        _copy(root / REPRESENTATIONS / sha / record.id / name, into, relative, files)
-        withheld = []
+                        payload = root / REPRESENTATIONS / sha / record.id / name
+                        if payload.is_file():
+                            _copy(payload, into, relative, files)
+                        else:
+                            withheld.append(f"{sha}/{record.id}/{name}")
+        copied_payloads = {name.removeprefix(f"{REPRESENTATIONS}/") for name, _ in files if name.startswith(f"{REPRESENTATIONS}/")}
+        withheld = [name for name in withheld if name not in copied_payloads]
     manifest = ExportManifest(classes=tuple(sorted(classes, key=lambda c: c.value)), files=tuple(files), artifacts=digests,
-                              withheld_payloads=tuple(withheld), created_at=datetime.now(UTC).isoformat(timespec="seconds"))
+                              withheld_payloads=tuple(dict.fromkeys(withheld)), missing_bytes=tuple(missing), created_at=datetime.now(UTC).isoformat(timespec="seconds"))
     (into / MANIFEST).write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return manifest
 
 
 def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | None = None) -> ImportSummary:
     bundle = Path(bundle)
-    manifest = ExportManifest.model_validate_json((bundle / MANIFEST).read_text(encoding="utf-8"))
+    manifest = ExportManifest.model_validate_json(read_bytes(bundle, MANIFEST))
     copied: list[str] = []
     skipped: list[str] = []
     seeded: list[str] = []
     kept: list[str] = []
     journal_state: dict[str, bool] = {}
+    journal_faults: dict[str, str] = {}
     journal_dirs = (*JOURNALS, f"{TREES}/journal")
     for journal in journal_dirs:
-        existing = library.root / journal
-        journal_state[journal] = existing.is_dir() and any(existing.glob("*.json"))
+        try:
+            guard, _ = guard_for(library.root, f"{journal}/.import-location")
+            existing = guard.directory
+            journal_state[journal] = existing.is_dir() and any(existing.glob("*.json"))
+        except (OSError, LayoutError) as error:
+            journal_faults[journal] = str(error)
+            journal_state[journal] = False
         (kept if journal_state[journal] else seeded).append(journal)
     grouped: dict[str, list[tuple[str, PurePosixPath, str]]] = {journal: [] for journal in journal_dirs}
     for relative, digest in manifest.files:
@@ -163,38 +208,55 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
         except ExportError as error:
             skipped.append(f"{relative}: {error}")
             continue
+        relative = safe.as_posix()
+        if len(safe.parts) < 2 or safe.parts[0] not in {ARTIFACTS, REPRESENTATIONS, TREES, *JOURNALS, "lean"}:
+            skipped.append(f"{relative}: not an exported library location")
+            continue
         owner = next((j for j in journal_dirs if relative.startswith(j + "/")), None)
         if owner is not None:
             grouped[owner].append((relative, safe, digest))
             continue
-        source = bundle / safe
-        if not source.is_file() or source.is_symlink():
-            skipped.append(f"{relative}: missing from bundle")
+        try:
+            data = read_bytes(bundle, safe)
+        except (OSError, LayoutError) as error:
+            skipped.append(f"{relative}: cannot read bundle file ({error})")
             continue
-        if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+        if hashlib.sha256(data).hexdigest() != digest:
             skipped.append(f"{relative}: digest mismatch")
             continue
         if relative.startswith("lean/"):
             if shared_lean is None:
                 skipped.append(f"{relative}: no shared Lean root given")
                 continue
-            target = shared_lean / PurePosixPath(*safe.parts[1:])
+            destination = shared_lean
+            destination_relative = PurePosixPath(*safe.parts[1:])
+            if destination_relative.suffix != ".lean":
+                skipped.append(f"{relative}: not an exported Lean source")
+                continue
         else:
-            target = library.root / safe
-        if target.exists():
-            if hashlib.sha256(target.read_bytes()).hexdigest() == digest:
-                skipped.append(f"{relative}: already present")
-            else:
-                skipped.append(f"{relative}: local file differs; not overwritten")
+            destination = library.root
+            destination_relative = safe
+        try:
+            guard, name = guard_for(destination, destination_relative, create=True)
+            target = guard.path(name)
+            if target.exists():
+                with guard.open(name, "rb") as handle:
+                    same = hashlib.sha256(handle.read()).hexdigest() == digest
+                skipped.append(f"{relative}: already present" if same else f"{relative}: local file differs; not overwritten")
+                continue
+            guard.write_bytes(name, data)
+        except (OSError, LayoutError) as error:
+            skipped.append(f"{relative}: cannot write destination ({error})")
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
         copied.append(relative)
     # A journal is a hash chain: it is imported whole after its staged copy
     # verifies, or not at all. A gap or a corrupt revision would otherwise
     # seed a journal every later replay refuses.
     for owner, entries in grouped.items():
         if not entries:
+            continue
+        if owner in journal_faults:
+            skipped.append(f"{owner}: {journal_faults[owner]}; nothing of this journal was imported")
             continue
         if journal_state[owner]:
             skipped.append(f"{owner}: local journal already has history; merging is synchronization, which is deferred ({len(entries)} file(s) not imported)")
@@ -210,17 +272,24 @@ def import_export(library: ManagedLibrary, bundle: Path, *, shared_lean: Path | 
 
 def _import_journal(root: Path, bundle: Path, owner: str, entries: list[tuple[str, PurePosixPath, str]]) -> str | None:
     """Stage every file of one journal, verify the chain, then move it in as a unit; the fault otherwise."""
-    root.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".import-journal-", dir=root))
+    try:
+        parent_guard, name = guard_for(root, owner, create=True)
+        target = parent_guard.reserve(name)
+        destination_guard = WriteGuard(target)
+        if target.exists() and not target.is_dir():
+            return "journal destination is not a directory"
+    except (OSError, LayoutError) as error:
+        return f"cannot write journal destination ({error})"
+    staging = Path(tempfile.mkdtemp(prefix=".import-journal-", dir=parent_guard.directory))
     try:
         depth = len(PurePosixPath(owner).parts) + 1
         for relative, safe, digest in entries:
             if len(safe.parts) != depth:
                 return f"{relative} is not a journal file"
-            source = bundle / safe
-            if not source.is_file() or source.is_symlink():
-                return f"{relative} missing from bundle"
-            data = source.read_bytes()
+            try:
+                data = read_bytes(bundle, safe)
+            except (OSError, LayoutError) as error:
+                return f"{relative} cannot read bundle file ({error})"
             if hashlib.sha256(data).hexdigest() != digest:
                 return f"{relative} digest mismatch"
             (staging / safe.name).write_bytes(data)
@@ -228,13 +297,11 @@ def _import_journal(root: Path, bundle: Path, owner: str, entries: list[tuple[st
             verify_chain(staging)
         except JournalError as error:
             return f"journal chain invalid ({error})"
-        target = root / owner
         if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(staging, target)
+            os.replace(staging, parent_guard.reserve(name))
             return None
         for path in sorted(staging.iterdir(), key=lambda p: p.relative_to(staging).as_posix()):
-            os.replace(path, target / path.name)
+            os.replace(path, destination_guard.reserve(path.name))
         return None
     finally:
         shutil.rmtree(staging, ignore_errors=True)

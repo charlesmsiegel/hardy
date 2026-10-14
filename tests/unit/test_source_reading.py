@@ -102,3 +102,46 @@ def test_unknown_node_and_unaliased_query_are_explicit(tmp_path):
     reader = SourceReader(lib)
     assert reader.read_statement(sha, "n-missing").unavailable
     assert reader.resolve_alias(sha, "not an alias at all !") == ()
+
+
+def test_search_loads_artifact_once(tmp_path, monkeypatch):
+    lib, sha = built(tmp_path)
+    reader = SourceReader(lib)
+    calls = []
+    original = lib.availability
+
+    def counted(identifier):
+        calls.append(identifier)
+        return original(identifier)
+
+    monkeypatch.setattr(lib, 'availability', counted)
+    assert reader.search_text(sha, 'Theorem 1.2')
+    assert calls == [sha]
+
+
+def test_reader_restricts_search_before_limit_and_clamps_context(tmp_path):
+    lib, sha = built(tmp_path)
+    reader = SourceReader(lib)
+    (theorem,) = reader.resolve_alias(sha, 'Theorem 1.2')
+    allowed = frozenset({theorem.id})
+    found = reader.find_statements(sha, limit=1, restrict=allowed)
+    assert [n.id for n in found] == [theorem.id]
+    assert [h.node for h in reader.search_text(sha, 'cyclic', limit=1, restrict=allowed)] == [theorem.id]
+    assert reader.find_statements(sha, restrict=frozenset()) == ()
+    part = theorem.span.ranges[0]
+    context = reader.read_context(sha, theorem.id, before=1000, after=1000, clamp=(part.start, part.end))
+    assert context.text == reader.read_node(sha, theorem.id).text
+    assert reader.proof_of(sha, theorem.id) == reader.read_proof(sha, theorem.id).node
+    assert reader.proof_of(sha, 'missing') is None
+
+
+
+
+def test_context_reports_withheld_text_as_unavailable(tmp_path):
+    lib, sha = built(tmp_path)
+    reader = SourceReader(lib)
+    (node,) = reader.resolve_alias(sha, 'Theorem 1.2')
+    part = node.span.ranges[0]
+    (lib.representations.root / sha / part.representation / 'text.txt').unlink()
+    result = reader.read_context(sha, node.id)
+    assert result.unavailable and not result.text
