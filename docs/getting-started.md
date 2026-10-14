@@ -1,217 +1,75 @@
 # Getting started
 
-This tutorial walks a fresh clone through installing Hardy, checking the
-machine, and looking at a first proof; it is for someone who has just cloned
-the repository and has nothing else set up yet, and every command it shows
-you can run yourself.
+Install Hardy, open a mathematical project, and keep statement correspondence,
+kernel proof and supplied-argument review separate. The browser workbench and
+`hardy chat` call the same project operations.
 
-## 1. Install and sign in
+## 1. Install and authenticate
 
-From the clone:
+From a clone on Linux or macOS:
 
 ```sh
 git clone https://github.com/charlesmsiegel/hardy
 cd hardy
 scripts/install.sh
-```
-
-This installs *this checkout*, editable, so `git pull` keeps `hardy` current.
-It also installs Lean's toolchain manager, a shared Mathlib project, a LaTeX
-subset, and the Claude Code CLI if you do not already have it. See
-[Installing Hardy](install.md) for what each step does and where it puts
-things, and for the options that skip parts of it (`--skip-mathlib`,
-`--skip-latex`, and the rest).
-
-Hardy authenticates through the Claude Code CLI, so sign in once:
-
-```sh
 claude login
-```
-
-Every Hardy session on this machine now uses your subscription. There is no
-separate Hardy account and, on the default backend, no API key to manage.
-
-## 2. Check the machine
-
-```sh
+claude auth status
 hardy doctor
 ```
 
-reports what each prerequisite needs, and exits `1` if anything required is
-still missing. Run on a machine that has not yet finished installing Mathlib
-and a LaTeX distribution, it looks like this:
+On Windows, run `scripts\install-windows.ps1` with PowerShell, as described in
+[Installing Hardy](install.md). The installer installs this checkout editable,
+so keep it in place. It provisions Python, Lean/Lake, pinned Mathlib and
+Tectonic, interactive LaTeX tools and the Claude Code CLI, reusing healthy
+existing tools. Options such as `--skip-mathlib` and `--skip-latex` deliberately
+leave those capabilities unavailable.
 
-```
-[ok  ] python: 3.11.15 at /home/user/hardy/.venv/bin/python
-[ok  ] lean project: not configured; Lean runs in the current directory
-[ok  ] toolchain pin: no configured project to compare against Hardy's pins
-[FAIL] lean: lake not found on PATH; install elan (see scripts/install.sh)
-[FAIL] latex: pdflatex not found on PATH; install a TeX distribution (see scripts/install.sh)
-[ok  ] cas: sympy sympy 1.14.0 on CPython 3.11.15
-[ok  ] model: claude-opus-5
-[ok  ] backend: claude
-[ok  ] claude sdk: claude-agent-sdk 0.2.127
-[ok  ] claude cli: /opt/node22/bin/claude
-[ok  ] claude login: signed in via oauth_token
+The default `claude` backend uses your Claude Code subscription. Authentication
+is successful when `claude auth status` reports `loggedIn: true`; an installed
+CLI or its version number does not establish sign-in. There is no separate Hardy
+account.
 
-2 required check(s) failed; Hardy will not work until they are fixed.
-```
+For the optional API transport, install `hardy-prover[api]`, set
+`backend = "api"` in `~/.hardy/config.toml` and supply `ANTHROPIC_API_KEY` in the
+environment. Choose the actual model identity your endpoint supports. The API
+transport is metered separately from a subscription. Interactive `backend`
+accepts `claude` or `api`; Codex requires the optional `codex` extra and is a
+`--backend codex` choice on staged `prove`/`accept`. See
+[Configuration](reference/configuration.md) for settings, precedence and
+backend-specific authentication.
 
-Each line checks one thing and says exactly what is missing when it fails.
-`lean` needs `lake` on `PATH`, which `scripts/install.sh` installs through
-elan; `latex` needs `pdflatex`. The `claude cli` and `claude login` lines are
-why `doctor` fails on a logged-out machine rather than on your first
-question. Once `scripts/install.sh` has finished, re-run `hardy doctor` and
-expect every line to read `[ok ]`.
+`hardy doctor` reports executable, configuration and authentication checks and
+exits `1` when a required check fails. `hardy doctor --deep` also elaborates a
+small Mathlib example. Compiler version checks do not establish that a complete
+document will compile: interactive tools use `latex_command`, normally
+pdflatex, while staged documents use Tectonic and need its TeX bundle. Read the
+named failing check before starting a long run.
 
-`hardy doctor --deep` also compiles a small file that imports Mathlib and
-calls `norm_num`, which is slow but catches a Mathlib cache that is present
-but broken.
-
-## 3. Your first interactive session
-
-In an empty directory:
+## 2. Open a project in the workbench
 
 ```sh
-mkdir -p ~/math/sqrt-example
-cd ~/math/sqrt-example
-hardy chat
+hardy web
 ```
 
-With no problem recorded here yet, Hardy creates one for you, named `main`
-by default, under a new `.hardy/` directory. Everything the session produces
-lands under `<root>/<slug>/`: an authored `lean/` and `tex/`, a `session.json`
-record of what got approved and audited, an append-only `transcript.jsonl`,
-and a `.local/` directory of machine-local state that is never committed.
-See [On-disk layout](reference/on-disk-layout.md) for the full tree and what
-each file is for.
+Open the printed loopback URL, then create a project or add an existing Hardy
+problem directory through the registry. The browser uses its registry rather
+than the shell's current directory. Files, Ledger, Results and Publication read
+the selected project's durable record. Closing the browser does not stop the
+server; Ctrl+C in its terminal does.
 
-Ask it to prove that `sqrt(2)` is irrational, in your own words, the way you
-would state it to a person. Hardy proposes a Lean formalization of what you
-said and asks you to approve or revise it before anything is checked; once
-you approve, it works the statement against Lean and reports back whether
-the check went through. This page does not invent that transcript for you:
-it depends on a live, signed-in model turn, so watch what Hardy actually
-proposes and asks before you approve it.
-
-At any point, `/status` shows the project, model, and spend, read from the
-session's own files rather than from anything the conversation claims.
-`/exit` (or `/quit`, or Ctrl+D) leaves the session; nothing is lost, since
-the record is written as you go rather than at the end. See
-[working in `hardy chat`](guides/interactive-session.md) for the rest of
-what you can do at that prompt.
-
-## 4. Your first staged proof
-
-`hardy chat` is a durable, resumable session; `hardy prove` is the other
-shape, a single claim staged end to end with no session to come back to:
-
-```sh
-hardy prove "The real number sqrt(2) + sqrt(3) is irrational."
-```
-
-This stages one claim through the same gates a session enforces by hand: a
-proposed formalization you approve, an independent reader that checks the
-frozen Lean statement says what you said before any proof search starts, a
-proof search against that frozen statement, and an independent verifier that
-rebuilds and rechecks the result before anything is graded. Again, do not
-expect this page to show you a transcript: `hardy prove` needs a signed-in
-Claude CLI (or the `api` backend with a key) and talks to a real model, so
-run it yourself and watch what it asks.
-
-A run that goes all the way through leaves a fresh directory under
-`runs/<timestamp>-<slug>-<id>/`, and the one file worth reading first is
-`manifest.json`: its `grades` object carries four independent grades, and
-none of them implies another. `formal` is what the Lean kernel established
-(`kernel_verified`, `verified_modulo`, `partial`, or `not_formalized`);
-`faithfulness` is whether the independent reader agreed the Lean translation
-says what you said; `document` is only whether the LaTeX compiled; `informal`
-is the independent read of the writeup's completeness. See
-[Artifacts](reference/artifacts.md#grades) for what each grade and field
-means.
-
-To see what a completed run's directory actually looks like without running
-a model yourself, look at the same claim already proved and recorded:
-
-```sh
-acceptance/recorded/prove-verified/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8/
-```
-
-Its `request.md` holds the claim text verbatim (`The real number sqrt(2) +
-sqrt(3) is irrational.`), and its `manifest.json` carries
-`"formal": "kernel_verified"` and `"faithfulness": "user_approved"`. Compare
-the run you just made against this one: same claim, same shape of
-directory, and grades that should read the same way if your Lean and
-Mathlib pin match the ones this recording names. See
-[Proving a claim](guides/proving.md) for the rest of what `hardy prove`
-can do: strategies, declared assumptions, the faithfulness reader, both
-backends, and the checked-in acceptance set.
-
-## 5. Recheck a recorded run without a model
-
-Every recorded run under `acceptance/recorded/` can be cross-checked without
-starting a model, a Lean build, or a network connection at all:
-
-```sh
-hardy accept --recorded acceptance/recorded/prove-verified/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8
-```
-
-which prints:
-
-```
-Recorded run: acceptance/recorded/prove-verified/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8
-All recorded runs are self-consistent.
-```
-
-This audits the manifest against the trajectory against the Lean source
-against the compiled document, the same cross-check `hardy accept` runs
-against a live attempt, but entirely from files already on disk. It is how
-`acceptance/recorded/` stays checked without being re-run on every change,
-and it is a useful first command on any machine: it needs `hardy` installed
-and nothing else, not even the Lean toolchain `doctor` asked for above.
-
-## 6. Where to go next
-
-- [Installing Hardy](install.md) for what the installers do and how to
-  troubleshoot one.
-- [Command reference](reference/cli.md) for every command and flag,
-  including `hardy batch` and `hardy evals`, which this tutorial does not
-  cover.
-- [Configuration](reference/configuration.md) for every setting Hardy reads
-  and where each one comes from.
-- [On-disk layout](reference/on-disk-layout.md) for the full shape of a
-  root, a problem, and a run directory.
-- [Artifacts](reference/artifacts.md) for what every field in `manifest.json`,
-  `session.json`, and the evaluation artifacts means.
-- [Running Hardy safely](guides/running-safely.md) for what the trust
-  boundary actually is, and how to run Hardy inside a container or VM that
-  holds only the work.
-- [Trust boundary](design/trust-boundary.md) for the design argument behind
-  that boundary.
-- [Hardy roadmap](roadmap.md) for what is built, in progress, or not started.
-
-
-## Record a semantic target
-
-In the interactive session or the browser workbench's composer, enter:
+In the composer, record a small target:
 
 ```text
 /project target Nonnegative "Every natural number is nonnegative" --formal "lemma nonnegative (n : Nat) : 0 ≤ n"
 ```
 
-The ledger now contains the informal target, its proposed Lean statement, a
-scope admitting no background and separate open review/proof obligations. The
-command prints the target's exact reference; the formal proposal's ID is
-`Nonnegative:formal`. These records survive closing and reopening the project.
-Creation does not run Lean or establish correspondence. The exact-version
-human review command is documented in [session commands](reference/session-commands.md#project).
-The connected Research and Referee application workflows remain planned in
-[the roadmap](roadmap.md#application-integration-of-semantic-workflows).
+This records two exact proposals, their scope and separate open translation and
+proof obligations. It does not run Lean. In Ledger, inspect the informal and
+formal statements together and record an approved, disputed or unresolved
+correspondence judgment. Enter your reviewer label, what you actually examined,
+and your reason; an approval is a correspondence record, not a kernel proof.
 
-
-In the browser Ledger page, the new target has a side-by-side review card.
-Record the correspondence judgment and its actual conditions. In Files, save a
-Lean file containing:
+In Files, save a Lean file containing:
 
 ```lean
 import Mathlib
@@ -219,21 +77,194 @@ import Mathlib
 lemma nonnegative (n : Nat) : 0 ≤ n := Nat.zero_le n
 ```
 
-The editor runs the ordinary checked-save and axiom-audit path. Back in Ledger,
-choose `nonnegative` under **Checked result**, then **Bind checked save**. The
-formal-proof field and correspondence judgment remain separate. An approved
-current translation and bound checked proof support the statement; this does
-not assess an original supplied argument or a repair.
+The editor uses the checked-save and axiom-audit path. In Ledger, select
+`nonnegative` under **Checked result**, then **Bind checked save**. Inspect the
+separate formal-proof and correspondence fields. An approved current translation
+and exact bound checked proof support this statement; any supplied original
+argument still needs its own assessment. This lemma and live workflow results are
+inspected in Ledger/workflow reports and bundles. The native Results/theorem
+writeup registry remains a separate lane with its ordinary intentional naming,
+theorem and document gates.
 
-Use **Report export name** to save `reports/NAME.json`, or inspect and export
-from the session:
+Export the snapshot with the Ledger control or composer:
 
 ```text
 /project inspect Nonnegative
 /project export Nonnegative --output nonnegative-review
 ```
 
-Reopen the same project to recover the same target, judgments, binding and
-report. If Lean source or build inputs change, check and save again, then bind
-the fresh checked evidence. Read [session commands](reference/session-commands.md#project)
-for explicit ID/digest selectors and stale-review refusals.
+The snapshot is `reports/nonnegative-review.json`. Existing output names are
+refused. Reopen the same project to recover the same target and evidence. After
+changing Lean source or build inputs, check and save again, then bind the new
+exact result. A target correction uses a new ID and the current exact reference
+with `--supersedes`; old evidence remains historical.
+
+Publication authenticates proof authority for the exact selected item. For
+this native checked-save/bind slice, select `Nonnegative:formal` under
+`Nonnegative:scope`; `Nonnegative` has correspondence support. Its target report
+can say `supported_by_reviewed_formal_proof` while publishing that informal item
+still leaves an unresolved draft. The formalization link does not automatically
+transport proof or premise authorization. Publication also needs appropriate
+linked exposition and document checks; PDF compilation and native Results
+registration remain separate. See
+[publication commands](reference/cli.md#project-publication-commands).
+
+## 3. Research, Explore and Repair
+
+In **Research, Explore and Repair**, inspect the capability reasons before
+starting. Each operation records a run ID, exact request, attempts, elapsed time,
+actual model/backend and prompts, tool evidence and reported usage. Missing
+usage stays unknown; a missing provider or capability produces explicit
+blocked/pending work.
+
+- For **Research**, select `Nonnegative`, its required scope, and **Prove**.
+  Hardy identifies and classifies prerequisites, prepares the exact statement,
+  checks correspondence and uses the controlled Lean save path. Human
+  correspondence concerns and missing prerequisite evidence remain gates.
+- For **Explore**, select context, concept or representation, describe the
+  intended mathematics, and select the relevant exact context/use site.
+  Structured proposals remain proposals until their semantic obligations are
+  reviewed.
+- For **Repair**, select an outstanding defect obligation and its exact original
+  supplied argument. A proposed replacement has a distinct argument version,
+  replacement steps and affected graph. Inspect that repair separately from the
+  original; proving the conclusion alone does not assess every replacement step.
+
+Use **Stop active workflow** or Escape to cancel. History retains unfinished
+work. To resume, submit the same run ID with unchanged mathematical request;
+reusing the ID for different inputs is refused. **Obligations · work and
+history** includes open, investigating and blocked work and lets you select
+resolved, dismissed and abandoned history.
+
+<details>
+<summary>Read an explicitly conditional proof</summary>
+
+![Conditional result showing verified-modulo kernel audit, the used controlled premise, and an independently authenticated project proof-card preview](images/conditional-proof.png)
+
+Actual served workbench, controlled fixture: pinned Lean/Mathlib checked a proof
+using the admitted `controlled_binomial` premise. The report names that actual
+use; an allowed unused premise is a separate case. Model/review inputs were
+scripted synthetic fixtures, with no provider invoked. Project publication
+readiness, native audit display and document compilation remain separate.
+
+</details>
+
+Before repairing an argument you enter yourself, open **Record supplied
+arguments, steps, critiques and revisions**. Record the original text against
+its exact conclusion; leave **Original argument being repaired** empty. Add
+source-bound proof steps and internal claims with their containing argument and
+actual dependencies. A source region uses Unicode character offsets in the
+retained text. Intake can create these records from reviewed manuscript
+mappings instead. Inspect the exact outstanding critique/check obligation before
+selecting Repair; an arbitrary conclusion-proof obligation is not a supplied
+argument defect.
+
+The same operations are available in the composer or terminal. Read exact
+target/scope/argument references from the catalog rather than typing a short
+digest. [Session commands](reference/session-commands.md#project) gives the
+command forms and structured request fields.
+
+## 4. Intake and referee a manuscript
+
+Under **Import manuscript and propose source mappings**, select an exact saved
+TeX source or use **Paste manuscript TeX** to retain the text. Give the intake a
+run ID and new scope ID. Select all source files required by the manuscript,
+and enter its exact canonical paper identity/version when known under **Target
+paper identities and versions**. This keeps sources from the paper being audited
+on the required proof path. Choose citation depth 0, 1 or 2, then **Propose
+manuscript mappings**.
+
+In **Review manuscript mappings and required results**, select the exact
+proposal. Read each quote in its source span; approve, dispute or leave its
+mapping unresolved with a reason. Choose the main results and required internal
+claims. Unmapped text, unsupported constructs and ambiguous mappings remain
+visible. Selecting previously admitted background cannot admit a new premise;
+required and novel manuscript claims remain protected.
+
+Then open **Referee · main results, supplied arguments and repairs** and select
+the exact reviewed manuscript mapping. Its scope, ordered main/internal results
+and citation depth are shown read-only. Choose the original/repair versions to
+assess, bound citation nodes to between 1 and 128, then **Run Referee**. To change
+result roles or citation depth, record a new intake/review. The report states which semantic, structural, adversarial and citation layers
+actually ran, which were skipped/blocked, and their conditions. A citation
+mention, source retrieval, theorem identification and hypothesis applicability
+are distinct checks.
+
+For example, a manuscript can have a true `1 = 1` conclusion with an invalid
+zero-cancellation argument. A checked reflexivity proof supports the conclusion;
+the original argument can remain defective. A refuted internal claim can break
+a supplied argument while leaving its main conclusion unresolved. Read the
+separate theorem, original-proof, intermediate-claim and selected-repair
+assessments rather than deriving one from another.
+
+Under **Select argument versions, report and reproducible export**, choose the
+exact scope and arguments, inspect their assessments, and export a selected
+result bundle. If several proof artifacts are current, choose the exact formal
+evidence for replay; an ambiguous selection is refused. Retained checked Lean
+evidence can supply standalone model-free
+replay; without the exact artifact and dependency closure, the bundle explains
+why replay is unavailable. The Referee report history also exports an exact
+source-mapped report. Bundles live at `reports/NAME.bundle/` and contain
+`report.json`, a file-hash manifest and retained provenance. These differ from
+the JSON snapshot above.
+
+When `report.json` says replay is `ready`, follow `replay/README.txt`. Prepare
+the recorded Lean/Lake release and pinned project/dependencies, then run the
+bundle's exact command from its `replay/` directory:
+
+```sh
+python3 -I replay.py --project /absolute/pinned-project --lake /absolute/toolchain/bin/lake --lean /absolute/toolchain/bin/lean --manifest-sha256 FULL_REPLAY_MANIFEST_SHA256
+```
+
+Replace the paths and digest with the exact values in that bundle. The runner
+uses Python's standard library, needs no Hardy package/provider credentials,
+checks source/environment identities and performs a fresh named axiom audit.
+Dependencies are not bundled. The runner also pins the configured project's
+whole root Lean-source inventory: unrelated custom root files outside the
+selected retained closure must be supplied separately with their original bytes
+at the recorded paths. Missing material is refused, so a bundle alone cannot
+reconstruct an arbitrary custom project. Dependency source and compiled-library inventories
+must match; a rebuilt cache with different bytes is refused even at the same
+source revision. The compiled dependency hashes are captured at export and do
+not independently establish their derivation from source. Replay runs Lean in
+that configured environment; the existing execution/audit trust boundary still
+applies. The fresh result does not restamp historical evidence or establish
+translation or argument correspondence.
+
+## 5. Prove one theorem or inspect a recording
+
+The staged entry point handles a single claim:
+
+```sh
+hardy prove "The real number sqrt(2) + sqrt(3) is irrational."
+```
+
+It asks you to approve or revise a formalization, freezes that claim, obtains a
+separate correspondence read, searches for a proof, verifies it and builds a
+writeup. Read its independent grades rather than its exit code alone. See
+[Proving a claim](guides/proving.md) for declared assumptions, backend options
+and stage limits.
+
+Inspect the checked-in recording without a provider, Lean build or network:
+
+```sh
+hardy accept --recorded acceptance/recorded/prove-verified/20260901T220742+0000-sqrt-two-plus-sqrt-three-irrational-8ccb35a8
+```
+
+This checks consistency among the retained manifest, trajectory and artifacts.
+It does not execute a fresh Lean proof; standalone selected-result replay is
+the separate operation described above. The README's Lean excerpt comes from
+this recording and omits proof steps explicitly.
+
+## Where to go next
+
+- [Interactive session](guides/interactive-session.md) and
+  [session commands](reference/session-commands.md) for project operations.
+- [Installing Hardy](install.md), [configuration](reference/configuration.md)
+  and [CLI reference](reference/cli.md) for machine and launch settings.
+- [Artifacts](reference/artifacts.md) and [on-disk layout](reference/on-disk-layout.md)
+  for exact evidence and retained files.
+- [Trust boundary](design/trust-boundary.md) and
+  [running safely](guides/running-safely.md) for execution and evidence limits.
+- [Roadmap](roadmap.md#application-integration-of-semantic-workflows) for
+  validation, unavailable checks and the planned mathematical trials.

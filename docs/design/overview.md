@@ -5,15 +5,23 @@ who has run the tool once and wants to know what the pieces are before reading
 any of them. It carries no status; what is planned lives in
 [the roadmap](../roadmap.md).
 
-Hardy is a harness for proving mathematics with a language model. The model
-proposes: it writes a formalization, it writes Lean, it revises after an error.
-Lean's kernel verifies, and nothing the model says about its own work is taken
-as evidence of anything. Between those two, Hardy keeps the account: it freezes
-what was claimed, runs every tool call itself, reads the axiom report rather
-than the model's summary of it, and writes the artifacts a later reader can
-check without rerunning anything. The model is replaceable. The account is not,
-and almost every design decision below follows from wanting the account to stay
-true when the model is wrong, careless, or simply persuasive.
+Hardy is a mathematical project application whose model proposes statements,
+definitions, representations, prerequisites, proofs and repairs. Lean's kernel
+verifies formal statements; semantic and argument reviews carry their own
+attributed evidence. Hardy keeps the account: it retains exact sources,
+versions mathematical inputs, runs the tools, records failed attempts and
+authenticates the evidence behind each assessment. A supplied argument can fail
+while its conclusion remains true. Keeping those statements separate is part
+of the account.
+
+The workbench and terminal dispatch the same typed project operations through
+the session. Research composes prerequisite identification, classification,
+preparation, proof and acquisition; Explore produces contextual proposals;
+Repair selects an exact defect and supplied argument; manuscript intake and
+Referee bind mappings and assessments to exact source spans. These adapters
+reuse the ledger, contexts, capability evidence and policy. They introduce no
+separate project store or acceptance authority. The following diagram shows the
+staged single-theorem path within that application.
 
 ## The core loop
 
@@ -169,7 +177,7 @@ Paths below are relative to `src/hardy/`.
 | Package | What it owns |
 | --- | --- |
 | `app/` | CLI, TUI, MCP entry points, configuration, project construction, installation and doctor checks |
-| `workflows/` | Interactive sessions, staged proving, batch runs, approval and faithfulness, run storage and recorded-evidence readers |
+| `workflows/` | Interactive sessions, project research/intake/referee/repair, exact arguments and assessments, staged proving, batch runs, approval, evidence readers and selected export assembly |
 | `agents/` | Provider adapters, conversation events, runtime interface, loops, compaction and usage |
 | `formal/` | Lean syntax, environment identity, builds, retrieval, axiom policy and final verification |
 | `documents/` | TeX syntax, completion checks, compilation, controlled writeups and export rendering |

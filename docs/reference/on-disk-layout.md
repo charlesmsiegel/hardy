@@ -125,6 +125,14 @@ Everything one problem owns lives under its own directory, and all of it is mean
 ├── evidence/
 │   ├── 00000000000000000001.json              # one journal transaction per write: formal evidence records and acceptance decisions
 │   └── writer.lock                              # the journal's OS-level lock file, left in place after use
+├── semantic-sources/<sha256>.utf8               # exact immutable semantic/manuscript source bytes
+├── workflow-artifacts/<sha256>/<name>          # retained model/capability/source/environment artifacts
+├── reports/
+│   ├── <name>.json                              # /project export assessment snapshot
+│   └── <name>.bundle/                           # selected result or exact Referee bundle
+│       ├── manifest.json, report.json, README.txt
+│       ├── provenance/                           # owner journals, source/artifact bytes and actual trajectory
+│       └── replay/                               # only when exact selected-artifact replay is available
 ├── delegations/
 │   ├── journal.jsonl                              # append-only, hash-chained delegation events
 │   ├── journal.lock                               # the journal's OS-level lock file, left in place
@@ -162,6 +170,24 @@ Everything one problem owns lives under its own directory, and all of it is mean
 **`lean/`** and **`tex/`** are not paired by name; see the next section for why. **`cas/`** holds every cell as a file, filed by the model through `cas_run` under a path of its choosing or by `/cas` under `typed/`, and is committed as a whole except its two scratch subdirectories: `replay/` is a fresh kernel's working directory for replaying every accepted cell on export, and `script-run/` is where the rendered script is run to check it against that replay. Both are reset on every export and neither is meant to be read afterward, so neither is versioned.
 
 **`sources/`** is the problem's seed journal, written by `hardy library seed` and read by the session's source tools: which artifacts of the personal library at `~/.hardy/library/` this problem may read, by digest, with the edition and tree it was seeded under. It holds refs only, so it is committed like `bibliography.json` while the bytes it names stay on the machine that imported them.
+
+**`semantic-sources/`** retains exact UTF-8 bytes registered by semantic source
+and manuscript operations. A stable source ID can advance while every old
+reference and byte snapshot remains addressable. **`workflow-artifacts/`**
+retains content-addressed capability artifacts; readers rehash them before use.
+The existing **`evidence/`** journal also holds semantic/translation judgments,
+argument assessments, scoped admission decisions, workflow attempts/runtime
+calls, exact formal evidence and manuscript/Referee receipts. These owners use
+the existing ledger/journal rather than a second project database.
+
+**`reports/`** holds immutable JSON assessment snapshots and selected bundles.
+A bundle contains its own payload digest manifest, exact report and retained
+provenance. `replay/` contains the selected Lean source closure, pinned metadata,
+standalone Python runner/parser and setup instructions when replay is available;
+otherwise the report gives the unavailable reason. Dependencies are not bundled.
+See [Artifacts](artifacts.md#selected-result-and-referee-bundles) for the exact
+layout, replay boundary and independent grades. Existing output names are
+refused.
 
 **`bibliography.json`** is the one file that names every citation, keyed so that the same paper or edition gets the same cite key wherever it is cited; an entry made from the personal library names the work and edition it cites and every artifact digest that edition was read through, so a PDF and an EPUB of one confirmed edition share an entry while two editions never do; `tex/references.tex` is rendered whole from it on every write and would be overwritten by the next citation if hand-edited, so it carries no information `bibliography.json` does not already have.
 

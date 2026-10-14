@@ -1730,7 +1730,7 @@ No separate hole ledger, concept database, representation database, context/nota
 
 ## J0 — Delegation and research-swarm backend — P1
 
-**Status:** Backend complete (2026-09-10), all fourteen slices: delegation contracts and the hash-chained journal; ancestor-bounded leases with unknown liability and recursive cancellation; a local worker executor and the leaf worker with its own provider context; the problem core, research brief and staged initial working set with a diversity portfolio; lazy retrieval with isolation inherited down the tree; structured findings with upward, lateral and discoverable promotion; the mechanical lane-and-tranche scheduler; the optional bounded coordinator with explicit authority; per-worker workspace overlays and change sets; subtree project overlays with local admission; current-head reconciliation and crash-safe authoritative admission; routed attention with journaled subscriptions, safe-boundary interrupts and epoch-guarded continuations; the `/delegate` and `/jobs` control surface with a `delegation_workers` setting; and a hermetic end-to-end acceptance suite (one session worker admitted to the ledger; an eight-worker tree with a blind cell, an adversary, an assisted coordinator, conflicting change sets, duplicate findings, root exhaustion and a cancelled cell). Not built: distributed executors, book ingestion, a rich swarm UI, and application-installed capability owners, so authoritative admission from the terminal waits on the readers the ledger policy already requires. Per-worker child-process interruption is cooperative (runtime cancel plus tokens and per-call Lean timeouts), since process interruption is process-wide.
+**Status:** Backend complete (2026-09-10), all fourteen slices: delegation contracts and the hash-chained journal; ancestor-bounded leases with unknown liability and recursive cancellation; a local worker executor and the leaf worker with its own provider context; the problem core, research brief and staged initial working set with a diversity portfolio; lazy retrieval with isolation inherited down the tree; structured findings with upward, lateral and discoverable promotion; the mechanical lane-and-tranche scheduler; the optional bounded coordinator with explicit authority; per-worker workspace overlays and change sets; subtree project overlays with local admission; current-head reconciliation and crash-safe authoritative admission; routed attention with journaled subscriptions, safe-boundary interrupts and epoch-guarded continuations; the `/delegate` and `/jobs` control surface with a `delegation_workers` setting; and a hermetic end-to-end acceptance suite (one session worker admitted to the ledger; an eight-worker tree with a blind cell, an adversary, an assisted coordinator, conflicting change sets, duplicate findings, root exhaustion and a cancelled cell). The normal session installs its formal/admission capability owners and exact evidence/decision readers, so supported authoritative admission reaches the same policy from terminal and browser. Missing capability evidence still fails closed; directory-only readers remain unauthenticated. Not built: distributed executors, book ingestion and a rich swarm UI. Per-worker child-process interruption is cooperative (runtime cancel plus tokens and per-call Lean timeouts), since process interruption is process-wide.
 
 **Deps:** Core B-D, X2
 
@@ -1803,42 +1803,105 @@ That is the target architecture.
 
 ## Application integration of semantic workflows
 
-The engineering handoff separates application readiness on controlled examples
-from the planned Schottky counting, Riemann–Roch and EGH mathematical trials.
-Existing ledger, formal-save evidence, manuscript inventory and workflow owners
-remain the integration foundation.
+Application engineering checks use small controlled examples. Schottky
+counting, Riemann–Roch and EGH remain planned mathematical acceptance trials;
+their conclusions require their own recorded and reviewed evidence.
 
-- Implemented: `/project target` records separate informal/formal proposals,
-  a required empty-premise scope and open translation/proof obligations. Exact
-  supersession preserves earlier targets without transferring evidence.
-- Implemented: `/project review` journals exact human translation judgments
-  with reviewer, actual conditions and reason. Its reader refuses stale,
-  superseded, disputed and unresolved judgments. Review evidence is restricted
-  to formalization work and grants no kernel-proof grade.
-- Implemented: `/project bind` explicitly connects the exact proposal pair to
-  authenticated checked-save evidence. Statement, source inputs, saved-proof
-  revision and build signature are revalidated. Formal proof and approved
-  correspondence discharge their separate obligations through existing policy.
-- Implemented: `/project inspect` and `/project export` provide distinct
-  statement, translation and formal-proof fields with exact records and gaps.
-  Original arguments, intermediate claims and repairs remain unassessed.
-  Report snapshots survive restart and refuse output overwrite; they are not
-  standalone model-free replay bundles.
-- Implemented: Ledger controls create targets, display statements and contexts,
-  record attributed judgments, select exact checked saves and export reports.
-  Structured browser operations and command adapters share session owners and
-  policy, including exact project/version checks.
-- Validated: a controlled real-Lean save/review/bind/export/restart slice,
-  including unchecked-source invalidation. Chromium exercised target creation,
-  review, editing and checking through Files, binding, export, refresh and
-  keyboard tab navigation. The correspondence judgment was a synthetic fixture;
-  no provider model was invoked. A real screenshot of this controlled example
-  appears in the README.
-- Pending: model semantic and literature review readers; argument/repair graph
-  and assessment integration; human admission/scope authorization; live
-  Research, Explore, Repair and Referee construction; reviewable semantic
-  manuscript intake; replay bundles and live model application acceptance.
-- Baseline reconciled: upstream main is `b40ade623a52af9b545039eb27ef787b6bf1fd74`.
+- Implemented: shared versioned context, declaration, statement, source,
+  argument, proof-step and repair operations. Theorem conclusions, original
+  arguments, intermediate claims and selected repairs have independent
+  authenticated assessment lanes. Source/dependency/context changes preserve
+  history and withdraw affected current judgment authority.
+- Implemented: attributed semantic/literature judgments and scoped human
+  admission with exact source/correspondence/search/Lean gates. Required work,
+  target-paper novel claims and their formal aliases remain protected.
+  Conditional proof records distinguish allowed from actually used premises.
+- Implemented: normal session construction of Research/RecursiveResolver,
+  Explore/RepresentationResolver and Repair/Strategy/FinalVerifier with the
+  configured runtime and controlled capability/save owners. Exact requests,
+  attempts, prompts/model/backend, elapsed time, actual/unavailable usage and
+  blocked/interrupted work are durable. `compute` remains unresolved where no
+  checked computation contract exists; elaborated acquisition proposals do not
+  become automatically accepted mathematics.
+- Implemented: exact TeX semantic intake with mechanical inventory, quoted
+  source spans, unapproved mapping proposals, unsupported/unmapped gaps,
+  explicit main/internal selection and citation depth. Referee/Critique records
+  executed/skipped/blocked layers, source-mapped heuristic defects, exact
+  citation/source/theorem/hypothesis checks and independent theorem/argument
+  assessments. Citation recursion is bounded by requested depth/nodes and
+  available exact source mappings; it does not establish whole-paper semantic
+  completeness.
+- Implemented and independently reviewed: shared strict browser/command project
+  actions, labelled context/argument/intake/review/admission/workflow/report
+  controls and all-state obligation filters. Referee uses the reviewed scope,
+  ordered main/internal results and citation depth as read-only run inputs.
+- Implemented and independently reviewed: selected-result and exact Referee
+  bundles, immutable audited native-source retention, standalone replay,
+  authenticated project publication and late workflow-usage reconciliation.
+  Legacy `/project export` remains a JSON assessment snapshot. Live proofs keep
+  ordinary lemma saves; semantic results appear in Ledger/workflow reports and
+  bundles while native Results/theorem-writeup registration remains separate.
+- Validated engineering fixtures: a scripted synthetic runtime with actual
+  pinned Lean 4.35.0-rc3 and Mathlib saved a real helper used by the main proof,
+  separately assessed a revised argument while retaining its defective
+  original, and reauthenticated after restart. A separate actual conditional
+  fixture exercised source/correspondence/admission probes and scoped saves,
+  distinguishing used from unused admitted premises after restart. Actual
+  manuscript intake/Referee checks retained a true conclusion with defective
+  original and a refuted internal claim with unresolved main. These are
+  software fixtures, not actual-provider trials or substantive research results.
+- Validated earlier workbench slice: served Chromium created a target, recorded
+  synthetic correspondence, edited and checked actual Lean through Files,
+  bound the exact checked save, exported, refreshed and traversed keyboard
+  focus. Source editing withdrew current binding authority. This earlier
+  `True` slice left its supplied-argument lanes unassessed; the final screenshots
+  show the later reflexivity/repair and conditional-result slices.
+- Validated manual documentation routes: the exact Nonnegative target/review,
+  actual Mathlib lemma save/bind/inspect/JSON export and selected native replay;
+  correctly quantified Nonnegative Research; Explore/context; retained TeX,
+  direct intake/mapping review/Referee/export; actual reflexivity Research,
+  distinct Repair, exact proof selection/export and restart. Standalone Python
+  replay from outside the project produced a fresh named empty-axiom audit
+  without Hardy/provider imports or restamping historical evidence. Ambiguous
+  formal artifact selection was refused until exact evidence was selected.
+- Validated integrated served Chromium: 24 recorded steps passed with no page
+  errors, including retained source, exact mapping review, Referee, Research,
+  distinct Repair, fresh Referee, exact result/Referee exports and restore.
+  Status remained readable while a provider fixture was active, project switch
+  returned 409, and Escape produced durable cancellation. Actual Lean and
+  scripted synthetic model/review provenance remain separate. The README and
+  tutorial use inspected unedited captures of the actual assessment panels.
+- Validated project reads share one verified evidence-journal snapshot within
+  each read request, including nested policy lookups. Every new request
+  reauthenticates; no persistent cache bypasses tamper detection. Actual tiny
+  journal reads and provider-active status access were exercised after this
+  correction.
+- Validated browser publication/proof-card previews use the session's actual
+  authenticated policy. Controlled used and unused admitted-premise results
+  both showed ready=true, retaining the distinct actual-used assumption audit.
+  Target-report support, exact publication establishment, native Results and
+  document compilation remain separate.
+- Validated final engineering gate at `d781104e`: 8,876 hermetic tests passed,
+  69 skipped and 55 live/real-toolchain tests deselected. Documentation,
+  module-boundary and global Ruff checks passed. All 50 named frontend tests,
+  the production build and served smoke passed; the shipped assets match the
+  frontend sources. Independent source and documentation reviews closed all
+  material findings.
+- Pending: actual provider+Lean application acceptance. No provider credentials
+  were configured for this handoff; controlled runtime responses are labelled
+  synthetic and unreported token/cost counters remain null/unknown.
+- Pending: staged document compilation in the handoff environment. Tectonic
+  0.16.9 runs, but its standard bundle endpoint still returned HTTP 403 on
+  2026-10-14 at 21:56 UTC. Version readiness does not establish bundle
+  availability. The separate interactive pdflatex path compiled a controlled
+  document successfully.
 
-The controlled semantic-target slice is only part of ENG-1 through ENG-6. Full
-engineering readiness and the substantive mathematical trials remain separate.
+Standalone replay pins retained local source and environment metadata plus
+export-time dependency source/compiled-library inventories. Those compiled
+hashes do not independently establish source derivation or a separate trusted
+producer. A different rebuilt cache can fail at the same source revision.
+The whole configured-project root source inventory is pinned too: unrelated
+custom root Lean files outside the bundled import closure need their original
+bytes at inventoried paths. A bundle alone cannot reconstruct an arbitrary
+custom project. Engineering readiness, actual-provider readiness and the substantive
+mathematical trials remain separate.

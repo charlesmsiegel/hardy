@@ -448,6 +448,39 @@ that the translation was read by something that had no stake in it, and it
 records that beside the frozen claim, so a later reader follows claim to
 formalization to faithfulness verdict to proof without rerunning any of it.
 
+## Attributed project judgments
+
+Human project reviews record the operator-supplied reviewer label, actual
+conditions, verdict and reason. This is attribution inside Hardy's local trust
+boundary, not independently authenticated human identity. Fresh model contexts
+record actual model/backend, prompts, configuration, tools and reported
+isolation. Starting a distinct provider context does not establish mathematical
+independence. Neither human nor model review grants a kernel proof grade.
+
+Review authority binds exact subject, formalization, source, scope and
+dependency versions. Later source, definition, context, citation-use or step
+changes withdraw affected current authority; the earlier record remains
+historical. A current human correspondence dispute is not overridden by a
+later model approval. The browser's enabled button is presentation; owners
+recheck exact gates when accepting any decision.
+
+Scope admission reads the retained source and exact applicability or
+correspondence evidence, runs actual search and Lean probes, and requires an
+explicit current human decision. Missing or inconclusive gates remain missing.
+Required work, target-paper novel claims and ordinary local hypotheses cannot
+be repackaged as admitted external background. Contextual hypotheses remain
+local mathematical inputs. Conditional proofs disclose admitted premises
+actually used, separately from premises merely allowed in the scope.
+
+Selected-artifact replay executes Lean afresh, whereas recorded acceptance
+checks old artifacts for consistency. Replay pins dependency source and
+compiled-library inventories captured at export. These hashes do not prove a
+source-to-cache derivation or independently authenticate their original
+producer. A differently rebuilt cache can fail the byte comparison at the same
+source revision. Neither operation confines execution or supplies a second
+kernel implementation; the selected Lean environment remains part of the
+trust base.
+
 ## Assumptions
 
 An assumption is an axiom a human approves, and approving one widens the trust

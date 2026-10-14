@@ -7,75 +7,107 @@
 
 Hardy is an application for mathematical research, development, proof repair
 and paper auditing, built around Lean 4 and a durable mathematical project.
-Its intended workflow connects informal targets, definitions, representations,
+Its workflows connect informal targets, definitions, representations,
 prerequisites and supplied arguments to the evidence that supports them.
 Versioned statements and contexts preserve what was actually asked; obligations
 keep missing work visible; authenticated evidence separates a checked proof
 from a translation judgment, an admitted premise or a compiled document.
 
-The supported entry points are the browser workbench, interactive session and
-staged single-theorem prover. Research, Explore, Repair and Referee also have
-workflow implementations; their presence in the package does not mean that
-these high-level workflows are constructed by the application. See the
-[roadmap](docs/roadmap.md) for application integration and remaining work.
+The browser workbench and interactive session share project operations for
+Research, Explore, Repair and Referee. The staged prover remains a direct entry
+point for one theorem. Each surface records exact inputs, attempts, evidence and
+outstanding work in the same durable project. See the
+[roadmap](docs/roadmap.md) for validation and remaining work.
 
 The name recalls G. H. Hardy's response to Ramanujan: recognize the insight,
 then demand the proof.
 
 ## Work on a mathematical project
 
-Start the browser workbench with:
+Suppose a manuscript states `1 = 1` but argues by cancelling zero, and another
+result relies on an internal claim `0 = 1`. A useful audit has several answers
+to give: whether each conclusion is established, whether the supplied argument
+works, what happened to the internal claim, and whether a proposed repair fixes
+the argument. Hardy keeps those assessments separate. An independent proof of
+`1 = 1` does not repair its original argument; a refuted intermediate claim does
+not automatically refute the theorem that cited it.
+
+Start the browser workbench:
 
 ```sh
 hardy web
 ```
 
-Open or create a project through its registry. The workbench provides project
-files, a ledger graph, results and publication views. Its composer shares the
-session command path. Record a small semantic target there, or in `hardy chat`:
+Open or create a project through the registry. Files, the ledger graph, results
+and publication views share the project's record. The Ledger controls let you:
+
+- Create exact statements and mathematical contexts, including declarations,
+  local hypotheses, notation and representation choices. Revisions retain old
+  versions and require fresh evidence for changed inputs.
+- Run **Research** on a selected target and scope, **Explore** a concept or
+  representation, or **Repair** an exact defect and original argument. Proposals
+  and missing prerequisites remain visible; a model response cannot close a
+  proof obligation.
+- Paste or select TeX sources and known audited-paper identities, propose source
+  mappings, and review each mapping against its quoted source. Choose main results, required internal claims and citation
+  depth before **Referee** runs its recorded layers.
+- Review correspondence and premise admissions with the actual reviewer,
+  conditions and reason. Admission requires exact source, search and Lean gates;
+  required targets and novel manuscript results remain on the proof path.
+- Inspect the theorem conclusion, original argument, intermediate claims and a
+  selected repair independently, then export the selected result or Referee
+  report. A result with retained formal evidence can include model-free Lean
+  replay; unresolved assessments stay in the export.
+
+For a first target, use the workbench composer or `hardy chat`:
 
 ```text
 /project target Nonnegative "Every natural number is nonnegative" --formal "lemma nonnegative (n : Nat) : 0 ≤ n"
 ```
 
-This records two exact statements and an empty-premise scope, with open
-translation-review and proof obligations. In Ledger, read the statements side
-by side and record an approved, disputed or unresolved correspondence judgment,
-with the reviewer, actual conditions and reason. Save the exact Lean statement
-and proof through Files, then choose its checked result under **Bind checked
-save**. The command equivalents are `/project review`, `/project bind` and
-`/project inspect`; [session commands](docs/reference/session-commands.md) gives
-the exact-version syntax. `/project export` and the Ledger export control save
-an assessment snapshot with its evidence references and unresolved work.
+This creates separate informal/formal proposals and an empty-premise scope.
+Review their correspondence side by side. Save the exact statement and proof
+through Files, then select its checked result under **Bind checked save**.
+Research can also prepare and prove the selected target through the controlled
+save path. The command equivalents and exact-version syntax are in
+[session commands](docs/reference/session-commands.md); [getting started](docs/getting-started.md)
+walks through both routes.
 
 <details>
-<summary>Controlled review in the workbench</summary>
+<summary>A conclusion, defective original and separate repair</summary>
 
-![Ledger review card with separate statement, translation, formal-proof and supplied-argument assessments](docs/images/semantic-target.png)
+![Workbench assessment: reviewed kernel proof supports the theorem, the original argument is defective, and the selected repair has heuristic review support](docs/images/project-assessments.png)
 
-Controlled engineering example: Lean checked `True`; correspondence was a
-synthetic test judgment, and no provider model was invoked. Original and repaired
-arguments remain unassessed.
+Actual served workbench, controlled reflexivity fixture: pinned Lean/Mathlib
+checked the conclusion; the original zero-cancellation argument remains
+defective, and the selected replacement has heuristic review support.
+Model responses and review judgments were scripted synthetic inputs; no provider
+model was invoked. Document compilation and citation review remain unassessed.
 
 </details>
 
-The report keeps correspondence, kernel proof and informal-target support
-separate. A checked Lean proof establishes its formal statement; linking it to
-the intended mathematics still needs correspondence review, exact hypotheses
-and assumption provenance. Proving a theorem by another argument also leaves
-the supplied proof to assess. Original arguments, intermediate claims and
-repairs are explicitly unassessed until that work is performed.
+The [project workflow fixtures](tests/unit/test_live_project_workflows.py),
+[manuscript fixtures](tests/unit/test_live_manuscript.py) and
+[standalone replay tests](tests/unit/test_standalone_replay.py) make the
+controlled input/output checks inspectable.
 
-The records survive restart. Correct a target under a new ID with
-`--supersedes ID@FULL_SHA256`; earlier versions and their evidence remain
-addressable. Changes to proof inputs or the configured build invalidate bound
-acceptance until fresh checked evidence is bound. High-level workflow
-integration and argument assessment remain in [the roadmap](docs/roadmap.md).
+Kernel proof, statement correspondence, scoped assumptions, citation review and
+document compilation carry independent evidence. A checked Lean proof
+establishes its exact formal statement under the axioms it used; connecting it
+to the intended mathematics still needs correspondence and hypothesis review.
+A model or human argument assessment carries its own evidence level and actual
+conditions. Workflow proofs use ordinary lemma saves and appear as semantic
+results in Ledger, workflow reports and selected bundles. The Results/theorem
+writeup registry retains its separate explicit naming, theorem and document
+gates. Compiling a report supplies no theorem support.
+
+The records survive restart, including failed and interrupted attempts. Resume a
+workflow with its original request ID and unchanged mathematical inputs; changed
+inputs require a new request. Stop cancels active work and preserves its history.
+Changes to a source, context, definition, citation or proof dependency withdraw
+affected current acceptance while retaining the historical record.
 
 ## Prove one theorem
-
-<!-- A screenshot of the interactive session goes here once one is supplied:
-     ![A Hardy session](docs/images/session.png) -->
 
 A recorded staged proof, from a claim in ordinary language to a kernel-checked Lean
 file and a compiled writeup:
@@ -191,22 +223,26 @@ On Windows, without WSL:
 powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 ```
 
-The installer brings up Python, elan and Lake, a pinned Mathlib, a TeX engine,
-and Hardy itself, skipping anything already present; expect the Mathlib step to
-take a while. Hardy authenticates through the Claude Code CLI, so a Claude
-subscription works with no API key; an `api` backend that takes an Anthropic
-key is available too. Once a release is tagged, a one-line installer will fetch
-the released wheel instead of a clone. [The install guide](docs/install.md)
+The installer brings up Python, elan and Lake, pinned Mathlib and Tectonic,
+interactive LaTeX tools, the Claude Code CLI and Hardy itself, reusing healthy
+existing tools; expect the Mathlib step to take a while. The default `claude`
+backend uses Claude Code subscription sign-in;
+`claude auth status` must report a logged-in account. The optional `api` backend
+needs the `api` extra, an explicit backend setting and `ANTHROPIC_API_KEY`.
+Interactive sessions accept `claude` or `api`; the optional Codex backend is a
+staged `prove`/`accept` flag. Configuration and authentication are described in
+[the settings reference](docs/reference/configuration.md). Once a release is
+tagged, a one-line installer will fetch the released wheel instead of a clone. [The install guide](docs/install.md)
 covers every option, path, and failure mode.
 
 ## Use
 
 | Command | What it does |
 | --- | --- |
-| `hardy`, `hardy chat` | Open or resume an interactive session on one problem: Lean, LaTeX, and computer algebra in one durable workspace. |
+| `hardy`, `hardy chat` | Open or resume a durable mathematical project, with project workflows, Lean, LaTeX and computer algebra. |
 | `hardy web` | Serve the browser client on 127.0.0.1; it opens projects from its own registry, never the current directory. |
 | `hardy prove` | Take one claim from statement to verified document, staged and gated. |
-| `hardy doctor` | Report whether Lean, LaTeX, computer algebra, and the model are usable. |
+| `hardy doctor` | Check tool, configuration and selected-backend authentication prerequisites. |
 | `hardy setup` | Discover, install, and record the pinned toolchain. |
 | `hardy accept` | Run the checked-in acceptance problems, or recheck recorded runs. |
 | `hardy batch` | Run one proof request unattended and record the trajectory. |

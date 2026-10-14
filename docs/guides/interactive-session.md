@@ -62,6 +62,60 @@ here, and separately refuses a directory that exists but is not a Hardy project
 of its own, such as `src/` or a Lean library you keep beside your problems; it
 will not scatter `lean/`, `tex/` and a record into a tree it did not make.
 
+## Research, arguments and manuscript review
+
+The workbench's project controls and `/project` commands call the same typed
+session operations. A project keeps exact statements, mathematical contexts,
+source-bound arguments/steps, scopes and obligations beside authenticated
+capability evidence. [Getting started](../getting-started.md) walks the target,
+research/repair and manuscript routes; [session commands](../reference/session-commands.md#project)
+gives the exact current syntax.
+
+Research selects an exact target and scope and records prerequisite search,
+preparation, correspondence and controlled proof attempts. Explore proposes
+contexts, concepts or representations without assuming a theorem-shaped target.
+Repair selects an exact outstanding defect and original supplied argument,
+records a distinct replacement and assesses its steps separately. Proving the
+conclusion independently does not repair the original argument.
+
+For TeX, retain/select exact source versions, propose mappings, review their
+quotes and proposed semantics, then select main/internal results and citation
+depth. Referee uses that exact reviewed selection. Unsupported or unmapped text
+stays visible; missing providers, source identities or capabilities produce
+explicit blocked/skipped work. Its report records actual layers and conditions,
+and keeps heuristic defects separate from formal counterevidence. A refuted
+internal claim does not settle the main conclusion automatically.
+
+Review/admission controls require the actual reviewer label, conditions and
+reason. A local hypothesis is local context; an admitted external premise needs
+source/correspondence/search/Lean gates and an explicit current human decision.
+Required results and novel claims of the audited paper remain protected.
+Changed source/context/definition/dependency versions withdraw affected current
+authority while retaining history.
+
+Workflow IDs preserve exact mathematical requests through restart and resume;
+changed inputs under the same ID are refused. Stop/Escape cancels active work,
+and attempts, actual runtime configuration/prompts, elapsed time and reported or
+unavailable usage remain in history. Outstanding obligations include open,
+investigating and blocked states; filters also expose resolved, dismissed and
+abandoned history.
+
+Inspect a target with explicit scope/original/repair selections before export.
+`/project export` freezes a JSON snapshot; the structured `bundle` action adds
+selected evidence/provenance and available standalone formal replay. Exact
+Referee receipts export separately. Neither exporting nor compiling a document
+changes the theorem/argument assessments. See
+[the bundle reference](../reference/artifacts.md#selected-result-and-referee-bundles).
+
+Publication likewise selects an exact established item. For the native
+Nonnegative save/bind example, proof evidence belongs to `Nonnegative:formal`
+under `Nonnegative:scope`. Its informal target can have reviewed formal support
+in a target report while remaining unestablished for publication: a
+formalization relation does not itself transport proof or authorize a premise.
+Select the formal item for that proof-backed publication; compiling an informal
+draft does not remove its unresolved policy work. See
+[publication commands](../reference/cli.md#project-publication-commands).
+
 ## The tools the model has, and the ones it is refused
 
 The model's whole reach into your workspace is a fixed set of tool calls Hardy

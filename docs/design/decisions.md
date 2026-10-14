@@ -603,8 +603,9 @@ the caller's.
 ### The staged request schema stays standalone
 
 We chose to keep the public staged prove request standalone, exposing
-contextual formalization directly, over a project-aware request, which is
-deferred to later integration.
+contextual formalization directly, over making every staged request depend on
+the project ledger. Project workflows adapt exact selected records at their
+own boundary.
 
 Cost: a project-aware staged run needs an additional input adapter; the
 contextual service it would call already exists.
@@ -735,9 +736,55 @@ the same checked declaration supplies elaboration to formalization work only
 alongside the exact approved correspondence judgment.
 
 Cost: a changed saved-proof revision requires rebinding. A reader with no live
-build environment cannot authenticate this binding, and says so. The exported
-report is a frozen assessment with exact references; it does not package a
-fresh independent Lean replay or establish an unassessed supplied argument.
+build environment cannot authenticate this binding, and says so. The JSON
+snapshot export freezes an assessment and exact references. Standalone replay
+is a separate selected-artifact operation; neither export establishes an
+unassessed supplied argument.
+
+### A supplied argument is assessed separately from its conclusion
+
+We chose distinct original and repaired argument records, with exact
+source-bound steps and separate assessments, over treating a conclusion proof
+as a repaired argument. An alternative proof can settle the theorem while
+leaving the supplied reasoning defective. A false internal claim can invalidate
+that reasoning without settling the main conclusion.
+
+Cost: a repair owes explicit replacement steps and fresh coverage; a proof of
+its conclusion cannot silently supply them.
+
+### Every application surface calls the same project operations
+
+We chose a strict shared action adapter for browser controls and session
+commands, over independent command and HTTP implementations, because exact
+project/version checks and typed selections belong at one boundary. The session
+constructs existing workflows through named runtime/capability ports; owners
+retain mathematical acceptance authority.
+
+Cost: complex command requests use structured JSON while the browser offers
+labelled fields for the same records.
+
+### Replay selects immutable evidence instead of current workspace files
+
+We chose an explicit selected-artifact bundle with retained source closure and
+pinned environment identities, over reconstructing a historical proof from the
+current workspace. A later edit cannot change what the replay says it checks.
+Fresh Lean execution and named axiom parsing remain separate from report and
+correspondence judgments.
+
+Cost: missing historical bytes or environment identities make replay
+unavailable; the report preserves that reason rather than inventing a closure.
+
+### Workflow lemma saves preserve the native document registry
+
+We chose ordinary lemma saves for live workflow proofs, over automatically
+registering every semantic result or prerequisite as a public theorem. Exact
+semantic results and their independent assessments are inspected in Ledger,
+workflow reports, selected bundles and authenticated project publication. The
+native Results/theorem writeup lane keeps its explicit naming and document
+gates.
+
+Cost: a workflow proof does not automatically become a native registered
+writeup theorem; that intentional authoring work remains separate.
 
 ### A callback result must be a boolean
 

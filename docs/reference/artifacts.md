@@ -2,6 +2,110 @@
 
 This page names every record Hardy writes to disk and what its fields mean: the staged run manifest and trajectory, the interactive record and transcript, the ledger, and the evaluation artifacts. It is for anyone reading a run directory by hand, writing a script against `manifest.json` or `scoreboard.json`, or auditing what a grade actually rests on. For where each file lives on disk, see [On-disk layout](on-disk-layout.md); for the settings that shape a run, see [Configuration](configuration.md).
 
+## Project evidence and assessments
+
+Project records use exact `{id,digest}` references. The ledger records sources,
+contexts, statements, arguments, proof steps, obligations and relations. The
+existing hash-chained `evidence/` journal retains capability receipts and human
+decisions. These records do not obtain authority merely by appearing in a
+journal: their owners authenticate exact current inputs and evidence on use.
+
+| Record | Retained meaning |
+| --- | --- |
+| Semantic judgment / mathematical assessment | Exact subject/scope and relevant source/dependency versions, purpose or statement/argument dimension, verdict, reviewer, actual conditions/reason, evidence, actual assumptions, coverage and unresolved work |
+| Translation review / checked binding | Exact informal/formal proposal pair and scope/context; current correspondence attribution or the actual checked-save/proof/source/build identity |
+| Scoped admission request / gate / decision | Exact premise/formalization/source/scope, actual source/search/Lean gate outputs and environment, human decision and commit receipt; missing or stale gates grant no permission |
+| `ModelCallReceipt` | Exact prompts, response schema/text, context ID, model/backend/endpoint/configuration/tools/isolation, status/detail, elapsed time and actual/unavailable usage; optional `teardown_pending` records unfinished cleanup |
+| `WorkflowAttempt` | Request/attempt identity and JSON, kind (`research`, `explore`, `repair`, `intake`, `referee`), running/completed/pending/failed/blocked/cancelled/interrupted state, detail/result, elapsed time and timestamp |
+| `FrozenFormalEvidence` | Exact frozen claim/formalization/relation/input closure and scope/context, source/result artifacts, actual axiom report, declared/allowed/used assumption identities, environment, native save, source-input/build signature, correspondence receipt and retained source/environment artifacts |
+| `IntakeProposal` / `IntakeReview` | Mechanical inventory, exact source versions and quoted proposed mappings, gaps, runtime receipt; explicit mapping decisions, main/internal/background selection and exact input closure |
+| `RefereeReceipt` | Exact reviewed scope/result/argument/citation bounds, source/dependency inputs, report, executed/skipped/blocked layers and actual conditions, model refs, terminal state and elapsed time |
+
+Source spans use Unicode-codepoint `[start,end)` offsets in the full immutable
+UTF-8 source version. Intake validates the quote and digest. Source reading,
+citation presence, exact theorem selection, hypothesis applicability and source
+admission remain different checks. A missing citation identity or unavailable
+expansion stays explicit in coverage.
+
+`hardy.semantic-target-report/v1` reports theorem statement, original argument,
+intermediate claims and selected repair independently, with evidence levels,
+actual assumptions, coverage, unresolved reasons and history. Formal proof,
+translation, citation review and document compilation remain separate lanes.
+Explicit scope selection cannot borrow acceptance from a different scope.
+Publication also authenticates the exact selected item's establishment; a
+supported informal-target report does not automatically transfer its formal
+proposal's direct proof evidence through the formalization relation. Native
+checked-save/bind publications select the formal item and its scope; informal
+draft readiness, PDF compilation and native Results registration remain separate.
+`hardy.manuscript-referee-report/v1` adds exact source locations/inventory/gaps,
+demonstrated defects and their evidence level, actual layers and formalization
+runs, citations and outstanding obligations. Current reads revalidate inputs;
+historical reports retain stale reasons instead of current authority.
+
+Reported usage is preserved rather than guessed. Missing token/cost counters
+remain null/unreported. A workflow's completed software state is not a
+mathematical grade. Fresh provider contexts record actual conditions without
+claiming mathematical independence or a human review.
+
+## Selected-result and Referee bundles
+
+The `bundle` and `referee-export` project actions write
+`reports/NAME.bundle/`; existing destinations are refused. The legacy
+`/project export` writes only `reports/NAME.json`.
+
+| Path | Meaning |
+| --- | --- |
+| `manifest.json` | `hardy.selected-artifact-bundle/v1`, digest map of payload files |
+| `report.json` | `hardy.selected-result-export/v1` or `hardy.selected-referee-export/v1`, exact selection, current assessment, revisions and replay state; historical Referee receipt/report remain separate |
+| `README.txt` | Grade/provenance notes and a link to replay instructions when available |
+| `provenance/ledger/`, `provenance/evidence/` | Retained owner transaction/journal JSON |
+| `provenance/semantic-sources/`, `provenance/workflow-artifacts/` | Exact retained source bytes and referenced capability artifacts |
+| `provenance/trajectory.json` | Runtime calls, attempts, elapsed measurements, capability/tool events, human interventions, session metrics and missing-usage interpretation |
+| `replay/manifest.json` | `hardy.standalone-lean-replay/v1`: selected module/declaration, local build order, historical axioms/signature, approved external axioms, environment/package/source/cache inventories and file digests |
+| `replay/lean/`, `replay/environment/` | Exact local source closure and retained Lake/toolchain metadata |
+| `replay/replay.py`, `replay/audit.py`, `replay/README.txt` | Standalone Python-stdlib runner, axiom parser, pinned setup and exact command |
+
+Replay is `ready` when the exact retained artifact/closure and pinned environment
+can be packaged; otherwise it records `unavailable` with a precise reason.
+With no selected formal artifact, the export contains only the report/provenance.
+Multiple authenticated artifacts require an explicit formal EvidenceRef. Historical selection retains
+its current-authentication status without restamping the old evidence. Legacy
+records without immutable snapshots cannot be reconstructed from current bytes.
+Historical scope/formal selections that current-only readers cannot inspect
+retain raw history with an unavailable current assessment and exact reason;
+present state cannot manufacture historical acceptance.
+
+Replay needs installed pinned Lean/Lake and a separately prepared project, but
+no Hardy package or provider credentials. Dependencies are not bundled. The
+whole configured-project root Lean-source inventory is also pinned; unrelated
+custom root files outside the selected bundled closure require their original
+bytes at the inventoried paths. Missing original material is refused; the bundle
+alone cannot reconstruct an arbitrary custom configured project. The
+runner verifies tool versions, manifest/metadata and dependency inventories,
+builds local inputs in a fresh temporary directory and performs a named axiom
+audit. Missing, duplicate or truncated audit output and `sorryAx` cannot pass.
+Standard, used external, allowed unused and declared assumptions stay distinct.
+Fresh audit data is separate from historical evidence.
+
+Compiled dependency hashes are captured at export. They pin bytes without
+independently proving source-to-cache derivation. A cache rebuilt at the same
+source revision can have different bytes and be refused. That rebuild creates
+a new environment; capture it explicitly rather than editing an old bundle or
+restamping historical evidence. Replay keeps Hardy's documented Lean execution
+and audit trust boundary.
+
+From the bundle's `replay/` directory, use the exact paths and digest in its
+`README.txt`:
+
+```sh
+python3 -I replay.py --project /absolute/pinned-project --lake /absolute/toolchain/bin/lake --lean /absolute/toolchain/bin/lean --manifest-sha256 FULL_REPLAY_MANIFEST_SHA256
+```
+
+A Referee bundle preserves its exact historical report separately from current
+assessment and stale reasons. It selects no formal proof implicitly; select a
+mathematical result artifact for replay. `hardy accept --recorded` instead
+checks retained artifact consistency without fresh Lean execution.
+
 ## `manifest.json` (staged runs)
 
 Every `hardy prove` attempt, staged or live, ends with a `manifest.json` in its run directory (`runs/<timestamp>-<slug>-<id>/`). It is written last, after every other artifact, and it hashes the run directory as it stands at that moment: `artifacts` names every file's own path and SHA-256, `trajectory.jsonl` included. A tool call still running when the run is cancelled is stopped before the manifest is written for exactly this reason; nothing may append to the run directory after the manifest has hashed it, because a manifest whose digests do not describe the directory it names is not evidence of anything. If a wait for a subprocess to settle runs out, the manifest still gets written where the run actually stopped; a record that says where it stops is better evidence than a silent truncation a reader would mistake for the end of the run.
