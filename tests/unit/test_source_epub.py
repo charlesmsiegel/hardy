@@ -162,3 +162,170 @@ def test_zip_traversal_and_bomb_are_refused(tmp_path):
     good = epub()
     extraction = archives.extract(good, into)
     assert extraction.kind == "zip" and {f.path for f in extraction.files} >= {"mimetype", "META-INF/container.xml"}
+
+
+def test_spine_resolves_encoded_relative_urls_and_rejects_escape():
+    from hardy.literature.sources.epub import EpubAdapter
+
+    container = CONTAINER.replace('OEBPS/content.opf', 'OEBPS/pkg/content%20file.opf')
+    package = OPF.replace('chapter1.xhtml', '../Text/ch%201.xhtml#start').replace('chapter2.xhtml', '../../../escape.xhtml')
+    items, _, diagnostics = EpubAdapter()._spine(epub({'META-INF/container.xml': container,
+        'OEBPS/pkg/content file.opf': package, 'OEBPS/Text/ch 1.xhtml': CH1}))
+    assert items == [('OEBPS/Text/ch 1.xhtml', CH1)]
+    assert len(diagnostics) == 1 and diagnostics[0].code == 'spine_item_unreadable'
+
+
+@pytest.mark.parametrize('encoding', ['utf-8', 'utf-16'])
+def test_xml_refuses_declarations_beyond_prefix(encoding):
+    from hardy.literature.sources.adapters import ExtractionRefused
+    from hardy.literature.sources.epub import _parse_xml
+
+    source = "<?xml version='1.0'?>" + ' ' * 5000 + "<!DOCTYPE r [<!ENTITY a 'AAAA'>]><r>&a;</r>"
+    with pytest.raises(ExtractionRefused, match='DOCTYPE'):
+        _parse_xml(source.encode(encoding), 'padded')
+
+
+@pytest.mark.parametrize('br', ['<br>', '<br/>'])
+def test_void_elements_keep_sibling_paths_and_exact_ranges(br):
+    from hardy.literature.sources.epub import scan_html
+
+    text, nodes, _ = scan_html(f'<html><body><img id="fig"><p>a{br}b</p><hr><p>c</p></body></html>')
+    assert text == 'a\nb\nc\n'
+    assert [(n['path'], n['start'], n['end']) for n in nodes] == [
+        ('html[1]/body[1]/img[1]', 0, 0), ('html[1]/body[1]/p[1]', 0, 3),
+        ('html[1]/body[1]/p[2]', 4, 5)]
+
+
+@pytest.mark.parametrize('formula,expected', [
+    ('<mi>x</mi><mo>&gt;</mo><mn>0</mn>', 'x > 0'),
+    ('<semantics><mi>x</mi><annotation encoding="application/x-tex">x^2</annotation><annotation-xml><mi>duplicate</mi></annotation-xml></semantics>', 'x^2'),
+])
+def test_mathml_text_preserves_formula_and_exact_block_range(tmp_path, formula, expected):
+    lib = ManagedLibrary(tmp_path / 'library')
+    source = f'<html><body><p>Let <math>{formula}</math> be positive.</p></body></html>'
+    report = lib.import_source(ImportRequest(data=source.encode(), original_name='math.html'))
+    sha = report.outcome.artifact.sha256
+    rep = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    text = lib.representations.text(sha, rep.id)
+    assert text == f'Let {expected} be positive.\n'
+    assert any(d.code == 'mathml_rendered_as_text' for d in rep.quality.diagnostics)
+    from hardy.literature.sources.epub import scan_html
+    _, nodes, _ = scan_html(source)
+    assert text[nodes[0]['start']:nodes[0]['end']] == text.rstrip('\n')
+
+
+@pytest.mark.parametrize('tag', ['math', 'svg'])
+def test_recovery_preserves_later_paragraph_and_reports_quality(tmp_path, tag):
+    lib = ManagedLibrary(tmp_path / 'library')
+    source = f'<html><body><p>Let <{tag}><mi>x</mi> be.</p></stray><p>Second paragraph text.</p></body></html>'
+    report = lib.import_source(ImportRequest(data=source.encode(), original_name='broken.html'))
+    sha = report.outcome.artifact.sha256
+    rep = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    assert 'Second paragraph text.' in lib.representations.text(sha, rep.id)
+    assert any(d.code == 'recovered_markup' for d in rep.quality.diagnostics)
+    from hardy.literature.sources.epub import scan_html
+    _, nodes, _ = scan_html(source)
+    assert nodes[-1]['path'] == 'html[1]/body[1]/p[2]'
+    assert nodes[-1]['end'] > nodes[-1]['start']
+
+
+def test_scanner_accumulation_work_is_linear():
+    from hardy.literature.sources.epub import _Blocks
+
+    class CountedChunks(list):
+        visited = 0
+
+        def __iter__(self):
+            for chunk in super().__iter__():
+                self.visited += len(chunk)
+                yield chunk
+
+    for count in (1000, 2000):
+        parser = _Blocks()
+        parser.text = CountedChunks()
+        parser.feed('<html><body>' + '<p>paragraph</p>' * count + '</body></html>')
+        parser.close()
+        parser.finish()
+        assert ''.join(parser.text) == 'paragraph\n' * count
+        assert parser.text.visited <= parser.length * 2
+
+
+def test_mathml_linearization_and_svg_omission_do_not_claim_complete_coverage(tmp_path):
+    lib = ManagedLibrary(tmp_path / 'library')
+    source = b'<html><body><p><math><mfrac><mi>x</mi><mi>y</mi></mfrac></math><svg><text>diagram</text></svg></p></body></html>'
+    report = lib.import_source(ImportRequest(data=source, original_name='lossy.html'))
+    sha = report.outcome.artifact.sha256
+    rep = lib.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    assert rep.quality.status == 'partial' and rep.quality.coverage is None
+    assert {'mathml_rendered_as_text', 'svg_omitted'} <= {d.code for d in rep.quality.diagnostics}
+
+
+def test_empty_whitespace_chunk_does_not_create_extra_block_separator():
+    from hardy.literature.sources.epub import scan_html
+
+    text, nodes, _ = scan_html('<p>a</p>  <span id="b"></span><p>c</p>')
+    assert text == 'a\nc\n'
+    assert nodes[1]['start'] == nodes[1]['end'] == 2
+
+
+def test_encrypted_epub_reports_extraction_refused(tmp_path):
+    raw = bytearray(epub())
+    raw[6] |= 1
+    central = raw.index(b'PK\x01\x02')
+    raw[central + 8] |= 1
+    library = ManagedLibrary(tmp_path / 'library')
+    report = library.import_source(ImportRequest(data=bytes(raw), original_name='encrypted.epub'))
+    assert report.extraction.status == 'failed'
+    assert any(item.code == 'extraction_refused' for item in report.extraction.diagnostics)
+
+
+def test_scanner_golden_nested_blocks_inline_ids_whitespace_and_links():
+    from hardy.literature.sources.epub import scan_html
+
+    text, nodes, links = scan_html('<div><p>a <span id="s">b</span> c</p><p> d </p></div>')
+    assert text == 'a \nb c\nd \n'
+    assert [(n['path'], n['start'], n['end']) for n in nodes] == [
+        ('div[1]', 0, 10), ('div[1]/p[1]', 0, 6), ('div[1]/p[1]/span[1]', 3, 4), ('div[1]/p[2]', 7, 9)]
+    assert links == []
+    text, nodes, links = scan_html('<p> a <a href="#x">link</a> </p> \n<p id="x">b</p>')
+    assert text == ' a link \nb\n'
+    assert [(n['path'], n['start'], n['end']) for n in nodes] == [('p[1]', 0, 8), ('p[2]', 9, 10)]
+    assert links == [('x', 3)]
+
+
+def test_nested_mathml_alternative_keeps_outer_tex_and_following_prose(tmp_path):
+    from hardy.literature.sources.epub import scan_html
+
+    source = ('<html><body><p>Let <math><semantics><msup><mi>x</mi><mn>2</mn></msup>'
+              '<annotation-xml encoding="MathML-Content"><math><apply><power/><ci>x</ci><cn>2</cn>'
+              '</apply></math></annotation-xml><annotation encoding="application/x-tex">x^2</annotation>'
+              '</semantics></math> be positive.</p><p>Next paragraph.</p></body></html>')
+    library = ManagedLibrary(tmp_path / 'library')
+    report = library.import_source(ImportRequest(data=source.encode(), original_name='alternatives.html'))
+    sha = report.outcome.artifact.sha256
+    representation = library.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    text = library.representations.text(sha, representation.id)
+    assert text == 'Let x^2 be positive.\nNext paragraph.\n'
+    assert representation.quality.status == 'partial'
+    assert not any(d.code == 'recovered_markup' for d in report.extraction.diagnostics)
+    _, nodes, _ = scan_html(source)
+    assert [(n['start'], n['end']) for n in nodes] == [(0, 20), (21, 36)]
+
+
+@pytest.mark.parametrize('first,second,expected', [
+    ('x', 'x', 'x'),
+    ('x^2', '{x}^{2}', 'x^2'),
+    ('x<!-- chunk boundary -->^2', '{x}^{2}', 'x^2'),
+    (' ', 'x^2', 'x^2'),
+    (' ', '', 'x'),
+])
+def test_mathml_selects_one_nonempty_tex_alternative(tmp_path, first, second, expected):
+    source = (f'<html><body><p>Let <math><semantics><mi>x</mi>'
+              f'<annotation encoding="application/x-tex">{first}</annotation>'
+              f'<annotation encoding="application/x-latex">{second}</annotation>'
+              f'</semantics></math> be positive.</p></body></html>')
+    library = ManagedLibrary(tmp_path / 'library')
+    report = library.import_source(ImportRequest(data=source.encode(), original_name='tex-alternatives.html'))
+    sha = report.outcome.artifact.sha256
+    representation = library.representations.list(sha, RepresentationKind.NORMALIZED_TEXT)[0]
+    assert library.representations.text(sha, representation.id) == f'Let {expected} be positive.\n'

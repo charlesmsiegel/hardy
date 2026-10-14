@@ -8,14 +8,17 @@ that callback runs through whichever `Ui` ends up live.
 
 from __future__ import annotations
 
+import asyncio
 import io
 from io import StringIO
+from types import SimpleNamespace
 
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
+from prompt_toolkit.patch_stdout import StdoutProxy
 
 from hardy.app.tui import run_session
 from hardy.foundation.files import LayoutError
@@ -132,12 +135,19 @@ def test_the_session_factory_is_called_exactly_once_on_the_plain_path(settings, 
     assert len(calls) == 1
 
 
-def test_the_banner_appears_on_the_interactive_shell_path(settings, monkeypatch):
+@pytest.mark.parametrize("delayed_stdout", [False, True])
+def test_the_banner_appears_on_the_interactive_shell_path(settings, monkeypatch, delayed_stdout):
     """The banner carries the unsandboxed-execution warning (a standing
     disclosure, `AGENTS.md`) -- it must not get lost when the interactive
     path is wired to the real `Shell` instead of the old REPL loop.
     """
     monkeypatch.setattr("hardy.app.tui._is_interactive", lambda: True)
+    if delayed_stdout:
+        # Deterministically run the proxy worker only during close(), after
+        # /exit has finished the app. Its loop callbacks then arrive too late
+        # to deliver prints made through patch_stdout before the first prompt.
+        monkeypatch.setattr(StdoutProxy, "_start_write_thread", lambda proxy: SimpleNamespace(join=proxy._write_thread))
+        monkeypatch.setattr(StdoutProxy, "_get_app_loop", lambda proxy: asyncio.get_running_loop())
     buffer = StringIO()
     with create_pipe_input() as pipe:
         output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))

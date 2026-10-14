@@ -159,12 +159,14 @@ class SourceReader:
 
     def find_statements(
         self, sha256: str, *, kinds: tuple[NodeKind, ...] = (), number: str | None = None, query: str | None = None,
-        limit: int = 50, tree: str | None = None,
+        limit: int = 50, tree: str | None = None, restrict: frozenset[str] | None = None,
     ) -> tuple[SourceNode, ...]:
         loaded = self._load(sha256, tree)
         words = {w.lower() for w in WORD.findall(query or "")}
         found = []
         for node in loaded.tree.nodes:
+            if restrict is not None and node.id not in restrict:
+                continue
             if node.kind not in STATEMENT_KINDS:
                 continue
             if kinds and node.kind not in kinds:
@@ -180,6 +182,9 @@ class SourceReader:
 
     def resolve_alias(self, sha256: str, alias: str, *, tree: str | None = None) -> tuple[SourceNode, ...]:
         loaded = self._load(sha256, tree)
+        return self._resolve_alias(loaded, alias)
+
+    def _resolve_alias(self, loaded: _Loaded, alias: str) -> tuple[SourceNode, ...]:
         match = ALIAS.match(alias.strip())
         if match is None:
             return ()
@@ -188,13 +193,15 @@ class SourceReader:
         found = [n for n in loaded.tree.nodes if n.number == number and (not kind or n.kind.value == kind)]
         return tuple(found)
 
-    def search_text(self, sha256: str, query: str, *, limit: int = 20, tree: str | None = None) -> tuple[SearchHit, ...]:
+    def search_text(self, sha256: str, query: str, *, limit: int = 20, tree: str | None = None, restrict: frozenset[str] | None = None) -> tuple[SearchHit, ...]:
         loaded = self._load(sha256, tree)
         hits: list[SearchHit] = []
         stripped = query.strip()
         words = [w.lower() for w in WORD.findall(stripped)]
-        exact_alias = {n.id for n in self.resolve_alias(sha256, stripped, tree=tree)} if stripped else set()
+        exact_alias = {n.id for n in self._resolve_alias(loaded, stripped)} if stripped else set()
         for node in loaded.tree.nodes:
+            if restrict is not None and node.id not in restrict:
+                continue
             text = _text_of(node, loaded)
             lowered = text.lower()
             if node.id == stripped:
@@ -232,6 +239,16 @@ class SourceReader:
             return self._unavailable(sha256, error)
         return self._deliver(loaded, record.statement_span or record.span, node=record.id)
 
+    def proof_of(self, sha256: str, node: str, *, tree: str | None = None) -> str | None:
+        loaded = self._load(sha256, tree)
+        try:
+            record = loaded.tree.node(node)
+        except KeyError:
+            return None
+        if record.kind is NodeKind.PROOF:
+            return record.id
+        return next((e.source for e in loaded.tree.edges if e.kind is SourceEdgeKind.PROOF_OF and e.target == node), None)
+
     def read_proof(self, sha256: str, node: str, *, start: int = 0, tree: str | None = None) -> Delivery:
         try:
             loaded = self._load(sha256, tree)
@@ -247,15 +264,20 @@ class SourceReader:
         proof = loaded.tree.node(proofs[0])
         return self._deliver(loaded, proof.span, node=proof.id, start=start)
 
-    def read_context(self, sha256: str, node: str, *, before: int = 400, after: int = 400, tree: str | None = None) -> Delivery:
+    def read_context(self, sha256: str, node: str, *, before: int = 400, after: int = 400, tree: str | None = None, clamp: tuple[int, int] | None = None) -> Delivery:
         try:
             loaded = self._load(sha256, tree)
             record = loaded.tree.node(node)
         except (SourceUnavailable, KeyError) as error:
             return self._unavailable(sha256, error)
         part = record.span.ranges[0]
-        text = loaded.texts[part.representation]
+        text = loaded.texts.get(part.representation)
+        if text is None:
+            return Delivery(text="", artifact_sha256=sha256, representation=part.representation, tree=loaded.tree.id, node=record.id,
+                            unavailable=f"representation {part.representation} is not available; offsets cannot be read in any other")
         start, end = max(0, part.start - before), min(len(text), part.end + after)
+        if clamp is not None:
+            start, end = max(start, clamp[0]), min(end, clamp[1])
         window = RepresentationSpan(representation=part.representation, start=start, end=end)
         return self._deliver(loaded, window, node=record.id)
 

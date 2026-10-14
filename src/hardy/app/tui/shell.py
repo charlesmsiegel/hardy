@@ -1208,19 +1208,28 @@ class Shell:
         # neither and the default session's devices already match.
         self._loop = asyncio.get_running_loop()
         self._app.create_background_task(self._drain_prompt_requests())
+        # Startup must reach the terminal before input can exit the app.
+        # patch_stdout queues writes on a worker; closing that worker joins
+        # it but does not await the terminal callbacks it posted to this loop.
+        # An already queued /exit can therefore discard a queued banner.
+        session = self._state.session
+        startup = banner.lines(
+            self._state.config,
+            cas=getattr(session, "cas", None),
+            cas_detail=getattr(session, "cas_detail", ""),
+            project_context=getattr(session, "project_context_detail", ""),
+            fresh_thread=getattr(session, "fresh_thread_detail", ""),
+        )
+        startup.extend(("error", notice) for notice in self._notices)
+        output = self._app.output
+        output.enable_autowrap()
+        for style, text in startup:
+            lines = [text] if style in {"normal", "warning"} else transcript.notice_lines(text, self._size().columns) or [""]
+            for line in lines:
+                output.write(line.replace("\n", "\r\n") + "\r\n")
+        output.write("\r\n")
+        output.flush()
         with patch_stdout(raw=True):
-            session = self._state.session
-            for style, text in banner.lines(
-                self._state.config,
-                cas=getattr(session, "cas", None),
-                cas_detail=getattr(session, "cas_detail", ""),
-                project_context=getattr(session, "project_context_detail", ""),
-                fresh_thread=getattr(session, "fresh_thread_detail", ""),
-            ):
-                self.write(text, style=style)
-            for notice in self._notices:
-                self.write(notice, style="error")
-            print()
             try:
                 return await self._app.run_async() or 0
             finally:

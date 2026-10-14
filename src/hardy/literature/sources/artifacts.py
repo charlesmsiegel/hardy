@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from hardy.foundation.files import LayoutError, WriteGuard, guard_for, read_bytes, read_text
+from hardy.foundation.locking import FileLock, LockTimeout
 
 from .contracts import (
     RESTRICTION,
@@ -178,6 +179,15 @@ class ArtifactStore:
     def import_bytes(self, request: ImportRequest) -> ImportOutcome:
         data = self._bounded_input(request)
         sha256 = hashlib.sha256(data).hexdigest()
+        guard, name = guard_for(self.root, f".locks/{sha256}.lock", create=True)
+        try:
+            with FileLock(guard.reserve(name)):
+                return self._import_data(request, data, sha256)
+        except LockTimeout as error:
+            raise ArtifactError(f"artifact {sha256} import lock could not be taken: {error}") from error
+
+    def _import_data(self, request: ImportRequest, data: bytes, sha256: str) -> ImportOutcome:
+        """Admit, restore and tighten a digest while its import lock is held."""
         format_, media_type = detect_format(data, name=request.original_name or (request.path.name if request.path else None))
         now = self._clock()
         reused = self.holds(sha256)
@@ -188,7 +198,7 @@ class ArtifactStore:
             )
             reused = not self._admit(artifact, data)
         artifact = self.record(sha256)
-        if reused and RESTRICTION[request.access] > RESTRICTION[artifact.access]:
+        if RESTRICTION[request.access] > RESTRICTION[artifact.access]:
             # Identical bytes imported again under a stricter policy: the record
             # tightens. The looser policy of an earlier import never survives
             # a later correction, whatever order the imports came in.

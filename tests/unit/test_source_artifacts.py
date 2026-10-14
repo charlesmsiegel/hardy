@@ -173,3 +173,59 @@ def test_access_policy_and_metadata_are_recorded(tmp_path):
 )
 def test_detect_format(data, name, expected):
     assert detect_format(data, name=name) == expected
+
+
+@pytest.mark.parametrize('first,second', [
+    (AccessPolicy.REDISTRIBUTABLE, AccessPolicy.PRIVATE_LOCAL),
+    (AccessPolicy.PRIVATE_LOCAL, AccessPolicy.REDISTRIBUTABLE),
+])
+def test_metadata_only_restore_preserves_strictest_policy(tmp_path, first, second):
+    artifacts = store(tmp_path)
+    initial = artifacts.import_bytes(ImportRequest(data=PDF, access=first))
+    (artifacts.root / initial.artifact.sha256 / 'content').unlink()
+    restored = artifacts.import_bytes(ImportRequest(data=PDF, access=second))
+    assert restored.artifact.access is AccessPolicy.PRIVATE_LOCAL
+    assert artifacts.record(initial.artifact.sha256).access is AccessPolicy.PRIVATE_LOCAL
+    assert artifacts.read(initial.artifact.sha256) == PDF
+
+
+def test_concurrent_policy_corrections_never_lose_private_policy(tmp_path, monkeypatch):
+    artifacts = store(tmp_path)
+    sha = artifacts.import_bytes(ImportRequest(data=PDF, access=AccessPolicy.REDISTRIBUTABLE)).artifact.sha256
+    original = artifacts.record
+    public_read = threading.Event()
+    private_read = threading.Event()
+    private_done = threading.Event()
+    failures = []
+
+    def coordinated_read(digest):
+        held = original(digest)
+        if threading.current_thread().name == 'private-correction':
+            private_read.set()
+            public_read.wait(0.2)
+        elif threading.current_thread().name == 'public-correction':
+            public_read.set()
+            assert private_done.wait(2)
+        return held
+
+    monkeypatch.setattr(artifacts, 'record', coordinated_read)
+
+    def correct(policy):
+        try:
+            artifacts.import_bytes(ImportRequest(data=PDF, access=policy))
+        except Exception as error:
+            failures.append(error)
+        finally:
+            if policy is AccessPolicy.PRIVATE_LOCAL:
+                private_done.set()
+
+    private = threading.Thread(name='private-correction', target=correct, args=(AccessPolicy.PRIVATE_LOCAL,))
+    public = threading.Thread(name='public-correction', target=correct, args=(AccessPolicy.PUBLIC_PROVIDER_RETRIEVABLE,))
+    private.start()
+    assert private_read.wait(2)
+    public.start()
+    private.join(3)
+    public.join(3)
+    assert not private.is_alive() and not public.is_alive()
+    assert not failures
+    assert original(sha).access is AccessPolicy.PRIVATE_LOCAL

@@ -169,7 +169,8 @@ def test_export_needs_a_fresh_destination_and_import_confines_paths(tmp_path):
     target = ManagedLibrary(tmp_path / "victim" / "library")
     summary = import_export(target, crafted)
     assert not (tmp_path / "victim" / "outside.json").exists()
-    assert any("would leave" in s for s in summary.skipped) and summary.copied == ("evil.json",)
+    assert any("would leave" in s for s in summary.skipped) and summary.copied == ()
+    assert any("not an exported library location" in s for s in summary.skipped)
 
 
 def test_a_policy_tightened_after_extraction_withholds_derived_text(tmp_path):
@@ -222,3 +223,85 @@ def test_a_corrupt_or_incomplete_journal_is_never_seeded_piecemeal(tmp_path):
     with pytest.raises(JournalError, match="digest"):
         verify_chain(tampered / "ledger")
     assert verify_chain(tampered / "links") == len(link_files)
+
+
+def test_private_export_of_metadata_only_library_records_missing_data(tmp_path):
+    _, lib, sha, *_ = populated(tmp_path)
+    export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=tmp_path / 'metadata')
+    restored = ManagedLibrary(tmp_path / 'restored')
+    import_export(restored, tmp_path / 'metadata')
+    bundle = tmp_path / 'private'
+    manifest = export_library(restored, classes=frozenset({ExportClass.PRIVATE_SOURCE_CACHE}), into=bundle)
+    assert manifest.missing_bytes == (sha,)
+    assert manifest.withheld_payloads
+    assert (bundle / 'export.json').is_file()
+    assert all((bundle / name).is_file() for name, _ in manifest.files)
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_export_failure_restores_destination(tmp_path, monkeypatch, existing):
+    from hardy.literature.sources import export as module
+    _, lib, *_ = populated(tmp_path)
+    bundle = tmp_path / 'bundle'
+    if existing:
+        bundle.mkdir()
+    original = module._copy
+    calls = 0
+    def fail_after_copy(*args):
+        nonlocal calls
+        calls += 1
+        original(*args)
+        if calls == 2:
+            raise OSError('disk full')
+    monkeypatch.setattr(module, '_copy', fail_after_copy)
+    with pytest.raises(OSError, match='disk full'):
+        export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=bundle)
+    assert bundle.exists() == existing
+    if existing:
+        assert list(bundle.iterdir()) == []
+
+
+def test_failed_export_does_not_remove_competing_success(tmp_path, monkeypatch):
+    import threading
+
+    from hardy.literature.sources import export as module
+
+    lib = ManagedLibrary(tmp_path / 'library')
+    lib.import_source(ImportRequest(data=PDF), extract=False)
+    destination = tmp_path / 'bundle'
+    first_copy = threading.Event()
+    second_done = threading.Event()
+    original = module._copy
+    outcomes = {}
+
+    def copy(*args, **kwargs):
+        if threading.current_thread().name == 'failed-export':
+            first_copy.set()
+            second_done.wait(0.2)
+            raise OSError('copy failed')
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, '_copy', copy)
+
+    def export(name):
+        try:
+            outcomes[name] = export_library(lib, classes=frozenset({ExportClass.METADATA_SEMANTICS}), into=destination)
+        except Exception as error:
+            outcomes[name] = error
+        finally:
+            if name == 'success':
+                second_done.set()
+
+    failing = threading.Thread(name='failed-export', target=export, args=('failure',))
+    succeeding = threading.Thread(target=export, args=('success',))
+    failing.start()
+    assert first_copy.wait(2)
+    succeeding.start()
+    failing.join(3)
+    succeeding.join(3)
+    assert not failing.is_alive() and not succeeding.is_alive()
+    assert isinstance(outcomes['failure'], OSError)
+    assert not isinstance(outcomes['success'], Exception)
+    assert (destination / 'export.json').is_file()
+    imported = ManagedLibrary(tmp_path / 'imported')
+    assert import_export(imported, destination).copied

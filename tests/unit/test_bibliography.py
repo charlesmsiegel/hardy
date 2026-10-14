@@ -981,3 +981,42 @@ def test_a_persisted_key_latex_reads_differently_is_refused():
     for bad in ("a,b", "a{b", "a}b", "a\\b", "a b", "", "x" * 200):
         with pytest.raises(ValidationError):
             Entry(key=bad, **whole)
+
+
+@pytest.mark.parametrize("operation", ["cite", "cite_edition", "regenerate"])
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_all_bibliography_writers_translate_lock_failure(tmp_path, monkeypatch, operation, unavailable):
+    from hardy.foundation.locking import LockTimeout, LockUnavailable
+    from hardy.literature.sources.arxiv_adapter import catalog_records
+
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record())
+    bibliography.tex.joinpath("references.tex").write_text("stale", encoding="utf-8")
+    failure = LockUnavailable("unwritable") if unavailable else LockTimeout("busy")
+
+    def refuse(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr("hardy.literature.bibliography.FileLock", refuse)
+    message = "could not be taken" if unavailable else "another session"
+    with pytest.raises(BibliographyError, match=message) as caught:
+        if operation == "cite":
+            bibliography.cite(_record())
+        elif operation == "cite_edition":
+            work, edition = catalog_records(_record())
+            bibliography.cite_edition(work, edition, read_artifacts=("a" * 64,))
+        else:
+            bibliography.regenerate()
+    assert caught.value.__cause__ is failure
+    assert bibliography.tex.joinpath("references.tex").read_text(encoding="utf-8") == "stale"
+
+
+def test_regenerate_translates_real_lock_contention(tmp_path):
+    bibliography = Bibliography(tmp_path, lock_timeout=0.01)
+    bibliography.cite(_record())
+    bibliography.tex.joinpath("references.tex").write_text("stale", encoding="utf-8")
+    with (
+        FileLock(tmp_path / ".local" / "bibliography.lock"),
+        pytest.raises(BibliographyError, match="another session"),
+    ):
+        bibliography.regenerate()

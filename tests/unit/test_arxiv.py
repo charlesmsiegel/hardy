@@ -16,6 +16,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -396,9 +397,10 @@ def test_a_response_that_fails_mid_body_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
-    # Exercise the body failure independently of TLS setup or host scheduling.
-    monkeypatch.setattr(client_module.time, "monotonic", lambda: 0.0)
-    monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", lambda *a, **k: Collapsing())
+    # Mock before HTTPSHandler creates the host's TLS context, which can use
+    # up the deadline on Windows before this scripted body is ever read.
+    monkeypatch.setattr(client_module.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=lambda *a, **k: Collapsing()))
+    monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=lambda: 0.0))
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -422,7 +424,8 @@ def test_a_chunked_response_cut_short_is_an_arxiv_error(monkeypatch):
         def __exit__(self, *_: object) -> None:
             return None
 
-    monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", lambda *a, **k: Truncated())
+    monkeypatch.setattr(client_module.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=lambda *a, **k: Truncated()))
+    monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=lambda: 0.0))
     with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
@@ -431,9 +434,46 @@ def test_a_connection_that_never_opens_is_an_arxiv_error(monkeypatch):
     def refuse(*args, **kwargs):
         raise OSError("network unreachable")
 
-    monkeypatch.setattr(client_module.urllib.request.OpenerDirector, "open", refuse)
+    monkeypatch.setattr(client_module.urllib.request, "build_opener", lambda *a: SimpleNamespace(open=refuse))
+    monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=lambda: 0.0))
     with pytest.raises(arxiv.ArxivError, match="could not be reached"):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
+
+
+@pytest.mark.parametrize(("setup_seconds", "expected_reads"), [(6.0, 0), (1.0, 2)])
+def test_http_deadline_includes_setup_and_does_not_reset_after_each_read(monkeypatch, setup_seconds, expected_reads):
+    clock = Clock(0.0)
+    socket_timeouts: list[float] = []
+
+    class Dribbling:
+        reads = 0
+        closed = False
+        fp = SimpleNamespace(raw=SimpleNamespace(_sock=SimpleNamespace(settimeout=socket_timeouts.append)))
+
+        def read(self, size: int) -> bytes:
+            self.reads += 1
+            clock.now += 2.0
+            return b"x"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            self.closed = True
+
+    response = Dribbling()
+
+    def build_opener(*handlers):
+        clock.now += setup_seconds
+        return SimpleNamespace(open=lambda *a, **k: response)
+
+    monkeypatch.setattr(client_module.urllib.request, "build_opener", build_opener)
+    monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=clock.time))
+    with pytest.raises(arxiv.ArxivError, match=f"5s deadline with {expected_reads} bytes read"):
+        arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
+    assert response.reads == expected_reads
+    assert response.closed
+    assert socket_timeouts == ([] if expected_reads == 0 else [4.0, 2.0])
 
 
 def test_the_throttle_serialises_across_processes(tmp_path: Path):
