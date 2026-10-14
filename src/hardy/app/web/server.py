@@ -18,6 +18,7 @@ it already drew rather than start the transcript again.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import mimetypes
 import secrets
@@ -333,16 +334,26 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, panels.record_counts(problem))
         elif name == "ledger":
             self._json(200, panels.ledger_list(problem))
-        elif name == "ledger/item":
+        elif name in {"ledger/item", "ledger/export", "publications"}:
             if "project" in query and query["project"][0] != str(problem):
-                raise Busy("The open project changed. Reload the target before reviewing it.")
-            self._json(200, panels.ledger_item(problem, query.get("id", [""])[0], owners=getattr(session, "owners", None)))
-        elif name == "ledger/export":
-            self._json(200, panels.ledger_export(problem, query.get("id", [""])[0]))
+                raise Busy("The open project changed. Reload the ledger before reviewing it.")
+            if getattr(session, "workspace", None) != problem:
+                raise Busy("The open project changed. Reload the ledger before reviewing it.")
+            projection = getattr(session, "project_read_projection", None)
+            owners = getattr(session, "owners", None) if callable(projection) else None
+            if owners is not None and Path(owners.problem).resolve() != problem.resolve():
+                raise Busy("The ledger owners belong to another project. Reload the project.")
+            with projection() if callable(projection) else contextlib.nullcontext():
+                if name == "publications":
+                    result = panels.publications(problem, owners=owners)
+                else:
+                    panel = panels.ledger_item if name == "ledger/item" else panels.ledger_export
+                    result = panel(problem, query.get("id", [""])[0], owners=owners)
+            if host.session is not session or self._problem() != problem:
+                raise Busy("The open project changed. Reload the ledger before reviewing it.")
+            self._json(200, result)
         elif name == "results":
             self._json(200, panels.results(problem))
-        elif name == "publications":
-            self._json(200, panels.publications(problem))
         elif name == "checkpoints":
             self._json(200, panels.checkpoints(host.config.layout))
         elif name == "spend":

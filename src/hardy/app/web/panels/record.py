@@ -24,6 +24,7 @@ from hardy.workflows.ledger.contracts import (
     Scope,
     VersionRef,
 )
+from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.ledger.views import LedgerViews
@@ -791,7 +792,15 @@ def results(problem: Path) -> dict[str, Any]:
 _UNSCOPED = Scope(id="unscoped")
 
 
-def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
+def _publication_policy(problem: Path, owners) -> LedgerPolicy | None:
+    if owners is None:
+        return None
+    if Path(owners.problem).resolve() != problem.resolve():
+        raise ValueError("Publication owners belong to another project")
+    return owners.policy
+
+
+def ledger_export(problem: Path, item_id: str, *, owners=None) -> dict[str, Any]:
     """The Export proof card's dependency closure: one row per closure member.
 
     Each row reads `name . record . verdict . writeup`, mirroring the design:
@@ -815,13 +824,17 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
     statement, not a reader's agreement with prose.
     So `words` and `reader_agreed` are always `None` here -- reported as
     genuinely absent, never guessed from `verdict` or from `record`.
+
+    A loaded session supplies its authenticated owners inside a pure read
+    projection. Directory-only reads retain the default fail-closed policy.
     """
+    policy = _publication_policy(problem, owners)
     snapshot = LedgerStore(problem).read()
     head = snapshot.head(item_id)
     if not isinstance(head, ProjectItem):
         raise ValueError(f"{item_id!r} is not a project item")
 
-    views = LedgerViews(snapshot)
+    views = LedgerViews(snapshot, policy)
     scopes = snapshot.current(Scope)
     candidates = tuple(sorted((s for s in scopes if head.ref in s.must_prove), key=lambda s: s.id))
     scope = candidates[0] if candidates else None
@@ -918,7 +931,7 @@ def ledger_export(problem: Path, item_id: str) -> dict[str, Any]:
     }
 
 
-def publications(problem: Path) -> dict[str, Any]:
+def publications(problem: Path, *, owners=None) -> dict[str, Any]:
     """Every ledger item's publication presentation, plus a draft preview for each scope claiming it as a root.
 
     Two halves, matching the design's two builders. `items` is every current
@@ -958,7 +971,11 @@ def publications(problem: Path) -> dict[str, Any]:
     is dropped from `candidates` rather than failing the whole list: one
     stale scope must not take the page listing every other candidate down
     with it, the same defence `runs()` applies per run directory.
+
+    A loaded session supplies its authenticated owners inside a pure read
+    projection. Directory-only reads retain the default fail-closed policy.
     """
+    policy = _publication_policy(problem, owners)
     snapshot = LedgerStore(problem).read()
 
     items = [
@@ -976,7 +993,7 @@ def publications(problem: Path) -> dict[str, Any]:
     for scope in snapshot.current(Scope):
         for ref in scope.must_prove:
             try:
-                plan = plan_publication(snapshot, PublicationRequest(roots=(ref,), scope=scope.ref))
+                plan = plan_publication(snapshot, PublicationRequest(roots=(ref,), scope=scope.ref), policy=policy)
                 record = snapshot.get(ref)
                 draft = assemble_publication(plan, title=record.name)
             except ValueError:

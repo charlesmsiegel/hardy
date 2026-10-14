@@ -447,6 +447,89 @@ def test_publications_route_serves_a_real_candidate(server) -> None:
     assert payload["candidates"][0]["item"] == "thm-1" and payload["candidates"][0]["ready"] is False
 
 
+def test_publication_routes_without_a_read_projection_remain_unauthenticated(server):
+    from types import SimpleNamespace
+
+    from test_project_publication_evidence import controlled_project
+
+    problem = server.host.session.workspace
+    _store, main, _premise, _unused, _scope, policy = controlled_project(problem, False)
+    server.host.session.owners = SimpleNamespace(problem=problem, policy=policy)
+    for route in ("/api/publications", f"/api/ledger/export?id={main.id}"):
+        status, _, body = _call(server, "GET", route)
+        assert status == 200, body
+        payload = json.loads(body)
+        assert (payload["candidates"][0] if "candidates" in payload else payload)["ready"] is False
+
+
+def test_publication_route_rejects_a_session_replaced_during_the_projection(server, monkeypatch):
+    from hardy.app.web import panels
+
+    original = panels.publications
+    def replaced(problem, **kwargs):
+        result = original(problem, **kwargs)
+        server.host.session = FakeSession(problem)
+        return result
+    monkeypatch.setattr(panels, "publications", replaced)
+    status, _, body = _call(server, "GET", "/api/publications")
+    assert status == 409 and "open project changed" in json.loads(body)["error"]
+
+
+def test_publication_routes_authenticate_current_formal_policy_and_withdraw_stale_evidence(tmp_path, monkeypatch):
+    from test_web_panels import native_publication_pair
+
+    from hardy.app.web import panels
+    from hardy.workflows.interactive.project import ProjectOperations
+
+    config = make_config(tmp_path)
+    chat, target, formal, scope = native_publication_pair(config.layout.problem)
+    operations = ProjectOperations(chat.workspace, lambda plan, **_kw: plan, policy=chat.owners.policy)
+    assert operations.publish(formal.id, scope=scope.id, output="preview-only").ready
+    assert not operations.publish(target.id, scope=scope.id, output="preview-only").ready
+    assert not next(row for row in panels.publications(chat.workspace)["candidates"]
+                    if row["item"] == formal.id)["ready"]
+    assert panels.ledger_export(chat.workspace, formal.id)["ready"] is False
+    registry = make_registry(tmp_path)
+    registry.add(chat.workspace)
+    host = WebHost(config, FakeOpener(tmp_path), lambda *_: chat, projects=registry)
+    replay, replays = chat.owners.journal._replay, []
+    def observed(guard):
+        replays.append(guard)
+        return replay(guard)
+    monkeypatch.setattr(chat.owners.journal, "_replay", observed)
+    for srv in _serve(host, _static(tmp_path)):
+        project = str(chat.workspace)
+        for current in (True, False):
+            before = {path: path.read_bytes() for path in chat.workspace.rglob("*") if path.is_file()}
+            replays.clear()
+            status, _, body = _call(srv, "GET", f"/api/publications?project={project}")
+            assert status == 200, body
+            candidates = {row["item"]: row for row in json.loads(body)["candidates"]}
+            assert candidates[formal.id]["ready"] is current
+            assert candidates[target.id]["ready"] is False
+            assert len(replays) == 1
+            replays.clear()
+            status, _, body = _call(srv, "GET", f"/api/ledger/export?id={formal.id}&project={project}")
+            assert status == 200, body
+            exported = json.loads(body)
+            assert exported["ready"] is current
+            assert next(row for row in exported["rows"] if row["id"] == formal.id)["unestablished"] is not current
+            assert len(replays) == 1
+            replays.clear()
+            status, _, body = _call(srv, "GET", f"/api/ledger/item?id={target.id}&project={project}")
+            assert status == 200, body
+            assert json.loads(body)["semantic"]["formal_proof"]["status"] == ("kernel_verified" if current else "stale")
+            assert len(replays) == 1
+            assert {path: path.read_bytes() for path in chat.workspace.rglob("*") if path.is_file()} == before
+            if current:
+                source = chat.workspace / "lean" / "Saved.lean"
+                source.write_text(source.read_text(encoding="utf-8") + "\n-- external source edit\n", encoding="utf-8")
+        for route in ("/api/publications", f"/api/ledger/export?id={formal.id}"):
+            separator = "&" if "?" in route else "?"
+            assert _call(srv, "GET", route + separator + "project=/other-project")[0] == 409
+        assert not (chat.workspace / "publications").exists()
+
+
 def test_checkpoints_route_serves_a_real_checkpoint(server) -> None:
     from hardy.workflows import checkpoints as checkpoint_module
 
