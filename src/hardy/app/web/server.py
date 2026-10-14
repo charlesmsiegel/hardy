@@ -211,6 +211,12 @@ class Handler(BaseHTTPRequestHandler):
             raise NoProject()
         return host.config.layout.problem
 
+    def _editor_problem(self, data: dict[str, Any]) -> Path:
+        problem = self._problem()
+        if "project" in data and data["project"] != str(problem):
+            raise Busy("The open project changed. Reload the file before saving or checking it.")
+        return problem
+
     # -- GET ---------------------------------------------------------------
 
     def do_GET(self) -> None:
@@ -308,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
         elif name == "files":
             self._json(200, panels.files(problem))
         elif name == "file":
-            self._json(200, panels.file_text(problem, query.get("path", [""])[0]))
+            self._json(200, {**panels.file_text(problem, query.get("path", [""])[0]), "project": str(problem)})
         elif name == "pdf":
             self._bytes(200, panels.pdf_bytes(problem, query.get("path", [""])[0]), "application/pdf")
         elif name == "sources":
@@ -459,8 +465,9 @@ class Handler(BaseHTTPRequestHandler):
                 # elaborates against the same workspace a turn may be saving
                 # into.
                 relative = str(data.get("path", ""))
-                panels.confine(self._problem(), relative)
-                self._json(200, host.check_file(relative, str(data.get("source", ""))))
+                problem = self._editor_problem(data)
+                panels.confine(problem, relative)
+                self._json(200, host.check_file(relative, str(data.get("source", "")), expected_problem=problem))
             elif path == "/api/library":
                 problem = self._problem()
                 result = host.run_exclusive(lambda: uploads.library_import(
@@ -502,14 +509,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/file":
                 relative = str(data.get("path", ""))
-                panels.confine(self._problem(), relative)
+                problem = self._editor_problem(data)
+                panels.confine(problem, relative)
                 options = {"base_sha256": data["base_sha256"]} if "base_sha256" in data else {}
-                self._json(200, self.server.host.save_file(relative, str(data.get("source", "")), **options))
+                self._json(200, self.server.host.save_file(
+                    relative, str(data.get("source", "")), expected_problem=problem, **options,
+                ))
             else:
                 self._json(404, {"error": "unknown action"})
         except FileConflict as error:
-            current = panels.file_text(self._problem(), relative)
-            self._json(409, {**current, "error": str(error), "conflict": True})
+            self._json(409, {**error.current, "error": str(error), "conflict": True})
         except (Busy, NoProject) as error:
             self._json(409, {"error": str(error)})
         except RuntimeError:
