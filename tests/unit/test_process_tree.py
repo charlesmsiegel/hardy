@@ -87,7 +87,7 @@ def test_a_leader_exit_does_not_end_the_descendants_budget(tmp_path, monkeypatch
         _assert_child_stopped(int(ready.read_text()))
     finally:
         if ready.exists():
-            with contextlib.suppress(ProcessLookupError):
+            with contextlib.suppress(OSError):
                 os.kill(int(ready.read_text()), 9)
         if worker:
             worker.join(timeout=6)
@@ -142,7 +142,7 @@ def _assert_child_stopped(pid):
         until = time.monotonic() + 1
         while status.exists() and time.monotonic() < until:
             try:
-                if 'State:\tZ' in status.read_text():
+                if 'State:\tZ' in status.read_text(encoding='utf-8'):
                     return
             except FileNotFoundError:
                 return
@@ -171,13 +171,13 @@ def test_kernel_kill_stops_group_members_even_when_the_leader_obeys(tmp_path):
     while not ready.exists() and time.monotonic() < until:
         time.sleep(.01)
     try:
-        assert ready.exists()
+        assert ready.exists(), (kernel.process.poll(), kernel.stdout_text(), kernel.stderr_text())
         kernel.kill()
         assert kernel.process.poll() is not None
         _assert_child_stopped(int(ready.read_text()))
     finally:
         if ready.exists():
-            with contextlib.suppress(ProcessLookupError, PermissionError):
+            with contextlib.suppress(OSError):
                 os.kill(int(ready.read_text()), 9)
         kernel.kill(immediate=True)
 
@@ -284,4 +284,36 @@ def test_input_delivery_does_not_assume_a_leader_exit_ended_its_descendant(tmp_p
     try:
         assert kernel.send(b'x' * 1_000_000)
     finally:
+        kernel.kill(immediate=True)
+
+
+def test_windows_close_waits_for_job_settlement(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from hardy.algebra import kernel as kernel_module
+
+    kernel = _Kernel([sys.executable, '-c', 'import sys; sys.stdin.readline()'],
+                     tmp_path, 4096, merge_stderr=True)
+    settled = threading.Event()
+    queried = threading.Event()
+    done = threading.Event()
+
+    def members(child):
+        assert child is kernel.process
+        queried.set()
+        return not settled.is_set()
+
+    monkeypatch.setattr(kernel_module, 'os', SimpleNamespace(name='nt'), raising=False)
+    monkeypatch.setattr(kernel_module, 'tree_has_members', members, raising=False)
+    closer = threading.Thread(target=lambda: (kernel.kill(), done.set()), daemon=True)
+    try:
+        closer.start()
+        assert queried.wait(1), 'close did not check asynchronous job settlement'
+        assert not done.is_set(), 'close returned while the job still had a member'
+        settled.set()
+        assert done.wait(2)
+        assert all(not reader.is_alive() and pipe.closed for pipe, reader in kernel._readers)
+    finally:
+        settled.set()
+        closer.join(timeout=3)
         kernel.kill(immediate=True)

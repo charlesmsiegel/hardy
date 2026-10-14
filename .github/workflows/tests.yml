@@ -260,6 +260,10 @@ jobs:
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: astral-sh/setup-uv@v5
+      - name: Native process settlement
+        shell: pwsh
+        timeout-minutes: 3
+        run: uv run --python 3.12 --extra test pytest -v --no-cov tests/unit/test_process_tree.py tests/unit/test_portable_files.py --junitxml=windows-process-junit.xml
       - name: Hermetic suite
         shell: pwsh
         # -v prints each test id as it starts, so when a test hangs until the
@@ -267,4 +271,9 @@ jobs:
         run: uv run --python 3.12 --extra test pytest -v -m "not real_toolchain and not live" -rs -o faulthandler_timeout=300 --junitxml=windows-junit.xml
       - if: always()
         uses: actions/upload-artifact@v4
-        with: { name: windows-junit, path: windows-junit.xml, if-no-files-found: warn }
+        with:
+          name: windows-junit
+          path: |
+            windows-junit.xml
+            windows-process-junit.xml
+          if-no-files-found: warn
