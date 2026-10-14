@@ -6,6 +6,10 @@ Each head line binds the **manifest digest** — a hash over every content file 
 so an edit that leaves both version strings in place still fails
 `hardy evals corpus check`.
 
+## 0.2.2 - 2026-10-14 - manifest 754ae31cdd5fc7d65dada18c05befef14c4860e26cd1542b0440265e4926ef72 - scheme hardy-corpus-manifest-v2
+
+- Migrate the release manifest to hardy-corpus-manifest-v2 length framing. All statement ids, mathematical statements, classifications, and historical measurement identities are unchanged.
+
 ## 0.2.1 - 2026-09-04 - manifest bdf6ef50656e358b3261838d6a62866b6480cc02a6513884041f5dd27f2417d0
 
 - All five irrationality entries are now `11J72` ("Irrationality; linear
