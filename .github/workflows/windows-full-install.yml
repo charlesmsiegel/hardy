@@ -1,0 +1,54 @@
+# Hosted Windows full default install, distinct from the lightweight smoke job.
+# This proves fresh Hardy/Lean/Mathlib/Tectonic/config/launchers and real prompts.
+# Hosted Python/Git/Node are recorded prerequisites: a clean OS is not claimed.
+name: Windows full install
+on:
+  push:
+    branches: [main, 'fix/t1-full-windows-install']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-install:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+      - name: Build the candidate release
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build --out-dir release
+          tar czf release/hardy-installers.tar.gz scripts
+          python - <<'PY' > release/SHA256SUMS
+          import hashlib, pathlib
+          for path in sorted(pathlib.Path('release').iterdir()):
+              if path.name != 'SHA256SUMS':
+                  print(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}')
+          PY
+      - name: Full interactive install with Mathlib and launchers
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $server = Start-Process -PassThru -WindowStyle Hidden -FilePath python `
+            -ArgumentList '-m', 'http.server', '8000', '--directory', 'release', '--bind', '127.0.0.1'
+          try {
+            $ready = $false
+            foreach ($attempt in 1..50) {
+              try { Invoke-WebRequest 'http://127.0.0.1:8000/SHA256SUMS' -UseBasicParsing | Out-Null; $ready = $true; break }
+              catch { Start-Sleep -Milliseconds 200 }
+            }
+            if (-not $ready) { throw 'Local candidate release server did not start' }
+            & scripts\ci\windows-full-install.ps1 -Root (Join-Path $env:RUNNER_TEMP 'hardy-full-install')
+          } finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+      - name: Retain actual dependency baseline, prompts and doctor checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-full-install-${{ github.sha }}
+          path: ${{ runner.temp }}/hardy-full-install/logs
+          if-no-files-found: warn
