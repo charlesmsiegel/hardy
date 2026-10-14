@@ -94,7 +94,7 @@ class LiveEvidence:
             if frozen != record.claim:
                 return None
             source = self.artifact(record.source)
-            for _module, retained in record.retained_inputs:
+            for _module, retained in (*record.retained_inputs, *record.retained_shared):
                 self.artifact(retained)
             for retained in record.environment_artifacts:
                 self.artifact(retained)

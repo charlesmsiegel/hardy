@@ -446,14 +446,14 @@ class SessionRecord:
         recovered = held if held is not None else Usage()
         start = self._ledger_cursor(fresh=held is None)
         counted = 0
+        folded = False
         for event in self._recorded(start):
-            if event.get("type") == "exchange_unreported":
-                recovered = recovered.record({})
-                counted += 1
-            elif event.get("type") == "result" and not event.get("usage_unfolded"):
+            if event.get("type") == "exchange_unreported" or (event.get("type") == "result" and not event.get("usage_unfolded")):
+                before = recovered.turns
                 recovered = recovered.record(event)
-                counted += 1
-        if not counted:
+                counted += max(0, recovered.turns - before)
+                folded = True
+        if not folded:
             return recovered
         self.local[USAGE_KEY] = recovered.as_dict()
         # Accumulated, not overwritten. This runs on every open, and the tail

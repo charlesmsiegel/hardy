@@ -102,6 +102,7 @@ class StructuredModelCalls:
         started = time.monotonic()
         usage = Usage()
         reported = False
+        accounting = threading.Lock()
         response = ""
         provider_error = ""
         accepting = threading.Event()
@@ -118,13 +119,14 @@ class StructuredModelCalls:
             # thread IDs therefore cannot borrow another call's usage baseline.
             event = {**event, "workflow_call": identity, "workflow_context": context_id}
             if event.get("type") == "result":
-                if event.get("provider_unasked") or event.get("is_error"):
-                    provider_error = str(event.get("error") or event.get("result") or "Provider unavailable")
-                event = {**event, "cumulative": False}
-                usage = usage.record(event)
-                reported = True
-                offset = self.ports.record(event)
-                self.ports.usage(event, offset)
+                with accounting:
+                    if event.get("provider_unasked") or event.get("is_error"):
+                        provider_error = str(event.get("error") or event.get("result") or "Provider unavailable")
+                    event = {**event, "cumulative": False}
+                    usage = usage.record(event)
+                    reported = True
+                    offset = self.ports.record(event)
+                    self.ports.usage(event, offset)
             else:
                 self.ports.record({"type": "workflow_runtime", "workflow_call": identity, "event": event})
 
@@ -166,18 +168,20 @@ class StructuredModelCalls:
                 self._calling = False
                 self._active = runtime if pending else None
                 self._pending_context = context_id if pending else None
-            if runtime is not None and not reported:
-                # No counters are invented. A request that did not report usage
-                # remains explicitly unreported in the session's existing meter.
-                event = {"type": "exchange_unreported", "workflow_call": identity}
-                offset = self.ports.record(event)
-                self.ports.usage({}, offset)
-                usage = usage.record({})
+            with accounting:
+                if runtime is not None and not reported:
+                    # Serialize the marker with a late result so history never
+                    # records result-before-marker for the same fresh request.
+                    event = {"type": "exchange_unreported", "workflow_call": identity}
+                    offset = self.ports.record(event)
+                    self.ports.usage(event, offset)
+                    usage = usage.record(event)
+                receipt_usage = usage.summary()
             receipt = ModelCallReceipt(id=identity, operation=self.operation, stage=stage, context_id=context_id,
                 model=str(details["model"]), backend=details.get("backend"), endpoint=details.get("endpoint"),
                 configuration=details, system_prompt=system, user_prompt=prompt, response_schema=schema_source,
                 response=response, isolation=getattr(runtime, "isolation_guarantee", None),
                 tools=tuple(spec["function"]["name"] for spec in specs), status=status, detail=detail,
-                elapsed=time.monotonic() - started, usage=usage.summary(), recorded_at=stamp(), teardown_pending=pending)
+                elapsed=time.monotonic() - started, usage=receipt_usage, recorded_at=stamp(), teardown_pending=pending)
             self.ports.journal(receipt)
         return StructuredResponse(value, receipt)

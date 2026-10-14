@@ -82,6 +82,13 @@ class PublicationPresentation(FrozenModel):
     role: PublicationRole | None = None
 
 
+class PublicationAssumptionAudit(FrozenModel):
+    item: VersionRef
+    authenticated: bool
+    used: tuple[VersionRef, ...] = ()
+    admitted: bool = False
+
+
 class PublicationPlan(FrozenModel):
     request: PublicationRequest
     revision: int
@@ -99,13 +106,19 @@ class PublicationPlan(FrozenModel):
     structure: tuple[PublicationPlacement, ...] = ()
     presentation_revisions: tuple[PublicationPresentation, ...] = ()
     attachments: tuple[Relation, ...] = ()
+    scope: Scope | None = None
+    scope_authenticated: bool = False
+    allowed_premises: tuple[ProjectItem, ...] = ()
+    used_assumptions: tuple[VersionRef, ...] = ()
+    assumption_audits: tuple[PublicationAssumptionAudit, ...] = ()
 
     @property
     def ready(self) -> bool:
         publishable = {i.ref for i in self.items if i.kind not in _RESEARCH}
         return set(self.request.roots).issubset(publishable) and not (
                     self.unestablished or self.obligations or self.citations_open
-                    or self.stale_exposition or self.missing_exposition)
+                    or self.stale_exposition or self.missing_exposition
+                    or not self.scope_authenticated or any(not value.authenticated for value in self.assumption_audits))
 
 
 _PROSE = frozenset({ProjectItemKind.EXPOSITION, ProjectItemKind.DOCUMENT_FRAGMENT})
@@ -332,6 +345,21 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
     checked = {c.ref for c in citations.values() if c.required_claim in checked_subjects}
     documented = {p.target for p in current_prose if p.prose.statement is not None or p.prose.artifacts}
     missing = tuple(i.ref for i in items if i.kind not in _CONTAINERS and i.ref not in documented)
+    try:
+        views.policy._current_scope(snapshot, scope)
+        scope_authenticated = True
+    except (ValueError, OSError, TypeError):
+        scope_authenticated = False
+    allowed = tuple(snapshot.get(ref) for ref in dict.fromkeys((*scope.allowed_background, *scope.allowed_interfaces)))
+    claim_kinds = {ProjectItemKind.THEOREM, ProjectItemKind.LEMMA, ProjectItemKind.PROPOSITION,
+                   ProjectItemKind.COROLLARY, ProjectItemKind.CLAIM, ProjectItemKind.CONJECTURE, ProjectItemKind.EXTERNAL_RESULT}
+    audits = []
+    for item in items:
+        if item.kind in claim_kinds:
+            trust = views.trust_boundary(item.ref, scope)
+            audits.append(PublicationAssumptionAudit(item=item.ref, authenticated=trust.authenticated, used=trust.external_assumptions,
+                admitted=item.ref in scope.allowed_background + scope.allowed_interfaces))
+    used = ordered(ref for value in audits if value.authenticated and not value.admitted for ref in value.used)
     return PublicationPlan(request=request, revision=snapshot.revision, closure=ordered(closure),
         items=items, contexts=tuple(contexts), citations=tuple(citations[r] for r in ordered(citations)),
         exposition=tuple(current_prose), stale_exposition=tuple(stale_prose), missing_exposition=missing,
@@ -339,4 +367,5 @@ def plan_publication(snapshot: LedgerSnapshot, request: PublicationRequest, *,
         citations_open=ordered(set(citations) - checked), containment=containment,
         structure=_structure(snapshot, paths, items, publication_members),
         presentation_revisions=tuple(presentation_revisions[ref] for ref in ordered(presentation_revisions)),
-        attachments=applied_attachments)
+        attachments=applied_attachments, scope=scope, scope_authenticated=scope_authenticated,
+        allowed_premises=allowed, used_assumptions=used, assumption_audits=tuple(audits))

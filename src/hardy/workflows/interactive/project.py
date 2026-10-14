@@ -50,10 +50,11 @@ def _selected(snapshot: LedgerSnapshot, selector: str, expected: type):
 
 
 class ProjectOperations:
-    def __init__(self, workspace: Path, publish: Callable[..., PublicationResult]):
+    def __init__(self, workspace: Path, publish: Callable[..., PublicationResult], *, policy: LedgerPolicy | None = None):
         self.workspace = workspace
         self.store = LedgerStore(workspace)
         self._publish = publish
+        self._policy = policy
 
     def target(self, identity: str, statement: str, *, formal: str,
                context: str | None = None, supersedes: str | None = None) -> ProjectItem:
@@ -158,7 +159,7 @@ class ProjectOperations:
                     item = pinned
                     break
         plan: PublicationPlan = plan_publication(snapshot, PublicationRequest(
-            roots=(item.ref,), scope=selected_scope.ref))
+            roots=(item.ref,), scope=selected_scope.ref), policy=self._policy)
         root = WriteGuard(self.workspace)
         destination = root.path("publications") / name
         return self._publish(plan, output=destination, title=item.name)

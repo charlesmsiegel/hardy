@@ -12,6 +12,7 @@ from uuid import uuid4
 from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
 from hardy.formal.declarations import DeclarationIndex
 from hardy.formal.lean import LeanCheckResult, elaborate, environment_identity, render_theorem
+from hardy.formal.syntax import build_order
 from hardy.formal.verifier import FinalVerifier, VerificationResult, verification_source
 from hardy.foundation.files import guard_for, read_bytes
 from hardy.foundation.journal import record_digest
@@ -215,6 +216,10 @@ class LiveCapabilities:
             return result, None, effects
         saved = after.head(item_id(claim.proposal.theorem_name))
         sources, signatures = self.owners._build_snapshot() if self.owners._build_snapshot else ({}, {})
+        if module not in sources or module not in signatures:
+            raise ValueError("Checked save has no current exact source/build snapshot to retain")
+        shared = dict(self.owners._replay_shared())
+        shared_closure = tuple(name for name in build_order({**shared, **sources}, (module,)) if name in shared and name not in sources)
         names = {value.name: ref for value, ref in zip(allowed, refs, strict=True)}
         record = FrozenFormalEvidence(id=uuid4().hex, subject=work.item, scope=work.scope.ref, context=work.context,
             claim=claim, formalization=formalization, relation=self._formal_relation(after, work.item, formalization).ref,
@@ -227,8 +232,9 @@ class LiveCapabilities:
             saved_inputs=source_inputs(module, sources), signature=signatures.get(module), reading=reading,
             retained_inputs=tuple((name, self.artifact("source.lean", sources[name].encode(), locator=name))
                 for name, _digest in source_inputs(module, sources)),
+            retained_shared=tuple((name, self.artifact("source.lean", shared[name].encode(), locator=name)) for name in shared_closure),
             environment_artifacts=tuple(self.artifact(name, read_bytes(self.ports.lean_project, name))
-                for name in ("lake-manifest.json", "lean-toolchain")
+                for name in ("lake-manifest.json", "lean-toolchain", "lakefile.lean", "lakefile.toml")
                 if self.ports.lean_project is not None and (self.ports.lean_project / name).is_file()),
             configuration={"lean_command": list(self.ports.lean_command), "lean_project": str(self.ports.lean_project),
                 "limits": task.limits.model_dump(mode="json")},

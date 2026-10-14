@@ -96,9 +96,16 @@ class FrozenFormalEvidence(FrozenModel):
     signature: str | None = None
     reading: EvidenceRef | None = None
     retained_inputs: tuple[tuple[str, ArtifactRef], ...] = ()
+    retained_shared: tuple[tuple[str, ArtifactRef], ...] = ()
     environment_artifacts: tuple[ArtifactRef, ...] = ()
     configuration: dict[str, Any] = {}
     recorded_at: Text
+
+    def model_dump(self, **kwargs):
+        result = super().model_dump(**kwargs)
+        if not self.retained_shared:
+            result.pop("retained_shared", None)
+        return result
 
 
 LIVE_RECORDS = (ModelCallReceipt, WorkflowAttempt, LedgerEffects, FrozenFormalEvidence)

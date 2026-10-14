@@ -52,6 +52,10 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
     gaps.extend(f"Missing exposition: {r.id}@{r.digest}" for r in plan.missing_exposition)
     gaps.extend(f"Stale exposition {p.prose.id}: documents {p.documented.id}@{p.documented.digest}; "
                 f"selected {p.target.id}@{p.target.digest}" for p in plan.stale_exposition)
+    if not plan.scope_authenticated:
+        gaps.append("Exact scope authorization is unavailable for this publication plan.")
+    gaps.extend(f"Assumption audit unavailable: {value.item.id}@{value.item.digest}"
+                for value in plan.assumption_audits if not value.authenticated)
     for passage in plan.exposition:
         if passage.prose.statement is None:
             artifacts = "; ".join(f"{a.uri}@{a.digest}" for a in passage.prose.artifacts)
@@ -83,6 +87,22 @@ def assemble_publication(plan: PublicationPlan, *, title: str = "Selected result
             paragraph(gap)
     else:
         paragraph("The frozen plan reported no outstanding publication gaps when it was assembled.")
+
+    local_heading("Scope and assumptions")
+    paragraph(f"Exact scope: {plan.request.scope.id}@{plan.request.scope.digest}")
+    paragraph("Allowed premises are scope permissions, not proofs. Result dependencies are authenticated separately from these allowances.")
+    for premise in plan.allowed_premises:
+        used = premise.ref in plan.used_assumptions
+        paragraph(f"{'Used external premise' if used else 'Allowed premise; use not established' if any(not value.authenticated for value in plan.assumption_audits) else 'Allowed unused premise'}: "
+                  f"{premise.id}@{premise.digest}; {premise.statement or 'Statement text unavailable'}")
+    for value in plan.assumption_audits:
+        if value.authenticated:
+            paragraph(("Admitted premise; no independent proof supplied" if value.admitted else
+                       "Conditional result" if value.used else "No audited external premise used") +
+                      f": {value.item.id}@{value.item.digest}" +
+                      ("; assumes " + ", ".join(f"{ref.id}@{ref.digest}" for ref in value.used) if value.used else ""))
+    if not plan.allowed_premises:
+        paragraph("This exact scope grants no external premise allowances.")
 
     contexts = {context.item: context for context in plan.contexts}
     placements = {p.item: p for p in plan.structure}

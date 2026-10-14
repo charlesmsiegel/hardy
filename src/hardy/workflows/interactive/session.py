@@ -144,6 +144,7 @@ from hardy.workflows.interactive.documents import (
 )
 from hardy.workflows.interactive.documents import WriteupNotSaved as WriteupNotSaved
 from hardy.workflows.interactive.evidence import ProjectOwners, SaveGates
+from hardy.workflows.interactive.export_records import RefereeExportRequest, ResultExportRequest
 from hardy.workflows.interactive.formal import (
     FormalWorkspaceService,
     SavePolicy,
@@ -569,6 +570,9 @@ class MathematicsSession:
             final_gates=self._final_gates, missing_names=self._missing_registered_names,
             head_sources=lambda: self.lean_workspace.sources()),
             build_snapshot=self._project_build_snapshot)
+        from hardy.formal.replay import capture_replay_environment
+        self.owners.configure_replay(environment=lambda: capture_replay_environment(self._lean_project, self._lean_command),
+            shared_sources=lambda: self._shared_sources())
         self._save_streak = self.formal._save_streak
         # Streak key -> sha256 hex digests of sources that passed `check_lean`
         # on that path this turn. A green check on a path lifts the brake only
@@ -1191,7 +1195,7 @@ class MathematicsSession:
         if (any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive())
                 or (getattr(self, "live", None) is not None and (self.live.running.is_set() or self.live.calls.busy))):
             raise ValueError("A conversation turn or provider worker is still running.")
-        return ProjectOperations(self.workspace, PublishWorkflow(self.latex).publish)
+        return ProjectOperations(self.workspace, PublishWorkflow(self.latex).publish, policy=self.owners.policy)
 
     def project_target(self, identity: str, statement: str, *, formal: str,
                        context: str | None = None, supersedes: str | None = None):
@@ -1249,6 +1253,28 @@ class MathematicsSession:
             self._project_operations()
             self._refresh_shared_identity()
             return export_target(self.workspace, target, output=output, owners=self.owners)
+
+    def _result_exports(self):
+        from hardy.workflows.interactive.result_exports import ExportPorts, ResultExports
+
+        return ResultExports(ExportPorts(problem=self.workspace, owners=self.owners,
+            lean_project=self._lean_project, lean_command=self._lean_command,
+            shared_sources=lambda: self._shared_sources(), referee_report=self.project_referee_report,
+            session_metrics=lambda: {"usage": self.usage.summary()}))
+
+    def project_export_bundle(self, request: ResultExportRequest | dict[str, Any]) -> Path:
+        """Freeze one exact result selection and retained model-free replay inputs."""
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            self._refresh_shared_identity()
+            return self._result_exports().result(request)
+
+    def project_export_referee(self, request: RefereeExportRequest | dict[str, Any]) -> Path:
+        """Freeze one immutable referee receipt with fresh authority separately."""
+        with self._conversation_gate, self._gate:
+            self._project_operations()
+            self._refresh_shared_identity()
+            return self._result_exports().referee(request)
 
     def project_bind(self, target: str, translation: str, *, saved: str, scope: str | None = None):
         from hardy.workflows.ledger.contracts import VersionRef
@@ -2483,19 +2509,12 @@ class MathematicsSession:
             return ""
 
     def _used_assumptions(self, sources: dict[str, str] | None = None) -> set[str]:
-        """Approved axioms the saved tree actually rests on.
-
-        Both ways one can be reached: written into a workspace file, or
-        inherited through an import and found by the audit. An approval nobody
-        used is not an assumption this work depends on, and demanding an
-        appendix entry for it would pad the appendix with disclaimers a reader
-        has to rule out by hand.
-        """
+        """Actual current axiom audits, separate from merely declared premises."""
         used: set[str] = set()
         snapshot = self.lean_workspace.sources() if sources is None else sources
-        for source in snapshot.values():
-            used.update(name for name, _ in assumptions(source))
-        for record in self.state.get("audit", {}).values():
+        for record in self._current_audit(snapshot).values():
+            if record.get("stale"):
+                continue
             used.update(str(name) for name in record.get("assumed", ()))
         return used
 

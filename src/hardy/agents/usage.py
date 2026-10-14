@@ -138,6 +138,10 @@ class Usage:
     #: field was never reported and its counter above means nothing; a value
     #: below `turns` means the total covers only part of the session.
     reports: dict[str, int] = dataclasses.field(default_factory=dict)
+    #: Only outstanding workflow request identities, never a second usage log.
+    #: A deadline marker counts its liability once; its late result fills the
+    #: same exchange. Ordinary/legacy reports keep their existing behavior.
+    pending_workflow_calls: tuple[str, ...] = ()
 
     UNREPORTED = "not reported by this backend"
 
@@ -234,8 +238,17 @@ class Usage:
         one is *expected* to be smaller. `MathematicsSession._observed` is
         where stale reports are kept away from here.
         """
+        call = event.get("workflow_call")
+        call = call if isinstance(call, str) and call else None
+        pending = self.pending_workflow_calls
+        reconciled = call is not None and call in pending
         if event.get("provider_unasked") is True:
-            return self
+            return dataclasses.replace(self, turns=max(0, self.turns - 1),
+                pending_workflow_calls=tuple(value for value in pending if value != call)) if reconciled else self
+        if event.get("type") == "exchange_unreported" and call is not None:
+            if reconciled:
+                return self
+            return dataclasses.replace(self, turns=self.turns + 1, pending_workflow_calls=(*pending, call))
         session = event.get("session_id")
         session = session if isinstance(session, str) and session else self.provider_session
         switched = session != self.provider_session
@@ -296,7 +309,8 @@ class Usage:
         baselines.update(model)
         return dataclasses.replace(
             self,
-            turns=self.turns + 1,
+            turns=self.turns + (0 if reconciled else 1),
+            pending_workflow_calls=tuple(value for value in pending if value != call),
             cost_usd=spent,
             baselines=baselines,
             provider_session=session,
@@ -489,6 +503,10 @@ class Usage:
         held, marks = stored.get("reports"), stored.get("baselines")
         if not isinstance(held, Mapping) or not isinstance(marks, Mapping):
             return None
+        pending = stored.get("pending_workflow_calls", ())
+        if (not isinstance(pending, (tuple, list)) or any(not isinstance(value, str) or not value for value in pending)
+                or len(set(pending)) != len(pending) or len(pending) > counters["turns"]):
+            return None
         reports = {str(field): _count(covered) for field, covered in held.items()}
         if any(covered is None for covered in reports.values()):
             return None
@@ -503,6 +521,7 @@ class Usage:
             baselines=baselines,
             provider_session=session,
             reports={field: covered for field, covered in reports.items() if covered},
+            pending_workflow_calls=tuple(pending),
         )
 
 
