@@ -735,14 +735,16 @@ class WebHost:
             return self.session
         session = self._call(selected)
         result: dict[str, Any] = {"project": str(expected_problem), "errors": []}
-        for key, method_name in (("catalog", "project_catalog"), ("workflow", "project_workflow_status"),
-                                 ("intake", "project_intake_status"), ("referee", "project_referee_report")):
-            method = getattr(session, method_name, None)
-            if method is None:
-                result[key] = {}
-                result["errors"].append(f"This session does not provide {method_name}; reopen it with project workflow support.")
-            else:
-                result[key] = action_result(method())
+        projection = getattr(session, "project_read_projection", None)
+        with projection() if callable(projection) else contextlib.nullcontext():
+            for key, method_name in (("catalog", "project_catalog"), ("workflow", "project_workflow_status"),
+                                     ("intake", "project_intake_status"), ("referee", "project_referee_report")):
+                method = getattr(session, method_name, None)
+                if method is None:
+                    result[key] = {}
+                    result["errors"].append(f"This session does not provide {method_name}; reopen it with project workflow support.")
+                else:
+                    result[key] = action_result(method())
         if self._call(selected) is not session:
             raise Busy("The open project changed. Reload project workflow choices.")
         return result
