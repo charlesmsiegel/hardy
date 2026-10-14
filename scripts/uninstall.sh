@@ -136,7 +136,7 @@ remove_managed_tools() {
 		return 0
 	fi
 	while read -r digest relative extra; do
-		[ -z "$extra" ] && [ "${#digest}" = 64 ] || continue
+		if [ -n "$extra" ] || [ "${#digest}" != 64 ]; then continue; fi
 		case "$digest" in *[!0-9a-f]*) continue ;; esac
 		case "$relative" in
 		bin/uv | bin/uvx) ;;
