@@ -164,7 +164,9 @@ def test_kernel_kill_stops_group_members_even_when_the_leader_obeys(tmp_path):
         f'print("waiting for containment", {str(contained)!r}, flush=True)\n'
         f'while not pathlib.Path({str(contained)!r}).exists(): time.sleep(.005)\n'
         'print("containment ready", flush=True)\n'
-        f'helper = subprocess.Popen([sys.executable,"-c",{helper!r}])\n'
+        # The helper never reads input. Give it its own stream while the parent
+        # waits on the kernel's input, rather than sharing that Windows handle.
+        f'helper = subprocess.Popen([sys.executable,"-c",{helper!r}], stdin=subprocess.DEVNULL)\n'
         'print("helper spawned", helper.pid, flush=True)\n'
         'sys.stdin.readline()\n'
     )
