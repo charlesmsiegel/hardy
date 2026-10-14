@@ -16,9 +16,11 @@ translation in both directions.
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 
 import pytest
 
+from hardy.foundation.journal import Journal
 from hardy.foundation.values import ToolResult
 from hardy.workflows.interactive import session as session_module
 
@@ -29,9 +31,11 @@ class _Recorder:
     Built as a bare object with the two methods bound rather than a real
     `MathematicsSession`: what is under test is the path translation and the
     transcript line, and a real session needs a Lean toolchain to reach either.
+    Its empty journal supplies the same pre-write guard as a real session.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, journal: Journal) -> None:
+        self.owners = SimpleNamespace(journal=journal)
         #: The tool gate both methods take, as the real session's is.
         self._gate = threading.Lock()
         self.saved: list[tuple[str, str]] = []
@@ -62,8 +66,8 @@ class _Recorder:
 
 
 @pytest.fixture
-def recorder() -> _Recorder:
-    return _Recorder()
+def recorder(tmp_path) -> _Recorder:
+    return _Recorder(Journal(tmp_path / "evidence", types={}))
 
 
 @pytest.mark.parametrize(
