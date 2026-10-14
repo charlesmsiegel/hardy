@@ -51,7 +51,7 @@ def test_legacy_formal_evidence_optional_retention_fields_do_not_change_its_dige
 def test_native_shared_snapshot_is_retained_and_tampering_with_archive_withdraws_authority(tmp_path):
     chat, target, formal, saved = setup_pair(tmp_path, shared=True)
     shared = {name: source for space in chat._shared_spaces for name, source in space.sources().items()}
-    chat.owners.configure_replay(environment=lambda: ({"lean_version": "controlled"}, {}), shared_sources=lambda: shared)
+    chat.owners.configure_replay(environment=lambda: ({"lean_version": "controlled"}, {}), shared_sources=lambda _sources: shared)
     source = SOURCE.replace("import Mathlib", "import Mathlib\nimport Shared") + "-- snapshot this exact build\n"
     assert chat.save_authored("lean/Saved.lean", source).ok
     binding = bind(chat, target, formal, saved)
@@ -133,3 +133,72 @@ def test_native_document_assumptions_distinguish_unused_declaration_and_stale_au
     assert all(value.get("stale") for value in used._current_audit().values())
     assert used._used_assumptions() == set()
     assert used._audit_gaps(used._saved_theorems())
+
+
+def test_retention_uses_the_audited_snapshot_after_a_later_external_edit(tmp_path, monkeypatch):
+    chat, _target, _formal, _saved = setup_pair(tmp_path)
+    observed = []
+    chat.owners.configure_replay(environment=lambda: ({"lean_version": "controlled"}, {}),
+        shared_sources=lambda sources: (observed.append(dict(sources)), {})[1])
+    publish = chat.formal._publish_saved_audit
+    audited = SOURCE + "-- audited proof version\n"
+    later = SOURCE + "-- later external edit\n"
+    def changed(*args, **kwargs):
+        (chat.workspace / "lean" / "Saved.lean").write_text(later)
+        return publish(*args, **kwargs)
+    monkeypatch.setattr(chat.formal, "_publish_saved_audit", changed)
+    result = chat.save_authored("lean/Saved.lean", audited)
+    assert result.ok, result.output
+    record = chat.owners.journal.read().of(FormalEvidence)[-1]
+    assert observed[-1]["Saved"] == audited
+    assert chat.owners.live_evidence.artifact(dict(record.retained_inputs)["Saved"]).decode() == audited
+    assert record.signature == chat.lean_workspace.current_signatures({"Saved": audited})["Saved"]
+    assert record.signature != chat.lean_workspace.current_signatures()["Saved"]
+    assert chat._current_audit()["Saved"]["stale"]
+
+
+def test_environment_change_during_retention_cannot_be_attributed_to_old_proof(tmp_path, monkeypatch):
+    from hardy.formal import replay
+    chat, _target, _formal, _saved = setup_pair(tmp_path)
+    def moved(*_args):
+        chat._lean_project = tmp_path / "different-project"
+        return {"lean_version": "different"}, {}
+    monkeypatch.setattr(replay, "capture_replay_environment", moved)
+    result = chat.save_authored("lean/Saved.lean", SOURCE + "-- new audited version\n")
+    assert result.ok, result.output
+    record = chat.owners.journal.read().of(FormalEvidence)[-1]
+    assert record.environment_identity is None
+    assert "environment changed during source retention" in record.replay_unavailable
+    assert chat.owners.live_evidence.artifact(dict(record.retained_inputs)["Saved"]).decode() == SOURCE + "-- new audited version\n"
+
+
+def test_shared_retention_preserves_single_publication_observation(tmp_path, monkeypatch):
+    chat, _target, _formal, _saved = setup_pair(tmp_path, shared=True)
+    sources, signatures = chat.lean_workspace.sources, chat.lean_workspace.current_signatures
+    publish = chat.formal._publish_saved_audit
+    counts = {"reads": 0, "hashes": 0}
+    active = False
+    def reading():
+        if active:
+            counts["reads"] += 1
+        return sources()
+    def hashing(snapshot=None):
+        if active:
+            counts["hashes"] += 1
+        return signatures(snapshot)
+    def publishing(*args, **kwargs):
+        nonlocal active
+        active = True
+        try:
+            return publish(*args, **kwargs)
+        finally:
+            active = False
+    monkeypatch.setattr(chat.lean_workspace, "sources", reading)
+    monkeypatch.setattr(chat.lean_workspace, "current_signatures", hashing)
+    monkeypatch.setattr(chat.formal, "_publish_saved_audit", publishing)
+    source = SOURCE.replace("import Mathlib", "import Mathlib\nimport Shared") + "-- revised shared proof\n"
+    result = chat.save_authored("lean/Saved.lean", source)
+    assert result.ok, result.output
+    assert counts == {"reads": 1, "hashes": 1}
+    record = chat.owners.journal.read().of(FormalEvidence)[-1]
+    assert set(dict(record.retained_shared)) == {"Shared"}
