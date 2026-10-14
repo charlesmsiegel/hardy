@@ -1438,7 +1438,7 @@ def test_a_worker_is_started_once_even_when_two_sessions_hold_its_launch(tmp_pat
         first.shutdown()
 
 
-def test_resuming_another_live_sessions_paused_work_runs_it_once_even_while_that_session_idles(tmp_path):
+def test_resuming_another_live_sessions_paused_work_runs_it_once_even_while_that_session_idles(tmp_path, monkeypatch):
     """Review N-1: the session that queued the work may never act again, so a
     resume from another session relaunches it there. Two launches cannot both
     start it -- the start is decided under the journal lock -- so whichever
@@ -1446,6 +1446,14 @@ def test_resuming_another_live_sessions_paused_work_runs_it_once_even_while_that
     seed_lemma(tmp_path)
     held, free = threading.Event(), threading.Event()
     first = _live_session(tmp_path, _open([FINISH], gate=(held, free)), checks=4, slots=1)
+    settled = threading.Event()
+    settle = first._settle
+
+    def settle_and_signal(handle):
+        settle(handle)
+        settled.set()
+
+    monkeypatch.setattr(first, "_settle", settle_and_signal)
     second = None
     try:
         running = first.delegate(_spec(tmp_path))
@@ -1453,7 +1461,10 @@ def test_resuming_another_live_sessions_paused_work_runs_it_once_even_while_that
         queued = first.delegate(_spec(tmp_path))
         first.pause(queued.id, by="human")
         free.set()
-        assert first.wait(running.id, timeout=10).state is DelegationState.COMPLETED      # `first` is idle now
+        assert first.wait(running.id, timeout=10).state is DelegationState.COMPLETED
+        # wait() observes journal settlement before the callback's final
+        # dispatch; acknowledge that continuation before calling first idle.
+        assert settled.wait(5)
         second = _live_session(tmp_path, _open([FINISH]), checks=4, slots=1)
         assert second.resume(queued.id, by="human") is None
         assert second.wait(queued.id, timeout=10).state is DelegationState.COMPLETED
