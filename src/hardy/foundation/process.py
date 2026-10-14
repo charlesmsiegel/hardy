@@ -281,6 +281,11 @@ def contain(child: subprocess.Popen) -> None:
     grandchild spawned before this line escapes the job.
     """
     _assign_job(child)
+    with _RUNNING_LOCK:
+        _CONTAINED.add(child)
+        closing = _SHUTTING_DOWN
+    if closing:
+        kill_group(child)
 
 
 def can_contain() -> bool:
@@ -400,6 +405,7 @@ _RUNNING: set[_Running] = set()
 _RUNNING_LOCK = threading.Lock()
 #: Threads running a detached computation, by ident, for as long as they do.
 _DETACHED: set[int] = set()
+_CONTAINED: weakref.WeakSet[subprocess.Popen] = weakref.WeakSet()
 
 
 def detach_thread(ident: int) -> None:
@@ -434,6 +440,8 @@ def reattach_thread(ident: int) -> None:
 # grace the user had already declined to wait for.
 _ASKED, _INSISTED = 1, 2
 _STOP_LEVEL = 0
+_STOP_DETACHED = False
+_SHUTTING_DOWN = False
 
 
 @contextlib.contextmanager
@@ -457,7 +465,9 @@ def tracked(child: subprocess.Popen):
         # the snapshot they took or sees the level they set. It cannot fall
         # between the two.
         arriving_into = _STOP_LEVEL
-    if arriving_into and not entry.detached:
+        all_children = _STOP_DETACHED
+        shutting_down = _SHUTTING_DOWN
+    if arriving_into and (all_children or not entry.detached):
         # A detached job's child arriving into a stop is not what the stop
         # was pressed for. Outside the lock, `detached` observes set membership
         # and may see either side of a concurrent detach.
@@ -470,7 +480,7 @@ def tracked(child: subprocess.Popen):
             entry.interrupted.set()
         if arriving_into >= _INSISTED:
             entry.escalated.set()
-            terminate_group(child)
+            (kill_group if shutting_down else terminate_group)(child)
         else:
             signal_interrupt(child)
     try:
@@ -538,7 +548,7 @@ def stop_children() -> int:
     global _STOP_LEVEL
     with _RUNNING_LOCK:
         _STOP_LEVEL = _INSISTED
-        entries = [entry for entry in _RUNNING if not entry.detached]
+        entries = [entry for entry in _RUNNING if _STOP_DETACHED or not entry.detached]
     return _stop(entries)
 
 
@@ -549,7 +559,7 @@ def stop_thread(ident: int) -> int:
     return _stop(entries)
 
 
-def _stop(entries: list[_Running]) -> int:
+def _stop(entries: list[_Running], *, immediate: bool = False) -> int:
     for entry in entries:
         running = entry.child.poll() is None or any(reader.is_alive() for reader in entry.output_readers)
         entry.asked.set()
@@ -557,10 +567,28 @@ def _stop(entries: list[_Running]) -> int:
         # already exited leaves nothing to terminate, and the descendant still
         # holding the pipes is exactly what this press is for.
         entry.escalated.set()
-        terminate_group(entry.child)
+        (kill_group if immediate else terminate_group)(entry.child)
         if running:
             entry.interrupted.set()
     return len(entries)
+
+
+def shutdown_children() -> int:
+    """Irreversibly stop every owned child, including jobs and late arrivals.
+
+    Unlike Esc, terminal closure ends this process. A concurrent turn resume
+    must not reopen process creation while the host is terminating.
+    """
+    global _SHUTTING_DOWN, _STOP_LEVEL, _STOP_DETACHED
+    with _RUNNING_LOCK:
+        _SHUTTING_DOWN = True
+        _STOP_LEVEL = _INSISTED
+        _STOP_DETACHED = True
+        entries = list(_RUNNING)
+        contained = set(_CONTAINED) - {entry.child for entry in entries}
+    for child in contained:
+        kill_group(child)
+    return _stop(entries, immediate=True) + len(contained)
 
 
 def resume_children() -> None:
@@ -570,9 +598,12 @@ def resume_children() -> None:
     own cancellation flag. A stop that outlived the turn it belonged to would
     kill the next turn's first child on sight.
     """
-    global _STOP_LEVEL
+    global _STOP_LEVEL, _STOP_DETACHED
     with _RUNNING_LOCK:
+        if _SHUTTING_DOWN:
+            return
         _STOP_LEVEL = 0
+        _STOP_DETACHED = False
 
 
 def stopping() -> bool:

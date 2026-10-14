@@ -9,7 +9,7 @@ from typing import Any
 from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.app import config as configuration
-from hardy.app.commands.launch import _launch, _requested_chat
+from hardy.app.commands.launch import _launch, _requested_chat, console_lifetime
 from hardy.app.projects import offer_registration, prepare_layout
 from hardy.workflows import layout
 from hardy.workflows.interactive.session import MathematicsSession, SchemaError
@@ -71,7 +71,8 @@ def _chat(
     opener, build, close = _launch(config, args)
 
     try:
-        return run_session(config, build, plain=plain, reopen=opener)
+        with console_lifetime(opener, close):
+            return run_session(config, build, plain=plain, reopen=opener)
     except (SchemaError, layout.LayoutError) as error:
         # Reaches here whichever path `run_session` took: the plain path
         # raises it straight out of `build`, and the interactive path (see

@@ -153,12 +153,52 @@ def _launch(
         """
         live = getattr(opener, "session", None)
         closing = getattr(live, "close", None)
-        if closing is not None:
-            closing()
-        if opener.cas is not None:
-            opener.cas.session.close()
+        try:
+            if closing is not None:
+                closing()
+        finally:
+            if opener.cas is not None:
+                opener.cas.session.close()
 
     return opener, (build if open_session else None), close
+
+
+def console_lifetime(opener, close):
+    """Named emergency operations over the launch's current owners."""
+    from hardy.app.console_shutdown import console_shutdown
+    from hardy.foundation import process
+
+    def abandon(reason):
+        live = getattr(opener, "session", None)
+        if live is not None:
+            live.abandon_for_shutdown(reason)
+
+    def terminate():
+        # Independent owners: a blocked kernel reap cannot withhold the
+        # tracked-child sweep, or vice versa. The outer handler bounds waits.
+        import threading
+
+        errors = []
+
+        def run(operation):
+            try:
+                operation()
+            except Exception as error:  # noqa: BLE001 - attempt every owner
+                errors.append(error)
+
+        operations = [process.shutdown_children]
+        if opener.cas is not None:
+            operations.append(opener.cas.session.terminate_on_shutdown)
+        workers = [threading.Thread(target=run, args=(operation,), daemon=True)
+                   for operation in operations]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        if errors:
+            raise errors[0]
+
+    return console_shutdown(abandon, terminate, close)
 
 
 def _requested_chat(config: configuration.Config, requested: str) -> configuration.Config:
