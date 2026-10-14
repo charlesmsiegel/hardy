@@ -2,6 +2,7 @@ import dataclasses
 import importlib
 import json
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -218,7 +219,9 @@ def test_the_staged_doctor_checks_the_backend_the_run_will_build(tmp_path, monke
 
 def test_doctor_asked_for_a_backend_checks_that_one(tmp_path):
     doctor_module = importlib.import_module('hardy.app.doctor')
-    config = dataclasses.replace(_staged_config(tmp_path), backend='api')
+    config = _staged_config(
+        tmp_path, backend='api', lean_command=(sys.executable, "-c", "print('Lean fixture')"),
+    )
 
     names = [check.name for check in doctor_module.run_checks(config, backend='claude')]
 
@@ -231,11 +234,12 @@ def test_doctor_checks_the_compiler_prove_builds_its_document_with(tmp_path):
     doctor probed only the first, so a machine it called ready -- and that
     `prove`'s preflight therefore let through -- ran a whole proof and then
     could not start its compiler."""
-    import sys
-
     doctor_module = importlib.import_module('hardy.app.doctor')
-    absent = dataclasses.replace(_staged_config(tmp_path), tectonic=tmp_path / 'no-tectonic.exe')
-    present = dataclasses.replace(_staged_config(tmp_path), tectonic=Path(sys.executable))
+    config = _staged_config(
+        tmp_path, lean_command=(sys.executable, "-c", "print('Lean fixture')"),
+    )
+    absent = dataclasses.replace(config, tectonic=tmp_path / 'no-tectonic.exe')
+    present = dataclasses.replace(config, tectonic=Path(sys.executable))
 
     missing = {check.name: check for check in doctor_module.run_checks(absent)}['tectonic']
     found = {check.name: check for check in doctor_module.run_checks(present)}['tectonic']

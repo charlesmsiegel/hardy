@@ -225,13 +225,14 @@ def test_dangling_project_symlink_is_refused_before_confirmation(tmp_path):
         if getattr(error, 'winerror', None) == 1314:
             pytest.skip('Windows symlink privilege is unavailable')
         raise
+    original_link = project.readlink()
     outcome = installers.create_lean_project(
         lean_project=project,
         confirmer=lambda _: (_ for _ in ()).throw(AssertionError('must not prompt')),
     )
     assert outcome.status == 'failed'
     assert 'not a directory' in outcome.manual_instructions
-    assert project.is_symlink() and project.readlink() == target
+    assert project.is_symlink() and project.readlink() == original_link
     assert not target.exists()
 
 

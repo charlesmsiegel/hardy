@@ -1031,10 +1031,10 @@ def test_write_setting_refuses_unsupported_table_value_unchanged(tmp_path, origi
 def test_write_setting_preserves_unicode_string_separators(tmp_path, separator):
     path = tmp_path / 'config.toml'
     original = f'model = "chosen{separator}identity"\ntectonic = ""\n'
-    path.write_text(original)
+    path.write_text(original, encoding="utf-8")
     config.write_setting(path, 'tectonic', '/tools/tectonic')
     assert config.read_file(path)['model'] == f'chosen{separator}identity'
-    assert original.split('\n')[0] in path.read_text()
+    assert original.split('\n')[0] in path.read_text(encoding="utf-8")
 
 
 def test_write_setting_rejects_original_raw_control_character_unchanged(tmp_path):
