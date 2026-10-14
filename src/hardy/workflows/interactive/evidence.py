@@ -67,6 +67,7 @@ from hardy.formal.syntax import (
     statements,
 )
 from hardy.formal.workspace import LeanWorkspace, module_name
+from hardy.foundation.files import guard_for
 from hardy.foundation.journal import Journal, JournalError, StaleRevision, record_digest
 from hardy.foundation.locking import LockTimeout
 from hardy.foundation.values import FrozenModel, ToolResult
@@ -189,11 +190,19 @@ class FormalEvidence(FrozenModel):
     source_sha256: str
     recorded_at: str
     inputs: tuple[tuple[str, str], ...] = ()
+    retained_inputs: tuple[tuple[str, ArtifactRef], ...] = ()
+    retained_shared: tuple[tuple[str, ArtifactRef], ...] = ()
+    environment_identity: dict[str, Any] | None = None
+    environment_artifacts: tuple[ArtifactRef, ...] = ()
+    replay_unavailable: str | None = None
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         data = super().model_dump(**kwargs)
         if not self.inputs:
             data.pop("inputs", None)
+        for field in ("retained_inputs", "retained_shared", "environment_identity", "environment_artifacts", "replay_unavailable"):
+            if not getattr(self, field):
+                data.pop(field, None)
         return data
 
 
@@ -326,6 +335,8 @@ class ProjectOwners:
         self._audit = audit
         self._gates = gates
         self._build_snapshot = build_snapshot
+        self._replay_environment: Callable[[], tuple[dict[str, Any], Mapping[str, bytes]]] | None = None
+        self._replay_shared: Callable[[], Mapping[str, str]] = dict
         self.judgments = SemanticJudgments(self)
         self.scoped_admissions = ScopedAdmissions(self)
         from hardy.workflows.interactive.live_evidence import LiveEvidence
@@ -337,6 +348,18 @@ class ProjectOwners:
                                    read_scope_change_at=self.scoped_admissions.read_scope_change_at)
         from hardy.workflows.interactive.canonical_citations import CanonicalCitationOwner
         self.canonical_citations = CanonicalCitationOwner(self)
+
+    def configure_replay(self, *, environment: Callable[[], tuple[dict[str, Any], Mapping[str, bytes]]],
+                         shared_sources: Callable[[], Mapping[str, str]] = dict) -> None:
+        """Install actual small environment/shared-source projections, never a proof callback."""
+        self._replay_environment, self._replay_shared = environment, shared_sources
+
+    def _retain(self, name: str, data: bytes, *, locator: str | None = None) -> ArtifactRef:
+        checksum = sha256(data).hexdigest()
+        relative = f"workflow-artifacts/{checksum}/{name}"
+        guard, leaf = guard_for(self.problem, relative, create=True)
+        guard.write_bytes(leaf, data)
+        return ArtifactRef(uri="workflow-artifact:" + relative, digest=checksum, locator=locator)
 
     @classmethod
     def reading(cls, problem: Path) -> ProjectOwners:
@@ -639,18 +662,42 @@ class ProjectOwners:
         reference = self._mint(subject=obligation.item, scope=obligation.scope.ref, context=obligation.context,
                                module=module, declaration=match, statement=statement, axioms=axioms,
                                signature=workspace.current_signatures().get(module, ""), source=sources[module],
-                               inputs=source_inputs(module, sources))
+                               inputs=source_inputs(module, sources), sources=sources)
         return (reference,), f"{match} verified on the current head; {note}"
 
     def _mint(self, *, subject: VersionRef, scope: VersionRef, context: VersionRef | None, module: str,
               declaration: str, statement: str, axioms: Sequence[str], signature: str, source: str,
-              inputs: tuple[tuple[str, str], ...] = ()) -> EvidenceRef:
+              inputs: tuple[tuple[str, str], ...] = (), sources: Mapping[str, str] | None = None) -> EvidenceRef:
+        sources = dict(sources) if sources is not None else {module: source}
+        if sources.get(module) != source or inputs and source_inputs(module, sources) != inputs:
+            raise ValueError("Native retention source snapshot differs from the actual audited inputs")
+        retained = tuple((name, self._retain("source.lean", sources[name].encode(), locator=name))
+                         for name, _ in source_inputs(module, sources))
+        identity, environment_artifacts, shared_retained = None, (), ()
+        unavailable = "Native replay environment capture is not configured"
+        if self._replay_environment is not None:
+            try:
+                current, signatures = self._build_snapshot() if self._build_snapshot is not None else ({}, {})
+                if signatures.get(module) != signature or source_inputs(module, current) != source_inputs(module, sources):
+                    raise ValueError("Audited build moved before native environment/source retention")
+                shared = dict(self._replay_shared())
+                combined = {**shared, **sources}
+                shared_retained = tuple((name, self._retain("source.lean", shared[name].encode(), locator=name))
+                    for name in build_order(combined, (module,)) if name not in sources)
+                identity, metadata = self._replay_environment()
+                environment_artifacts = tuple(self._retain(name, data) for name, data in sorted(metadata.items()))
+                unavailable = None
+            except (ValueError, OSError) as error:
+                identity, environment_artifacts = None, ()
+                unavailable = str(error)
         record = FormalEvidence(
             id=f"formal:{subject.id}:{subject.digest[:12]}:{sha256(declaration.encode('utf-8')).hexdigest()[:8]}"
                f":{sha256(source.encode('utf-8')).hexdigest()[:8]}",
             subject=subject, scope=scope, context=context, outcome="kernel_proof", module=module,
             declaration=declaration, statement=statement, axioms=tuple(axioms), signature=signature,
             source_sha256=sha256(source.encode("utf-8")).hexdigest(), recorded_at=_stamp(), inputs=inputs,
+            retained_inputs=retained, retained_shared=shared_retained, environment_identity=identity,
+            environment_artifacts=environment_artifacts, replay_unavailable=unavailable,
         )
         self._append(record)
         return EvidenceRef(kind=EvidenceKind.FORMAL, subject=subject, producer=PRODUCER,
@@ -699,6 +746,13 @@ class ProjectOwners:
             return self._read_binding(reference)
         record = self.formal_record(reference)
         if record is None or any(axiom in audit.FORBIDDEN for axiom in record.axioms):
+            return None
+        try:
+            for _module, retained in (*record.retained_inputs, *record.retained_shared):
+                self.live_evidence.artifact(retained)
+            for retained in record.environment_artifacts:
+                self.live_evidence.artifact(retained)
+        except (ValueError, OSError):
             return None
         return AuthenticatedEvidence(reference, record.scope, record.context, record.outcome)
 
@@ -958,7 +1012,7 @@ class ProjectOwners:
                         said.append("earlier acceptance no longer reads under the current policy")
                 reference = self._mint(subject=item.ref, scope=scope.ref, context=item.context, module=module,
                                        declaration=name, statement=statement, axioms=axioms, signature=signature,
-                                       source=source, inputs=source_inputs(module, sources))
+                                       source=source, inputs=source_inputs(module, sources), sources=sources)
                 persisted.append("evidence recorded")
                 proposal = Resolution(id=f"{current.id}:resolution:{reference.artifact.digest[:12]}",
                                       obligation=current.ref, item=item.ref, evidence=(reference,),
