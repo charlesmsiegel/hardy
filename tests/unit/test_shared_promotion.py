@@ -323,7 +323,7 @@ def test_promotion_accepts_the_actual_audit_verdict_shape(tmp_path):
     from hardy.formal.audit import AxiomReport, classify
 
     def actual_audit(space, targets):
-        return {name: classify(tuple(AxiomReport(n, ()) for n in statements((space.root / module_path(name)).read_text())), ()).as_dict()
+        return {name: classify(tuple(AxiomReport(n, ()) for n in statements((space.root / module_path(name)).read_text(encoding="utf-8"))), ()).as_dict()
                 for name in targets}
 
     root, claims, claim, promoter, request, compiled = setup(tmp_path, audit=actual_audit)
