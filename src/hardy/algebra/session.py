@@ -112,6 +112,7 @@ class CasSession:
         # declined to wait for. Lifted by `resume`, at the start of the next
         # turn or command, exactly as that register is.
         self._stop_level = 0
+        self._shutting_down = False
         # Whether Hardy itself killed the kernel during the cell in flight --
         # the second press, in `escalate` or applied as the cell goes out.
         # Hardy knows this; the stream cannot say it. A driver told by the
@@ -181,6 +182,8 @@ class CasSession:
         self.total_spent_seconds = max(recorded_spend, self._load_spend())
 
     def _require_owner(self) -> None:
+        if self._shutting_down:
+            raise CasError("the CAS session is closing")
         if self._closed:
             raise CasError("the CAS session is closed; open a new session before running or writing")
         try:
@@ -432,7 +435,7 @@ class CasSession:
         # timeout, and a kernel dropped with all its state.
         retain = cap if self.backend.framing == "sentinel" else cap * 6 + 65_536
         try:
-            self._kernel = _Kernel(
+            kernel = _Kernel(
                 argv, self.cwd, retain, getattr(self.backend, "environment", {}),
                 merge_stderr=self.backend.framing == "sentinel",
             )
@@ -442,6 +445,13 @@ class CasSession:
                 f"could not start the {self.backend.name} kernel "
                 f"({' '.join(argv)}): {error}"
             ) from None
+        with self._signal_lock:
+            closing = self._shutting_down
+            if not closing:
+                self._kernel = kernel
+        if closing:
+            kernel.kill(immediate=True)
+            raise CasError("the CAS session is closing")
         self.state = "live"
 
     def probe_version(self) -> str:
@@ -827,7 +837,8 @@ class CasSession:
         belonged to would interrupt the next turn's first cell on sight.
         """
         with self._signal_lock:
-            self._stop_level = 0
+            if not self._shutting_down:
+                self._stop_level = 0
 
     def escalate(self) -> bool:
         """Stop waiting for the interrupt to be answered, and stop the kernel.
@@ -869,6 +880,20 @@ class CasSession:
         # as long as this press was made to avoid waiting.
         kernel.kill(immediate=True)
         return True
+
+    def terminate_on_shutdown(self) -> None:
+        """Kill even an idle kernel without waiting for the cell execution lock.
+
+        Console closure is process shutdown, rather than an interrupt that
+        preserves the namespace. The normal close still releases the lease.
+        """
+        with self._signal_lock:
+            self._shutting_down = True
+            self._stop_level = _INSISTED
+            self._killed = True
+            kernel = self._kernel
+        if kernel is not None:
+            kernel.kill(immediate=True)
 
     # -------------------------------------------------------------- budget
 

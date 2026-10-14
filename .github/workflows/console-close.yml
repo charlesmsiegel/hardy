@@ -1,14 +1,25 @@
-# Investigation only: a CTRL_BREAK_EVENT test cannot settle console closure.
-name: Native console close probe
+# Native Windows Console Host transport and application shutdown acceptance.
+name: Native console close acceptance
 
 on:
+  push:
+    branches: [fix/t1-console-shutdown]
   pull_request:
     paths:
       - .github/workflows/console-close.yml
+      - src/hardy/**
+      - tests/unit/test_console_shutdown_native.py
       - tests/unit/test_windows_console_close.py
       - tests/fixtures/console/**
 
+permissions:
+  contents: read
+
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    with:
+      checkout-ref: ${{ github.sha }}
   native-console-close:
     runs-on: windows-latest
     timeout-minutes: 5
@@ -28,10 +39,10 @@ jobs:
             New-ItemProperty -Path $startup -Name $name -Value $consoleHost -PropertyType String -Force | Out-Null
           }
           Get-ItemProperty -Path $startup -Name DelegationConsole, DelegationTerminal
-      - name: Observe real CTRL_CLOSE_EVENT
+      - name: Observe real CTRL_CLOSE_EVENT and application cleanup
         env:
           HARDY_NATIVE_CONSOLE_CLOSE: "1"
-        run: uv run --python 3.12 --extra test pytest -s -v tests/unit/test_windows_console_close.py --basetemp=console-probe-evidence
+        run: uv run --python 3.12 --extra test pytest -s -v tests/unit/test_windows_console_close.py tests/unit/test_console_shutdown.py tests/unit/test_console_shutdown_native.py -m "not real_toolchain and not live" --basetemp=console-probe-evidence
       - name: Keep native console diagnostics
         if: always()
         uses: actions/upload-artifact@v4

@@ -5044,10 +5044,16 @@ class MathematicsSession:
                 # The request never reached the provider: nothing was delivered.
                 self._attention_owed = []
                 self.jobs.forget_owed()
+                self.turns.starting.clear()
                 raise
-            turn = _ConversationTurn(events)
-            self._conversation_turns.add(turn)
-            return turn
+            try:
+                turn = _ConversationTurn(events)
+                self._conversation_turns.add(turn)
+                if self.turns.closing:
+                    self.turns.abandon_for_shutdown(self.turns.closing_reason, self._turn_persistence(), active=True)
+                return turn
+            finally:
+                self.turns.starting.clear()
 
     def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
         # An explicit `yield`, not `yield from`. A consumer that unwinds --
@@ -5120,7 +5126,8 @@ class MathematicsSession:
         return self.turns.cancel(reason, runtime=self.runtime, interrupt_work=self.interrupt_work, persistence=self._turn_persistence())
 
     def resume_work(self) -> None:
-        return self.turns.resume_work(self.cas.session if self.cas is not None else None)
+        if not self.turns.closing:
+            return self.turns.resume_work(self.cas.session if self.cas is not None else None)
 
     def interrupt_work(self) -> int:
         # A cell a detached job owns is not the turn's to interrupt.
@@ -5130,7 +5137,12 @@ class MathematicsSession:
         return self.turns.escalate(self.cas.session if self.cas is not None and not self.jobs.holds_cas() else None)
 
     def record_abandonment(self, reason: str) -> None:
-        return self.turns.record_abandonment(reason, self._turn_persistence())
+        if not self.turns.closing:
+            return self.turns.record_abandonment(reason, self._turn_persistence())
+
+    def abandon_for_shutdown(self, reason: str) -> None:
+        self.turns.abandon_for_shutdown(reason, self._turn_persistence(),
+                                        active=self.turns.starting.is_set() or any(turn.active for turn in self._conversation_turns))
 
     def save_authored(self, path: str, source: str, *, verify_commit: Callable[[], None] | None = None) -> ToolResult:
         """Save one workspace file a person wrote, on the model's own terms.

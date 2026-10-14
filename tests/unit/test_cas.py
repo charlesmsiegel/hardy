@@ -41,6 +41,68 @@ def test_state_carries_between_cells(tmp_path, cas_session) -> None:
         session.close()
 
 
+def test_console_shutdown_terminates_an_idle_kernel_without_waiting_for_session_close(cas_session):
+    session = cas_session()
+    try:
+        session.execute("a")
+        kernel = session._kernel
+        session.terminate_on_shutdown()
+        assert kernel.process.poll() is not None
+    finally:
+        session.close()
+
+
+def test_a_resume_after_console_shutdown_cannot_allocate_another_kernel(cas_session):
+    session = cas_session()
+    try:
+        session.execute("a")
+        session.terminate_on_shutdown()
+        session.resume()
+        with pytest.raises(CasError, match="closing"):
+            session.execute("b")
+    finally:
+        session.close()
+
+
+def test_console_shutdown_during_kernel_construction_never_publishes_the_child(cas_session, monkeypatch):
+    import hardy.algebra.session as implementation
+
+    session = cas_session()
+    entered, release = threading.Event(), threading.Event()
+    kernels, errors = [], []
+    original = implementation._Kernel
+
+    def paused_kernel(*args, **kwargs):
+        kernel = original(*args, **kwargs)
+        kernels.append(kernel)
+        entered.set()
+        assert release.wait(5)
+        return kernel
+
+    def execute():
+        try:
+            session.execute("a")
+        except CasError as error:
+            errors.append(error)
+
+    monkeypatch.setattr(implementation, "_Kernel", paused_kernel)
+    worker = threading.Thread(target=execute)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        session.terminate_on_shutdown()
+        release.set()
+        worker.join(5)
+        assert not worker.is_alive()
+        assert errors and "closing" in str(errors[0])
+        assert session._kernel is None
+        assert kernels[0].process.poll() is not None
+    finally:
+        release.set()
+        worker.join(5)
+        session.close()
+
+
 def test_a_failed_cell_is_recorded_but_not_accepted(tmp_path, cas_session) -> None:
     session = cas_session()
     try:

@@ -81,6 +81,11 @@ class TurnCoordinator:
     def __init__(self):
         self._gate = threading.Lock()
         self._cancelled = threading.Event()
+        self._closing = threading.Event()
+        self.starting = threading.Event()
+        self.closing_reason = "console_closed"
+        self._close_record = threading.Lock()
+        self._close_recorded = False
         self._reported = threading.Event()
         self._request_receipted = False
         self._request_rejected = False
@@ -157,6 +162,8 @@ class TurnCoordinator:
         transcript of ten thousand token deltas would be worse evidence, not
         better.
         """
+        if self.closing:
+            raise RuntimeError("session is closing")
         # Deliberately not a generator itself, and neither is the runtime's
         # `stream`. A generator body does not run until it is first iterated,
         # which would make the record of the turn wait on a consumer that may
@@ -182,6 +189,7 @@ class TurnCoordinator:
         # a reader of the trajectory never mistakes it for something typed.
         persistence.event({"type": "user", "message": {"role": "user", "content": text},
                            **({"author": author} if author else {})})
+        self.starting.set()
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
@@ -205,7 +213,8 @@ class TurnCoordinator:
         # sequence of turns, and a block that arrived as its own turn would
         # read back as something one of the parties said, not as the
         # workspace's own arithmetic addressed to whoever reads next.
-        return self._stream(runtime.stream(f"{block}\n\n{text}" if block else text), persistence=persistence, closing_notice=closing_notice)
+        events = runtime.stream(f"{block}\n\n{text}" if block else text)
+        return self._stream(events, persistence=persistence, closing_notice=closing_notice)
 
 
     def _stream(self, events: Iterator[TurnEvent], *, persistence: TurnPersistence, closing_notice: Callable[[], list[TurnEvent]]) -> Iterator[TurnEvent]:
@@ -276,7 +285,7 @@ class TurnCoordinator:
         put on disk, which is why `_dispatch` refuses new calls rather than
         trying to undo finished ones.
         """
-        if self._cancelled.is_set():
+        if self._cancelled.is_set() or self.closing:
             return 0
         self._cancelled.set()
         persistence.event({"type": "turn", "status": "cancelled", "reason": reason})
@@ -353,6 +362,21 @@ class TurnCoordinator:
         """
         persistence.event({"type": "turn", "status": "abandoned", "reason": reason})
 
+    @property
+    def closing(self) -> bool:
+        return self._closing.is_set()
+
+    def abandon_for_shutdown(self, reason: str, persistence: TurnPersistence, *, active: bool) -> None:
+        """Permanently close dispatch, and durably end an active turn once."""
+        with self._close_record:
+            if not self.closing:
+                self.closing_reason = reason
+            self._closing.set()
+            self._cancelled.set()
+            if active and not self._close_recorded:
+                self.record_abandonment(self.closing_reason, persistence)
+                self._close_recorded = True
+
 
     def _dispatch(self, name: str, arguments: dict[str, Any], *, tool: Callable[[str, dict[str, Any]], ToolResult], persistence: TurnPersistence, detach: Callable[..., Any] | None = None) -> ToolResult:
         """The single door every tool call goes through, whoever asked for it.
@@ -374,7 +398,7 @@ class TurnCoordinator:
         # finishing. Refusing is all cancellation can do here — a call already
         # past this point owns a subprocess and its workspace writes, and
         # interrupting it halfway would leave worse behind than letting it end.
-        if self._cancelled.is_set():
+        if self._cancelled.is_set() or self.closing:
             return self._refuse_cancelled(name, arguments, persistence)
         self._gate.acquire()
         release = True
@@ -385,7 +409,7 @@ class TurnCoordinator:
             # line long after the turn was cancelled. Without the second look
             # it would then start fresh work and write to the workspace, which
             # is exactly what `cancel` promises will not happen.
-            if self._cancelled.is_set():
+            if self._cancelled.is_set() or self.closing:
                 return self._refuse_cancelled(name, arguments, persistence)
             # Written before the call runs, not only after. A Lean check can
             # take minutes, and a session killed in the middle of one used to

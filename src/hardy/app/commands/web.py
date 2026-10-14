@@ -5,7 +5,7 @@ import argparse
 import contextlib
 
 from hardy.app import config as configuration
-from hardy.app.commands.launch import _launch, _requested_chat
+from hardy.app.commands.launch import _launch, _requested_chat, console_lifetime
 from hardy.app.project_registry import Entry, ProjectRegistry
 from hardy.app.projects import prepare_layout
 from hardy.workflows import layout
@@ -112,7 +112,8 @@ def _web(
             except (OSError, ValueError) as error:
                 print(f"Could not record {config.layout.problem} in the project registry: {error}")
         try:
-            serve(host, port=args.port, open_browser=args.open)
+            with console_lifetime(opener, close):
+                serve(host, port=args.port, open_browser=args.open)
         except OSError as error:
             print(f"Could not listen on 127.0.0.1:{args.port}: {error.strerror or error}")
             return 1
