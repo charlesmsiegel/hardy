@@ -40,12 +40,28 @@ from hardy.workflows.ledger.contracts import (
     Scope,
     VersionRef,
 )
+from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.representation import (
     RepresentationRequest,
     RepresentationResolver,
     RepresentationResult,
 )
+
+
+def formalization_records(snapshot: LedgerSnapshot, subject: VersionRef, *, id: str, formal: str,
+                          scope: VersionRef, origin: ProjectOrigin = ProjectOrigin.GENERATED_LOCAL) -> tuple[ProjectItem, Relation]:
+    target, selected_scope = snapshot.get(subject), snapshot.get(scope)
+    if not isinstance(target, ProjectItem) or not target.statement or not isinstance(selected_scope, Scope):
+        raise ValueError("formalization requires a stated exact item and scope")
+    if any(snapshot.head(ref.id).ref != ref for ref in (subject, scope)):
+        raise ValueError("formalization requires current exact inputs")
+    item = ProjectItem(id=id, kind="claim", name=f"{target.name} proposed formalization", statement=formal,
+        context=target.context, origin=origin, semantics=(("role", "proposed_formalization"),))
+    link = Relation(id=f"{id}:formalizes", kind="formalizes", source=item.ref, target=subject)
+    if any(snapshot.head_or_none(value.id) is not None for value in (item, link)):
+        raise ValueError("formalization proposal requires a distinct identity")
+    return item, link
 
 
 class SemanticOperations:
@@ -114,6 +130,20 @@ class SemanticOperations:
             id, statement, formal=formal,
             context=f"{context.id}@{context.digest}" if context else None,
             supersedes=f"{supersedes.id}@{supersedes.digest}" if supersedes else None)
+
+    def formalization(self, subject: VersionRef, *, id: str, formal: str, scope: VersionRef,
+                      origin: ProjectOrigin = ProjectOrigin.HUMAN_AUTHORED) -> ProjectItem:
+        """Propose an exact translation without revising the selected mathematical scope."""
+        snapshot = self.store.read()
+        records = formalization_records(snapshot, subject, id=id, formal=formal, scope=scope, origin=origin)
+        item = records[0]
+        selected_scope = snapshot.get(scope)
+        work = (Obligation(id=f"{id}:correspondence", item=subject, kind="formalize", scope=selected_scope,
+                           context=item.context, reason="Exact correspondence requires review and elaboration."),
+                Obligation(id=f"{id}:proof", item=item.ref, kind="prove", scope=selected_scope,
+                           context=item.context, reason="The proposed formal statement remains unproved."))
+        self.store.append((*records, *work), expected_revision=snapshot.revision, validate=self.owners.policy.validate)
+        return item
 
     def scope(self, id: str, *, must_prove: tuple[VersionRef, ...]) -> Scope:
         """Select required exact work; revisions can only add protected targets.
@@ -219,7 +249,7 @@ class SemanticOperations:
         if snapshot.head_or_none(request.id) is not None:
             raise ValueError("argument version requires a distinct identity")
         argument = ProjectItem(id=request.id, kind=ProjectItemKind.ARGUMENT, name=request.id,
-            statement=request.text, context=context, origin=ProjectOrigin.HUMAN_AUTHORED,
+            statement=request.text, context=context, origin=request.origin,
             semantics=tuple(semantics), research=ResearchState(status="proposed", reason=request.reason))
         records = [argument, Relation(id=f"{request.id}:conclusion", kind=RelationKind.SUPPORTS,
                                       source=argument.ref, target=target.ref)]

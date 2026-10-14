@@ -110,6 +110,9 @@ class SemanticJudgments:
             matching = [value for value in self.owners.journal.read().of(SemanticJudgment)
                         if (value.subject, value.scope, value.purpose, value.citation, value.citation_use)
                         == (record.subject, record.scope, record.purpose, record.citation, record.citation_use)]
+            human = [value for value in matching if value.actor != "model"]
+            if human:
+                matching = human
             if not matching or matching[-1] != record:
                 return None
             inputs = relevant_versions(self.owners.problem, snapshot, record.subject,

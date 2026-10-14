@@ -680,6 +680,128 @@ class MathematicsSession:
         #: Model receipts owed for the attention block of the turn being started; committed
         #: only once the runtime has accepted the request.
         self._attention_owed: list[tuple[str, str | None, int]] = []
+        self._install_live_workflows(getattr(make_runtime, "project_workflows_builder", None))
+
+    def _install_live_workflows(self, builder=None):
+        from hardy.formal.declarations import DeclarationIndex
+        from hardy.workflows.admission import ProbeOperations
+        from hardy.workflows.interactive.live_capabilities import (
+            CapabilityPorts,
+            LiveCapabilities,
+            indexed_search,
+        )
+        from hardy.workflows.interactive.live_runtime import ModelCallPorts, StructuredModelCalls
+        from hardy.workflows.interactive.live_workflows import LiveWorkflows
+        from hardy.workflows.interactive.scoped_admission import ScopedAdmissionOperations
+
+        names = {"check_lean", "search_declarations", "inspect_declarations", "rank_premises", "search_modules",
+                 "read_lean", "search_papers", "fetch_paper", "fetch_source", "read_paper",
+                 "map_source", "read_source", "search_source", "list_sources"}
+        specs = [spec for spec in CHAT_TOOLS if spec["function"]["name"] in names]
+        self._live_tool_names = {spec["function"]["name"] for spec in specs}
+        models = ModelCallPorts(make_runtime=self._make_runtime, record=self._record, usage=self._live_usage,
+            journal=self.owners._append, dispatch=self._live_dispatch, check_cancelled=self._live_check_cancelled,
+            model=lambda: str(self.runtime.model), configuration=lambda: provenance(self.runtime), cwd=self.workspace, specs=specs)
+        declarations = DeclarationIndex(self._lean_project)
+        capabilities = CapabilityPorts(problem=self.workspace, lean_command=self._lean_command,
+            lean_project=self._lean_project, limits=self.limits, check_source=self._live_check_source,
+            save=self._live_save, search=lambda query: self.search.search_declarations(query) if self.search
+                else indexed_search(self._lean_project, query, index=declarations), environment=self._probe_environment,
+            lean_path=self._lean_path, check_cancelled=self._live_check_cancelled, papers=self.papers,
+            recheck=self._live_recheck)
+        self.live = (builder(models, capabilities, self.owners) if builder is not None else
+                     LiveWorkflows(LiveCapabilities(capabilities, owners=self.owners, calls=StructuredModelCalls(models))))
+        self.owners.scoped_admissions.configure(ScopedAdmissionOperations(
+            search=lambda item: capabilities.search(item.statement or item.name),
+            probes=ProbeOperations(elaborate=self._probe_lean_source, refute=self._probe_lean_source),
+            environment=self._probe_environment))
+
+    def _live_usage(self, event, offset):
+        with self._spend:
+            self.record.publish_usage(self.usage.record(event), offset)
+
+    def _live_dispatch(self, name, arguments):
+        from dataclasses import replace
+        if name not in self._live_tool_names:
+            return ToolResult(False, "This live workflow offers no such tool; controlled workflow owners perform saves and trust decisions")
+        persistence = replace(self._turn_persistence(), event=lambda event: self._record({
+            "type": "workflow_tool", "operation": self.live.calls.operation, "event": event}))
+        return self.turns._dispatch(name, arguments, tool=self._tool, persistence=persistence)
+
+    def _live_check_cancelled(self):
+        if self._cancelled.is_set() or self.turns.closing:
+            raise InterruptedError("Project workflow cancelled")
+
+    def _live_check_source(self, source):
+        with self._gate:
+            self._live_check_cancelled()
+            return self._run_lean_source(source)
+
+    def _live_save(self, path, source, scope, declared, verify_commit):
+        from dataclasses import replace
+
+        from hardy.workflows.ledger.store import LedgerStore
+
+        with self._gate:
+            self._live_check_cancelled()
+            snapshot = LedgerStore(self.workspace).read()
+            self.owners.policy._current_scope(snapshot, scope)
+            actual, _refs = self.live.capabilities.declared(snapshot, scope)
+            if actual != declared:
+                raise ValueError("Scoped save declarations differ from exact admitted premises")
+            state = self.record.snapshot_of("assumptions", "quarantine")
+            state["assumptions"] = [*state["assumptions"], *(
+                {"formal_name": value.name, "lean_statement": value.statement} for value in declared)]
+            approved = self._approved_assumptions() | {value.name for value in declared}
+            policy = replace(self._formal_save_policy(verify_commit),
+                final_gates=lambda text: self.formal._final_gates(text, state),
+                audit_tree=lambda space, modules: self.formal._audit_tree(space, modules,
+                    approved=approved, probe_groups=self._probe_groups))
+            return self.formal._save_lean_unbraked(path, source, policy=policy, ratchet=True, generated=False)
+
+    def _live_recheck(self, subject, scope):
+        from hardy.workflows.interactive.live_records import FrozenFormalEvidence
+        from hardy.workflows.ledger.store import LedgerStore
+
+        with self._gate:
+            snapshot = LedgerStore(self.workspace).read()
+            self.owners.policy._current_scope(snapshot, scope)
+            modules = tuple(dict.fromkeys(value.source.locator for value in self.owners.journal.read().of(FrozenFormalEvidence)
+                if value.subject == subject and value.outcome == "kernel_proof" and value.source.locator))
+            if not modules:
+                return False, "No controlled formal artifact exists for this exact dependent; semantic recheck remains open"
+            failure = self.lean_workspace.build_modules(modules)
+            if failure:
+                return False, failure.output
+            declared, _ = self.live.capabilities.declared(snapshot, scope)
+            audit = self.formal._audit_tree(self.lean_workspace, modules,
+                approved=self._approved_assumptions() | {value.name for value in declared}, probe_groups=self._probe_groups)
+            return (False, audit.output) if isinstance(audit, ToolResult) else (True, audit[1])
+
+    def _run_project_workflow(self, operation, *args, **kwargs):
+        with self._conversation_gate:
+            with self._gate:
+                if self._closed or self.turns.closing:
+                    raise ValueError("This project session is closed")
+                self._project_operations()
+                self._refresh_shared_identity()
+                self._cancelled.clear()
+                self.resume_work()
+            # Runtime tools take the ordinary tool gate themselves. Never hold
+            # that gate while a provider can request one of those tools.
+            return operation(*args, **kwargs)
+
+    def project_research(self, request, *, max_attempts=64):
+        return self._run_project_workflow(self.live.research, request, max_attempts=max_attempts)
+
+    def project_explore(self, request):
+        return self._run_project_workflow(self.live.explore, request)
+
+    def project_repair(self, request, *, max_attempts=8):
+        return self._run_project_workflow(self.live.repair, request, max_attempts=max_attempts)
+
+    def project_workflow_status(self, id=None):
+        return self.live.status(id)
 
     @property
     def state(self) -> dict[str, Any]:
@@ -831,6 +953,13 @@ class MathematicsSession:
         if self._closed:
             return
         errors: list[Exception] = []
+        try:
+            if getattr(self, "live", None) is not None and (self.live.running.is_set() or self.live.calls.busy):
+                self.cancel(reason="session_closed")
+                if self.live.calls.busy:
+                    raise RuntimeError("Workflow provider worker teardown is pending; session cleanup remains retryable")
+        except Exception as error:  # noqa: BLE001 - every owner must still release resources
+            errors.append(error)
         try:
             self.delegations.cancel_all(reason="session closed")
         except Exception as error:  # noqa: BLE001 - later owners must still release resources
@@ -1028,7 +1157,8 @@ class MathematicsSession:
         from hardy.workflows.publish import PublishWorkflow
 
         worker = getattr(self.runtime, "worker", None)
-        if any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive()):
+        if (any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive())
+                or (getattr(self, "live", None) is not None and (self.live.running.is_set() or self.live.calls.busy))):
             raise ValueError("A conversation turn or provider worker is still running.")
         return ProjectOperations(self.workspace, PublishWorkflow(self.latex).publish)
 
@@ -1105,7 +1235,8 @@ class MathematicsSession:
                              summary: str = "", action: str = "fork") -> str:
         with self._conversation_gate:
             worker = getattr(self.runtime, "worker", None)
-            if any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive()):
+            if (any(turn.active for turn in self._conversation_turns) or (worker is not None and worker.is_alive())
+                    or self.live.calls.busy):
                 raise ValueError("A conversation turn or provider worker is still running.")
             history = self.record.history()
             transition = self.record.branch(parent, expected_leaf=history.active_leaf if expected_leaf is None else expected_leaf,
@@ -5097,6 +5228,8 @@ class MathematicsSession:
 
     def stream(self, text: str, *, author: str | None = None) -> Iterator[TurnEvent]:
         with self._conversation_gate:
+            if self.live.calls.busy:
+                raise ValueError("A workflow provider worker is still running or tearing down")
             if self._runtime_epoch != self.record.history().epoch:
                 raise ValueError("Conversation changed; reopen the session before starting a turn.")
             self._in_flight_text = text
@@ -5187,7 +5320,15 @@ class MathematicsSession:
         return final_text(self.stream(text))
 
     def cancel(self, reason: str = "user_cancelled") -> int:
-        return self.turns.cancel(reason, runtime=self.runtime, interrupt_work=self.interrupt_work, persistence=self._turn_persistence())
+        try:
+            # TurnCoordinator owns the shared cancellation flag, durable event
+            # and child-process interrupt. Setting the flag first would make
+            # its idempotence guard skip all three during a live workflow.
+            return self.turns.cancel(reason, runtime=self.runtime, interrupt_work=self.interrupt_work,
+                                     persistence=self._turn_persistence())
+        finally:
+            if getattr(self, "live", None) is not None:
+                self.live.calls.cancel()
 
     def resume_work(self) -> None:
         if not self.turns.closing:

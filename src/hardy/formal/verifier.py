@@ -156,6 +156,7 @@ class FinalVerifier:
         limits: RunLimits,
         runner: Callable[[ProcessSpec], ProcessResult] = run_process,
         allowed: Sequence[DeclaredAssumption] = (),
+        lean_command: tuple[str, ...] | None = None,
     ) -> None:
         self._lake = lake
         self._lean_project = lean_project
@@ -166,6 +167,7 @@ class FinalVerifier:
         # the ordinary case and the strict one: with nothing declared, every
         # axiom beyond Lean's own is unexpected and refuses the proof.
         self._allowed = tuple(allowed)
+        self._lean_command = lean_command or (str(lake), "env", "lean")
 
     def verify(
         self,
@@ -248,7 +250,7 @@ class FinalVerifier:
 
         elaboration = elaborate(
             source,
-            argv=(str(self._lake), "env", "lean", "--json"),
+            argv=(*self._lean_command, "--json"),
             cwd=self._lean_project,
             timeout_seconds=self._limits.lean_process_seconds,
             max_output_bytes=self._limits.process_output_bytes,

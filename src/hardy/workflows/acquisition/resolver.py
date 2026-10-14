@@ -46,7 +46,8 @@ class RecursiveResolver:
     def __init__(self, store: LedgerStore, *, classifier: GapClassifier,
                  policy: LedgerPolicy, resolvers: Mapping[ResolverKey, Resolver],
                  decide: Callable[[LedgerSnapshot, Resolution], ArtifactRef | None],
-                 check_cancelled: Callable[[], None] = lambda: None) -> None:
+                 check_cancelled: Callable[[], None] = lambda: None,
+                 read_effects: Callable[[LedgerSnapshot, ArtifactRef], LedgerSnapshot] | None = None) -> None:
         self.store = store
         self.classifier = classifier
         self.policy = policy
@@ -54,6 +55,7 @@ class RecursiveResolver:
                           else GapKind(key): value for key, value in resolvers.items()}
         self.decide = decide
         self.check_cancelled = check_cancelled
+        self.read_effects = read_effects
 
     def _append(self, snapshot: LedgerSnapshot, records: tuple[LedgerRecord, ...]) -> LedgerSnapshot:
         unique = {}
@@ -185,6 +187,11 @@ class RecursiveResolver:
                 self.check_cancelled()
                 if not isinstance(result, ResolverResult):
                     raise ValueError("resolver must return candidate records")
+                if result.effects is not None:
+                    if self.read_effects is None:
+                        raise ValueError("controlled ledger effects reader unavailable")
+                    snapshot = self.read_effects(snapshot, result.effects)
+                    work = self._work(snapshot, ref)
                 links = []
                 for child in result.children:
                     contexts = {None}

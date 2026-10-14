@@ -50,6 +50,7 @@ class SearchRecord(FrozenModel):
     query: Text
     hits: tuple[SearchMatch, ...] = ()
     complete: bool = True
+    artifact: ArtifactRef | None = None
 
 
 class GapDecision(FrozenModel):
@@ -86,3 +87,4 @@ class ResolverResult:
     children: tuple[Obligation, ...] = ()
     evidence: tuple[EvidenceRef, ...] = ()
     detail: str = ""
+    effects: ArtifactRef | None = None

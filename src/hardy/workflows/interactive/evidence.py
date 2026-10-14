@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -75,6 +77,7 @@ from hardy.workflows.interactive.judgments import (
     SemanticJudgment,
     SemanticJudgments,
 )
+from hardy.workflows.interactive.live_records import LIVE_RECORDS
 from hardy.workflows.interactive.scoped_admission import (
     AdmissionGateRecord,
     HumanScopeCommit,
@@ -256,7 +259,7 @@ REVIEW_URI = "hardy-translation-review:"
 _TYPES = {"FormalEvidence": FormalEvidence, "Decision": Decision, "TranslationReview": TranslationReview,
           "CheckedBinding": CheckedBinding,
           **{value.__name__: value for value in (SemanticJudgment, CitationEvidenceBinding, MathematicalAssessment,
-              ScopedAdmissionRequest, AdmissionGateRecord, HumanScopeDecision, HumanScopeCommit)}}
+              ScopedAdmissionRequest, AdmissionGateRecord, HumanScopeDecision, HumanScopeCommit, *LIVE_RECORDS)}}
 
 
 def item_id(name: str) -> str:
@@ -323,6 +326,10 @@ class ProjectOwners:
         self._build_snapshot = build_snapshot
         self.judgments = SemanticJudgments(self)
         self.scoped_admissions = ScopedAdmissions(self)
+        from hardy.workflows.interactive.live_evidence import LiveEvidence
+        self.live_evidence = LiveEvidence(self, source_inputs=source_inputs,
+            translation_reviews=lambda: self.journal.read().of(TranslationReview))
+        self._saved_effects = ContextVar("hardy_saved_effects", default=None)
         self.policy = LedgerPolicy(read_evidence=self.read_evidence, read_decision=self.read_decision,
                                    read_evidence_at=self.read_evidence_at,
                                    read_scope_change_at=self.scoped_admissions.read_scope_change_at)
@@ -345,10 +352,11 @@ class ProjectOwners:
         return AdmissionOwners(verify=self.verify, policy=self.policy, decide=self.decide)
 
     @staticmethod
-    def _proposal_pair(snapshot: LedgerSnapshot, subject: VersionRef, translation: VersionRef):
+    def _proposal_pair(snapshot: LedgerSnapshot, subject: VersionRef, translation: VersionRef,
+                       scope: VersionRef | None = None):
         target, formal = snapshot.get(subject), snapshot.get(translation)
         if not (isinstance(target, ProjectItem) and isinstance(formal, ProjectItem)
-                and ("role", "semantic_target") in target.semantics
+                and target.statement
                 and ("role", "proposed_formalization") in formal.semantics):
             raise ValueError("Review requires a semantic target and its proposed formalization.")
         if any(snapshot.head(ref.id).ref != ref for ref in (subject, translation)):
@@ -359,16 +367,20 @@ class ProjectOwners:
             raise ValueError("The proposed formalization does not belong to this target through one exact link.")
         scopes = [scope for scope in snapshot.current(Scope)
                   if subject in scope.must_prove and translation in scope.must_prove]
-        owned_scope = next((scope for scope in scopes if scope.id == f"{target.id}:scope"), None)
-        if target.context != formal.context or (owned_scope is None and len(scopes) != 1):
+        owned_scope = (snapshot.get(scope) if scope is not None else
+                       next((value for value in scopes if value.id == f"{target.id}:scope"), None))
+        if (target.context != formal.context or (owned_scope is None and len(scopes) != 1)
+                or (owned_scope is not None and (not isinstance(owned_scope, Scope)
+                    or snapshot.head(owned_scope.id) != owned_scope))):
             raise ValueError("Review requires one exact shared scope and context.")
         return target, formal, links[0], owned_scope or scopes[0]
 
     def review_translation(self, subject: VersionRef, translation: VersionRef, *,
-                           verdict: str, reviewer: str, conditions: str, reason: str) -> TranslationReview:
+                           verdict: str, reviewer: str, conditions: str, reason: str,
+                           scope: VersionRef | None = None) -> TranslationReview:
         """Record a human review of the exact current proposal through application operations."""
         snapshot = LedgerStore(self.problem).read()
-        target, formal, link, scope = self._proposal_pair(snapshot, subject, translation)
+        target, formal, link, scope = self._proposal_pair(snapshot, subject, translation, scope)
         if not all(isinstance(value, str) and value.strip() for value in (reviewer, conditions, reason)):
             raise ValueError("Review requires a reviewer, actual conditions and a reason.")
         record = TranslationReview(id=f"translation-review:{uuid4().hex}", subject=subject,
@@ -437,7 +449,7 @@ class ProjectOwners:
         try:
             if snapshot is None:
                 snapshot = LedgerStore(self.problem).read()
-            target, formal, link, scope = self._proposal_pair(snapshot, binding.target, binding.translation)
+            target, formal, link, scope = self._proposal_pair(snapshot, binding.target, binding.translation, binding.scope)
             inputs = relevant_versions(self.problem, snapshot, target.ref,
                 (formal.ref, link.ref, scope.ref, binding.saved, binding.saved_proof))
             if binding.inputs:
@@ -472,11 +484,12 @@ class ProjectOwners:
                                      "elaborated" if elaboration else "kernel_proof",
                                      obligation_kinds=(ObligationKind.FORMALIZE if elaboration else ObligationKind.PROVE,))
 
-    def bind_saved(self, target: VersionRef, translation: VersionRef, saved: VersionRef) -> CheckedBinding:
+    def bind_saved(self, target: VersionRef, translation: VersionRef, saved: VersionRef, *,
+                   scope: VersionRef | None = None) -> CheckedBinding:
         """Connect one exact proposed statement to an already checked save through existing policy."""
         store = LedgerStore(self.problem)
         snapshot = store.read()
-        subject, formal, link, scope = self._proposal_pair(snapshot, target, translation)
+        subject, formal, link, scope = self._proposal_pair(snapshot, target, translation, scope)
         result = snapshot.get(saved)
         if (not isinstance(result, ProjectItem) or result.id != item_id(result.name)
                 or snapshot.head(result.id).ref != saved or result.context != subject.context):
@@ -507,7 +520,8 @@ class ProjectOwners:
             raise ValueError("Checked-save evidence is stale or its build environment cannot be revalidated.")
         self._append(binding)
         proof_ref = self.binding_reference(binding)
-        self._resolve_bound(store, snapshot, translation, ObligationKind.PROVE, (proof_ref,))
+        self._resolve_bound(store, snapshot, translation, ObligationKind.PROVE, (proof_ref,), scope=scope.ref,
+                            preferred=f"{target.id}:proof")
         snapshot = store.read()
         reviews = self.journal.read().of(TranslationReview)
         faithful = [self.review_reference(review) for review in reviews
@@ -515,12 +529,18 @@ class ProjectOwners:
         faithful = [ref for ref in faithful if self._read_review(ref, snapshot=snapshot) is not None]
         if faithful:
             self._resolve_bound(store, snapshot, target, ObligationKind.FORMALIZE,
-                                (self.binding_reference(binding, elaboration=True), faithful[-1]))
+                                (self.binding_reference(binding, elaboration=True), faithful[-1]), scope=scope.ref,
+                                preferred=f"{target.id}:translation-review")
         return binding
 
     def _resolve_bound(self, store: LedgerStore, snapshot: LedgerSnapshot, subject: VersionRef,
-                       kind: ObligationKind, evidence: tuple[EvidenceRef, ...]) -> None:
-        candidates = [work for work in snapshot.current(Obligation) if work.item == subject and work.kind == kind]
+                       kind: ObligationKind, evidence: tuple[EvidenceRef, ...], *, scope: VersionRef,
+                       preferred: str | None = None) -> None:
+        candidates = [work for work in snapshot.current(Obligation) if work.item == subject and work.kind == kind
+                      and work.scope.ref == scope]
+        chosen = [work for work in candidates if work.id == preferred]
+        if chosen:
+            candidates = chosen
         if len(candidates) != 1:
             raise ValueError("Binding requires one exact application obligation.")
         work = candidates[0]
@@ -649,6 +669,8 @@ class ProjectOwners:
 
     def read_evidence_at(self, snapshot: LedgerSnapshot, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """Authenticate against the policy's locked snapshot without reacquiring its ledger lock."""
+        if reference.producer == "hardy.live-formal":
+            return self.live_evidence.read(snapshot, reference)
         if reference.producer == "hardy.semantic-judgments":
             return self.judgments.read(snapshot, reference)
         if reference.kind == EvidenceKind.FAITHFULNESS:
@@ -659,6 +681,8 @@ class ProjectOwners:
 
     def read_evidence(self, reference: EvidenceRef) -> AuthenticatedEvidence | None:
         """What the owner's record behind a reference established, if it still reads and rests on nothing forbidden."""
+        if reference.producer == "hardy.live-formal":
+            return self.live_evidence.read(LedgerStore(self.problem).read(), reference)
         if reference.producer == "hardy.semantic-judgments":
             return self.judgments.read(LedgerStore(self.problem).read(), reference)
         if reference.kind == EvidenceKind.FAITHFULNESS:
@@ -733,6 +757,24 @@ class ProjectOwners:
         return None
 
     # -- the save path --------------------------------------------------------------------
+
+    @contextmanager
+    def capture_saved_effects(self):
+        """Capture only transactions this trusted save owner actually committed."""
+        committed = []
+        token = self._saved_effects.set(committed)
+        try:
+            yield committed
+        finally:
+            self._saved_effects.reset(token)
+
+    def _append_saved(self, store, records, **kwargs):
+        records = tuple(records)
+        result = store.append(records, **kwargs)
+        captured = self._saved_effects.get()
+        if captured is not None:
+            captured.extend(record.ref for record in records)
+        return result
 
     def record_saved(self, sources: Mapping[str, str], records: Mapping[str, Mapping[str, Any]],
                      signatures: Mapping[str, str], *, shared: Mapping[str, Sequence[str]] | None = None) -> str:
@@ -828,7 +870,7 @@ class ProjectOwners:
                 reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
                                                       "status": "open", "resolution": None, "reason": reason})
                 try:
-                    snapshot = store.append((reopened,), expected_revision=snapshot.revision,
+                    snapshot = self._append_saved(store, (reopened,), expected_revision=snapshot.revision,
                                             validate=self.policy.validate)
                 except (ValueError, OSError, LockTimeout) as error:
                     notes.append(f"{item.name} proof obligation not reopened: {error}")
@@ -881,7 +923,7 @@ class ProjectOwners:
             current = opened
         persisted: list[str] = []
         if batch:
-            snapshot = store.append(batch, expected_revision=snapshot.revision, validate=self.policy.validate)
+            snapshot = self._append_saved(store, batch, expected_revision=snapshot.revision, validate=self.policy.validate)
             # Receipts only after append returns: a prepared batch says nothing
             # about what survived, and later journal/acceptance writes may fail.
             if scope in batch:
@@ -920,20 +962,20 @@ class ProjectOwners:
                 accepted = self.policy.accept(snapshot, proposal, receipt)
                 closed = Obligation.model_validate({**current.model_dump(), "previous": current.ref,
                                                     "status": "resolved", "resolution": accepted, "reason": None})
-                store.append((closed,), expected_revision=snapshot.revision, validate=self.policy.validate)
+                self._append_saved(store, (closed,), expected_revision=snapshot.revision, validate=self.policy.validate)
                 said.append("proof obligation re-accepted" if current.status is ObligationStatus.RESOLVED
                             else "proof obligation resolved")
                 return "; ".join(said)
             if current.status is ObligationStatus.RESOLVED:
                 reopened = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "status": "open",
                                                       "resolution": None, "reason": reason})
-                store.append((reopened,), expected_revision=snapshot.revision, validate=self.policy.validate)
+                self._append_saved(store, (reopened,), expected_revision=snapshot.revision, validate=self.policy.validate)
                 said.append(f"proof obligation reopened ({reason})")
             elif current in batch:
                 said.append(f"proof obligation open ({reason})")
             elif current.reason != reason:
                 revised = Obligation.model_validate({**current.model_dump(), "previous": current.ref, "reason": reason})
-                store.append((revised,), expected_revision=snapshot.revision, validate=self.policy.validate)
+                self._append_saved(store, (revised,), expected_revision=snapshot.revision, validate=self.policy.validate)
                 said.append(f"proof obligation still open ({reason})")
             return "; ".join(said)
         except (ValueError, OSError, LockTimeout) as error:

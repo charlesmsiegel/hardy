@@ -68,13 +68,15 @@ class ResearchWorkflow:
                  identify: Callable[[LedgerSnapshot, ResearchRequest], ResearchPlan],
                  prepare: Callable[[FormalizationInput], PreparedCandidate | SemanticBlockers],
                  record_formalization: Callable[[LedgerSnapshot, Obligation, PreparedCandidate], ResolverResult],
-                 prove: Resolver, refute: Resolver | None = None, compute: Resolver | None = None):
+                 prove: Resolver, refute: Resolver | None = None, compute: Resolver | None = None,
+                 durable_planning: bool = False):
         if resolver.store.project != store.project:
             raise ValueError("research and acquisition must share the same ledger")
         self.store, self.resolver = store, resolver
         self.identify, self.prepare = identify, prepare
         self.record_formalization = record_formalization
         self.prove, self.refute, self.compute = prove, refute, compute
+        self.durable_planning = durable_planning
 
     @staticmethod
     def _subject(snapshot: LedgerSnapshot, request: ResearchRequest) -> tuple[ProjectItem, Scope]:
@@ -97,7 +99,8 @@ class ResearchWorkflow:
             kind="prove" if request.operation == "prove" else "check_informal_step")
         formalize = Obligation(id=f"{request.id}:formalize", item=target.ref, kind="formalize",
                                scope=scope, context=target.context)
-        if any(record.id == request.id for record in snapshot.records):
+        registered = any(record.id == request.id for record in snapshot.records)
+        if registered:
             if snapshot.head(request.id) != note:
                 raise ValueError("research request identity already names another request")
             # A serialized note is not permission to skip the original A2 gate.
@@ -116,7 +119,14 @@ class ResearchWorkflow:
                         value.id, value.item, value.kind, value.scope, value.context
                     ) != (expected.id, expected.item, expected.kind, expected.scope, expected.context):
                         raise ValueError("research formalization work changed identity")
-            return snapshot.head(work.id)
+            if not self.durable_planning or snapshot.head_or_none(f"{request.id}:planned") is not None:
+                return snapshot.head(work.id)
+        elif self.durable_planning:
+            link = Relation(id=f"{request.id}:formalization", kind="blocked_by",
+                            source=work.ref, target=formalize.ref)
+            self.store.append((note, work, formalize, link), expected_revision=snapshot.revision,
+                              validate=self.resolver.policy.validate)
+            snapshot = self.store.read()
         plan = self.identify(snapshot, request)
         if not isinstance(plan, ResearchPlan):
             raise ValueError("research identification must return a ResearchPlan")
@@ -127,14 +137,18 @@ class ResearchWorkflow:
             if isinstance(record, Obligation) and (record.status != "open" or record.resolution is not None
                                                   or record.scope != scope):
                 raise ValueError("research plan cannot assign acceptance or change scope")
-        links = [Relation(id=f"{request.id}:formalization", kind="blocked_by",
-                          source=work.ref, target=formalize.ref)]
+        links = [] if self.durable_planning else [Relation(id=f"{request.id}:formalization", kind="blocked_by",
+                                                         source=work.ref, target=formalize.ref)]
         for index, prerequisite in enumerate(plan.prerequisites):
             links.append(Relation(id=f"{request.id}:prerequisite:{index}", kind="blocked_by",
                                   source=formalize.ref, target=prerequisite.ref))
-        self.store.append((*plan.records, *plan.prerequisites, note, work, formalize, *links),
+        planned = ProjectItem(id=f"{request.id}:planned", kind="research_note", name="Research identification completed",
+            origin="generated_local", context=request.context,
+            semantics=(("research-request", request.model_dump_json()),))
+        base = (planned,) if self.durable_planning else (note, work, formalize)
+        self.store.append((*plan.records, *plan.prerequisites, *links, *base),
                           expected_revision=snapshot.revision, validate=self.resolver.policy.validate)
-        return work
+        return self.store.read().head(work.id)
 
     def _formalize(self, snapshot: LedgerSnapshot, work: Obligation, gap: ClassifiedGap) -> ResolverResult:
         item = snapshot.get(work.item)
@@ -161,7 +175,7 @@ class ResearchWorkflow:
             semantics=(("frozen-claim", candidate.claim.model_dump_json()),))
         link = Relation(id=f"{note.id}:formalizes", kind="formalizes", source=note.ref, target=work.item)
         return ResolverResult(records=(*result.records, note, link), children=result.children,
-                              evidence=result.evidence, detail=result.detail)
+                              evidence=result.evidence, detail=result.detail, effects=result.effects)
 
     def run(self, request: ResearchRequest, *, max_attempts: int = 64) -> ResearchReport:
         request = ResearchRequest.model_validate(request.model_dump())
@@ -185,7 +199,8 @@ class ResearchWorkflow:
             registry[(kind, work.kind)] = dispatch
             registry[(kind, "formalize")] = dispatch
         runner = RecursiveResolver(self.store, classifier=self.resolver.classifier, policy=self.resolver.policy,
-            resolvers=registry, decide=self.resolver.decide, check_cancelled=self.resolver.check_cancelled)
+            resolvers=registry, decide=self.resolver.decide, check_cancelled=self.resolver.check_cancelled,
+            read_effects=self.resolver.read_effects)
         result = runner.resolve(work.ref, max_attempts=max_attempts)
         snapshot = self.store.read()
         target, scope = self._subject(snapshot, request)

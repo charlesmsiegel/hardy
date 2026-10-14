@@ -57,6 +57,7 @@ class ArgumentRequest(FrozenModel):
     original: VersionRef | None = None
     context: VersionRef | None = None
     reason: Text | None = None
+    origin: ProjectOrigin = ProjectOrigin.HUMAN_AUTHORED
 
 
 JudgmentPurpose = Literal[
@@ -111,11 +112,14 @@ class JudgmentRequest(FrozenModel):
     sources: tuple[SourceRegion, ...] = ()
     citation: VersionRef | None = None
     citation_use: CitationReviewUse | None = None
+    actor: Literal["human", "model"] | None = None
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         data = super().model_dump(**kwargs)
         if self.citation_use is None:
             data.pop("citation_use", None)
+        if self.actor is None:
+            data.pop("actor", None)
         return data
 
 

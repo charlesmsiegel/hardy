@@ -312,15 +312,26 @@ class LedgerPolicy:
             raise ValueError("scope authorization does not match exact change and policy")
 
     def _check_scope(self, snapshot: LedgerSnapshot, scope: Scope) -> None:
-        protected = {ref.id for current in snapshot.current(Scope) for ref in current.must_prove}
+        protected = {ref.id for current in snapshot.records if isinstance(current, Scope) for ref in current.must_prove}
+        protected.update(item.id for item in snapshot.records
+                         if isinstance(item, ProjectItem) and item.origin == ProjectOrigin.TARGET_PAPER)
+        # A formal alias of a required statement is still required mathematics.
+        # History is deliberate: a stale translation cannot be admitted under
+        # its old identity after its exact relation or target has moved.
+        while True:
+            aliases = {edge.source.id for edge in snapshot.records if isinstance(edge, Relation)
+                       and edge.kind == RelationKind.FORMALIZES and edge.target.id in protected}
+            if aliases.issubset(protected):
+                break
+            protected.update(aliases)
         for ref in scope.allowed_background + scope.allowed_interfaces:
             value = snapshot.get(ref)
             if not isinstance(value, ProjectItem):
                 raise ValueError("scope admission requires a project item")
-            if ref.id in protected:
-                raise ValueError("must_prove item cannot be admitted, including stale revisions")
             if value.origin == ProjectOrigin.TARGET_PAPER:
                 raise ValueError("target-paper self-assumption is forbidden")
+            if ref.id in protected:
+                raise ValueError("must_prove item or protected formalization cannot be admitted, including stale revisions")
             if value.kind in {ProjectItemKind.DECLARATION, ProjectItemKind.QUESTION,
                               ProjectItemKind.CONJECTURE, ProjectItemKind.GOAL}:
                 raise ValueError("local declarations and research proposals are not trusted assumptions")
