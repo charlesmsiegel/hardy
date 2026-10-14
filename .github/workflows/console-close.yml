@@ -15,6 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Select Windows Console Host for the desktop-close probe
+        shell: pwsh
+        run: |
+          # Microsoft's Windows Console Host preference; Windows Terminal
+          # supplies a PseudoConsoleWindow that cannot establish WM_CLOSE.
+          # https://learn.microsoft.com/windows/terminal/group-policy#default-terminal-application
+          $startup = 'HKCU:\Console\%%Startup'
+          $consoleHost = '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}'
+          New-Item -Path $startup -Force | Out-Null
+          foreach ($name in @('DelegationConsole', 'DelegationTerminal')) {
+            New-ItemProperty -Path $startup -Name $name -Value $consoleHost -PropertyType String -Force | Out-Null
+          }
+          Get-ItemProperty -Path $startup -Name DelegationConsole, DelegationTerminal
       - name: Observe real CTRL_CLOSE_EVENT
         env:
           HARDY_NATIVE_CONSOLE_CLOSE: "1"
