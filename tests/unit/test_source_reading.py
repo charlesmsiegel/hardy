@@ -135,6 +135,36 @@ def test_reader_restricts_search_before_limit_and_clamps_context(tmp_path):
     assert reader.proof_of(sha, 'missing') is None
 
 
+def test_consecutive_reads_verify_artifact_and_payloads_once(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    from hardy.literature.sources import artifacts, representations
+
+    built_library, sha = built(tmp_path)
+    tree = built_library.trees.preferred(sha)
+    theorem = next(n for n in tree.nodes if n.kind is NodeKind.THEOREM)
+    lib = ManagedLibrary(built_library.root)
+    reader = SourceReader(lib)
+    artifact_reads = []
+    payload_reads = []
+    original_artifact = artifacts.read_bytes
+    original_payload = representations.read_bytes
+
+    def counted_artifact(root, relative):
+        artifact_reads.append(relative)
+        return original_artifact(root, relative)
+
+    def counted_payload(root, relative):
+        payload_reads.append(relative)
+        return original_payload(root, relative)
+
+    monkeypatch.setattr(artifacts, 'read_bytes', counted_artifact)
+    monkeypatch.setattr(representations, 'read_bytes', counted_payload)
+    assert reader.read_statement(sha, theorem.id).text
+    assert reader.read_statement(sha, theorem.id).text
+    assert artifact_reads.count(f'{sha}/content') == 1
+    assert payload_reads and len(payload_reads) == len(set(payload_reads))
 
 
 def test_context_reports_withheld_text_as_unavailable(tmp_path):

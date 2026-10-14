@@ -417,7 +417,12 @@ def build_tree(
                 diagnostics.append(Diagnostic(code="numbering_gap", severity="info",
                                               detail=f"numbering jumps from {prefix}{a} to {prefix}{b}; units between were not recovered, which is not evidence they are absent"))
 
-    tree_seed = json_digest([artifact.sha256, BUILDER, builder_version, [n.model_dump(mode="json") for n in nodes], [e.model_dump(mode="json") for e in edges]])
+    seed = [artifact.sha256, BUILDER, builder_version, [n.model_dump(mode="json") for n in nodes], [e.model_dump(mode="json") for e in edges]]
+    # Preserve the historical v1 identity protocol. Current trees include
+    # diagnostics so reuse cannot discard newly discovered extraction gaps.
+    if builder_version != "1":
+        seed.append([d.model_dump(mode="json") for d in diagnostics])
+    tree_seed = json_digest(seed)
     return SourceTree(
         id=f"tree-{tree_seed[:16]}", artifact_sha256=artifact.sha256, version=(previous.version + 1) if previous else 1,
         builder=BUILDER, builder_version=builder_version, representations=(rep,), nodes=tuple(nodes), edges=tuple(edges),

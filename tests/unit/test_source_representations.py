@@ -151,3 +151,133 @@ def test_raced_admission_with_different_output_is_refused(tmp_path, monkeypatch)
     assert store.get(SHA, "rep-1") == winner and store.text(SHA, "rep-1") == "winner"
     same = store.admit(record("rep-1", {"text.txt": b"winner"}), {"text.txt": b"winner"})
     assert same == winner
+
+
+def test_payload_verification_reuses_unchanged_files_and_rechecks_tamper(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    import os
+
+    from hardy.literature.sources import representations as module
+
+    store = RepresentationStore(tmp_path / 'reps')
+    payloads = {'text.txt': b'one', 'layout.json': b'{}'}
+    store.admit(record('rep-cache', payloads), payloads)
+    reads = []
+    original = module.read_bytes
+
+    def counted(root, relative):
+        reads.append(relative)
+        return original(root, relative)
+
+    monkeypatch.setattr(module, 'read_bytes', counted)
+    assert store.text(SHA, 'rep-cache') == 'one'
+    assert store.text(SHA, 'rep-cache') == 'one'
+    assert len(reads) == 2  # one read per payload, only on first verification
+    path = store.root / SHA / 'rep-cache' / 'layout.json'
+    old = path.stat()
+    path.write_bytes(b'[]')
+    os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns))
+    with pytest.raises(RepresentationError, match='no longer'):
+        store.text(SHA, 'rep-cache')
+
+
+def test_payload_cache_refuses_symlink_replacement(tmp_path):
+    store = RepresentationStore(tmp_path / 'reps')
+    store.admit(record('rep-cache', {'text.txt': b'one'}), {'text.txt': b'one'})
+    assert store.text(SHA, 'rep-cache') == 'one'
+    path = store.root / SHA / 'rep-cache' / 'text.txt'
+    other = tmp_path / 'other'
+    other.write_bytes(b'one')
+    path.unlink()
+    path.symlink_to(other)
+    from hardy.foundation.files import LayoutError
+    with pytest.raises(LayoutError):
+        store.text(SHA, 'rep-cache')
+
+
+def test_unchanged_verified_text_is_decoded_once(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    from hardy.literature.sources import representations as module
+
+    store = RepresentationStore(tmp_path / 'reps')
+    store.admit(record('rep-text', {'text.txt': b'one'}), {'text.txt': b'one'})
+    decoded = []
+    original = module.read_bytes
+
+    class CountDecode(bytes):
+        def decode(self, *args, **kwargs):
+            decoded.append(1)
+            return super().decode(*args, **kwargs)
+
+    monkeypatch.setattr(module, 'read_bytes', lambda root, relative: CountDecode(original(root, relative)))
+    assert store.text(SHA, 'rep-text') == 'one'
+    assert store.text(SHA, 'rep-text') == 'one'
+    assert decoded == [1]
+
+
+def test_windows_change_clock_invalidates_representation_cache(tmp_path, monkeypatch):
+    import os
+
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    store = RepresentationStore(tmp_path / 'reps')
+    store.admit(record('rep-text', {'text.txt': b'one'}), {'text.txt': b'one'})
+    assert store.text(SHA, 'rep-text') == 'one'
+    path = store.root / SHA / 'rep-text' / 'text.txt'
+    before = path.stat()
+    path.write_bytes(b'two')
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    with pytest.raises(RepresentationError, match='no longer'):
+        store.text(SHA, 'rep-text')
+
+
+def test_cached_reader_survives_concurrent_lru_eviction(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    import inspect
+    import sys
+    import threading
+
+    store = RepresentationStore(tmp_path / "reps")
+    payloads = {"text.txt": b"valid"}
+    for index in range(65):
+        store.admit(record(f"rep-{index}", payloads), payloads)
+    for index in range(64):
+        assert store.text(SHA, f"rep-{index}") == "valid"
+    lines, start = inspect.getsourcelines(RepresentationStore.payload)
+    promotion = start + next(i for i, line in enumerate(lines) if "self._verified.move_to_end(key)" in line)
+    paused, resume = threading.Event(), threading.Event()
+    results, errors = [], []
+
+    def trace(frame, event, _arg):
+        if frame.f_code is RepresentationStore.payload.__code__ and event == "line" and frame.f_lineno == promotion:
+            paused.set()
+            assert resume.wait(5)
+        return trace
+
+    def reader():
+        sys.settrace(trace)
+        try:
+            results.append(store.text(SHA, "rep-0"))
+        except Exception as error:
+            errors.append(error)
+        finally:
+            sys.settrace(None)
+
+    worker = threading.Thread(target=reader)
+    worker.start()
+    try:
+        assert paused.wait(5)
+        assert store.text(SHA, "rep-64") == "valid"
+    finally:
+        resume.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert results == ["valid"]

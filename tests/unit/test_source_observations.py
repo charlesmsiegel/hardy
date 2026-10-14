@@ -89,3 +89,18 @@ def test_observation_store_is_write_once_per_set(tmp_path):
     assert store.sets(SHA) == ("text-1",)
     assert store.get(SHA, "missing") == ()
     assert store.all(SHA) == found
+
+
+def test_page_break_scan_never_copies_remaining_text():
+    class NoSlices(str):
+        def __getitem__(self, key):
+            assert not isinstance(key, slice), 'page-break scan copied a text tail'
+            return super().__getitem__(key)
+
+        def split(self, *args, **kwargs):
+            raise AssertionError('page-break scan allocated all pages')
+
+    found = kinds(observe_text(rep(), NoSlices('a\fb\f\fc')), ObservationKind.PAGE_BREAK)
+    assert [(o.anchor.locator.start, o.anchor.locator.end, o.value('page_boundary')) for o in found] == [
+        (1, 2, '1'), (3, 4, '2'), (4, 5, '3'),
+    ]

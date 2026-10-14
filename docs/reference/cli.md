@@ -382,6 +382,11 @@ Lists every artifact the library holds with its format, the title of its authori
 
 Prints one artifact's record, availability, every provenance record, every derived representation with its quality, every tree, the edition it authoritatively belongs to, and the candidate editions still awaiting a decision. The argument is the digest or any unique prefix of it.
 
+Reads verify managed bytes against their recorded digests. On Windows, Hardy
+rehashes on every read: creation time and NT ChangeTime do not reliably identify
+same-size edits when modification time is restored. Platforms with a supported
+change token can reuse verification while guarded file identities remain equal.
+
 ### hardy library tree
 
 Builds, validates and admits a deterministic source tree over the artifact's normalized text, printing the node and edge counts and every diagnostic; a numbering gap is reported here, not filled in. A tree that fails mechanical validation is not admitted. Exits `1` when there is no text to build from.

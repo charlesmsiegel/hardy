@@ -189,6 +189,93 @@ def test_metadata_only_restore_preserves_strictest_policy(tmp_path, first, secon
     assert artifacts.read(initial.artifact.sha256) == PDF
 
 
+def test_unchanged_availability_verifies_content_once(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    import hardy.literature.sources.artifacts as module
+    artifacts = store(tmp_path)
+    initial = artifacts.import_bytes(ImportRequest(data=PDF))
+    reads = []
+    original = module.read_bytes
+
+    def counted(base, relative):
+        reads.append(str(relative))
+        return original(base, relative)
+
+    monkeypatch.setattr(module, 'read_bytes', counted)
+    for _ in range(3):
+        assert artifacts.availability(initial.artifact.sha256).status == 'available'
+    assert reads == [f'{initial.artifact.sha256}/content']
+
+
+@pytest.mark.parametrize('change', ['overwrite', 'replace', 'truncate', 'symlink', 'directory_symlink'])
+def test_availability_cache_detects_external_changes(tmp_path, change):
+    artifacts = store(tmp_path)
+    initial = artifacts.import_bytes(ImportRequest(data=PDF))
+    sha = initial.artifact.sha256
+    content = artifacts.root / sha / 'content'
+    assert artifacts.availability(sha).status == 'available'
+    before = content.stat()
+    if change == 'overwrite':
+        content.write_bytes(b'x' * len(PDF))
+        os.utime(content, ns=(before.st_atime_ns, before.st_mtime_ns))
+    elif change == 'replace':
+        replacement = tmp_path / 'replacement'
+        replacement.write_bytes(b'x' * len(PDF))
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(content)
+    elif change == 'truncate':
+        content.write_bytes(PDF[:10])
+    elif change == 'symlink':
+        target = tmp_path / 'external'
+        target.write_bytes(PDF)
+        content.unlink()
+        content.symlink_to(target)
+    else:
+        directory = content.parent
+        moved = tmp_path / 'moved'
+        directory.rename(moved)
+        directory.symlink_to(moved, target_is_directory=True)
+    assert artifacts.availability(sha).status == 'corrupt'
+    with pytest.raises(ArtifactError, match='corrupt'):
+        artifacts.read(sha)
+
+
+def test_availability_does_not_cache_a_file_replaced_during_verification(tmp_path, monkeypatch):
+    import hardy.literature.sources.artifacts as module
+
+    artifacts = store(tmp_path)
+    sha = artifacts.import_bytes(ImportRequest(data=PDF)).artifact.sha256
+    original = module.read_bytes
+
+    def replace_after_read(base, relative):
+        data = original(base, relative)
+        replacement = tmp_path / 'replacement'
+        replacement.write_bytes(b'x' * len(PDF))
+        replacement.replace(artifacts.root / sha / 'content')
+        return data
+
+    monkeypatch.setattr(module, 'read_bytes', replace_after_read)
+    assert artifacts.availability(sha).status == 'corrupt'
+    monkeypatch.setattr(module, 'read_bytes', original)
+    assert artifacts.availability(sha).status == 'corrupt'
+
+
+def test_windows_change_clock_invalidates_artifact_cache(tmp_path, monkeypatch):
+    from file_identity_helpers import windows_creation_clock
+
+    windows_creation_clock(monkeypatch)
+    artifacts = store(tmp_path)
+    sha = artifacts.import_bytes(ImportRequest(data=PDF)).artifact.sha256
+    path = artifacts.root / sha / 'content'
+    assert artifacts.availability(sha).status == 'available'
+    before = path.stat()
+    path.write_bytes(b'x' * len(PDF))
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert artifacts.availability(sha).status == 'corrupt'
+
+
 def test_concurrent_policy_corrections_never_lose_private_policy(tmp_path, monkeypatch):
     artifacts = store(tmp_path)
     sha = artifacts.import_bytes(ImportRequest(data=PDF, access=AccessPolicy.REDISTRIBUTABLE)).artifact.sha256

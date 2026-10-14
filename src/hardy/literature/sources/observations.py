@@ -70,11 +70,8 @@ def observe_text(representation: DerivedRepresentation, text: str, *, producer_v
             payload=payload, producer=PRODUCER, producer_version=producer_version, confidence=confidence,
         ))
 
-    position = 0
-    for index, _ in enumerate(text.split(PAGE_BREAK)):
-        if index > 0:
-            add(ObservationKind.PAGE_BREAK, position - 1, position, (("page_boundary", str(index)),), "form feed between pages", 1.0)
-        position = text.find(PAGE_BREAK, position) + 1 if PAGE_BREAK in text[position:] else len(text)
+    for index, match in enumerate(re.finditer(re.escape(PAGE_BREAK), text), start=1):
+        add(ObservationKind.PAGE_BREAK, match.start(), match.end(), (("page_boundary", str(index)),), "form feed between pages", 1.0)
 
     for match in HEADING.finditer(text):
         if match.group("chapter"):
