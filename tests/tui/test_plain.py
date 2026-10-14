@@ -278,7 +278,7 @@ def test_command_interrupt_returns_to_prompt(settings):
 
 
 def test_sigint_during_checkpoint_restore_finishes_before_next_turn(settings, monkeypatch):
-    import os
+    import asyncio
     import signal
     import threading
 
@@ -291,9 +291,13 @@ def test_sigint_during_checkpoint_restore_finishes_before_next_turn(settings, mo
     saved = checkpoints.save(paths)
     released = threading.Event()
     finished = threading.Event()
+    loop = None
     original = checkpoints.restore
     def restore(*args, **kwargs):
-        os.kill(os.getpid(), signal.SIGINT)
+        # os.kill(SIGINT) terminates Python on Windows. Deliver the real
+        # signal on the UI thread through the portable signal API instead.
+        assert loop is not None
+        loop.call_soon_threadsafe(signal.raise_signal, signal.SIGINT)
         assert released.wait(5)
         try:
             return original(*args, **kwargs)
@@ -301,6 +305,8 @@ def test_sigint_during_checkpoint_restore_finishes_before_next_turn(settings, mo
             finished.set()
     monkeypatch.setattr(checkpoints, 'restore', restore)
     async def confirm(self, question):
+        nonlocal loop
+        loop = asyncio.get_running_loop()
         return True
     monkeypatch.setattr(plain.PlainUi, 'confirm', confirm)
     old = FakeSession()
