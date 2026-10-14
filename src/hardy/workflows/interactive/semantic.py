@@ -43,8 +43,8 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
     native = [value for value in owner.journal.read().of(CheckedBinding) if value.target == target.ref
               and (scope is None or value.scope == scope)
               and owner.read_evidence_at(snapshot, owner.binding_reference(value)) is not None]
-    if (("role", "semantic_target") not in target.semantics
-            or (not native and any(value.subject == target.ref and (scope is None or value.scope == scope) for value in live))):
+    if not native and (("role", "semantic_target") not in target.semantics
+            or any(value.subject == target.ref and (scope is None or value.scope == scope) for value in live)):
         scopes = [value for value in snapshot.current(Scope) if target.ref in value.must_prove]
         owned_scope = next((value for value in scopes if value.id == f"{target.id}:scope"), None)
         selected_scope = snapshot.get(scope) if scope else owned_scope or (scopes[0] if len(scopes) == 1 else None)
@@ -116,6 +116,15 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
     links = [r for r in snapshot.current(Relation) if r.kind == RelationKind.FORMALIZES and r.target == target.ref
              and isinstance(snapshot.get(r.source), ProjectItem)
              and ("role", "proposed_formalization") in snapshot.get(r.source).semantics]
+    if native:
+        selected = native if requested_scope is not None else (
+            [value for value in native if value.scope.id == f"{target.id}:scope"] or native)
+        pairs = {(value.translation, value.scope) for value in selected}
+        if len(pairs) != 1:
+            raise ValueError("Inspection requires one exact bound formalization and scope selection.")
+        formal_ref, bound_scope = next(iter(pairs))
+        requested_scope = requested_scope or bound_scope
+        links = [value for value in links if value.source == formal_ref]
     if len(links) != 1:
         raise ValueError("The target has no unique exact proposed formalization.")
     formal = snapshot.get(links[0].source)
@@ -135,15 +144,15 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         owner.review_reference(latest) if legacy_review else owner.judgments.reference(latest)) is not None
     works = [o for o in snapshot.current(Obligation) if o.item in {target.ref, formal.ref}
              and o.scope.ref == scope.ref and o.context == target.context]
-    work = {o.kind: o for o in sorted(works, key=lambda o: o.id not in {
-        f"{target.id}:proof", f"{target.id}:translation-review"}, reverse=True)}
-    proof = work.get(ObligationKind.PROVE)
-    formalization = work.get(ObligationKind.FORMALIZE)
+    accepted = [o for o in works if o.resolution is not None and owner.policy.is_accepted(snapshot, o.resolution)]
+    proof = next((o for o in (*accepted, *works) if o.item == formal.ref and o.kind == ObligationKind.PROVE), None)
+    formalization = next((o for o in (*accepted, *works)
+                          if o.item == target.ref and o.kind == ObligationKind.FORMALIZE), None)
     verified = any(owner.read_evidence_at(snapshot, owner.binding_reference(value)) is not None for value in bindings)
     mapped = any(o.item == formal.ref and o.kind == ObligationKind.PROVE and o.resolution is not None
-                 and owner.policy.is_accepted(snapshot, o.resolution) for o in works)
+                 for o in accepted)
     translated = any(o.item == target.ref and o.kind == ObligationKind.FORMALIZE and o.resolution is not None
-                     and owner.policy.is_accepted(snapshot, o.resolution) for o in works)
+                     for o in accepted)
     evidence = []
     axioms: list[str] | None = None
     if bindings:
@@ -202,7 +211,7 @@ def target_report(problem: Path, selector: str, *, owners: ProjectOwners | None 
         "document_compilation": {"status": "unassessed", "reason": "Compilation does not assess mathematical arguments."},
         "bindings": [b.model_dump(mode="json") for b in bindings],
         "obligations": [{**o.model_dump(mode="json"), "authenticated": bool(o.resolution and owner.policy.is_accepted(snapshot, o.resolution))}
-                        for o in work.values()],
+                        for o in works],
     }
 
 
