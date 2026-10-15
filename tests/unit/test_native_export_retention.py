@@ -90,11 +90,12 @@ def test_live_checked_save_retains_exact_shared_closure_and_all_lake_metadata(tm
     formal = ops.formalization(claim.ref, id="formal", formal=capabilities.signature(candidate.claim), scope=scope.ref)
     work = ops.obligation(claim.ref, kind="prove", scope=scope.ref, reason="Controlled actual checked-save path")
     snapshot = ops.store.read()
+    prepared = capabilities.formalization_evidence(snapshot, work, candidate, formal.ref)
     task = ProofTask(claim=candidate.claim, limits=chat.limits)
     submission = ProofSubmission(proof_body="by exact True.intro", informal_proof="Controlled imported closure fixture")
     verified = capabilities.proof(task, submission)
     assert verified.verified
-    result, reference, _effects = capabilities.save(snapshot, work, task, submission, verified, formal.ref, None)
+    result, reference, _effects = capabilities.save(snapshot, work, task, submission, verified, prepared)
     assert result.ok, result.output
     record = chat.owners.journal.read().of(FrozenFormalEvidence)[-1]
     assert dict(record.retained_shared).keys() == {"Shared"}

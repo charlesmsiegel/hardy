@@ -324,7 +324,7 @@ class LiveWorkflows:
         if outcome.evidence is None or outcome.submission is None or strategy.last_verification is None:
             return ResolverResult(detail=outcome.detail)
         result, reference, effects = self.capabilities.save(snapshot, work, task, outcome.submission,
-            strategy.last_verification, candidate.formalization, candidate.reading)
+            strategy.last_verification, candidate)
         return ResolverResult(evidence=(reference,) if reference else (), detail=result.output, effects=effects)
 
     def _semantic(self, snapshot, work, gap):
@@ -502,7 +502,7 @@ class LiveWorkflows:
                 if self.owners.live_evidence.read(before, LiveEvidence.reference(candidate, faithful=True)) is None:
                     return RepairSaveResult(ToolResult(False, "Exact translation requires correspondence review; no proof was saved"))
                 result, reference, effects = self.capabilities.save(before, saving.obligation, task, saving.outcome.submission,
-                    strategy.last_verification, candidate.formalization, candidate.reading)
+                    strategy.last_verification, candidate)
                 return RepairSaveResult(result, ((reference, LiveEvidence.reference(candidate, faithful=True)) if reference else ()), effects)
             core = RepairWorkflow(self.store, policy=self.owners.policy, read_claim=lambda _ref: candidate.claim,
                 save=save, recheck=lambda _snapshot, ref: RecheckResult(ref, *self.capabilities.ports.recheck(ref, defect.scope)),

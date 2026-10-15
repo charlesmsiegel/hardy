@@ -30,7 +30,7 @@ from hardy.workflows.formalization import (
     resolve_input,
 )
 from hardy.workflows.interactive.evidence import ProjectOwners, item_id, source_inputs
-from hardy.workflows.interactive.live_evidence import ARTIFACT_URI, MODEL_URI
+from hardy.workflows.interactive.live_evidence import ARTIFACT_URI, MODEL_URI, LiveEvidence
 from hardy.workflows.interactive.live_records import FrozenFormalEvidence
 from hardy.workflows.interactive.live_runtime import StructuredModelCalls
 from hardy.workflows.interactive.semantic_records import stamp
@@ -47,6 +47,10 @@ from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
 from hardy.workflows.storage import RunStore
 from hardy.workflows.strategies.contracts import ProofTask
+
+
+class _CorrespondenceWithdrawn(ValueError):
+    """The exact semantic reading stopped authenticating before save commit."""
 
 
 @dataclass(frozen=True)
@@ -191,10 +195,14 @@ class LiveCapabilities:
         return verifier.verify(task.claim, submission.proof_body, RunStore(directory, uuid4()), allowed=task.declared_assumptions)
 
     def save(self, snapshot: LedgerSnapshot, work: Obligation, task: ProofTask,
-             submission: ProofSubmission, verified: VerificationResult, formalization: VersionRef,
-             reading: EvidenceRef | None) -> tuple[ToolResult, EvidenceRef | None, ArtifactRef | None]:
+             submission: ProofSubmission, verified: VerificationResult,
+             candidate: FrozenFormalEvidence) -> tuple[ToolResult, EvidenceRef | None, ArtifactRef | None]:
         if not verified.verified:
             return ToolResult(False, "FinalVerifier did not verify this proof"), None, None
+        if (candidate.subject != work.item or candidate.scope != work.scope.ref
+                or candidate.context != work.context or candidate.claim != task.claim):
+            raise ValueError("checked save requires the exact prepared correspondence")
+        formalization, reading = candidate.formalization, candidate.reading
         allowed, refs = self.declared(snapshot, work.scope)
         if allowed != task.declared_assumptions:
             raise ValueError("proof assumptions changed before guarded save")
@@ -208,8 +216,16 @@ class LiveCapabilities:
             if current.revision != snapshot.revision:
                 raise ValueError("overlapping edit before controlled save commit")
             self.owners.policy._current_scope(current, work.scope)
+            # Review submissions have their own journal and need not advance
+            # the ledger. Re-read the exact prepared pair after the final audit,
+            # immediately before committing any staged proof-save effects.
+            if self.owners.live_evidence.read(current, LiveEvidence.reference(candidate, faithful=True)) is None:
+                raise _CorrespondenceWithdrawn("Exact translation requires correspondence review; no proof was saved")
         with self.owners.capture_saved_effects() as committed:
-            result = self.ports.save(module.replace(".", "/") + ".lean", source, work.scope, allowed, guard)
+            try:
+                result = self.ports.save(module.replace(".", "/") + ".lean", source, work.scope, allowed, guard)
+            except _CorrespondenceWithdrawn as error:
+                result = ToolResult(False, str(error))
         after = self.store.read()
         effects = self.owners.live_evidence.effects(snapshot, after, committed=tuple(committed))
         if not result.ok:

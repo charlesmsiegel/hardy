@@ -99,6 +99,47 @@ def test_owner_evidence_must_bind_exact_subject_scope_context_and_claim(wrong):
         policy.accept(snapshot(subject, scope, work), proposal, receipt)
 
 
+@pytest.mark.parametrize("current_first", [False, True])
+@pytest.mark.parametrize("withdrawal", ["unavailable", "scope", "outcome", "reader-error"])
+def test_independent_current_proof_survives_an_invalid_alternative(current_first, withdrawal):
+    subject, scope, work, evidence, proposal = fixture()
+    other = work.model_copy(update={"id": "independent-proof"})
+    alternative = evidence.model_copy(update={"artifact": ArtifactRef(uri="formal/new.json", digest="c" * 64)})
+    proposed = proposal.model_copy(update={"id": "new-resolution", "obligation": other.ref, "evidence": (alternative,)})
+    policy, receipt, records, decisions = authority(scope, work, evidence, proposal)
+    second_receipt = ArtifactRef(uri="decisions/new.json", digest="d" * 64)
+    decisions[second_receipt] = AcceptanceDecision(proposed.ref, other.ref, subject.ref, scope.ref, None, policy.digest)
+    records[alternative.artifact] = replace(records[evidence.artifact], reference=alternative)
+    state = snapshot(subject, scope, work, other)
+    first = work.model_copy(update={"previous": work.ref, "status": ObligationStatus.RESOLVED,
+        "resolution": policy.accept(state, proposal, receipt)})
+    second = other.model_copy(update={"previous": other.ref, "status": ObligationStatus.RESOLVED,
+        "resolution": policy.accept(state, proposed, second_receipt)})
+    state = snapshot(subject, scope, work, other, *((second, first) if current_first else (first, second)))
+    observed = records[evidence.artifact]
+    if withdrawal == "unavailable":
+        records.pop(evidence.artifact)
+    elif withdrawal == "scope":
+        records[evidence.artifact] = replace(observed, scope=Scope(id="other-scope").ref)
+    elif withdrawal == "outcome":
+        records[evidence.artifact] = replace(observed, outcome="elaborated")
+    else:
+        def reader(reference):
+            if reference == evidence:
+                raise OSError("old retained receipt unavailable")
+            return records.get(reference.artifact)
+        policy._read_evidence = reader
+    assert not policy.is_accepted(state, first.resolution)
+    assert policy.is_accepted(state, second.resolution)
+    assert policy.premise_allowed(state, subject.ref, scope=scope, context=None)
+    assert policy.trust_boundary(state, subject.ref, scope=scope, context=None) == ()
+    # Trying alternatives must retain cycle detection and refuse all-invalid proof sets.
+    cyclic = snapshot(*state.records, Relation(id="cycle", kind="depends_on", source=subject.ref, target=subject.ref))
+    assert not policy.premise_allowed(cyclic, subject.ref, scope=scope, context=None)
+    records.pop(alternative.artifact)
+    assert not policy.premise_allowed(state, subject.ref, scope=scope, context=None)
+
+
 def test_forged_decision_or_mutated_proposal_cannot_resolve_work():
     subject, scope, work, evidence, proposal = fixture()
     policy, receipt, _, decisions = authority(scope, work, evidence, proposal)

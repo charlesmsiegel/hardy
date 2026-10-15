@@ -508,7 +508,13 @@ class LedgerPolicy:
             if (obligation.item == ref and obligation.scope.ref == scope.ref
                     and obligation.kind in _ESTABLISHES[value.kind]
                     and obligation.status == ObligationStatus.RESOLVED and obligation.resolution):
-                self._check_resolution(snapshot, obligation.resolution, visiting)
+                try:
+                    self._check_resolution(snapshot, obligation.resolution, visiting)
+                except (ValueError, OSError, TypeError):
+                    # Independent proofs are alternatives. A stale receipt
+                    # cannot establish this item or hide another current proof.
+                    # Keep the visiting set so alternatives cannot admit cycles.
+                    continue
                 return True
         return False
 
