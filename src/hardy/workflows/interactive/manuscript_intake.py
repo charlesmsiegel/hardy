@@ -67,6 +67,28 @@ class ManuscriptSourcePorts:
     managed_choices: Callable[[], list[dict[str, Any]]] | None = None
 
 
+def extraction_regions(texts, scanned):
+    """Mechanical quoted choices, without assigning any semantic mapping."""
+    def quoted(span):
+        return {**asdict(span), "quote": texts[span.path][span.start:span.end]}
+    # Nested bodies overlap. Charge codepoints before slicing so the extra
+    # body text stays linear in the bounded input, rather than quadratic.
+    remaining = sum(len(text) for text in texts.values())
+    result = []
+    for env in scanned.environments:
+        if env.closing is None:
+            continue
+        size = env.closing.start - env.opening.end
+        body = None
+        if size <= remaining:
+            body = quoted(SourceSpan(path=env.opening.path, digest=env.opening.digest,
+                start=env.opening.end, end=env.closing.start))
+            remaining -= size
+        result.append({"kind": env.kind, "opening": quoted(env.opening),
+            "body": body, "body_omitted": body is None})
+    return result
+
+
 def managed_source_ports(list_sources, *, library, seeds) -> ManuscriptSourcePorts:
     """Read only exact native TeX representations explicitly seeded to this project."""
     import json
@@ -302,9 +324,20 @@ class ManuscriptIntake:
         before_calls = {value.id for value in self.owners.journal.read().of(ModelCallReceipt)}
         call, status, detail, mappings = None, "proposed", "Extraction requires explicit mapping review", []
         try:
-            response = self.calls.structured("manuscript.extract", {"sources": texts, "inventory": asdict(scanned)}, ExtractionProposal,
+            response = self.calls.structured("manuscript.extract", {"sources": texts, "inventory": asdict(scanned),
+                "source_regions": extraction_regions(texts, scanned)}, ExtractionProposal,
                 system="Propose source-bound mathematical readings, never approve or prove them. Offsets are Unicode codepoints. "
-                "Copy each quote exactly and its full source digest. Bind claim/proof environments to exact inventoried openings. "
+                "Return one JSON object with mappings (an array) and ambiguities (an array), following the response_schema. "
+                "source_regions supplies mechanically computed opening and body QuotedSpans. Copy these complete objects "
+                "including path, digest, start, end and quote; do not calculate offsets or digests yourself. "
+                "For a claim or argument, environment must be its opening object, never the whole environment or body. "
+                "Use the supplied body as span when it covers the intended reading. A null body with body_omitted=true "
+                "means its quote exceeded the aggregate source-size bound; inspect the retained sources for a smaller "
+                "exact span or report ambiguity. kind is argument for proof and claim for supported non-proof environments; "
+                "on claims, claim_kind must match the inventoried kind (theorem, lemma, proposition, corollary, claim, "
+                "conjecture or definition). "
+                "Set an argument's target to its claim mapping key; set a step's argument to its argument mapping key. "
+                "If selecting a smaller span, copy its exact quote and full source digest, with exact codepoint offsets. "
                 "Identify every supplied argument, its steps, internal claims, local contexts/notation, dependencies and citation uses. "
                 "Novel source claims remain required work. Preserve ambiguity and unmatched prose. Do not invent offsets or external assumptions.")
             call = response.receipt.id

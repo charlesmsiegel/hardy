@@ -153,9 +153,9 @@ installer is cheap and safe.
    winget. POSIX leaves Node installation to the user when npm is missing.
 7. **Configuration**: the installer asks for a model identity and writes it
    to the config file below (mode 600). On the default backend there is no
-   API key: sign in once with `claude login`. The opt-in `api` backend is
-   the one exception and is not installed by default; see **The API
-   backend** below. An existing config file is never overwritten.
+   API key: sign in once with `claude login`. Optional API transports
+   require their SDK extra and selected key; see **The API backend** and
+   **OpenAI-compatible endpoints and OpenRouter** below. An existing config file is never overwritten.
 8. **Verification**: `hardy doctor` runs last and reports anything still
    missing.
 
@@ -196,8 +196,9 @@ staged documents; pdflatex serves interactive writeup tools, so the default
 TeX subset remains necessary. `--full-latex` selects the full TeX distribution.
 
 Verification treats authentication as a backend-specific next step: run
-`claude login` for Claude, supply `ANTHROPIC_API_KEY` for the API backend, or
-sign in through `hardy setup` for Codex.
+`claude login` for Claude, supply `ANTHROPIC_API_KEY` for `api`,
+`OPENAI_API_KEY` for `openai` or `OPENROUTER_API_KEY` for `openrouter`, or
+sign in through `hardy setup` for staged Codex.
 Missing required installed tools still cause exit 1, and the installation
 summary is printed even when those doctor checks fail. Explicit skips waive
 only the corresponding tool checks; an absent Claude CLI is still a failure.
@@ -315,7 +316,8 @@ Claude Code CLI is signed in, not merely installed: a logged-out machine
 fails here rather than on your first question. With `backend = "api"` it
 means the `anthropic` package is importable and `ANTHROPIC_API_KEY` is set,
 whether one is set, never what it is, since a doctor report is something
-people paste into issues.
+people paste into issues. `openai` and `openrouter` check the optional `openai`
+SDK and their separate selected key instead.
 
 The two TeX checks serve different paths: `latex_command`, normally pdflatex,
 compiles interactive cells; Tectonic compiles staged documents. `doctor` probes

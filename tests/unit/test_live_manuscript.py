@@ -122,6 +122,66 @@ def test_intake_is_unapproved_until_review_and_exact_scope_survives_restart(tmp_
     assert owners.journal.read().records
 
 
+@pytest.mark.parametrize("tamper", [None, "whole-environment", "quote"])
+def test_extractor_can_select_prequoted_unicode_regions_without_calculating_offsets(tmp_path, tamper):
+    from hardy.workflows.interactive.manuscript_records import IntakeRequest, SelectedTexSource
+    text = TEX.replace("Unmapped mathematical convention.", "Unicode convention: α ∈ ℕ.")
+    def extract(_stage, payload):
+        mappings = []
+        for key, region in zip(("main", "original", "middle"), payload["source_regions"], strict=True):
+            value = dict(key=key, kind="argument" if region["kind"] == "proof" else "claim",
+                name=key, span=dict(region["body"]), environment=dict(region["opening"]))
+            if region["kind"] == "proof":
+                value["target"] = "main"
+            else:
+                value["claim_kind"] = region["kind"]
+            if key == "main" and tamper == "whole-environment":
+                start = region["opening"]["start"]
+                end = payload["inventory"]["environments"][0]["closing"]["end"]
+                value["environment"] = {**region["opening"], "end": end, "quote": text[start:end]}
+            if key == "main" and tamper == "quote":
+                value["span"]["quote"] = "fabricated quote"
+            mappings.append(value)
+        return {"mappings": mappings, "ambiguities": []}
+    intake, files, _ = owner(tmp_path, extract)
+    files["main.tex"] = text
+    proposed = intake.propose(IntakeRequest(id="unicode", scope_id="scope", sources=(
+        SelectedTexSource(path="main.tex", digest=sha256(text.encode()).hexdigest()),)))
+    mappings = proposed["proposal"]["mappings"]
+    assert proposed["proposal"]["status"] == "proposed", proposed
+    assert {value["key"] for value in mappings} == ({"main", "original", "middle"} if tamper is None else {"original", "middle"})
+    assert not tuple(intake.store.read().current(Scope)), "A supplied region is still an unapproved proposal"
+    assert any(gap["kind"] == "invalid_mapping" for gap in proposed["proposal"]["gaps"]) == (tamper is not None)
+    if tamper is None:
+        for value in mappings:
+            for field in ("span", "environment"):
+                span = value[field]
+                assert span["quote"] == text[span["start"]:span["end"]]
+        accepted = review(intake, proposed)
+        scope = intake.store.read().get(VersionRef.model_validate(accepted["scope"]))
+        assert {VersionRef.model_validate(accepted["bindings"][key]) for key in ("main", "middle")} == set(scope.must_prove)
+
+
+def test_nested_extraction_regions_bound_quoted_text_before_copying(tmp_path):
+    from hardy.workflows.interactive.manuscript_records import IntakeRequest, SelectedTexSource
+    text = r"\begin{theorem}" * 128 + "α" * 8192 + r"\end{theorem}" * 128
+    observed = []
+    def extract(_stage, payload):
+        observed.append(payload)
+        return {"mappings": [], "ambiguities": ["Nested theorem readings remain unresolved"]}
+    intake, files, _ = owner(tmp_path, extract)
+    files["main.tex"] = text
+    proposed = intake.propose(IntakeRequest(id="nested", scope_id="scope", sources=(
+        SelectedTexSource(path="main.tex", digest=sha256(text.encode()).hexdigest()),)))
+    regions = observed[0]["source_regions"]
+    assert len(regions) == 128
+    assert sum(len(region["body"]["quote"]) for region in regions if region["body"] is not None) <= len(text)
+    assert any(region["body_omitted"] and region["body"] is None for region in regions)
+    assert observed[0]["sources"]["main.tex"] == text
+    assert not proposed["proposal"]["mappings"]
+    assert any(gap["kind"] == "unmapped_source" for gap in proposed["proposal"]["gaps"])
+
+
 def test_source_edit_rejects_old_review_but_retains_old_bytes(tmp_path):
     intake, files, _ = owner(tmp_path)
     proposed = start(intake)
