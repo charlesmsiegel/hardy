@@ -77,6 +77,7 @@ from hardy.workflows.interactive.judgments import (
     CitationEvidenceBinding,
     SemanticJudgment,
     SemanticJudgments,
+    TranslationReview,
 )
 from hardy.workflows.interactive.live_records import LIVE_RECORDS
 from hardy.workflows.interactive.manuscript_records import MANUSCRIPT_RECORDS
@@ -217,29 +218,6 @@ class Decision(FrozenModel):
     context: VersionRef | None
     policy_digest: str
     recorded_at: str
-
-
-class TranslationReview(FrozenModel):
-    """An attributed correspondence judgment; approval is never a kernel proof."""
-
-    id: str
-    subject: VersionRef
-    translation: VersionRef
-    relation: VersionRef
-    scope: VersionRef
-    context: VersionRef | None
-    verdict: Literal["approved", "disputed", "unresolved"]
-    reviewer: str
-    conditions: str
-    reason: str
-    recorded_at: str
-    inputs: tuple[VersionRef, ...] = ()
-
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        data = super().model_dump(**kwargs)
-        if not self.inputs:
-            data.pop("inputs", None)
-        return data
 
 
 class CheckedBinding(FrozenModel):
@@ -450,11 +428,9 @@ class ProjectOwners:
                 # empty-context/empty-dependency slice only. They cannot acquire
                 # authority for semantic inputs absent from their record.
                 return None
-            # The latest judgment supersedes earlier approval of the same exact proposal.
-            reviews = self.journal.read().of(TranslationReview)
-            latest = [review for review in reviews if review.subject == record.subject
-                      and review.translation == record.translation and review.scope == record.scope]
-            if not latest or latest[-1] != record:
+            latest, _legacy = self.judgments.correspondence_review(
+                record.subject, record.translation, record.scope, human_only=False)
+            if latest != record:
                 return None
         except (ValueError, JournalError, OSError, LockTimeout):
             return None
@@ -467,15 +443,22 @@ class ProjectOwners:
                            artifact=ArtifactRef(uri=BINDING_URI + binding.id, digest=record_digest(binding),
                                                 locator="elaboration" if elaboration else "proof"))
 
+    def establishment_reference(self, binding: CheckedBinding) -> EvidenceRef:
+        """The semantic conclusion requires this proof and its accepted correspondence."""
+        return EvidenceRef(kind=EvidenceKind.FORMAL, subject=binding.target, producer=PRODUCER,
+            artifact=ArtifactRef(uri=BINDING_URI + binding.id, digest=record_digest(binding),
+                                 locator="establishment"))
+
     def _read_binding(self, reference: EvidenceRef, *,
                       snapshot: LedgerSnapshot | None = None) -> AuthenticatedEvidence | None:
         if reference.kind != EvidenceKind.FORMAL or reference.producer != PRODUCER:
             return None
         binding = self._find(CheckedBinding, BINDING_URI, reference.artifact)
-        if binding is None or reference.artifact.locator not in {"proof", "elaboration"}:
+        if binding is None or reference.artifact.locator not in {"proof", "elaboration", "establishment"}:
             return None
         elaboration = reference.artifact.locator == "elaboration"
-        if reference.subject != (binding.target if elaboration else binding.translation):
+        establishment = reference.artifact.locator == "establishment"
+        if reference.subject != (binding.target if elaboration or establishment else binding.translation):
             return None
         try:
             if snapshot is None:
@@ -509,6 +492,23 @@ class ProjectOwners:
             if (checked.inputs != source_inputs(checked.module, sources)
                     or signatures.get(checked.module) != checked.signature):
                 return None
+            if establishment:
+                # Generic correspondence or approval of another translation
+                # can resolve other work on this target. Establishment must
+                # pin the current exact-pair review in this binding's accepted
+                # formalization, alongside this very elaboration reference.
+                review, native = self.judgments.correspondence_review(
+                    binding.target, binding.translation, binding.scope, human_only=False)
+                faithful = (self.review_reference(review) if native else self.judgments.reference(review)) if review else None
+                if faithful is None or not any(
+                    work.item == binding.target and work.kind == ObligationKind.FORMALIZE
+                    and work.scope.ref == binding.scope and work.context == binding.context
+                    and work.status == ObligationStatus.RESOLVED and work.resolution is not None
+                    and self.binding_reference(binding, elaboration=True) in work.resolution.evidence
+                    and faithful in work.resolution.evidence
+                    and self.policy.is_accepted(snapshot, work.resolution)
+                    for work in snapshot.current(Obligation)):
+                    return None
         except (ValueError, JournalError, OSError, LockTimeout, ImportCycle):
             return None
         return AuthenticatedEvidence(reference, binding.scope, binding.context,
@@ -554,14 +554,28 @@ class ProjectOwners:
         self._resolve_bound(store, snapshot, translation, ObligationKind.PROVE, (proof_ref,), scope=scope.ref,
                             preferred=f"{target.id}:proof")
         snapshot = store.read()
-        reviews = self.journal.read().of(TranslationReview)
-        faithful = [self.review_reference(review) for review in reviews
-                    if review.subject == target and review.translation == translation]
-        faithful = [ref for ref in faithful if self._read_review(ref, snapshot=snapshot) is not None]
-        if faithful:
+        review, native = self.judgments.correspondence_review(target, translation, scope.ref, human_only=False)
+        faithful = (self.review_reference(review) if native else self.judgments.reference(review)) if review else None
+        authenticated = self.read_evidence_at(snapshot, faithful) if faithful else None
+        establishment_id = f"{target.id}:establishment:{scope.digest}"
+        establishment = snapshot.head_or_none(establishment_id)
+        if establishment is None:
+            establishment = Obligation(id=establishment_id, item=target, kind=ObligationKind.PROVE,
+                scope=scope, context=subject.context,
+                reason="The semantic target requires a checked proof and current exact correspondence.")
+            store.append((establishment,), expected_revision=snapshot.revision, validate=self.policy.validate)
+            snapshot = store.read()
+        elif (not isinstance(establishment, Obligation) or establishment.item != target
+                or establishment.kind != ObligationKind.PROVE or establishment.scope != scope
+                or establishment.context != subject.context):
+            raise ValueError("Semantic establishment identity belongs to different exact work.")
+        if authenticated is not None:
             self._resolve_bound(store, snapshot, target, ObligationKind.FORMALIZE,
-                                (self.binding_reference(binding, elaboration=True), faithful[-1]), scope=scope.ref,
+                                (self.binding_reference(binding, elaboration=True), faithful), scope=scope.ref,
                                 preferred=f"{target.id}:translation-review")
+            self._resolve_bound(store, store.read(), target, ObligationKind.PROVE,
+                                (self.establishment_reference(binding),), scope=scope.ref,
+                                preferred=establishment.id)
         return binding
 
     def _resolve_bound(self, store: LedgerStore, snapshot: LedgerSnapshot, subject: VersionRef,

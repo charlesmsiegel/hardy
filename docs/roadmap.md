@@ -1881,20 +1881,46 @@ their conclusions require their own recorded and reviewed evidence.
   both showed ready=true, retaining the distinct actual-used assumption audit.
   Target-report support, exact publication establishment, native Results and
   document compilation remain separate.
-- Validated final engineering gate at `d781104e`: 8,876 hermetic tests passed,
+- Validated earlier engineering gate at `d781104e`: 8,876 hermetic tests passed,
   69 skipped and 55 live/real-toolchain tests deselected. Documentation,
   module-boundary and global Ruff checks passed. All 50 named frontend tests,
   the production build and served smoke passed; the shipped assets match the
   frontend sources. Independent source and documentation reviews closed all
-  material findings.
-- Pending: actual provider+Lean application acceptance. No provider credentials
-  were configured for this handoff; controlled runtime responses are labelled
+  material findings from that review; a subsequent branch review exposed the
+  additional cases corrected below.
+- Corrected and independently reviewed: citation/source judgments preserve
+  current authority across prospective and bound use descriptions, including
+  withdrawal through the original selector-free source-reading operation.
+  Native and semantic correspondence use the same exact review history and
+  human precedence. Empty or whitespace-only source passages cannot pass
+  admission, including through gates recorded before that correction.
+- Corrected and independently reviewed: Referee discoveries retain their exact
+  defective argument or step when opening actionable Repair work. Repair
+  handles reused and blocked formal proposals without empty transactions and
+  requires current correspondence before proof strategy execution and again
+  before checked save. Original defects remain separate historical work.
+- Corrected and independently reviewed: native checked-save/bind establishes
+  its semantic target through existing proof policy only with the current
+  exact formalization review, authenticated proof and exact scope revision.
+  Generic or other-formalization approvals cannot authorize that bridge.
+  Scope expansion and reapproval require fresh exact binding; previous records
+  retain their identities. Sixty-five new regression cases cover these gaps
+  and adjacent withdrawal, source, scope, retry and publication boundaries.
+- Validated staged document compilation after normal proxy-respecting cache
+  preparation: unchanged default `build_writeup` and Tectonic 0.16.9 compiled
+  two documents using the configured pinned standard bundle. Actual Lean
+  4.35.0-rc3/Mathlib verified reflexivity with an empty axiom audit; application
+  grades stayed partial and correspondence stayed unapproved. One document
+  retained that kernel evidence and one explicitly lacked a proof. An earlier
+  uncached default compile failed because its filtered child environment could
+  not fetch a missing resource; cache preparation and the successful rerun
+  were recorded separately. This establishes the tested compilation route,
+  not cold-cache network availability or actual-provider acceptance.
+- Pending: actual provider+Lean application acceptance. The supported project
+  Claude runtime is not signed in and no Anthropic API key is configured.
+  A logged-in Codex CLI supports the separate staged backend, not the existing
+  interactive project runtime. Controlled model responses remain labelled
   synthetic and unreported token/cost counters remain null/unknown.
-- Pending: staged document compilation in the handoff environment. Tectonic
-  0.16.9 runs, but its standard bundle endpoint still returned HTTP 403 on
-  2026-10-14 at 21:56 UTC. Version readiness does not establish bundle
-  availability. The separate interactive pdflatex path compiled a controlled
-  document successfully.
 
 Standalone replay pins retained local source and environment metadata plus
 export-time dependency source/compiled-library inventories. Those compiled

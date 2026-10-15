@@ -103,7 +103,9 @@ def test_citation_binding_cannot_reassign_explicit_review_to_another_contract(tm
     work = ops.obligation(item.ref, kind='check_citation', scope=scope.ref, reason='C2 review remains missing')
     snapshot = ops.store.read()
     proposal = Resolution(id='C2-resolution', item=item.ref, obligation=work.ref, evidence=evidence)
-    with pytest.raises(ValueError, match='citation'):
+    # The newer explicit C1 approval supersedes its prospective receipt, so
+    # current-evidence authentication rejects before the C2 binding check.
+    with pytest.raises(ValueError, match='evidence does not authenticate'):
         owners.policy.accept(snapshot, proposal, owners.decide(snapshot, proposal))
 
 

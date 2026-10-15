@@ -34,6 +34,7 @@ from hardy.workflows.ledger.contracts import (
     Text,
     VersionRef,
 )
+from hardy.workflows.ledger.graph import LedgerGraph
 from hardy.workflows.ledger.policy import LedgerPolicy
 from hardy.workflows.ledger.state import LedgerSnapshot
 from hardy.workflows.ledger.store import LedgerStore
@@ -48,6 +49,7 @@ class CritiqueFinding(FrozenModel):
                   "resolve_ambiguity", "justify_transport"]
     reason: Text
     counterexample: VersionRef | None = None
+    subject: VersionRef | None = None
 
 
 class CritiqueRequest(FrozenModel):
@@ -179,15 +181,35 @@ class CritiqueWorkflow:
         obligations = []
         relations = []
         heads = {record.id: record for record in snapshot.current(LedgerRecord)}
+        arguments = {edge.source for edge in snapshot.current(Relation)
+            if edge.kind == "supports" and edge.target == subject.ref
+            and isinstance(snapshot.get(edge.source), ProjectItem)
+            and snapshot.head(edge.source.id).ref == edge.source
+            and snapshot.get(edge.source).kind == ProjectItemKind.ARGUMENT}
+        if subject.kind == ProjectItemKind.ARGUMENT:
+            arguments.add(subject.ref)
+        members = {subject.ref, *arguments}
+        graph = LedgerGraph(snapshot)
+        for argument in arguments:
+            members.update(edge.target for edge in snapshot.current(Relation)
+                if edge.kind == "contains" and edge.source == argument)
+            members.update(ref for ref in graph.dependency_closure(argument)
+                if isinstance(snapshot.get(ref), ProjectItem)
+                and snapshot.get(ref).kind == ProjectItemKind.PROOF_STEP)
         for layer, finding in findings:
+            defective = snapshot.get(finding.subject or subject.ref)
+            if (not isinstance(defective, ProjectItem) or snapshot.head(defective.id) != defective
+                    or defective.ref not in members):
+                raise ValueError("critique finding subject must be current and belong to the audited subject or argument")
             if finding.counterexample is not None:
                 example = snapshot.get(finding.counterexample)
                 if (not isinstance(example, ProjectItem) or example.kind != ProjectItemKind.EXAMPLE
                         or snapshot.head(example.id) != example):
                     raise ValueError("counterexample must reference a current example item")
             key = "critique:" + json_digest({"subject": subject.ref.model_dump(),
-                "scope": scope.ref.model_dump(), "layer": layer, "finding": finding.model_dump()})
-            obligation = Obligation(id=key, item=subject.ref, scope=scope, context=subject.context,
+                "scope": scope.ref.model_dump(), "layer": layer,
+                "finding": finding.model_dump(exclude={"subject"} if finding.subject in {None, subject.ref} else set())})
+            obligation = Obligation(id=key, item=defective.ref, scope=scope, context=defective.context,
                                     kind=finding.kind, reason=f"{layer}: {finding.reason}")
             old = heads.get(key)
             if old is not None:
@@ -201,7 +223,7 @@ class CritiqueWorkflow:
                 records[key] = obligation
             if finding.counterexample is not None:
                 relation = Relation(id=key + ":counterexample", kind="counterexample_to",
-                                    source=finding.counterexample, target=subject.ref)
+                                    source=finding.counterexample, target=defective.ref)
                 relations.append(relation)
                 if heads.get(relation.id) != relation:
                     records[relation.id] = relation

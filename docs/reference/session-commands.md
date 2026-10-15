@@ -89,11 +89,20 @@ run and does not manufacture correspondence from a declaration name.
 Binding closes the formal proposal's proof obligation through policy. If the
 latest exact correspondence judgment is approved, the checked save also
 supplies elaboration evidence to close the target's formalization obligation.
+An exact semantic correspondence review can supply that approval too; both
+review forms share the same current human-precedence history. Binding also
+opens a semantic-target establishment obligation, resolved only when the
+checked proof and its exact correspondence both remain authenticated. This
+allows the target itself to be selected for publication or reused under that
+scope without registering a native Results theorem or compiling a document.
 Without that review, the formal proof can be recorded while correspondence
-remains unresolved. A later dispute withdraws correspondence without denying
-the formal proof. Source, imported-input, build-environment or saved-proof
+and semantic establishment remain unresolved. A later dispute withdraws
+correspondence and semantic establishment without denying the formal proof.
+Source, imported-input, build-environment or saved-proof
 revision changes make affected binding acceptance stale; history remains.
-After a new checked save, bind its exact current version again.
+After a new checked save or correspondence approval, bind its exact current
+version again. Repeat bind for older projects to create their establishment
+record; historical evidence is not rewritten.
 
 `/project inspect TARGET` prints the structured assessment report. It separates
 informal-target support, translation review and formal proof. Original supplied
