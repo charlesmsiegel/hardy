@@ -402,6 +402,7 @@ openai = [
 ]
 test = [
     { name = "nbformat" },
+    { name = "openai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -415,6 +416,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28,<2" },
     { name = "nbformat", marker = "extra == 'test'", specifier = ">=5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.55" },
+    { name = "openai", marker = "extra == 'test'", specifier = ">=3.31" },
     { name = "openai-codex", marker = "extra == 'codex'", specifier = ">=0.144" },
     { name = "prompt-toolkit", specifier = ">=3.0.50,<3.1" },
     { name = "pydantic", specifier = ">=2.9" },

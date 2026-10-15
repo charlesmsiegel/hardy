@@ -513,7 +513,10 @@ Anthropic Messages and OpenAI-compatible Chat Completions translate their own
 messages, tools, finish reasons and usage. They share Hardy's API request
 deadline, retry and durable spend-admission owner, alongside the same tool
 loop. OpenRouter is an explicit preset with its own credential and endpoint;
-it cannot silently borrow an OpenAI key or endpoint override. Every run records
+its owned SDK header boundary excludes ambient OpenAI custom headers and
+organization/project metadata, so those settings cannot override its selected
+key. The ordinary OpenAI-compatible backend retains its SDK configuration.
+OpenRouter cannot silently borrow an OpenAI key or endpoint override. Every run records
 its actual backend, redacted endpoint and model. Provider reasoning metadata
 is retained for tool continuations and counted by compaction without becoming
 visible transcript text.
