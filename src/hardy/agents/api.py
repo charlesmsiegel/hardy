@@ -21,11 +21,8 @@ performs every Lean check and every write.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import os
-import threading
-import time
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from copy import deepcopy
@@ -33,9 +30,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from hardy.agents.contracts import ProviderRequestTimeout, TurnEvent, final_text
+from hardy.agents.api_transport import ApiProvider
+from hardy.agents.contracts import TurnEvent, final_text
 from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
-from hardy.agents.spend_budget import COUNTERS, SpendBudget, SpendLimitReached
+from hardy.agents.spend_budget import SpendBudget
 from hardy.foundation.values import ToolResult
 
 BACKEND = "anthropic-api"
@@ -275,26 +273,10 @@ def _rejected(error: BaseException) -> bool:
             and getattr(error, "response", None) is not None)
 
 
-class AnthropicProvider:
+class AnthropicProvider(ApiProvider):
     """One Messages API call. The loop decides whether to make it."""
 
-    def __init__(
-        self,
-        model: str,
-        *,
-        client: Any | None = None,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-        spend_budget: SpendBudget | None = None,
-        sleep: Callable[[float], None] = time.sleep,
-        clock: Callable[[], float] = time.monotonic,
-        observe: Callable[[dict[str, Any]], None] | None = None,
-    ) -> None:
-        self.model = model
-        self.max_tokens = max_tokens
-        self._client = client
-        self.spend_budget = spend_budget
-        self._sleep, self._clock = sleep, clock
-        self.observe = observe or (lambda event: None)
+    prompt_caching = True
 
     def client(self) -> Any:
         """The SDK client, built on the first call that needs one.
@@ -332,52 +314,22 @@ class AnthropicProvider:
         base = base or os.environ.get("ANTHROPIC_BASE_URL")
         return f"messages api ({redacted(str(base))})" if base else "messages api"
 
-    def _within(self, request: dict[str, Any], timeout: float | None) -> Any:
-        """The request, under a deadline the loop can actually rely on.
+    def _send(self, request):
+        return self.client().messages.create(**request)
 
-        The client's `timeout` is HTTPX's, and HTTPX's read timeout bounds the
-        wait for *each chunk* rather than the whole exchange -- so an endpoint
-        or gateway that keeps dribbling data can hold `messages.create` open
-        past `wall_seconds` while the trajectory says Hardy enforced it. The
-        call therefore runs on a thread of its own and is waited on for exactly
-        the time the loop has left.
+    @staticmethod
+    def _timed_out(error):
+        return timed_out(error)
 
-        The limit that remains is stated rather than hidden, and it is the one
-        `ClaudeAgentRuntime.cancel` and the tool gate both state: the request
-        is abandoned, not aborted. A daemon thread may still be waiting on the
-        socket when Hardy has stopped. What the deadline guarantees is that
-        *Hardy* stops -- the run ends as a timeout at the moment it should,
-        rather than whenever the far end decides to finish.
-        """
-        if timeout is None:
-            return self.client().messages.create(**request)
-        outcome: dict[str, Any] = {}
+    @staticmethod
+    def _rejected(error):
+        return _rejected(error)
 
-        def call() -> None:
-            try:
-                outcome["reply"] = self.client().messages.create(**request)
-            except BaseException as error:  # noqa: BLE001 - re-raised on the caller's thread
-                outcome["error"] = error
+    @staticmethod
+    def _usage(reply):
+        return _usage(getattr(reply, "usage", None))
 
-        worker = threading.Thread(target=call, name="hardy-provider", daemon=True)
-        worker.start()
-        worker.join(max(timeout, 0.0))
-        if worker.is_alive():
-            raise TimeoutError(f"the provider request exceeded its {timeout:g}s budget")
-        if "error" in outcome:
-            raise outcome["error"]
-        return outcome["reply"]
-
-    def complete(
-        self,
-        *,
-        system: str,
-        messages: Sequence[Message],
-        specs: Sequence[dict[str, Any]],
-        timeout: float | None = None,
-    ) -> ProviderTurn:
-        started = self._clock()
-        provider_called = False
+    def _request(self, system, messages, specs):
         request: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -392,56 +344,9 @@ class AnthropicProvider:
                 if isinstance(block, dict) and block.get("type") not in ("thinking", "redacted_thinking"):
                     block["cache_control"] = {"type": "ephemeral"}
                     break
-        for attempt in range(4):
-            remaining = timeout if attempt == 0 else (None if timeout is None else max(0.0, timeout - (self._clock() - started)))
-            if remaining is not None:
-                request["timeout"] = remaining
-            try:
-                reservation = self.spend_budget.reserve(request) if self.spend_budget is not None else None
-            except SpendLimitReached as error:
-                error.provider_called = provider_called
-                raise
-            # Admission can wait for a journal lock. Recheck after it, and refund
-            # this reservation at zero if no request can still be sent.
-            remaining = None if timeout is None else max(0.0, timeout - (self._clock() - started))
-            if remaining is not None:
-                if remaining <= 0:
-                    if reservation is not None:
-                        self.spend_budget.settle(reservation, dict.fromkeys(COUNTERS, 0))
-                    raise ProviderRequestTimeout(
-                        f"the provider request exceeded its {timeout:g}s budget before sending",
-                        provider_called=provider_called,
-                    )
-                request["timeout"] = remaining
-            try:
-                provider_called = True
-                reply = self._within(request, remaining)
-                reported = _usage(getattr(reply, "usage", None))
-            except BaseException as error:
-                if reservation is not None:
-                    self.spend_budget.settle(reservation, dict.fromkeys(COUNTERS, 0) if _rejected(error) else None)
-                if timed_out(error):
-                    bound = f"its {timeout:g}s budget" if timeout is not None else "the transport's own timeout"
-                    raise TimeoutError(f"the provider request exceeded {bound}") from error
-                status = getattr(error, "status_code", None)
-                connection = any(cls.__name__ == "APIConnectionError" for cls in type(error).__mro__)
-                if attempt == 3 or not (status in {429, 500, 502, 503, 504, 529} or connection):
-                    raise
-                delay = float(2 ** attempt)
-                headers = getattr(getattr(error, "response", None), "headers", {})
-                with contextlib.suppress(ValueError, TypeError):
-                    delay = max(delay, float(headers.get("retry-after", 0)))
-                remaining = None if timeout is None else timeout - (self._clock() - started)
-                if remaining is not None and delay >= remaining:
-                    raise
-                self.observe({"type": "provider_retry", "status": status, "attempt": attempt + 1, "sleep": delay})
-                self._sleep(delay)
-                if timeout is not None and self._clock() - started >= timeout:
-                    raise
-                continue
-            if reservation is not None:
-                self.spend_budget.settle(reservation, reported)
-            break
+        return request
+
+    def _turn(self, reply, reported):
         text: list[str] = []
         calls: list[ToolCall] = []
         reasoning: list[Any] = []
@@ -484,7 +389,7 @@ class AnthropicProvider:
 
 
 class ApiRuntime:
-    """Hardy's conversation with a model over the Messages API.
+    """Hardy's conversation with a model over a selected owned API transport.
 
     Shaped like `ClaudeAgentRuntime` so every caller is indifferent to which
     one it got, with two differences a caller may ask about rather than
@@ -531,13 +436,14 @@ class ApiRuntime:
         self.session_id: str | None = None
         self._cwd = cwd
         self._provider = provider if provider is not None else AnthropicProvider(model)
+        self.backend = getattr(self._provider, "backend", BACKEND)
         if spend_budget is not None:
-            if not isinstance(self._provider, AnthropicProvider):
-                raise ValueError("provider budget requires the owned AnthropicProvider call boundary")
+            if not isinstance(self._provider, ApiProvider):
+                raise ValueError("provider budget requires the owned API provider call boundary")
             if self._provider.spend_budget not in (None, spend_budget):
                 raise ValueError("provider already belongs to another spend budget")
             self._provider.spend_budget = spend_budget
-        if isinstance(self._provider, AnthropicProvider) and observe is not None:
+        if isinstance(self._provider, ApiProvider) and observe is not None:
             self._provider.observe = observe
         self._loop = AgentLoop(
             self._provider,
@@ -567,7 +473,7 @@ class ApiRuntime:
     @property
     def prompt_caching(self) -> bool:
         """Whether this owned transport requests ephemeral prefix caching."""
-        return isinstance(self._provider, AnthropicProvider)
+        return bool(getattr(self._provider, "prompt_caching", False))
 
     @property
     def output_limit(self) -> int | None:

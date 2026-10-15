@@ -368,7 +368,7 @@ def bind_spend_budget(factory: Callable, path: Path) -> Callable:
     policy = getattr(factory, "spend_policy", None)
     if policy is None and not path.exists():
         return factory
-    if getattr(factory, "budget_backend", None) != "api":
+    if getattr(factory, "budget_backend", None) not in {"api", "openai", "openrouter"}:
         raise ValueError("provider budgets require the harness-owned API backend")
     if policy is None:
         first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])

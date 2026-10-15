@@ -114,6 +114,8 @@ def _backend_checks(backend: str) -> list[Check]:
     """
     if backend == "api":
         return _api_checks()
+    if backend in {"openai", "openrouter"}:
+        return _openai_checks(backend)
     if backend == "codex":
         return _codex_checks()
     return _subscription_checks()
@@ -171,6 +173,22 @@ def _api_checks() -> list[Check]:
         bool(key),
         "ANTHROPIC_API_KEY is set" if key else "ANTHROPIC_API_KEY is unset; the api backend cannot start without it",
     ))
+    return checks
+
+
+def _openai_checks(backend: str) -> list[Check]:
+    from hardy.agents.openai_api import KEYS
+
+    checks = []
+    try:
+        import openai
+    except ImportError:
+        checks.append(Check("openai sdk", False, "not installed; pip install 'hardy-prover[openai]'"))
+    else:
+        checks.append(Check("openai sdk", True, f"openai {getattr(openai, '__version__', 'unknown')}"))
+    key = KEYS[backend]
+    checks.append(Check(f"{backend} key", bool(os.environ.get(key)),
+        f"{key} is set" if os.environ.get(key) else f"{key} is unset; the {backend} backend cannot start without it"))
     return checks
 
 

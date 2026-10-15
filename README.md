@@ -229,7 +229,9 @@ existing tools; expect the Mathlib step to take a while. The default `claude`
 backend uses Claude Code subscription sign-in;
 `claude auth status` must report a logged-in account. The optional `api` backend
 needs the `api` extra, an explicit backend setting and `ANTHROPIC_API_KEY`.
-Interactive sessions accept `claude` or `api`; the optional Codex backend is a
+Interactive sessions also accept `openai` and `openrouter` with the `openai`
+extra, an explicit model and the corresponding `OPENAI_API_KEY` or
+`OPENROUTER_API_KEY`. Set `OPENAI_BASE_URL` for a compatible gateway. The optional Codex backend is a
 staged `prove`/`accept` flag. Configuration and authentication are described in
 [the settings reference](docs/reference/configuration.md). Once a release is
 tagged, a one-line installer will fetch the released wheel instead of a clone. [The install guide](docs/install.md)

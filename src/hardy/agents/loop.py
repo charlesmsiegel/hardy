@@ -29,6 +29,7 @@ can be tested against a scripted provider with no network at all.
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -315,6 +316,8 @@ class AgentLoop:
         #: per-exchange report climbing past its predecessor would be counted
         #: as the difference and undercount every exchange after the first.
         self._totals: dict[str, int] = {}
+        self._total_cost_usd = 0.0
+        self._cost_stated = False
         #: Which counters *this* exchange stated. A report publishes the
         #: running total for these and no others: `usage.Usage` reads a field
         #: it is handed as reported, and a stale figure repeated from an
@@ -378,6 +381,7 @@ class AgentLoop:
         self._cancelled = False
         self._pending = []
         self._stated, self._failure = set(), None
+        self._cost_stated = False
         self._budget_refused = False
         self.turns = None
         budget = Budget(self.max_turns, self.wall_seconds)
@@ -778,6 +782,11 @@ class AgentLoop:
         if not isinstance(usage, Mapping):
             return
         for key, value in usage.items():
+            if key == "cost_usd":
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+                    self._total_cost_usd += float(value)
+                    self._cost_stated = True
+                continue
             if isinstance(value, int) and not isinstance(value, bool):
                 self._totals[str(key)] = self._totals.get(str(key), 0) + value
                 self._stated.add(str(key))
@@ -788,10 +797,9 @@ class AgentLoop:
             "session_id": self.session_id,
             "turns": budget.spent,
             **({"provider_unasked": True} if self._budget_refused and budget.spent == 0 else {}),
-            # No provider states a price on this transport, and inventing one
-            # from a token count and a published rate would be Hardy's
-            # arithmetic wearing the provider's authority.
-            "cost_usd": None,
+            # Only explicit provider USD receipts supply price; token tariffs
+            # belong to the separate spend-admission estimate.
+            "cost_usd": self._total_cost_usd if self._cost_stated else None,
             # The running total, for the counters this exchange actually
             # stated and no others. An exchange that reported nothing -- one
             # that ended on a provider error before any answer arrived --

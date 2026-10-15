@@ -91,7 +91,7 @@ PROJECT_SETTINGS = frozenset({"project"})
 # harness-owned loop of issue #23 -- Hardy decides when a provider call is
 # made, keeps both bounds itself, and can decline a call outright -- and it
 # needs `ANTHROPIC_API_KEY`.
-BACKENDS = ("claude", "api")
+BACKENDS = ("claude", "api", "openai", "openrouter")
 DEFAULT_BACKEND = "claude"
 
 #: How each backend is paid for, in the words a session banner and the model
@@ -102,6 +102,8 @@ DEFAULT_BACKEND = "claude"
 AUTHENTICATION = {
     "claude": "Claude Code subscription",
     "api": "Anthropic API key (metered)",
+    "openai": "OpenAI-compatible API key (metered)",
+    "openrouter": "OpenRouter API key (metered)",
 }
 
 
@@ -760,13 +762,15 @@ def load(
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
+    if backend in {"openai", "openrouter"} and not values.get("model"):
+        raise ValueError(f"the {backend} backend requires an explicit model identity")
     provider_budget = None
     if values.get("provider_budget"):
         budget_path = Path(checked("provider_budget", str(values["provider_budget"]))).expanduser()
         if not budget_path.is_absolute():
             budget_path = path.parent / budget_path
         provider_budget = SpendPolicy.model_validate_json(budget_path.read_text(encoding="utf-8"))
-        if backend != "api":
+        if backend not in {"api", "openai", "openrouter"}:
             raise ValueError("provider budgets require the harness-owned API backend")
     cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a

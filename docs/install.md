@@ -249,6 +249,16 @@ Explorer either fails to parse or is silently corrupted. See
 one, and how `lean_command` and `latex_command` are split into a program and
 its arguments.
 
+### OpenAI-compatible endpoints and OpenRouter
+
+Install `pip install 'hardy-prover[openai]'`. Configure `backend = "openrouter"`
+and an explicit provider/model identity, then supply `OPENROUTER_API_KEY`.
+For OpenAI-compatible Chat Completions, select `backend = "openai"`, set the
+endpoint's model and `OPENAI_API_KEY`, and override `OPENAI_BASE_URL` when needed.
+`hardy doctor` and `hardy setup` check the selected SDK/key without printing it.
+See [configuration](reference/configuration.md#openai-compatible-endpoints-and-openrouter)
+for endpoint defaults, compatibility and spend-accounting limits.
+
 ### The API backend
 
 `backend = "api"` (or `HARDY_BACKEND=api`) sends to the Anthropic Messages

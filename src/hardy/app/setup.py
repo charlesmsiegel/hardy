@@ -135,6 +135,18 @@ def backend_probe(backend: str) -> Callable[[], tuple[bool, str]]:
     Claude CLI, and a Claude-configured machine passed setup without the key
     the `api` runtime needs and failed at its first request instead.
     """
+    if backend in {"openai", "openrouter"}:
+        def probe():
+            from hardy.agents.openai_api import KEYS, load_sdk
+            try:
+                sdk = load_sdk()
+            except RuntimeError as error:
+                return False, str(error)
+            key = KEYS[backend]
+            if not os.environ.get(key):
+                return False, f"openai {getattr(sdk, '__version__', 'unknown')}, {key} unset"
+            return True, f"openai {getattr(sdk, '__version__', 'unknown')}; {backend} key present"
+        return probe
     return probe_api if backend == "api" else probe_claude
 
 

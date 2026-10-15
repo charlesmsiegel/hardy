@@ -26,23 +26,32 @@ def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BAC
     `backend` chooses the transport, and with it who owns the turn loop. The
     default authenticates through the Claude Code agent SDK and needs no API
     key, at the cost of the SDK running the loop (issue #23); `api` runs the
-    loop in Hardy and needs `ANTHROPIC_API_KEY`. Imported where it is chosen
+    loop in Hardy and needs `ANTHROPIC_API_KEY`. `openai` and `openrouter`
+    use the same owned loop over Chat Completions with their own API keys.
+    Imported where it is chosen
     rather than at module scope, so a machine with neither the Anthropic SDK
     nor a key installed still starts on the default.
     """
 
-    if spend_policy is not None and backend != "api":
+    if backend not in configuration.BACKENDS:
+        raise ValueError(f"unknown interactive backend: {backend}")
+    if spend_policy is not None and backend not in {"api", "openai", "openrouter"}:
         raise ValueError("provider budgets require the harness-owned API backend")
 
     def make(model: str | None = None, **context: Any) -> Any:
         if spend_policy is not None and context.get("spend_budget") is None:
             raise ValueError("bind the declared provider budget to a run or session before constructing its runtime")
-        if context.get("spend_budget") is not None and backend != "api":
+        if context.get("spend_budget") is not None and backend not in {"api", "openai", "openrouter"}:
             raise ValueError("provider budgets require the harness-owned API backend")
         if backend == "api":
             from hardy.agents.api import ApiRuntime
 
             return ApiRuntime(model or default_model, **context)
+        if backend in {"openai", "openrouter"}:
+            from hardy.agents.api import ApiRuntime
+            from hardy.agents.openai_api import OpenAIProvider
+
+            return ApiRuntime(model or default_model, provider=OpenAIProvider(model or default_model, backend=backend), **context)
         return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
 
     make.spend_policy = spend_policy

@@ -60,12 +60,12 @@ nothing.
 | `tectonic` | `HARDY_TECTONIC` | `tectonic` | The `tectonic` executable Hardy invokes. |
 | `tectonic_bundle` | `HARDY_TECTONIC_BUNDLE` | the pinned bundle URL Hardy ships with | Where `doctor`/`setup` fetch the TeX distribution bundle from. |
 | `tectonic_bundle_sha256` | `HARDY_TECTONIC_BUNDLE_SHA256` | the digest matching the pinned bundle | The digest the fetched bundle must match; the bundle is pinned by URL and digest together so a writeup stays reproducible against the distribution that built it. |
-| `backend` | `HARDY_BACKEND` | `claude` | Which transport carries an interactive session: `claude` authenticates through the Claude Code agent SDK and a Claude Max subscription and needs no API key; `api` is the harness-owned loop that calls the Messages API directly and needs `ANTHROPIC_API_KEY`. Only these two values are accepted here; `codex` is a `--backend` flag on `prove` and `accept`, not a config setting. |
+| `backend` | `HARDY_BACKEND` | `claude` | Which transport carries an interactive session: `claude` authenticates through the Claude Code agent SDK and a Claude Max subscription and needs no API key; `api` is the harness-owned loop that calls the Messages API directly and needs `ANTHROPIC_API_KEY`. `openai` uses an OpenAI-compatible Chat Completions endpoint and `openrouter` uses its OpenRouter preset; both need the optional `openai` extra and an explicit `model`. These four values are accepted here; `codex` is a `--backend` flag on `prove` and `accept`, not a config setting. |
 | `cas_backend` | `HARDY_CAS_BACKEND` | `sympy` | The computer algebra kernel: `sympy`, `singular`, or `macaulay2`. SymPy is the default because it is a Python dependency and always present; the other two are opt-in. |
 | `cas_command` | `HARDY_CAS_COMMAND` | unset | The executable for a non-default `cas_backend`. Unused when `cas_backend` is `sympy`. |
 | `project_context` | `HARDY_PROJECT_CONTEXT` | `true` | Whether an interactive session reads the project's own context file. See [Project context files](#project-context-files). |
 | `context_window` | `HARDY_CONTEXT_WINDOW` | `200000` (tokens) | The context window compaction plans against. Settable because this is a property of the endpoint, not of Hardy: a gateway serving `claude-opus-5` may offer a smaller window than Anthropic does. |
-| `provider_budget` | `HARDY_PROVIDER_BUDGET` | unset | Path to a JSON spend-policy file, resolved relative to the config file that names it. Requires `backend = "api"`. See [Provider budget](cli.md#provider-budget-api-backend) in the command reference for the policy format. |
+| `provider_budget` | `HARDY_PROVIDER_BUDGET` | unset | Path to a JSON spend-policy file, resolved relative to the config file that names it. Requires `backend` to be `api`, `openai` or `openrouter`. See [Provider budget](cli.md#provider-budget-api-backend) in the command reference for the policy format. |
 | `delegation_workers` | `HARDY_DELEGATION_WORKERS` | `4` | How many background delegation workers an interactive session runs at once. Each worker is its own provider context and its own computer algebra kernel; the pool is a slot count, not a spend limit, and the session's Lean-check and active-time ceilings are what every worker draws from. There is no upper bound here: the machine and the provider set it. |
 | `compute_detach_seconds` | `HARDY_COMPUTE_DETACH_SECONDS` | `10` (seconds) | How long a Lean check or save, a LaTeX check or save, or a computer algebra cell may hold an interactive turn before it is detached into a background job under `/jobs` and the turn goes on without it; the result reaches the model at its next turn. `0` disables detaching, so every such call blocks the turn until it finishes. |
 
@@ -76,10 +76,9 @@ environment value outside the constraint is refused where the file is read:
 - `context_window` must be greater than `8192`. That is the largest reply the
   API transport will ask for, so a window at or below it would leave no room
   for a request even to be answered.
-- `backend` must be `claude` or `api`.
+- `backend` must be `claude`, `api`, `openai` or `openrouter`. The latter two require an explicit `model` identity.
 - `cas_backend` must be `sympy`, `singular`, or `macaulay2`.
-- `provider_budget` is refused unless `backend` is `api`; the harness-owned
-  loop it meters does not exist on the other backends.
+- `provider_budget` requires `api`, `openai` or `openrouter`; SDK backends do not use the metered Hardy-owned loop.
 - `delegation_workers` must be a whole number of at least `1`.
 - `compute_detach_seconds` must be zero or a finite number of seconds.
 
@@ -136,12 +135,42 @@ Not every `HARDY_*` variable has a `config.toml` key behind it. These do not:
 | `HARDY_CLAIM_SHA256` | the MCP tool server a staged run launches | The Frozen Claim a Lean tool call must match; without it the server withdraws the Lean tools and serves the computer algebra session only. |
 | `ANTHROPIC_API_KEY` | the `api` backend | The credential the Messages API is called with. Required whenever `backend = "api"`. |
 | `ANTHROPIC_BASE_URL` | the `api` backend | Overrides the Messages API endpoint, for a gateway or proxy in front of Anthropic's own. |
+| `OPENAI_API_KEY` | the `openai` backend | Required credential for the selected OpenAI-compatible endpoint. |
+| `OPENAI_BASE_URL` | the `openai` backend | Chat Completions base URL; defaults to `https://api.openai.com/v1`. |
+| `OPENROUTER_API_KEY` | the `openrouter` backend | Required OpenRouter credential. It does not fall back to another backend's key. |
+| `OPENROUTER_BASE_URL` | the `openrouter` backend | Optional base URL override; defaults to `https://openrouter.ai/api/v1`. `OPENAI_BASE_URL` does not affect this preset. |
 | `LEAN_PATH` | Lean subprocesses | The module search path Lean and `lake env` resolve imports against. Hardy builds this itself for every Lean call it makes; setting it in the surrounding shell only matters where Hardy inherits rather than replaces it. |
 
 A further handful are read only by the test suite and never by `hardy`
 itself: `HARDY_LIVE` and `HARDY_ARXIV_LIVE`/`HARDY_LOOGLE_LIVE` opt a machine
 into tests that spend a real subscription or hit a live service, and
 `HARDY_RECORD_DIR` names where such a test writes what it recorded.
+
+## OpenAI-compatible endpoints and OpenRouter
+
+Install `pip install 'hardy-prover[openai]'`, then configure an explicit model:
+
+```toml
+backend = "openrouter"
+model = "openai/gpt-4.1-mini"
+```
+
+Supply `OPENROUTER_API_KEY` in the process environment. For OpenAI or another
+compatible Chat Completions service, use `backend = "openai"`, its model
+identity and `OPENAI_API_KEY`; set `OPENAI_BASE_URL` for a custom endpoint.
+Model names and supported capabilities belong to the endpoint. Compatibility
+requires text Chat Completions, JSON function calls and the output cap
+`max_completion_tokens` (`max_tokens` on the OpenRouter preset).
+
+These backends serve chat, browser projects and their Research, Explore,
+Repair, intake and Referee workflows. Staged `prove`/`accept` continue to select
+Claude or Codex. Hardy executes offered tools and keeps API turn/deadline and
+spend-admission bounds. A timed-out socket request can still finish and bill;
+its unknown spend stays reserved. Endpoint identity is redacted before recording.
+Reported cache tokens are removed from the uncached input count; missing usage
+fields remain unreported. Explicit OpenRouter USD cost receipts are retained;
+generic endpoint cost units are not inferred. OpenRouter account/key billing is
+separate from Hardy's optional explicit-tariff spend estimate.
 
 ## Live project workflows
 

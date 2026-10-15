@@ -155,7 +155,10 @@ def test_kernel_kill_stops_group_members_even_when_the_leader_obeys(tmp_path):
     helper = (
         'import os,signal,time\n'
         'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
-        f'open({str(ready)!r}, "w").write(str(os.getpid()))\n'
+        # Publish readiness only once the PID is written and closed. Otherwise
+        # the parent can kill the helper between file creation and its write.
+        f'with open({str(ready) + ".pending"!r}, "w") as marker: marker.write(str(os.getpid()))\n'
+        f'os.replace({str(ready) + ".pending"!r}, {str(ready)!r})\n'
         'time.sleep(30)\n'
     )
     contained = tmp_path / 'contained'

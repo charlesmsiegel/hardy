@@ -19,7 +19,7 @@ CODEX = "codex"
 #: these. A transport not named here carries a family of its own name, which
 #: lists nothing and refuses every catalogued entry: the safe answer for a
 #: backend this file has never heard of.
-SERVES: dict[str, str] = {"claude": CLAUDE, "api": CLAUDE, "codex": CODEX}
+SERVES: dict[str, str] = {"claude": CLAUDE, "api": CLAUDE, "codex": CODEX, "openai": "openai", "openrouter": "openrouter"}
 
 
 @dataclass(frozen=True)

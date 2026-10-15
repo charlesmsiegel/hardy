@@ -33,7 +33,9 @@ For the optional API transport, install `hardy-prover[api]`, set
 `backend = "api"` in `~/.hardy/config.toml` and supply `ANTHROPIC_API_KEY` in the
 environment. Choose the actual model identity your endpoint supports. The API
 transport is metered separately from a subscription. Interactive `backend`
-accepts `claude` or `api`; Codex requires the optional `codex` extra and is a
+accepts `claude`, `api`, `openai` or `openrouter`; the latter two use the optional
+`openai` extra, an explicit model and their API key (see the
+[configuration reference](reference/configuration.md#openai-compatible-endpoints-and-openrouter)). Codex requires the optional `codex` extra and is a
 `--backend codex` choice on staged `prove`/`accept`. See
 [Configuration](reference/configuration.md) for settings, precedence and
 backend-specific authentication.
