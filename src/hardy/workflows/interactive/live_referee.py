@@ -144,9 +144,9 @@ class LiveReferee:
                     conditions=review_conditions(response.receipt), reason="The fresh adversarial response omitted this exact subject.",
                     unresolved=("No current review coverage was supplied for this exact subject.",)))
         # Validate all returned assessments before any model judgment is recorded.
+        self.operations.assess_many(validated)
         findings = []
         for value in validated:
-            self.operations.assess(value)
             corresponding = assessments.get(value.subject)
             if corresponding:
                 defects.extend(_json(defect) for defect in corresponding.defects)

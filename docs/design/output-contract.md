@@ -19,6 +19,12 @@ separately. Each lane names its evidence level, actual assumptions, coverage,
 unresolved work and historical assessments. A missing or stale receipt leaves
 an explicit gap.
 
+Referee validates each adversarial response as a batch through the assessment
+owner, including permitted assumptions, exact evidence and relevant versions.
+Only a fully valid batch is published, in one evidence-journal transaction.
+A refused response retains its receipt and failure reason without publishing
+any of its judgments; earlier independent assessments remain available.
+
 An independent proof of a conclusion does not assess the original argument. A
 repaired argument is a distinct source-bound item with its own steps and review;
 the conclusion proof alone cannot fill missing replacement-step coverage.
