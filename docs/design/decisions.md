@@ -785,6 +785,19 @@ proof. Rebinding never rehabilitates the old receipt or removes its outstanding
 obligation: publication can authenticate the target's current proof while still
 showing the separate stale Research work.
 
+### Exact source positions are mechanical inputs to extraction
+
+The extraction owner provides quoted opening and body spans from its lexical
+inventory, alongside the unchanged source and inventory. The model selects
+semantic readings and references without calculating source digests or codepoint
+offsets. Whole-environment substitutions and incorrect quotes still fail exact
+validation; mapping review and mathematical acceptance remain separate.
+
+Cost: nested bodies overlap. Extra body quotes have a codepoint budget equal
+to the selected source length, charged before slicing. Omitted quotes are
+explicit; the complete original source remains available and uncovered readings
+stay visible.
+
 ### A supplied argument is assessed separately from its conclusion
 
 We chose distinct original and repaired argument records, with exact
