@@ -1469,7 +1469,7 @@ def test_checkpoints_reshapes_list_checkpoints_oldest_first(tmp_path: Path) -> N
 
 
 def native_publication_pair(problem: Path):
-    """Real session policy establishes the formal claim, without transporting it to the informal target."""
+    """Real session policy establishes exact formal and reviewed semantic claims."""
     from test_project_binding import bind, setup_pair
 
     from hardy.workflows.interactive.semantic_operations import SemanticOperations
