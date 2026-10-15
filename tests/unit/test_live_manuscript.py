@@ -287,6 +287,30 @@ def test_referee_model_source_locations_match_only_its_assessable_subjects(tmp_p
     assert set(report["source_locations"]) == {ref["id"] for ref in approved["bindings"].values()}
 
 
+@pytest.mark.parametrize("invalid", ["duplicate", "dimension", "verdict"])
+def test_invalid_referee_subject_assessments_do_not_write_partial_judgments(tmp_path, invalid):
+    from hardy.workflows.interactive.assessments import MathematicalAssessment
+    def answer(stage, payload):
+        if stage == "manuscript.extract":
+            return proposals()
+        values = [dict(subject=item["ref"],
+            dimension="argument" if item["kind"] in {"argument", "proof_step"} else "statement",
+            verdict="unresolved", reason="Controlled exact-subject review") for item in payload["subjects"]]
+        if invalid == "duplicate":
+            values.append({**values[0], "dimension": "argument"})
+        elif invalid == "dimension":
+            values[-1]["dimension"] = "argument" if values[-1]["dimension"] == "statement" else "statement"
+        else:
+            values[-1]["verdict"] = "defective" if values[-1]["dimension"] == "statement" else "refuted"
+        return {"assessments": values}
+    flow, request, intake, _, _ = referee_fixture(tmp_path, answer)
+    before = tuple(intake.owners.journal.read().of(MathematicalAssessment))
+    result = flow.run(request)
+    assert result["receipt"]["status"] == "failed"
+    assert tuple(intake.owners.journal.read().of(MathematicalAssessment)) == before == ()
+    assert all(target["statement"]["status"] == "unresolved" for target in result["report"]["targets"])
+
+
 def test_referee_report_revalidates_source_after_restart(tmp_path):
     from hardy.workflows.interactive.live_referee import LiveReferee
     flow, request, intake, files, _ = referee_fixture(tmp_path)
