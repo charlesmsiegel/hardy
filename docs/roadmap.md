@@ -1933,10 +1933,31 @@ their conclusions require their own recorded and reviewed evidence.
   reported OpenRouter USD costs are retained. Staged transports remain Claude
   and Codex. Controlled protocol/configuration and existing Anthropic checks pass;
   a real OpenRouter runtime smoke call succeeded.
-- Pending: actual provider+Lean Research and manuscript/Referee/Repair application
-  acceptance through the new supported OpenRouter route. Earlier controlled
-  model responses remain labelled synthetic; missing token/cost fields stay
-  unknown. The Claude runtime remains unsigned-in, separately from this route.
+- Validated actual-provider application acceptance through the supported
+  OpenRouter runtime and normal project owners, with pinned Lean
+  4.35.0-rc3/Mathlib: GPT-4.1 mini Research established a tiny reflexivity target;
+  GPT-4.1 Referee discovered the supplied argument's defect and Repair produced
+  a distinct supported replacement with an actual empty-axiom kernel audit.
+  A fresh Sonnet 4.5 manuscript project completed intake and Referee: its main
+  statement was supported by review, its original argument was defective and
+  its independent false internal lemma was refuted by review. These semantic
+  reviews remain distinct from kernel proof; Referee's statement elaboration
+  alone proved neither claim.
+- Validated exact source-mapping and correspondence interventions were
+  explicitly attributed to the Codex acceptance operator (AI assistant), not
+  an independent human reviewer. Invalid mappings, duplicate/foreign subjects,
+  incorrect dimensions and verdicts remain retained refusals, with no invented
+  model answers or weakened validation. Exact quoted intake regions are bounded
+  against nested-source amplification; Referee receives only its assessable
+  subjects' source locations and explicit cardinality/dimension instructions.
+- Validated restart with no new model calls and unchanged historical receipts
+  across the actual Research, Repair and completed Referee projects. Source
+  ambiguities, unsupported/unmapped text and rejected proof-step mappings remain
+  coverage gaps. Repair closes its selected repair work; separate manuscript
+  formalization/proof obligations remain open, and the required false internal
+  claim prevents publication readiness. All three immutable budgets settled
+  without pending liability or overruns. Earlier controlled model responses
+  remain labelled synthetic; unavailable token/cost fields remain unknown.
 
 Standalone replay pins retained local source and environment metadata plus
 export-time dependency source/compiled-library inventories. Those compiled
