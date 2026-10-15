@@ -200,7 +200,9 @@ def test_decisions_and_pins_are_journaled_by_the_controller(tmp_path):
                                   concurrency=ConcurrencyLease(slots=1), created_by="human")
 
         first = controller.delegate(spec("first"))
-        assert started.wait(5)
+        # Durable journal writes can delay worker startup on Windows runners;
+        # this checks scheduler provenance, not a five-second latency promise.
+        assert started.wait(30)
         second = controller.delegate(spec("second"))
         third = controller.delegate(spec("third"))
         controller.pin(third.id, "reinforce", by="human")
@@ -210,17 +212,18 @@ def test_decisions_and_pins_are_journaled_by_the_controller(tmp_path):
         assert decision.granted is not None
         assert LeaseLedger(controller.tree()).reserved(first.id).official_checks == 2
         release.set()
-        controller.wait(first.id, timeout=5)
-        controller.wait(third.id, timeout=5)
+        controller.wait(first.id, timeout=30)
+        controller.wait(third.id, timeout=30)
         assert opened == [first.id, third.id]                      # the pinned one ran; the forbidden one waits
         assert controller.tree().get(second.id).state is DelegationState.QUEUED
         controller.unpin(second.id, "forbid_spend", by="human")
-        controller.wait(second.id, timeout=5)
+        controller.wait(second.id, timeout=30)
         kinds = [e.kind for e in controller.store.events()]
         assert "scheduler.decision" in kinds and "scheduler.pin" in kinds and "scheduler.unpin" in kinds
         assert controller.pins() == ((third.id, "reinforce"),)
         assert LeaseLedger(controller.tree()).allocatable(ROOT_ID).official_checks == 6
     finally:
+        release.set()
         controller.shutdown()
 
 
