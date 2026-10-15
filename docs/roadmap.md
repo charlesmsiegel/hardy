@@ -1906,6 +1906,16 @@ their conclusions require their own recorded and reviewed evidence.
   Scope expansion and reapproval require fresh exact binding; previous records
   retain their identities. Sixty-five new regression cases cover these gaps
   and adjacent withdrawal, source, scope, retry and publication boundaries.
+- Corrected the subsequent mixed Research/native history: an older stale
+  Research proof no longer hides a current exact checked re-save and native
+  rebind from premise authority or semantic-target assumption audits. The old
+  receipt remains invalid and its obligation remains visible, including after
+  restart. Publication can still require that separate stale work to be resolved.
+- Corrected second-session correspondence withdrawal during the final staged
+  audit: Research and Repair reauthenticate their exact prepared correspondence
+  in the final save guard. A completed native or semantic human withdrawal
+  prevents proof-save artifacts and leaves actionable pending work. Unrelated
+  review changes and exact reapprovals preserve current correspondence.
 - Validated staged document compilation after normal proxy-respecting cache
   preparation: unchanged default `build_writeup` and Tectonic 0.16.9 compiled
   two documents using the configured pinned standard bundle. Actual Lean

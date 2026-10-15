@@ -730,6 +730,13 @@ receipts to their exact bound use before selecting the current judgment, so a
 later dispute cannot leave an earlier approval authoritative under another
 description of the same use.
 
+Research and Repair pass their exact prepared correspondence record to checked
+save. The final commit guard reauthenticates that record after the staged audit,
+including the review journal, because a second session can withdraw a reading
+without changing the ledger revision. A withdrawn reading refuses the staged
+save and leaves the workflow pending; an unrelated reading or a current exact
+approval does not block the save.
+
 ### Bind semantic proposals to the actual checked-save owner
 
 We chose an explicit exact-version binding, over matching a semantic target to
@@ -756,6 +763,12 @@ build environment cannot authenticate this binding, and says so. The JSON
 snapshot export freezes an assessment and exact references. Standalone replay
 is a separate selected-artifact operation; neither export establishes an
 unassessed supplied argument.
+
+Premise policy checks each independent establishing resolution with the same
+cycle-detection ancestry. An invalid older proof cannot hide a current exact
+proof. Rebinding never rehabilitates the old receipt or removes its outstanding
+obligation: publication can authenticate the target's current proof while still
+showing the separate stale Research work.
 
 ### A supplied argument is assessed separately from its conclusion
 
