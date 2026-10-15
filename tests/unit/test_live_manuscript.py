@@ -272,6 +272,21 @@ def test_referee_defective_original_and_refuted_intermediate_leave_main_unresolv
     assert report["source_locations"][approved["bindings"]["original"]["id"]]["quote"].startswith("Cancel zero")
 
 
+def test_referee_model_source_locations_match_only_its_assessable_subjects(tmp_path):
+    flow, request, _, _, approved = referee_fixture(tmp_path)
+    report = flow.run(request)["report"]
+    inputs = [json.loads(call["user_prompt"])["input"] for call in report["model_calls"]
+        if call["stage"] == "referee.adversarial"]
+    assert len(inputs) == 2
+    for value in inputs:
+        subject_ids = {subject["ref"]["id"] for subject in value["subjects"]}
+        assert set(value["source_locations"]) == subject_ids
+        assert all(location["quote"] == TEX[location["start"]:location["end"]]
+            for location in value["source_locations"].values())
+    # The full audit retains all selected mappings, independently of each call's scope.
+    assert set(report["source_locations"]) == {ref["id"] for ref in approved["bindings"].values()}
+
+
 def test_referee_report_revalidates_source_after_restart(tmp_path):
     from hardy.workflows.interactive.live_referee import LiveReferee
     flow, request, intake, files, _ = referee_fixture(tmp_path)

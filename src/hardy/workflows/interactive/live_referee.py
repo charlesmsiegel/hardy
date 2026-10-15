@@ -94,9 +94,10 @@ class LiveReferee:
     def _adversarial(self, review_input, repairs, originals, texts, locations, defects):
         snapshot = review_input.snapshot
         subjects = self._subjects(snapshot, review_input.subject.ref, repairs, originals)
+        subject_ids = {value.id for value in subjects}
         payload = {"subjects": [{**value.model_dump(mode="json"), "ref": value.ref.model_dump(mode="json")}
                     for value in subjects], "scope": review_input.scope.model_dump(mode="json"),
-                   "source_locations": locations,
+                   "source_locations": {key: value for key, value in locations.items() if key in subject_ids},
                    "context": _json(LedgerViews(snapshot, self.owners.policy).context(review_input.subject.context))
                         if review_input.subject.context else None,
                    "dependencies": [snapshot.get(ref).model_dump(mode="json") for ref in
@@ -105,8 +106,11 @@ class LiveReferee:
             system="Audit the exact supplied mathematics adversarially. Assess theorem conclusions, original supplied arguments, "
             "proof steps and an explicitly selected repair separately. A defective proof does not refute its conclusion. "
             "A false intermediate does not refute a main theorem. Leave a conclusion unresolved without independent reasons. "
-            "Every demonstrated defect must quote its exact source span, explain a concrete failed inference or counterexample, "
-            "and retain heuristic_model_review evidence level. State actual assumptions and unreviewed work. "
+            "Assess only entries in subjects; copy each assessment.subject exactly from that entry's ref, including its complete digest. "
+            "Scope and dependency references do not authorize additional assessment subjects. Each defect.subject must equal its assessment.subject. "
+            "Every demonstrated defect must quote its exact source span and explain a concrete failed inference or counterexample. "
+            "Copy its path, digest and offsets exactly from that subject's source_locations entry when quoting the complete supplied span. "
+            "Retain heuristic_model_review evidence level. State actual assumptions and unreviewed work. "
             "You have a newly started context and no Hardy tools; do not claim mathematical independence or kernel authority.")
         allowed = {value.ref: value for value in subjects}
         assessments = {value.subject: value for value in response.value.assessments}
