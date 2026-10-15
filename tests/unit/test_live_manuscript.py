@@ -311,6 +311,71 @@ def test_invalid_referee_subject_assessments_do_not_write_partial_judgments(tmp_
     assert all(target["statement"]["status"] == "unresolved" for target in result["report"]["targets"])
 
 
+@pytest.mark.parametrize("prior_assessments", [False, True])
+def test_refused_referee_batch_with_last_forbidden_assumption_leaves_no_judgments(tmp_path, prior_assessments):
+    from hardy.workflows.interactive.assessments import MathematicalAssessment
+    from hardy.workflows.interactive.live_records import ModelCallReceipt
+    from hardy.workflows.interactive.manuscript_records import RefereeReceipt
+    from hardy.workflows.interactive.semantic_records import AssessmentRequest
+
+    def answer(stage, payload):
+        if stage == "manuscript.extract":
+            return proposals()
+        values = [dict(subject=item["ref"],
+            dimension="argument" if item["kind"] in {"argument", "proof_step"} else "statement",
+            verdict="supported", reason="ONLY_THE_REFUSED_RESPONSE") for item in payload["subjects"]]
+        values[-1]["assumptions"] = [values[0]["subject"]]
+        return {"assessments": values}
+
+    flow, request, intake, _, approved = referee_fixture(tmp_path, answer)
+    main = VersionRef.model_validate(approved["bindings"]["main"])
+    original = VersionRef.model_validate(approved["bindings"]["original"])
+    if prior_assessments:
+        for subject, dimension, verdict in ((main, "statement", "supported"), (original, "argument", "defective")):
+            intake.operations.assess(AssessmentRequest(subject=subject, scope=request.scope,
+                dimension=dimension, verdict=verdict, reviewer="independent reader", conditions="Earlier exact reading",
+                reason="Earlier independent assessment"))
+    before = intake.owners.journal.read().of(MathematicalAssessment)
+    assert bool(before) == prior_assessments
+    result = flow.run(request)
+    assert result["receipt"]["status"] == "failed"
+    assert "assumptions are outside exact permitted scope/context" in result["receipt"]["detail"]
+    assert all(layer["status"] == ("skipped" if layer["layer"] == "formalization" else "blocked")
+        for layer in result["report"]["layers"] if layer["layer"] in {"formalization", "adversarial"})
+    assert intake.owners.journal.read().of(MathematicalAssessment) == before
+    restarted, _, owners = owner(tmp_path)
+    assert owners.journal.read().of(MathematicalAssessment) == before
+    for report in (result["report"]["targets"][0], restarted.operations.report(main, scope=request.scope)):
+        assert report["statement"]["status"] == ("supported_by_review" if prior_assessments else "unresolved")
+        assert report["original_proof"]["status"] == ("defective" if prior_assessments else "unassessed")
+        assert report["formal_proof"]["status"] == "unresolved"
+    calls = [call for call in owners.journal.read().of(ModelCallReceipt) if call.stage == "referee.adversarial"]
+    assert len(calls) == 2 and all("ONLY_THE_REFUSED_RESPONSE" in call.response for call in calls)
+    assert any(receipt.status == "failed" and "assumptions are outside exact permitted scope/context" in receipt.detail
+        for receipt in owners.journal.read().of(RefereeReceipt))
+
+
+def test_referee_batch_retains_explicit_unresolved_assessments_for_omitted_subjects(tmp_path):
+    from hardy.workflows.interactive.assessments import MathematicalAssessment
+
+    def answer(stage, payload):
+        if stage == "manuscript.extract":
+            return proposals()
+        return {"assessments": [dict(subject=payload["subjects"][0]["ref"], dimension="statement",
+            verdict="supported", reason="Exact supplied conclusion reviewed")]}
+    flow, request, intake, _, approved = referee_fixture(tmp_path, answer)
+    result = flow.run(request)
+    assert result["receipt"]["status"] == "completed"
+    main = result["report"]["targets"][0]
+    assert main["statement"]["status"] == "supported_by_review"
+    assert main["original_proof"]["status"] == "unresolved"
+    original = VersionRef.model_validate(approved["bindings"]["original"])
+    step = VersionRef.model_validate(approved["bindings"]["step"])
+    omitted = [record for record in intake.owners.journal.read().of(MathematicalAssessment) if record.subject in {original, step}]
+    assert {record.subject for record in omitted} == {original, step}
+    assert all(record.verdict == "unresolved" and record.unresolved for record in omitted)
+
+
 def test_referee_report_revalidates_source_after_restart(tmp_path):
     from hardy.workflows.interactive.live_referee import LiveReferee
     flow, request, intake, files, _ = referee_fixture(tmp_path)

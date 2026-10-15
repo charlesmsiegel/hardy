@@ -1958,6 +1958,19 @@ their conclusions require their own recorded and reviewed evidence.
   claim prevents publication readiness. All three immutable budgets settled
   without pending liability or overruns. Earlier controlled model responses
   remain labelled synthetic; unavailable token/cost fields remain unknown.
+- Corrected OpenRouter credential isolation: an owned SDK header boundary
+  excludes ambient OpenAI authorization/custom headers and organization/project
+  metadata, including case variants and duplicate authorization spellings.
+  Offline requests through the actual locked SDK verify the selected router key,
+  endpoint overrides and retries; ordinary OpenAI configuration is preserved.
+  The test extra includes that SDK so these regressions execute in normal CI.
+- Corrected whole-response Referee validation: the assessment owner checks all
+  subjects' permitted assumptions, exact evidence and relevant versions before
+  one atomic evidence-journal append. A late invalid assessment leaves no
+  current judgments from that batch, including after restart, and does not
+  replace earlier independent assessments. Refused responses and failure
+  reasons remain retained. These offline corrections preserve the original
+  source identities of the earlier actual-provider acceptance records.
 
 Standalone replay pins retained local source and environment metadata plus
 export-time dependency source/compiled-library inventories. Those compiled

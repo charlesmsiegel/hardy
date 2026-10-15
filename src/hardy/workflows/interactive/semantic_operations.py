@@ -5,6 +5,7 @@ saves keep their separate owners. Context changes create distinct identities.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -345,6 +346,9 @@ class SemanticOperations:
 
     def assess(self, request: AssessmentRequest):
         return self.assessments.record(request)
+
+    def assess_many(self, requests: Iterable[AssessmentRequest]):
+        return self.assessments.record_many(requests)
 
     def report(self, target: VersionRef, *, original: VersionRef | None = None, repaired: VersionRef | None = None, scope: VersionRef | None = None):
         from hardy.workflows.interactive.semantic import target_report

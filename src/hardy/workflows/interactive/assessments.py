@@ -1,6 +1,7 @@
 """Independent versioned statement/argument assessments; review never becomes proof."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 from uuid import uuid4
 
@@ -32,11 +33,28 @@ class AssessmentOperations:
         self.owners = owners
 
     def record(self, request: AssessmentRequest) -> MathematicalAssessment:
-        from hardy.workflows.interactive.semantic_records import stamp
+        return self.record_many((request,))[0]
+
+    def record_many(self, requests: Iterable[AssessmentRequest]) -> tuple[MathematicalAssessment, ...]:
+        """Validate one exact batch before publishing it in one journal transaction."""
         from hardy.workflows.ledger.store import LedgerStore
 
+        requests = tuple(requests)
+        if not requests:
+            return ()
+        store = LedgerStore(self.owners.problem)
+        with self.owners.journal.read_projection() as history:
+            snapshot = store.read()
+            records = tuple(self._prepare(snapshot, request) for request in requests)
+        if store.read().revision != snapshot.revision:
+            raise ValueError("assessment inputs changed while validating batch")
+        self.owners.journal.append(records, expected_revision=history.revision)
+        return records
+
+    def _prepare(self, snapshot: LedgerSnapshot, request: AssessmentRequest) -> MathematicalAssessment:
+        from hardy.workflows.interactive.semantic_records import stamp
+
         request = AssessmentRequest.model_validate(request.model_dump())
-        snapshot = LedgerStore(self.owners.problem).read()
         subject, scope = snapshot.get(request.subject), snapshot.get(request.scope)
         if not isinstance(subject, ProjectItem) or not isinstance(scope, Scope):
             raise ValueError("assessment requires exact item and scope")
@@ -53,10 +71,8 @@ class AssessmentOperations:
         self._check_evidence(snapshot, request, context=subject.context)
         inputs = relevant_versions(self.owners.problem, snapshot, request.subject,
                                    (*request.relevant, request.scope, *request.assumptions))
-        record = MathematicalAssessment(**request.model_dump(), id=f"assessment:{uuid4().hex}",
+        return MathematicalAssessment(**request.model_dump(), id=f"assessment:{uuid4().hex}",
             context=subject.context, inputs=inputs, recorded_at=stamp())
-        self.owners._append(record)
-        return record
 
     def read(self, record: MathematicalAssessment, *, snapshot: LedgerSnapshot) -> MathematicalAssessment | None:
         try:
