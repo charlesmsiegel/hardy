@@ -16,20 +16,21 @@ def test_structured_actions_reject_extra_fields_and_coercion():
         validate_action({"operation": "repair", "project": "/p", "request": {"id": "r", "obligation": "latest"}})
 
 
-def test_command_parser_preserves_json_and_dispatches_the_browser_request():
+def test_command_parser_preserves_json_and_dispatches_the_browser_request(tmp_path):
     from hardy.app.project_actions import execute_action, parse_action_command, validate_action
 
     class Session:
-        workspace = Path('/p')
+        workspace = tmp_path / 'project with spaces'
 
         def project_target(self, **kwargs):
             return kwargs
 
-    command = parse_action_command('target T "A \'quoted\' statement" --formal "lemma T : True"', project="/p")
-    browser = validate_action({"operation": "target", "project": "/p", "identity": "T",
+    project = str(Session.workspace)
+    command = parse_action_command('target T "A \'quoted\' statement" --formal "lemma T : True"', project=project)
+    browser = validate_action({"operation": "target", "project": project, "identity": "T",
                                "statement": "A 'quoted' statement", "formal": "lemma T : True"})
     assert execute_action(Session(), command) == execute_action(Session(), browser)
-    structured = parse_action_command('action source {"id":"s","text":"line\\n\\\\alpha \\\"quoted\\\""}', project="/p")
+    structured = parse_action_command('action source {"id":"s","text":"line\\n\\\\alpha \\\"quoted\\\""}', project=project)
     assert structured.request.text == 'line\n\\alpha "quoted"'
 
 
@@ -89,11 +90,11 @@ def test_command_requests_cannot_replace_operation_or_loaded_project(command):
         parse_action_command(command, project='/loaded-project')
 
 
-def test_shared_dispatch_enforces_loaded_project_for_commands_and_browser():
+def test_shared_dispatch_enforces_loaded_project_for_commands_and_browser(tmp_path):
     from hardy.app.project_actions import execute_action, parse_action_command, validate_action
 
     class Session:
-        workspace = Path('/loaded-project')
+        workspace = tmp_path / 'loaded project'
         mutations = []
 
         def project_mark(self, **kwargs):
@@ -101,12 +102,13 @@ def test_shared_dispatch_enforces_loaded_project_for_commands_and_browser():
             return kwargs
 
     session = Session()
-    wrong = validate_action({'operation': 'mark', 'project': '/other-project', 'item': 'result', 'visibility': 'public'})
+    project = str(session.workspace)
+    wrong = validate_action({'operation': 'mark', 'project': str(tmp_path / 'other-project'), 'item': 'result', 'visibility': 'public'})
     with pytest.raises(ValueError, match='loaded project'):
         execute_action(session, wrong)
     assert session.mutations == []
-    command = parse_action_command('mark result public', project='/loaded-project')
-    browser = validate_action({'operation': 'mark', 'project': '/loaded-project', 'item': 'result', 'visibility': 'public'})
+    command = parse_action_command('mark result public', project=project)
+    browser = validate_action({'operation': 'mark', 'project': project, 'item': 'result', 'visibility': 'public'})
     assert execute_action(session, command) == execute_action(session, browser)
 
 

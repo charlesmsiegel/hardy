@@ -11,9 +11,15 @@ import pytest
 
 
 def executable(path, source):
-    path.write_text("#!/usr/bin/env python3\n" + source)
-    path.chmod(0o755)
-    return str(path)
+    """Run the same Python tool fixture through a platform-native launcher."""
+    script = path.with_suffix(".py")
+    script.write_text("#!/usr/bin/env python3\n" + source, encoding="utf-8")
+    if os.name == "nt":
+        launcher = path.with_suffix(".cmd")
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\n@exit /b %errorlevel%\n', encoding="utf-8")
+        return str(launcher)
+    script.chmod(0o755)
+    return str(script)
 
 
 def fixture_bundle(tmp_path, *, report="'selected' does not depend on any axioms", axioms=(), approved=(), shadow=False):
@@ -25,7 +31,9 @@ def fixture_bundle(tmp_path, *, report="'selected' does not depend on any axioms
     compiled = project / ".lake" / "build" / "lib" / "lean"
     compiled.mkdir(parents=True)
     (compiled / "Cached.olean").write_bytes(b"exact dependency cache fixture")
-    lean = executable(tmp_path / "lean", """import os, pathlib, sys
+    tools = tmp_path / "tool chain"
+    tools.mkdir()
+    lean = executable(tools / "lean", """import os, pathlib, sys
 if '--version' in sys.argv:
     print('Lean (version 4.35.0-rc3, x86_64, commit 123abc, Release)')
 elif '-o' in sys.argv:
@@ -33,13 +41,13 @@ elif '-o' in sys.argv:
 else:
     print("'selected' depends on axioms: [sorryAx]" if SHADOW and os.environ.get('LEAN_PATH', '').split(os.pathsep)[0] == 'HOSTILE' else REPORT)
 """.replace("REPORT", repr(report)).replace("SHADOW", repr(shadow)))
-    lake = executable(tmp_path / "lake", """import os, sys
+    lake = executable(tools / "lake", """import os, subprocess, sys
 if sys.argv[1:] == ['--version']:
     print('Lake version 5.0.0 (Lean version 4.35.0-rc3)')
 else:
     if SHADOW:
         os.environ['LEAN_PATH'] = 'HOSTILE' + os.pathsep + os.environ.get('LEAN_PATH', '')
-    os.execv(sys.argv[2], sys.argv[2:])
+    raise SystemExit(subprocess.call(sys.argv[2:]))
 """.replace("SHADOW", repr(shadow)))
     environment = snapshot_environment(project, (lake, "env", lean))
     payload = replay_payload(module="Main", declaration="selected", sources={"Main": "theorem selected : True := True.intro\n"},
@@ -76,6 +84,7 @@ def test_standalone_replay_refuses_missing_duplicate_truncated_or_hole_audit(tmp
     replay, project, lean, lake = fixture_bundle(tmp_path, report=report)
     result = run_replay(replay, project, lean, lake)
     assert result.returncode != 0
+    assert "fresh axiom audit" in result.stderr, result.stderr
 
 
 @pytest.mark.parametrize("changed", ["source", "toolchain", "manifest", "extra_source", "compiled_cache"])
@@ -84,7 +93,7 @@ def test_standalone_replay_refuses_tampering_or_environment_drift(tmp_path, chan
     if changed == "source":
         (replay / "lean" / "Main.lean").write_text("theorem selected : False := by sorry\n")
     elif changed == "toolchain":
-        path = Path(lean)
+        path = Path(lean).with_suffix(".py")
         path.write_text(path.read_text(encoding="utf-8").replace("123abc", "badbad"), encoding="utf-8")
     elif changed == "manifest":
         (project / "lake-manifest.json").write_text('{"packages": [], "changed": true}')
