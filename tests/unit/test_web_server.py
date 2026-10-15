@@ -485,7 +485,7 @@ def test_publication_routes_authenticate_current_formal_policy_and_withdraw_stal
     chat, target, formal, scope = native_publication_pair(config.layout.problem)
     operations = ProjectOperations(chat.workspace, lambda plan, **_kw: plan, policy=chat.owners.policy)
     assert operations.publish(formal.id, scope=scope.id, output="preview-only").ready
-    assert not operations.publish(target.id, scope=scope.id, output="preview-only").ready
+    assert operations.publish(target.id, scope=scope.id, output="preview-only").ready
     assert not next(row for row in panels.publications(chat.workspace)["candidates"]
                     if row["item"] == formal.id)["ready"]
     assert panels.ledger_export(chat.workspace, formal.id)["ready"] is False
@@ -506,15 +506,16 @@ def test_publication_routes_authenticate_current_formal_policy_and_withdraw_stal
             assert status == 200, body
             candidates = {row["item"]: row for row in json.loads(body)["candidates"]}
             assert candidates[formal.id]["ready"] is current
-            assert candidates[target.id]["ready"] is False
+            assert candidates[target.id]["ready"] is current
             assert len(replays) == 1
-            replays.clear()
-            status, _, body = _call(srv, "GET", f"/api/ledger/export?id={formal.id}&project={project}")
-            assert status == 200, body
-            exported = json.loads(body)
-            assert exported["ready"] is current
-            assert next(row for row in exported["rows"] if row["id"] == formal.id)["unestablished"] is not current
-            assert len(replays) == 1
+            for identity in (formal.id, target.id):
+                replays.clear()
+                status, _, body = _call(srv, "GET", f"/api/ledger/export?id={identity}&project={project}")
+                assert status == 200, body
+                exported = json.loads(body)
+                assert exported["ready"] is current
+                assert next(row for row in exported["rows"] if row["id"] == identity)["unestablished"] is not current
+                assert len(replays) == 1
             replays.clear()
             status, _, body = _call(srv, "GET", f"/api/ledger/item?id={target.id}&project={project}")
             assert status == 200, body
