@@ -957,6 +957,18 @@ def test_withdrawn_intermediate_mapping_is_not_a_current_shared_argument_lane(tm
     assert not report["intermediate_claims"]
 
 
+def test_claim_cannot_be_constructed_inside_its_own_supporting_proof(tmp_path):
+    payload = proposals()
+    payload["mappings"][0]["argument"] = "original"
+    intake, _, _ = owner(tmp_path, lambda *_: payload)
+    proposed = start(intake)
+    before = intake.store.read()
+    with pytest.raises(ValueError, match="cyclic semantic mapping construction"):
+        review(intake, proposed)
+    assert intake.store.read() == before
+    assert not intake.status("paper")["reviews"]
+
+
 @pytest.mark.parametrize("invalid", ["cycle", "context-kind", "argument-context", "claim-containment", "claim-argument-kind", "identity-collision", "declaration-reference", "duplicate-declaration", "blank-proof", "context-requirement", "dependency-requirement"])
 def test_invalid_mapping_construction_writes_nothing_and_same_proposal_can_be_corrected(tmp_path, invalid):
     payload = proposals()

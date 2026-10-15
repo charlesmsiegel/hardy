@@ -50,7 +50,9 @@ class ManuscriptMapping(FrozenModel):
     context: str | None = None
     target: str | None = None
     source: str | None = None
-    argument: str | None = None
+    argument: str | None = Field(default=None, description="Mapping key of a distinct enclosing argument containing this step or internal claim. "
+        "Do not point a conclusion to its own supporting proof: that proof instead sets its target to the conclusion key. "
+        "All construction references must form an acyclic graph.")
     declarations: tuple[DeclarationSpec, ...] = ()
     bindings: tuple[BindingSpec, ...] = ()
     required_statement: str | None = None

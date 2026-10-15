@@ -337,6 +337,9 @@ class ManuscriptIntake:
                 "on claims, claim_kind must match the inventoried kind (theorem, lemma, proposition, corollary, claim, "
                 "conjecture or definition). "
                 "Set an argument's target to its claim mapping key; set a step's argument to its argument mapping key. "
+                "A claim's argument field means a distinct enclosing argument containing an intermediate claim, never "
+                "the proof supporting that claim. Leave it null for a standalone theorem/lemma: its proof points to it "
+                "through the proof's target. Construction references must be acyclic. "
                 "If selecting a smaller span, copy its exact quote and full source digest, with exact codepoint offsets. "
                 "Identify every supplied argument, its steps, internal claims, local contexts/notation, dependencies and citation uses. "
                 "Novel source claims remain required work. Preserve ambiguity and unmatched prose. Do not invent offsets or external assumptions.")
