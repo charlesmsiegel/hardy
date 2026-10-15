@@ -144,7 +144,7 @@ class LiveReferee:
             if corresponding:
                 defects.extend(_json(defect) for defect in corresponding.defects)
             if value.verdict in {"defective", "refuted"}:
-                findings.append(CritiqueFinding(kind="check_informal_step", reason=value.reason))
+                findings.append(CritiqueFinding(kind="check_informal_step", reason=value.reason, subject=value.subject))
         return ReviewPass(subject=review_input.subject.ref, scope=review_input.scope.ref,
             revision=snapshot.revision, findings=tuple(findings))
 

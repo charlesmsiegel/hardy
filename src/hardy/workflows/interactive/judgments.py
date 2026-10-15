@@ -5,6 +5,7 @@ mathematical truth. Neither a source read nor a human approval is a kernel proof
 """
 from __future__ import annotations
 
+from typing import Any, Literal
 from uuid import uuid4
 
 from hardy.foundation.journal import record_digest
@@ -18,6 +19,7 @@ from hardy.workflows.ledger.contracts import (
     EvidenceKind,
     EvidenceRef,
     ProjectItem,
+    Relation,
     Scope,
     Text,
     VersionRef,
@@ -28,6 +30,29 @@ from hardy.workflows.ledger.validation import references
 
 PRODUCER = "hardy.semantic-judgments"
 URI = "hardy-semantic-judgment:"
+
+
+class TranslationReview(FrozenModel):
+    """An attributed correspondence judgment; approval is never a kernel proof."""
+
+    id: str
+    subject: VersionRef
+    translation: VersionRef
+    relation: VersionRef
+    scope: VersionRef
+    context: VersionRef | None
+    verdict: Literal["approved", "disputed", "unresolved"]
+    reviewer: str
+    conditions: str
+    reason: str
+    recorded_at: str
+    inputs: tuple[VersionRef, ...] = ()
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        data = super().model_dump(**kwargs)
+        if not self.inputs:
+            data.pop("inputs", None)
+        return data
 
 
 class SemanticJudgment(JudgmentRequest):
@@ -60,6 +85,77 @@ class SemanticJudgments:
         return bool(reading is not None and reading.purpose == "source_read"
                     and reading.subject == request.subject and reading.scope == request.scope
                     and reading.sources and reading.sources == request.sources)
+
+    def _citation_identity(self, snapshot: LedgerSnapshot, record: SemanticJudgment):
+        """Resolve a prospective review to its exact bound use, preserving revisions."""
+        if record.citation is not None:
+            return record.citation
+        reference = self.reference(record)
+        bound = {value.citation for value in self.owners.journal.read().of(CitationEvidenceBinding)
+                 if reference in value.evidence}
+        if len(bound) == 1:
+            return next(iter(bound))
+        if bound:
+            raise ValueError("citation review has conflicting exact bindings")
+        if record.citation_use is None:
+            return None
+        contracts = [value for value in snapshot.current(CitationContract)
+                     if record.citation_use.matches(value) and self._source_matches(value, record)]
+        # An unbound review cannot select between distinct exact contracts.
+        return contracts[0].ref if len(contracts) == 1 else record.citation_use
+
+    def _history_key(self, snapshot: LedgerSnapshot, record: SemanticJudgment):
+        citation = (self._citation_identity(snapshot, record) if record.purpose in {"citation", "source_read"}
+                    else (record.citation, record.citation_use))
+        return (record.subject, record.scope, record.context, record.purpose, citation,
+                record.sources, self._formalizations(snapshot, record))
+
+    @staticmethod
+    def _formalizations(snapshot: LedgerSnapshot, record: SemanticJudgment) -> set[VersionRef]:
+        return {value.source for value in snapshot.current(Relation)
+                if record.purpose == "correspondence" and value.kind == "formalizes"
+                and value.target == record.subject and value.source in record.relevant}
+
+    def correspondence_review(self, subject: VersionRef, formalization: VersionRef, scope: VersionRef,
+                              *, human_only: bool = True):
+        """One journal-ordered exact-pair history for native and semantic reviews.
+
+        Generic correspondence readings (for example, admission of an external
+        premise) carry no formalization and retain their separate authority.
+        """
+        reviews = [value for value in self.owners.journal.read().records if (
+            isinstance(value, TranslationReview) and value.subject == subject
+            and value.translation == formalization and value.scope == scope
+        ) or (
+            isinstance(value, SemanticJudgment) and value.purpose == "correspondence"
+            and value.subject == subject and value.scope == scope
+            and formalization in value.relevant
+        )]
+        human = [value for value in reviews if getattr(value, "actor", None) != "model"]
+        selected = human if human_only or human else reviews
+        latest = selected[-1] if selected else None
+        return latest, isinstance(latest, TranslationReview)
+
+    def _current(self, snapshot: LedgerSnapshot, record: SemanticJudgment) -> bool:
+        if record.purpose == "correspondence":
+            formalizations = self._formalizations(snapshot, record)
+            if formalizations:
+                return all(self.correspondence_review(record.subject, formalization, record.scope,
+                    human_only=False)[0] == record for formalization in formalizations)
+        key = self._history_key(snapshot, record)
+        matching = [value for value in self.owners.journal.read().of(SemanticJudgment)
+                    if (value.subject, value.scope, value.context, value.purpose,
+                        value.sources) == (record.subject, record.scope,
+                            record.context, record.purpose, record.sources)
+                    and (self._history_key(snapshot, value) == key or (
+                        # Withdrawing the original physical source reading
+                        # also withdraws uses subsequently bound to that read.
+                        # An explicitly selected other use remains separate.
+                        record.purpose == "source_read" and value.verdict != "approved"
+                        and value.citation is None and value.citation_use is None))]
+        human = [value for value in matching if value.actor != "model"]
+        selected = human or matching
+        return bool(selected and selected[-1] == record)
 
     def record(self, request: JudgmentRequest) -> SemanticJudgment:
         from hardy.workflows.interactive.semantic_records import stamp
@@ -107,13 +203,7 @@ class SemanticJudgments:
         if record is None or reference != self.reference(record) or record.verdict != "approved":
             return None
         try:
-            matching = [value for value in self.owners.journal.read().of(SemanticJudgment)
-                        if (value.subject, value.scope, value.purpose, value.citation, value.citation_use)
-                        == (record.subject, record.scope, record.purpose, record.citation, record.citation_use)]
-            human = [value for value in matching if value.actor != "model"]
-            if human:
-                matching = human
-            if not matching or matching[-1] != record:
+            if not self._current(snapshot, record):
                 return None
             inputs = relevant_versions(self.owners.problem, snapshot, record.subject,
                 self._extra(record), sources=record.sources)

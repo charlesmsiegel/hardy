@@ -723,6 +723,13 @@ Cost: review and ledger histories are separate journals. Review submission does
 not resolve an obligation, and a record that becomes stale immediately after
 submission stays historical rather than approving the changed proposal.
 
+Native and semantic correspondence reviews share one journal-ordered history
+for each exact target, formalization and scope. Human readings take precedence
+over model readings. Citation and source-reading histories resolve prospective
+receipts to their exact bound use before selecting the current judgment, so a
+later dispute cannot leave an earlier approval authoritative under another
+description of the same use.
+
 ### Bind semantic proposals to the actual checked-save owner
 
 We chose an explicit exact-version binding, over matching a semantic target to
@@ -734,6 +741,15 @@ workspace supplies one source/signature snapshot so those values describe the
 same bytes. Standard-axiom proof evidence can discharge the formal proposal;
 the same checked declaration supplies elaboration to formalization work only
 alongside the exact approved correspondence judgment.
+
+The native bind operation also opens semantic-target establishment work. It
+resolves that work through the existing proof policy only when the same exact
+binding has an accepted current correspondence. The establishment reader
+rechecks both authorities on every use; a dispute or changed proof withdraws
+publication and premise authority while preserving the independent formal-proof
+lane. Existing projects acquire this establishment record by repeating the
+explicit bind operation. Naming a native Results theorem and compiling its
+writeup remain separate operations.
 
 Cost: a changed saved-proof revision requires rebinding. A reader with no live
 build environment cannot authenticate this binding, and says so. The JSON

@@ -8,7 +8,7 @@ import time
 from typing import Any, Literal
 from uuid import uuid4
 
-from hardy.foundation.values import FrozenModel
+from hardy.foundation.values import FrozenModel, ToolResult
 from hardy.workflows.acquisition.classifier import GapClassifier
 from hardy.workflows.acquisition.contracts import (
     GapDecision,
@@ -483,15 +483,24 @@ class LiveWorkflows:
                     return {"status": "pending", "repaired_argument": repaired.ref.model_dump(mode="json"),
                         "detail": "Replacement proposed; exact conclusion preparation remains unresolved"}
                 proposed = self._record_prepared(snapshot, work, prepared)
-                self.store.append(proposed.records, expected_revision=snapshot.revision, validate=self.owners.policy.validate)
+                if not proposed.evidence:
+                    return {"status": "pending", "repaired_argument": repaired.ref.model_dump(mode="json"),
+                        "detail": proposed.detail}
+                if proposed.records:
+                    self.store.append(proposed.records, expected_revision=snapshot.revision, validate=self.owners.policy.validate)
                 snapshot = self.store.read()
                 candidate = self._candidate(snapshot, work)
             if candidate is None:
                 return {"status": "pending", "repaired_argument": repaired.ref.model_dump(mode="json"), "detail": "No exact frozen conclusion"}
+            if self.owners.live_evidence.read(snapshot, LiveEvidence.reference(candidate, faithful=True)) is None:
+                return {"status": "pending", "repaired_argument": repaired.ref.model_dump(mode="json"),
+                    "detail": "Exact translation requires correspondence review; no proof was attempted"}
             task = self._task(candidate, defect.scope)
             strategy = self._strategy(task)
             def save(saving):
                 before = self.store.read()
+                if self.owners.live_evidence.read(before, LiveEvidence.reference(candidate, faithful=True)) is None:
+                    return RepairSaveResult(ToolResult(False, "Exact translation requires correspondence review; no proof was saved"))
                 result, reference, effects = self.capabilities.save(before, saving.obligation, task, saving.outcome.submission,
                     strategy.last_verification, candidate.formalization, candidate.reading)
                 return RepairSaveResult(result, ((reference, LiveEvidence.reference(candidate, faithful=True)) if reference else ()), effects)

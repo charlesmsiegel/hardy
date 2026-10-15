@@ -152,6 +152,10 @@ class ScopedAdmissions:
         extra = ((request.scope,) if scope else ()) + ((request.formalization,) if request.formalization else ())
         return relevant_versions(self.owners.problem, snapshot, request.subject, extra, sources=request.sources)
 
+    def _has_source_material(self, snapshot, request) -> bool:
+        return bool(request.sources) and all(
+            read_region(self.owners.problem, snapshot, region).strip() for region in request.sources)
+
     def _review_matches(self, request, reference) -> bool:
         if request.formalization is None:
             return True
@@ -217,10 +221,10 @@ class ScopedAdmissions:
         search_output = "Search unavailable."
         environment = "unavailable"
         reasons = []
-        if request.sources:
-            for region in request.sources:
-                read_region(self.owners.problem, snapshot, region)
+        if self._has_source_material(snapshot, request):
             missing.remove("source")
+        else:
+            reasons.append("Admission requires nonempty source material in every selected passage.")
         value = self.owners.read_evidence_at(snapshot, faithfulness)
         if (value is not None and faithfulness.subject == request.subject and value.scope == request.scope
                 and value.context == item.context and value.outcome == "faithful"
@@ -321,12 +325,14 @@ class ScopedAdmissions:
             return False
         if self.operations.environment() != gate.environment:
             return False
+        if snapshot is None:
+            snapshot = LedgerStore(self.owners.problem).read()
         request = self._request(gate.request)
+        if not self._has_source_material(snapshot, request):
+            return False
         # Scope itself advanced as the authorized effect. Revalidate the exact
         # subject/source dependencies against the original request's snapshot
         # inputs while excluding only that authorized scope revision.
-        if snapshot is None:
-            snapshot = LedgerStore(self.owners.problem).read()
         inputs = self._inputs(snapshot, request, scope=False)
         expected = tuple(ref for ref in request.inputs if ref != request.scope)
         if inputs != expected:

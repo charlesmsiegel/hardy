@@ -60,13 +60,7 @@ class LiveEvidence:
         return data
 
     def human_review(self, subject, formalization, scope):
-        legacy = {value.id for value in self.translation_reviews() if value.subject == subject
-                  and value.translation == formalization and value.scope == scope}
-        reviews = [value for value in self.owners.journal.read().records if value.id in legacy or (
-            getattr(value, "purpose", None) == "correspondence" and getattr(value, "actor", None) != "model"
-            and value.subject == subject and value.scope == scope
-            and (formalization in value.inputs or value.verdict != "approved"))]
-        return (reviews[-1], reviews[-1].id in legacy) if reviews else (None, False)
+        return self.owners.judgments.correspondence_review(subject, formalization, scope)
 
     def record(self, value: FrozenFormalEvidence) -> EvidenceRef:
         self.owners._append(value)
