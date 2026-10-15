@@ -26,6 +26,19 @@ def load_sdk():
     return openai
 
 
+def openrouter_client(sdk, **options):
+    class OpenRouterClient(sdk.OpenAI):
+        @property
+        def default_headers(self):
+            # The SDK merges OPENAI_CUSTOM_HEADERS and organization/project
+            # settings even with an explicit API key. Own the entire public
+            # header boundary so no spelling or unrelated gateway header can
+            # cross into OpenRouter. SDK copies preserve this subclass.
+            return {"Accept": "application/json", "Content-Type": "application/json",
+                "User-Agent": self.user_agent, **self.auth_headers}
+    return OpenRouterClient(**options)
+
+
 def _field(value, name, default=None):
     return value.get(name, default) if isinstance(value, Mapping) else getattr(value, name, default)
 
@@ -89,7 +102,9 @@ class OpenAIProvider(ApiProvider):
             key = os.environ.get(KEYS[self._selected])
             if not key:
                 raise RuntimeError(f"the {self._selected} backend needs {KEYS[self._selected]}")
-            self._client = load_sdk().OpenAI(api_key=key, base_url=self._base_url, max_retries=0)
+            sdk = load_sdk()
+            options = dict(api_key=key, base_url=self._base_url, max_retries=0)
+            self._client = openrouter_client(sdk, **options) if self._selected == "openrouter" else sdk.OpenAI(**options)
         return self._client
 
     @property

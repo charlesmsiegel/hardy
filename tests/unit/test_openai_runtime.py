@@ -151,11 +151,11 @@ def test_factory_budget_doctor_and_setup_use_selected_credentials(tmp_path, monk
     requests = []
     class Sdk:
         __version__ = "controlled"
-        @staticmethod
-        def OpenAI(**options):
-            requests.append(options)
-            return Client([reply(reported={"prompt_tokens": 10, "completion_tokens": 2,
-                "prompt_tokens_details": {"cached_tokens": 4, "cache_write_tokens": 0}})])
+        class OpenAI(Client):
+            def __init__(self, **options):
+                requests.append(options)
+                super().__init__([reply(reported={"prompt_tokens": 10, "completion_tokens": 2,
+                    "prompt_tokens_details": {"cached_tokens": 4, "cache_write_tokens": 0}})])
     monkeypatch.setitem(sys.modules, "openai", Sdk)
     monkeypatch.setattr(openai_api, "load_sdk", lambda: Sdk)
     monkeypatch.setenv(key, "canary-credential-never-record")

@@ -158,6 +158,10 @@ model = "openai/gpt-4.1-mini"
 Supply `OPENROUTER_API_KEY` in the process environment. For OpenAI or another
 compatible Chat Completions service, use `backend = "openai"`, its model
 identity and `OPENAI_API_KEY`; set `OPENAI_BASE_URL` for a custom endpoint.
+The `openrouter` preset excludes ambient `OPENAI_CUSTOM_HEADERS`, organization
+and project headers, including authorization overrides; its requests use the
+selected router key. The `openai` backend retains the SDK's intentional
+`OPENAI_CUSTOM_HEADERS`, `OPENAI_ORG_ID` and `OPENAI_PROJECT_ID` configuration.
 Model names and supported capabilities belong to the endpoint. Compatibility
 requires text Chat Completions, JSON function calls and the output cap
 `max_completion_tokens` (`max_tokens` on the OpenRouter preset).
