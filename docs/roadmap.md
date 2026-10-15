@@ -1926,11 +1926,17 @@ their conclusions require their own recorded and reviewed evidence.
   not fetch a missing resource; cache preparation and the successful rerun
   were recorded separately. This establishes the tested compilation route,
   not cold-cache network availability or actual-provider acceptance.
-- Pending: actual provider+Lean application acceptance. The supported project
-  Claude runtime is not signed in and no Anthropic API key is configured.
-  A logged-in Codex CLI supports the separate staged backend, not the existing
-  interactive project runtime. Controlled model responses remain labelled
-  synthetic and unreported token/cost counters remain null/unknown.
+- Implemented: OpenAI-compatible Chat Completions and the OpenRouter preset
+  serve interactive projects and their workflows through the existing Hardy-owned
+  tool loop, shared API deadline/retry and durable spend admission. Selected
+  credentials, redacted endpoints, explicit models, cache-aware token counts and
+  reported OpenRouter USD costs are retained. Staged transports remain Claude
+  and Codex. Controlled protocol/configuration and existing Anthropic checks pass;
+  a real OpenRouter runtime smoke call succeeded.
+- Pending: actual provider+Lean Research and manuscript/Referee/Repair application
+  acceptance through the new supported OpenRouter route. Earlier controlled
+  model responses remain labelled synthetic; missing token/cost fields stay
+  unknown. The Claude runtime remains unsigned-in, separately from this route.
 
 Standalone replay pins retained local source and environment metadata plus
 export-time dependency source/compiled-library inventories. Those compiled

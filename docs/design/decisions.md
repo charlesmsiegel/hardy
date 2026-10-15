@@ -507,6 +507,21 @@ Limit: the typesetting package set is pinned only through its bundle digest.
 
 ## Architecture
 
+### API transports share the owned call boundary
+
+Anthropic Messages and OpenAI-compatible Chat Completions translate their own
+messages, tools, finish reasons and usage. They share Hardy's API request
+deadline, retry and durable spend-admission owner, alongside the same tool
+loop. OpenRouter is an explicit preset with its own credential and endpoint;
+it cannot silently borrow an OpenAI key or endpoint override. Every run records
+its actual backend, redacted endpoint and model. Provider reasoning metadata
+is retained for tool continuations and counted by compaction without becoming
+visible transcript text.
+
+Cost: compatible services differ in model names and protocol support. A missing
+usage field remains unknown, and a deadline cannot revoke a request already
+sent to the provider. Staged SDK workflows retain their existing transports.
+
 The rules are on [module boundaries](module-boundaries.md).
 
 ### Internal packages with enforced dependencies

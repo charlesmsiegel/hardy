@@ -397,6 +397,9 @@ api = [
 codex = [
     { name = "openai-codex" },
 ]
+openai = [
+    { name = "openai" },
+]
 test = [
     { name = "nbformat" },
     { name = "pytest" },
@@ -411,6 +414,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.28,<2" },
     { name = "nbformat", marker = "extra == 'test'", specifier = ">=5" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.55" },
     { name = "openai-codex", marker = "extra == 'codex'", specifier = ">=0.144" },
     { name = "prompt-toolkit", specifier = ">=3.0.50,<3.1" },
     { name = "pydantic", specifier = ">=2.9" },
@@ -420,7 +424,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
-provides-extras = ["test", "codex", "api"]
+provides-extras = ["test", "codex", "api", "openai"]
 
 [[package]]
 name = "httpcore"
@@ -775,6 +779,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/31/72/b3446efab8756e7df4b8ec587f8e611cb5a7249e4323db480802f1d3be04/nbformat-5.11.1.tar.gz", hash = "sha256:32d4521c68c6e7d5b29c76defaeed9f42ea733142b9b19f88277ce10390b9c4d", size = 147775, upload-time = "2026-08-17T08:10:51.942Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1a/69/ee613f74085ca7103f79cd08d579c4f3177d1d26e5d3d9528d2d6536a707/nbformat-5.11.1-py3-none-any.whl", hash = "sha256:cc6698fa75f4fab8755ead786317815f13a6fee3b53311c0abb1a8b51d52f7ec", size = 79849, upload-time = "2026-08-17T08:10:50.18Z" },
+]
+
+[[package]]
+name = "openai"
+version = "3.31.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/99/d0c5b9e60eb131bfe5f6f818e9b25650b64004ff84512c0f7e00a246b826/openai-3.31.0.tar.gz", hash = "sha256:58110edba9acaf29cb2a675a1cbcccdd9f2fdb4932baed474dc847a7639e5d02", size = 2117207, upload-time = "2026-10-14T05:39:33.445Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/22/66014c8fede0aa2b3381cf80c5102219b78657b3e61776cdab8f0b78675a/openai-3.31.0-py3-none-any.whl", hash = "sha256:e5839f6670483f368de40ce3422f524c1afaf12ff8660539f53489e200db8d78", size = 2235454, upload-time = "2026-10-14T05:39:31.197Z" },
 ]
 
 [[package]]

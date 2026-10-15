@@ -41,6 +41,7 @@ codex = ["openai-codex>=0.144"]
 # transport that needs an API key rather than a subscription, and it is what a
 # user installs to get the loop Hardy runs itself (issue #23).
 api = ["anthropic>=0.40"]
+openai = ["openai>=1.55"]
 
 [project.scripts]
 hardy = "hardy.app.cli:main"
