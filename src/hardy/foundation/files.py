@@ -8,10 +8,11 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import IO, Any
 
 from hardy.foundation.locking import replace_with_retry
 
@@ -261,7 +262,7 @@ class WriteGuard:
         self.confirm()
         return _leaf(self.directory / _name(name))
 
-    def open(self, name: str, mode: str = "r", **kwargs: Any) -> Any:
+    def open(self, name: str, mode: str = "r", **kwargs: Any) -> IO[Any]:
         """Open `name` inside this directory, or refuse.
 
         Reads go through here too, not only writes. A symlinked `cells.jsonl`
@@ -396,7 +397,7 @@ class WriteGuard:
         self.confirm()
         _leaf(self.directory / _name(name)).unlink(missing_ok=missing_ok)
 
-    def write_json(self, name: str, value: Any) -> None:
+    def write_json(self, name: str, value: object) -> None:
         """Replace `name` with `value` as JSON, whole or not at all.
 
         Not fsynced, unlike `write_bytes`'s default. `session.json` is rewritten
@@ -509,12 +510,17 @@ def portable_key(relative: str) -> str:
     return "/".join(part.rstrip(". ").casefold() for part in str(relative).replace("\\", "/").split("/"))
 
 
+# Windows reserves these names in every directory, whatever the extension.
+_DEVICES = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"})
+_PORT_DEVICE = re.compile(r"(COM|LPT)[1-9¹²³]")
+# Every separator either platform reads inside a name.
+_SEPARATORS = frozenset({"/", "\\", os.sep, os.altsep}) - {None}
+
+
 def reserved_device_name(name: str) -> bool:
     """Whether a component denotes a Windows device, on every platform."""
     stem = str(name).rstrip(". ").split(".", 1)[0].rstrip(" ").upper()
-    return stem in {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} or (
-        len(stem) == 4 and stem[:3] in {"COM", "LPT"} and stem[3] in "123456789¹²³"
-    )
+    return stem in _DEVICES or _PORT_DEVICE.fullmatch(stem) is not None
 
 
 def _name(name: str) -> str:
@@ -527,7 +533,7 @@ def _name(name: str) -> str:
     text = str(name)
     if not text or text in {".", ".."}:
         raise LayoutError(f"{name!r} is not a file name")
-    if "/" in text or "\\" in text or os.sep in text or (os.altsep and os.altsep in text):
+    if any(separator in text for separator in _SEPARATORS):
         raise LayoutError(f"a guarded file is one name, not a path: {name!r}")
     # One `Path`, not two: this runs on every append, and building the same
     # object twice to ask it two questions is the kind of cost that is
