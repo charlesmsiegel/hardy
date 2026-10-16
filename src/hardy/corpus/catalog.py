@@ -34,7 +34,8 @@ CONTENT_FILES = ("sources.json", "analysis-plan.json", "tombstones.json")
 # published version non-reproducible (spec §3). CHANGELOG.md is not itself a
 # content file, so writing the digest into it is a fixed point.
 HEAD = re.compile(
-    r"^## (\d+\.\d+\.\d+)\s+-\s+(\S+)(?:\s+-\s+manifest\s+([0-9a-f]{64})(?:\s+-\s+scheme\s+(\S+))?)?\s*$",
+    r"^## (?P<version>\d+\.\d+\.\d+)\s+-\s+(?P<date>\S+)"
+    r"(?:\s+-\s+manifest\s+(?P<manifest>[0-9a-f]{64})(?:\s+-\s+scheme\s+(?P<scheme>\S+))?)?\s*$",
     re.MULTILINE,
 )
 SEMVER = r"^\d+\.\d+\.\d+$"
@@ -84,14 +85,7 @@ def _load_corpus(root: Path) -> tuple[ProblemSet, set[str]]:
             shard = _load_shard(path)
             versions.add(shard.corpus_version)
             for entry in shard.entries:
-                if entry.id in seen:
-                    raise CorpusError(
-                        f"duplicate id {entry.id!r} in {path.name} and {seen[entry.id].name}"
-                    )
-                if entry.shard != path.stem:
-                    raise CorpusError(
-                        f"{entry.id!r} is filed in {path.name} but belongs in shard {entry.shard}"
-                    )
+                _check_filing(entry, path, seen)
                 seen[entry.id] = path
                 entries.append(entry)
         try:
@@ -103,6 +97,18 @@ def _load_corpus(root: Path) -> tuple[ProblemSet, set[str]]:
             return ProblemSet(entries=tuple(entries)), versions
         except ValidationError as error:
             raise CorpusError(f"the shards do not form one valid corpus: {error}") from error
+
+
+def _check_filing(entry: Entry, path: Path, seen: dict[str, Path]) -> None:
+    """An entry's id is new to the corpus, and it sits in the shard its code derives."""
+    if entry.id in seen:
+        raise CorpusError(
+            f"duplicate id {entry.id!r} in {path.name} and {seen[entry.id].name}"
+        )
+    if entry.shard != path.stem:
+        raise CorpusError(
+            f"{entry.id!r} is filed in {path.name} but belongs in shard {entry.shard}"
+        )
 
 
 TAXONOMY_FILES = ("msc2020.json", "msc-to-arxiv.json")
@@ -176,6 +182,7 @@ def source_issues(problems: ProblemSet, sources: dict[str, dict]) -> list[str]:
 
 
 def load_tombstones(root: Path) -> dict[str, str]:
+    """The id registry: every id ever issued, mapped to the date it was issued."""
     path = root / "tombstones.json"
     if not path.exists():
         raise CorpusError(f"missing id registry: {path}")
@@ -241,6 +248,10 @@ def _content_paths(root: Path) -> list[Path]:
 
 
 MANIFEST_DIGEST_SCHEME = "hardy-corpus-manifest-v2"
+# The current scheme prefixes each path and each file's bytes with its length,
+# in this many big-endian bytes, so no two different trees feed the hash the
+# same byte stream.
+_LENGTH_PREFIX_BYTES = 8
 
 
 def manifest_digest(root: Path, *, scheme: str = MANIFEST_DIGEST_SCHEME) -> str:
@@ -255,7 +266,7 @@ def manifest_digest(root: Path, *, scheme: str = MANIFEST_DIGEST_SCHEME) -> str:
         data = path.read_bytes()
         for field in (name, data):
             if scheme == MANIFEST_DIGEST_SCHEME:
-                hasher.update(len(field).to_bytes(8, "big"))
+                hasher.update(len(field).to_bytes(_LENGTH_PREFIX_BYTES, "big"))
             hasher.update(field)
     return hasher.hexdigest()
 
@@ -269,7 +280,19 @@ def head_of(text: str) -> tuple[str, str, str | None]:
     match = HEAD.search(text)
     if match is None:
         raise CorpusError("CHANGELOG.md has no version heading")
-    return match.group(1), match.group(2), match.group(3)
+    return match.group("version"), match.group("date"), match.group("manifest")
+
+
+def _scheme_of(text: str) -> str | None:
+    """The manifest scheme the changelog head names, or None on a head written before schemes.
+
+    For text `head_of` has already accepted. Any scheme this build does not
+    know is refused rather than compared.
+    """
+    scheme = HEAD.search(text).group("scheme")
+    if scheme not in (None, MANIFEST_DIGEST_SCHEME):
+        raise CorpusError(f"unknown corpus manifest scheme: {scheme}")
+    return scheme
 
 
 def changelog_head(root: Path) -> tuple[str, str, str | None]:
@@ -290,9 +313,7 @@ def release_issues(root: Path, prior_changelog: str) -> list[str]:
     prior_version, _, prior_manifest = head_of(prior_changelog)
     version = corpus_version(root)
     manifest = manifest_digest(root)
-    prior_scheme = HEAD.search(prior_changelog).group(4)
-    if prior_scheme not in (None, MANIFEST_DIGEST_SCHEME):
-        raise CorpusError(f"unknown corpus manifest scheme: {prior_scheme}")
+    prior_scheme = _scheme_of(prior_changelog)
     unchanged = prior_manifest == manifest
     if prior_scheme is None and prior_manifest is not None:
         unchanged = unchanged or prior_manifest == manifest_digest(root, scheme="legacy-v1")
@@ -321,6 +342,7 @@ def _parts(version: str) -> tuple[int, int, int]:
 
 
 def corpus_version(root: Path) -> str:
+    """The one `corpus_version` every shard declares, or a refusal naming the disagreement."""
     # Scoped: a `Shard` carries `Entry` objects that validate their own codes,
     # so re-parsing outside the corpus's own taxonomy would call a valid
     # external corpus invalid against Hardy's bundled tables.
@@ -351,9 +373,7 @@ def version_issues(root: Path, *, versions: set[str] | None = None) -> list[str]
         )
     else:
         actual = manifest_digest(root)
-        scheme = HEAD.search((root / "CHANGELOG.md").read_text(encoding="utf-8")).group(4)
-        if scheme not in (None, MANIFEST_DIGEST_SCHEME):
-            raise CorpusError(f"unknown corpus manifest scheme: {scheme}")
+        scheme = _scheme_of((root / "CHANGELOG.md").read_text(encoding="utf-8"))
         if bound == actual or (scheme is None and bound == manifest_digest(root, scheme="legacy-v1")):
             return issues
 
@@ -438,27 +458,34 @@ def check_issues(root: Path) -> list[str]:
 
 
 def _code_issues(problems: ProblemSet, root: Path) -> list[str]:
-    issues: list[str] = []
     with taxonomy.using(root):
-        for entry in problems.entries:
-            for code in entry.msc:
-                if not taxonomy.is_known(code):
-                    issues.append(f"{entry.id!r}: unknown MSC code {code!r}")
-                    continue
-                # Every roll-up the corpus actually needs. Checking only that
-                # the full code exists lets a manifest-bound but incomplete
-                # mapping pass, and `corpus report` then raises `UnknownCode`
-                # on the very corpus this call just declared clean.
-                for table, lookup in (("fields", taxonomy.field_of),
-                                      ("groups", taxonomy.group_of),
-                                      ("arxiv", taxonomy.arxiv_of)):
-                    try:
-                        lookup(code)
-                    except taxonomy.UnknownCode:
-                        issues.append(
-                            f"{entry.id!r}: {code!r} has no {table} entry for its class "
-                            f"{code[:2]!r} in taxonomy/msc-to-arxiv.json"
-                        )
+        return [
+            issue
+            for entry in problems.entries
+            for code in entry.msc
+            for issue in _issues_with_code(entry.id, code)
+        ]
+
+
+def _issues_with_code(entry_id: str, code: str) -> list[str]:
+    """What stops one entry's code from being classified, under the scoped taxonomy."""
+    if not taxonomy.is_known(code):
+        return [f"{entry_id!r}: unknown MSC code {code!r}"]
+    # Every roll-up the corpus actually needs. Checking only that the full
+    # code exists lets a manifest-bound but incomplete mapping pass, and
+    # `corpus report` then raises `UnknownCode` on the very corpus this call
+    # just declared clean.
+    issues = []
+    for table, lookup in (("fields", taxonomy.field_of),
+                          ("groups", taxonomy.group_of),
+                          ("arxiv", taxonomy.arxiv_of)):
+        try:
+            lookup(code)
+        except taxonomy.UnknownCode:
+            issues.append(
+                f"{entry_id!r}: {code!r} has no {table} entry for its class "
+                f"{code[:2]!r} in taxonomy/msc-to-arxiv.json"
+            )
     return issues
 
 
