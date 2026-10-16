@@ -15,6 +15,12 @@ from pathlib import Path
 
 
 def atomic_write_bytes(target: Path, content: bytes) -> None:
+    """Replace `target` with `content`, fsynced and whole or not at all, creating its directory.
+
+    The temporary sits beside `target`, so the replace is a rename within one
+    directory. Nothing here checks the path itself: `files.WriteGuard` is the
+    guarded counterpart.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary_name: str | None = None
     try:
@@ -49,12 +55,13 @@ _sleep: Callable[[float], None] = time.sleep
 #:
 #: What one built in Python carries depends on the platform, and this has to
 #: be read with both in mind. Off Windows, `OSError` has no `winerror`
-#: attribute at all, and `getattr(..., 5)` below reads that absence as
+#: attribute at all, and the `getattr` below reads that absence as
 #: `ERROR_ACCESS_DENIED`. On Windows the attribute always exists, and is
 #: `None` when nothing set it -- a `PermissionError(13, "...")` there is
 #: re-raised at once as not a sharing violation. A test simulating a sharing
 #: violation therefore sets `winerror` itself, which reads the same on both.
-_SHARING_ERRORS = frozenset({5, 32, 33})
+_ERROR_ACCESS_DENIED, _ERROR_SHARING_VIOLATION, _ERROR_LOCK_VIOLATION = 5, 32, 33
+_SHARING_ERRORS = frozenset({_ERROR_ACCESS_DENIED, _ERROR_SHARING_VIOLATION, _ERROR_LOCK_VIOLATION})
 
 
 class FileInUse(PermissionError):
@@ -104,7 +111,7 @@ def replace_with_retry(source: Path, target: Path) -> None:
             os.replace(source, target)
             return
         except PermissionError as error:
-            if getattr(error, "winerror", 5) not in _SHARING_ERRORS:
+            if getattr(error, "winerror", _ERROR_ACCESS_DENIED) not in _SHARING_ERRORS:
                 raise
             if waited >= 1.5:
                 raise FileInUse(f"{target} is open in another program") from error
@@ -130,6 +137,8 @@ BUSY = frozenset(
 #: `O_NOFOLLOW` where the platform has it, nothing where it does not -- which
 #: is why the `lstat` beside it is not redundant.
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+#: A lock file is created readable and writable by its owner only.
+_LOCK_FILE_MODE = 0o600
 
 
 class LockTimeout(RuntimeError):
@@ -295,7 +304,7 @@ class FileLock:
                     errno.ELOOP, f"{self.path} is a symlink; refusing to lock through it"
                 )
             flags = os.O_CREAT | os.O_RDWR | _NOFOLLOW
-            self._handle = os.open(self.path, flags, 0o600)
+            self._handle = os.open(self.path, flags, _LOCK_FILE_MODE)
         try:
             _lock(self._handle)
         except OSError as error:

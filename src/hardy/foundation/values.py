@@ -19,7 +19,7 @@ class FrozenModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-def json_digest(value: Any) -> str:
+def json_digest(value: object) -> str:
     """SHA-256 of sorted, compact UTF-8 JSON, preserving non-ASCII text.
 
     Evidence producers and readers must hash the same bytes. Callers own the
@@ -47,6 +47,12 @@ def schema_text(model: type[BaseModel]) -> str:
 
 @dataclass(frozen=True)
 class ToolResult:
+    """What one tool call hands back, the same shape for every transport.
+
+    `output` is the text the model reads; `source` is the source text the
+    call checked, when it checked one.
+    """
+
     ok: bool
     output: str
     source: str | None = None
