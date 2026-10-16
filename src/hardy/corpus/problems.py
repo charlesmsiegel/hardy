@@ -22,14 +22,19 @@ from hardy.foundation.values import FrozenModel
 
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_'.]*$")
-# A dotted Lean module path -- what a real `import` line accepts -- and
-# nothing else: no newline, no space, no stray token that could smuggle a
-# second Lean command onto the same or a following line (item 6b).
 # `12Fxx` or `12F10`, the two forms that name mathematics. MSC also publishes
 # `12-XX` (the bare class) and `12-01` (publication type: textbooks, surveys,
 # proceedings), and neither classifies a theorem.
 SUBJECT_CODE = re.compile(r"\d\d[A-Z](xx|\d\d)")
+# A dotted Lean module path -- what a real `import` line accepts -- and
+# nothing else: no newline, no space, no stray token that could smuggle a
+# second Lean command onto the same or a following line (item 6b).
 IMPORT = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$")
+
+
+def _blank(text: str | None) -> bool:
+    """Whether an optional note is absent or says nothing at all."""
+    return not (text or "").strip()
 
 
 class Occurrence(FrozenModel):
@@ -95,7 +100,7 @@ class Review(FrozenModel):
 
     @model_validator(mode="after")
     def _unfaithful_needs_a_reason(self) -> Review:
-        if self.verdict == "unfaithful" and not (self.reason or "").strip():
+        if self.verdict == "unfaithful" and _blank(self.reason):
             raise ValueError("an unfaithful verdict must record why")
         return self
 
@@ -114,12 +119,19 @@ class Audit(FrozenModel):
 
     @model_validator(mode="after")
     def _broken_needs_a_note(self) -> Audit:
-        if self.verdict == "broken" and not (self.note or "").strip():
+        if self.verdict == "broken" and _blank(self.note):
             raise ValueError("a broken verdict must record why")
         return self
 
 
 class Entry(FrozenModel):
+    """One corpus statement, exactly as a shard stores it.
+
+    The Lean it poses (`name`, `binders`, `conclusion`, `imports`), the claim
+    a model is handed (`input`), its classification and provenance, and its
+    review state. Each validator below is one rule of the schema.
+    """
+
     id: str = Field(pattern=SLUG.pattern)
     input: str = Field(min_length=1)
     name: str = Field(pattern=IDENT.pattern)
@@ -165,16 +177,16 @@ class Entry(FrozenModel):
 
     @model_validator(mode="after")
     def _reasons_accompany_the_states_that_need_them(self) -> Entry:
-        if self.status == "retired" and not (self.retired_reason or "").strip():
+        if self.status == "retired" and _blank(self.retired_reason):
             raise ValueError("a retired entry must record why")
         if self.arxiv_override is not None:
-            if not (self.override_reason or "").strip():
+            if _blank(self.override_reason):
                 raise ValueError("an arxiv_override must record why")
             if self.arxiv_override not in taxonomy.arxiv_classes():
                 raise ValueError(
                     f"arxiv_override outside the mapping codomain: {self.arxiv_override!r}"
                 )
-        if self.witness is None and not (self.witness_note or "").strip():
+        if self.witness is None and _blank(self.witness_note):
             raise ValueError("witness: null must record why no witness can be produced")
         return self
 
@@ -182,7 +194,7 @@ class Entry(FrozenModel):
     def _authored_entries_are_self_describing_and_carry_no_fixtures(self) -> Entry:
         if self.occurrences:
             return self
-        if not (self.rationale or "").strip():
+        if _blank(self.rationale):
             raise ValueError("an entry with no occurrences must record a rationale (spec 2.2)")
         if self.fixtures:
             raise ValueError(
@@ -295,38 +307,36 @@ class Entry(FrozenModel):
 
 
 class ProblemSet(FrozenModel):
+    """A whole problem list, checked for what no single entry can check alone.
+
+    Ids and Lean names are unique across the list, and every twin perturbs a
+    true entry of the same list in that entry's own field.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True, ignored_types=(cached_property,))
 
     schema_version: Literal[2] = 2
     entries: tuple[Entry, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _consistent(self) -> ProblemSet:
+    def _ids_and_names_are_unique(self) -> ProblemSet:
         for label, seen in (("id", [e.id for e in self.entries]),
                             ("name", [e.name for e in self.entries])):
             dupes = sorted(value for value, count in Counter(seen).items() if count > 1)
             if dupes:
                 raise ValueError(f"duplicate {label}: {', '.join(dupes)}")
-        by_id = {e.id: e for e in self.entries}
-        for entry in self.entries:
-            if entry.expected == "true" and entry.twin_of is not None:
-                raise ValueError(f"{entry.id}: a true entry has no twin_of")
-            if entry.expected == "false":
-                target = by_id.get(entry.twin_of or "")
-                if target is None:
-                    raise ValueError(f"{entry.id}: twin_of must name an entry in the list")
-                if target.expected != "true":
-                    raise ValueError(f"{entry.id}: twin_of must name a true entry, not a twin")
-                if entry.msc[0] != target.msc[0]:
-                    raise ValueError(
-                        f"{entry.id}: a twin is in the same field as the statement it perturbs; "
-                        f"{entry.msc[0]} drifts from {target.msc[0]}"
-                    )
         return self
 
-    def by_id(self, id: str) -> Entry:
+    @model_validator(mode="after")
+    def _twins_perturb_a_true_entry_in_its_field(self) -> ProblemSet:
+        by_id = {e.id: e for e in self.entries}
+        for entry in self.entries:
+            _check_twin_of(entry, by_id)
+        return self
+
+    def by_id(self, entry_id: str) -> Entry:
         """O(1): a linear scan here is quadratic when a caller loops over it."""
-        return self.index[id]
+        return self.index[entry_id]
 
     @cached_property
     def index(self) -> dict[str, Entry]:
@@ -340,6 +350,24 @@ class ProblemSet(FrozenModel):
     @property
     def twins(self) -> tuple[Entry, ...]:
         return tuple(e for e in self.entries if e.expected == "false")
+
+
+def _check_twin_of(entry: Entry, by_id: dict[str, Entry]) -> None:
+    """A true entry names no twin; a twin names a true entry of the list, in that entry's field."""
+    if entry.expected == "true":
+        if entry.twin_of is not None:
+            raise ValueError(f"{entry.id}: a true entry has no twin_of")
+        return
+    target = by_id.get(entry.twin_of or "")
+    if target is None:
+        raise ValueError(f"{entry.id}: twin_of must name an entry in the list")
+    if target.expected != "true":
+        raise ValueError(f"{entry.id}: twin_of must name a true entry, not a twin")
+    if entry.msc[0] != target.msc[0]:
+        raise ValueError(
+            f"{entry.id}: a twin is in the same field as the statement it perturbs; "
+            f"{entry.msc[0]} drifts from {target.msc[0]}"
+        )
 
 
 def sha256_of(path: Path) -> str:
