@@ -1,21 +1,34 @@
 /* One theme, two palettes, a pages-first workbench.
  *
  * Every colour below is a variable and every variable is defined twice: once
- * for light, once under `prefers-color-scheme: dark`. Nothing here loads a
- * font from anywhere -- the page runs under `font-src 'self'`, so the body
- * text is a serif system stack (no download) and the only bundled faces are
- * KaTeX's own, which Vite emits beside the CSS that asks for them.
+ * for light, once under `prefers-color-scheme: dark` (`styles.test.mjs`
+ * fails a colour token that has only one). Nothing here loads a font from
+ * anywhere -- the page runs under `font-src 'self'` -- so all three stacks are
+ * system faces: `--sans` (a serif, despite the name) for prose, `--mono` for
+ * identifiers, code and figures, and `--ui` for chrome -- navigation,
+ * buttons, labels, table heads -- where a serif at 11-13px reads worse than
+ * the platform's own sans. The only bundled faces are KaTeX's own, which Vite
+ * emits beside the CSS that asks for them.
+ *
+ * Contrast: `--fg` and `--muted` both clear 4.5:1 on `--bg` and `--panel` in
+ * both palettes (`--muted` also on the 18% accent tint a selected row wears);
+ * `--border` is for rules and cards, `--border-strong` (3:1) for the edge of
+ * a control a person has to find.
  */
 
 :root {
   --bg: #e4e8de;
   --panel: #eceee6;
   --fg: #1e2a24;
-  --muted: #5f6b62;
+  --muted: #4c5850;
   --accent: #2e6a55;
   --error: #9a3a34;
-  --warning: #86620a;
-  --border: #c6cdc0;
+  --warning: #7a5906;
+  --border: #aeb7a8;
+  --border-strong: #76817a;
+  /* Accent pushed toward the text colour, so the ring is a step further from
+     the background than the accent itself in either palette. */
+  --focus: color-mix(in srgb, var(--accent) 80%, var(--fg));
   --result: #cfdfd2;
   --research: #e2dbc2;
   --concept: #d2d9e2;
@@ -23,7 +36,16 @@
   --other: #d8dcd2;
   --r: 3px;
   --r2: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --control-h: 32px;
+  --control-h-sm: 24px;
   --sans: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
   --math: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Times New Roman", serif;
   color-scheme: light;
@@ -34,11 +56,13 @@
     --bg: #1b241f;
     --panel: #1f2923;
     --fg: #ece5d3;
-    --muted: #a49d8b;
+    --muted: #b5ae9c;
     --accent: #a8d3c2;
     --error: #e8a19a;
     --warning: #e2c778;
-    --border: #2e3a33;
+    --border: #3c4a42;
+    --border-strong: #6c7b72;
+    --focus: color-mix(in srgb, var(--accent) 80%, var(--fg));
     --result: #2c4a3c;
     --research: #4a4531;
     --concept: #33415a;
@@ -63,29 +87,53 @@ body,
 }
 
 body {
+  /* `accent-color` inherits, so every checkbox, radio and progress bar takes
+     the palette's accent without a rule of its own. */
+  accent-color: var(--accent);
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.5 var(--sans);
+  font: 14px/1.5 var(--sans);
 }
 
 /* -- workbench base type -------------------------------------------------- */
 
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+
+/* One ring for everything a keyboard can reach. A component that draws its
+   own focus (the composer's accent border, the Ledger graph's stroke) says so
+   in its own rule. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button,
+label {
+  font-family: var(--ui);
+}
+
+summary {
+  cursor: pointer;
+}
+
 .section-label {
   color: var(--muted);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.08em;
+  font: 600 11px/1.3 var(--ui);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .page-title {
-  font-size: 16px;
-  font-weight: 600;
+  font: 600 18px/1.3 var(--ui);
 }
 
 th {
   border-bottom: 1px solid color-mix(in srgb, var(--fg) 30%, transparent);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.06em;
+  font: 600 11px/1.3 var(--ui);
+  letter-spacing: 0.04em;
   text-align: left;
   text-transform: uppercase;
 }
@@ -94,10 +142,256 @@ td {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
-pre,
-textarea,
-input {
-  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+.visually-hidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* -- controls: buttons, fields, disclosures --------------------------------
+ * The one set every page assembles its controls from. The element rules for
+ * `input`, `select` and `textarea` sit inside `:where()`, so they carry no
+ * specificity: the composer, the editor and every page's own compact input
+ * keep whatever their class says and pick up only what it leaves unsaid.
+ * Checkboxes, radios, file pickers and input-buttons keep the platform's
+ * drawing. */
+
+:where(
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]),
+    select,
+    textarea
+  ) {
+  background-color: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r2);
+  color: var(--fg);
+  font: 13px/1.4 var(--ui);
+  max-width: 100%;
+  padding: 0 var(--space-2);
+}
+
+:where(
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]),
+    select:not([multiple], [size])
+  ) {
+  height: var(--control-h);
+}
+
+:where(select[multiple], select[size]) {
+  padding: var(--space-1);
+}
+
+/* Mono, like the composer: what goes in a text area here is TeX, Lean, a
+   command or an identifier list far more often than it is prose. */
+:where(textarea) {
+  font: 13px/1.5 var(--mono);
+  min-height: calc(2 * var(--control-h));
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* Not inside `:where()`: a page's compact input sets its own border colour,
+   and focus should still show on it. */
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"], [type="submit"], [type="button"], [type="reset"], [type="image"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+
+:where(input, select, textarea):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Secondary is the default; `--primary` is the one action a form exists
+   for, `--quiet` an aside drawn as text, `--danger` anything that abandons,
+   cancels or deletes. Each modifier's hover comes after `.button:hover`,
+   which would otherwise repaint it. */
+.button {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r2);
+  color: var(--fg);
+  cursor: pointer;
+  display: inline-flex;
+  font: 500 13px/1.2 var(--ui);
+  gap: var(--space-1);
+  justify-content: center;
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-3);
+  text-align: center;
+  text-decoration: none;
+}
+
+.button:hover:enabled {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border-color: var(--accent);
+}
+
+.button:active:enabled {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
+.button:disabled,
+.button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.button--yes {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.button--primary:hover:enabled,
+.button--primary:active:enabled {
+  background: color-mix(in srgb, var(--accent) 82%, var(--fg));
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--fg));
+}
+
+.button--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.button--quiet:hover:enabled,
+.button--quiet:active:enabled {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: transparent;
+}
+
+.button--danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.button--danger:hover:enabled,
+.button--danger:active:enabled {
+  background: color-mix(in srgb, var(--error) 10%, var(--panel));
+  border-color: var(--error);
+}
+
+.button--small {
+  font-size: 12px;
+  min-height: var(--control-h-sm);
+  padding: 2px var(--space-2);
+}
+
+/* A labelled control: the label above, the control, then a hint. The label
+   is a real `<label>` (or the `<legend>` of a fieldset), never a
+   placeholder standing in for one. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.field__label {
+  color: var(--fg);
+  font: 600 12px/1.3 var(--ui);
+}
+
+.field__control {
+  width: 100%;
+}
+
+.field__hint {
+  color: var(--muted);
+  font: 12px/1.4 var(--ui);
+}
+
+/* A `<details>` drawn as a card whose summary is the whole clickable header
+   row, with one rotating marker in place of the platform's triangle. The
+   summary bleeds to the card's edges (negative margin) so its hover and
+   divider span the card while the body keeps the card's padding. */
+.wb-disclosure {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+
+.wb-disclosure[open] {
+  padding-bottom: var(--space-3);
+}
+
+.wb-disclosure > summary {
+  align-items: center;
+  border-radius: var(--r2);
+  display: flex;
+  font: 600 13px/1.3 var(--ui);
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0 calc(-1 * var(--space-3));
+  min-height: calc(var(--control-h) + var(--space-2));
+  padding: var(--space-2) var(--space-3);
+  user-select: none;
+}
+
+.wb-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.wb-disclosure > summary::before {
+  color: var(--muted);
+  content: "\25B8";
+  content: "\25B8" / "";
+  display: inline-block;
+  flex: none;
+  /* A 1em square with the glyph centred in it, so the rotation turns the
+     glyph in place instead of swinging it off the text's centre line. */
+  height: 1em;
+  line-height: 1;
+  text-align: center;
+  transition: transform 120ms ease;
+  width: 1em;
+}
+
+.wb-disclosure > summary:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+/* Inside the card's border rather than across it. */
+.wb-disclosure > summary:focus-visible {
+  outline-offset: -2px;
+}
+
+.wb-disclosure[open] > summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r2) var(--r2) 0 0;
+  margin-bottom: var(--space-3);
+}
+
+.wb-disclosure[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-disclosure > summary::before {
+    transition: none;
+  }
 }
 
 /* -- the model picker ---------------------------------------------------- */
@@ -113,6 +407,10 @@ input {
   padding: 2px 6px;
 }
 
+select.picker {
+  height: var(--control-h-sm);
+}
+
 .picker:disabled {
   cursor: not-allowed;
   opacity: 0.6;
@@ -125,6 +423,7 @@ input {
   color: var(--fg);
   font-family: var(--mono);
   font-size: 12px;
+  height: var(--control-h-sm);
   padding: 2px 6px;
 }
 
@@ -277,7 +576,7 @@ input {
 }
 
 .prompt__body:focus {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 4px;
 }
 
@@ -423,31 +722,6 @@ input {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-}
-
-.button {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  padding: 4px 14px;
-}
-
-.button:hover:enabled {
-  border-color: var(--accent);
-}
-
-.button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.button--yes {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* -- shared panel notes and errors ---------------------------------------
@@ -742,6 +1016,7 @@ input {
 
 .wb-toplinks {
   display: flex;
+  font-family: var(--ui);
   gap: 2px;
 }
 
@@ -760,7 +1035,7 @@ input {
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
-  font-size: 13px;
+  font: 13px var(--ui);
   gap: 2px;
   padding: 4px 10px 0;
 }
@@ -788,7 +1063,7 @@ input {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  font: 12px var(--mono);
+  font: 12px var(--ui);
   margin-left: auto;
   padding: 5px 10px;
 }
@@ -1048,11 +1323,12 @@ input {
 
 .wb-switcher__button {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   cursor: pointer;
   font: 12px var(--mono);
+  min-height: var(--control-h-sm);
   padding: 1px 8px;
 }
 
@@ -1076,10 +1352,10 @@ input {
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   display: grid;
-  font: 600 10px var(--mono);
+  font: 600 11px var(--ui);
   gap: 0 16px;
   grid-template-columns: 170px minmax(0, 1fr);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   margin-bottom: 4px;
   padding: 4px 12px 6px;
   text-transform: uppercase;
@@ -1144,10 +1420,11 @@ input {
 
 .wb-switcher__input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   font: 12px var(--mono);
+  height: var(--control-h-sm);
   padding: 1px 6px;
 }
 
@@ -1425,7 +1702,7 @@ input {
   border-bottom: 2px solid transparent;
   color: var(--muted);
   cursor: pointer;
-  font: 12px var(--mono);
+  font: 12px var(--ui);
   padding: 2px 8px;
 }
 
@@ -1875,7 +2152,7 @@ input {
   align-items: center;
   display: flex;
   gap: 2px;
-  font-size: 12px;
+  font: 12px var(--ui);
 }
 
 .wb-ledger__toggle-btn {
@@ -2001,10 +2278,11 @@ input {
 
 .wb-ledger__filter select {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   color: var(--fg);
   font: inherit;
+  height: var(--control-h-sm);
   padding: 1px 6px;
 }
 
@@ -2099,8 +2377,8 @@ input {
 
 .wb-files__tree-head {
   color: var(--muted);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.08em;
+  font: 600 11px/1.3 var(--ui);
+  letter-spacing: 0.06em;
   margin-bottom: 2px;
   text-transform: uppercase;
 }
@@ -2701,11 +2979,12 @@ input {
 
 .wb-editor__button {
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   cursor: pointer;
-  font: inherit;
+  font: 12px var(--ui);
+  min-height: var(--control-h-sm);
   padding: 2px 10px;
 }
 
@@ -2824,11 +3103,12 @@ input {
 
 .wb-rail__input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   color: var(--fg);
   flex: 1 1 auto;
   font: 11px var(--mono);
+  height: var(--control-h-sm);
   min-width: 0;
   padding: 3px 8px;
 }
@@ -2992,8 +3272,8 @@ input {
 
 .wb-spend__figure-name {
   color: var(--muted);
-  font: 600 10px var(--mono);
-  letter-spacing: 0.06em;
+  font: 600 11px var(--ui);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -3019,7 +3299,7 @@ input {
 }
 
 .wb-ledger__node:focus-visible rect {
-  stroke: var(--accent);
+  stroke: var(--focus);
   stroke-width: 3;
 }
 button.wb-ledger__version-row {
@@ -3030,6 +3310,6 @@ button.wb-ledger__version-row {
   cursor: pointer;
 }
 button.wb-ledger__version-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

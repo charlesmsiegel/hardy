@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build && node notices.mjs",
     "smoke": "npm test && node smoke.mjs",
-    "test": "node src/markdown.test.mjs && node src/files/Editor.test.mjs && node src/workbench/SemanticTarget.test.mjs && node src/workbench/ProjectWorkflow.test.mjs"
+    "test": "node src/styles.test.mjs && node src/markdown.test.mjs && node src/files/Editor.test.mjs && node src/workbench/SemanticTarget.test.mjs && node src/workbench/ProjectWorkflow.test.mjs"
   },
   "dependencies": {
     "dagre": "^0.8.5",
