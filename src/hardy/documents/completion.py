@@ -25,18 +25,18 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from hardy.documents.syntax import (
-    INCLUSION,
+from hardy.documents.scanner import (
     INLINE_VERBATIM,
-    ROOT_DOCUMENT,
     Conditionals,
     _executed_line,
     _MacroState,
     _next_conditional,
+    _Purpose,
+    _Reading,
     _tex_lines,
-    read_conditionals,
     uncommented,
 )
+from hardy.documents.syntax import INCLUSION, ROOT_DOCUMENT, read_conditionals
 from hardy.formal.syntax import COMMAND, normalise_lean, strip_comments
 
 # Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
@@ -257,8 +257,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
                     collected.append((offset, block))
 
             visible, environment, _, _ = _executed_line(
-                line, macro_state, preserve=True, stop_false=True, conditionals=conditionals,
-                inline=capture_inline,
+                line, macro_state, _Reading(_Purpose.DISPLAY, conditionals, capture_inline)
             )
             opening = OPENING.match(line, len(visible)) if environment is not None else None
             # A transforming block still *ends* where it ends -- the scan has to
