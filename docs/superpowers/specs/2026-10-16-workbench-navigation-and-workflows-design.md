@@ -60,9 +60,15 @@ command and HTTP route against the client found:
    - *Record:* supplied arguments and revisions, obligations.
 
    The page lists the groups on the left and draws one form at a time on the
-   right, with the capability status beside it. A form's feedback is always
-   visible while that form is open. Ledger keeps its list, graph and item pane
-   as its whole page, with a "New…" menu that links into Workflows.
+   right, with the capability status beside it. Every form stays mounted
+   while the page is open and only the selected one is shown, so switching
+   between forms never drops a pending request or the outcome it returned; a
+   form's feedback is always visible while that form is selected. Leaving the
+   page unmounts the forms, as leaving Ledger does today, and does not stop a
+   run: while a request is pending the form says so, and names where the
+   run's record will appear (workflow history, the intake report, the Referee
+   report). Ledger keeps its list, graph and item pane as its whole page,
+   with a "New…" menu that links into Workflows.
 4. **The missing controls**, each as sugar over a path that already exists,
    never a second path:
    - a **Stop** button whenever a turn or a command runs (`POST /api/cancel`,
@@ -78,6 +84,12 @@ command and HTTP route against the client found:
    - Jobs actions offered only in states where they apply, and a reinforcement
      amount instead of a fixed +2;
    - the structured **obligation** form;
+   - compose buttons where the page already shows the object the command
+     acts on: State, Reset… and Export on the `cas/` notebook, Export
+     session… on Home, and Finish… and Pin… on a selected delegation in Jobs.
+     Each puts the command in the composer for review, like Re-run does
+     today. Unpin is not offered: `/api/jobs` does not report a delegation's
+     pins, and offering a blind choice of pin kind would be a guess;
    - a **pending-card indicator** in the top bar that opens Chat, so an approval
      card is never visible only in a hidden dock.
 5. **A control and layout system.** One set of classes for buttons (primary,
