@@ -617,7 +617,7 @@ def test_a_detached_threads_child_is_outside_the_turns_sweeps_and_reached_by_thr
 
 def test_shutdown_sweep_also_stops_detached_job_children(tmp_path, monkeypatch):
     process = importlib.import_module('hardy.foundation.process')
-    monkeypatch.setattr(process, '_SHUTTING_DOWN', False)
+    monkeypatch.setattr(process._REGISTER, 'shutting_down', False)
     ready = tmp_path / 'ready'
     result = []
     spec = process.ProcessSpec(argv=(sys.executable, str(EMITTER), '--ready', str(ready),
@@ -639,5 +639,5 @@ def test_shutdown_sweep_also_stops_detached_job_children(tmp_path, monkeypatch):
         process.stop_thread(worker.ident)
         worker.join(10)
         process.reattach_thread(worker.ident)
-        process._SHUTTING_DOWN = False
+        process._REGISTER.shutting_down = False
         process.resume_children()

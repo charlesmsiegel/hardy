@@ -59,8 +59,8 @@ def test_a_leader_exit_does_not_end_the_descendants_budget(tmp_path, monkeypatch
             time.sleep(.01)
         # Observe the reaped leader rather than using a guessed delay.
         while time.monotonic() < until:
-            with process._RUNNING_LOCK:
-                entries = list(process._RUNNING)
+            with process._REGISTER.lock:
+                entries = list(process._REGISTER.running)
             if entries and entries[0].child.poll() is not None:
                 presses.append(process.interrupt_children())
                 if stop == 'escalate':
