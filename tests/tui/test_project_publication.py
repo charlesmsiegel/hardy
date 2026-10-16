@@ -134,7 +134,7 @@ async def test_publication_keeps_same_batch_escape_level_from_shell_admission(se
     checked = threading.Event()
     observed = []
     def check(*args, **kwargs):
-        observed.append(process._STOP_LEVEL)
+        observed.append(process._REGISTER.stop_level)
         checked.set()
         return ToolResult(False, "compiler cancelled before launch")
     monkeypatch.setattr(chat.latex, "check", check)

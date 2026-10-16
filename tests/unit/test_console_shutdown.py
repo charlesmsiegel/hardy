@@ -119,7 +119,7 @@ def test_a_concurrent_resume_cannot_reopen_child_creation_after_shutdown(tmp_pat
 
     from hardy.foundation import process
 
-    monkeypatch.setattr(process, "_SHUTTING_DOWN", False)
+    monkeypatch.setattr(process._REGISTER, "shutting_down", False)
     try:
         process.shutdown_children()
         process.resume_children()  # a turn already past its closing check
@@ -130,7 +130,7 @@ def test_a_concurrent_resume_cannot_reopen_child_creation_after_shutdown(tmp_pat
         assert child.interrupted
         assert child.stdout == ""
     finally:
-        process._SHUTTING_DOWN = False
+        process._REGISTER.shutting_down = False
         process.resume_children()
 
 
