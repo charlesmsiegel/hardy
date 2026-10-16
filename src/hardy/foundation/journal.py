@@ -15,7 +15,7 @@ Replay is O(history) by design: there is no cache or second copy to repair.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -30,6 +30,9 @@ from hardy.foundation.values import json_digest
 
 SCHEMA = "hardy.journal/v1"
 LOCK = "writer.lock"
+# What every transaction file carries, and what each record inside it carries.
+_ENVELOPE = frozenset({"schema", "sequence", "previous", "records", "digest"})
+_RECORD_ENVELOPE = frozenset({"type", "value", "digest"})
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -44,12 +47,19 @@ class StaleRevision(JournalError):
 
 @dataclass(frozen=True)
 class JournalSnapshot:
+    """A journal's records at one revision, and the digest of the transaction that ended there.
+
+    `head_digest` is None for the empty journal, and for the unwritten state
+    `append` hands its validator.
+    """
+
     records: tuple[BaseModel, ...] = ()
     revision: int = 0
     head_digest: str | None = None
     _by_type: dict[type, tuple[BaseModel, ...]] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def of(self, record_type: type[T]) -> tuple[T, ...]:
+        """The records of exactly `record_type`, in append order. Subclasses are not included."""
         cached = self._by_type.get(record_type)
         if cached is None:
             cached = tuple(r for r in self.records if type(r) is record_type)
@@ -67,6 +77,7 @@ class _ReadProjection:
 
 
 def record_digest(record: BaseModel) -> str:
+    """The digest a record is stored under, bound to its type's name as well as its value."""
     return json_digest({
         "schema": f"hardy.journal/{type(record).__name__}/v1",
         "value": record.model_dump(mode="json"),
@@ -84,31 +95,66 @@ def verify_chain(directory: Path) -> int:
     record envelopes' shape, not on one schema string.
     """
     directory = Path(directory)
-    names = sorted(p.name for p in directory.iterdir() if p.suffix.lower() == ".json") if directory.is_dir() else []
+    names = _transaction_names(directory) if directory.is_dir() else []
     previous: str | None = None
     for sequence, name in enumerate(names, 1):
-        if name != f"{sequence:020d}.json":
+        if name != _transaction_name(sequence):
             raise JournalError(f"journal sequence gap or invalid filename at {name}")
-        try:
-            event = json.loads((directory / name).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise JournalError(f"journal file {name} is not readable JSON") from error
-        if not isinstance(event, dict) or not {"schema", "sequence", "previous", "records", "digest"} <= set(event):
-            raise JournalError(f"invalid journal transaction envelope in {name}")
-        if not isinstance(event["schema"], str) or not event["schema"]:
-            raise JournalError("unsupported journal schema")
-        payload = {k: v for k, v in event.items() if k != "digest"}
-        if event["digest"] != json_digest(payload):
+        event = _load_any_envelope(directory, name)
+        if not _seals_its_content(event):
             raise JournalError(f"journal transaction content digest mismatch in {name}")
-        if type(event["sequence"]) is not int or event["sequence"] != sequence or event["previous"] != previous:
+        if not _follows(event, sequence, previous):
             raise JournalError(f"journal transaction history mismatch at {name}")
-        if not isinstance(event["records"], list) or any(not isinstance(e, dict) or not {"type", "value"} <= set(e) for e in event["records"]):
+        if not isinstance(event["records"], list) or not all(_is_record_envelope(e) for e in event["records"]):
             raise JournalError(f"invalid journal record envelope in {name}")
         previous = event["digest"]
     return len(names)
 
 
+def _load_any_envelope(directory: Path, name: str) -> dict:
+    """One transaction file read as JSON and checked for the envelope every chain writer uses."""
+    try:
+        event = json.loads((directory / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise JournalError(f"journal file {name} is not readable JSON") from error
+    if not isinstance(event, dict) or not _ENVELOPE.issubset(event):
+        raise JournalError(f"invalid journal transaction envelope in {name}")
+    if not isinstance(event["schema"], str) or not event["schema"]:
+        raise JournalError("unsupported journal schema")
+    return event
+
+
+def _is_record_envelope(entry: object) -> bool:
+    return isinstance(entry, dict) and {"type", "value"} <= set(entry)
+
+
+def _transaction_names(directory: Path) -> list[str]:
+    """The transaction files in `directory`, in the order their names sort."""
+    return sorted(path.name for path in directory.iterdir() if path.suffix.lower() == ".json")
+
+
+def _transaction_name(sequence: int) -> str:
+    return f"{sequence:020d}.json"
+
+
+def _seals_its_content(event: dict) -> bool:
+    """Whether the transaction's digest is the digest of everything else in it."""
+    payload = {k: v for k, v in event.items() if k != "digest"}
+    return event["digest"] == json_digest(payload)
+
+
+def _follows(event: dict, sequence: int, previous: str | None) -> bool:
+    """Whether the transaction is number `sequence` and names `previous` as the one before it."""
+    return type(event["sequence"]) is int and event["sequence"] == sequence and event["previous"] == previous
+
+
 class Journal:
+    """A journal directory read and appended through one typed record schema.
+
+    `types` maps the stored type name to the model it is read back as; a
+    record of any other type is refused on both paths.
+    """
+
     def __init__(self, directory: Path, *, types: Mapping[str, type[BaseModel]], lock_timeout: float = 30.0) -> None:
         self.directory = Path(directory)
         self._types = dict(types)
@@ -125,7 +171,7 @@ class Journal:
         return projection is not None and projection.active
 
     @contextmanager
-    def read_projection(self):
+    def read_projection(self) -> Iterator[JournalSnapshot]:
         """One fully verified snapshot for one pure read, without retaining its lock.
 
         Nested readers share only this request's records. A new outer read
@@ -148,6 +194,7 @@ class Journal:
         return WriteGuard(self.directory, create=create)
 
     def read(self) -> JournalSnapshot:
+        """The verified history, or the held snapshot inside a read projection."""
         projection = self._projection.get()
         if projection is not None and projection.active:
             return projection.snapshot
@@ -162,45 +209,30 @@ class Journal:
     def _replay(self, guard: WriteGuard) -> JournalSnapshot:
         records: list[BaseModel] = []
         previous: str | None = None
-        events = sorted(p.name for p in guard.directory.iterdir() if p.suffix.lower() == ".json")
-        for sequence, name in enumerate(events, 1):
-            if name != f"{sequence:020d}.json":
+        names = _transaction_names(guard.directory)
+        for sequence, name in enumerate(names, 1):
+            if name != _transaction_name(sequence):
                 raise JournalError("journal sequence gap or invalid filename")
-            with guard.open(name, "r", encoding="utf-8") as handle:
-                try:
-                    event = json.load(handle)
-                except ValueError as error:
-                    raise JournalError(f"journal file {name} is not JSON") from error
-            if not isinstance(event, dict) or set(event) != {"schema", "sequence", "previous", "records", "digest"}:
-                raise JournalError("invalid journal transaction envelope")
-            if event["schema"] != SCHEMA:
-                raise JournalError("unsupported journal schema")
-            payload = {k: v for k, v in event.items() if k != "digest"}
-            if event["digest"] != json_digest(payload):
+            event = _load_envelope(guard, name)
+            if not _seals_its_content(event):
                 raise JournalError("journal transaction content digest mismatch")
-            if type(event["sequence"]) is not int or event["sequence"] != sequence or event["previous"] != previous:
+            if not _follows(event, sequence, previous):
                 raise JournalError("journal transaction history mismatch")
             if not isinstance(event["records"], list):
                 raise JournalError("journal records must be a list")
-            for entry in event["records"]:
-                if not isinstance(entry, dict) or set(entry) != {"type", "value", "digest"}:
-                    raise JournalError("invalid journal record envelope")
-                record_type = self._types.get(entry["type"])
-                if record_type is None:
-                    raise JournalError(f"unsupported journal record type {entry['type']!r}")
-                try:
-                    record = record_type.model_validate(entry["value"])
-                except ValueError as error:
-                    raise JournalError(f"journal record of type {entry['type']!r} is invalid") from error
-                if record_digest(record) != entry["digest"]:
-                    raise JournalError("journal record digest mismatch")
-                records.append(record)
+            records.extend(_read_record(entry, self._types) for entry in event["records"])
             previous = event["digest"]
-        return JournalSnapshot(tuple(records), len(events), previous)
+        return JournalSnapshot(tuple(records), len(names), previous)
 
     def append(
         self, records: Iterable[BaseModel], *, expected_revision: int, validate: Validator | None = None,
     ) -> JournalSnapshot:
+        """Append `records` as one transaction on top of `expected_revision`, or refuse.
+
+        `StaleRevision` when the journal has moved past what the caller read.
+        `validate` sees the history before and after, under the writer lock,
+        and refuses by raising; nothing is written unless it returns.
+        """
         self.assert_writable()
         values: list[BaseModel] = []
         for record in records:
@@ -231,5 +263,35 @@ class Journal:
             digest = json_digest(payload)
             event = {**payload, "digest": digest}
             content = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
-            guard.write_bytes(f"{after.revision:020d}.json", content)
+            guard.write_bytes(_transaction_name(after.revision), content)
             return JournalSnapshot(after.records, after.revision, digest)
+
+
+def _load_envelope(guard: WriteGuard, name: str) -> dict:
+    """One transaction file read through `guard`, in exactly this journal's envelope."""
+    with guard.open(name, "r", encoding="utf-8") as handle:
+        try:
+            event = json.load(handle)
+        except ValueError as error:
+            raise JournalError(f"journal file {name} is not JSON") from error
+    if not isinstance(event, dict) or set(event) != _ENVELOPE:
+        raise JournalError("invalid journal transaction envelope")
+    if event["schema"] != SCHEMA:
+        raise JournalError("unsupported journal schema")
+    return event
+
+
+def _read_record(entry: object, types: Mapping[str, type[BaseModel]]) -> BaseModel:
+    """One stored record, read back as its registered type and checked against its digest."""
+    if not isinstance(entry, dict) or set(entry) != _RECORD_ENVELOPE:
+        raise JournalError("invalid journal record envelope")
+    record_type = types.get(entry["type"])
+    if record_type is None:
+        raise JournalError(f"unsupported journal record type {entry['type']!r}")
+    try:
+        record = record_type.model_validate(entry["value"])
+    except ValueError as error:
+        raise JournalError(f"journal record of type {entry['type']!r} is invalid") from error
+    if record_digest(record) != entry["digest"]:
+        raise JournalError("journal record digest mismatch")
+    return record
