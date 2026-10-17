@@ -1,10 +1,11 @@
 """One rule for cutting an observation down to what a model can be handed.
 
 Everything Hardy returns to a model is bounded -- Lean output keeps its tail
-(`lean.LeanTools._observe`), a CAS value too large to return spills to an
-artifact (`cas_tools`), a listing stopped returning file bodies
-(`chat.MathematicsSession._workspace_listing`) -- and every one of those
-bounds was re-derived where it was needed. Which end to keep, what to count,
+(`formal/lean.py`'s `LeanTools._observe`), a CAS value too large to return
+spills to an artifact (`algebra/tools.py`), a listing stopped returning file
+bodies (`MathematicsSession._workspace_listing` in
+`workflows/interactive/session.py`) -- and every one of those bounds was
+re-derived where it was needed. Which end to keep, what to count,
 and how to tell the model it is looking at a fragment are not per-call-site
 questions, and answering them per call site is how `read_file` came to be the
 one tool result with no bound at all.
@@ -29,8 +30,9 @@ from typing import Literal
 
 # A file read that reaches either of these is long enough that the model
 # should be choosing which part it wants. The byte figure matches the default
-# `model_observation_bytes` in `domain.Limits`; the line figure is there for
-# the file that is 20,000 short lines and well under the byte cap.
+# `model_observation_bytes` in `workflows.contracts.RunLimits`; the line
+# figure is there for the file that is 20,000 short lines and well under the
+# byte cap.
 DEFAULT_LINE_LIMIT = 2_000
 DEFAULT_BYTE_LIMIT = 32 * 1024
 
