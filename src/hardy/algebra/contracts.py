@@ -10,6 +10,8 @@ from pydantic import Field, model_validator
 from hardy.foundation.values import FrozenModel
 
 HEADER_BYTES = 10
+# The largest cell source a kernel is sent, and so the largest cell file.
+SOURCE_LIMIT_BYTES = 64 * 1024
 MERGED_CAPTURE_NOTE = (
     "Sentinel output combines stdout and stderr in the stdout transcript; "
     "the original stream origin is unavailable."
@@ -22,6 +24,9 @@ MERGED_CAPTURE_NOTE = (
 SENTINEL_BEGIN = "«hardy-begin:{nonce}»"
 SENTINEL_END = "«hardy-end:{nonce}»"
 BackendName = Literal["sympy", "singular", "macaulay2"]
+# Who asked for a cell, or a reset: the model through a tool, or the human
+# typing at `/cas`. The record keeps it so the timeline says why state changed.
+Author = Literal["model", "human"]
 
 class ReadFailure(Enum):
     """Distinguishable non-answers from a read of one cell's reply."""
@@ -107,7 +112,7 @@ class CellRecord(FrozenModel):
     # reset survives a restart: it is on every record rather than inferred from
     # a sentinel line that a reader would have to know how to recognise.
     segment: int
-    author: Literal["model", "human"]
+    author: Author
     source: str
     # The file under `cas/` this cell was read from, relative to that
     # directory, or "" on a record written before cells were files. `source`
