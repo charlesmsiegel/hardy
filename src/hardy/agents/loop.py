@@ -22,8 +22,9 @@ this side of the boundary.
 What has *not* moved is the thing that never had: Hardy runs every tool. The
 loop hands a name and arguments to `dispatch` and does with the answer what a
 transcript says it did. It is deliberately provider-agnostic — the Anthropic
-transport lives in `api_runtime` — so the whole of the interesting behaviour
-can be tested against a scripted provider with no network at all.
+transport lives in `api` and the OpenAI-compatible ones in `openai_api` — so
+the whole of the interesting behaviour can be tested against a scripted
+provider with no network at all.
 """
 
 from __future__ import annotations

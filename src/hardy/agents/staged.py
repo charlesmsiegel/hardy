@@ -29,7 +29,7 @@ from hardy.algebra.cas import CasError
 from hardy.algebra.export import export_session
 from hardy.algebra.tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from hardy.formal.budget import CheckBudget, ReservedBudget
-from hardy.formal.contracts import FrozenClaim
+from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
 from hardy.foundation.values import ToolResult, schema_text
 from hardy.prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from hardy.workflows.contracts import ProofSubmission, RunPhase
@@ -224,7 +224,7 @@ class ClaudeStagedRuntime:
         isolated: bool = False,
         phase: RunPhase = RunPhase.PROVING,
         wall_seconds: float | None = None,
-        allowed: Sequence[Any] = (),
+        allowed: Sequence[DeclaredAssumption] = (),
     ) -> StagedThread:
         """Open one stage's thread, with the tools that stage is entitled to.
 
@@ -384,7 +384,7 @@ class ClaudeStagedRuntime:
                     )
                     # Recorded here because nowhere else records it. The
                     # runtime deliberately leaves tool *results* to the
-                    # dispatcher (see `claude_runtime._blocks`), and every
+                    # dispatcher (see `ClaudeAgentRuntime._note`), and every
                     # other tool's outcome survives in something durable --
                     # `verification.json`, the workspace tree, the CAS cell
                     # log. A ranking has no such home, so without this the

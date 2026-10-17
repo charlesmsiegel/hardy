@@ -5,9 +5,18 @@ provider implements this contract without importing the session that uses it.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Protocol, TypeVar
+
+from pydantic import BaseModel
+
+from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
+from hardy.workflows.contracts import ProofSubmission, RunPhase
+
+ThreadT = TypeVar("ThreadT")
+StageT = TypeVar("StageT", bound=BaseModel)
 
 
 class ProviderRequestTimeout(TimeoutError):
@@ -24,7 +33,8 @@ class TurnEvent:
 
     `text` events are *deltas*, for drawing only. The reply a caller keeps is
     the `reply` event's text, assembled from whole blocks -- see
-    `claude_runtime._deltas` for why consuming both would double every answer.
+    `claude.ClaudeAgentRuntime._note` for why consuming both would double
+    every answer.
     """
 
     # `notice` is Hardy's own, not the model's: what the workspace still
@@ -48,6 +58,69 @@ class ChatRuntime(Protocol):
     def stream(self, text: str) -> Iterator[TurnEvent]: ...
     def ask(self, text: str) -> str: ...
     def cancel(self) -> None: ...
+
+
+class StagedRuntime(Protocol[ThreadT]):
+    """What the staged workflow drives: one schema-validated exchange per stage.
+
+    `ProveWorkflow` and the faithfulness gate call whichever backend the wiring
+    built, so a keyword one backend lacks fails on that backend alone, and only
+    once the stage that passes it is reached -- which is how a Codex run twice
+    ended `agent_runtime_failure`. Declared here so both backends answer to one
+    signature; `tests/unit/test_staged_runtime_contract.py` holds them to it.
+
+    A thread is the backend's own handle and is only ever handed back to the
+    runtime that opened it. `bind_proof_budget`, `interrupt_cas` and
+    `escalate_cas` are capabilities a backend may lack, so the workflow asks
+    for them rather than this contract requiring them.
+    """
+
+    #: Which backend answered, recorded beside the model in every verdict.
+    backend: str
+    #: What an `isolated` thread is worth here, or None when the backend cannot
+    #: establish the reader's independence. Read and recorded, never assumed.
+    isolation_guarantee: str | None
+
+    @property
+    def usage(self) -> dict[str, Any]:
+        """The run's spend in `Usage.summary`'s shape: unstated figures are None."""
+        ...
+
+    def start(
+        self,
+        *,
+        model: str,
+        run_dir: Path,
+        claim: FrozenClaim | None,
+        isolated: bool = False,
+        phase: RunPhase = RunPhase.PROVING,
+        wall_seconds: float | None = None,
+        allowed: Sequence[DeclaredAssumption] = (),
+    ) -> ThreadT:
+        """Open one stage's thread with the tools that stage is entitled to.
+
+        Lean tools only with a `claim`, scoped to it and to the `allowed`
+        assumptions the verifier will elaborate under; none at all when
+        `isolated`. A backend that cannot honour `allowed` refuses the thread
+        rather than checking proofs in an environment the verifier will not use.
+        """
+        ...
+
+    def run_structured(self, thread: ThreadT, stage: str, prompt: str, output_type: type[StageT]) -> StageT:
+        """One exchange on `thread`, answered as `output_type` or raised as a failed stage."""
+        ...
+
+    def run_proof(self, thread: ThreadT, prompt: str) -> ProofSubmission:
+        """One proof attempt: `run_structured` for the `proof` stage."""
+        ...
+
+    def cancel(self, thread: ThreadT) -> None:
+        """Stop the turn in flight on `thread`; safe to call from any thread."""
+        ...
+
+    def close(self) -> None:
+        """Release what the run held; the workflow calls it in a `finally`."""
+        ...
 
 
 def final_text(events: Iterable[TurnEvent]) -> str:
