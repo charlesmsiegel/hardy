@@ -27,7 +27,8 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from hardy.agents.api_transport import ApiProvider
@@ -36,6 +37,9 @@ from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
 from hardy.agents.spend_budget import SpendBudget
 from hardy.agents.usage import REPORTED_COUNTERS, stated_counters
 from hardy.foundation.values import ToolResult
+
+if TYPE_CHECKING:
+    from anthropic import Anthropic
 
 BACKEND = "anthropic-api"
 
@@ -55,7 +59,8 @@ KEY_MISSING = "the API backend needs ANTHROPIC_API_KEY; the other backends need 
 DEFAULT_MAX_TOKENS = 8192
 
 
-def load_sdk() -> Any:
+def load_sdk() -> ModuleType:
+    """The Anthropic SDK, imported on first use: it is an optional install."""
     try:
         import anthropic
     except ImportError as error:  # pragma: no cover - depends on the install
@@ -249,7 +254,7 @@ class AnthropicProvider(ApiProvider):
 
     prompt_caching = True
 
-    def client(self) -> Any:
+    def client(self) -> Anthropic:
         """The SDK client, built on the first call that needs one.
 
         Lazily, and that is the point rather than an optimisation. A run whose
