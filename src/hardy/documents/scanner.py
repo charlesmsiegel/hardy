@@ -264,6 +264,13 @@ _MACRO_DEF = re.compile(
 #: arity is how this scan would start being wrong in the dangerous direction.
 _LET = re.compile(r"\\let(?![a-zA-Z])")
 
+# Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
+# these TeX is free to eat an underscore, break a caret, or swallow a brace,
+# and a statement a human "checked" against a mangled copy was not checked.
+# `alltt` and `semiverbatim` are deliberately absent: both keep TeX's grouping
+# and command characters, so a listing of `theorem f {α : Type} : ...` loses its
+# braces to grouping and shows the reader a statement Lean never saw. An
+# environment belongs here only if every Lean character survives it.
 VERBATIM_ENVIRONMENT = re.compile(
     r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim\*?|lstlisting|minted)\}"
 )
