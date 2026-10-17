@@ -22,7 +22,7 @@ import threading
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
-from copy import copy
+from dataclasses import dataclass, field
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
@@ -39,7 +39,16 @@ from hardy.foundation.values import FrozenModel, json_digest
 COUNTERS = REPORTED_COUNTERS
 
 
+#: How many tokens a tariff's prices are quoted for.
+TARIFF_TOKENS = 1_000_000
+
+
 class Tariff(FrozenModel):
+    """USD per million tokens for each counter: how admission derives a cost.
+
+    A price list frozen into the journal's policy, never an invoice.
+    """
+
     id: str = Field(min_length=1)
     input_per_million: Decimal = Field(ge=0, allow_inf_nan=False)
     output_per_million: Decimal = Field(ge=0, allow_inf_nan=False)
@@ -50,10 +59,13 @@ class Tariff(FrozenModel):
         return (counts["input_tokens"] * self.input_per_million
             + counts["output_tokens"] * self.output_per_million
             + counts["cache_creation_input_tokens"] * self.cache_write_per_million
-            + counts["cache_read_input_tokens"] * self.cache_read_per_million) / 1_000_000
+            + counts["cache_read_input_tokens"] * self.cache_read_per_million) / TARIFF_TOKENS
 
 
 class SpendPolicy(FrozenModel):
+    """What a provider budget admits: its models, its limits, and how a
+    request is quoted. Frozen into the journal's first event."""
+
     id: str = Field(min_length=1)
     models: tuple[str, ...] = Field(min_length=1)
     token_limit: int | None = Field(default=None, ge=0, strict=True)
@@ -64,6 +76,8 @@ class SpendPolicy(FrozenModel):
 
     @model_validator(mode="after")
     def configured_limits(self) -> Self:
+        """A budget limits tokens or cost, prices cost by an explicit tariff,
+        and names every model it admits."""
         if self.token_limit is None and self.cost_limit_usd is None:
             raise ValueError("provider budget requires a token or cost limit")
         if self.cost_limit_usd is not None and self.tariff is None:
@@ -86,26 +100,52 @@ class SpendLimitReached(RuntimeError):
         super().__init__(f"provider budget refused the call: {limit}")
 
 
+@dataclass
+class _Verified:
+    """The journal as verified so far, and what replaying it charged.
+
+    Replaced whole rather than patched: an external change is replayed into a
+    fresh one beside the published one, and swapped in only once replay and
+    byte hashing have both succeeded.
+    """
+
+    events: list[dict[str, Any]] = field(default_factory=list)
+    #: The stat stamp of the journal these events were read at.
+    signature: tuple[int, ...] | None = None
+    journal_hash: Any = field(default_factory=sha256)
+    #: How many events have been replayed into the fields below.
+    revision: int = 0
+    reservations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    settled: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ending: str | None = None
+    #: What admission counts: quotes, corrected by settlements.
+    spent_tokens: int = 0
+    spent_cost: Decimal = Decimal(0)
+    has_overrun: bool = False
+    #: What settlements reported, for the summary.
+    reported_tokens: int = 0
+    actual_tokens: int = 0
+    actual_cost: Decimal = Decimal(0)
+    incomplete: int = 0
+    overruns: int = 0
+
+
 class SpendBudget:
+    """One run's durable provider-call admission, kept as a hash-chained journal.
+
+    Every conversation of the run reserves before it calls and settles after;
+    the journal is the state, so several owners of one path agree, and a
+    restart resumes rather than refunds. See the module docstring for what
+    admission does and does not promise.
+    """
+
     def __init__(self, path: Path, policy: SpendPolicy, *, read_only: bool = False):
         self.path = Path(path)
         self.policy = SpendPolicy.model_validate(policy.model_dump())
         self.guard = WriteGuard(self.path.parent, create=not read_only)
         self._read_only = read_only
         self._lock = threading.Lock()
-        self._events = []
-        self._signature = None
-        self._verified_state = ({}, {}, None)
-        self._state_revision = 0
-        self._journal_hash = sha256()
-        self._spent_tokens = 0
-        self._spent_cost = Decimal(0)
-        self._has_overrun = False
-        self._reported_tokens = 0
-        self._actual_tokens = 0
-        self._actual_cost = Decimal(0)
-        self._incomplete = 0
-        self._overruns = 0
+        self._verified = _Verified()
         with self._lock, self._file_lock():
             if not self.path.exists() and not read_only:
                 self._append([], "start", {"schema": "hardy.provider-budget/v1", "policy": self.policy.model_dump(mode="json")})
@@ -120,44 +160,30 @@ class SpendBudget:
         estimated_input = math.ceil(Decimal(characters) / self.policy.input_characters_per_token) + self.policy.input_overhead_tokens
         tariff = self.policy.tariff
         cost = ((estimated_input * max(tariff.input_per_million, tariff.cache_read_per_million, tariff.cache_write_per_million)
-                 + output * tariff.output_per_million) / 1_000_000) if tariff else Decimal(0)
+                 + output * tariff.output_per_million) / TARIFF_TOKENS) if tariff else Decimal(0)
         return estimated_input + output, cost
 
     def _stamp(self):
         stat = self.guard.path(self.path.name).stat()
         return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
-    def _refresh(self):
+    def _refresh(self) -> list[dict[str, Any]]:
         stamp = self._stamp()
-        if stamp != self._signature:
+        if stamp != self._verified.signature:
             events = self._read()
-            if events[:len(self._events)] != self._events:
+            if events[:len(self._verified.events)] != self._verified.events:
                 raise ValueError("provider budget journal rewrites verified history")
             # External changes are independently verified, including the full
             # byte digest. Own appends extend both hash and state below.
             # A rejected semantic tail must not become verified history or
             # replace any charged totals. Publish the candidate only after
             # replay and byte hashing both succeed.
-            candidate = copy(self)
-            candidate._events = events
-            candidate._verified_state = ({}, {}, None)
-            candidate._state_revision = 0
-            candidate._spent_tokens = 0
-            candidate._spent_cost = Decimal(0)
-            candidate._has_overrun = False
-            candidate._reported_tokens = 0
-            candidate._actual_tokens = 0
-            candidate._actual_cost = Decimal(0)
-            candidate._incomplete = 0
-            candidate._overruns = 0
-            candidate._state(events)
-            candidate._journal_hash = sha256(candidate.guard.path(candidate.path.name).read_bytes())
-            candidate._signature = stamp
-            for name in ("_events", "_verified_state", "_state_revision", "_spent_tokens", "_spent_cost",
-                         "_has_overrun", "_reported_tokens", "_actual_tokens", "_actual_cost", "_incomplete",
-                         "_overruns", "_journal_hash", "_signature"):
-                setattr(self, name, getattr(candidate, name))
-        return self._events
+            candidate = _Verified(events=events)
+            self._replay(candidate, events)
+            candidate.journal_hash = sha256(self.guard.path(self.path.name).read_bytes())
+            candidate.signature = stamp
+            self._verified = candidate
+        return self._verified.events
 
     def _read(self) -> list[dict[str, Any]]:
         data = self.guard.path(self.path.name).read_bytes()
@@ -190,49 +216,60 @@ class SpendBudget:
             stream.write(line)
             stream.flush()
             os.fsync(stream.fileno())
-        self._events.append(event)
-        self._state(self._events)
-        self._journal_hash.update(line.encode("utf-8"))
-        self._signature = self._stamp()
+        verified = self._verified
+        verified.events.append(event)
+        self._state(verified.events)
+        verified.journal_hash.update(line.encode("utf-8"))
+        verified.signature = self._stamp()
 
     def _state(self, events: list[dict[str, Any]]) -> tuple[dict, dict, str | None]:
-        reservations, settled, ending = self._verified_state
-        for event in events[max(1, self._state_revision):]:
+        """Replay what has not been replayed yet; the reservations, the
+        settlements, and the limit that ended admission, if one did."""
+        verified = self._replay(self._verified, events)
+        return verified.reservations, verified.settled, verified.ending
+
+    def _replay(self, verified: _Verified, events: list[dict[str, Any]]) -> _Verified:
+        for event in events[max(1, verified.revision):]:
             payload = event["payload"]
             if event["kind"] == "reserve":
-                if payload["id"] in reservations:
-                    raise ValueError("duplicate provider reservation")
-                tokens, cost = self._quote(payload["input_characters"], payload["max_tokens"])
-                if (payload["model"] not in self.policy.models or payload["tokens"] != tokens or payload["cost_usd"] != str(cost)
-                        or not isinstance(payload["request_sha256"], str) or len(payload["request_sha256"]) != 64):
-                    raise ValueError("provider reservation differs from its frozen quote policy")
-                reservations[payload["id"]] = payload
-                self._spent_tokens += tokens
-                self._spent_cost += cost
+                self._replay_reservation(verified, payload)
             elif event["kind"] == "settle":
-                if payload["id"] not in reservations or payload["id"] in settled:
-                    raise ValueError("provider settlement lacks one preceding reservation")
-                if payload != self._settlement(payload["id"], payload["reported"]):
-                    raise ValueError("provider settlement differs from reported usage")
-                settled[payload["id"]] = payload
-                quote = reservations[payload["id"]]
-                tokens, cost = self._charged(quote, payload)
-                self._spent_tokens += tokens - quote["tokens"]
-                self._spent_cost += cost - Decimal(quote["cost_usd"])
-                overran = self._overran(quote, payload)
-                self._has_overrun |= overran
-                self._reported_tokens += sum(n or 0 for n in payload["reported"].values())
-                self._actual_tokens += payload["tokens"] or 0
-                self._actual_cost += Decimal(payload["cost_usd"] or "0")
-                self._incomplete += payload["tokens"] is None
-                self._overruns += payload["tokens"] is not None and overran
+                self._replay_settlement(verified, payload)
             elif event["kind"] == "deny":
-                ending = payload["limit"]
+                verified.ending = payload["limit"]
             else:
                 raise ValueError("unknown provider budget journal event")
-        self._state_revision = len(events)
-        self._verified_state = reservations, settled, ending
-        return self._verified_state
+        verified.revision = len(events)
+        return verified
+
+    def _replay_reservation(self, verified: _Verified, payload: dict[str, Any]) -> None:
+        if payload["id"] in verified.reservations:
+            raise ValueError("duplicate provider reservation")
+        tokens, cost = self._quote(payload["input_characters"], payload["max_tokens"])
+        if (payload["model"] not in self.policy.models or payload["tokens"] != tokens or payload["cost_usd"] != str(cost)
+                or not isinstance(payload["request_sha256"], str) or len(payload["request_sha256"]) != 64):
+            raise ValueError("provider reservation differs from its frozen quote policy")
+        verified.reservations[payload["id"]] = payload
+        verified.spent_tokens += tokens
+        verified.spent_cost += cost
+
+    def _replay_settlement(self, verified: _Verified, payload: dict[str, Any]) -> None:
+        if payload["id"] not in verified.reservations or payload["id"] in verified.settled:
+            raise ValueError("provider settlement lacks one preceding reservation")
+        if payload != self._settlement(payload["id"], payload["reported"]):
+            raise ValueError("provider settlement differs from reported usage")
+        verified.settled[payload["id"]] = payload
+        quote = verified.reservations[payload["id"]]
+        tokens, cost = self._charged(quote, payload)
+        verified.spent_tokens += tokens - quote["tokens"]
+        verified.spent_cost += cost - Decimal(quote["cost_usd"])
+        overran = self._overran(quote, payload)
+        verified.has_overrun |= overran
+        verified.reported_tokens += sum(n or 0 for n in payload["reported"].values())
+        verified.actual_tokens += payload["tokens"] or 0
+        verified.actual_cost += Decimal(payload["cost_usd"] or "0")
+        verified.incomplete += payload["tokens"] is None
+        verified.overruns += payload["tokens"] is not None and overran
 
     def _settlement(self, identifier: str, usage: Mapping | None) -> dict[str, Any]:
         if usage is not None and not isinstance(usage, Mapping):
@@ -282,6 +319,11 @@ class SpendBudget:
         return tokens > quoted["tokens"] or (self.policy.tariff is not None and cost > Decimal(quoted["cost_usd"]))
 
     def reserve(self, request: Mapping[str, Any]) -> str:
+        """Admit one provider call quoted from its request, or refuse it.
+
+        Returns the reservation to settle once the provider answers. A refusal
+        is journaled and raised as `SpendLimitReached`, naming the limit.
+        """
         if self._read_only:
             raise ValueError("provider budget reader cannot reserve")
         if request.get("model") not in self.policy.models:
@@ -295,15 +337,8 @@ class SpendBudget:
         tokens, cost = self._quote(len(serialized), output)
         with self._lock, self._file_lock():
             events = self._refresh()
-            reservations, settled, _ = self._state(events)
-            spent_tokens, spent_cost = self._spent_tokens, self._spent_cost
-            limit = None
-            if self.policy.token_limit is not None and spent_tokens + tokens > self.policy.token_limit:
-                limit = "token_limit"
-            elif self.policy.cost_limit_usd is not None and spent_cost + cost > self.policy.cost_limit_usd:
-                limit = "cost_limit"
-            elif self._has_overrun:
-                limit = "reservation_overrun"
+            self._state(events)
+            limit = self._refusal(tokens, cost)
             if limit:
                 self._append(events, "deny", {"limit": limit})
                 raise SpendLimitReached(limit)
@@ -312,7 +347,18 @@ class SpendBudget:
                 "input_characters": len(serialized), "max_tokens": output, "tokens": tokens, "cost_usd": str(cost)})
             return identifier
 
+    def _refusal(self, tokens: int, cost: Decimal) -> str | None:
+        """The limit that refuses a call quoted at `tokens` and `cost`, if any:
+        either limit it would cross, or an overrun already reported."""
+        verified = self._verified
+        if self.policy.token_limit is not None and verified.spent_tokens + tokens > self.policy.token_limit:
+            return "token_limit"
+        if self.policy.cost_limit_usd is not None and verified.spent_cost + cost > self.policy.cost_limit_usd:
+            return "cost_limit"
+        return "reservation_overrun" if verified.has_overrun else None
+
     def settle(self, identifier: str, usage: Mapping | None) -> None:
+        """Journal what the provider reported for one reservation; idempotent."""
         if self._read_only:
             raise ValueError("provider budget reader cannot settle")
         # A failed write leaves the reservation pending in the journal, where
@@ -330,28 +376,34 @@ class SpendBudget:
             self._append(events, "settle", value)
 
     def summary(self) -> dict[str, Any]:
+        """The budget as a run record states it, verified against the journal."""
         with self._lock, self._file_lock():
             reservations, settled, ending = self._state(self._refresh())
+            verified = self._verified
             pending = len(reservations) - len(settled)
-            unknown = pending or self._incomplete
-            tokens, cost = self._actual_tokens, self._actual_cost
+            unknown = pending or verified.incomplete
+            tokens, cost = verified.actual_tokens, verified.actual_cost
             return {"policy": self.policy.model_dump(mode="json"), "policy_sha256": self.policy.digest,
-                "journal_sha256": self._journal_hash.hexdigest(),
+                "journal_sha256": verified.journal_hash.hexdigest(),
                 "reservations": len(reservations), "pending": pending,
-                "reported_tokens": self._reported_tokens,
+                "reported_tokens": verified.reported_tokens,
                 "actual_tokens": None if unknown else tokens,
                 # Complete settlements only. A partial report whose stated
                 # counters overran its reservation is not counted here; it
                 # shows only as the "reservation_overrun" deny it causes at
                 # the next reservation, in `ending_limit`.
-                "reservation_overruns": self._overruns,
+                "reservation_overruns": verified.overruns,
                 "derived_cost_usd": str(cost) if self.policy.tariff and not unknown else None,
                 "provider_cost_usd": None, "ending_limit": ending,
                 "enforcement": "expected-spend admission; actual overrun remains possible"}
 
 
-def budget_record_issues(directory: Path, recorded: Any) -> tuple[str, ...]:
-    """Read-only cross-check against the exact journal, including missing identity."""
+def budget_record_issues(directory: Path, recorded: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """Read-only cross-check against the exact journal, including missing identity.
+
+    `recorded` is the summary a run record states, as read back from it: a
+    value of the wrong shape is an issue reported, not an error raised.
+    """
     path = directory / "provider-budget.jsonl"
     if recorded is None and not path.exists():
         return ()
@@ -375,7 +427,7 @@ def bind_spend_budget(factory: Callable, path: Path) -> Callable:
         first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
         policy = SpendPolicy.model_validate(first["payload"]["policy"])
     owner = SpendBudget(path, policy)
-    def bound(*args, **kwargs):
+    def bound(*args: Any, **kwargs: Any) -> Any:
         return factory(*args, **kwargs, spend_budget=owner)
     bound.spend_budget = owner
     return bound

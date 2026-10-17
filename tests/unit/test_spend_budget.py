@@ -686,13 +686,13 @@ def test_rejected_external_tail_does_not_publish_unverified_cache(tmp_path, budg
     duplicate["digest"] = budget_module.json_digest(duplicate)
     owner.path.write_bytes(original + json.dumps(candidate).encode() + b"\n"
                            + json.dumps(duplicate).encode() + b"\n")
-    signature = owner._signature
-    charged = owner._spent_tokens, owner._spent_cost
+    signature = owner._verified.signature
+    charged = owner._verified.spent_tokens, owner._verified.spent_cost
     with pytest.raises(ValueError, match="duplicate"):
         owner.summary()
-    assert owner._signature == signature
-    assert (owner._spent_tokens, owner._spent_cost) == charged
-    assert owner._journal_hash.hexdigest() == before["journal_sha256"]
+    assert owner._verified.signature == signature
+    assert (owner._verified.spent_tokens, owner._verified.spent_cost) == charged
+    assert owner._verified.journal_hash.hexdigest() == before["journal_sha256"]
     owner.path.write_bytes(original)
     assert owner.summary() == before
     next_id = owner.reserve(request())
