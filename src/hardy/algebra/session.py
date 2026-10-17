@@ -24,9 +24,9 @@ from hardy.algebra.contracts import (
     CellOutcome,
     CellRecord,
     RebuildReport,
+    ReplayCheck,
     _why_unverified,
-    reproduces,
-    unobservable,
+    check_replay,
 )
 from hardy.algebra.kernel import Kernel
 from hardy.foundation.files import LayoutError, WriteGuard
@@ -192,9 +192,9 @@ class CasSession:
             if (info.st_dev, info.st_ino) != self._lease_identity:
                 raise CasError("the CAS writer lease was replaced; close and reopen the session")
         except (OSError, CasError) as error:
-            self._drop_kernel()
-            self.state = "poisoned"
-            raise CasError(f"the CAS cell log could not be written ({self.log_path}): {error}") from error
+            raise self._poisoned(
+                f"the CAS cell log could not be written ({self.log_path}): {error}"
+            ) from error
 
     def _load_spend(self) -> float:
         try:
@@ -376,9 +376,7 @@ class CasSession:
                 stream.flush()
                 os.fsync(stream.fileno())
         except OSError as error:
-            self._drop_kernel()
-            self.state = "poisoned"
-            raise CasError(
+            raise self._poisoned(
                 f"the CAS cell log could not be written ({self.log_path}): {error}. "
                 "The session is poisoned because its live state is no longer recorded. "
                 "Reset it to start clean."
@@ -776,9 +774,9 @@ class CasSession:
                     (json.dumps(self.total_spent_seconds, allow_nan=False) + "\n").encode("utf-8"),
                 )
             except (OSError, LayoutError) as error:
-                self._drop_kernel()
-                self.state = "poisoned"
-                raise CasError(f"the CAS spend could not be written ({self._spend_name}): {error}") from error
+                raise self._poisoned(
+                    f"the CAS spend could not be written ({self._spend_name}): {error}"
+                ) from error
 
     def _cell_seconds(self) -> float:
         """The deadline one round trip may have: the smaller of the two limits.
@@ -976,6 +974,16 @@ class CasSession:
         self._kernel = None
         self.state = "dead"
 
+    def _poisoned(self, message: str) -> CasError:
+        """Drop the kernel and mark the session poisoned; the error says why.
+
+        Poisoned means the live state is no longer described by anything a
+        rebuild can trust, so nothing runs again until a reset.
+        """
+        self._drop_kernel()
+        self.state = "poisoned"
+        return CasError(message)
+
     def _discard_kernel(self) -> None:
         """Close a kernel that nothing died in, leaving the session cold."""
         if self._kernel is not None:
@@ -986,133 +994,83 @@ class CasSession:
 
     def _restore(self) -> RebuildReport:
         """Rebuild live state after a death, and verify what was rebuilt."""
-        # Unaccepted live cells can mutate the namespace before returning. Replaying
-        # only accepted cells cannot recover those effects, even when later
-        # accepted cells produce the same output. Require an explicit reset.
-        unreplayed = tuple(
-            record.seq
-            for record in self.cells()
-            if not record.accepted and record.kernel_lost is not True
-            and record.status not in {"timeout", "kernel_died"}
-        )
-        if unreplayed:
-            self._drop_kernel()
-            self.state = "poisoned"
-            raise CasError(
-                "CAS state did not reproduce: unaccepted cell(s) "
-                f"{list(unreplayed)} may have changed the live state. "
-                "Reset the session to start clean."
-            )
+        self._refuse_lost_effects()
         # The start is the session's time too. Unbilled, a recovery cost one
         # kernel start the budget never saw, and `cas_session_seconds` bounded
         # total wall clock plus a start per death rather than total wall clock.
         started = time.monotonic()
         self._start()
         self.charge(time.monotonic() - started)
-        pending = self.accepted()
-        if not pending:
-            return RebuildReport(unreplayed=unreplayed)
-        diverged: list[int] = []
-        # A replay that overran the cap compared on a prefix just as a
-        # truncated record does, and the truncation can be on either side: an
-        # exact original against a replay that printed more still matches on
-        # what was retained, with the rest never looked at.
-        clipped: list[int] = []
-        unrecorded: set[int] = set()
-        unfingerprinted: set[int] = set()
-        for record in pending:
-            # A rebuild is the session's own time. Left unbilled, a session
-            # holding expensive accepted cells could time out and replay many
-            # minutes of work over and over while the budget never moved.
-            if self.remaining_seconds <= 0:
-                self._drop_kernel()
-                self.state = "poisoned"
-                raise CasError(
-                    "could not rebuild CAS state: the session budget ran out during "
-                    "replay. Reset the session to start clean."
-                )
-            started = time.monotonic()
-            outcome = self._send(record.source, self._cell_seconds())
-            self.charge(time.monotonic() - started)
-            # A replay Hardy signalled establishes nothing about the log, and
-            # an `ok` is the dangerous case rather than the safe one: a cell
-            # that caught the signal can skip a mutation and still print what
-            # it printed before, so `reproduces` would pass over a namespace
-            # that differs -- and every later cell would be built on it.
-            #
-            # Left retryable rather than poisoned. Poisoning says the accepted
-            # cells no longer describe a state that can be rebuilt, and nothing
-            # here has shown that: the user simply stopped the rebuild. The
-            # kernel is dropped, so the next cell tries again.
-            if outcome.signalled or outcome.status == "interrupted":
-                self._drop_kernel()
-                raise CasError(
-                    "the CAS rebuild was interrupted before it finished. Nothing is "
-                    "lost -- the saved cells are intact, and the next cell rebuilds "
-                    "from them again."
-                )
-            if outcome.status != "ok":
-                self._drop_kernel()
-                self.state = "poisoned"
-                raise CasError(
-                    f"could not rebuild CAS state: cell {record.seq} failed on replay. "
-                    "Reset the session to start clean."
-                )
-            # Running clean is not the same as recovering. A cell that depends
-            # on randomness, time, or the filesystem can succeed here and
-            # reconstruct a different value, and every later cell would be
-            # built on it.
-            if outcome.capture_truncated:
-                clipped.append(record.seq)
-            # Recorded per cell as the replay goes, because the report below
-            # needs the replay's half of it and the loop is where the outcome
-            # exists. A cell whose replay could not be fingerprinted is
-            # unchecked, not divergent.
-            if unobservable(record):
-                unrecorded.add(record.seq)
-            elif not outcome.state_digest:
-                unfingerprinted.add(record.seq)
-            if not reproduces(record, outcome):
-                diverged.append(record.seq)
+        checks = {record.seq: self._replay_for_rebuild(record) for record in self.accepted()}
+        # Running clean is not the same as recovering. A cell that depends on
+        # randomness, time, or the filesystem can succeed here and reconstruct
+        # a different value, and every later cell would be built on it.
+        diverged = [seq for seq, check in checks.items() if check.verdict == "diverged"]
         if diverged:
-            self._drop_kernel()
-            self.state = "poisoned"
-            raise CasError(
+            raise self._poisoned(
                 "could not rebuild CAS state faithfully: cell(s) "
                 f"{diverged} did not reproduce on replay. "
                 "Reset the session to start clean."
             )
-        # A clean replay is not the same as a checked one. On a backend that
-        # carries no state digest, a cell that printed nothing agrees with its
-        # record whatever it rebuilt, so the rebuild is reported with those
-        # cells named rather than as a rebuild that was verified.
-        return RebuildReport(
-            replayed=len(pending),
-            # A truncated capture belongs here for the same reason a missing
-            # digest does: the retained prefixes matched and the discarded
-            # tails were never compared, so a cell printing a deterministic
-            # prefix over a random tail replays "cleanly" without anything
-            # having checked the part that differs. Export already refuses to
-            # call such a cell verified; a rebuild says the same now.
-            unverified=tuple(
-                record.seq
-                for record in pending
-                if record.seq in unrecorded
-                or record.seq in unfingerprinted
-                or record.capture_truncated
-                or record.seq in set(clipped)
-            ),
-            digestless=tuple(record.seq for record in pending if record.seq in unrecorded),
-            unfingerprintable=tuple(
-                record.seq for record in pending if record.seq in unfingerprinted
-            ),
-            clipped=tuple(
-                record.seq
-                for record in pending
-                if record.capture_truncated or record.seq in set(clipped)
-            ),
-            unreplayed=unreplayed,
-        )
+        return RebuildReport.from_checks(checks)
+
+    def _refuse_lost_effects(self) -> None:
+        """Refuse a rebuild that could not include everything the kernel held.
+
+        Unaccepted live cells can mutate the namespace before returning.
+        Replaying only accepted cells cannot recover those effects, even when
+        later accepted cells produce the same output. Require an explicit reset.
+        """
+        unreplayed = [
+            record.seq
+            for record in self.cells()
+            if not record.accepted and record.kernel_lost is not True
+            and record.status not in {"timeout", "kernel_died"}
+        ]
+        if unreplayed:
+            raise self._poisoned(
+                "CAS state did not reproduce: unaccepted cell(s) "
+                f"{unreplayed} may have changed the live state. "
+                "Reset the session to start clean."
+            )
+
+    def _replay_for_rebuild(self, record: CellRecord) -> ReplayCheck:
+        """Replay one accepted cell into the rebuilding kernel, and judge it."""
+        # A rebuild is the session's own time. Left unbilled, a session
+        # holding expensive accepted cells could time out and replay many
+        # minutes of work over and over while the budget never moved.
+        if self.remaining_seconds <= 0:
+            raise self._poisoned(
+                "could not rebuild CAS state: the session budget ran out during "
+                "replay. Reset the session to start clean."
+            )
+        started = time.monotonic()
+        outcome = self._send(record.source, self._cell_seconds())
+        self.charge(time.monotonic() - started)
+        # A replay Hardy signalled establishes nothing about the log, and an
+        # `ok` is the dangerous case rather than the safe one: a cell that
+        # caught the signal can skip a mutation and still print what it
+        # printed before, so `reproduces` would pass over a namespace that
+        # differs -- and every later cell would be built on it.
+        #
+        # Left retryable rather than poisoned. Poisoning says the accepted
+        # cells no longer describe a state that can be rebuilt, and nothing
+        # here has shown that: the user simply stopped the rebuild. The kernel
+        # is dropped, so the next cell tries again.
+        if outcome.signalled or outcome.status == "interrupted":
+            self._drop_kernel()
+            raise CasError(
+                "the CAS rebuild was interrupted before it finished. Nothing is "
+                "lost -- the saved cells are intact, and the next cell rebuilds "
+                "from them again."
+            )
+        check = check_replay(record, outcome)
+        if check.verdict == "failed":
+            raise self._poisoned(
+                f"could not rebuild CAS state: cell {record.seq} failed on replay. "
+                "Reset the session to start clean."
+            )
+        return check
 
     def reset(self, *, author: str = "model") -> None:
         """Close the current segment. Nothing is deleted.

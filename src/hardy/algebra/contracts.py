@@ -1,7 +1,7 @@
 """Recorded cells, kernel outcomes and replay comparisons; no live kernel."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import Enum
 from typing import Any, Literal, TypeAlias
 
@@ -99,6 +99,9 @@ RETIRED_RECORD_FIELDS = ("output_artifact",)
 
 
 class CellRecord(FrozenModel):
+    """One line of the durable cell log: what ran, what it showed, and whether
+    the accepted state that recovery and export rebuild from includes it."""
+
     seq: int
     # Incremented by reset. Only the highest segment is live, which is how a
     # reset survives a restart: it is on every record rather than inferred from
@@ -172,6 +175,8 @@ class CellRecord(FrozenModel):
 
 
 class RebuildReport(FrozenModel):
+    """What rebuilding a dead kernel's state from the accepted cells established."""
+
     replayed: int = 0
     diverged: tuple[int, ...] = ()
     failed: int | None = None
@@ -197,6 +202,25 @@ class RebuildReport(FrozenModel):
     # Retained for existing report consumers. Current recovery refuses live
     # unaccepted cells instead of returning a report that omits their effects.
     unreplayed: tuple[int, ...] = ()
+
+    @classmethod
+    def from_checks(cls, checks: Mapping[int, ReplayCheck]) -> RebuildReport:
+        """A rebuild whose every replay agreed, naming what each could not compare.
+
+        A clean replay is not the same as a checked one. A cell whose namespace
+        was never compared agrees with its record whatever it rebuilt, and a
+        truncated capture belongs beside it for the same reason: the retained
+        prefixes matched and the discarded tails were never compared, so a
+        cell printing a deterministic prefix over a random tail replays
+        "cleanly" without anything having checked the part that differs.
+        """
+        return cls(
+            replayed=len(checks),
+            unverified=tuple(seq for seq, check in checks.items() if check.verdict == "unverified"),
+            digestless=tuple(seq for seq, check in checks.items() if check.digestless),
+            unfingerprintable=tuple(seq for seq, check in checks.items() if check.unfingerprinted),
+            clipped=tuple(seq for seq, check in checks.items() if check.clipped),
+        )
 
 
 def normalise(text: str) -> str:
@@ -319,3 +343,80 @@ def unobservable(record: CellRecord) -> bool:
     return not record.state_digest
 
 
+# What one replayed cell establishes about its record, in the words an export
+# publishes. `verified` is the whole claim: the cell ran, reproduced every
+# field Hardy compares, and its namespace was compared as well.
+Verdict = Literal["verified", "diverged", "failed", "unverified"]
+
+
+class ReplayCheck(FrozenModel):
+    """One replayed cell, judged against its record.
+
+    The single rule a rebuild and an export both apply, so that a cell a
+    rebuild calls unchecked is never one an export publishes as verified. An
+    agreeing replay is still `unverified` when any comparison it rests on is
+    incomplete, and the flags say which: a capture cut at `cas_output_bytes`
+    on either side, a record with no namespace digest, or a replay that could
+    not take one. More than one can hold.
+    """
+
+    verdict: Verdict
+    detail: str = ""
+    clipped: bool = False
+    digestless: bool = False
+    unfingerprinted: bool = False
+
+
+def check_replay(record: CellRecord, outcome: CellOutcome | None) -> ReplayCheck:
+    """Judge one replay of `record`; `outcome` is None for a cell never reached.
+
+    A missing digest is a gap whatever the backend. Singular and Macaulay2
+    have no protocol to carry one, so every replay there reproduces what the
+    cell showed and says nothing about what it left -- which is exactly what a
+    rebuild has always reported, and what an export now publishes too.
+    """
+    if outcome is None:
+        return ReplayCheck(verdict="unverified", detail="not reached")
+    if outcome.status != "ok":
+        excerpt = (outcome.stderr or outcome.stdout).strip()[:160]
+        return ReplayCheck(verdict="failed", detail=f"replay {outcome.status}: {excerpt}")
+    if not reproduces(record, outcome):
+        # Which comparison failed, not just that one did. A silent
+        # `x = random.random()` reproduces every printed field and fails only
+        # on the digest, and reporting that as "different output" told
+        # `export.json` and the notebook the opposite of what happened --
+        # hiding exactly the state discrepancy the digest was added to expose.
+        return ReplayCheck(
+            verdict="diverged",
+            detail=(
+                "replay produced different output"
+                if not same_output(record, outcome)
+                else "replay reproduced the output and rebuilt a different namespace"
+            ),
+        )
+    gaps = ReplayCheck(
+        verdict="unverified",
+        clipped=record.capture_truncated or outcome.capture_truncated,
+        digestless=unobservable(record),
+        unfingerprinted=not unobservable(record) and not outcome.state_digest,
+    )
+    if gaps.clipped:
+        # The prefixes match and nothing is known about the rest. Calling that
+        # "verified" would claim complete reproduction on evidence that stops
+        # at `cas_output_bytes`; AGENTS.md asks for a partial result to state
+        # its limits rather than round itself up.
+        return gaps.model_copy(update={"detail": (
+            "capture truncated at cas_output_bytes: the retained prefixes "
+            "match, and the discarded tails could not be compared"
+        )})
+    if state_unchecked(record, outcome):
+        # The replay reproduced everything Hardy can see and nothing more.
+        # Either side of the comparison missing puts a cell here: a record
+        # with no fingerprint and a replay that could not take one are
+        # different causes with the same consequence, nothing was compared.
+        return gaps.model_copy(update={"detail": "output reproduced, state not compared: " + (
+            "this kernel could not fingerprint the namespace this cell left"
+            if gaps.digestless
+            else "the replay could not fingerprint the namespace it rebuilt"
+        )})
+    return ReplayCheck(verdict="verified")
