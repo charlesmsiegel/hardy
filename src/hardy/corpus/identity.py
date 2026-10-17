@@ -1,14 +1,14 @@
 """Content and review identities, independent of experimental measurement."""
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
+
+from hardy.foundation.values import json_digest
 
 
 def _digest(kind: str, parts: list[Any]) -> str:
-    payload = json.dumps([kind, *parts], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    """One component digest: `kind` and its parts as one canonical JSON array."""
+    return json_digest([kind, *parts])
 
 
 def statement_digest(
@@ -20,18 +20,21 @@ def statement_digest(
     witness: str | None,
     witness_note: str | None,
 ) -> str:
-    """Governs A1, A2, A3 and A6 -- the conditions that load no fixtures.
+    """Governs every condition that loads no fixture: what the baseline sweep
+    measures of the bare statement, its non-vacuity witness check included,
+    and -- through `prompt_digest` -- every model condition on it.
 
     The witness is in here because the digest decides incremental reuse:
     editing a valid witness into one the kernel rejects would otherwise leave a
-    cached A6 pass looking current and bypass the non-vacuity gate.
+    cached non-vacuity pass looking current and bypass that gate.
 
-    Fixtures are deliberately *not* in here. A4, A5 and B4 depend on
-    `fixture_set_digest` as a separate component precisely so that editing a
-    shared fixture stales those and nothing else; folding fixtures in here
-    would reach A1-A3, A6 and -- through `prompt_digest` -- B1-B3, none of
-    which has a fixture in scope, and collapse the component boundary the
-    whole arrangement exists to draw (spec section 3).
+    Fixtures are deliberately *not* in here. The conditions that load an
+    entry's fixtures depend on `fixture_set_digest` as a separate component
+    precisely so that editing a shared fixture stales those and nothing else;
+    folding fixtures in here would reach every bare condition, sweep and
+    model alike, none of which has a fixture in scope, and collapse the
+    component boundary the whole arrangement exists to draw
+    (`docs/design/corpus.md`, "Digests decide what is stale").
     """
     return _digest(
         "statement", [name, binders, conclusion, list(imports), witness, witness_note])
@@ -48,7 +51,7 @@ def fixture_set_digest(resolved: tuple[str, ...]) -> str:
 
 
 def prompt_digest(*, statement: str, input: str, expected: str, twin_of: str | None) -> str:
-    """Governs the B-group.
+    """Governs the model conditions.
 
     `input` reaches the model as `informal_claim` in `evals.runner.run_set`, so
     rewording it can change solve behaviour while the Lean is untouched.

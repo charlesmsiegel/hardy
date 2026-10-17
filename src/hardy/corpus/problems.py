@@ -157,9 +157,19 @@ class Entry(FrozenModel):
     fixtures: tuple[str, ...] = ()
 
     @property
+    def primary_code(self) -> str:
+        """The code that files the entry: its shard, field, reporting group and, unless overridden, arXiv class.
+
+        The first code, not the first occurrence. Occurrences decide which
+        texts an entry stands in; an authored entry has none and still has a
+        field.
+        """
+        return self.msc[0]
+
+    @property
     def shard(self) -> str:
         """Derived, never stored: a stored shard is a derived value in the corpus."""
-        return self.msc[0][:2]
+        return self.primary_code[:2]
 
     @model_validator(mode="after")
     def _codes_are_known_and_finer_than_their_class(self) -> Entry:
@@ -210,8 +220,10 @@ class Entry(FrozenModel):
         Nothing mechanical distinguishes a faithful formalisation from a
         plausible-looking wrong one, so a human read is the gate -- and a
         reviewer approved a *specific* statement, prompt and filing. Binding
-        the review to all three means an edit or a re-tag drops the entry back
-        to `candidate` instead of leaving a stale approval standing.
+        the review to all three means an edit or a re-tag makes the entry
+        invalid -- and the corpus refuse to load -- until it is re-reviewed or
+        set back to `candidate` by hand, instead of leaving a stale approval
+        standing.
         """
         if self.status != "active":
             return self
@@ -223,7 +235,7 @@ class Entry(FrozenModel):
             raise ValueError("the review approved a different statement; re-review or set status to candidate")
         if self.review.prompt_digest != self.prompt_digest():
             raise ValueError("the review approved a different prompt; re-review or set status to candidate")
-        if self.review.msc != self.msc or self.review.group != taxonomy.group_of(self.msc[0]):
+        if self.review.msc != self.msc or self.review.group != taxonomy.group_of(self.primary_code):
             raise ValueError(
                 "the review approved a different classification; a wrong-but-valid code passes every "
                 "mechanical check, so re-review or set status to candidate"
@@ -242,27 +254,28 @@ class Entry(FrozenModel):
         return self
 
     def statement_digest(self) -> str:
-        """The A1/A2/A3/A6 component. Fixtures are a *separate* component --
-        see `fixture_set_digest` -- so an edit to a shared fixture cannot
-        stale the conditions that never load one (spec section 3)."""
+        """The component every fixture-free condition depends on. Fixtures are
+        a *separate* component -- see `fixture_set_digest` -- so an edit to a
+        shared fixture cannot stale the conditions that never load one."""
         return digests.statement_digest(
             name=self.name, binders=self.binders, conclusion=self.conclusion,
             imports=self.imports, witness=self.witness, witness_note=self.witness_note,
         )
 
     def prompt_digest(self) -> str:
-        """The B1/B2/B3 component: the statement plus everything else the
-        model sees or that shapes the run. Fixture-free, for the same reason."""
+        """The model conditions' component: the statement plus everything else
+        the model sees or that shapes the run. Fixture-free, for the same reason."""
         return digests.prompt_digest(
             statement=self.statement_digest(), input=self.input,
             expected=self.expected, twin_of=self.twin_of,
         )
 
     def fixture_set_digest(self, resolved: tuple[str, ...]) -> str:
-        """The A4/A5/B4 component, over the *resolved* fixture contents.
+        """The component of the conditions that load fixtures, over the *resolved* fixture contents.
 
-        `resolved` comes from the fixture store, which phase 3 adds; until
-        then an entry carries no fixtures and this is the digest of nothing.
+        `resolved` comes from the fixture store, which the roadmap reserves
+        and nothing builds yet; until it exists an entry carries no fixtures
+        and this is the digest of nothing.
         """
         return digests.fixture_set_digest(resolved)
 
@@ -363,10 +376,10 @@ def _check_twin_of(entry: Entry, by_id: dict[str, Entry]) -> None:
         raise ValueError(f"{entry.id}: twin_of must name an entry in the list")
     if target.expected != "true":
         raise ValueError(f"{entry.id}: twin_of must name a true entry, not a twin")
-    if entry.msc[0] != target.msc[0]:
+    if entry.primary_code != target.primary_code:
         raise ValueError(
             f"{entry.id}: a twin is in the same field as the statement it perturbs; "
-            f"{entry.msc[0]} drifts from {target.msc[0]}"
+            f"{entry.primary_code} drifts from {target.primary_code}"
         )
 
 
