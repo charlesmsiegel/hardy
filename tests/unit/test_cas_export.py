@@ -278,7 +278,7 @@ def test_a_multi_line_verdict_detail_still_publishes_a_runnable_script(
 ) -> None:
     """The verdict is a comment, and a comment ends at the first newline.
 
-    `_verdicts` builds a `failed` detail out of the replay's stderr, which for
+    `check_replay` builds a `failed` detail out of the replay's stderr, which for
     the default backend is a traceback. Written straight into the one-line
     `# --- cell N (model)  [failed: ...]` header, every line of it after the
     first landed in the script as source, and the published file died with

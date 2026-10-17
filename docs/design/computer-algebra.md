@@ -320,11 +320,22 @@ been made, so what is here is a strong check with a named limit rather than a
 proof.
 
 Only the default backend can do any of this. Singular and Macaulay2 have no
-protocol to carry a namespace digest, so `records_state` is false for them
-(`algebra/backends.py`) and a rebuild there names the cells whose replay proved
-nothing rather than reporting a rebuild as though it had been checked. A
-truncated capture lands in the same list for the same reason: the retained
-prefixes matched and the discarded tails were never compared.
+protocol to carry a namespace digest, so a rebuild there names the cells whose
+replay proved nothing rather than reporting a rebuild as though it had been
+checked. A truncated capture lands in the same list for the same reason: the
+retained prefixes matched and the discarded tails were never compared.
+
+A rebuild and an export judge a replayed cell by one rule, `check_replay` in
+`algebra/contracts.py`, so a cell one of them calls unchecked is never one the
+other calls verified. An export's per-cell `verified` is the whole claim: the
+cell ran, reproduced every field Hardy compares, and its namespace was compared
+too. Anything less is `unverified` with the reason in its detail. On Singular
+and Macaulay2 that means every cell of an export is `unverified` ("output
+reproduced, state not compared"), and such an export never reports
+`reproduces`; its `script_verdict` still says whether the published file
+reproduces the recorded transcript. An export that counted those cells
+verified was the same overclaim a rebuild already refused, published in the
+artifact a reader keeps.
 
 ## Recovery: what may rebuild accepted state and what may not
 

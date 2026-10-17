@@ -8,6 +8,7 @@ needing SymPy, Singular, or Macaulay2 installed.
 """
 
 import contextlib
+import hashlib
 import json
 import pathlib
 import signal
@@ -17,6 +18,17 @@ import uuid
 
 HEADER_BYTES = 10
 HISTORY: list[str] = []
+# The fake's namespace is HISTORY, and it is described the way the driver
+# describes its own: a fingerprint after every cell, withheld for good once a
+# cell has left something the kernel cannot describe -- as the driver withholds
+# one once a value whose repr says nothing about what it holds is bound.
+OPAQUE = False
+
+
+def _state_digest() -> str:
+    if OPAQUE:
+        return ""
+    return hashlib.sha256(json.dumps(HISTORY).encode("utf-8")).hexdigest()
 
 
 PENDING_INTERRUPT = False
@@ -164,13 +176,18 @@ def answer(source: str) -> dict:
             "stderr": "",
             "value_repr": "",
         }
+    global OPAQUE
     if word == "quiet":
-        # Accepted, and shows nothing whatever. A replay of it agrees with its
-        # record however different the state it rebuilt, which is exactly what
-        # a backend carrying no state digest cannot check -- and must not
-        # report a rebuild as though it had.
+        # Accepted, shows nothing whatever, and leaves state the kernel cannot
+        # describe. A replay of it agrees with its record however different
+        # the state it rebuilt, which is exactly what a missing digest cannot
+        # check -- and must not report a rebuild as though it had.
+        OPAQUE = True
         return {"status": "ok", "stdout": "", "stderr": "", "value_repr": ""}
     if word == "noisy":
+        # As `quiet`, but printing on both streams and reporting a value:
+        # output reproduced is not a second opinion on a missing digest.
+        OPAQUE = True
         return {"status": "ok", "stdout": "out", "stderr": "warning: noisy", "value_repr": "1"}
     HISTORY.append(word)
     # Deterministic in the sequence of cells, so an honest replay reproduces it.
@@ -247,6 +264,7 @@ def main() -> None:
         finally:
             _handle_stops_by(_remember)
         reply = clip(reply, limit)
+        reply["state_digest"] = _state_digest()
         encoded = json.dumps(reply).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
         stdout.write(encoded)

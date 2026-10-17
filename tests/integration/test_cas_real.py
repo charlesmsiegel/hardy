@@ -27,6 +27,19 @@ BACKENDS = [
 ]
 
 
+def assert_reproduced_as_far_as_compared(report) -> None:
+    """Every cell's output reproduced, and nothing more is claimed.
+
+    Neither interpreter can describe its namespace, so no cell of theirs is
+    ever `verified` -- the export says "state not compared" instead, the same
+    words a rebuild uses -- and `reproduces` is never true. What can be
+    checked must still agree: nothing diverged, nothing failed.
+    """
+    dump = report.model_dump_json(indent=2)
+    assert report.diverged == 0 and report.failed == 0, dump
+    assert all("state not compared" in verdict.detail for verdict in report.verdicts), dump
+
+
 def session_for(name: str, executable: str, tmp_path) -> CasSession:
     found = shutil.which(executable)
     if found is None:
@@ -80,7 +93,7 @@ def test_an_exported_session_reproduces(name, executable, source, tmp_path) -> N
         # Dumped on failure: these two interpreters exist only in CI, so a bare
         # assertion here costs a round trip to find out what the script printed.
         assert report.script_verdict == "verified", report.model_dump_json(indent=2)
-        assert report.reproduces, report.model_dump_json(indent=2)
+        assert_reproduced_as_far_as_compared(report)
     finally:
         session.close()
 
@@ -117,7 +130,7 @@ def test_macaulay2_exports_cleanly_once_the_output_counter_reaches_two_digits(
             assert record.stdout.count("\n") >= 2, record.model_dump_json(indent=2)
         report = export_session(session, tmp_path / "cas")
         assert report.script_verdict == "verified", report.model_dump_json(indent=2)
-        assert report.reproduces, report.model_dump_json(indent=2)
+        assert_reproduced_as_far_as_compared(report)
     finally:
         session.close()
 

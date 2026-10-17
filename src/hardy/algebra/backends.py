@@ -279,16 +279,10 @@ class SympyBackend:
     # for the kernel and for the exported script alike, so the file a reader
     # runs is run the way its record was made.
     environment: Mapping[str, str] = MappingProxyType({"PYTHONHASHSEED": "0"})
-    # This backend's protocol carries a fingerprint of the namespace, so a
-    # record without one means something specific happened -- a value Hardy
-    # could only see in prefix, or one whose repr says nothing about what it
-    # holds. Sentinel backends have no such protocol, where a missing digest
-    # is the norm and carries no signal; `records_state` is what lets an
-    # export tell those two silences apart.
-    records_state = True
     # The driver writes one frame per cell on a descriptor of its own, with
     # stdout and stderr captured separately inside it, and reports the cell's
-    # status itself -- including that it stopped a cell its frame said to.
+    # status itself -- including that it stopped a cell its frame said to --
+    # with a fingerprint of the namespace the cell left.
     capture_mode: CaptureMode = "separate"
     reports_status = True
     frame_carries_stop = True
@@ -466,9 +460,10 @@ class SentinelBackend(abc.ABC):
     echo: str
     environment: Mapping[str, str] = MappingProxyType({})
     # Neither Singular nor Macaulay2 can be asked what is in its namespace, so
-    # every record from them is digestless and no verdict can be drawn from
-    # that. What their replays check is what those replays can check.
-    records_state = False
+    # every record from them is digestless, and `check_replay` reports every
+    # replay of one as output reproduced and state not compared -- in a
+    # rebuild's note and an export's verdicts alike.
+    #
     # Both child descriptors share one pipe (see the class docstring), the
     # status is Hardy's reading of an error banner, and a frame is plain
     # source with no word in it for a stop.
