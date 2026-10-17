@@ -65,10 +65,13 @@ duplicate the statement, split its measurements across ids, and make one theorem
 look like several problems in every aggregate. So `occurrences` is a tuple of
 `(source_id, locator)` pairs and the entry is the theorem.
 
-**The first occurrence is primary and governs.** Everything that needs a single
-answer reads it: the field the entry is filed under, the source level a report
+**The first occurrence is primary and governs.** Everything about the entry's
+texts that needs a single answer reads it: the source level a report
 stratifies on, and the text an antecedent must come from. The rest are
-citations. The alternative is worse than it looks. If those questions were
+citations. The field is filed by code, not by text: `Entry.primary_code`, the
+first of `msc`, decides the shard, the field, the reporting group and, unless
+`arxiv_override` names one, the arXiv class, so an authored entry with no
+occurrence still has a field. The alternative is worse than it looks. If those questions were
 answered existentially over all occurrences, an author could reach for whichever
 text orders the material most favourably, and adding a book could move a headline
 number. The primary occurrence pins it.
@@ -236,7 +239,8 @@ Prose describing a review is not a gate, so the record is bound to what was
 read. `_an_active_entry_carries_a_current_faithful_review` (`problems.py`)
 requires an `active` entry to carry a `faithful` review whose statement digest,
 prompt digest, `msc` and reporting group all match the entry as it now stands,
-so an edit or a re-tag drops the entry back to `candidate` instead of leaving a
+so an edit or a re-tag makes the entry invalid, and the corpus refuse to load,
+until it is re-reviewed or set back to `candidate` by hand, instead of leaving a
 stale approval standing. The classification is in there because a
 wrong-but-syntactically-valid MSC code passes every taxonomy validator, and
 field attribution is the headline claim. `expected` and `twin_of` are in the
