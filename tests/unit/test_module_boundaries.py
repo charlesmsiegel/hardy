@@ -203,6 +203,21 @@ def test_full_tree_dependency_directions(import_graph):
                         if name.startswith('hardy.app.commands')}, module
 
 
+def test_foundation_reaches_nothing_above_itself(import_graph):
+    """`foundation/` must stay true without knowing Lean, TeX, papers or runs.
+
+    The direction rule above names capabilities and controllers; this names
+    the bottom of the stack, so a helper that quietly imports a capability
+    into foundation fails here rather than becoming the `utils` package the
+    guardrail in module-boundaries.md warns about.
+    """
+    for module in import_graph:
+        if module == 'hardy.foundation' or module.startswith('hardy.foundation.'):
+            above = {name for name in _reachable(import_graph, module)
+                     if name != 'hardy' and not name.startswith('hardy.foundation')}
+            assert not above, (module, sorted(above))
+
+
 def test_evaluation_and_cli_cycles_are_removed(import_graph):
     for module in import_graph:
         if module.startswith('hardy.evals.') or module in {'hardy.cli', 'hardy.app.cli'}:
