@@ -354,12 +354,12 @@ export function HumanSemanticReview({project,catalog={},disabled=false,onDone}) 
 }
 
 function SourceFields({catalog}) {
-  return <details className="wb-stack"><summary>Bind an exact source passage</summary>
+  return <details><summary>Bind an exact source passage</summary><div className="wb-stack">
     <Choice label="Exact source version" name="source" required={false} values={catalog.sources || []}/>
     <Field label="Passage start, Unicode character offset" name="start" type="number" min="0" initial="0" required={false}/>
     <Field label="Passage end, Unicode character offset" name="end" type="number" min="0" required={false}/>
     <p className="panel__note">The retained source and character range are authenticated by the owner. Source reading alone does not approve correspondence.</p>
-  </details>;
+  </div></details>;
 }
 
 export function ArgumentEditor({project,catalog={},disabled=false,onDone}) {

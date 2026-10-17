@@ -345,8 +345,11 @@ textarea:focus {
 }
 
 /* A form's controls, stacked. `.wb-fieldset` is the `<fieldset>` that
-   disables a whole form while it runs; `.wb-stack` gives the same rhythm to
-   a nested disclosure or group. A button in either keeps its own width. */
+   disables a whole form while it runs; `.wb-stack` is a `<div>` that gives
+   the same rhythm to any group inside one, including what a disclosure holds.
+   Never put it on a `<details>`: a details lays out only its summary and its
+   content slot, so the gap would miss the fields and add dead space when it
+   is closed. A button in either keeps its own width. */
 .wb-fieldset,
 .wb-stack {
   display: flex;
@@ -363,6 +366,11 @@ textarea:focus {
 
 .wb-fieldset--apart {
   margin-top: var(--space-4);
+}
+
+/* The summary is not part of the stack, so the first field clears it. */
+summary + .wb-stack {
+  margin-top: var(--space-3);
 }
 
 .wb-fieldset > .button,
@@ -389,14 +397,17 @@ textarea:focus {
   white-space: pre-wrap;
 }
 
-/* Directly in a card, the card's own gap spaces it; a lone field there (a
-   selector above a form, not a field inside one) takes a little more. */
-.wb-card > .wb-pre {
+/* Directly in a card, the card's own gap spaces it. That holds for a section
+   or an article, not for a `<details>`: its flex gap reaches only the summary
+   and the content slot, and what sits in the slot is ordinary block flow. A
+   lone selector there (the one above a form, not a field inside one) spaces
+   itself. */
+.wb-card:not(details) > .wb-pre {
   margin: 0;
 }
 
-.wb-card > .field {
-  margin-block: var(--space-1);
+details.wb-card > .field {
+  margin-block: var(--space-3);
 }
 
 /* One entry in a history, set off from the one above. */
@@ -1159,7 +1170,7 @@ select.picker {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  font: 12px var(--ui);
+  font: 12px/1.5 var(--ui);
   margin-left: auto;
   padding: 5px 10px;
 }
@@ -1798,7 +1809,7 @@ select.picker {
   border-bottom: 2px solid transparent;
   color: var(--muted);
   cursor: pointer;
-  font: 12px var(--ui);
+  font: 12px/1.5 var(--ui);
   padding: 2px 8px;
 }
 

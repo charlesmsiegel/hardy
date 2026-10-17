@@ -7,7 +7,7 @@ const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'http://localhos
 globalThis.window=dom.window;globalThis.document=dom.window.document;globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const {createRoot}=await import('react-dom/client');
 const server=await createServer({server:{middlewareMode:true,ws:false}});
-const {ContextForm,LiveWorkflow,ObligationWork,ManuscriptIntake,ScopeForm,Field,Feedback}=await server.ssrLoadModule('/src/workbench/ProjectWorkflow.jsx');
+const {ContextForm,LiveWorkflow,ObligationWork,ManuscriptIntake,ScopeForm,Field,Choice,Feedback}=await server.ssrLoadModule('/src/workbench/ProjectWorkflow.jsx');
 const {AdmissionReview,SelectedAssessment,SourceNavigation,IntakeReview,RefereeControl,AssessmentReport,BundleExport,HumanSemanticReview,ArgumentEditor}=await server.ssrLoadModule('/src/workbench/ProjectReview.jsx');
 const {filterObligations,useProjectAction,sourceChoiceKey,evidenceChoiceKey}=await server.ssrLoadModule('/src/workbench/projectForms.js');
 const root=createRoot(document.getElementById('root'));
@@ -97,6 +97,38 @@ test('Field draws its hint, its required mark and its error wiring from the clas
   assert.equal(document.querySelector('[name="b"]').hasAttribute('aria-describedby'),false);
   const status=document.querySelector('[role="status"]');assert.ok(status.classList.contains('wb-feedback'));assert.equal(status.textContent,'Recorded.');
   assert.ok(document.querySelector('[role="alert"]').classList.contains('panel__error'));
+});
+// A <details> lays out only its summary and its content slot, so `display:flex; gap` on the
+// element itself never reaches the fields inside it (and leaves dead space when it is closed).
+// The group a disclosure holds is a div of its own, after the summary.
+const assertDisclosureOwnsAStack=(summaryText) => {
+  const details=[...document.querySelectorAll('#root details')].find((node) => node.firstElementChild.textContent.startsWith(summaryText));
+  assert.ok(details,summaryText);
+  assert.equal(details.firstElementChild.tagName,'SUMMARY','the summary stays the first child');
+  assert.ok(!details.className.includes('wb-stack'),`${summaryText}: the details is not itself a stack`);
+  const stack=details.querySelector(':scope > .wb-stack');
+  assert.ok(stack&&stack.tagName==='DIV',`${summaryText}: its fields sit in a div.wb-stack`);
+  assert.equal(stack.previousElementSibling,details.firstElementChild,'the stack follows the summary');
+  assert.ok(stack.querySelectorAll('.field').length>=2);
+};
+test('a disclosure inside a form stacks its fields in a div, never on the details element',async () => {
+  await act(() => root.render(React.createElement(ContextForm,{project:'/p',catalog:{contexts:[row('parent','context')]}})));
+  await type('parent',`parent@${'a'.repeat(64)}`);
+  assertDisclosureOwnsAStack('Add a local declaration');
+  await act(() => root.render(React.createElement(ManuscriptIntake,{project:'/p',intake:{source_choices:[]}})));
+  const paste=[...document.querySelectorAll('#root details')].find((node) => node.firstElementChild.textContent==='Paste manuscript TeX');
+  assert.ok(!paste.className.includes('wb-stack'),'a closed disclosure holding one form takes no stack');
+  for (const Form of [HumanSemanticReview,ArgumentEditor]) {
+    await act(() => root.render(React.createElement(Form,{project:'/p',catalog:{}})));
+    assertDisclosureOwnsAStack('Bind an exact source passage');
+  }
+  assert.equal(document.querySelectorAll('#root details.wb-stack').length,0);
+});
+test('only a value descriptor can be a disabled option, never a catalog record that carries the key',async () => {
+  const record={...row('R','claim'),disabled:true};
+  await act(() => root.render(React.createElement(Choice,{label:'Pick',name:'pick',values:[{value:'on',label:'Off limits',disabled:true},{value:'free',label:'Free'},record]})));
+  const disabled=[...document.querySelectorAll('option')].filter((option) => option.disabled).map((option) => option.textContent);
+  assert.deepEqual(disabled,['Off limits']);
 });
 test('obligation work includes all six states and accurate outstanding filter',async () => {
   const states=['open','investigating','blocked','resolved','dismissed','abandoned'];

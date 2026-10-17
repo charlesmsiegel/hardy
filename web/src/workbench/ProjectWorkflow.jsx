@@ -28,7 +28,12 @@ export function Field({label, name, area = false, required = true, type = 'text'
 }
 
 // `empty={null}` leaves out the placeholder row, for a menu that always has a
-// value (`defaultValue`) and so is never "unset". A value may be `disabled`.
+// value (`defaultValue`) and so is never "unset". An entry is a catalog record
+// (named by its exact reference) or a descriptor `{value, label, disabled?}`;
+// only a descriptor can be disabled, so a record that happens to carry a
+// `disabled` field never disables its own option.
+const optionDisabled = (item) => item.value !== undefined && item.disabled === true;
+
 export function Choice({label, name, values = [], required = true, empty = 'Choose…', value, onChange, multiple = false, defaultValue, hint}) {
   const id = useId();
   const initial = defaultValue ?? (multiple ? [] : empty === null ? undefined : '');
@@ -36,7 +41,7 @@ export function Choice({label, name, values = [], required = true, empty = 'Choo
     <select id={id} name={name} required={required} multiple={multiple} className="field__control" {...hintProps(id, hint)}
       {...(value === undefined ? {defaultValue:initial} : {value})} onChange={onChange}>
       {!multiple && empty !== null ? <option value="">{empty}</option> : null}
-      {values.map((item) => <option key={item.value ?? selector(item)} value={item.value ?? selector(item)} disabled={item.disabled}>
+      {values.map((item) => <option key={item.value ?? selector(item)} value={item.value ?? selector(item)} disabled={optionDisabled(item)}>
         {item.label || `${item.name || item.label || item.id} · ${item.kind || 'v'} · ${(item.digest || item.ref?.digest || '').slice(0,8)}`}
       </option>)}
     </select>
@@ -86,7 +91,7 @@ export function ContextForm({project,catalog={},disabled=false,onDone}) {
       <Field label="New context ID" name="id"/><Field label="Context label" name="label"/>
       <Choice label="Parent context" name="parent" required={false} empty="New empty root context" values={catalog.contexts || []} value={parent} onChange={(event) => setParent(event.target.value)}/>
       <Choice label="Context being revised" name="supersedes" required={false} empty="No previous context" values={catalog.contexts || []}/>
-      {parent ? <details className="wb-stack"><summary>Add a local declaration or representation convention</summary>
+      {parent ? <details><summary>Add a local declaration or representation convention</summary><div className="wb-stack">
         <Field label="Declaration ID" name="declaration_id" required={false}/><Field label="Symbol" name="symbol" required={false}/>
         <Field label="Semantic type or local hypothesis" name="semantic_type" required={false} area/>
         <Choice label="Declaration role" name="role" required={false} empty={null} defaultValue="arbitrary" values={plain(['arbitrary','chosen','derived','local_hypothesis'])}/>
@@ -95,7 +100,7 @@ export function ContextForm({project,catalog={},disabled=false,onDone}) {
         <Choice label="Convention kind" name="binding_kind" required={false} empty={null} defaultValue="convention" values={plain(['alias','notation','convention','ambient'])}/>
         <Field label="Meaning or representation choice" name="meaning" required={false} area/>
         <Choice label="Convention target" name="binding_target" required={false} values={catalog.items || []}/>
-      </details> : <p className="panel__note">Create an empty root first, then select it as parent to add local declarations.</p>}
+      </div></details> : <p className="panel__note">Create an empty root first, then select it as parent to add local declarations.</p>}
       <button className="button button--primary" type="submit">Record context</button>
     </fieldset></form><Feedback action={action}/>
   </details>;
@@ -123,7 +128,7 @@ export function ManuscriptIntake({project,catalog={},intake={},disabled=false,on
       <button type="submit" className="button button--primary" disabled={sourceSelectionChanged || !currentSources.length}>Propose manuscript mappings</button>
     </fieldset></form>
     {!choices.length ? <p className="panel__note">Save a TeX source through Files or retain pasted manuscript text below, then refresh source choices.</p> : null}
-    <details className="wb-stack"><summary>Paste manuscript TeX</summary><form onChange={action.invalidate} onSubmit={(event) => {
+    <details><summary>Paste manuscript TeX</summary><form onChange={action.invalidate} onSubmit={(event) => {
       event.preventDefault();const f=formValues(event.currentTarget);action.submit('source',{id:f.source_id,text:f.text});
     }}><fieldset disabled={disabled || action.pending || !project} className="wb-fieldset">
       <Field label="Pasted manuscript source ID" name="source_id"/><Field label="Manuscript TeX" name="text" area/>
