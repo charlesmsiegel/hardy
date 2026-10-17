@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hardy.documents.latex import typeset
+from hardy.documents.scanner import typeset
 from hardy.foundation.locking import FileLock
 from hardy.literature.arxiv import PaperRecord, digest
 from hardy.literature.bibliography import (
