@@ -1,18 +1,25 @@
 """Bounded, non-shell child process execution.
 
 Lean and Tectonic are untrusted in the sense that matters here: they can run
-long, print without end, or die. Every child Hardy starts goes through this
-module so a run's time and output budgets are enforced in one place, and so
+long, print without end, or die. Every toolchain child Hardy runs to completion
+goes through `run_process` (`run_guarded` is `run_process` with the inherited
+environment), so a run's time and output budgets are enforced in one place, and
 child output is decoded as UTF-8 rather than by whatever the host's locale
 happens to be. Lean prints `⊢` and `∀`; a Windows console codepage cannot.
 
 Time and output are not the only bounds. A child can also be told to stop
 before either is reached -- that is what Esc does -- so this module also owns
 the one platform-correct way to signal a child, and the register of which
-children are currently running. `cas.py` drives a persistent kernel that this
-module's `run_process` never sees, and it borrows `child_creation` and
-`signal_interrupt` from here rather than reimplementing the platform detail: the
-kernel is owned by its session, which is what interrupts it.
+children are currently running.
+
+Not every child is one run. `algebra/kernel.py` drives a persistent CAS kernel,
+and `algebra/scripts.py` runs exported scripts; both start their own `Popen`
+and borrow `child_creation`, `child_environment`, `signal_interrupt` and
+`contain` from here rather than reimplementing the platform detail, and the
+kernel is interrupted by the session that owns it, not by the register. A few
+short probes -- `git` in `formal/replay.py` and the evaluation runner, the
+region renderer in `literature/sources/ocr.py` -- call `subprocess.run` with a
+timeout and come here for nothing.
 """
 
 from __future__ import annotations
@@ -31,13 +38,15 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 
 from hardy.foundation.values import FrozenModel
 
-# The child gets the variables a toolchain needs to find itself, and nothing
-# else; credentials in the parent environment are not inherited by accident.
+# A "toolchain" child gets the variables a toolchain needs to find itself, and
+# nothing else, so credentials in the parent environment are not inherited by
+# accident. An "inherited" child (`run_guarded`) gets all of them, on purpose.
 RUNTIME_ENVIRONMENT_KEYS = {
     "APPDATA",
     "COMSPEC",
@@ -679,125 +688,53 @@ def run_guarded(
     *,
     cwd: Path | None = None,
     timeout: float,
-    env: dict[str, str] | None = None,
     max_output_bytes: int = _GUARDED_OUTPUT_BYTES,
 ) -> GuardedResult:
-    """Run a child to completion, reachable by Esc, inheriting the environment.
+    """`run_process` for a child that needs this process's whole environment.
 
-    The counterpart to `run_process` for the callers that cannot use it: a TeX
-    installation and a Lake project both need the environment they were started
-    with, and `run_process` deliberately hands a child only the few variables a
-    toolchain needs to find itself. What they still need is everything else --
-    the group, the register, the grace, and the escalation -- and three callers
-    reimplementing that is three chances to leave one rung off the ladder.
+    For the callers that cannot have `run_process`'s default: a TeX
+    installation and a Lake project both need the environment they were
+    started with, and a toolchain child is handed only the few variables a
+    toolchain needs to find itself. What they still need is everything else
+    -- the group, the register, the grace, and the escalation -- and they get
+    exactly `run_process`'s, so there is one ladder to keep whole rather than
+    one per caller. The cost is the one `ProcessSpec.environment` names:
+    whatever this process holds in its environment, credentials included,
+    the child holds too.
 
     Output is bounded while it arrives, before any caller trims diagnostics.
     An overflow stops the child and cannot be mistaken for compiler success.
     """
-    limits = ProcessSpec(argv=tuple(argv), cwd=cwd or Path.cwd(),
-                         timeout_seconds=timeout, max_output_bytes=max_output_bytes)
-    child = _spawn(list(argv), cwd=str(cwd) if cwd else None, env=env)
-    capture = _Capture(child, limits.max_output_bytes)
-    with tracked(child) as entry:
-        entry.watch_output(capture.readers)
-        settled = threading.Event()
-        watcher = threading.Thread(target=_escalate_after_grace, args=(child, entry, settled), daemon=True)
-        watcher.start()
-        deadline = time.monotonic() + limits.timeout_seconds
-        try:
-            timed_out = _wait_guarded(entry, capture, deadline)
-            child.wait(timeout=TEARDOWN_SECONDS)
-        except BaseException:
-            # A Ctrl+C at a *synchronous* caller: `hardy doctor` run as a
-            # command has no cancellation wrapper around `run_checks`, so the
-            # KeyboardInterrupt simply unwinds through here. The probe is in a
-            # process group of its own, which is what keeps the terminal's own
-            # signal off it -- so nothing else is going to stop it, and
-            # unwinding without killing the group leaves it running out its
-            # 30-120 second limit after Hardy has gone.
-            _abandon(child)
-            raise
-        finally:
-            settled.set()
-            watcher.join(timeout=1)
-            capture.join()
-        interrupted = entry.interrupted.is_set()
-    stdout, stderr, output_overflow = capture.result()
-    stopped = timed_out or interrupted or output_overflow
+    result = run_process(ProcessSpec(
+        argv=tuple(argv), cwd=cwd or Path.cwd(), timeout_seconds=timeout,
+        max_output_bytes=max_output_bytes, environment="inherited",
+    ))
     return GuardedResult(
-        returncode=None if stopped else child.returncode,
-        stdout=stdout,
-        stderr=stderr,
-        timed_out=timed_out,
-        interrupted=interrupted,
-        output_overflow=output_overflow,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        timed_out=result.timed_out,
+        interrupted=result.interrupted,
+        output_overflow=result.output_overflow,
     )
 
 
-def _wait_guarded(entry: _Running, capture: _Capture, deadline: float) -> bool:
-    """Wait for a guarded run to settle. Returns whether its deadline ended the wait.
-
-    An overflow or the deadline kills the group here; a stop is walked up the
-    ladder by `_escalate_after_grace`. A wrapper can exit while its descendant
-    still owns the pipes, so this waits for the output to settle too.
-    """
-    while entry.working():
-        if capture.overflow.is_set():
-            kill_group(entry.child)
-            return False
-        if time.monotonic() >= deadline:
-            kill_group(entry.child)
-            return True
-        time.sleep(_POLL_SECONDS)
-    return False
-
-
-def _escalate_after_grace(child: subprocess.Popen, entry: _Running, settled: threading.Event) -> None:
-    """Stop a child that was asked to stop and did not.
-
-    `communicate` cannot be told to stop waiting, so the ladder every other
-    child walks -- grace, group SIGTERM, group SIGKILL -- is walked here by a
-    watcher instead. The grace is spent in slices: nothing sets `settled` when
-    the second press arrives, so a single long wait could not be woken by it,
-    and a press landing inside the grace would sit out the whole of the grace
-    it was pressed to skip.
-    """
-    while not entry.asked.is_set() and not entry.escalated.is_set():
-        if settled.wait(0.05):
-            return
-    if _settled_within(settled, entry, INTERRUPT_GRACE_SECONDS):
-        return
-    # Whatever the leader was doing when the press landed, something in its
-    # group is still holding the pipes `communicate` is waiting on -- so this
-    # run is one Hardy stopped, and its output is whatever had arrived by the
-    # time it did. Recorded here rather than at the press, because until the
-    # grace ran out the child still had every chance to finish on its own.
-    entry.interrupted.set()
-    terminate_group(child)
-    if _settled_within(settled, entry, TEARDOWN_SECONDS):
-        return
-    kill_group(child)
-
-
-def _settled_within(settled: threading.Event, entry: _Running, seconds: float) -> bool:
-    """Whether the child ended within `seconds`. Cut short by a second press."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if entry.escalated.is_set():
-            return False
-        if settled.wait(min(0.05, max(0.0, deadline - time.monotonic()))):
-            return True
-    return settled.is_set()
-
-
 class ProcessSpec(FrozenModel):
-    """One `run_process` child: what to run, where, and its time and output budgets."""
+    """One `run_process` child: what to run, where, its budgets, and the environment it gets.
+
+    `environment` is the one policy the callers differ on. A "toolchain"
+    child gets only `RUNTIME_ENVIRONMENT_KEYS` from this process, so
+    credentials are not inherited by accident; an "inherited" child gets the
+    whole environment, for a toolchain that cannot find itself otherwise.
+    `env` is added on top of either.
+    """
 
     argv: tuple[str, ...]
     cwd: Path
     timeout_seconds: float = Field(ge=0, allow_inf_nan=False, strict=True)
     max_output_bytes: int = Field(ge=0, strict=True)
     env: dict[str, str] = Field(default_factory=dict)
+    environment: Literal["toolchain", "inherited"] = "toolchain"
 
 
 class ProcessResult(FrozenModel):
@@ -819,11 +756,11 @@ class ProcessResult(FrozenModel):
 def run_process(spec: ProcessSpec) -> ProcessResult:
     """Run one child to completion within `spec`'s budgets, reachable by Esc throughout.
 
-    The child gets no stdin, a process group of its own, and only the
-    environment `child_environment` builds from `spec.env`.
+    The child gets no stdin, a process group of its own, and the environment
+    `spec.environment` names.
     """
     started = time.monotonic()
-    child = _spawn(spec.argv, cwd=spec.cwd, env=child_environment(spec.env))
+    child = _spawn(spec.argv, cwd=spec.cwd, env=_environment_for(spec))
     capture = _Capture(child, spec.max_output_bytes)
     with tracked(child) as entry:
         entry.watch_output(capture.readers)
@@ -985,6 +922,15 @@ def _decode_output(value: bytes) -> str:
     """Child output as UTF-8 whatever the host's locale, with every line ending a `\\n`."""
     text = value.decode("utf-8", errors="replace")
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _environment_for(spec: ProcessSpec) -> dict[str, str] | None:
+    if spec.environment == "toolchain":
+        return child_environment(spec.env)
+    if not spec.env:
+        # Nothing to add: the platform hands the whole environment on as is.
+        return None
+    return {**os.environ, **spec.env}
 
 
 def child_environment(explicit: dict[str, str]) -> dict[str, str]:
