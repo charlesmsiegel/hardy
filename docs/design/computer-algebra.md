@@ -298,7 +298,8 @@ nothing at all: a replay that rebuilt a different `x` reproduced three empty
 fields and was called faithful, with every later cell then standing on a value
 nobody had compared. So the kernel fingerprints its own namespace after every
 cell and the record carries the digest as `state_digest`
-(`algebra/driver.py`).
+(`algebra/rendering.py`, which the driver loads and which, like the driver,
+imports nothing from Hardy but the standard library).
 
 What the digest fingerprints is the object *graph*, not a rendering of it. A
 repr describes a value and is silent about identity: `a = []; b = a` and
