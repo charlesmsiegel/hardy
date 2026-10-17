@@ -17,25 +17,14 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
 from hardy.formal.build_cache import publish_build, sweep_retired_builds
+
+# The grammar lives in `formal/syntax/`. Each `name as name` below re-exports
+# a name the interactive session still imports from the workspace; a new caller
+# imports it from `syntax` instead.
 from hardy.formal.syntax import ANY_NAME as ANY_NAME
-from hardy.formal.syntax import ASSUMPTION as ASSUMPTION
-from hardy.formal.syntax import AXIOM_KEYWORD as AXIOM_KEYWORD
-from hardy.formal.syntax import BINDERS as BINDERS
-from hardy.formal.syntax import CLOSERS as CLOSERS
 from hardy.formal.syntax import COMMAND as COMMAND
-from hardy.formal.syntax import COMPONENT as COMPONENT
-from hardy.formal.syntax import ESCAPED as ESCAPED
-from hardy.formal.syntax import HEADER_KEYWORDS as HEADER_KEYWORDS
 from hardy.formal.syntax import IDENTIFIER as IDENTIFIER
-from hardy.formal.syntax import IMPORT_PREFIX as IMPORT_PREFIX
-from hardy.formal.syntax import MODULE as MODULE
-from hardy.formal.syntax import OPENERS as OPENERS
-from hardy.formal.syntax import OPENS_PROOF as OPENS_PROOF
-from hardy.formal.syntax import PRIVATE as PRIVATE
-from hardy.formal.syntax import PROOF as PROOF
-from hardy.formal.syntax import QUALIFIED as QUALIFIED
 from hardy.formal.syntax import QUALIFIED_NAME as QUALIFIED_NAME
-from hardy.formal.syntax import WRAPPER as WRAPPER
 from hardy.formal.syntax import (
     Compile,
     _olean_module,
@@ -46,17 +35,10 @@ from hardy.formal.syntax import (
     module_path,
 )
 from hardy.formal.syntax import DeclarationRefused as DeclarationRefused
-from hardy.formal.syntax import DuplicateDeclaration as DuplicateDeclaration
 from hardy.formal.syntax import ImportCycle as ImportCycle
-from hardy.formal.syntax import QuotedDeclaration as QuotedDeclaration
-from hardy.formal.syntax import UncertainDeclaration as UncertainDeclaration
 from hardy.formal.syntax import WorkspacePathError as WorkspacePathError
-from hardy.formal.syntax import _scan as _scan
-from hardy.formal.syntax import _statement_end as _statement_end
-from hardy.formal.syntax import _word_at as _word_at
 from hardy.formal.syntax import assumptions as assumptions
 from hardy.formal.syntax import declarations as declarations
-from hardy.formal.syntax import declared_name as declared_name
 from hardy.formal.syntax import dependents as dependents
 from hardy.formal.syntax import external_imports as external_imports
 from hardy.formal.syntax import internal_imports as internal_imports
