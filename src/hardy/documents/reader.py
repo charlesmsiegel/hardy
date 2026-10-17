@@ -305,49 +305,71 @@ def assemble(tex: Mapping[str, str]) -> Displayed:
     of an ambiguous conditional skips. Each errs toward the refusal its own
     question owes.
     """
-    seen: set[str] = set()
     # Over every file, in the order the root inputs them: a preamble usually
     # declares what the body uses, and a declaration counts from where TeX
     # meets it, not from wherever in the tree it happens to be written.
-    conditionals = read_conditionals(tex)
+    return _Assembly(tex, read_conditionals(tex)).walk(ROOT_DOCUMENT)
 
-    def walk(path: str) -> Displayed:
-        if not path or path in seen or path not in tex:
+
+class _Assembly:
+    """One reading of a tree from its root, each file read where it is first input."""
+
+    def __init__(self, tex: Mapping[str, str], conditionals: Conditionals) -> None:
+        self.tex = tex
+        self.conditionals = conditionals
+        self.seen: set[str] = set()
+
+    def walk(self, path: str) -> Displayed:
+        r"""`path` as read, each fragment it inputs spliced in at its `\input`."""
+        if not path or path in self.seen or path not in self.tex:
             return Displayed("", ())
-        seen.add(path)
-        page = displayed(tex[path], conditionals)
-        parts: list[str] = []
-        quoted: list[tuple[int, str]] = []
-        uncertain: list[str] = list(page.uncertain)
-        length = 0
-        consumed = 0
-        quoted_through = -1
+        self.seen.add(path)
+        page = displayed(self.tex[path], self.conditionals)
+        spliced = _Splice(page)
         for match in INCLUSION.finditer(page.executed):
-            head = page.executed[consumed : match.start()]
-            parts.append(head)
-            quoted.extend(
-                (length + offset - consumed, block)
-                for offset, block in page.quoted
-                if quoted_through < offset <= match.start()
-            )
-            length += len(head)
-            child = walk(target(match.group(1), tex))
-            parts.append(child.executed)
-            quoted.extend((length + offset, block) for offset, block in child.quoted)
-            uncertain.extend(name for name in child.uncertain if name not in uncertain)
-            length += len(child.executed)
-            consumed = match.end()
-            quoted_through = match.start()
-        tail = page.executed[consumed:]
-        parts.append(tail)
-        quoted.extend(
-            (length + offset - consumed, block)
-            for offset, block in page.quoted
-            if offset > quoted_through
-        )
-        return Displayed("".join(parts), tuple(quoted), tuple(uncertain))
+            spliced.add(match, self.walk(target(match.group(1), self.tex)))
+        return spliced.finish()
 
-    return walk(ROOT_DOCUMENT)
+
+class _Splice:
+    r"""One file's `Displayed`, rebuilt with each input's text in place of its
+    `\input`, and every quoted block moved to where it now sits."""
+
+    def __init__(self, page: Displayed) -> None:
+        self.page = page
+        self.parts: list[str] = []
+        self.quoted: list[tuple[int, str]] = []
+        self.uncertain: list[str] = list(page.uncertain)
+        # The length of the text spliced so far, how far into the page's own
+        # text it has copied, and the offset its quoted blocks are placed to.
+        self.length = 0
+        self.consumed = 0
+        self.quoted_through = -1
+
+    def add(self, match: re.Match[str], child: Displayed) -> None:
+        head = self.page.executed[self.consumed : match.start()]
+        self.parts.append(head)
+        self.quoted.extend(
+            (self.length + offset - self.consumed, block)
+            for offset, block in self.page.quoted
+            if self.quoted_through < offset <= match.start()
+        )
+        self.length += len(head)
+        self.parts.append(child.executed)
+        self.quoted.extend((self.length + offset, block) for offset, block in child.quoted)
+        self.uncertain.extend(name for name in child.uncertain if name not in self.uncertain)
+        self.length += len(child.executed)
+        self.consumed = match.end()
+        self.quoted_through = match.start()
+
+    def finish(self) -> Displayed:
+        self.parts.append(self.page.executed[self.consumed :])
+        self.quoted.extend(
+            (self.length + offset - self.consumed, block)
+            for offset, block in self.page.quoted
+            if offset > self.quoted_through
+        )
+        return Displayed("".join(self.parts), tuple(self.quoted), tuple(self.uncertain))
 
 
 def without_definitions(text: str) -> str:
