@@ -6,12 +6,16 @@ import math
 import os
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from hardy.agents.api import redacted
 from hardy.agents.api_transport import ApiProvider
 from hardy.agents.loop import Message, ProviderTurn, ToolCall
 from hardy.agents.usage import token_count
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 ENDPOINTS = {"openai": "https://api.openai.com/v1", "openrouter": "https://openrouter.ai/api/v1"}
 KEYS = {"openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
@@ -19,7 +23,8 @@ BASE_URLS = {"openai": "OPENAI_BASE_URL", "openrouter": "OPENROUTER_BASE_URL"}
 SDK_MISSING = "OpenAI-compatible backends need pip install 'hardy-prover[openai]'"
 
 
-def load_sdk():
+def load_sdk() -> ModuleType:
+    """The OpenAI SDK, imported on first use: it is an optional install."""
     try:
         import openai
     except ImportError as error:
@@ -27,10 +32,12 @@ def load_sdk():
     return openai
 
 
-def openrouter_client(sdk, **options):
+def openrouter_client(sdk: ModuleType, **options: Any) -> OpenAI:
+    """An OpenAI SDK client that sends OpenRouter exactly its own headers."""
+
     class OpenRouterClient(sdk.OpenAI):
         @property
-        def default_headers(self):
+        def default_headers(self) -> dict[str, str]:
             # The SDK merges OPENAI_CUSTOM_HEADERS and organization/project
             # settings even with an explicit API key. Own the entire public
             # header boundary so no spelling or unrelated gateway header can
@@ -45,24 +52,29 @@ def _field(value, name, default=None):
 
 
 def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
-    result = []
-    for message in messages:
-        if message.role == "tool_result":
-            result.append({"role": "tool", "tool_call_id": message.call_id, "content": message.text or ""})
-        elif message.role == "user":
-            if message.text:
-                result.append({"role": "user", "content": message.text})
-        elif message.blocks and isinstance(message.blocks[0], dict) and message.blocks[0].get("role") == "assistant":
-            # Opaque provider reasoning/signature fields remain in memory for
-            # tool continuations, outside transcripts and visible responses.
-            result.append(deepcopy(message.blocks[0]))
-        elif message.text or message.tool_calls:
-            entry = {"role": "assistant", "content": message.text or None}
-            if message.tool_calls:
-                entry["tool_calls"] = [{"id": call.id, "type": "function", "function": {
-                    "name": call.name, "arguments": json.dumps(call.arguments)}} for call in message.tool_calls]
-            result.append(entry)
-    return result
+    """Hardy's conversation in the Chat Completions shape, one wire message per
+    message, leaving out an empty user turn and an assistant turn that said
+    and called nothing."""
+    return [wire for message in messages if (wire := _wire(message)) is not None]
+
+
+def _wire(message: Message) -> dict[str, Any] | None:
+    if message.role == "tool_result":
+        return {"role": "tool", "tool_call_id": message.call_id, "content": message.text or ""}
+    if message.role == "user":
+        return {"role": "user", "content": message.text} if message.text else None
+    sent = message.blocks[0] if message.blocks else None
+    if isinstance(sent, dict) and sent.get("role") == "assistant":
+        # Opaque provider reasoning/signature fields remain in memory for
+        # tool continuations, outside transcripts and visible responses.
+        return deepcopy(sent)
+    if not (message.text or message.tool_calls):
+        return None
+    entry: dict[str, Any] = {"role": "assistant", "content": message.text or None}
+    if message.tool_calls:
+        entry["tool_calls"] = [{"id": call.id, "type": "function", "function": {
+            "name": call.name, "arguments": json.dumps(call.arguments)}} for call in message.tool_calls]
+    return entry
 
 
 def usage(reported: object) -> dict[str, int] | None:
@@ -94,7 +106,14 @@ def usage(reported: object) -> dict[str, int] | None:
     return result or None
 
 
+#: Chat Completions finish reasons, in the stop vocabulary the loop reads.
+FINISH_REASONS = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
+
+
 class OpenAIProvider(ApiProvider):
+    """One Chat Completions call to OpenAI or OpenRouter. The loop decides
+    whether to make it; `ApiProvider` keeps its deadline and admission."""
+
     def __init__(self, model: str, *, backend: str = "openai", base_url: str | None = None, **kwargs):
         if backend not in ENDPOINTS:
             raise ValueError("OpenAI-compatible provider requires openai or openrouter backend")
@@ -103,7 +122,9 @@ class OpenAIProvider(ApiProvider):
         self._selected = backend
         self._base_url = base_url or os.environ.get(BASE_URLS[backend]) or ENDPOINTS[backend]
 
-    def client(self):
+    def client(self) -> OpenAI:
+        """The SDK client, built on the first call that needs one, from the
+        selected backend's own key and endpoint."""
         if self._client is None:
             key = os.environ.get(KEYS[self._selected])
             if not key:
@@ -114,7 +135,8 @@ class OpenAIProvider(ApiProvider):
         return self._client
 
     @property
-    def endpoint(self):
+    def endpoint(self) -> str:
+        """Where this transport sends, redacted for the record."""
         base = getattr(self._client, "base_url", None) if self._client is not None else self._base_url
         return f"chat completions ({redacted(str(base or self._base_url))})"
 
@@ -151,22 +173,10 @@ class OpenAIProvider(ApiProvider):
         text = _field(message, "content") or ""
         if not isinstance(text, str):
             raise ValueError("provider returned non-text completion content")
-        calls, wire = [], {"role": "assistant", "content": text or None}
-        for call in _field(message, "tool_calls") or []:
-            function = _field(call, "function")
-            identifier, name = _field(call, "id"), _field(function, "name")
-            if _field(call, "type") != "function" or not identifier or not name:
-                raise ValueError("provider returned an invalid function call")
-            encoded = _field(function, "arguments")
-            try:
-                arguments = json.loads(encoded)
-            except (ValueError, TypeError) as error:
-                raise ValueError("provider function arguments must be a JSON object") from error
-            if not isinstance(arguments, dict):
-                raise ValueError("provider function arguments must be a JSON object")
-            calls.append(ToolCall(identifier, name, arguments))
-            wire.setdefault("tool_calls", []).append({"id": identifier, "type": "function",
-                "function": {"name": name, "arguments": encoded}})
+        wire: dict[str, Any] = {"role": "assistant", "content": text or None}
+        parsed = [_tool_call(call) for call in _field(message, "tool_calls") or []]
+        if parsed:
+            wire["tool_calls"] = [entry for _, entry in parsed]
         reasoning = []
         for field in ("reasoning_details", "reasoning_content"):
             value = _field(message, field)
@@ -174,8 +184,24 @@ class OpenAIProvider(ApiProvider):
                 wire[field] = value
                 reasoning.append({field: value})
         finish = _field(selected, "finish_reason")
-        stop = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}.get(finish, finish or "unknown")
-        if _field(message, "refusal"):
-            stop = "refusal"
-        return ProviderTurn(text=text, tool_calls=tuple(calls), blocks=(wire,),
+        stop = "refusal" if _field(message, "refusal") else FINISH_REASONS.get(finish, finish or "unknown")
+        return ProviderTurn(text=text, tool_calls=tuple(call for call, _ in parsed), blocks=(wire,),
             thinking=bool(reasoning), reasoning=tuple(reasoning), usage=reported, stop_reason=stop)
+
+
+def _tool_call(call: object) -> tuple[ToolCall, dict[str, Any]]:
+    """One function call from a reply: as the loop runs it, and as it goes
+    back on the wire, with its arguments exactly as the provider encoded them."""
+    function = _field(call, "function")
+    identifier, name = _field(call, "id"), _field(function, "name")
+    if _field(call, "type") != "function" or not identifier or not name:
+        raise ValueError("provider returned an invalid function call")
+    encoded = _field(function, "arguments")
+    try:
+        arguments = json.loads(encoded)
+    except (ValueError, TypeError) as error:
+        raise ValueError("provider function arguments must be a JSON object") from error
+    if not isinstance(arguments, dict):
+        raise ValueError("provider function arguments must be a JSON object")
+    wire = {"id": identifier, "type": "function", "function": {"name": name, "arguments": encoded}}
+    return ToolCall(identifier, name, arguments), wire
