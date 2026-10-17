@@ -1,7 +1,9 @@
 import ast
 import importlib
+import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -361,3 +363,36 @@ def test_context_candidate_fence_collision_lengthens_marker(monkeypatch):
     monkeypatch.setattr(prompts.hashlib, "sha256", lambda payload: Digest())
     assert prompts._fence("claim", "Lean", "context ===HARDY-12345678===") == "===HARDY-123456789==="
 
+
+def test_the_coordinator_is_told_exactly_the_actions_a_plan_may_take():
+    """The action list is prose in the template and a `Literal` in the code.
+
+    It drifted once: `reinforce` and `finish` were accepted from a plan but
+    never offered to the coordinator, so it could not choose them. The prose
+    stays prose -- each action carries its arguments in words -- and this is
+    what keeps the two the same set.
+    """
+    from hardy.prompts import source
+    from hardy.workflows.delegation.coordinator import Action
+
+    sentence = re.search(r"Actions: (.*?)\. \"noop\" is", source("delegation_coordinator")).group(1)
+    offered = {name.strip() for name in re.sub(r"\([^)]*\)", "", sentence).split(",")}
+    assert offered == set(get_args(Action))
+
+
+@pytest.mark.parametrize("name", ["chat", "batch/system"])
+def test_the_axioms_a_prompt_promises_are_the_ones_the_audit_accepts(name):
+    """The standard axiom set is restated as prose in the templates.
+
+    Rendering it from `formal.audit.STANDARD` would take the sentence out of
+    the source the prompt-set hashes cover, so the prose stays and this ties
+    it to the constant: changing what the audit accepts without changing what
+    the model is told fails here.
+    """
+    from hardy.formal import audit
+    from hardy.prompts import source
+
+    text = source(name)
+    listed = re.search(r"beyond ((?:`[^`]+`(?:,? and |, )?)+)", text).group(1)
+    assert set(re.findall(r"`([^`]+)`", listed)) == audit.STANDARD
+    assert all(f"`{axiom}`" in text for axiom in audit.FORBIDDEN)
