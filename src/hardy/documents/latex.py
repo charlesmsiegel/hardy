@@ -7,6 +7,14 @@ whether every reference and citation resolved, since LaTeX exits zero over a
 `??` or a `[?]`. Only a compile of the real document publishes `writeup.pdf`
 and its labels, and only once the caller's `commit` has saved the source.
 Nothing here confines the compiler: run it on trusted output only.
+
+The staged writeup's compile (`writeup.build_writeup`) refuses two more things
+from its log: a character the font dropped, and a file read from outside its
+pinned Tectonic bundle. This check refuses neither. A host file is what the
+user's own `latex_command` reads by design -- there is no bundle here for it
+to break -- but a dropped glyph loses a quoted Lean symbol on this path too,
+and nothing records a reason for leaving it out; adding it is one more
+refusal in `_verdict`, read with `references.dropped_glyphs`.
 """
 from __future__ import annotations
 
@@ -27,8 +35,8 @@ from hardy.documents.syntax import (
     MAX_PASSES,
     OUTPUTS,
     ROOT_DOCUMENT,
-    executed_text,
     executed_begin_document,
+    executed_text,
     reached_fragments,
     read_conditionals,
     stamped,
@@ -343,6 +351,24 @@ class _Compiled:
     output: str
     elapsed: float
 
+    def report(self, verdict: str, note: str, limit: int) -> str:
+        """What the caller is shown: exit status, the compiler's output, and
+        Hardy's verdict and note, bounded by `limit` bytes."""
+        report = "\n".join(part for part in (verdict, note) if part)
+        # Bounded after the report is added, not only before. The
+        # compiler's own output was cut to `output_limit` and then an
+        # unbounded diagnostic appended -- and that diagnostic names every
+        # unresolved reference and every unreferenced label, so a document
+        # with thousands of them flooded the transcript past the cap the
+        # limit exists to be.
+        head = f"exit={self.outcome.returncode} elapsed={self.elapsed:.3f}s\n"
+        body = self.output + (f"\n{report}" if report else "")
+        # The tail is kept, so what survives a document with thousands of
+        # unresolved labels is Hardy's own verdict rather than TeX's
+        # chatter; the exit status is held out of the cut because it is
+        # one line and it is the first thing a reader looks for.
+        return head + _tail(body, limit - len(head))
+
 
 #: The refusal for a compile that exited zero and made nothing to publish.
 _NO_DOCUMENT = (
@@ -525,7 +551,7 @@ class LatexTools:
             broken, labels = _verdict(run, work, given, root.actual, vouched)
             publication = _Publication(output_dir, aux_dir, commit, published, _publication_lock)
             resolved, note = publication.settle(work, run.outcome.returncode == 0 and not broken, actual=root.actual)
-            return ToolResult(resolved, self._report(run, broken or references.note(labels), note), source)
+            return ToolResult(resolved, run.report(broken or references.note(labels), note, self.output_limit), source)
 
     def _compile(self, work: Path, started: float) -> _Compiled | str:
         """Run the compiler over the root in `work`; the run, or why it has no
@@ -555,24 +581,6 @@ class LatexTools:
             # one would read as LaTeX rejecting the document.
             return f"interrupted after {elapsed:.3f}s\n{output}"
         return _Compiled(outcome, log, output, elapsed)
-
-    def _report(self, run: _Compiled, verdict: str, note: str) -> str:
-        """What the caller is shown: exit status, the compiler's output, and
-        Hardy's verdict and note, bounded by `output_limit`."""
-        report = "\n".join(part for part in (verdict, note) if part)
-        # Bounded after the report is added, not only before. The
-        # compiler's own output was cut to `output_limit` and then an
-        # unbounded diagnostic appended -- and that diagnostic names every
-        # unresolved reference and every unreferenced label, so a document
-        # with thousands of them flooded the transcript past the cap the
-        # limit exists to be.
-        head = f"exit={run.outcome.returncode} elapsed={run.elapsed:.3f}s\n"
-        body = run.output + (f"\n{report}" if report else "")
-        # The tail is kept, so what survives a document with thousands of
-        # unresolved labels is Hardy's own verdict rather than TeX's
-        # chatter; the exit status is held out of the cut because it is
-        # one line and it is the first thing a reader looks for.
-        return head + _tail(body, self.output_limit - len(head))
 
     def _passes(self, work: Path, root: Path) -> tuple[GuardedResult, str, str]:
         r"""Run the compiler until another pass would not change the answer.
