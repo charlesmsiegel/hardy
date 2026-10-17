@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -34,6 +34,7 @@ from hardy.agents.api_transport import ApiProvider
 from hardy.agents.contracts import TurnEvent, final_text
 from hardy.agents.loop import AgentLoop, Message, ProviderTurn, ToolCall
 from hardy.agents.spend_budget import SpendBudget
+from hardy.agents.usage import REPORTED_COUNTERS, stated_counters
 from hardy.foundation.values import ToolResult
 
 BACKEND = "anthropic-api"
@@ -216,61 +217,25 @@ def redacted(url: str) -> str:
     return f"{kept} (query redacted)" if parsed.query else kept
 
 
-def timed_out(error: BaseException) -> bool:
-    """Whether `error` is the transport saying the request ran out of time.
-
-    Asked of the SDK's class when it can be reached, and of the class name
-    otherwise -- a caller may have injected a client with no `anthropic`
-    installed behind it, and a timeout is still a timeout there.
-    """
-    if isinstance(error, TimeoutError):
-        return True
-    try:
-        return isinstance(error, load_sdk().APITimeoutError)
-    except (RuntimeError, AttributeError):
-        return type(error).__name__ == "APITimeoutError"
-
-
-def _usage(reported: Any) -> dict[str, Any] | None:
+def _usage(reported: object) -> dict[str, int] | None:
     """The provider's token report, or None when it stated nothing.
 
-    Copied into a plain dict, and never `{}`: `usage.Usage` reads an absent
-    report as "not stated" and an empty one as a measured zero, and only one
-    of those is true of a provider that said nothing.
+    The SDK's `Usage` model, a plain mapping a caller injected, or any object
+    carrying the counters as attributes, read through one vocabulary
+    (`stated_counters`). Copied into a plain dict, and never `{}`:
+    `usage.Usage` reads an absent report as "not stated" and an empty one as a
+    measured zero, and only one of those is true of a provider that said
+    nothing.
     """
     if reported is None:
         return None
     if hasattr(reported, "model_dump"):
         counts = reported.model_dump()
-    elif isinstance(reported, dict):
-        counts = dict(reported)
+    elif isinstance(reported, Mapping):
+        counts = reported
     else:
-        counts = {key: getattr(reported, key) for key in dir(reported) if not key.startswith("_")}
-    stated = {
-        str(key): value
-        for key, value in counts.items()
-        if isinstance(value, int) and not isinstance(value, bool)
-    }
-    return stated or None
-
-
-#: Statuses the Messages API answers before it does any work: rate limited
-#: (429) and overloaded (529). Neither bills anything.
-REJECTED_BEFORE_WORK = frozenset({429, 529})
-
-
-def _rejected(error: BaseException) -> bool:
-    """Whether a failed call was an explicit pre-execution rejection.
-
-    By shape rather than by class, since the SDK is loaded lazily: an
-    `anthropic.APIStatusError` carries the HTTP status and the response it
-    came in. Every other failure -- a 5xx, a dropped connection, Hardy's own
-    deadline -- may have happened after the provider started work, so it is
-    not one of these (owner decision 4).
-    """
-    status = getattr(error, "status_code", None)
-    return (isinstance(status, int) and not isinstance(status, bool) and status in REJECTED_BEFORE_WORK
-            and getattr(error, "response", None) is not None)
+        counts = {key: getattr(reported, key, None) for key in REPORTED_COUNTERS}
+    return stated_counters(counts) or None
 
 
 class AnthropicProvider(ApiProvider):
@@ -316,14 +281,6 @@ class AnthropicProvider(ApiProvider):
 
     def _send(self, request):
         return self.client().messages.create(**request)
-
-    @staticmethod
-    def _timed_out(error):
-        return timed_out(error)
-
-    @staticmethod
-    def _rejected(error):
-        return _rejected(error)
 
     @staticmethod
     def _usage(reply):

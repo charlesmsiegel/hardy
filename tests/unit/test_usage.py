@@ -575,3 +575,20 @@ def test_a_summary_of_an_exchange_nobody_reported_on_is_not_a_summary_of_zero():
     assert stated["cost_usd"] is None
     assert stated["total_tokens"] is None
     assert not any(stated["reported"].values())
+
+
+def test_a_result_event_reads_back_as_the_report_that_wrote_it():
+    """Both runtimes write `ExchangeReport.event()` and the ledger reads
+    `ExchangeReport.read`, so the event's vocabulary is one declaration: what
+    one side writes, the other reads back field for field."""
+    from hardy.agents.usage import ExchangeReport
+
+    owned_loop = ExchangeReport(session_id="s", turns=2, cost_usd=None, usage={"input_tokens": 5}, is_error=True,
+                                error="provider_error", enforced_by="hardy")
+    claude_sdk = ExchangeReport(session_id="t", turns=3, cost_usd=0.25, usage={"input_tokens": 9}, is_error=False,
+                                api_error_status=None, guarded=True, exchange_usage={"input_tokens": 9},
+                                cumulative=False, model_usage=None)
+    for report in (owned_loop, claude_sdk):
+        assert ExchangeReport.read(report.event()) == report
+    assert "exchange_usage" not in owned_loop.event() and "model_usage" not in owned_loop.event()
+    assert set(claude_sdk.event()) >= {"exchange_usage", "cumulative", "model_usage"}

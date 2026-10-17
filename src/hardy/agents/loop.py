@@ -38,6 +38,7 @@ from typing import Any, Protocol, TypeVar
 
 from hardy.agents.contracts import ProviderRequestTimeout, TurnEvent
 from hardy.agents.spend_budget import SpendLimitReached
+from hardy.agents.usage import ExchangeReport
 from hardy.foundation.values import ToolResult
 
 T = TypeVar("T")
@@ -793,25 +794,24 @@ class AgentLoop:
                 self._stated.add(str(key))
 
     def _report(self, budget: Budget) -> None:
-        self._observe({
-            "type": "result",
-            "session_id": self.session_id,
-            "turns": budget.spent,
-            **({"provider_unasked": True} if self._budget_refused and budget.spent == 0 else {}),
+        self._observe(ExchangeReport(
+            session_id=self.session_id,
+            turns=budget.spent,
+            provider_unasked=self._budget_refused and budget.spent == 0,
             # Only explicit provider USD receipts supply price; token tariffs
             # belong to the separate spend-admission estimate.
-            "cost_usd": self._total_cost_usd if self._cost_stated else None,
+            cost_usd=self._total_cost_usd if self._cost_stated else None,
             # The running total, for the counters this exchange actually
             # stated and no others. An exchange that reported nothing -- one
             # that ended on a provider error before any answer arrived --
             # reports None rather than handing back the previous exchange's
             # figures as though it had stated them itself; and one that stated
             # some but not all of them does not silently vouch for the rest.
-            "usage": {key: self._totals[key] for key in sorted(self._stated)} or None,
-            "is_error": self._failure is not None,
-            **({"error": self._failure} if self._failure else {}),
+            usage={key: self._totals[key] for key in sorted(self._stated)} or None,
+            is_error=self._failure is not None,
+            error=self._failure,
             # Who kept the bounds this exchange ran under. Recorded beside the
             # numbers because the whole point of owning the loop is that the
             # limits a trajectory states are the limits that applied.
-            "enforced_by": "hardy",
-        })
+            enforced_by="hardy",
+        ).event())

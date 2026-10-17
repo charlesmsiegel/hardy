@@ -24,7 +24,7 @@ Nothing here estimates. If the provider did not say it, Hardy does not know it.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 #: Hardy's field name for each counter, keyed by the name the provider's usage
@@ -37,6 +37,13 @@ _COUNTERS = {
     "cache_creation_input_tokens": "cache_write_tokens",
     "cache_read_input_tokens": "cache_read_tokens",
 }
+
+#: The token counters a provider usage report states, under the Messages API's
+#: names: the one vocabulary every transport reports in. The Claude Code CLI
+#: and Hardy's Anthropic transport speak it natively, the OpenAI-compatible
+#: transports are translated into it (`openai_api.usage`), the Claude runtime
+#: maps `modelUsage` onto it, and spend admission settles in it.
+REPORTED_COUNTERS = tuple(_COUNTERS)
 
 #: What `/status` calls each counter. Keyed by field so the labels and the
 #: order in `Usage.COUNTERS` cannot drift apart.
@@ -52,7 +59,7 @@ _LABELS = {
 _LABEL = 14
 
 
-def _count(value: Any) -> int | None:
+def token_count(value: object) -> int | None:
     """A token count, or None if the report did not give a usable one.
 
     None rather than 0 on purpose: the caller distinguishes "the provider said
@@ -65,17 +72,112 @@ def _count(value: Any) -> int | None:
     return value
 
 
+def stated_counters(report: object) -> dict[str, int]:
+    """The counters one provider report states usably, under its own names.
+
+    Only `REPORTED_COUNTERS`, and only figures `token_count` accepts: a key
+    the report carries that is not a counter, or a counter it filled with
+    something that is not a count, is not a statement about spend.
+    """
+    if not isinstance(report, Mapping):
+        return {}
+    return {key: counted for key in REPORTED_COUNTERS if (counted := token_count(report.get(key))) is not None}
+
+
 #: Where `Usage.baselines` keeps the last `model_usage` figure for each
 #: counter, beside the report's own figures, so cost's evidence is differenced
 #: against its own history.
 _MODEL = "model_usage."
 
 
-def _fields(report: Any) -> dict[str, int]:
+def _fields(report: object) -> dict[str, int]:
     """A provider usage report's usable token counters, under Hardy's names."""
-    if not isinstance(report, Mapping):
-        return {}
-    return {field: counted for key, field in _COUNTERS.items() if (counted := _count(report.get(key))) is not None}
+    return {_COUNTERS[key]: counted for key, counted in stated_counters(report).items()}
+
+
+@dataclasses.dataclass(frozen=True)
+class ExchangeReport:
+    """The `result` event: what a runtime says one exchange cost.
+
+    Written by the runtime that saw the exchange end -- `AgentLoop._report` on
+    Hardy's own loop, `ClaudeAgentRuntime._note` on the SDK's -- and read back
+    by `Usage.record`, live or from a transcript an earlier version wrote. So
+    its vocabulary is spelled here once, and a figure is held as the provider
+    stated it: `Usage.record` decides what it is worth, and None stays None.
+    """
+
+    session_id: str | None = None
+    #: Provider calls the exchange took, in the runtime's own definition.
+    turns: int | None = None
+    #: An explicit provider receipt in USD, never derived from a tariff.
+    cost_usd: object = None
+    #: The provider's token report, or None when it stated nothing.
+    usage: Mapping[str, object] | None = None
+    is_error: bool | None = None
+    #: The spend budget refused the exchange's first call: nothing was sent.
+    provider_unasked: bool = False
+    error: str | None = None
+    api_error_status: object = None
+    errors: Sequence[str] | None = None
+    #: Who kept the exchange's bounds, where a runtime keeps them itself.
+    enforced_by: str | None = None
+    #: Whether the runtime ran the restored-total guard `Usage.record`
+    #: describes. `exchange_usage` (what the exchange's own messages moved)
+    #: and `cumulative` mean something only when it did.
+    guarded: bool = False
+    exchange_usage: Mapping[str, int] | None = None
+    cumulative: bool | None = None
+    #: `modelUsage` summed over models, the evidence sharing the cost's
+    #: lifecycle.
+    model_usage: Mapping[str, int] | None = None
+
+    def event(self) -> dict[str, Any]:
+        """The transcript's form: optional keys only when stated, in the order
+        earlier records carry them."""
+        event: dict[str, Any] = {"type": "result", "session_id": self.session_id, "turns": self.turns}
+        if self.provider_unasked:
+            event["provider_unasked"] = True
+        event.update(cost_usd=self.cost_usd, usage=self.usage, is_error=self.is_error)
+        if self.error:
+            event["error"] = self.error
+        if self.api_error_status is not None:
+            event["api_error_status"] = self.api_error_status
+        if self.errors:
+            event["errors"] = self.errors
+        if self.enforced_by is not None:
+            event["enforced_by"] = self.enforced_by
+        if self.guarded:
+            event.update(exchange_usage=self.exchange_usage, cumulative=self.cumulative)
+        if self.guarded or self.model_usage is not None:
+            event["model_usage"] = self.model_usage
+        return event
+
+    @classmethod
+    def read(cls, event: Mapping[str, Any]) -> ExchangeReport:
+        """The report a transcript event carries, whichever version wrote it.
+
+        Only a non-empty string is a session id. A report is guarded when it
+        carries either of the guard's keys, as every report the Claude runtime
+        has written since the guard existed does, even when both are null.
+        """
+        session = event.get("session_id")
+        usage = event.get("usage")
+        return cls(
+            session_id=session if isinstance(session, str) and session else None,
+            turns=event.get("turns"),
+            cost_usd=event.get("cost_usd"),
+            usage=usage if isinstance(usage, Mapping) else None,
+            is_error=event.get("is_error"),
+            provider_unasked=event.get("provider_unasked") is True,
+            error=event.get("error"),
+            api_error_status=event.get("api_error_status"),
+            errors=event.get("errors"),
+            enforced_by=event.get("enforced_by"),
+            guarded="exchange_usage" in event or "cumulative" in event,
+            exchange_usage=event.get("exchange_usage"),
+            cumulative=event.get("cumulative"),
+            model_usage=event.get("model_usage"),
+        )
 
 
 def _money(value: float) -> str:
@@ -105,6 +207,34 @@ def _compact(count: int) -> str:
     if count < 1_000_000:
         return f"{round(count / 1_000):,}k"
     return f"{count / 1_000_000:.1f}M"
+
+
+@dataclasses.dataclass(frozen=True)
+class _Figures:
+    """What one report states that the ledger can use, under Hardy's names."""
+
+    #: The cost and the token counters, as stated: what gets folded.
+    stated: dict[str, float]
+    tokens: dict[str, int]
+    #: What this exchange's own messages moved: a floor under its real spend
+    #: that does not depend on how the CLI accumulates its report.
+    own: dict[str, int]
+    #: The `model_usage` counters, under `_MODEL`-prefixed baseline names.
+    model: dict[str, int]
+
+    @classmethod
+    def of(cls, report: ExchangeReport) -> _Figures:
+        cost = report.cost_usd
+        stated: dict[str, float] = {}
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            stated["cost_usd"] = float(cost)
+        tokens = _fields(report.usage)
+        return cls(
+            stated={**stated, **tokens},
+            tokens=tokens,
+            own=_fields(report.exchange_usage),
+            model={f"{_MODEL}{field}": figure for field, figure in _fields(report.model_usage).items()},
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -242,81 +372,76 @@ class Usage:
         call = call if isinstance(call, str) and call else None
         pending = self.pending_workflow_calls
         reconciled = call is not None and call in pending
-        if event.get("provider_unasked") is True:
+        report = ExchangeReport.read(event)
+        if report.provider_unasked:
             return dataclasses.replace(self, turns=max(0, self.turns - 1),
                 pending_workflow_calls=tuple(value for value in pending if value != call)) if reconciled else self
         if event.get("type") == "exchange_unreported" and call is not None:
             if reconciled:
                 return self
             return dataclasses.replace(self, turns=self.turns + 1, pending_workflow_calls=(*pending, call))
-        session = event.get("session_id")
-        session = session if isinstance(session, str) and session else self.provider_session
-        switched = session != self.provider_session
-        stated: dict[str, float] = {}
-        cost = event.get("cost_usd")
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
-            stated["cost_usd"] = float(cost)
-        tokens = _fields(event.get("usage"))
-        stated.update(tokens)
-        # What this exchange's own messages moved: a floor under its real
-        # spend that does not depend on how the CLI accumulates its report.
-        own = _fields(event.get("exchange_usage"))
-        model = {f"{_MODEL}{field}": figure for field, figure in _fields(event.get("model_usage")).items()}
-        guarded = "exchange_usage" in event or "cumulative" in event
-
-        if guarded:
-            tokens_restored = (
-                not switched and bool(own) and event.get("cumulative") is not False
-                and self._climbed(tokens, own)
-            )
-            cost_restored = (
-                not switched and bool(own) and bool(tokens) and "cost_usd" in self.baselines
-                and stated.get("cost_usd", self.baselines["cost_usd"]) >= self.baselines["cost_usd"]
-                and self._climbed(model, {f"{_MODEL}{field}": n for field, n in own.items()})
-            )
-        else:
-            # A restart is a property of the report, not of one field: the
-            # CLI writes every restored counter back at once. One figure below
-            # its baseline condemns the whole report -- taken field by field,
-            # a fresh counter that happened to pass an old baseline would be
-            # read as an increment.
-            restarted = switched or any(
-                figure < self.baselines[field] for field, figure in stated.items() if field in self.baselines
-            )
-            tokens_restored = cost_restored = not restarted
+        session = report.session_id or self.provider_session
+        figures = _Figures.of(report)
+        tokens_continue, cost_continues = self._continuing(report, figures, switched=session != self.provider_session)
         # A restart invalidates every baseline of its family, not just the ones
         # this report restates: an omitted field left holding the old figure
         # would make the next report that does state it -- necessarily smaller
         # -- read as a second restart and be added whole.
         baselines = {
             field: figure for field, figure in self.baselines.items()
-            if (tokens_restored if field in self.COUNTERS else cost_restored)
+            if (tokens_continue if field in self.COUNTERS else cost_continues)
         }
-        reports = dict(self.reports)
         totals = {field: getattr(self, field) for field in self.COUNTERS}
         spent = self.cost_usd
-        for field, figure in stated.items():
+        for field, figure in figures.stated.items():
             base = baselines.get(field)
             added = figure if base is None or figure < base else figure - base
             # Never less than the exchange's own messages moved.
-            added = max(added, own.get(field, 0) if field in tokens else 0)
-            baselines[field] = figure
-            reports[field] = reports.get(field, 0) + 1
+            added = max(added, figures.own.get(field, 0) if field in figures.tokens else 0)
             if field == "cost_usd":
                 spent = (self.cost_usd or 0.0) + added
             else:
                 totals[field] += int(added)
-        baselines.update(model)
         return dataclasses.replace(
             self,
             turns=self.turns + (0 if reconciled else 1),
             pending_workflow_calls=tuple(value for value in pending if value != call),
             cost_usd=spent,
-            baselines=baselines,
+            baselines={**baselines, **figures.stated, **figures.model},
             provider_session=session,
-            reports=reports,
+            reports={**self.reports, **{field: self.reports.get(field, 0) + 1 for field in figures.stated}},
             **totals,
         )
+
+    def _continuing(self, report: ExchangeReport, figures: _Figures, *, switched: bool) -> tuple[bool, bool]:
+        """Whether the report's tokens, and its cost, continue the running
+        totals the baselines hold -- the decision `record` describes.
+
+        A new provider session continues nothing. A guarded report continues a
+        family only on proof; an unguarded one continues both unless a figure
+        went backwards.
+        """
+        if switched:
+            return False, False
+        if not report.guarded:
+            # A restart is a property of the report, not of one field: the
+            # CLI writes every restored counter back at once. One figure below
+            # its baseline condemns the whole report -- taken field by field,
+            # a fresh counter that happened to pass an old baseline would be
+            # read as an increment.
+            restarted = any(
+                figure < self.baselines[field] for field, figure in figures.stated.items() if field in self.baselines
+            )
+            return not restarted, not restarted
+        if not figures.own:
+            return False, False
+        tokens = report.cumulative is not False and self._climbed(figures.tokens, figures.own)
+        cost = (
+            bool(figures.tokens) and "cost_usd" in self.baselines
+            and figures.stated.get("cost_usd", self.baselines["cost_usd"]) >= self.baselines["cost_usd"]
+            and self._climbed(figures.model, {f"{_MODEL}{field}": n for field, n in figures.own.items()})
+        )
+        return tokens, cost
 
     def _climbed(self, figures: Mapping[str, float], own: Mapping[str, int]) -> bool:
         """Whether `figures` are the last ones plus exactly this exchange's own.
@@ -489,7 +614,7 @@ class Usage:
         if not isinstance(stored, Mapping):
             return None
         counters = {
-            field: _count(stored.get(field))
+            field: token_count(stored.get(field))
             for field in ("turns", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens")
         }
         if any(value is None for value in counters.values()):
@@ -507,7 +632,7 @@ class Usage:
         if (not isinstance(pending, (tuple, list)) or any(not isinstance(value, str) or not value for value in pending)
                 or len(set(pending)) != len(pending) or len(pending) > counters["turns"]):
             return None
-        reports = {str(field): _count(covered) for field, covered in held.items()}
+        reports = {str(field): token_count(covered) for field, covered in held.items()}
         if any(covered is None for covered in reports.values()):
             return None
         baselines = {}

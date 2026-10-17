@@ -11,6 +11,7 @@ from typing import Any
 from hardy.agents.api import redacted
 from hardy.agents.api_transport import ApiProvider
 from hardy.agents.loop import Message, ProviderTurn, ToolCall
+from hardy.agents.usage import token_count
 
 ENDPOINTS = {"openai": "https://api.openai.com/v1", "openrouter": "https://openrouter.ai/api/v1"}
 KEYS = {"openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
@@ -64,16 +65,21 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     return result
 
 
-def usage(reported) -> dict[str, int] | None:
+def usage(reported: object) -> dict[str, int] | None:
+    """A Chat Completions usage report, translated into `REPORTED_COUNTERS`.
+
+    `prompt_tokens` includes the cached and cache-written ones, which the
+    reported vocabulary counts apart, so input is what remains after both. A
+    report whose cache figures exceed its prompt is refused rather than
+    rounded: it cannot be divided honestly. None when nothing was stated.
+    """
     if reported is None:
         return None
-    def count(value):
-        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-    prompt = count(_field(reported, "prompt_tokens"))
-    completion = count(_field(reported, "completion_tokens"))
+    prompt = token_count(_field(reported, "prompt_tokens"))
+    completion = token_count(_field(reported, "completion_tokens"))
     details = _field(reported, "prompt_tokens_details")
-    cached = count(_field(details, "cached_tokens"))
-    created = count(_field(details, "cache_write_tokens"))
+    cached = token_count(_field(details, "cached_tokens"))
+    created = token_count(_field(details, "cache_write_tokens"))
     result = {}
     if prompt is not None:
         if (cached or 0) + (created or 0) > prompt:
