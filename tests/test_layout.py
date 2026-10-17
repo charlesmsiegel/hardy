@@ -1307,10 +1307,10 @@ def test_write_guard_write_text_goes_through_the_same_retrying_replace_as_write_
     """#332's retry has to cover this write too. The layout ratchet only sees
     a bare `os.replace` outside `locking.py`; it says nothing about whether a
     *new* method built on `write_bytes` still goes through the retry, so this
-    proves the wiring directly: `write_text` must call `replace_with_retry`,
-    not rename the temporary itself.
+    proves the wiring directly: `write_text` must reach `replace_with_retry`
+    (through `locking.write_atomically`), not rename the temporary itself.
     """
-    import hardy.foundation.files as files_module
+    import hardy.foundation.locking as locking_module
 
     calls: list[str] = []
 
@@ -1318,7 +1318,7 @@ def test_write_guard_write_text_goes_through_the_same_retrying_replace_as_write_
         calls.append(Path(source).name)
         os.replace(source, target)
 
-    monkeypatch.setattr(files_module, "replace_with_retry", spy)
+    monkeypatch.setattr(locking_module, "replace_with_retry", spy)
     guard = WriteGuard(tmp_path, create=True)
     guard.write_text("note.txt", "hello\r\n")
     assert calls, "write_text must go through replace_with_retry, not open the target directly"

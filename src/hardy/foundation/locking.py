@@ -12,27 +12,46 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import IO
 
 
 def atomic_write_bytes(target: Path, content: bytes) -> None:
     """Replace `target` with `content`, fsynced and whole or not at all, creating its directory.
 
-    The temporary sits beside `target`, so the replace is a rename within one
-    directory. Nothing here checks the path itself: `files.WriteGuard` is the
-    guarded counterpart.
+    Nothing here checks the path: a link at `target` is replaced and one
+    above it is followed. Files inside a project are written through
+    `files.WriteGuard`, which proves the path first; this is for the files
+    Hardy keeps outside one -- run storage, the paper library, evaluation
+    boards and summaries, the corpus viewer's shards.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary_name: str | None = None
+    write_atomically(target, lambda handle: handle.write(content))
+
+
+def write_atomically(target: Path, fill: Callable[[IO[bytes]], object], *, sync: bool = True) -> None:
+    """Replace `target` with what `fill` writes, whole or not at all.
+
+    `fill` writes into a `NamedTemporaryFile` beside `target`, which opens
+    `O_CREAT | O_EXCL` under a name nobody can have shipped, and which is
+    renamed over `target` by `replace_with_retry` once it is complete: a
+    reader sees the old file or the new one, never part of either, and a
+    failure leaves no temporary behind. `sync` fsyncs the bytes before the
+    rename, for a file that has to survive a crash and not only a reader.
+    The one copy of this sequence, so a fix to it cannot go stale in a second.
+    """
+    temporary: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temporary:
-            temporary_name = temporary.name
-            temporary.write(content)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        replace_with_retry(Path(temporary_name), target)
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as handle:
+            temporary = handle.name
+            fill(handle)
+            if sync:
+                handle.flush()
+                os.fsync(handle.fileno())
+        replace_with_retry(Path(temporary), target)
+        temporary = None
     finally:
-        if temporary_name is not None:
-            Path(temporary_name).unlink(missing_ok=True)
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
 
 
 #: Whether a bare `os.replace` onto an open destination needs retrying at all.
