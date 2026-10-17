@@ -137,8 +137,13 @@ def chat_project_context_prompt(*, name: str, text: str, truncated: bool, shown:
     whose prompt came partly from a project-local file is not comparable to
     another run. Interactive work wants intent; benchmarking wants a fixed
     condition.
+
+    The file is a checkout's, so it is quoted inside a `_fence` derived from
+    its own bytes: a fixed closing line is one the file could write, and
+    whatever followed it would then read as Hardy's own words.
     """
-    return render("chat_project_context", name=name, text=text, truncated=truncated, shown=shown, total=total)
+    return render("chat_project_context", name=name, text=text, truncated=truncated, shown=shown,
+                  total=total, fence=_fence(text))
 
 
 def cas_spill_note(*, artifact: str | None, capture_truncated: bool) -> str:
