@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -27,7 +28,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from hardy.agents.usage import Usage
-from hardy.formal.contracts import FrozenClaim
+from hardy.formal.contracts import DeclaredAssumption, FrozenClaim
 from hardy.prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS
 from hardy.workflows.contracts import ProofSubmission, RunPhase
 from hardy.workflows.storage import RunStore
@@ -37,6 +38,17 @@ T = TypeVar("T", bound=BaseModel)
 SDK_MISSING = (
     "the Codex backend needs the Codex SDK: pip install 'hardy-prover[codex]', "
     "then sign in with your ChatGPT subscription"
+)
+
+# This backend's Lean tools are built by the `hardy.mcp_server` process, which
+# is configured from its environment with the run and the claim and is told no
+# assumptions. Checking proofs there for a run that declared some would answer
+# `unknown identifier` for every axiom the verifier will allow -- telling the
+# model its proof is wrong when the environment is what differed.
+ASSUMPTIONS_UNSUPPORTED = (
+    "the Codex backend cannot prove under declared assumptions: its Lean tools "
+    "run in the hardy.mcp_server process, which is not told them; use the "
+    "Claude backend for this run"
 )
 
 
@@ -100,8 +112,13 @@ class CodexRuntime:
         isolated: bool = False,
         phase: RunPhase = RunPhase.PROVING,
         wall_seconds: float | None = None,
+        allowed: Sequence[DeclaredAssumption] = (),
     ) -> AgentThread:
         """Open one stage's thread, in the working directory that stage may see.
+
+        `allowed` is refused rather than ignored on a thread that would serve
+        Lean tools: see `ASSUMPTIONS_UNSUPPORTED`. A thread with no claim, or
+        an isolated one, serves none and has nothing to scope.
 
         `isolated` is the faithfulness reader's, and here it is the *directory*
         that matters rather than the tools. This SDK gives the agent its own
@@ -128,8 +145,9 @@ class CodexRuntime:
         gate reads and records. Closing this needs the process confinement
         docs/design/trust-boundary.md defers, or a readable-root control this SDK does not offer.
         """
+        if allowed and claim is not None and not isolated:
+            raise ValueError(ASSUMPTIONS_UNSUPPORTED)
         sdk = load_sdk()
-        configuration: dict[str, Any] = {}
         if isolated:
             # Kept for the life of the runtime and removed by `close`: it must
             # outlive the turn, and nothing is ever written into it.

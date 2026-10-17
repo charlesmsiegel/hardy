@@ -319,3 +319,41 @@ def test_a_thread_started_before_any_claim_exists_still_gets_hardys_server(tmp_p
         'HARDY_CONFIG': str(tmp_path / 'hardy.json'),
     }
     assert 'HARDY_CLAIM_SHA256' not in mcp['env']
+
+
+def test_a_proof_thread_accepts_the_assumptions_the_workflow_passes(tmp_path) -> None:
+    """`ProveWorkflow` opens every proof thread with `allowed=`. Without the
+    keyword the `TypeError` ended every Codex staged run at the start of proof
+    search as `agent_runtime_failure` -- the `wall_seconds` failure above, one
+    keyword later. With nothing declared there is nothing to honour."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    _, runtime, client, store = _runtime(tmp_path, _events('proof-events.json'))
+    claim = _claim(domain)
+
+    thread = runtime.start(model='gpt-test', run_dir=store.path, claim=claim, allowed=())
+
+    assert thread.sdk_thread is client.thread
+    assert client.start_calls[0]['config']['mcp_servers']['hardy']['env']['HARDY_CLAIM_SHA256'] == (
+        claim.content_hash
+    )
+
+
+def test_declared_assumptions_are_refused_rather_than_silently_dropped(tmp_path) -> None:
+    """This backend's Lean tools are built by the `hardy.mcp_server` process,
+    which is told the claim and not the assumptions. A proof thread opened
+    anyway would check proofs in a different environment from the verifier's
+    -- `unknown identifier` for every axiom the run stands on -- so the thread
+    is refused before any provider conversation starts."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    _, runtime, client, store = _runtime(tmp_path, _events('proof-events.json'))
+    assumption = domain.DeclaredAssumption(name='h_open', statement='True', source='test')
+
+    with pytest.raises(ValueError, match='declared assumptions'):
+        runtime.start(model='gpt-test', run_dir=store.path, claim=_claim(domain), allowed=(assumption,))
+
+    assert client.start_calls == []
+    # Threads that serve no Lean tools have nothing to scope, so the same
+    # assumptions are no reason to refuse them.
+    runtime.start(model='gpt-test', run_dir=store.path, claim=None, allowed=(assumption,))
+    runtime.start(model='gpt-test', run_dir=store.path, claim=_claim(domain), isolated=True, allowed=(assumption,))
+    assert len(client.start_calls) == 2
