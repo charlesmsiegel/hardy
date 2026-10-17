@@ -27,7 +27,7 @@ from hardy.documents.syntax import (
     MAX_PASSES,
     OUTPUTS,
     ROOT_DOCUMENT,
-    _executed,
+    executed_text,
     executed_begin_document,
     reached_fragments,
     read_conditionals,
@@ -724,7 +724,7 @@ def _references(
     # labels are not labels this compile created.
     for orphan in unreached_fragments(sources):
         sources.pop(orphan, None)
-    executed = {path: _executed(text, conditionals) for path, text in sources.items()}
+    executed = {path: executed_text(text, conditionals) for path, text in sources.items()}
     labels = references.unreferenced_labels(executed)
     # A false branch holding an `\if...` name Hardy cannot place has no
     # known end: nested, it may hide a live `\input`; not nested, it may

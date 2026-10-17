@@ -4,7 +4,7 @@ The engine under `syntax`. A comment, a `\verb` span, a verbatim environment,
 a macro body, a `\let` operand and an `\iffalse` branch each hide text from
 TeX, and each depends on the escapes seen before it -- so they are decided in
 one pass over each line rather than by passes that each need the others'
-answers. `typeset` is that pass over a whole file; `_executed_line` is one line
+answers. `typeset` is that pass over a whole file; `executed_line` is one line
 of it, shared with the readers that need offsets kept (`syntax`'s
 `executed_begin_document`, `completion.displayed`).
 
@@ -22,7 +22,7 @@ from enum import Enum
 from typing import NamedTuple
 
 
-def _tex_lines(source: str) -> list[tuple[str, str]]:
+def tex_lines(source: str) -> list[tuple[str, str]]:
     """Actual TeX line endings, excluding form feeds and Unicode separators."""
     return [
         (match.group("body"), match.group("ending"))
@@ -39,7 +39,7 @@ def uncommented(source: str) -> str:
     the single character before the marker.
     """
     kept = []
-    for line, _ in _tex_lines(source):
+    for line, _ in tex_lines(source):
         cut = 0
         while True:
             found = line.find("%", cut)
@@ -90,7 +90,7 @@ def opens_conditional(name: str, declared: Collection[str] = frozenset()) -> boo
     return name in CONDITIONALS or name in declared
 
 
-def _conditional_pattern(names: Iterable[str]) -> re.Pattern[str]:
+def conditional_pattern(names: Iterable[str]) -> re.Pattern[str]:
     r"""`_CONDITIONAL`, widened to those of `names` not spelled `\if...`.
 
     Longest first, so a name is never cut short by another that begins it.
@@ -137,7 +137,7 @@ class Conditionals:
     def pattern(self) -> re.Pattern[str]:
         r"""`_CONDITIONAL`, widened to the ambiguous names not spelled `\if...`
         (`\let\mycond\iftrue`), so a scan meets them where they stand."""
-        return _conditional_pattern(self.ambiguous)
+        return conditional_pattern(self.ambiguous)
 
     def nesting(self, token: re.Match[str], *, ambiguous_nests: bool = True) -> int:
         r"""How `token`, a match of `pattern` inside a false branch, moves its depth.
@@ -160,11 +160,11 @@ class Conditionals:
 NO_CONDITIONALS = Conditionals()
 
 
-def _skip_command(text: str, index: int) -> int:
+def skip_command(text: str, index: int) -> int:
     r"""The index just after the control sequence starting at `index`.
 
     `\foo` is its letters; `\&` is the single character after the backslash.
-    The same rule TeX tokenises by, and the one `_MacroState.step` relies on
+    The same rule TeX tokenises by, and the one `MacroState.step` relies on
     when it declines to count an escaped brace as a group.
     """
     pos = index + 1
@@ -175,7 +175,7 @@ def _skip_command(text: str, index: int) -> int:
     return min(pos + 1, len(text))
 
 
-def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
+def skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
     """`index` must point at `opener`. The index just after its matching `closer`."""
     depth = 0
     length = len(text)
@@ -190,7 +190,7 @@ def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
     return length
 
 
-def _next_conditional(text: str, conditionals: Conditionals, index: int) -> re.Match[str] | None:
+def next_conditional(text: str, conditionals: Conditionals, index: int) -> re.Match[str] | None:
     """Find the next conditional control token, consuming escaped backslashes."""
     while index < len(text):
         index = text.find("\\", index)
@@ -199,11 +199,11 @@ def _next_conditional(text: str, conditionals: Conditionals, index: int) -> re.M
         found = conditionals.pattern.match(text, index)
         if found is not None:
             return found
-        index = _skip_command(text, index)
+        index = skip_command(text, index)
     return None
 
 
-def _false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list[tuple[int, int]]:
+def false_regions(text: str, conditionals: Conditionals, *, nest: bool) -> list[tuple[int, int]]:
     r"""Each `\iffalse ... \fi` region of `text`, reading every name
     `conditionals` calls ambiguous as a conditional when `nest` and as an
     ordinary control word otherwise."""
@@ -224,7 +224,7 @@ def _false_branch_end(text: str, conditionals: Conditionals, index: int, *, nest
     """
     depth = 1
     while depth > 0:
-        found = _next_conditional(text, conditionals, index)
+        found = next_conditional(text, conditionals, index)
         if found is None:
             return len(text)
         depth += conditionals.nesting(found, ambiguous_nests=nest)
@@ -240,7 +240,7 @@ def _false_branch_end(text: str, conditionals: Conditionals, index: int, *, nest
 # untouched and reachable. The lookahead used in its place asks the same
 # question `\b` was for -- "not a letter next" -- without depending on `*`
 # counting as a word character.
-_MACRO_DEF = re.compile(
+MACRO_DEFINITION = re.compile(
     r"\\(?P<env>new|renew)environment\*?(?![a-zA-Z])"
     r"|\\(?:newcommand|renewcommand|providecommand)\*?(?![a-zA-Z])"
     # `\gdef`, `\xdef` and `\edef` are `\def` for this purpose: TeX stores a
@@ -294,7 +294,7 @@ class _Phase(Enum):
     BODY = "body"  # inside a body: stored, not run
 
 
-class _MacroState:
+class MacroState:
     r"""Where a left-to-right scan has got to inside a macro definition.
 
     Carried across lines by `typeset`, and stepped only over text TeX would
@@ -394,9 +394,13 @@ class _MacroState:
                 self._open(_Phase.NAMING)
                 return
             self.phase = _Phase.ARGS
-        stepper = self._STEPPERS.get(self.phase)
-        if stepper is not None:
-            stepper(self, character)
+        match self.phase:
+            case _Phase.NAMING | _Phase.BRACKET:
+                self._grouped(character)
+            case _Phase.ARGS:
+                self._arguments(character)
+            case _Phase.BODY:
+                self._body(character)
 
     def _open(self, phase: _Phase) -> None:
         self.phase = phase
@@ -439,15 +443,8 @@ class _MacroState:
                 self.bodies -= 1
                 self.phase = _Phase.ARGS if self.bodies > 0 else _Phase.IDLE
 
-    _STEPPERS: dict[_Phase, Callable[[_MacroState, str], None]] = {
-        _Phase.NAMING: _grouped,
-        _Phase.BRACKET: _grouped,
-        _Phase.ARGS: _arguments,
-        _Phase.BODY: _body,
-    }
 
-
-class _Purpose(Enum):
+class Purpose(Enum):
     """What a line is read for, which decides what stands in for text TeX does not run."""
 
     #: What TeX runs and nothing else: dropped text leaves at most a space.
@@ -461,21 +458,22 @@ class _Purpose(Enum):
 
 
 @dataclass(frozen=True)
-class _Reading:
+class Reading:
     r"""How one document is read: for what, under which conditionals, and who
     is shown each inline `\verb` span (offset into the line, and content)."""
 
-    purpose: _Purpose = _Purpose.TYPESET
+    purpose: Purpose = Purpose.TYPESET
     conditionals: Conditionals = NO_CONDITIONALS
     inline: Callable[[int, str], None] | None = None
 
     @property
     def keeps_offsets(self) -> bool:
-        return self.purpose is not _Purpose.TYPESET
+        """Whether text TeX does not run is blanked to its own width rather than dropped."""
+        return self.purpose is not Purpose.TYPESET
 
 
-class _ExecutedLine(NamedTuple):
-    """One line as TeX reads it: see `_executed_line`."""
+class ExecutedLine(NamedTuple):
+    """One line as TeX reads it: see `executed_line`."""
 
     text: str
     environment: str | None
@@ -484,10 +482,10 @@ class _ExecutedLine(NamedTuple):
 
 
 #: Text read for what TeX runs, under no conditional of the document's own.
-_TYPESETTING = _Reading()
+_TYPESETTING = Reading()
 
 
-def _executed_line(line: str, state: _MacroState, reading: _Reading = _TYPESETTING) -> _ExecutedLine:
+def executed_line(line: str, state: MacroState, reading: Reading = _TYPESETTING) -> ExecutedLine:
     r"""One line as TeX reads it, up to any verbatim environment it opens.
 
     Returns the text TeX would run, the environment opened (or None), what
@@ -522,24 +520,24 @@ def _executed_line(line: str, state: _MacroState, reading: _Reading = _TYPESETTI
 
 
 class _LineScan:
-    """The pass `_executed_line` describes, one token at a time."""
+    """The pass `executed_line` describes, one token at a time."""
 
-    def __init__(self, line: str, state: _MacroState, reading: _Reading) -> None:
+    def __init__(self, line: str, state: MacroState, reading: Reading) -> None:
         self.line = line
         self.state = state
         self.reading = reading
         self.index = 0
         self.kept: list[str] = []
 
-    def run(self) -> _ExecutedLine:
+    def run(self) -> ExecutedLine:
         while self.index < len(self.line):
-            ended = self._skipped() if self.state.skipping else self._executed()
+            ended = self._skipped() if self.state.skipping else self._live()
             if ended is not None:
                 return ended
         return self._ended(None, "", commented=False)
 
-    def _ended(self, environment: str | None, rest: str, *, commented: bool) -> _ExecutedLine:
-        return _ExecutedLine("".join(self.kept), environment, rest, commented)
+    def _ended(self, environment: str | None, rest: str, *, commented: bool) -> ExecutedLine:
+        return ExecutedLine("".join(self.kept), environment, rest, commented)
 
     def _keep(self, end: int) -> None:
         """Keep the text up to `end` as written."""
@@ -553,7 +551,7 @@ class _LineScan:
         self.kept.append(" " * width if self.reading.keeps_offsets else compact)
         self.index = end
 
-    def _skipped(self) -> _ExecutedLine | None:
+    def _skipped(self) -> ExecutedLine | None:
         r"""Inside an `\iffalse`: the text is kept, and only conditionals count."""
         character = self.line[self.index]
         if character == "%":
@@ -564,13 +562,13 @@ class _LineScan:
         conditionals = self.reading.conditionals
         token = conditionals.pattern.match(self.line, self.index)
         if token is None:
-            self._keep(_skip_command(self.line, self.index))
+            self._keep(skip_command(self.line, self.index))
             return None
         self.state.skipping += conditionals.nesting(token)
         self._keep(token.end())
         return None
 
-    def _executed(self) -> _ExecutedLine | None:
+    def _live(self) -> ExecutedLine | None:
         character = self.line[self.index]
         if character == "\\":
             return self._control()
@@ -588,7 +586,7 @@ class _LineScan:
         else:
             self._keep(self.index + 1)
 
-    def _control(self) -> _ExecutedLine | None:
+    def _control(self) -> ExecutedLine | None:
         """A backslash: the control sequences that change the scan, or an escape."""
         if self.state.letting > 0:
             self._let_operand()
@@ -621,12 +619,12 @@ class _LineScan:
         # it, and that is exactly one thing: it cannot open a region.
         # So the text stays and the opener match is skipped, which is
         # the whole of the rule and none of the erasure.
-        after = _skip_command(self.line, self.index)
+        after = skip_command(self.line, self.index)
         self._hide(after, self.line[self.index : after])
         self.state.swallowed()
 
-    def _false_branch(self, found: re.Match[str]) -> _ExecutedLine | None:
-        if self.reading.purpose is _Purpose.DISPLAY:
+    def _false_branch(self, found: re.Match[str]) -> ExecutedLine | None:
+        if self.reading.purpose is Purpose.DISPLAY:
             self._keep(len(self.line))
             return self._ended(None, "", commented=False)
         self._keep(found.end())
@@ -642,7 +640,7 @@ class _LineScan:
             self.reading.inline(self.index, self.line[found.end() : closed])
         self._hide(len(self.line) if closed < 0 else closed + 1, " ")
 
-    def _verbatim_opener(self, found: re.Match[str]) -> _ExecutedLine | None:
+    def _verbatim_opener(self, found: re.Match[str]) -> ExecutedLine | None:
         if self.state.phase is not _Phase.IDLE:
             # Stored, not opened. `\newcommand{\x}{\begin{verbatim}}`
             # runs nothing until `\x` is expanded, and nothing here
@@ -685,11 +683,11 @@ class _LineScan:
     #: The control sequences that change what the scan does, in the order
     #: they are tried: the pattern, whether it acts inside a definition as
     #: well as outside one, and what it does.
-    _CONTROLS: tuple[tuple[re.Pattern[str], bool, Callable[..., _ExecutedLine | None]], ...] = (
+    _CONTROLS: tuple[tuple[re.Pattern[str], bool, Callable[..., ExecutedLine | None]], ...] = (
         (_IFFALSE, False, _false_branch),
         (INLINE_VERBATIM, False, _inline_verbatim),
         (VERBATIM_ENVIRONMENT, True, _verbatim_opener),
-        (_MACRO_DEF, True, _definition),
+        (MACRO_DEFINITION, True, _definition),
         (_LET, False, _let),
     )
 
@@ -711,13 +709,13 @@ def unfinished_definition(source: str) -> bool:
     in a writeup; saying so is both cheaper and more honest than pretending
     to have read it.
     """
-    state = _MacroState()
+    state = MacroState()
     typeset(source, carried=state)
     return state.pending
 
 
 def typeset(
-    source: str, *, carried: _MacroState | None = None,
+    source: str, *, carried: MacroState | None = None,
     conditionals: Conditionals = NO_CONDITIONALS,
 ) -> str:
     r"""`source` reduced to what TeX would actually execute.
@@ -738,8 +736,8 @@ def typeset(
     each is invisible to a pass that runs before the other, so neither runs
     first and both are decided here, in the order TeX meets them.
     """
-    state = carried if carried is not None else _MacroState()
-    return "".join(_typeset_pieces(source, state, _Reading(conditionals=conditionals)))
+    state = carried if carried is not None else MacroState()
+    return "".join(_typeset_pieces(source, state, Reading(conditionals=conditionals)))
 
 
 def _after(text: str, closer: str) -> str | None:
@@ -748,7 +746,7 @@ def _after(text: str, closer: str) -> str | None:
     return rest if marker else None
 
 
-def _typeset_pieces(source: str, state: _MacroState, reading: _Reading) -> Iterator[str]:
+def _typeset_pieces(source: str, state: MacroState, reading: Reading) -> Iterator[str]:
     """The executed text of each line in turn, each after what joins it to the last."""
     closing: str | None = None
     # What goes in front of the next piece. A newline everywhere except after
@@ -756,13 +754,13 @@ def _typeset_pieces(source: str, state: _MacroState, reading: _Reading) -> Itera
     # all: `\bib%` and then `item{key}` is a `\bibitem` it runs and this
     # scan used to see as two innocent fragments.
     gap = ""
-    for raw, _ in _tex_lines(source):
+    for raw, _ in tex_lines(source):
         line = raw if closing is None else _after(raw, closing)
         if line is None:
             continue
         closing = None
         while True:
-            text, environment, rest, commented = _executed_line(line, state, reading)
+            text, environment, rest, commented = executed_line(line, state, reading)
             yield gap
             yield text
             gap = "" if commented and environment is None else "\n"

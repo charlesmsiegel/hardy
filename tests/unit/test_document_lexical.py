@@ -1,4 +1,4 @@
-from hardy.documents import completion, syntax
+from hardy.documents import completion, reader, scanner, syntax
 
 
 def test_stamp_ignores_inactive_document_markers():
@@ -21,11 +21,11 @@ def test_inline_and_escaped_openers_do_not_hide_theorems():
 
 def test_unreached_walks_each_file_once(monkeypatch):
     calls = []
-    original = syntax._executed
+    original = syntax.executed_text
     def counted(source, conditionals=syntax.NO_CONDITIONALS):
         calls.append(source)
         return original(source, conditionals)
-    monkeypatch.setattr(syntax, '_executed', counted)
+    monkeypatch.setattr(syntax, 'executed_text', counted)
     tex = {'writeup.tex': '\\input{a}\\input{b}', 'a.tex': 'A', 'b.tex': 'B'}
     assert syntax.unreached_fragments(tex) == []
     assert len(calls) == len(tex)
@@ -75,7 +75,7 @@ def test_completion_and_reachability_agree_on_executed_commands():
         '\\verb%literal% % comment\n\\input{a}',
     )
     for source in sources:
-        assert completion.normalise(completion.displayed(source).executed) == completion.normalise(syntax._executed(source))
+        assert completion.normalise(completion.displayed(source).executed) == completion.normalise(syntax.executed_text(source))
 
 
 def test_false_branch_macro_never_changes_live_scanner_state():
@@ -204,3 +204,27 @@ def test_cr_and_crlf_are_tex_line_endings_with_original_marker_offsets():
         source = '% fake \\begin{document}' + ending + r'\begin{document}Body'
         marker = syntax.executed_begin_document(source)
         assert marker is not None and marker.start() == source.rindex(r'\begin{document}')
+
+
+def test_a_line_read_to_locate_keeps_its_offsets_and_blanks_what_does_not_run():
+    """`Purpose.LOCATE` keeps every offset; typesetting drops the same text instead.
+
+    A stored verbatim opener and an inline `\\verb` span run nothing here, so
+    both readings leave them out -- one as blanks of the same width, so an
+    offset into the result is an offset into the line.
+    """
+    line = r'\newcommand{\x}{\begin{verbatim}} \verb|a| text'
+    located = scanner.executed_line(line, scanner.MacroState(), scanner.Reading(scanner.Purpose.LOCATE))
+    assert located.environment is None
+    assert len(located.text) == len(line)
+    assert located.text.index('text') == line.index('text')
+    assert 'verbatim' not in located.text and '|a|' not in located.text
+    typeset = scanner.executed_line(line, scanner.MacroState())
+    assert 'verbatim' not in typeset.text and typeset.text.endswith(' text')
+
+
+def test_an_input_argument_is_resolved_as_tex_reads_it():
+    tex = {'sub/a.tex': '', 'b': '', 'b.tex': ''}
+    assert reader.target('./sub\\a', tex) == 'sub/a.tex'
+    assert reader.target('b', tex) == 'b'
+    assert reader.target('  ', tex) == ''

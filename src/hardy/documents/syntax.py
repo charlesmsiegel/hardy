@@ -13,22 +13,22 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from hardy.documents.scanner import (
-    _MACRO_DEF,
-    Conditionals,
-    _conditional_pattern,
-    _executed_line,
-    _false_regions,
-    _MacroState,
-    _Purpose,
-    _Reading,
-    _skip_balanced,
-    _skip_command,
-    _tex_lines,
-    typeset,
-)
 from hardy.documents.scanner import CONDITIONALS as CONDITIONALS
 from hardy.documents.scanner import INLINE_VERBATIM as INLINE_VERBATIM
+from hardy.documents.scanner import (
+    MACRO_DEFINITION,
+    Conditionals,
+    MacroState,
+    Purpose,
+    Reading,
+    conditional_pattern,
+    executed_line,
+    false_regions,
+    skip_balanced,
+    skip_command,
+    tex_lines,
+    typeset,
+)
 from hardy.documents.scanner import NO_CONDITIONALS as NO_CONDITIONALS
 from hardy.documents.scanner import VERBATIM_ENVIRONMENT as VERBATIM_ENVIRONMENT
 from hardy.documents.scanner import opens_conditional as opens_conditional
@@ -129,7 +129,7 @@ def compiles_document(sources: Mapping[str, str], path: str) -> bool:
     return path == ROOT_DOCUMENT or path in reached_fragments(sources)
 
 
-def _normalise_include(found: str) -> str:
+def normalise_include(found: str) -> str:
     r"""A captured `\input{...}` argument, in the spelling `by_stem` is keyed by.
 
     Tectonic accepts either path separator and resolves `.` as the including
@@ -435,7 +435,7 @@ class _Events:
 
 def _conditional_events(text: str, openers: Collection[str]) -> _Events:
     trace = _Trace(_macro_bodies(text), _binding_sites(text), openers)
-    for found in _conditional_pattern(openers).finditer(text):
+    for found in conditional_pattern(openers).finditer(text):
         trace.meet(found)
     booleans = tuple(
         (f"if{found.group(1)}", found.start(), trace.runs(found.start())) for found in _BOOLEAN.finditer(text)
@@ -510,7 +510,7 @@ def _resolver(paths: Collection[str]) -> Callable[[str], str | None]:
             by_stem[normal[: -len(".tex")]] = path
 
     def resolve(found: str) -> str | None:
-        key = _normalise_include(found)
+        key = normalise_include(found)
         target = by_stem.get(key)
         if target is None and key.endswith(".tex"):
             target = by_stem.get(key[: -len(".tex")])
@@ -619,7 +619,7 @@ def _drop_iffalse(text: str, conditionals: Conditionals = NO_CONDITIONALS) -> st
 
 def _either_false_regions(text: str, conditionals: Conditionals) -> list[tuple[int, int]]:
     """The false branches of `text` under both readings of an ambiguous name."""
-    return _false_regions(text, conditionals, nest=True) + _false_regions(text, conditionals, nest=False)
+    return false_regions(text, conditionals, nest=True) + false_regions(text, conditionals, nest=False)
 
 
 def _uncertain_in(text: str, conditionals: Conditionals) -> list[str]:
@@ -675,7 +675,7 @@ def _macro_bodies(text: str) -> list[tuple[int, int]]:
     """
     spans: list[tuple[int, int]] = []
     index = 0
-    while (keyword := _MACRO_DEF.search(text, index)) is not None:
+    while (keyword := MACRO_DEFINITION.search(text, index)) is not None:
         # `\newenvironment{name}{begin}{end}` has TWO bodies, and the second
         # is as unexecuted as the first: an `\input` written into either runs
         # when the environment is used, not when it is defined. Recognising
@@ -700,12 +700,12 @@ def _body_start(text: str, index: int) -> int:
     ends at `index`: where its first body's brace is, or the end of `text`."""
     index = _skip_spaces(text, index)
     if index < len(text) and text[index] == "{":
-        index = _skip_balanced(text, index, "{", "}")
+        index = skip_balanced(text, index, "{", "}")
     elif index < len(text) and text[index] == "\\":
-        index = _skip_command(text, index)
+        index = skip_command(text, index)
     index = _skip_spaces(text, index)
     while index < len(text) and text[index] == "[":
-        index = _skip_spaces(text, _skip_balanced(text, index, "[", "]"))
+        index = _skip_spaces(text, skip_balanced(text, index, "[", "]"))
     # `\def`'s parameter text (`#1#2`, delimiters) is neither a name nor a
     # bracket, so it is skipped over rather than parsed.
     brace = text.find("{", index)
@@ -719,7 +719,7 @@ def _bodies(text: str, index: int, count: int) -> tuple[list[tuple[int, int]], i
         index = _skip_spaces(text, index)
         if index >= len(text) or text[index] != "{":
             break
-        end = _skip_balanced(text, index, "{", "}")
+        end = skip_balanced(text, index, "{", "}")
         found.append((index, end))
         index = end
     return found, index
@@ -742,7 +742,7 @@ def _drop_macro_bodies(text: str) -> str:
     return "".join(kept)
 
 
-def _executed(source: str, conditionals: Conditionals = NO_CONDITIONALS) -> str:
+def executed_text(source: str, conditionals: Conditionals = NO_CONDITIONALS) -> str:
     r"""`source` with everything TeX would never actually run removed.
 
     `uncommented` drops what a human comment hides from TeX; this drops
@@ -768,7 +768,7 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
 
     A fragment nothing includes is in no PDF, whatever it says. A session once
     wrote itself a status report that way and nobody could have read it.
-    Follows the same commands `reached_fragments` does, through `_executed` rather
+    Follows the same commands `reached_fragments` does, through `executed_text` rather
     than plain `uncommented`: an `\input` written inside `\iffalse ... \fi`
     or inside a macro definition's body is text TeX itself never runs, and
     counting it as reached would clear a fragment that is not, in fact, in
@@ -807,7 +807,7 @@ def reached_fragments(sources: Mapping[str, str]) -> set[str]:
     conditionals = read_conditionals(sources)
     while frontier:
         current = frontier.pop()
-        for found in INCLUSION.findall(_executed(sources[current], conditionals)):
+        for found in INCLUSION.findall(executed_text(sources[current], conditionals)):
             target = resolve(found)
             if target is not None and target not in reached:
                 reached.add(target)
@@ -818,18 +818,18 @@ def reached_fragments(sources: Mapping[str, str]) -> set[str]:
 def executed_begin_document(source: str) -> re.Match[str] | None:
     """Locate a live document opener without changing source offsets."""
     conditionals = read_conditionals({ROOT_DOCUMENT: source})
-    text = "".join(_located_lines(source, _Reading(_Purpose.LOCATE, conditionals)))
+    text = "".join(_located_lines(source, Reading(Purpose.LOCATE, conditionals)))
     chars = list(text)
     for start, end in _either_false_regions(text, conditionals):
         chars[start:end] = " " * (end - start)
     return BEGIN_DOCUMENT.search("".join(chars))
 
 
-def _located_lines(source: str, reading: _Reading) -> Iterator[str]:
+def _located_lines(source: str, reading: Reading) -> Iterator[str]:
     """Each line of `source` as TeX runs it, verbatim content blanked, offsets kept."""
-    state = _MacroState()
+    state = MacroState()
     closing: str | None = None
-    for raw, ending in _tex_lines(source):
+    for raw, ending in tex_lines(source):
         line = raw
         prefix = ""
         while line:
@@ -842,7 +842,7 @@ def _located_lines(source: str, reading: _Reading) -> Iterator[str]:
                 prefix += " " * end
                 line = line[end:]
                 closing = None
-            text, environment, rest, _ = _executed_line(line, state, reading)
+            text, environment, rest, _ = executed_line(line, state, reading)
             prefix += text + " " * (len(line) - len(text) - len(rest))
             if environment is None:
                 break
