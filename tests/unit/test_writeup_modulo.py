@@ -95,15 +95,8 @@ def _render(assumed=(), declared=()):
         tectonic_executable="/usr/bin/tectonic",
         prompt_set_sha256="f" * 64,
     )
-    return writeup._render(
-        claim,
-        content,
-        grades,
-        verification,
-        identities,
-        domain.DocumentStatus.TEX_COMPILED,
-        declared=declared,
-    )
+    paper = writeup._Paper(claim, content, grades, verification, identities, declared)
+    return writeup._render(paper, domain.DocumentStatus.TEX_COMPILED)
 
 
 def test_a_modulo_document_does_not_say_kernel_verified() -> None:

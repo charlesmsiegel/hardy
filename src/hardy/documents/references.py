@@ -27,6 +27,13 @@ both. It is reported instead -- `unreferenced_labels` -- as a note on the
 compile, which is also what a model that misspelled a `\ref` most needs to
 see: the labels this document actually creates.
 
+Two more things a compile can do while exiting zero are read here too, for
+the same reason: a character the font lacks is dropped from the page, and a
+file read from outside a pinned bundle makes a different document from the
+one its digest names (`dropped_glyphs`, `host_paths`). The staged writeup
+refuses both (`writeup`); the interactive check does not, and `latex` says
+why.
+
 Everything here reads text. Nothing runs a compiler, which is why the parsing
 can be tested without one.
 """
@@ -120,6 +127,7 @@ class Unresolved:
     line: int | None = None
 
     def sentence(self) -> str:
+        """The finding as the sentence a model is handed, with the input line TeX blamed."""
         where = f" (input line {self.line})" if self.line is not None else ""
         if self.kind == "reference":
             return (
@@ -207,8 +215,7 @@ def unresolved(log: str) -> tuple[Unresolved, ...]:
         # know the warning format of still emits this, and treating "I could
         # not parse a name" as "nothing is wrong" is how a `[?]` gets
         # published: the compile is refused, and the log says the rest.
-        for kind in dict.fromkeys(SUMMARY.findall(text)):
-            found.append(Unresolved(kind="unnamed", name=kind))
+        found.extend(Unresolved(kind="unnamed", name=kind) for kind in dict.fromkeys(SUMMARY.findall(text)))
         if DUPLICATE_SUMMARY.search(text) is not None:
             found.append(Unresolved(kind="unnamed", name="multiply-defined labels"))
     return tuple(found)
@@ -263,11 +270,7 @@ def unreferenced_labels(sources: Mapping[str, str]) -> tuple[str, ...]:
                 # cleveref and hyperref both take comma-separated lists, and
                 # `\ref{a,b}` under cleveref points at two labels.
                 referenced.update(part.strip() for part in group.split(",") if part.strip())
-    ordered: list[str] = []
-    for label in labels:
-        if label and label not in referenced and label not in ordered:
-            ordered.append(label)
-    return tuple(ordered)
+    return tuple(dict.fromkeys(label for label in labels if label and label not in referenced))
 
 
 #: What LaTeX writes into the `.aux` for every `\\cite` it ran, whether or not
@@ -335,3 +338,25 @@ def note(labels: tuple[str, ...]) -> str:
         f"note: {len(labels)} label(s) nothing in the document points at: "
         f"{', '.join(labels)}"
     )
+
+
+#: A character the engine could not set, with the font that lacked it.
+MISSING_GLYPH = re.compile(r"^Missing character: (.*)$", re.M)
+# Tectonic's own warning for a file it read from outside the bundle -- a
+# host font, typically -- which is its way of saying the document did not
+# come from the pinned bundle alone.
+HOST_PATH = re.compile(r"accessing absolute path `([^`]*)`; build may not be reproducible")
+
+
+def host_paths(log_text: str) -> tuple[str, ...]:
+    """Every file the engine read from outside the pinned bundle, from its log."""
+    return tuple(dict.fromkeys(HOST_PATH.findall(log_text)))
+
+
+def dropped_glyphs(log_text: str) -> tuple[str, ...]:
+    """Every character the engine reported it could not set, from its log.
+
+    Each line names the character and the font that lacked it. Empty means
+    every character of the source reached the page.
+    """
+    return tuple(dict.fromkeys(match.strip() for match in MISSING_GLYPH.findall(log_text)))
