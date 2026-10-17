@@ -17,6 +17,7 @@ import hashlib
 import itertools
 import re
 import sys
+from collections.abc import Callable
 
 
 def clip(text: str, limit: int) -> tuple[str, bool]:
@@ -234,7 +235,7 @@ def _record(digest, name: object, kind: bytes, payload: bytes) -> None:
 def _open(digest, name: object, kind: bytes) -> None:
     """Begin an entry whose payload is fed in piece by piece.
 
-    `_walk` streams rather than returning what it built. The node budget
+    `_GraphWalk` streams rather than returning what it built. The node budget
     bounds how many objects it visits and not how much they render to, so a
     single container of a few thousand distinct near-cap strings accumulated
     the whole fingerprint in memory before hashing any of it -- 1.5 GiB under
@@ -248,37 +249,8 @@ def _open(digest, name: object, kind: bytes) -> None:
     digest.update(b"\0")
 
 
-def _emit(emit, budget: list[int], text: str) -> bool:
-    """Feed one token to the hash, or refuse because the payload is too large.
-
-    A node budget bounds how many objects the walk visits; it does not bound
-    what they render to, and every leaf may render to `limit` bytes. So the
-    total is bounded here as well, and exceeding it refuses the digest for the
-    same reason exceeding any other bound does: the alternative is a
-    fingerprint of part of a namespace presented as one of the whole.
-
-    `emit is None` is the numbering-only walk, which produces no payload and
-    so cannot exhaust this.
-    """
-    if emit is None:
-        return True
-    payload = text.encode("utf-8", errors="backslashreplace")
-    budget[1] -= len(payload)
-    if budget[1] < 0:
-        return False
-    emit(payload)
-    return True
-
-
-def _walk(
-    value: object,
-    seen: dict[int, int],
-    limit: int,
-    budget: list[int],
-    emit=None,
-    depth: int = 0,
-) -> bool:
-    """Fingerprint the object *graph* rooted at `value`, or refuse.
+class _GraphWalk:
+    """Fingerprint the object *graph* of a namespace, value by value, or refuse.
 
     Hashing a rendering was never going to be enough, and each round of it
     failed one level deeper: two names for one object, then a name bound to
@@ -298,36 +270,94 @@ def _walk(
     and this must not become the unbounded traversal `_lower_bound` exists to
     prevent. Exceeding either refuses rather than truncating: a partial walk
     would be a fingerprint of part of the graph presented as one of the whole.
-
-    `emit=None` numbers the graph without describing it, for a name whose
-    value is not itself hashed -- the preamble's -- but whose position other
-    names may refer to. Numbering it is what lets a name bound to a preamble
-    object hash as a reference to it rather than by a repr that is usually
-    `<function symbols at 0x...>` and would refuse the digest outright.
+    One walk spans one fingerprint pass, so numbering and budgets are shared
+    by every name in it.
     """
-    marker = seen.get(id(value))
-    if marker is not None:
-        return _emit(emit, budget, f"@{marker}")
-    if budget[0] <= 0 or depth >= _ESTIMATE_DEPTH:
-        return False
-    seen[id(value)] = len(seen)
-    budget[0] -= 1
-    if type(value) in _SIZED:  # noqa: E721 -- exact type only
-        if not _emit(emit, budget, type(value).__name__ + "("):
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        # Which object each name is bound to, numbered by first appearance. A
+        # repr describes a value and says nothing about the object graph:
+        # `a = []; b = a` and `a = []; b = []` render identically, so a replay
+        # that rebuilt the wrong one of those fingerprinted the same -- and a
+        # later `a.append(1); b` then sees different state. A second name for
+        # an object already seen hashes that reference instead of its repr, so
+        # sharing is part of the fingerprint. The walk holds every value, so
+        # the ids cannot be reused under it, and the order is the
+        # deterministic one `_fingerprint` walks in.
+        self.seen: dict[int, int] = {}
+        # What the walk may spend: objects to number, then bytes to describe
+        # them in. Both are generous against anything a session would
+        # plausibly hold and both are finite, because a namespace can hold a
+        # graph no traversal would finish and a handful of objects that render
+        # to more than a machine has. Neither is a cap on what is *reported*
+        # -- only the hex digest leaves here -- so exceeding one costs the
+        # digest rather than truncating it, and the cell is reported
+        # unverified.
+        self.nodes = max(limit, 1024)
+        self.payload = max(limit, 1024) * 256
+
+    def walk(self, value: object, emit: Callable[[bytes], object] | None = None, depth: int = 0) -> bool:
+        """Feed `value`'s graph to `emit`; False when it cannot be fingerprinted.
+
+        `emit=None` numbers the graph without describing it, for a name whose
+        value is not itself hashed -- the preamble's -- but whose position
+        other names may refer to. Numbering it is what lets a name bound to a
+        preamble object hash as a reference to it rather than by a repr that
+        is usually `<function symbols at 0x...>` and would refuse the digest
+        outright.
+        """
+        marker = self.seen.get(id(value))
+        if marker is not None:
+            return self._emit(emit, f"@{marker}")
+        if self.nodes <= 0 or depth >= _ESTIMATE_DEPTH:
+            return False
+        self.seen[id(value)] = len(self.seen)
+        self.nodes -= 1
+        if type(value) in _SIZED:  # noqa: E721 -- exact type only
+            return self._container(value, emit, depth)
+        if emit is None:
+            return True
+        return self._leaf(value, emit)
+
+    def _container(self, value: object, emit: Callable[[bytes], object] | None, depth: int) -> bool:
+        if not self._emit(emit, type(value).__name__ + "("):
             return False
         for key, entry in _members(value):
             for part in ((key,) if entry is None else (key, entry)):
-                if not _walk(part, seen, limit, budget, emit, depth + 1) and emit is not None:
+                if not self.walk(part, emit, depth + 1) and emit is not None:
                     return False
-                if not _emit(emit, budget, ","):
+                if not self._emit(emit, ","):
                     return False
-        return _emit(emit, budget, ")")
-    if emit is None:
+        return self._emit(emit, ")")
+
+    def _leaf(self, value: object, emit: Callable[[bytes], object]) -> bool:
+        rendered, truncated = bounded_repr(value, self.limit)
+        if truncated or _OPAQUE.search(rendered):
+            return False
+        return self._emit(emit, type(value).__name__ + ":" + rendered)
+
+    def _emit(self, emit: Callable[[bytes], object] | None, text: str) -> bool:
+        """Feed one token to the hash, or refuse because the payload is too large.
+
+        A node budget bounds how many objects the walk visits; it does not
+        bound what they render to, and every leaf may render to `limit` bytes.
+        So the total is bounded here as well, and exceeding it refuses the
+        digest for the same reason exceeding any other bound does: the
+        alternative is a fingerprint of part of a namespace presented as one
+        of the whole.
+
+        `emit is None` is the numbering-only walk, which produces no payload
+        and so cannot exhaust this.
+        """
+        if emit is None:
+            return True
+        payload = text.encode("utf-8", errors="backslashreplace")
+        self.payload -= len(payload)
+        if self.payload < 0:
+            return False
+        emit(payload)
         return True
-    rendered, truncated = bounded_repr(value, limit)
-    if truncated or _OPAQUE.search(rendered):
-        return False
-    return _emit(emit, budget, type(value).__name__ + ":" + rendered)
 
 
 def _fingerprint(namespace: dict, baseline: dict, limit: int) -> str:
@@ -341,23 +371,7 @@ def _fingerprint(namespace: dict, baseline: dict, limit: int) -> str:
     in place does not, and that is the hole this leaves.
     """
     digest = hashlib.sha256()
-    # Which object each name is bound to, numbered by first appearance. A repr
-    # describes a value and says nothing about the object graph: `a = []; b = a`
-    # and `a = []; b = []` render identically, so a replay that rebuilt the
-    # wrong one of those fingerprinted the same -- and a later `a.append(1); b`
-    # then sees different state. A second name for an object already seen
-    # hashes that reference instead of its repr, so sharing is part of the
-    # fingerprint. The walk holds every value, so the ids cannot be reused
-    # under it, and the order is the deterministic one below.
-    seen: dict[int, int] = {}
-    # What the walk may spend: objects to number, then bytes to describe them
-    # in. Both are generous against anything a session would plausibly hold
-    # and both are finite, because a namespace can hold a graph no traversal
-    # would finish and a handful of objects that render to more than a machine
-    # has. Neither is a cap on what is *reported* -- only the hex digest
-    # leaves here -- so exceeding one costs the digest rather than truncating
-    # it, and the cell is reported unverified.
-    budget = [max(limit, 1024), max(limit, 1024) * 256]
+    graph = _GraphWalk(limit)
     # `repr`, not the name itself: `globals()` accepts a non-string key, and
     # `sorted` over mixed types raises -- which used to lose the whole digest
     # for the namespace rather than describe it.
@@ -378,10 +392,10 @@ def _fingerprint(namespace: dict, baseline: dict, limit: int) -> str:
         # graph; a skip resting on one could not survive it. `_` is a name in
         # the namespace and is hashed like any other.
         if name in baseline and baseline[name] is value:
-            _walk(value, seen, limit, budget)
+            graph.walk(value)
             continue
         _open(digest, name, b"value")
-        if not _walk(value, seen, limit, budget, digest.update):
+        if not graph.walk(value, digest.update):
             # A prefix, a default repr, and a graph too large or too deep to
             # walk are all the same answer: Hardy could not see what is there.
             # Two values agreeing for the first `limit` bytes hash alike, and
