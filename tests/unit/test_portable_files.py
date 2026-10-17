@@ -141,7 +141,7 @@ def test_cas_replacement_still_refuses_changed_lease(tmp_path, cas_session):
     directory = tmp_path / 'cas'
     active = cas_session(directory)
     try:
-        active._lease.__exit__(None, None, None)
+        active._journal._lease.__exit__(None, None, None)
         directory.rename(tmp_path / 'old-cas')
         directory.mkdir()
         with pytest.raises((LayoutError, CasError)):

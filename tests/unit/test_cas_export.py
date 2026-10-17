@@ -206,7 +206,7 @@ def test_a_truncated_record_is_unverifiable_even_when_the_script_runs_clean(
         session.execute("a")
         # Exactly what a cell that overran the cap leaves behind, without
         # needing a cell large enough to also overrun the script run's capture.
-        session._records[-1] = session._records[-1].model_copy(
+        session._journal.records[-1] = session._journal.records[-1].model_copy(
             update={"capture_truncated": True}
         )
         report = export_session(session, tmp_path / "cas")
