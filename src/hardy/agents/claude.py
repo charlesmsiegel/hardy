@@ -24,6 +24,7 @@ import queue
 import threading
 import time
 import uuid
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,14 +39,7 @@ from hardy.foundation.values import ToolResult
 if TYPE_CHECKING:
     # The SDK is an optional install loaded on first use (`load_sdk`); its
     # types are named here for the reader and never imported at runtime.
-    from claude_agent_sdk import (
-        AssistantMessage,
-        HookContext,
-        McpSdkServerConfig,
-        PermissionResult,
-        SdkMcpTool,
-        ToolPermissionContext,
-    )
+    import claude_agent_sdk as sdk_types
 
 SERVER = "hardy"
 
@@ -80,11 +74,7 @@ class _MessageUsage:
     def __init__(self) -> None:
         self._held: dict[str, dict[str, int]] = {}
 
-    def restart(self) -> None:
-        """Forget the last exchange's messages as a new one starts."""
-        self._held = {}
-
-    def note(self, message: AssistantMessage) -> None:
+    def note(self, message: sdk_types.AssistantMessage) -> None:
         """Hold one assistant message's usage, under its API message id."""
         counted = stated_counters(getattr(message, "usage", None))
         if not counted:
@@ -99,12 +89,11 @@ class _MessageUsage:
 
     def take(self) -> dict[str, int]:
         """The exchange's floor, summed over its messages; the next starts empty."""
-        own: dict[str, int] = {}
+        own: Counter[str] = Counter()
         for held in self._held.values():
-            for name, figure in held.items():
-                own[name] = own.get(name, 0) + figure
+            own.update(held)
         self._held = {}
-        return own
+        return dict(own)
 
 
 class _DrawnText:
@@ -153,11 +142,8 @@ class _DrawnText:
         return self.blocks[0] if self.blocks else None
 
     def consume(self) -> None:
-        """Retire the oldest open block, which a completed block now stands for.
-
-        Its own entry only, oldest first: clearing the lot would make every
-        later block in the same message look undrawn and get drawn twice.
-        """
+        """Retire the oldest open block, now that a completed block stands for
+        it -- that one only: clearing the lot would redraw every later block."""
         self.blocks.pop(0)
 
     def settle(self) -> str:
@@ -392,14 +378,14 @@ def load_sdk() -> ModuleType:
 
 def build_server(
     sdk: ModuleType, specs: list[dict[str, Any]], dispatch: Callable[[str, dict[str, Any]], ToolResult]
-) -> McpSdkServerConfig:
+) -> sdk_types.McpSdkServerConfig:
     """Expose Hardy's tools to the SDK, each one still executed by Hardy."""
     return sdk.create_sdk_mcp_server(name=SERVER, tools=[_wrap(sdk, spec["function"], dispatch) for spec in specs])
 
 
 def _wrap(
     sdk: ModuleType, function: dict[str, Any], dispatch: Callable[[str, dict[str, Any]], ToolResult]
-) -> SdkMcpTool[Any]:
+) -> sdk_types.SdkMcpTool[Any]:
     name = function["name"]
     schema = function.get("parameters") or {"type": "object", "properties": {}}
 
@@ -440,11 +426,11 @@ class _ToolGate:
         """True the first time a given tool call is refused; false on a repeat.
 
         `permit`, `gate` and `ClaudeAgentRuntime._note` each independently
-        notice a refused call, so one denied built-in reaching more than one of them must not
-        turn into more than one `refused_tool` event in the transcript --
-        `documents/export.py` renders every such event as its own line, with
-        no deduplication of its own, and the fifty-slot clip it applies counts
-        raw events. A call with no id -- an older SDK, or a caller that has
+        notice a refused call, so one denied built-in reaching more than one of
+        them must not turn into more than one `refused_tool` event in the
+        transcript -- `documents/export.py` renders every such event as its own
+        line, with no deduplication of its own, and the fifty-slot clip it
+        applies counts raw events. A call with no id -- an older SDK, or a caller that has
         none to give -- is never deduplicated: recording a real refusal twice
         is a cosmetic doubling, but dropping one because it happened to share
         an absent id with another is a refusal the record would then deny.
@@ -457,8 +443,8 @@ class _ToolGate:
         return True
 
     async def permit(
-        self, name: str, arguments: dict[str, Any], context: ToolPermissionContext | None
-    ) -> PermissionResult:
+        self, name: str, arguments: dict[str, Any], context: sdk_types.ToolPermissionContext | None
+    ) -> sdk_types.PermissionResult:
         """Allow Hardy's own tools; refuse everything else by default.
 
         A denylist has to anticipate every built-in the CLI might grow. This
@@ -475,7 +461,7 @@ class _ToolGate:
         return self._sdk().PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
 
     async def gate(
-        self, data: Mapping[str, Any], tool_use_id: str | None, context: HookContext | None
+        self, data: Mapping[str, Any], tool_use_id: str | None, context: sdk_types.HookContext | None
     ) -> dict[str, Any]:
         """The `PreToolUse` hook: a second default-deny gate for whatever
         `tools=[]` and `permit` above do not stop.
@@ -574,15 +560,9 @@ class ClaudeAgentRuntime:
 
     @property
     def enforcement(self) -> dict[str, str]:
-        """Who keeps each bound.
-
-        `max_turns` is handed to the SDK, which owns the loop and is therefore
-        the only thing in a position to count turns; `_within_budget` keeps the
-        wall clock here because nothing else bounds a stalled request.
-        Published rather than assumed by the caller, so a trajectory records
-        who actually applied each limit -- which is the honesty problem issue
-        #23 exists for, stated instead of hidden.
-        """
+        """Who keeps each bound, published so a trajectory records who actually
+        applied each limit (issue #23): the SDK owns the loop and so counts
+        turns; `_within_budget` keeps the wall clock, which nothing else bounds."""
         return {"turns": "provider sdk", "wall_clock": "hardy"}
 
     def _loaded(self) -> Any:
@@ -685,7 +665,7 @@ class ClaudeAgentRuntime:
             self._loop, self._client, self._called = None, None, {}
             self._text.restart()
             self._tools.restart()
-            self._message_usage.restart()
+            self._message_usage = _MessageUsage()
 
             self._worker = worker
         worker.start()
