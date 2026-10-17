@@ -33,6 +33,9 @@ import json
 import secrets
 import shutil
 import time
+from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -48,7 +51,7 @@ from hardy.algebra.contracts import (
 )
 from hardy.algebra.operations import OperationControl
 from hardy.algebra.replay import replay_in_fresh_kernel
-from hardy.algebra.scripts import run_exported_script
+from hardy.algebra.scripts import ScriptRun, run_exported_script
 from hardy.algebra.session import CasSession
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.values import FrozenModel
@@ -341,22 +344,28 @@ def _restore_published(script: Path, published: bytes) -> bool:
     return True
 
 
-def _verify_script(
-    session: CasSession,
-    cells: tuple[CellRecord, ...],
-    script: Path,
-    directory: Path,
-    completion: str = "",
-    *, control: OperationControl | None = None,
-) -> tuple[Verdict, str]:
-    """Run the published file and say whether it reproduced the session.
+# A verdict on running the published script, and the evidence behind it.
+ScriptVerdict = tuple[Verdict, str]
 
-    Billed to the session budget like every other kernel an export starts, and
-    bounded by what is left of it: an export must not be a way to buy time the
-    session no longer has.
-    """
-    remaining = session.remaining_seconds
-    if remaining <= 0:
+
+@dataclass(frozen=True)
+class _Export:
+    """One export under way: the session it reads, the `cas/` it publishes
+    into, and the stop the operation answers to."""
+
+    session: CasSession
+    directory: Path
+    control: OperationControl | None
+
+    def check(self) -> None:
+        """Raise if the operation has been stopped."""
+        if self.control is not None:
+            self.control.check()
+
+
+def _cannot_run(session: CasSession, cells: tuple[CellRecord, ...]) -> ScriptVerdict | None:
+    """Why the script cannot be checked at all, or None when it can."""
+    if session.remaining_seconds <= 0:
         return "unverified", "the session budget ran out before the script could be run"
     capture_mode = session.backend.capture_mode
     if any(record.capture_mode != capture_mode for record in cells):
@@ -364,139 +373,134 @@ def _verify_script(
             "the recorded capture mode differs from the script runner; identical "
             "text cannot establish equivalent capture. Reset and record a fresh session."
         )
-    truncated_cells = [record.seq for record in cells if record.capture_truncated]
+    return None
 
-    # Fresh every time: a script that writes a file must be seen to create it,
-    # not to find it left behind by the previous export.
-    run_directory = _scratch(directory, SCRIPT_RUN)
-    # The published file itself, at the path it was published to -- not a copy
-    # somewhere else. Byte identity is not enough to make a copy stand in for
-    # it, because moving a file changes `__file__`: a cell reading
-    # `pathlib.Path(__file__).parent.name` branches one way under the check
-    # and the other way when a reader runs the artifact, and the verdict would
-    # then describe a run nobody will ever perform. Only the working directory
-    # is moved aside, so what the run writes by a relative path lands in the
-    # scratch tree; a run that writes relative to `__file__` writes beside the
-    # artifact, which is what running the artifact does and what the check is
-    # here to be honest about.
-    #
-    # What running it in place costs is the artifact: a cell is free to rewrite
-    # or delete the path it was run from, and Python has already loaded the
-    # module, so such a run still finishes and still matches the record. That
-    # is answered below by putting the bytes back and refusing the verdict,
-    # rather than by checking a file no reader will run.
-    published = script.read_bytes()
-    running = script
-    started = time.monotonic()
-    try:
-        run = run_exported_script(
-            backend=session.backend,
-            command=session.command,
-            script=running,
-            cwd=run_directory,
-            timeout=remaining,
-            max_output_bytes=session.limits.cas_output_bytes,
-            control=control,
-        )
-    except CasError as error:
-        session.charge(time.monotonic() - started)
-        return "failed", str(error)
-    session.charge(time.monotonic() - started)
-    if control is not None:
-        control.check()
 
-    # The file is read back, and put back if it moved. A verdict is a claim
-    # about the bytes a reader will keep, so a run that rewrote them leaves no
-    # such claim to make -- and leaves an artifact whose contents no longer
-    # match the hash the manifest records for it, which is the export's own
-    # promise about itself. Restoring costs nothing a reader wanted: the
-    # published bytes are what this export set out to publish, and what the
-    # run did to them is what the verdict now says.
-    if not script.exists() or script.read_bytes() != published:
-        put_back = (
-            "the published bytes have been put back"
-            if _restore_published(script, published)
-            else "and the published bytes could not be put back, so what is on disk "
-            "is not what this export's manifest describes"
-        )
-        return "failed", (
-            "the published script rewrote itself while it was being run, so the "
-            f"verdict would not describe the file this export publishes; {put_back}"
-        )
+def _rewritten(script: Path, published: bytes) -> ScriptVerdict | None:
+    """Refuse a verdict on a file the run changed, and put the published bytes back.
+
+    A verdict is a claim about the bytes a reader will keep, so a run that
+    rewrote them leaves no such claim to make -- and leaves an artifact whose
+    contents no longer match the hash the manifest records for it, which is
+    the export's own promise about itself. Restoring costs nothing a reader
+    wanted: the published bytes are what this export set out to publish, and
+    what the run did to them is what the verdict now says.
+    """
+    if script.exists() and script.read_bytes() == published:
+        return None
+    put_back = (
+        "the published bytes have been put back"
+        if _restore_published(script, published)
+        else "and the published bytes could not be put back, so what is on disk "
+        "is not what this export's manifest describes"
+    )
+    return "failed", (
+        "the published script rewrote itself while it was being run, so the "
+        f"verdict would not describe the file this export publishes; {put_back}"
+    )
+
+
+def _unfinished(run: ScriptRun, timeout: float) -> ScriptVerdict | None:
     if run.timed_out:
-        return "failed", f"the script did not finish within {remaining:g}s"
+        return "failed", f"the script did not finish within {timeout:g}s"
     if run.returncode:
         diagnostics = run.stderr or run.stdout
         return "failed", f"the script exited {run.returncode}: {_excerpt(diagnostics.strip())}"
+    return None
 
-    # The file itself is what a line-oriented interpreter was fed, and what it
-    # echoes back into its own transcript -- including Hardy's header and the
-    # per-cell notes, which the session never printed and which sit between one
-    # cell's output and the next.
-    fed = published.decode("utf-8", errors="replace") if session.backend.script_stdin else ""
-    stdout = session.backend.sanitize(run.stdout, fed)
-    pattern = session.backend.error_pattern
-    if pattern is not None and (pattern.search(stdout) or pattern.search(run.stderr)):
-        # A sentinel interpreter reports an error and carries on with the next
-        # line, so a broken script still exits 0. The banner is the exit code.
+
+def _banner(backend: CasBackend, stdout: str, stderr: str) -> ScriptVerdict | None:
+    """A sentinel interpreter reports an error and carries on with the next
+    line, so a broken script still exits 0. The banner is the exit code."""
+    pattern = backend.error_pattern
+    if pattern is not None and (pattern.search(stdout) or pattern.search(stderr)):
         return "failed", "the script printed an error banner"
+    return None
 
-    # Everything above is a claim the evidence supports whatever was truncated:
-    # the file ran, it exited 0, and no banner appeared in what was read.
-    # Comparing transcripts is not, and this is the point at which a missing
-    # tail stops being survivable. `diverged` is as much an affirmative claim as
-    # `verified` -- "the script printed something else" about bytes Hardy never
-    # read is the same rounding-up the truncated-cell verdict refuses, pointed
-    # the other way.
+
+def _incomparable(run: ScriptRun, cells: tuple[CellRecord, ...]) -> ScriptVerdict | None:
+    """Refuse to compare transcripts when either side is only a prefix.
+
+    Everything checked before this is a claim the evidence supports whatever
+    was truncated: the file ran, it exited 0, and no banner appeared in what
+    was read. Comparing transcripts is not, and this is the point at which a
+    missing tail stops being survivable. `diverged` is as much an affirmative
+    claim as `verified` -- "the script printed something else" about bytes
+    Hardy never read is the same rounding-up the truncated-cell verdict
+    refuses, pointed the other way.
+    """
     if run.capture_truncated:
         return "unverified", (
             "the script's own output passed cas_output_bytes, so its transcript "
             "could not be compared against the record"
         )
+    truncated_cells = [record.seq for record in cells if record.capture_truncated]
     if truncated_cells:
         return "unverified", (
             f"cell(s) {truncated_cells} were recorded from a truncated capture, so "
             "there is no complete transcript to compare the script against"
         )
+    return None
 
-    expected_out, expected_err = _expected_transcript(cells)
-    transcript = _between_markers(stdout)
-    if transcript is not None and _wants_completion(session.backend):
-        # Printed by the file's own last statement, so its absence says the
-        # file did not get there. Checked before the transcript is compared,
-        # because the comparison would otherwise pass: a run that stopped
-        # after cell one prints exactly what cell one printed, and a run that
-        # stopped before cell one prints nothing at all, which is what a
-        # session of silent cells recorded.
-        #
-        # Presence is the whole of the claim, so the first occurrence is cut
-        # out and the rest compared as usual -- rather than requiring it last,
-        # which would misreport a cell's own `atexit` output as an early exit
-        # when it is an ordinary divergence.
-        if completion not in transcript:
-            return "failed", (
-                "the script stopped before it reached its last cell, so what it "
-                "printed is not what running this file does"
-            )
-        transcript = transcript.replace(completion + "\n", "", 1).replace(completion, "", 1)
-    if transcript is None:
+
+def _without_completion(backend: CasBackend, transcript: str, completion: str) -> str | None:
+    """`transcript` with the completion line cut out, or None if it never printed.
+
+    Printed by the file's own last statement, so its absence says the file did
+    not get there. Checked before the transcript is compared, because the
+    comparison would otherwise pass: a run that stopped after cell one prints
+    exactly what cell one printed, and a run that stopped before cell one
+    prints nothing at all, which is what a session of silent cells recorded.
+
+    Presence is the whole of the claim, so the first occurrence is cut out and
+    the rest compared as usual -- rather than requiring it last, which would
+    misreport a cell's own `atexit` output as an early exit when it is an
+    ordinary divergence.
+    """
+    if not _wants_completion(backend):
+        return transcript
+    if completion not in transcript:
+        return None
+    return transcript.replace(completion + "\n", "", 1).replace(completion, "", 1)
+
+
+def _transcripts_differ(
+    backend: CasBackend,
+    cells: tuple[CellRecord, ...],
+    run: ScriptRun,
+    stdout: str,
+    completion: str,
+) -> ScriptVerdict | None:
+    """Compare what the script printed against what the session recorded.
+
+    `stdout` is the run's output as the backend sanitized it.
+    """
+    bracketed = _between_markers(stdout)
+    if bracketed is None:
         # The script exited 0 and its capture was complete, so the two
         # statements bracketing its own transcript are statements it ran. A
-        # file that did not print them printed something other than what
-        # Hardy wrote out.
+        # file that did not print them printed something other than what Hardy
+        # wrote out.
         return "diverged", (
             "the script did not print the markers Hardy wrote around its own "
             f"transcript; it printed {_excerpt(run.stdout.strip())}"
         )
-    trailing = _content_lines(_without_chrome(session.backend, _after_end_marker(stdout)))
+    transcript = _without_completion(backend, bracketed, completion)
+    if transcript is None:
+        return "failed", (
+            "the script stopped before it reached its last cell, so what it "
+            "printed is not what running this file does"
+        )
+    trailing = _content_lines(_without_chrome(backend, _after_end_marker(stdout)))
     if trailing:
         return "diverged", (
             "the script printed after its own closing marker, which the session "
             f"never recorded: {_excerpt(trailing)}"
         )
+    expected_out, expected_err = _expected_transcript(cells)
     for stream, actual, expected in (
         ("output", transcript, expected_out),
-        ("stderr", _without_chrome(session.backend, run.stderr), expected_err),
+        ("stderr", _without_chrome(backend, run.stderr), expected_err),
     ):
         got, want = _content_lines(actual), _content_lines(expected)
         if got != want:
@@ -510,6 +514,11 @@ def _verify_script(
                 f"the script's {stream} is not the {stream} the session recorded; "
                 f"recorded {_excerpt(want)}, script printed {_excerpt(got)}"
             )
+    return None
+
+
+def _unbounded(run: ScriptRun) -> ScriptVerdict | None:
+    """Refuse `verified` for a run whose descendants nobody could account for."""
     if run.descendants_unknown:
         # Not "it left one" but "nobody could look". Same position and the
         # same reason: everything comparable agreed, and what is left is a
@@ -537,7 +546,113 @@ def _verify_script(
             "the script left a process running when it exited, so what running "
             "this file does is not bounded by what was observed of it"
         )
+    return None
+
+
+def _verify_script(
+    export: _Export, cells: tuple[CellRecord, ...], script: Path, completion: str
+) -> ScriptVerdict:
+    """Run the published file and say whether it reproduced the session.
+
+    Billed to the session budget like every other kernel an export starts, and
+    bounded by what is left of it: an export must not be a way to buy time the
+    session no longer has.
+    """
+    session = export.session
+    if (refusal := _cannot_run(session, cells)) is not None:
+        return refusal
+    remaining = session.remaining_seconds
+    # Fresh every time: a script that writes a file must be seen to create it,
+    # not to find it left behind by the previous export.
+    run_directory = _scratch(export.directory, SCRIPT_RUN)
+    # The published file itself, at the path it was published to -- not a copy
+    # somewhere else. Byte identity is not enough to make a copy stand in for
+    # it, because moving a file changes `__file__`: a cell reading
+    # `pathlib.Path(__file__).parent.name` branches one way under the check
+    # and the other way when a reader runs the artifact, and the verdict would
+    # then describe a run nobody will ever perform. Only the working directory
+    # is moved aside, so what the run writes by a relative path lands in the
+    # scratch tree; a run that writes relative to `__file__` writes beside the
+    # artifact, which is what running the artifact does and what the check is
+    # here to be honest about.
+    #
+    # What running it in place costs is the artifact: a cell is free to rewrite
+    # or delete the path it was run from, and Python has already loaded the
+    # module, so such a run still finishes and still matches the record. That
+    # is answered by `_rewritten`: the bytes are put back and the verdict
+    # refused, rather than checking a file no reader will run.
+    published = script.read_bytes()
+    started = time.monotonic()
+    try:
+        run = run_exported_script(
+            backend=session.backend,
+            command=session.command,
+            script=script,
+            cwd=run_directory,
+            timeout=remaining,
+            max_output_bytes=session.limits.cas_output_bytes,
+            control=export.control,
+        )
+    except CasError as error:
+        session.charge(time.monotonic() - started)
+        return "failed", str(error)
+    session.charge(time.monotonic() - started)
+    export.check()
+    if (verdict := _rewritten(script, published)) is not None:
+        return verdict
+    if (verdict := _unfinished(run, remaining)) is not None:
+        return verdict
+    # The file itself is what a line-oriented interpreter was fed, and what it
+    # echoes back into its own transcript -- including Hardy's header and the
+    # per-cell notes, which the session never printed and which sit between one
+    # cell's output and the next.
+    fed = published.decode("utf-8", errors="replace") if session.backend.script_stdin else ""
+    stdout = session.backend.sanitize(run.stdout, fed)
+    if (verdict := _banner(session.backend, stdout, run.stderr)) is not None:
+        return verdict
+    if (verdict := _incomparable(run, cells)) is not None:
+        return verdict
+    if (verdict := _transcripts_differ(session.backend, cells, run, stdout, completion)) is not None:
+        return verdict
+    if (verdict := _unbounded(run)) is not None:
+        return verdict
     return "verified", ""
+
+
+def _environment_lines(mark: str, environment: Mapping[str, str]) -> list[str]:
+    """The script header's note on the environment the check ran under.
+
+    A verdict describes running these bytes *this way*; run them another way
+    and the verdict is not about what you ran. `PYTHONHASHSEED` is the one
+    that bites in practice -- a cell printing a set or a string-keyed dict
+    orders it by the interpreter's per-process hash seed, so an unpinned
+    reader can see a different order from the one recorded and checked.
+    """
+    if not environment:
+        return []
+    setting = " ".join(f"{key}={value}" for key, value in sorted(environment.items()))
+    return [
+        f"{mark} Checked under {setting}. Run it the same way to get the",
+        f"{mark} output Hardy compared against the session; a different hash",
+        f"{mark} seed can reorder a printed set or dict. Also in export.json.",
+        "",
+    ]
+
+
+def _cell_lines(backend: CasBackend, record: CellRecord, verdict: CellVerdict) -> list[str]:
+    """One cell as the script writes it: a note naming it, then its source."""
+    mark = backend.comment
+    note = (
+        ""
+        if verdict.verdict == "verified"
+        else f"  [{verdict.verdict}: {_one_line(verdict.detail)}]"
+    )
+    filed = f" {_one_line(record.path)}" if record.path else ""
+    return [
+        f"{mark} --- cell {record.seq} ({record.author}){filed}{note}",
+        backend.render_cell(record.source).rstrip(),
+        "",
+    ]
 
 
 def render_script(
@@ -572,21 +687,7 @@ def render_script(
         " export.json.",
         "",
     ]
-    # The environment the session and the check both ran under. A verdict
-    # describes running these bytes *this way*; run them another way and the
-    # verdict is not about what you ran. `PYTHONHASHSEED` is the one that bites
-    # in practice -- a cell printing a set or a string-keyed dict orders it by
-    # the interpreter's per-process hash seed, so an unpinned reader can see a
-    # different order from the one recorded and checked.
-    environment = backend.environment
-    if environment:
-        setting = " ".join(f"{key}={value}" for key, value in sorted(environment.items()))
-        lines += [
-            f"{mark} Checked under {setting}. Run it the same way to get the",
-            f"{mark} output Hardy compared against the session; a different hash",
-            f"{mark} seed can reorder a printed set or dict. Also in export.json.",
-            "",
-        ]
+    lines += _environment_lines(mark, backend.environment)
     if backend.preamble:
         lines += [backend.preamble, ""]
     # The script says where its own transcript starts and stops, so the check
@@ -603,19 +704,56 @@ def render_script(
         "",
     ]
     for record, verdict in zip(cells, verdicts, strict=True):
-        note = (
-            ""
-            if verdict.verdict == "verified"
-            else f"  [{verdict.verdict}: {_one_line(verdict.detail)}]"
-        )
-        filed = f" {_one_line(record.path)}" if record.path else ""
-        lines.append(f"{mark} --- cell {record.seq} ({record.author}){filed}{note}")
-        lines.append(backend.render_cell(record.source).rstrip())
-        lines.append("")
+        lines += _cell_lines(backend, record, verdict)
     epilogue = _markers(backend.transcript_epilogue, completion)
     if epilogue:
         lines += [*epilogue, ""]
     return "\n".join(lines) + "\n"
+
+
+def _outputs(record: CellRecord) -> list[dict[str, Any]]:
+    """A recorded cell's outputs, in nbformat's shapes."""
+    outputs: list[dict[str, Any]] = []
+    if record.stdout:
+        outputs.append(
+            {"output_type": "stream", "name": "stdout", "text": record.stdout.splitlines(True)}
+        )
+    if record.stderr:
+        outputs.append(
+            {"output_type": "stream", "name": "stderr", "text": record.stderr.splitlines(True)}
+        )
+    if record.value_repr:
+        outputs.append(
+            {
+                "output_type": "execute_result",
+                "execution_count": record.seq,
+                "data": {"text/plain": record.value_repr.splitlines(True)},
+                "metadata": {},
+            }
+        )
+    return outputs
+
+
+def _notebook_cell(record: CellRecord, verdict: CellVerdict) -> dict[str, Any]:
+    """One accepted cell as a notebook code cell, its verdict in its metadata."""
+    return {
+        "cell_type": "code",
+        "id": f"cell-{record.seq}",
+        "execution_count": record.seq,
+        "metadata": {
+            "hardy": {
+                "seq": record.seq,
+                "author": record.author,
+                "path": record.path,
+                "verification": verdict.verdict,
+                "detail": verdict.detail,
+                "capture_truncated": record.capture_truncated,
+                "capture_mode": record.capture_mode,
+            }
+        },
+        "outputs": _outputs(record),
+        "source": record.source.splitlines(True),
+    }
 
 
 def render_notebook(
@@ -638,45 +776,9 @@ def render_notebook(
             "cell_type": "markdown", "id": "hardy-capture", "metadata": {},
             "source": [MERGED_CAPTURE_NOTE],
         })
-    for record, verdict in zip(cells, verdicts, strict=True):
-        outputs: list[dict[str, Any]] = []
-        if record.stdout:
-            outputs.append(
-                {"output_type": "stream", "name": "stdout", "text": record.stdout.splitlines(True)}
-            )
-        if record.stderr:
-            outputs.append(
-                {"output_type": "stream", "name": "stderr", "text": record.stderr.splitlines(True)}
-            )
-        if record.value_repr:
-            outputs.append(
-                {
-                    "output_type": "execute_result",
-                    "execution_count": record.seq,
-                    "data": {"text/plain": record.value_repr.splitlines(True)},
-                    "metadata": {},
-                }
-            )
-        notebook_cells.append(
-            {
-                "cell_type": "code",
-                "id": f"cell-{record.seq}",
-                "execution_count": record.seq,
-                "metadata": {
-                    "hardy": {
-                        "seq": record.seq,
-                        "author": record.author,
-                        "path": record.path,
-                        "verification": verdict.verdict,
-                        "detail": verdict.detail,
-                        "capture_truncated": record.capture_truncated,
-                        "capture_mode": record.capture_mode,
-                    }
-                },
-                "outputs": outputs,
-                "source": record.source.splitlines(True),
-            }
-        )
+    notebook_cells += [
+        _notebook_cell(record, verdict) for record, verdict in zip(cells, verdicts, strict=True)
+    ]
     notebook = {
         "cells": notebook_cells,
         "metadata": {
@@ -716,29 +818,20 @@ def export_session(session: CasSession, directory: Path, *,
     nothing serialised, and it replayed and published a segment that was
     still being appended to.
     """
+    export = _Export(session, directory, control)
     with session.hold():
-        if control is not None:
-            control.check()
-        return _export_held(session, directory, control=control)
+        export.check()
+        return _export_held(export)
 
 
-def _export_held(session: CasSession, directory: Path, *,
-                 control: OperationControl | None = None) -> ExportReport:
-    cells = session.accepted()
-    if not cells:
-        raise CasError("nothing to export: the session has no accepted cells")
-
-    # Every file this function publishes goes through this guard, which proves
-    # at each write that `directory` is still the problem's own `cas/` and not
-    # a symlink pointing out of it. `Layout.ensure` checked that when the
-    # project opened; an export happens later, and a clone is free to ship the
-    # link that makes "later" the interesting moment.
-    guard = WriteGuard(directory, create=True)
+def _replay_verdicts(export: _Export, cells: tuple[CellRecord, ...]) -> list[CellVerdict]:
+    """Replay the accepted cells in a fresh kernel and judge each one."""
+    session = export.session
     # Fresh every time, on the same rule `_verify_script` applies to
     # `script-run`: a replay that starts in the previous export's leftovers is
     # not the fresh kernel this check says it is, and a cell that writes a file
     # must be seen to create it rather than to find it.
-    replay_directory = _scratch(directory, REPLAY)
+    replay_directory = _scratch(export.directory, REPLAY)
     outcomes = replay_in_fresh_kernel(
         backend=session.backend,
         command=session.command,
@@ -752,22 +845,18 @@ def _export_held(session: CasSession, directory: Path, *,
         # reached"), as `docs/design/computer-algebra.md` promises.
         budget_seconds=session.remaining_seconds,
         charge=session.charge,
-        control=control,
+        control=export.control,
     )
-    if control is not None:
-        control.check()
-    verdicts = [_verdict(record, outcome) for record, outcome in zip(cells, outcomes, strict=True)]
+    export.check()
+    return [_verdict(record, outcome) for record, outcome in zip(cells, outcomes, strict=True)]
 
-    script_path = directory / f"session{session.backend.script_suffix}"
-    notebook_path = directory / "session.ipynb"
-    # Fresh for this export, and known to both the file and the check.
-    completion = completion_marker() if _wants_completion(session.backend) else ""
-    script = render_script(session, cells, verdicts, completion).encode("utf-8")
-    # The script is published before it is checked, because the thing checked
-    # has to be the thing published: these exact bytes are what gets run.
-    guard.write_bytes(script_path.name, script)
+
+def _checked_script(
+    export: _Export, cells: tuple[CellRecord, ...], script: Path, completion: str
+) -> ScriptVerdict:
+    """`_verify_script`, with any failure of the check itself as its verdict."""
     try:
-        script_verdict = _verify_script(session, cells, script_path, directory, completion, control=control)
+        return _verify_script(export, cells, script, completion)
     except Exception as error:  # noqa: BLE001 - see below
         # Deliberately everything. `docs/design/output-contract.md` requires a
         # partial export to be written and marked rather than withheld, and the
@@ -775,63 +864,55 @@ def _export_held(session: CasSession, directory: Path, *,
         # the manifest with it: a session that cannot say whether its script
         # runs is strictly better off than one with no artifacts at all. A
         # verdict of `unverified` naming the failure is what that costs.
-        script_verdict = ("unverified", _excerpt(f"the script could not be checked: {error!r}"))
-    notebook = render_notebook(session, cells, verdicts, script_verdict).encode("utf-8")
-    guard.write_bytes(notebook_path.name, notebook)
+        return "unverified", _excerpt(f"the script could not be checked: {error!r}")
 
-    # Read back at the last possible moment, because the manifest is a claim
-    # about what is on disk and not about what was handed to `write_bytes`.
-    # `_verify_script` checks the script the instant the run ends and the
-    # notebook is rendered after that, so anything that changed a published
-    # file in between -- a descendant that left its process group and outlived
-    # the sweep, most of all -- would have been recorded under a hash of bytes
-    # nothing on disk had. This closes the window an export controls. It
-    # cannot close the one after that: a file on disk can be changed at any
-    # later time by anything at all, which is what the manifest's hashes are
-    # for.
+
+def _read_back(published: dict[Path, bytes], script_verdict: ScriptVerdict) -> ScriptVerdict:
+    """The script verdict, withdrawn if a published file changed under the export.
+
+    Read back at the last possible moment, because the manifest is a claim
+    about what is on disk and not about what was handed to `write_bytes`.
+    `_verify_script` checks the script the instant the run ends and the
+    notebook is rendered after that, so anything that changed a published file
+    in between -- a descendant that left its process group and outlived the
+    sweep, most of all -- would have been recorded under a hash of bytes
+    nothing on disk had. This closes the window an export controls. It cannot
+    close the one after that: a file on disk can be changed at any later time
+    by anything at all, which is what the manifest's hashes are for.
+    """
     changed = [
         path.name
-        for path, published in ((script_path, script), (notebook_path, notebook))
-        if not path.exists() or path.read_bytes() != published
+        for path, data in published.items()
+        if not path.exists() or path.read_bytes() != data
     ]
-    if changed:
-        for path, published in ((script_path, script), (notebook_path, notebook)):
-            _restore_published(path, published)
-        # Not over a verdict that already failed. `_verify_script` reads the
-        # script back the instant the run ends and says something more precise
-        # when it finds it changed -- including that the guard refused to put
-        # it back, which this would have replaced with a message saying the
-        # bytes were restored. A second report of one event is not more honest
-        # than the first.
-        #
-        # The cell verdicts are left alone. They are claims about replaying
-        # cells in a fresh kernel, which is evidence a file being clobbered
-        # afterwards does not touch; it is the claim about the published file
-        # that stops being supportable.
-        if script_verdict[0] != "failed":
-            script_verdict = (
-                "failed",
-                f"{', '.join(changed)} changed on disk while this export was still "
-                "being written, so the verdict would not describe the files it "
-                "publishes; the published bytes have been put back",
-            )
-
-    counts = {name: 0 for name in ("verified", "diverged", "failed", "unverified")}
-    for verdict in verdicts:
-        counts[verdict.verdict] += 1
-    report = ExportReport(
-        script_path=script_path.as_posix(),
-        notebook_path=notebook_path.as_posix(),
-        manifest_path=(directory / "export.json").as_posix(),
-        backend=session.backend.name,
-        verdicts=tuple(verdicts),
-        script_verdict=script_verdict[0],
-        script_detail=script_verdict[1],
-        **counts,
+    if not changed:
+        return script_verdict
+    for path, data in published.items():
+        _restore_published(path, data)
+    # Not over a verdict that already failed. `_verify_script` reads the script
+    # back the instant the run ends and says something more precise when it
+    # finds it changed -- including that the guard refused to put it back,
+    # which this would have replaced with a message saying the bytes were
+    # restored. A second report of one event is not more honest than the first.
+    #
+    # The cell verdicts are left alone. They are claims about replaying cells
+    # in a fresh kernel, which is evidence a file being clobbered afterwards
+    # does not touch; it is the claim about the published file that stops
+    # being supportable.
+    if script_verdict[0] == "failed":
+        return script_verdict
+    return (
+        "failed",
+        f"{', '.join(changed)} changed on disk while this export was still "
+        "being written, so the verdict would not describe the files it "
+        "publishes; the published bytes have been put back",
     )
-    # Written last, and recording both digests. Two atomic writes are not one
-    # atomic write: a crash between them would leave a fresh script beside a
-    # stale notebook, and only this manifest makes that detectable.
+
+
+def _manifest(
+    session: CasSession, report: ExportReport, published: dict[Path, bytes]
+) -> bytes:
+    """`export.json`: what was exported, under what conditions, with which verdicts."""
     manifest = {
         "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "backend": session.backend.name,
@@ -844,19 +925,62 @@ def _export_held(session: CasSession, directory: Path, *,
         # Recorded here and named in the script's own header.
         "environment": dict(session.backend.environment),
         "capture_mode": session.backend.capture_mode,
-        "counts": counts,
-        "script_verdict": script_verdict[0],
-        "script_detail": script_verdict[1],
-        "files": {
-            script_path.name: hashlib.sha256(script).hexdigest(),
-            notebook_path.name: hashlib.sha256(notebook).hexdigest(),
+        "counts": {
+            name: getattr(report, name) for name in ("verified", "diverged", "failed", "unverified")
         },
-        "verdicts": [verdict.model_dump(mode="json") for verdict in verdicts],
+        "script_verdict": report.script_verdict,
+        "script_detail": report.script_detail,
+        "files": {path.name: hashlib.sha256(data).hexdigest() for path, data in published.items()},
+        "verdicts": [verdict.model_dump(mode="json") for verdict in report.verdicts],
     }
-    guard.write_bytes(
-        "export.json",
-        (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    return (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _export_held(export: _Export) -> ExportReport:
+    session, directory = export.session, export.directory
+    cells = session.accepted()
+    if not cells:
+        raise CasError("nothing to export: the session has no accepted cells")
+
+    # Every file this function publishes goes through this guard, which proves
+    # at each write that `directory` is still the problem's own `cas/` and not
+    # a symlink pointing out of it. `Layout.ensure` checked that when the
+    # project opened; an export happens later, and a clone is free to ship the
+    # link that makes "later" the interesting moment.
+    guard = WriteGuard(directory, create=True)
+    verdicts = _replay_verdicts(export, cells)
+
+    script_path = directory / f"session{session.backend.script_suffix}"
+    notebook_path = directory / "session.ipynb"
+    # Fresh for this export, and known to both the file and the check.
+    completion = completion_marker() if _wants_completion(session.backend) else ""
+    script = render_script(session, cells, verdicts, completion).encode("utf-8")
+    # The script is published before it is checked, because the thing checked
+    # has to be the thing published: these exact bytes are what gets run.
+    guard.write_bytes(script_path.name, script)
+    script_verdict = _checked_script(export, cells, script_path, completion)
+    notebook = render_notebook(session, cells, verdicts, script_verdict).encode("utf-8")
+    guard.write_bytes(notebook_path.name, notebook)
+    published = {script_path: script, notebook_path: notebook}
+    script_verdict = _read_back(published, script_verdict)
+
+    counts = Counter(verdict.verdict for verdict in verdicts)
+    report = ExportReport(
+        script_path=script_path.as_posix(),
+        notebook_path=notebook_path.as_posix(),
+        manifest_path=(directory / "export.json").as_posix(),
+        backend=session.backend.name,
+        verified=counts["verified"],
+        diverged=counts["diverged"],
+        failed=counts["failed"],
+        unverified=counts["unverified"],
+        verdicts=tuple(verdicts),
+        script_verdict=script_verdict[0],
+        script_detail=script_verdict[1],
     )
-    if control is not None:
-        control.check()
+    # Written last, and recording both digests. Two atomic writes are not one
+    # atomic write: a crash between them would leave a fresh script beside a
+    # stale notebook, and only this manifest makes that detectable.
+    guard.write_bytes("export.json", _manifest(session, report, published))
+    export.check()
     return report
