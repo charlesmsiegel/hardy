@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from hardy.documents import export
+from hardy.documents import conversation, export
 
 # POSIX mode bits and fifos have no Windows counterpart: `chmod` there toggles
 # a read-only flag, `umask` is a no-op, and `os.mkfifo` does not exist.
@@ -1487,7 +1487,7 @@ def test_a_new_turns_tool_result_does_not_finish_a_crashed_turns_call():
         {"type": "tool_started", "name": "check_lean", "arguments": {"module": "New"}},
         {"type": "tool", "name": "check_lean", "arguments": {"module": "New"}},
     ]
-    assert export._unfinished(events) == {0}
+    assert conversation.unfinished(events) == {0}
 
 
 def test_tool_results_identify_the_call_even_across_turns():
@@ -1497,9 +1497,9 @@ def test_tool_results_identify_the_call_even_across_turns():
         {"type": "tool_started", "name": "check_lean", "call_id": "new"},
         {"type": "tool", "name": "check_lean", "call_id": "new"},
     ]
-    assert export._unfinished(events) == {0}
+    assert conversation.unfinished(events) == {0}
     events.append({"type": "tool", "name": "check_lean", "call_id": "old"})
-    assert export._unfinished(events) == set()
+    assert conversation.unfinished(events) == set()
 
 
 def test_checkpoint_supersession_uses_exact_block_identity():
@@ -1508,9 +1508,9 @@ def test_checkpoint_supersession_uses_exact_block_identity():
         {**_checkpoint("Second unfinished"), "block_id": "second"},
         {"type": "assistant", "block_id": "first", "message": {"content": "First complete"}},
     ]
-    assert export._superseded(events) == {0}
+    assert conversation.superseded(events) == {0}
     events.append({**_checkpoint("Second further"), "block_id": "second"})
-    assert export._superseded(events) == {0, 1}
+    assert conversation.superseded(events) == {0, 1}
     page = build(transcript=events)
     assert page.count("First complete") == 1 and page.count("Second further") == 1
     assert "First draft" not in page and "Second unfinished" not in page
@@ -1562,7 +1562,7 @@ def test_refusals_fill_all_fifty_slots_and_count_each_omission(
         {'type': 'tool', 'name': f'save{i}', 'result': {'ok': False, 'output': 'no'}}
         for i in range(failures)
     ]
-    listed = export._refusals({'transcript': transcript})
+    listed = export._refusals(transcript)
     assert listed.count('<li>') == 50
     assert listed.count('not a Hardy tool') == denials - lost_denials
     assert f'save{failures - 1}:' in listed
