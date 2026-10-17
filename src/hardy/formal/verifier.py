@@ -14,6 +14,7 @@ import hashlib
 import re
 from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple
 
 from pydantic import model_validator
 
@@ -25,7 +26,13 @@ from hardy.formal.contracts import (
     VerificationEvidence,
     freeze_claim,
 )
-from hardy.formal.lean import LeanDiagnostic, elaborate, render_theorem, scannable
+from hardy.formal.lean import (
+    Elaboration,
+    LeanDiagnostic,
+    elaborate,
+    render_theorem,
+    scannable,
+)
 
 # One scanner, not a second copy. The copy that lived here missed Lean's raw
 # strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
@@ -113,6 +120,8 @@ UNAUTHORIZED_SIGNATURE_TOKEN = re.compile(
 
 
 class VerificationResult(FrozenModel):
+    """What the independent verifier concluded, as `lean/verification.json` records it."""
+
     verified: bool
     reason: TerminalReason | None
     axioms: tuple[str, ...]
@@ -149,6 +158,12 @@ class VerificationResult(FrozenModel):
 
 
 class FinalVerifier:
+    """Rebuilds a frozen claim around a proof body and checks it in a fresh Lean.
+
+    One per process and environment; what a run may stand on is passed per
+    call, since it belongs to the run.
+    """
+
     def __init__(
         self,
         *,
@@ -193,16 +208,30 @@ class FinalVerifier:
             # checks. Everything the run declares is rendered into that file,
             # so a declaration is as much Hardy's responsibility as the
             # theorem header it sits above.
-            bare = verification_source(claim, proof_body)
-            return _failure(
-                store,
-                bare,
-                hashlib.sha256(bare.encode("utf-8")).hexdigest(),
-                TerminalReason.FORBIDDEN_HOLE,
-                "Declared assumption refused: " + declared,
-            )
+            refusal = _Refusal(TerminalReason.FORBIDDEN_HOLE, "Declared assumption refused: " + declared)
+            return _refuse(store, verification_source(claim, proof_body), refusal)
         source = verification_source(claim, proof_body, permitted)
-        source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        refusal = self._refusal_before_lean(claim, proof_body)
+        if refusal is not None:
+            return _refuse(store, source, refusal)
+        elaboration = elaborate(
+            source,
+            argv=(*self._lean_command, "--json"),
+            cwd=self._lean_project,
+            timeout_seconds=self._limits.lean_process_seconds,
+            max_output_bytes=self._limits.process_output_bytes,
+            runner=self._runner,
+        )
+        verdict = self._graded(claim, source, elaboration, permitted)
+        if isinstance(verdict, _Refusal):
+            return _refuse(store, source, verdict, elaboration.diagnostics)
+        result = self._accepted(claim, elaboration, verdict)
+        store.write_text(PurePosixPath("lean/Main.lean"), source)
+        store.write_json(PurePosixPath("lean/verification.json"), result)
+        return result
+
+    def _refusal_before_lean(self, claim: FrozenClaim, proof_body: str) -> _Refusal | None:
+        """Why the claim or the body may not reach Lean at all, or None."""
         # The claim must still hash to what it hashed to when it was approved,
         # and must still be the environment this verifier is running.
         expected_claim = freeze_claim(
@@ -217,91 +246,64 @@ class FinalVerifier:
             or claim.imports != claim.environment.imports
             or claim.environment != self._environment
         ):
-            return _failure(
-                store,
-                source,
-                source_sha,
+            return _Refusal(
                 TerminalReason.STATEMENT_MISMATCH,
                 "Frozen Claim hash, imports, or verifier environment does not match",
             )
         signature_violation = _signature_violation(claim)
         if signature_violation is not None:
-            return _failure(
-                store,
-                source,
-                source_sha,
+            return _Refusal(
                 TerminalReason.FORBIDDEN_HOLE,
                 "Forbidden Lean syntax in Frozen Claim signature: " + signature_violation,
             )
         forbidden = FORBIDDEN_TOKEN.search(scannable(proof_body))
-        refusal = (
+        body_refusal = (
             f"forbidden Lean token: {forbidden.group(1)}"
             if forbidden is not None
             else proof_body_violation(proof_body)
         )
-        if refusal is not None:
-            result = VerificationResult(
-                verified=False,
-                reason=TerminalReason.FORBIDDEN_HOLE,
-                axioms=(),
-                diagnostics=(LeanDiagnostic(severity="error", message=refusal),),
-                source_sha256=source_sha,
-                verification_sha256=None,
-            )
-            return _save_failure(store, source, result)
+        if body_refusal is not None:
+            return _Refusal(TerminalReason.FORBIDDEN_HOLE, body_refusal)
+        return None
 
-        elaboration = elaborate(
-            source,
-            argv=(*self._lean_command, "--json"),
-            cwd=self._lean_project,
-            timeout_seconds=self._limits.lean_process_seconds,
-            max_output_bytes=self._limits.process_output_bytes,
-            runner=self._runner,
-        )
-        diagnostics = elaboration.diagnostics
+    def _graded(
+        self,
+        claim: FrozenClaim,
+        source: str,
+        elaboration: Elaboration,
+        permitted: Sequence[DeclaredAssumption],
+    ) -> audit.Verdict | _Refusal:
+        """What a finished elaboration establishes: an accepted verdict, or why not."""
         process = elaboration.process
         if process.timed_out or process.output_overflow or process.interrupted:
-            return _failure(
-                store,
-                source,
-                source_sha,
+            return _Refusal(
                 TerminalReason.TIMEOUT_BUDGET_EXHAUSTED,
                 ("Fresh Lean verification was interrupted before it finished"
                  if process.interrupted else
                  "Fresh Lean verification timed out or exceeded its output limit"),
-                diagnostics,
             )
         # `success` rather than its parts restated, so the verifier also
         # refuses a run `#exit` cut short with nothing worse than a warning.
         if not elaboration.success:
-            return _failure(
-                store,
-                source,
-                source_sha,
+            return _Refusal(
                 TerminalReason.LEAN_ELABORATION_FAILURE,
                 "Fresh Lean verification did not accept the reconstructed source",
-                diagnostics,
             )
         # Only what Lean said at Hardy's own `#print axioms`, the file's last
         # line. A message from any other line came from something the body
         # made Lean say, and one with no position is not Lean's report at all.
         reports = audit.parse(
-            audit_line_messages(source, diagnostics), (claim.proposal.theorem_name,)
+            audit_line_messages(source, elaboration.diagnostics), (claim.proposal.theorem_name,)
         )
         if reports is None:
             # A silent axiom report is not an absence of axioms, and neither is
             # a duplicated one -- Hardy will not pick a winner between two.
             # Nor is a report on the wrong line: a body that stopped Lean
             # before the audit ran leaves exactly this silence.
-            return _failure(
-                store,
-                source,
-                source_sha,
+            return _Refusal(
                 TerminalReason.LEAN_ELABORATION_FAILURE,
                 "Fresh Lean verification did not emit a single readable axiom report",
-                diagnostics,
             )
-        axioms = reports[0].axioms
         # Graded against exactly what this run declared. With nothing declared
         # this is the old rule unchanged -- `sorryAx` and every non-standard
         # axiom refused alike -- and with a declared set, an axiom in it is
@@ -310,28 +312,29 @@ class FinalVerifier:
         # so no declaration can launder a hole.
         verdict = audit.classify(reports, [item.name for item in permitted])
         if verdict.status not in (audit.AuditStatus.CLEAN, audit.AuditStatus.MODULO):
-            return _failure(
-                store,
-                source,
-                source_sha,
+            return _Refusal(
                 TerminalReason.UNEXPECTED_AXIOM,
                 "Unexpected axioms: " + ", ".join(verdict.forbidden + verdict.unapproved),
-                diagnostics,
-                axioms,
+                reports[0].axioms,
             )
+        return verdict
 
+    def _accepted(
+        self, claim: FrozenClaim, elaboration: Elaboration, verdict: audit.Verdict
+    ) -> VerificationResult:
+        axioms = verdict.reports[0].axioms
         evidence = VerificationEvidence(
             claim_sha256=claim.content_hash,
-            source_sha256=source_sha,
+            source_sha256=elaboration.source_sha256,
             axioms=axioms,
             toolchain=self._environment,
         )
-        result = VerificationResult(
+        return VerificationResult(
             verified=True,
             reason=None,
             axioms=axioms,
-            diagnostics=diagnostics,
-            source_sha256=source_sha,
+            diagnostics=elaboration.diagnostics,
+            source_sha256=elaboration.source_sha256,
             verification_sha256=evidence.digest,
             evidence=evidence,
             # What was USED, from Lean's own report -- not what was declared.
@@ -340,9 +343,6 @@ class FinalVerifier:
             # what the result stands on.
             assumed=verdict.assumed,
         )
-        store.write_text(PurePosixPath("lean/Main.lean"), source)
-        store.write_json(PurePosixPath("lean/verification.json"), result)
-        return result
 
 
 def axiom_report_line(theorem_name: str) -> str:
@@ -523,29 +523,29 @@ def _signature_violation(claim: FrozenClaim) -> str | None:
     return unauthorized.group(1) if unauthorized is not None else None
 
 
-def _save_failure(store: RunStore, source: str, result: VerificationResult) -> VerificationResult:
+class _Refusal(NamedTuple):
+    """Why the verifier will not accept, and the axioms Lean named, if it got that far."""
+
+    reason: TerminalReason
+    message: str
+    axioms: tuple[str, ...] = ()
+
+
+def _refuse(
+    store: RunStore,
+    source: str,
+    refusal: _Refusal,
+    diagnostics: tuple[LeanDiagnostic, ...] = (),
+) -> VerificationResult:
+    """Record a refusal beside the source it refused, which is never `Main.lean`."""
+    result = VerificationResult(
+        verified=False,
+        reason=refusal.reason,
+        axioms=refusal.axioms,
+        diagnostics=diagnostics + (LeanDiagnostic(severity="error", message=refusal.message),),
+        source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        verification_sha256=None,
+    )
     store.write_text(PurePosixPath("lean/last-attempt.lean"), source)
     store.write_json(PurePosixPath("lean/verification.json"), result)
     return result
-
-
-def _failure(
-    store: RunStore,
-    source: str,
-    source_sha: str,
-    reason: TerminalReason,
-    message: str,
-    diagnostics: tuple[LeanDiagnostic, ...] = (),
-    axioms: tuple[str, ...] = (),
-) -> VerificationResult:
-    result = VerificationResult(
-        verified=False,
-        reason=reason,
-        axioms=axioms,
-        diagnostics=diagnostics + (LeanDiagnostic(severity="error", message=message),),
-        source_sha256=source_sha,
-        verification_sha256=None,
-    )
-    return _save_failure(store, source, result)
-
-
