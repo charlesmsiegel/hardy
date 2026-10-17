@@ -7,10 +7,15 @@ reordered or hand-edited file is a refusal rather than a quietly different
 history. `append` takes the revision the caller read and refuses when the
 journal has moved: two writers racing against one head cannot both win.
 
-This is the project ledger's transaction discipline with the record schema
-left to the caller. It knows nothing about Lean, papers, or claims; owners
-above it decide what a valid transaction is through the `validate` hook.
-Replay is O(history) by design: there is no cache or second copy to repair.
+This is the chain discipline the project ledger also writes, with the record
+schema left to the caller. The ledger (`workflows/ledger/store.py`) still
+keeps its own copy of the chain rather than building on this one: its
+envelope carries an `activate` field and its replay validates as it goes,
+neither of which `Journal` offers, so `verify_chain` checks the chain and
+accepts either envelope. It knows nothing about Lean, papers, or claims;
+owners above it decide what a valid transaction is through the `validate`
+hook. Replay is O(history) by design: there is no cache or second copy to
+repair.
 """
 from __future__ import annotations
 
