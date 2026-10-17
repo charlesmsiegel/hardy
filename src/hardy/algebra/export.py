@@ -748,8 +748,8 @@ def _export_held(session: CasSession, directory: Path, *,
         # An export is the session spending its own budget in a second kernel.
         # Bounded by what is left, and billed for what it uses, so a session
         # cannot exceed `cas_session_seconds` by exporting repeatedly. Cells
-        # the remaining budget does not reach come back `unverified`, which is
-        # what `docs/.../interactive-cas-design.md` already promised.
+        # the remaining budget does not reach come back `unverified` ("not
+        # reached"), as `docs/design/computer-algebra.md` promises.
         budget_seconds=session.remaining_seconds,
         charge=session.charge,
         control=control,
