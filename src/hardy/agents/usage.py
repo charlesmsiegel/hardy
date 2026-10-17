@@ -262,6 +262,14 @@ class _Reading:
             cumulative=report.cumulative,
         )
 
+    def added(self, field: str, base: float | None) -> float:
+        """What one stated figure adds to its total: its growth past the
+        baseline that survived, or the whole of it when none did or it fell --
+        and never less than the exchange's own messages moved."""
+        figure = self.stated[field]
+        grown = figure if base is None or figure < base else figure - base
+        return max(grown, self.own.get(field, 0) if field in self.tokens else 0)
+
     def continues(self, baselines: Mapping[str, float], *, switched: bool) -> tuple[bool, bool]:
         """Whether this report's tokens, and its cost, continue the running
         totals `baselines` hold, and so are differenced rather than counted whole.
@@ -447,11 +455,8 @@ class Usage:
         }
         totals = {field: getattr(self, field) for field in self.COUNTERS}
         spent = self.cost_usd
-        for field, figure in reading.stated.items():
-            base = baselines.get(field)
-            added = figure if base is None or figure < base else figure - base
-            # Never less than the exchange's own messages moved.
-            added = max(added, reading.own.get(field, 0) if field in reading.tokens else 0)
+        for field in reading.stated:
+            added = reading.added(field, baselines.get(field))
             if field == "cost_usd":
                 spent = (self.cost_usd or 0.0) + added
             else:
