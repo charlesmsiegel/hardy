@@ -270,7 +270,7 @@ def test_provider_reports_fold_into_the_runs_usage_ledger(tmp_path) -> None:
     _, _, runtime = _staged(tmp_path)
 
     before = runtime.usage
-    runtime._observe(
+    runtime._record.observe(
         {
             'type': 'result',
             'cost_usd': 0.25,
@@ -317,7 +317,7 @@ def test_a_report_smaller_than_its_sessions_last_is_counted_whole(tmp_path) -> N
     _, _, runtime = _staged(tmp_path)
 
     for cost, read in ((0.06, 38443), (0.04, 38443)):
-        runtime._observe(
+        runtime._record.observe(
             {'type': 'result', 'cost_usd': cost, 'usage': {'input_tokens': 2, 'cache_read_input_tokens': read}, 'session_id': 'same'}
         )
 
@@ -328,8 +328,8 @@ def test_a_report_smaller_than_its_sessions_last_is_counted_whole(tmp_path) -> N
 
 
 def _report(runtime, session, cost, tokens, **extra) -> None:
-    runtime._asked += 1
-    runtime._observe(
+    runtime._record.asked += 1
+    runtime._record.observe(
         {'type': 'result', 'session_id': session, 'cost_usd': cost,
          'usage': {'input_tokens': tokens, 'output_tokens': tokens // 10}, **extra}
     )
@@ -389,8 +389,8 @@ def test_the_documented_cli_gives_the_staged_and_batch_ledgers_one_answer(tmp_pa
     _, _, runtime = _staged(tmp_path)
 
     for n in (1, 2, 3):
-        runtime._asked += 1
-        runtime._observe({
+        runtime._record.asked += 1
+        runtime._record.observe({
             'type': 'result', 'session_id': 'S', 'cost_usd': 0.5 * n,
             'usage': {'input_tokens': 1000, 'output_tokens': 100},
             'exchange_usage': {'input_tokens': 1000, 'output_tokens': 100}, 'cumulative': False,
@@ -409,7 +409,7 @@ def test_unreported_exchanges_pad_the_count_across_sessions(tmp_path) -> None:
 
     _report(runtime, 'A', 0.5, 1000)
     _report(runtime, 'B', 0.3, 700)
-    runtime._asked += 1
+    runtime._record.asked += 1
 
     usage = runtime.usage
     assert usage['exchanges'] == 3

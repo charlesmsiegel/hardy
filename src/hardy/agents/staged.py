@@ -5,15 +5,19 @@ a conversation. This adapter is the join: each stage is one exchange that must
 come back as JSON matching the stage's schema, and a stage that answers with
 prose instead is a failed stage rather than something to interpret loosely.
 
-The Lean tools offered here are the same bounded runtime the MCP server
+The Lean tools offered here run on the same bounded runtime the MCP server
 serves, so an official proof check costs the same budget whichever transport
-the model reached it through.
+the model reached it through. Their declarations are not yet shared: the
+`LEAN_TOOLS` table here and the FastMCP functions in `app/mcp.py` describe the
+same five tools separately, and the MCP server builds its runtime without the
+run's declared assumptions -- which is why the Codex backend, served through
+it, refuses an assumed run (`codex.ASSUMPTIONS_UNSUPPORTED`).
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -42,88 +46,218 @@ T = TypeVar("T", bound=BaseModel)
 # traceback learns nothing it can act on.
 REFUSED = ToolResult(False, "the run was cancelled before this tool call was made")
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "lean_check_proof",
-            "description": "Check one proof body against the exact Frozen Claim.",
-            "parameters": {
-                "type": "object",
-                "properties": {"claim_id": {"type": "string"}, "proof_body": {"type": "string"}},
-                "required": ["claim_id", "proof_body"],
-                "additionalProperties": False,
-            },
+@dataclass(frozen=True)
+class LeanTool:
+    """One Lean tool a staged thread offers: what the model is told, and what runs."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+    #: Runs the call on the thread's `LeanToolRuntime`. Malformed arguments
+    #: raise `KeyError`, `TypeError` or `ValueError`, which the dispatcher
+    #: answers as an invalid call.
+    call: Callable[[Any, dict[str, Any]], Any]
+    #: Whether the answer is written into the trajectory. Only a ranking is:
+    #: every other tool's outcome survives in something durable --
+    #: `verification.json`, the workspace tree -- and a ranking has no such
+    #: home, so the trajectory would otherwise show retrieval asked and never
+    #: what it answered, for a result that shaped the proof.
+    recorded: bool = False
+
+    @property
+    def spec(self) -> dict[str, Any]:
+        """The declaration in the function-calling shape every transport reads."""
+        return {
+            "type": "function",
+            "function": {"name": self.name, "description": self.description, "parameters": self.parameters},
+        }
+
+
+def _check_proof(lean: Any, arguments: dict[str, Any]) -> Any:
+    return lean.check_proof(str(arguments["claim_id"]), str(arguments["proof_body"]))
+
+
+def _check_scratch(lean: Any, arguments: dict[str, Any]) -> Any:
+    return lean.bound_check(lean.service.check_scratch(str(arguments["source"])))
+
+
+def _inspect_declarations(lean: Any, arguments: dict[str, Any]) -> Any:
+    return lean.bound_inspection(lean.service.inspect_declarations(tuple(str(item) for item in arguments["names"])))
+
+
+def _search_declarations(lean: Any, arguments: dict[str, Any]) -> Any:
+    return lean.search_declarations(str(arguments["query"]), int(arguments.get("limit", 10)))
+
+
+def _rank_premises(lean: Any, arguments: dict[str, Any]) -> Any:
+    return lean.rank_premises(str(arguments["goal"]), int(arguments.get("limit", 10)))
+
+
+LEAN_TOOLS = (
+    LeanTool(
+        "lean_check_proof",
+        "Check one proof body against the exact Frozen Claim.",
+        {
+            "type": "object",
+            "properties": {"claim_id": {"type": "string"}, "proof_body": {"type": "string"}},
+            "required": ["claim_id", "proof_body"],
+            "additionalProperties": False,
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lean_check_scratch",
-            "description": "Check bounded exploratory source under Hardy's fixed imports.",
-            "parameters": {
-                "type": "object",
-                "properties": {"source": {"type": "string"}},
-                "required": ["source"],
-                "additionalProperties": False,
-            },
+        _check_proof,
+    ),
+    LeanTool(
+        "lean_check_scratch",
+        "Check bounded exploratory source under Hardy's fixed imports.",
+        {
+            "type": "object",
+            "properties": {"source": {"type": "string"}},
+            "required": ["source"],
+            "additionalProperties": False,
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lean_inspect_declarations",
-            "description": "Resolve a bounded list of exact Lean declaration names.",
-            "parameters": {
-                "type": "object",
-                "properties": {"names": {"type": "array", "items": {"type": "string"}}},
-                "required": ["names"],
-                "additionalProperties": False,
-            },
+        _check_scratch,
+    ),
+    LeanTool(
+        "lean_inspect_declarations",
+        "Resolve a bounded list of exact Lean declaration names.",
+        {
+            "type": "object",
+            "properties": {"names": {"type": "array", "items": {"type": "string"}}},
+            "required": ["names"],
+            "additionalProperties": False,
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "lean_search_declarations",
-            "description": (
-                "Search declaration names read from the pinned Mathlib package "
-                "sources -- instant, no Lean process. A hit is a lead to confirm "
-                "with lean_inspect_declarations; a miss is about the index, not "
-                "Mathlib."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
-                "required": ["query"],
-                "additionalProperties": False,
-            },
+        _inspect_declarations,
+    ),
+    LeanTool(
+        "lean_search_declarations",
+        (
+            "Search declaration names read from the pinned Mathlib package "
+            "sources -- instant, no Lean process. A hit is a lead to confirm "
+            "with lean_inspect_declarations; a miss is about the index, not "
+            "Mathlib."
+        ),
+        {
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["query"],
+            "additionalProperties": False,
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "rank_premises",
-            "description": "Rank the declarations most likely to help with one goal, fusing a name index over the pinned Mathlib sources with Loogle. The answer names every source it asked and says whether the ranking can be replayed.",
-            "parameters": {
-                "type": "object",
-                "properties": {"goal": {"type": "string"}, "limit": {"type": "integer"}},
-                "required": ["goal"],
-                "additionalProperties": False,
-            },
+        _search_declarations,
+    ),
+    LeanTool(
+        "rank_premises",
+        "Rank the declarations most likely to help with one goal, fusing a name index over the pinned Mathlib sources with Loogle. The answer names every source it asked and says whether the ranking can be replayed.",
+        {
+            "type": "object",
+            "properties": {"goal": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["goal"],
+            "additionalProperties": False,
         },
-    },
-]
+        _rank_premises,
+        recorded=True,
+    ),
+)
+
+#: The Lean tool declarations, as a thread with a claim is offered them.
+TOOLS = [tool.spec for tool in LEAN_TOOLS]
+
+_LEAN_TOOLS_BY_NAME = {tool.name: tool for tool in LEAN_TOOLS}
 
 
 @dataclass
 class StagedThread:
+    """One stage's provider conversation, and the claim its tools are scoped to."""
+
     runtime: Any
     claim: FrozenClaim | None
     # The phase this thread's turns belong to. Carried on the thread rather
     # than read from the workflow because `cancel` runs after the workflow has
     # stopped advancing, and the seal it may write still has to say when.
     phase: RunPhase = RunPhase.PROVING
+
+
+class _StagedRecord:
+    """What a staged run's provider threads write, and what they say it cost.
+
+    `observe` is the one path from a provider's thread into the trajectory, so
+    it is the one that has to be closable: see `seal`. The spend is folded by
+    the same ledger the batch runner and the interactive session use, so a
+    staged manifest cannot disagree with a batch record about what
+    "unreported" means.
+    """
+
+    def __init__(self, store: RunStore) -> None:
+        self._store = store
+        # Held across every append, not merely checked: `seal` must be able to
+        # promise that nothing is mid-write when it returns.
+        self._lock = threading.Lock()
+        self._sealed = False
+        # One ledger per provider session (`fold_by_session`), rebound under
+        # the lock, never mutated.
+        self._spend: dict[str, Usage] = {}
+        #: Exchanges Hardy sent, counted when they are sent. A stage that
+        #: times out, is cancelled, or fails before the provider reports on it
+        #: was still sent and may still have been billed; the batch runner
+        #: counts such an exchange with nothing stated about it, and so does
+        #: this.
+        self.asked = 0
+
+    def count_sent(self) -> None:
+        with self._lock:
+            self.asked += 1
+
+    def usage(self) -> dict[str, Any]:
+        with self._lock:
+            spend = combined([ledger.summary() for ledger in self._spend.values()])
+            spend["exchanges"] = max(self.asked, spend["exchanges"])
+            return spend
+
+    def observe(self, event: dict[str, Any], phase: RunPhase = RunPhase.PROVING) -> None:
+        """Append one provider event to the trajectory, unless the record is sealed."""
+        with self._lock:
+            if self._sealed:
+                return
+            if event.get("type") == "result":
+                # A resumed thread's reports may carry the session's running
+                # total: `_ask` opens a fresh client per turn, but `_options`
+                # resumes the thread's session. So each report is folded into
+                # its own session's ledger, where `Usage.record` decides for
+                # cost and for tokens whether to difference it, and the
+                # sessions are only added in `usage`. The $0.68-for-$0.78
+                # manifest that once made this key every report apart came from
+                # threads that all took one inherited session id; each thread
+                # now opens under an id of its own.
+                self._spend = fold_by_session(self._spend, event)
+            self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
+
+    def seal(self, phase: RunPhase = RunPhase.PROVING) -> None:
+        """Stop recording this run, and record that as the last thing said.
+
+        Only for a provider thread that outlived the wait for it. `settle` is
+        bounded, so it can fail, and `ProveWorkflow._finalize` hashes every file
+        in the run directory -- `trajectory.jsonl` among them -- as soon as
+        `cancel` returns. An event appended after that would leave the manifest
+        carrying the hash of a file that changed after it was read, which is the
+        one thing a record built for verification cannot do. Waiting
+        indefinitely instead is not on offer: this is the Ctrl+C path.
+
+        So the last event says the record stops here, which is worse evidence
+        than a complete trajectory and much better than a silent truncation a
+        reader would mistake for the end of the run.
+        """
+        with self._lock:
+            if self._sealed:
+                return
+            self._store.append(
+                "claude.unsettled",
+                {
+                    "message": (
+                        "the provider thread was still running when the run was "
+                        "cancelled; events after this point were not recorded"
+                    )
+                },
+                phase=phase,
+            )
+            self._sealed = True
 
 
 class ClaudeStagedRuntime:
@@ -147,7 +281,7 @@ class ClaudeStagedRuntime:
         cas_runtime: CasToolRuntime | None = None,
         cas_directory: Path | None = None,
     ) -> None:
-        self._store = store
+        self._record = _StagedRecord(store)
         self._lean_runtime_factory = lean_runtime_factory
         self._runtime_class = runtime_class
         # Offered in every stage, including formalization: computing an example
@@ -170,21 +304,6 @@ class ClaudeStagedRuntime:
         # separate steps and a cancellation can land between them, only to be
         # erased by the very turn it was meant to stop.
         self._starting = threading.Lock()
-        # `_observe` is the one path from the provider's thread into the
-        # trajectory, so it is the one that has to be closable. See `_seal`.
-        self._records = threading.Lock()
-        self._sealed = False
-        # What the provider said the run cost, folded by the same ledger the
-        # batch runner and the interactive session use, so a staged manifest
-        # cannot disagree with a batch record about what "unreported" means.
-        # One ledger per provider session (`fold_by_session`), rebound under
-        # `_records`, never mutated.
-        self._spend: dict[str, Usage] = {}
-        # Exchanges Hardy sent, counted when they are sent. A stage that times
-        # out, is cancelled, or fails before the provider reports on it was
-        # still sent and may still have been billed; the batch runner counts
-        # such an exchange with nothing stated about it, and so does this.
-        self._asked = 0
         self._proof_budget: CheckBudget | ReservedBudget | None = None
         self._proof_tools: tuple[Any, tuple[Any, ...], Any] | None = None
 
@@ -210,10 +329,7 @@ class ClaudeStagedRuntime:
         An exchange the provider never reported on is counted all the same,
         with every figure left unstated, rather than left out of the ledger.
         """
-        with self._records:
-            spend = combined([ledger.summary() for ledger in self._spend.values()])
-            spend["exchanges"] = max(self._asked, spend["exchanges"])
-            return spend
+        return self._record.usage()
 
     def start(
         self,
@@ -270,7 +386,7 @@ class ClaudeStagedRuntime:
             # filing it as such would make the trajectory's own ordering false
             # -- provider events for the faithfulness read appearing under
             # `proving` before the transition into proving was even recorded.
-            observe=partial(self._observe, phase=phase),
+            observe=partial(self._record.observe, phase=phase),
             # Nothing else bounds a provider that accepts the connection and
             # then never answers. The proving loop re-checks its budget every
             # attempt, so a stall there is caught on the next pass; a stage
@@ -282,55 +398,6 @@ class ClaudeStagedRuntime:
         thread = StagedThread(runtime=runtime, claim=claim, phase=phase)
         self._threads.append(thread)
         return thread
-
-    def _observe(self, event: dict[str, Any], phase: RunPhase = RunPhase.PROVING) -> None:
-        # Held across the append, not merely checked: `_seal` must be able to
-        # promise that nothing is mid-write when it returns.
-        with self._records:
-            if self._sealed:
-                return
-            if event.get("type") == "result":
-                # A resumed thread's reports may carry the session's running
-                # total: `_ask` opens a fresh client per turn, but `_options`
-                # resumes the thread's session. So each report is folded into
-                # its own session's ledger, where `Usage.record` decides for
-                # cost and for tokens whether to difference it, and the
-                # sessions are only added in `usage`. The $0.68-for-$0.78
-                # manifest that once made this key every report apart came from
-                # threads that all took one inherited session id; each thread
-                # now opens under an id of its own.
-                self._spend = fold_by_session(self._spend, event)
-            self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
-
-    def _seal(self, phase: RunPhase = RunPhase.PROVING) -> None:
-        """Stop recording this run, and record that as the last thing said.
-
-        Only for a provider thread that outlived the wait for it. `settle` is
-        bounded, so it can fail, and `ProveWorkflow._finalize` hashes every file
-        in the run directory -- `trajectory.jsonl` among them -- as soon as
-        `cancel` returns. An event appended after that would leave the manifest
-        carrying the hash of a file that changed after it was read, which is the
-        one thing a record built for verification cannot do. Waiting
-        indefinitely instead is not on offer: this is the Ctrl+C path.
-
-        So the last event says the record stops here, which is worse evidence
-        than a complete trajectory and much better than a silent truncation a
-        reader would mistake for the end of the run.
-        """
-        with self._records:
-            if self._sealed:
-                return
-            self._store.append(
-                "claude.unsettled",
-                {
-                    "message": (
-                        "the provider thread was still running when the run was "
-                        "cancelled; events after this point were not recorded"
-                    )
-                },
-                phase=phase,
-            )
-            self._sealed = True
 
     def _cas_dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if self._cas is None:
@@ -353,72 +420,55 @@ class ClaudeStagedRuntime:
             return ToolResult(False, f"CAS: {error}")
         return ToolResult(False, f"unknown tool: {name}")
 
-    def _dispatcher(self, lean_runtime: Any):
-        def run(name: str, arguments: dict[str, Any]) -> ToolResult:
-            if name in CAS_TOOL_NAMES:
-                return self._cas_dispatch(name, arguments)
-            if lean_runtime is None:
-                return ToolResult(False, "no Lean tools are available in this stage")
-            try:
-                if name == "lean_check_proof":
-                    result = lean_runtime.check_proof(
-                        str(arguments["claim_id"]), str(arguments["proof_body"])
-                    )
-                elif name == "lean_check_scratch":
-                    result = lean_runtime.bound_check(
-                        lean_runtime.service.check_scratch(str(arguments["source"]))
-                    )
-                elif name == "lean_inspect_declarations":
-                    result = lean_runtime.bound_inspection(
-                        lean_runtime.service.inspect_declarations(
-                            tuple(str(item) for item in arguments["names"])
-                        )
-                    )
-                elif name == "lean_search_declarations":
-                    result = lean_runtime.search_declarations(
-                        str(arguments["query"]), int(arguments.get("limit", 10))
-                    )
-                elif name == "rank_premises":
-                    result = lean_runtime.rank_premises(
-                        str(arguments["goal"]), int(arguments.get("limit", 10))
-                    )
-                    # Recorded here because nowhere else records it. The
-                    # runtime deliberately leaves tool *results* to the
-                    # dispatcher (see `ClaudeAgentRuntime._note`), and every
-                    # other tool's outcome survives in something durable --
-                    # `verification.json`, the workspace tree, the CAS cell
-                    # log. A ranking has no such home, so without this the
-                    # trajectory would show that retrieval was asked and never
-                    # what it answered, for a result that shaped the proof.
-                    self._observe({"type": "ranking", "ranking": result.model_dump(mode="json")})
-                else:
-                    return ToolResult(False, f"unknown tool: {name}")
-            except (KeyError, TypeError, ValueError) as error:
-                return ToolResult(False, f"invalid tool call: {error}")
-            return ToolResult(getattr(result, "success", True), result.model_dump_json())
+    def _dispatcher(self, lean_runtime: Any) -> Callable[[str, dict[str, Any]], ToolResult]:
+        """The callback one thread's runtime hands every tool call to, with
+        that thread's Lean runtime, or None where the stage has no Lean tools."""
+        return partial(self._dispatch, lean_runtime)
 
-        def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
-            # Checked before the gate: a cancelled run's queued calls must not
-            # first wait behind the Lean check that is still finishing.
+    def _dispatch(self, lean_runtime: Any, name: str, arguments: dict[str, Any]) -> ToolResult:
+        # Checked before the gate: a cancelled run's queued calls must not
+        # first wait behind the Lean check that is still finishing.
+        if self._cancelled.is_set():
+            return REFUSED
+        with self._gate:
+            # And again, holding it. The SDK can launch several calls at
+            # once, so one can pass the check above, block here behind a
+            # Lean run taking minutes, and arrive long after the run was
+            # cancelled and its manifest hashed.
             if self._cancelled.is_set():
                 return REFUSED
-            with self._gate:
-                # And again, holding it. The SDK can launch several calls at
-                # once, so one can pass the check above, block here behind a
-                # Lean run taking minutes, and arrive long after the run was
-                # cancelled and its manifest hashed.
-                if self._cancelled.is_set():
-                    return REFUSED
-                if (lean_runtime is not None and self._proof_budget is not None
-                        and self._proof_budget.remaining_seconds <= 0):
-                    return ToolResult(False, "the shared proof deadline is exhausted")
-                return run(name, arguments)
+            if (lean_runtime is not None and self._proof_budget is not None
+                    and self._proof_budget.remaining_seconds <= 0):
+                return ToolResult(False, "the shared proof deadline is exhausted")
+            return self._run_tool(lean_runtime, name, arguments)
 
-        return dispatch
+    def _run_tool(self, lean_runtime: Any, name: str, arguments: dict[str, Any]) -> ToolResult:
+        if name in CAS_TOOL_NAMES:
+            return self._cas_dispatch(name, arguments)
+        if lean_runtime is None:
+            return ToolResult(False, "no Lean tools are available in this stage")
+        tool = _LEAN_TOOLS_BY_NAME.get(name)
+        if tool is None:
+            return ToolResult(False, f"unknown tool: {name}")
+        try:
+            result = tool.call(lean_runtime, arguments)
+            if tool.recorded:
+                # Recorded here because nowhere else records it: the runtime
+                # deliberately leaves tool *results* to the dispatcher (see
+                # `ClaudeAgentRuntime._note`).
+                self._record.observe({"type": "ranking", "ranking": result.model_dump(mode="json")})
+        except (KeyError, TypeError, ValueError) as error:
+            return ToolResult(False, f"invalid tool call: {error}")
+        return ToolResult(getattr(result, "success", True), result.model_dump_json())
 
     def run_structured(
         self, thread: StagedThread, stage: str, prompt: str, output_type: type[T]
     ) -> T:
+        """One exchange on `thread`, answered as `output_type`.
+
+        The schema is appended to the prompt, and an answer that is not a JSON
+        object matching it is a failed stage rather than prose to interpret.
+        """
         # Refused before it is sent. `_cancelled` used to gate tool DISPATCH
         # only, which stops a cancelled run from doing more work and does not
         # stop it from starting a new billable exchange -- and the workflow has
@@ -454,8 +504,7 @@ class ClaudeStagedRuntime:
             text = prompt + STRUCTURE_INSTRUCTION + schema_text(output_type)
             # Counted before it is sent, not after it is answered: the answer
             # is exactly what a cancelled or timed-out stage never has.
-            with self._records:
-                self._asked += 1
+            self._record.count_sent()
             opened = getattr(thread.runtime, "stream", None)
             reading = opened(text) if opened is not None else None
         spoken = final_text(reading) if reading is not None else thread.runtime.ask(text)
@@ -525,11 +574,11 @@ class ClaudeStagedRuntime:
         settle = getattr(thread.runtime, "settle", None)
         if settle is not None and settle() is False:
             # It would not stop, and the manifest is about to be written. Sealing
-            # is what keeps that manifest true; `_seal` states the cost. In the
+            # is what keeps that manifest true; `seal` states the cost. In the
             # thread's own phase: a Ctrl+C during the faithfulness read leaves
             # its last event where that read happened, not in a phase the run
             # had not entered.
-            self._seal(thread.phase)
+            self._record.seal(thread.phase)
 
     def interrupt_cas(self) -> bool:
         """Ask this run's CAS kernel to stop the cell it is in, if any.

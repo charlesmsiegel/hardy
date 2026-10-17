@@ -237,7 +237,7 @@ def test_cancelling_a_staged_run_waits_for_the_tool_call_in_flight(tmp_path: Pat
 
 
 class Store:
-    """`RunStore.append`, as `_observe` reaches it."""
+    """`RunStore.append`, as the staged record reaches it."""
 
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
@@ -265,9 +265,9 @@ def test_a_provider_thread_that_will_not_settle_seals_the_trajectory(tmp_path: P
     )
     thread = runtime.start(model="claude-haiku-4-5", run_dir=tmp_path, claim=None)
 
-    runtime._observe({"type": "assistant"})
+    runtime._record.observe({"type": "assistant"})
     runtime.cancel(thread)
-    runtime._observe({"type": "assistant"})     # the thread that would not stop
+    runtime._record.observe({"type": "assistant"})     # the thread that would not stop
 
     kinds = [kind for kind, _ in store.events]
     assert kinds.count("claude.assistant") == 1, "an event landed after the run was sealed"
