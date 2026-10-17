@@ -28,7 +28,7 @@ Paths are relative to `src/hardy/`.
 | `workflows/interactive/` | `session.py` coordinates `SessionRecord` for guarded persistence and detached snapshots, `FormalWorkspaceService` for checked saves and audit freshness, `AssumptionAdmission` for evidence and approval or quarantine, `DocumentService` for compilation and publication state, and `TurnCoordinator` for serialized dispatch, cancellation, spend and compaction. |
 | `evals/` | Experimental contracts, selection and source identity below execution; sweeps, run execution, scoreboard validation and pooling. Validation and pooling import neither the runner nor the command adapters. |
 | `app/` | CLI and MCP entry points, `tui/`, configuration, project construction, terminal approval, installation and doctor checks. `cli.py` builds the parser, resolves configuration and dispatches; `commands/` holds one adapter per command (`chat`, `web`, `prove`, `accept`, `batch`, `setup`, `latency`, with `launch` shared by `chat` and `web`), and none of them imports `cli.py`. `evals.py` adapts evaluation commands and `corpus_viewer.py` serves the packaged viewer. |
-| `foundation/` | `values.py` supplies strict value primitives and tool results; `files.py`, `locking.py` and `paths.py` supply guarded filesystem operations and shared tooling paths. Process control and truncation live here too, with no capability dependencies. |
+| `foundation/` | `values.py` supplies strict value primitives and tool results; `files.py`, `locking.py` and `paths.py` supply guarded filesystem operations and shared tooling paths; `journal.py` supplies the hash-chained, append-only journal of typed records that shared claims, realizations and promotions, project evidence, and the source catalog, seeds and trees are kept in. Process control and truncation live here too, with no capability dependencies. |
 | `prompts/` | Prompt rendering, prompt identity and packaged templates. Project-authored command templates stay inputs under each project's `.hardy/prompts/`. |
 
 The package root holds `__init__.py`, `__main__.py` and the `cli.py`,
@@ -110,8 +110,8 @@ coordinates.
 
 `foundation/` must not become a `utils` package that imports the whole
 application. It is deliberately small: strict value primitives, guarded file
-operations, locking, paths, process control and truncation. Nothing in it
-imports a capability.
+operations, locking, a hash-chained journal, paths, process control and
+truncation. Nothing in it imports a capability.
 
 The test that keeps this honest is the direction rule, but the discipline is
 social. The question to ask of a candidate module is not "is it generic?" but

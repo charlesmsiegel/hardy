@@ -148,6 +148,7 @@ flowchart TD
     agents -->|uses| foundation
     workflows -->|uses| foundation
     prompts -->|uses| foundation
+    prompts -->|quotes claims from| formal
 ```
 
 Hardy stays one distribution and one installation. The packages are internal
@@ -185,7 +186,7 @@ Paths below are relative to `src/hardy/`.
 | `literature/` | Paper acquisition, guarded libraries, archive admission, statement inventory and bibliography |
 | `corpus/` | Statement schema, taxonomy, content identity, loading, mechanical checks and releases |
 | `evals/` | Experimental contracts, selection, source identity, sweeps, run execution, scoreboard validation and pooling |
-| `foundation/` | Strict values, guarded files, paths, locks, process control and truncation |
+| `foundation/` | Strict values, guarded files, paths, locks, the hash-chained journal, process control and truncation |
 | `prompts/` | Prompt rendering, prompt identity and packaged templates |
 
 The package root holds only `__init__.py`, `__main__.py` and the `cli.py`,
