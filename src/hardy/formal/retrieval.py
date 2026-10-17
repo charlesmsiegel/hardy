@@ -53,6 +53,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
+from http import HTTPStatus
 from pathlib import Path
 from typing import Literal, Protocol
 from urllib.parse import urlencode
@@ -85,6 +86,11 @@ MAX_SIGNATURE_CHARACTERS = 512
 # budget on its way to meaning nothing.
 MAX_NAME_CHARACTERS = 256
 MAX_HITS = 200
+# The most premises one ranking returns, whatever a caller asks for.
+MAX_PREMISES = 50
+# The shortest constant name the declaration index is asked to match (see
+# `DeclarationIndexSource.query_for`).
+SHORTEST_INDEX_CONSTANT = 3
 
 # The query is one bounded line, matching what the search tools accept: a
 # query they would refuse is refused here, before it costs any source a call.
@@ -509,7 +515,7 @@ class DeclarationIndexSource:
         tokens = [
             token
             for token in DECLARATION_NAME.findall(STRING_LITERAL.sub(blank, query))
-            if len(token) >= 3 and set(token) != {"_"} and token not in NOT_A_CONSTANT
+            if len(token) >= SHORTEST_INDEX_CONSTANT and set(token) != {"_"} and token not in NOT_A_CONSTANT
         ]
         return " ".join(dict.fromkeys(tokens))
 
@@ -657,7 +663,7 @@ def _fetch_url(url: str, timeout: float) -> bytes:
         # this request was wrong, which is the endpoint's contract having moved
         # -- and that is precisely what the live test must fail on rather than
         # skip past.
-        if error.code >= 500 or error.code in TRANSIENT_STATUSES:
+        if error.code >= HTTPStatus.INTERNAL_SERVER_ERROR or error.code in TRANSIENT_STATUSES:
             raise RetrievalTransportError(
                 f"Loogle is unavailable: HTTP {error.code} {error.reason}"
             ) from error
@@ -917,24 +923,19 @@ class PremiseRetriever:
                 f"no searchable line of at most {MAX_QUERY_CHARACTERS} characters could be "
                 "taken from this goal"
             )
-        if not 1 <= limit <= 50:
-            raise ValueError("a premise ranking holds between 1 and 50 premises")
+        if not 1 <= limit <= MAX_PREMISES:
+            raise ValueError(f"a premise ranking holds between 1 and {MAX_PREMISES} premises")
 
         # Depth is not derived from `limit`; see the note on fusion above.
         with self._admission:
             return self._ranked(goal, query, limit)
 
     def _ranked(self, goal: str, query: str, limit: int) -> PremiseRanking:
-        depth = MAX_HITS
         started = self._clock()
         spent = 0.0
         exhausted = False
         outcomes: list[SourceOutcome] = []
-        # name -> (rank per source, best record seen)
-        found: dict[str, list[SourceRank]] = {}
-        records: dict[str, DeclarationRecord] = {}
-        local_signature: set[str] = set()
-
+        fusion = _Fusion()
         for source in self._sources:
             identity = source.identity
             remaining = self._limits.retrieval_seconds - self._spent - spent
@@ -955,25 +956,8 @@ class PremiseRetriever:
                     )
                 )
                 continue
-
-            detail: str | None = None
-            results: tuple[DeclarationRecord, ...] = ()
             asked = source.query_for(query)
-            try:
-                results = source.search(asked, depth)
-            except Exception as error:  # noqa: BLE001 - one source failing is an outcome, not the end
-                # Every way a source can fail, not the two that were foreseen.
-                # `lake` losing its execute bit raises `PermissionError`, and
-                # letting that escape would discard the other sources' results
-                # along with the provenance that exists to report the failure --
-                # turning one broken source into no ranking at all.
-                # A `RetrievalError` already reads as a sentence; anything else
-                # is named, because "not executable" alone says nothing.
-                detail = (
-                    str(error)
-                    if isinstance(error, RetrievalError)
-                    else f"{type(error).__name__}: {error}"
-                )
+            results, detail = _asked(source, asked)
             seconds = max(0.0, self._clock() - started - spent)
             spent += seconds
             outcomes.append(
@@ -986,57 +970,14 @@ class PremiseRetriever:
                     detail=detail,
                 )
             )
-            if detail is not None:
-                continue
-            seen: set[str] = set()
-            position = 0
-            for record in results:
-                # A source that lists a name twice must not vote twice: two
-                # entries from one search would inflate the score and leave
-                # `ranks` reading as though two searches had agreed.
-                if record.name in seen:
-                    continue
-                seen.add(record.name)
-                # Counted after the skip, not by `enumerate` before it: a
-                # source answering `[A, A, B]` put B second among the results
-                # it usefully returned, and recording it third quietly lowered
-                # its score for a duplicate that had already been discarded.
-                position += 1
-                found.setdefault(record.name, []).append(
-                    SourceRank(source=identity.name, rank=position)
-                )
-                # The signature a model reads should be the one the environment
-                # it will elaborate against actually holds, so the local search
-                # wins over a remote service's rendering.
-                #
-                # Keyed on the *kind*, not on `pinned`. Tightening what pinning
-                # requires -- a matching manifest -- quietly cost a
-                # legitimately-unpinned local environment its say over
-                # signatures, and handed the model a remote type for a
-                # declaration its own Lean was about to elaborate. Whether a
-                # ranking can be replayed is a question for `reproducible`.
-                local = identity.kind in LOCAL_KINDS
-                if record.name not in records or (local and record.name not in local_signature):
-                    records[record.name] = record
-                if local:
-                    local_signature.add(record.name)
+            if detail is None:
+                fusion.vote(identity, results)
 
-        premises = [
-            RankedPremise(
-                name=name,
-                signature=records[name].signature,
-                score=sum(1.0 / (RRF_K + item.rank) for item in ranks),
-                ranks=tuple(ranks),
-            )
-            for name, ranks in found.items()
-        ]
-        # Name breaks the tie, so the same answers always fuse to the same order.
-        premises.sort(key=lambda premise: (-premise.score, premise.name))
-
+        premises = fusion.premises()[:limit]
         prior = self._spent
         self._spent += spent
         provenance = RetrievalProvenance(
-            premises_sha256=premises_digest(premises[:limit]),
+            premises_sha256=premises_digest(premises),
             budget_seconds=self._limits.retrieval_seconds,
             prior_seconds_spent=prior,
             goal_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
@@ -1047,7 +988,7 @@ class PremiseRetriever:
         return PremiseRanking(
             goal=goal,
             query=query,
-            premises=tuple(premises[:limit]),
+            premises=tuple(premises),
             provenance=provenance,
             provenance_sha256=provenance.digest,
             complete=PremiseRanking._complete(provenance),
@@ -1056,6 +997,84 @@ class PremiseRetriever:
             run_seconds_remaining=self.seconds_remaining,
             budget_exhausted=exhausted,
         )
+
+
+def _asked(source: PremiseSource, query: str) -> tuple[tuple[DeclarationRecord, ...], str | None]:
+    """What `source` answered, `MAX_HITS` deep, or nothing and why it could not."""
+    try:
+        return source.search(query, MAX_HITS), None
+    except Exception as error:  # noqa: BLE001 - one source failing is an outcome, not the end
+        # Every way a source can fail, not the two that were foreseen.
+        # `lake` losing its execute bit raises `PermissionError`, and
+        # letting that escape would discard the other sources' results
+        # along with the provenance that exists to report the failure --
+        # turning one broken source into no ranking at all.
+        # A `RetrievalError` already reads as a sentence; anything else
+        # is named, because "not executable" alone says nothing.
+        detail = (
+            str(error)
+            if isinstance(error, RetrievalError)
+            else f"{type(error).__name__}: {error}"
+        )
+        return (), detail
+
+
+class _Fusion:
+    """The reciprocal-rank votes of one ranking, and the signature each name is shown with."""
+
+    def __init__(self) -> None:
+        self._ranks: dict[str, list[SourceRank]] = {}
+        self._records: dict[str, DeclarationRecord] = {}
+        self._local_signature: set[str] = set()
+
+    def vote(self, identity: SourceIdentity, results: Sequence[DeclarationRecord]) -> None:
+        """Count one source's answers, each name once, at the position it usefully held."""
+        # The signature a model reads should be the one the environment it
+        # will elaborate against actually holds, so the local search wins over
+        # a remote service's rendering.
+        #
+        # Keyed on the *kind*, not on `pinned`. Tightening what pinning
+        # requires -- a matching manifest -- quietly cost a
+        # legitimately-unpinned local environment its say over signatures, and
+        # handed the model a remote type for a declaration its own Lean was
+        # about to elaborate. Whether a ranking can be replayed is a question
+        # for `reproducible`.
+        local = identity.kind in LOCAL_KINDS
+        seen: set[str] = set()
+        for record in results:
+            # A source that lists a name twice must not vote twice: two entries
+            # from one search would inflate the score and leave `ranks` reading
+            # as though two searches had agreed.
+            if record.name in seen:
+                continue
+            seen.add(record.name)
+            # Counted after the skip, not by `enumerate` before it: a source
+            # answering `[A, A, B]` put B second among the results it usefully
+            # returned, and recording it third quietly lowered its score for a
+            # duplicate that had already been discarded.
+            position = len(seen)
+            self._ranks.setdefault(record.name, []).append(
+                SourceRank(source=identity.name, rank=position)
+            )
+            if record.name not in self._records or (local and record.name not in self._local_signature):
+                self._records[record.name] = record
+            if local:
+                self._local_signature.add(record.name)
+
+    def premises(self) -> list[RankedPremise]:
+        """Every name voted for, best fused score first."""
+        premises = [
+            RankedPremise(
+                name=name,
+                signature=self._records[name].signature,
+                score=sum(1.0 / (RRF_K + item.rank) for item in ranks),
+                ranks=tuple(ranks),
+            )
+            for name, ranks in self._ranks.items()
+        ]
+        # Name breaks the tie, so the same answers always fuse to the same order.
+        premises.sort(key=lambda premise: (-premise.score, premise.name))
+        return premises
 
 
 class PinnedProject(Protocol):
