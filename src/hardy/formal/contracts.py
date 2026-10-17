@@ -14,6 +14,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import StringConstraints, model_validator
 
+from hardy.formal.syntax import ATTRIBUTES, MODIFIERS
 from hardy.foundation.values import FrozenModel, json_digest
 
 
@@ -200,13 +201,11 @@ class VerificationEvidence(FrozenModel):
 
 
 # What a request's declaration may open with. Attributes and modifiers come
-# before the keyword in ordinary Lean, and this is the earliest of the three
-# places that had to be taught so -- the head grammar in `hardy.formal.lean` never saw
-# a decorated declaration, because this refused it first.
-DECLARATION_KEYWORD = re.compile(
-    r"^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local|public|meta)\s+)*"
-    r"(?:theorem|lemma|example)(?:\s|$)"
-)
+# before the keyword in ordinary Lean, and this is the earliest place that had
+# to be taught so -- the head grammar in `hardy.formal.lean` never saw a
+# decorated declaration, because this refused it first. Both read the head
+# through the one grammar now, so they cannot disagree about it again.
+DECLARATION_KEYWORD = re.compile(rf"^{ATTRIBUTES}{MODIFIERS}(?:theorem|lemma|example)(?:\s|$)")
 
 
 @dataclass(frozen=True)
