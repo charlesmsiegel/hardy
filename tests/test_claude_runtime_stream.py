@@ -846,7 +846,7 @@ def test_a_completed_block_is_recorded_after_the_checkpoints_that_drew_it():
 
 
 def test_finishing_one_block_preserves_another_blocks_checkpoint():
-    from hardy.documents.export import _conversation
+    from hardy.documents.conversation import render as render_conversation
 
     seen = []
     live = runtime(observe=seen.append, checkpoint_seconds=0)
@@ -854,7 +854,7 @@ def test_finishing_one_block_preserves_another_blocks_checkpoint():
     list(live._note(StreamEvent("Second unfinished α", index=1), []))
     list(live._note(AssistantMessage(TextBlock("First complete")), []))
     # The process could die here, before settling the second open block.
-    page = _conversation(seen)
+    page = render_conversation(seen)
     assert page.count("First complete") == 1
     assert "First draft" not in page
     assert "Second unfinished α" in page and "not a completed answer" in page

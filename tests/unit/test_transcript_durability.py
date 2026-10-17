@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from hardy.documents.export import _conversation
+from hardy.documents.conversation import render as render_conversation
 from hardy.foundation.values import ToolResult
 from hardy.workflows.interactive.record import SessionRecord
 from hardy.workflows.interactive.turns import TurnCoordinator, TurnPersistence
@@ -94,7 +94,7 @@ def test_hard_process_exit_preserves_checkpoint_or_inflight_tool_and_recovers_sp
     restarted = SessionRecord(workspace)
     restarted.load()
     assert restarted.transcript_path.read_bytes().startswith(before)
-    page = _conversation(list(restarted._recorded()))
+    page = render_conversation(list(restarted._recorded()))
     assert ("started and never finished" if stage == "tool" else "The unfinished α proof 🧮") in page
     restarted._record({"type": "result", "cost_usd": 0.5})
     recovered = restarted._recover_spend()
