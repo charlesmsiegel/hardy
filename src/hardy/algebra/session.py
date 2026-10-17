@@ -681,7 +681,5 @@ class CasSession:
         with self._lock:
             if self._journal.closed:
                 return
-            try:
+            with contextlib.closing(self._journal):
                 self._exchange.drop()
-            finally:
-                self._journal.close()

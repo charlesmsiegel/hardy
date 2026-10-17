@@ -96,12 +96,9 @@ def replay_in_fresh_kernel(
     """
     _refuse_foreign(cells, backend)
     _check(control)
+    # A session of its own, over a scratch log removed when it is done.
     session = CasSession(
-        backend=backend,
-        command=command,
-        log_path=cwd / SCRATCH_LOG,
-        limits=limits,
-        cwd=cwd,
+        backend=backend, command=command, log_path=cwd / SCRATCH_LOG, limits=limits, cwd=cwd
     )
     spend = _Spend(
         budget_seconds if budget_seconds is not None else limits.cas_session_seconds, charge

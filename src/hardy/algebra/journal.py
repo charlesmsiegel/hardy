@@ -40,7 +40,8 @@ class CellJournal:
         self._lease_identity: tuple[int, int] | None = None
         # Terminal: a closed journal is never owned again by this process.
         self.closed = False
-        self._spend_name = path.name + ".spend.json"
+        # The sidecar beside the log that carries the session's total spend.
+        self.spend_name = path.name + ".spend.json"
 
     # ---------------------------------------------------------------- lease
 
@@ -98,7 +99,7 @@ class CellJournal:
 
     def _load_spend(self) -> float:
         try:
-            with self._guard.open(self._spend_name, "r", encoding="utf-8") as stream:
+            with self._guard.open(self.spend_name, "r", encoding="utf-8") as stream:
                 value = json.load(stream)
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError("expected finite nonnegative seconds")
@@ -108,19 +109,15 @@ class CellJournal:
             # just as it was before accounting was persisted separately.
             return 0.0
         except (OSError, ValueError, OverflowError) as error:
-            raise CasError(f"the CAS spend could not be read ({self._spend_name}): {error}") from error
+            raise CasError(f"the CAS spend could not be read ({self.spend_name}): {error}") from error
 
     def write_spend(self, total_seconds: float) -> None:
         """Persist the running total, or raise `OSError`/`LayoutError`."""
         self._guard.mkdir()
         self._guard.write_bytes(
-            self._spend_name,
+            self.spend_name,
             (json.dumps(total_seconds, allow_nan=False) + "\n").encode("utf-8"),
         )
-
-    @property
-    def spend_name(self) -> str:
-        return self._spend_name
 
     # ------------------------------------------------------------------ log
 

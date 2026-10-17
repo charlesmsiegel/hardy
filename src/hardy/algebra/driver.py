@@ -48,6 +48,7 @@ import threading
 import time
 import traceback
 import uuid
+from dataclasses import dataclass
 from typing import BinaryIO
 
 from hardy.algebra.rendering import bounded_repr, clip, clip_jointly, state_digest
@@ -720,7 +721,7 @@ def main() -> None:
     stdin = _protocol_input()
     redirect_console_breaks()
     try:
-        _cell_loop(stdin, namespace, baseline, limit, capture)
+        _cell_loop(stdin, _Interpreter(namespace, baseline, limit, capture))
     # The very last resort. Everything a cell's own source can do is answered
     # inside `_cell_loop` -- `run_cell` catches every `BaseException` from
     # parsing or running it, and the frame loop below catches its own protocol
@@ -741,7 +742,89 @@ def main() -> None:
         raise SystemExit(1) from None
 
 
-def _cell_loop(stdin, namespace: dict, baseline: dict, limit: int, capture: _Capture) -> None:
+@dataclass
+class _Interpreter:
+    """What every cell runs against, for the life of this process.
+
+    The namespace persists from cell to cell; `baseline` is that namespace as
+    the preamble left it, which the digest leaves out; `limit` is the byte cap
+    every reply is held to; `capture` holds descriptors 1 and 2.
+    """
+
+    namespace: dict
+    baseline: dict
+    limit: int
+    capture: _Capture
+
+    def answer(self, request: dict) -> dict:
+        """Answer one request: run its cell, or answer it unrun if a stop is in force."""
+        global PENDING_INTERRUPT
+        # The raising handler goes up *inside* the `try` and comes down in the
+        # `finally`, because each switch is itself a window: a signal landing
+        # after the handler is installed but before the block is entered, or
+        # after the block ends but before deferral is restored, would escape
+        # `main` and kill the kernel over a press meant to cost one cell. Hardy
+        # signals the instant it has written a frame, so those are exactly the
+        # moments an early press arrives.
+        #
+        # The deferred flag is read *after* the switch, never before. Read
+        # first, a signal arriving in between would set it again with nobody
+        # left to look, and the cell would run on with the press already spent
+        # -- until Hardy gave up waiting and killed the kernel.
+        try:
+            _handle_stops_by(signal.default_int_handler)
+            held = PENDING_INTERRUPT
+            PENDING_INTERRUPT = False
+            # `stopping` is Hardy's own word that a press is in force as this
+            # cell goes out, written into the frame under the same lock that
+            # orders presses against sends -- and it decides on its own. It
+            # used to be honoured only together with a remembered signal, and
+            # the signal is the half that can be late or lost: a shared runner
+            # dropped it two runs in three, the cell ran to its deadline, and
+            # the kernel was taken with it -- the exact loss a remembered press
+            # exists to prevent. Hardy sends no signal for a frame that says
+            # `stopping`, so nothing can land in the handler switch below.
+            #
+            # `held` without `stopping` is a signal that arrived in the moment
+            # after the last reply was flushed and before Hardy had read it. It
+            # was aimed at a cell that was already over, and Hardy -- which
+            # knows whether it still wants a stop -- says it does not.
+            # Rejecting this cell for it would stop something nobody asked to
+            # stop. A frame with no flag at all is an older parent's, and
+            # there the remembered signal is all there is to go on.
+            if request.get("stopping", held):
+                # The stop reached this kernel before the cell did. Answering
+                # without running it is what the parent is waiting for: it gets
+                # a framed reply straight away, the namespace is untouched, and
+                # the kernel is still here for the next cell.
+                return _interrupted_reply()
+            return run_cell(str(request.get("source", "")), self.namespace, self.limit, self.capture)
+        except KeyboardInterrupt:
+            return _interrupted_reply()
+        # `run_cell` answers everything a cell's own source can raise. What
+        # can still land here is `SystemExit` from somewhere that is not a
+        # cell's `exec`/`eval` -- there is none today -- or a bug in this
+        # loop's own bookkeeping above. Either way it is reported as this
+        # cell's error rather than allowed to end the session over it: no
+        # path from a cell's source may cost the loop itself (issue #311).
+        except BaseException:
+            return _failed_reply(self.limit)
+        finally:
+            _handle_stops_by(_remember)
+
+    def digest(self) -> str:
+        """`state_digest` of the namespace now, or "" when it cannot be taken."""
+        try:
+            return state_digest(self.namespace, self.baseline, self.limit)
+        except BaseException:
+            # A namespace Hardy cannot fingerprint is one it must not claim to
+            # have fingerprinted, and it is emphatically not a reason to end a
+            # session: an empty digest is the value that means "not compared",
+            # which is what a backend with no digest at all reports.
+            return ""
+
+
+def _cell_loop(stdin: BinaryIO, interpreter: _Interpreter) -> None:
     """Read frames and answer them, for as long as the parent keeps sending."""
     while True:
         # Deferred across the read, raised across the cell. The cell is the one
@@ -752,13 +835,13 @@ def _cell_loop(stdin, namespace: dict, baseline: dict, limit: int, capture: _Cap
         request = _read_request(stdin)
         if request is None:
             return
-        reply = _answer(request, namespace, limit, capture)
+        reply = interpreter.answer(request)
         # Taken after every cell, failed ones included: a cell that raised
         # partway through has still changed the namespace, and the parent
         # needs to know whether it did before it decides that replaying only
         # the accepted cells can rebuild this state.
-        reply["state_digest"] = _digest_or_nothing(namespace, baseline, limit)
-        capture.write_reply(_serialised(reply))
+        reply["state_digest"] = interpreter.digest()
+        interpreter.capture.write_reply(_serialised(reply))
 
 
 def _read_request(stdin: BinaryIO) -> dict | None:
@@ -781,74 +864,6 @@ def _read_request(stdin: BinaryIO) -> dict | None:
         return json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-
-
-def _answer(request: dict, namespace: dict, limit: int, capture: _Capture) -> dict:
-    """Answer one request: run its cell, or answer it unrun if a stop is in force."""
-    global PENDING_INTERRUPT
-    # The raising handler goes up *inside* the `try` and comes down in the
-    # `finally`, because each switch is itself a window: a signal landing
-    # after the handler is installed but before the block is entered, or
-    # after the block ends but before deferral is restored, would escape
-    # `main` and kill the kernel over a press meant to cost one cell. Hardy
-    # signals the instant it has written a frame, so those are exactly the
-    # moments an early press arrives.
-    #
-    # The deferred flag is read *after* the switch, never before. Read
-    # first, a signal arriving in between would set it again with nobody
-    # left to look, and the cell would run on with the press already spent
-    # -- until Hardy gave up waiting and killed the kernel.
-    try:
-        _handle_stops_by(signal.default_int_handler)
-        held = PENDING_INTERRUPT
-        PENDING_INTERRUPT = False
-        # `stopping` is Hardy's own word that a press is in force as this
-        # cell goes out, written into the frame under the same lock that
-        # orders presses against sends -- and it decides on its own. It
-        # used to be honoured only together with a remembered signal, and
-        # the signal is the half that can be late or lost: a shared runner
-        # dropped it two runs in three, the cell ran to its deadline, and
-        # the kernel was taken with it -- the exact loss a remembered press
-        # exists to prevent. Hardy sends no signal for a frame that says
-        # `stopping`, so nothing can land in the handler switch below.
-        #
-        # `held` without `stopping` is a signal that arrived in the moment
-        # after the last reply was flushed and before Hardy had read it. It
-        # was aimed at a cell that was already over, and Hardy -- which
-        # knows whether it still wants a stop -- says it does not.
-        # Rejecting this cell for it would stop something nobody asked to
-        # stop. A frame with no flag at all is an older parent's, and
-        # there the remembered signal is all there is to go on.
-        if request.get("stopping", held):
-            # The stop reached this kernel before the cell did. Answering
-            # without running it is what the parent is waiting for: it gets
-            # a framed reply straight away, the namespace is untouched, and
-            # the kernel is still here for the next cell.
-            return _interrupted_reply()
-        return run_cell(str(request.get("source", "")), namespace, limit, capture)
-    except KeyboardInterrupt:
-        return _interrupted_reply()
-    # `run_cell` answers everything a cell's own source can raise. What
-    # can still land here is `SystemExit` from somewhere that is not a
-    # cell's `exec`/`eval` -- there is none today -- or a bug in this
-    # loop's own bookkeeping above. Either way it is reported as this
-    # cell's error rather than allowed to end the session over it: no
-    # path from a cell's source may cost the loop itself (issue #311).
-    except BaseException:
-        return _failed_reply(limit)
-    finally:
-        _handle_stops_by(_remember)
-
-
-def _digest_or_nothing(namespace: dict, baseline: dict, limit: int) -> str:
-    try:
-        return state_digest(namespace, baseline, limit)
-    except BaseException:
-        # A namespace Hardy cannot fingerprint is one it must not claim to
-        # have fingerprinted, and it is emphatically not a reason to end a
-        # session: an empty digest is the value that means "not compared",
-        # which is what a backend with no digest at all reports.
-        return ""
 
 
 def _serialised(reply: dict) -> bytes:
