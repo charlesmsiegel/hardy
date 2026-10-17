@@ -19,6 +19,19 @@ ESCAPED = r"«[^»\n]+»"
 ANY_NAME = rf"(?:{IDENTIFIER}|{ESCAPED})"
 QUALIFIED = rf"{IDENTIFIER}(?:\.{IDENTIFIER})*"
 QUALIFIED_NAME = rf"{ANY_NAME}(?:\.{ANY_NAME})*"
+# One declaration name, whole: what Hardy writes after `theorem` or `axiom` and
+# asks `#print axioms` about. Every gate that lets a name into a file Lean reads
+# matches it here, because the gates that kept a pattern of their own drifted:
+# one omitted the `!` and `?` that end `List.head!`, so a `theorem solve!` was
+# frozen as `solve`, and the final verifier refused `solve!` and `«first
+# result»` after the batch and workspace scanners had learned both were names.
+DECLARATION_NAME = re.compile(QUALIFIED_NAME)
+# Where a word Lean could read as a keyword stands alone rather than inside a
+# name: `IDENTIFIER`'s alphabet with `!` and `?` on either side, so `axiom?`
+# and `get!` are names, a dot before it, so `h.def` is a field, and the
+# guillemets, so `«axiom»` names a declaration rather than making one.
+NOT_NAME_BEFORE = r"(?<![\w'!?.«])"
+NOT_NAME_AFTER = r"(?![\w'!?»])"
 
 # Module and path components stay unescaped: they are file names on disk, and a
 # guillemet in one is not something to invite.
@@ -51,6 +64,16 @@ def name_aliases(name: str) -> tuple[str, ...]:
     if "." not in name:
         return (name,)
     return (name, name.rsplit(".", 1)[1])
+
+
+def unqualified(name: str) -> str:
+    """The last component of `name`: what a declaration is called inside its namespace.
+
+    Read by component rather than split at the last dot, because a guillemet
+    may hold one: `X.«a.b»` declares `«a.b»` under `X`, and a split reads `b»`.
+    """
+    components = _components(name)
+    return components[-1] if components else name
 
 
 def _components(name: str) -> list[str]:
