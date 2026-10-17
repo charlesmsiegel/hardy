@@ -208,7 +208,7 @@ class SympyBackend:
         return sanitized_stdout
 
 
-class _SentinelBackend:
+class SentinelBackend:
     """An interpreter reading stdin, framed by a nonce it is asked to echo.
 
     Less trustworthy than the driver protocol and unavoidable: neither Singular
@@ -299,7 +299,7 @@ class _SentinelBackend:
         return sanitized_stdout
 
 
-class SingularBackend(_SentinelBackend):
+class SingularBackend(SentinelBackend):
     name: BackendName = "singular"
     script_suffix = ".sing"
     language = "singular"
@@ -320,7 +320,7 @@ class SingularBackend(_SentinelBackend):
         return (str(command) if command else "Singular", "-q")
 
 
-class Macaulay2Backend(_SentinelBackend):
+class Macaulay2Backend(SentinelBackend):
     name: BackendName = "macaulay2"
     script_suffix = ".m2"
     language = "macaulay2"

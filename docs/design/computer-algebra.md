@@ -366,7 +366,7 @@ available until it is lost, but recovery cannot silently omit those effects.
 ## Merged capture for sentinel backends
 
 Singular and Macaulay2 offer no way to be spoken to in frames, so
-`_SentinelBackend` (`algebra/backends.py`) sends a cell between two marker
+`SentinelBackend` (`algebra/backends.py`) sends a cell between two marker
 statements the interpreter is asked to echo, with a fresh nonce per cell so a
 cell that echoes text cannot forge the end of its own reply.
 
