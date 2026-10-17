@@ -1,5 +1,5 @@
 // Chat: the transcript surface. Mounted once by `Shell` regardless of the
-// active tab (see `workbench/Dock.jsx`), and shown full width -- rail,
+// active page (see `workbench/Dock.jsx`), and shown full width -- rail,
 // header, transcript, composer -- only when the route is actually `chat` or
 // `tree`; docked beside another page it draws just the header, transcript
 // and composer, because a 200px rail would eat half of a 380px dock.

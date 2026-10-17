@@ -45,11 +45,14 @@ const draw = (props) =>
   );
 /** The page entries, not the footer's dock and collapse toggles. */
 const entries = () => [...document.querySelectorAll('nav[aria-label="Workbench"] li > button')];
+/** The footer's buttons: the dock's cycle when it is drawn, then the collapse. */
+const footer = () => [...document.querySelectorAll('nav[aria-label="Workbench"] .wb-sidebar__foot > button')];
+const dockButton = () => footer().find((node) => !node.classList.contains('wb-sidebar__collapse'));
+const collapseButton = () => footer().find((node) => node.classList.contains('wb-sidebar__collapse'));
 const entry = (label) => entries().find((node) => node.querySelector('.wb-nav__label')?.textContent === label);
 
 test('every page has exactly one entry and every entry a page', () => {
   const pages = navPages();
-  assert.deepEqual(pages, NAV_GROUPS.flatMap((group) => group.items.map((item) => item.page)));
   assert.equal(new Set(pages).size, pages.length, `duplicated entries: ${pages.filter((page, at) => pages.indexOf(page) !== at)}`);
   const missing = Object.keys(PAGES).filter((page) => !pages.includes(page));
   assert.deepEqual(missing, [], 'every registered page has a sidebar entry');
@@ -109,4 +112,48 @@ test('collapsed, every entry keeps its name and a tooltip', async () => {
     assert.equal(node.querySelector('.wb-nav__glyph').getAttribute('aria-hidden'), 'true');
   }
   assert.match(entry('Chat').getAttribute('aria-label'), /^Chat, 1 /, 'the count is part of the name');
+});
+
+test('the Jobs count is drawn as attention and the Chat count is not', async () => {
+  await draw({badges: {jobs: 3, chat: 1}});
+  const jobs = entry('Jobs').querySelector('.wb-nav__badge');
+  const chat = entry('Chat').querySelector('.wb-nav__badge');
+  assert.ok(jobs.classList.contains('wb-nav__badge--attention'), 'Jobs says "act on this"');
+  assert.equal(chat.classList.contains('wb-nav__badge--attention'), false, 'a waiting card is a count, not an alarm');
+});
+
+test('the dock button cycles pinned, strip, hidden and names what it does next', async () => {
+  const chosen = [];
+  for (const [dock, next] of [['pinned', 'strip'], ['strip', 'hidden'], ['hidden', 'pinned']]) {
+    await draw({dock, onToggleDock: (value) => chosen.push(value)});
+    const button = dockButton();
+    assert.ok(button, `the dock button is drawn while the dock is ${dock}`);
+    assert.ok(button.getAttribute('aria-label').startsWith(`chat: ${dock}`), `its name says the dock is ${dock}`);
+    await act(() => button.click());
+    assert.equal(chosen.at(-1), next, `${dock} cycles to ${next}`);
+  }
+  assert.equal(chosen.length, 3);
+});
+
+test('the dock button is not drawn where it would change nothing', async () => {
+  await draw({route: {page: 'home', arg: ''}});
+  assert.ok(dockButton(), 'drawn on an ordinary page');
+  for (const page of ['chat', 'tree']) {
+    await draw({route: {page, arg: ''}});
+    assert.equal(Boolean(dockButton()), false, `not drawn on ${page}`);
+    assert.ok(collapseButton(), `the collapse toggle stays on ${page}`);
+  }
+  await draw({disabled: true});
+  assert.equal(Boolean(dockButton()), false, 'not drawn while nothing is open');
+});
+
+test('the collapse button asks for the opposite of what is drawn', async () => {
+  const asked = [];
+  await draw({collapsed: false, onToggleCollapsed: (value) => asked.push(value)});
+  assert.equal(collapseButton().getAttribute('aria-label'), 'collapse sidebar');
+  await act(() => collapseButton().click());
+  await draw({collapsed: true, onToggleCollapsed: (value) => asked.push(value)});
+  assert.equal(collapseButton().getAttribute('aria-label'), 'expand sidebar');
+  await act(() => collapseButton().click());
+  assert.deepEqual(asked, [true, false]);
 });

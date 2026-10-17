@@ -8,7 +8,7 @@
 // whether the rail is collapsed is `Shell`'s chrome state beside `dock`.
 //
 // Collapsing happens in two ways that must draw the same: the user's choice
-// (`collapsed`, a class here) and a viewport under 900px (a media query in
+// (`collapsed`, a class here) and a viewport under 1100px (a media query in
 // `styles.css`, which this component never hears about). So the DOM does not
 // change shape between them -- both only narrow the rail, and a container
 // query on the rail's own width hides the words. That is also why every
@@ -27,8 +27,14 @@ const GROUPS = NAV_GROUPS.map((group) => ({...group, items: group.items.filter((
 );
 
 //: What each count counts, for the name a screen reader reads -- the digit
-//: on its own says how many but not of what.
-const COUNTED = {jobs: 'need attention', chat: 'waiting for an answer'};
+//: on its own says how many but not of what. `attention` is the count that
+//: means "act on this", drawn in the error tone as the old tab bar's red pill
+//: was, so it is not read as "selected"; a card waiting for an answer is a
+//: count of things in the chat and keeps the accent.
+const COUNTED = {
+  jobs: {what: 'need attention', attention: true},
+  chat: {what: 'waiting for an answer', attention: false},
+};
 
 //: `pinned -> strip`, `strip -> hidden`, `hidden -> pinned` -- one cycle, no
 //: state the label does not also name, so the button always says what
@@ -41,7 +47,8 @@ const DOCK_LABEL = {
 };
 
 function Entry({item, current, count, disabled, go}) {
-  const name = count ? `${item.label}, ${count} ${COUNTED[item.page] ?? ''}`.trim() : item.label;
+  const counted = COUNTED[item.page];
+  const name = count ? `${item.label}, ${count} ${counted?.what ?? ''}`.trim() : item.label;
   return (
     <li>
       <button
@@ -57,7 +64,9 @@ function Entry({item, current, count, disabled, go}) {
           {item.glyph}
         </span>
         <span className="wb-nav__label">{item.label}</span>
-        {count ? <span className="wb-nav__badge">{count}</span> : null}
+        {count ? (
+          <span className={counted?.attention ? 'wb-nav__badge wb-nav__badge--attention' : 'wb-nav__badge'}>{count}</span>
+        ) : null}
       </button>
     </li>
   );

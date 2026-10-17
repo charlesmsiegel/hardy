@@ -72,3 +72,66 @@ test('a quiet button\'s hover tint keeps its accent text at 4.5:1 on either surf
 test('the picker and the composer box edge themselves with the strong border', () => {
   for (const selector of ['.picker', '.composer__box']) assert.match(rule(selector), /border:\s*1px solid var\(--border-strong\)/, selector);
 });
+
+//: A declaration's value in a rule's body, with `var(--token)` resolved
+//: against one palette; only the colour tokens are variables here.
+function resolved(declarations, property, tokens) {
+  const raw = new RegExp(`(?:^|[;\\s])${property}:\\s*([^;]+)`).exec(declarations)?.[1].trim();
+  const token = /^var\((--[\w-]+)\)$/.exec(raw ?? '')?.[1];
+  assert.ok(token && tokens.has(token), `${property} is a colour token (${raw})`);
+  return tokens.get(token);
+}
+
+test('a sidebar count keeps its digits at 4.5:1 on its fill, in both palettes', () => {
+  for (const selector of ['.wb-nav__badge', '.wb-nav__badge--attention']) {
+    // The attention badge only changes the fill; the digits' colour is the base rule's.
+    const declarations = rule(selector) + (selector === '.wb-nav__badge' ? '' : rule('.wb-nav__badge'));
+    for (const [palette, tokens] of [['light', light], ['dark', dark]]) {
+      const ratio = contrast(resolved(declarations, 'color', tokens), resolved(declarations, 'background', tokens));
+      assert.ok(ratio >= 4.5, `${selector} digits on their fill are ${ratio.toFixed(2)}:1 in ${palette}`);
+    }
+  }
+  assert.match(rule('.wb-nav__badge--attention'), /background:\s*var\(--error\)/, 'attention is the error tone');
+});
+
+//: the `max-width` of every `@media (max-width: Npx)` block holding a rule for
+//: `selector` with `declaration` in it.
+function narrowedAt(selector, declaration) {
+  const widths = [];
+  for (const media of css.matchAll(/@media \(max-width: (\d+)px\) \{/g)) {
+    const from = media.index + media[0].length;
+    let depth = 1;
+    let at = from;
+    while (depth > 0 && at < css.length) {
+      depth += css[at] === '{' ? 1 : css[at] === '}' ? -1 : 0;
+      at += 1;
+    }
+    const hit = [...css.slice(from, at - 1).matchAll(/([^{}]+)\{([^{}]*)\}/g)].some(
+      ([, selectors, body]) => selectors.split(',').map((value) => value.trim()).includes(selector) && body.includes(declaration),
+    );
+    if (hit) widths.push(Number(media[1]));
+  }
+  return widths;
+}
+
+test('the sidebar is a rail before the pinned dock squeezes the page', () => {
+  // An open sidebar (184px) beside the dock (380px) leaves a page 337px wide at
+  // 901px; the rail has to be back before the dock is.
+  const [rail] = narrowedAt('.wb-sidebar', 'width: 48px');
+  const [dock] = narrowedAt('.wb-dock', 'display: none');
+  assert.ok(rail && dock, 'both breakpoints are declared');
+  assert.ok(rail > dock, `the rail (${rail}px) comes before the dock goes (${dock}px)`);
+});
+
+test('the current entry keeps its cue when colours are forced, and hover does not dim it', () => {
+  assert.match(rule('.wb-nav__item[aria-current="page"]'), /border-inline-start:\s*3px solid var\(--accent\)/, 'a border survives forced colours; a box-shadow does not');
+  assert.doesNotMatch(rule('.wb-nav__item[aria-current="page"]'), /box-shadow/);
+  assert.match(rule('.wb-nav__item:hover:enabled:not([aria-current])'), /background/, 'hover tints only entries that are not current');
+});
+
+test('a three-card row wraps by the width its page has, not the window\'s', () => {
+  // Beside the page sit a sidebar (open or a rail) and a dock (pinned or not),
+  // so the same window gives pages of very different widths.
+  assert.match(rule('.wb-cols3'), /repeat\(auto-fit,\s*minmax\(min\(100%,\s*\d+px\),\s*1fr\)\)/);
+  assert.deepEqual(narrowedAt('.wb-cols3', 'grid-template-columns'), [], 'no window query forces it to one column');
+});

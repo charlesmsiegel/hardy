@@ -1,10 +1,11 @@
-// Which component draws which tab.
+// Which component draws which page.
 //
-// A lookup rather than a switch, because thirteen tabs arrive across three
-// tasks and a page that has not landed yet should draw its empty state rather
-// than break the build. A tab whose id is absent here is a tab whose page does
-// not exist, which is a different thing from a page with nothing in it -- so
-// the fallback says so in words rather than rendering a blank panel.
+// A lookup rather than a switch, because the route is whatever the hash says
+// and a page that is not registered here yet should be answered in words
+// rather than by a blank panel or a throw: `Shell.jsx` draws "unknown route"
+// for a route absent here, and `Sidebar.jsx` leaves out an entry whose page
+// is absent (Workflows, until it lands). A route with no page is a different
+// thing from a page with nothing in it.
 //
 // `chat` and `tree` are Task 13a: `Shell.jsx` treats both routes as the chat
 // surface (mounted once, shown full width, no dock aside) -- `tree` is

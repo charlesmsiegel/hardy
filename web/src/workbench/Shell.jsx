@@ -56,7 +56,7 @@ function runningLabel(status, runningTool) {
 export default function Shell() {
   const [route, go] = useHash();
   const {
-    status, runningTool, prompts, refusal, projects, setProjects, refreshProjects, revision, loaded, messages,
+    status, runningTool, prompts, refusal, projects, setProjects, refreshProjects, revision, loaded, messages, cancel,
   } = useSession();
   //: What the first load said if it failed: `failed` files it into the
   //: transcript, which the unloaded shell does not draw, so it is repeated
@@ -68,15 +68,10 @@ export default function Shell() {
   //: as the prototype's own default.
   const [dock, setDock] = useState('pinned');
   //: Whether the user has narrowed the sidebar to its rail of glyphs. Chrome
-  //: state for the same reason as `dock`; below 900px the rail is forced by
+  //: state for the same reason as `dock`; below 1100px the rail is forced by
   //: `styles.css` whatever this says, and this is what returns when the
   //: window widens again.
   const [collapsed, setCollapsed] = useState(false);
-  //: The Jobs entry's attention count in the sidebar (Task 13b's Jobs page
-  //: is what gives it a number to show): one small panel read here rather
-  //: than inside `Sidebar.jsx`, which stays a stateless list of buttons.
-  //: Reading it at the shell costs one request per `revision`, the same as
-  //: any other panel, and does not touch the Chat/Tree mounting rules above.
   //: Nothing open: the server started with no registered project, or the
   //: user closed the one that was. `false`, not falsy -- the status is
   //: `EMPTY_STATUS` before the first load, and that must draw the loading
@@ -87,6 +82,11 @@ export default function Shell() {
   // the pages then asked six project-scoped endpoints that all answered 409
   // for the instant before the project menu replaced them.
   const settled = loaded && !empty;
+  //: The Jobs entry's attention count in the sidebar: one small panel read
+  //: here rather than inside `Sidebar.jsx`, which stays a stateless list of
+  //: buttons.
+  //: Reading it at the shell costs one request per `revision`, the same as
+  //: any other panel, and does not touch the Chat/Tree mounting rules above.
   const jobsPanel = usePanel(settled ? '/api/jobs' : null, revision);
   const jobsAttention = jobsPanel.data?.attention?.length || 0;
   //: The peek popover, or `null` when none is open. Held here, not in a
@@ -158,6 +158,9 @@ export default function Shell() {
           setProjects={setProjects}
           refreshProjects={refreshProjects}
           revision={revision}
+          waiting={prompts.length}
+          onStop={cancel}
+          go={go}
         />
         {sidebar(true)}
         <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
@@ -181,6 +184,9 @@ export default function Shell() {
           setProjects={setProjects}
           refreshProjects={refreshProjects}
           revision={revision}
+          waiting={prompts.length}
+          onStop={cancel}
+          go={go}
         />
         {sidebar(true)}
         <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
@@ -207,6 +213,9 @@ export default function Shell() {
         setProjects={setProjects}
         refreshProjects={refreshProjects}
         revision={revision}
+        waiting={prompts.length}
+        onStop={cancel}
+        go={go}
       />
       {sidebar(false)}
       <div className="wb-split" style={{gridTemplateColumns: bodyCols}}>

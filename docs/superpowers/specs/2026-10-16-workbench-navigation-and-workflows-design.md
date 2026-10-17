@@ -144,8 +144,9 @@ command and HTTP route against the client found:
 - **Sidebar groups:** *Project* (Home, Chat, Tree), *Mathematics* (Ledger,
   Workflows, Results, Publications), *Execution* (Jobs, Runs, Checkpoints),
   *Sources* (Library, Files), *Session* (Status, Environment, Help). The
-  sidebar collapses to a narrow rail on demand and below 900px. The chat dock
-  keeps its pinned / strip / hidden cycle.
+  sidebar collapses to a narrow rail on demand and below 1100px, before the
+  pinned dock (which goes at 900px) can squeeze the page. The chat dock keeps
+  its pinned / strip / hidden cycle.
 - **Typography:** the serif stack stays for prose and the monospace stack for
   identifiers, code and figures; navigation, buttons, labels and table headers
   move to the system UI sans stack (`system-ui, -apple-system, "Segoe UI",

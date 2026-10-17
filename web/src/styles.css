@@ -1167,11 +1167,13 @@ select.picker {
 
 /* -- Sidebar: the one navigation ------------------------------------------
  * Two widths and nothing else: `--collapsed` (the user's choice) and the
- * 900px query below both only narrow the rail, and the `wb-nav` container
+ * 1100px query below both only narrow the rail, and the `wb-nav` container
  * query is the one place that decides what a rail that narrow shows -- so
- * the two ways of collapsing cannot drift apart. Every button names itself
- * in `aria-label`, which is why the words can be `display: none` here
- * without leaving a button unnamed. */
+ * the two ways of collapsing cannot drift apart. The rail is back at 1100px,
+ * well before the dock goes at 900px: an open sidebar (184px) beside the
+ * pinned dock (380px) would leave a page 337px wide at 901px. Every button
+ * names itself in `aria-label`, which is why the words can be `display: none`
+ * here without leaving a button unnamed. */
 .wb-sidebar {
   background: var(--panel);
   border-right: 1px solid var(--border);
@@ -1221,17 +1223,23 @@ select.picker {
   width: 100%;
 }
 
-.wb-nav__item:hover:enabled {
+/* Not on the current entry: hover would otherwise out-rank its tint and dim
+   the one entry that says where you are. */
+.wb-nav__item:hover:enabled:not([aria-current]) {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* The current page: the accent tint a selected table row wears, a bar on
    the leading edge so it still reads in the rail, and the text left in
-   `--fg` so its contrast is the text's own. */
+   `--fg` so its contrast is the text's own. The bar is a border, not a
+   shadow, because forced-colours mode drops shadows and the tint with them;
+   a border is kept and drawn in a system colour. It takes 3px of the row's
+   own padding so the glyph does not move when the entry becomes current. */
 .wb-nav__item[aria-current="page"] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent);
+  border-inline-start: 3px solid var(--accent);
   font-weight: 600;
+  padding-inline-start: calc(var(--space-2) - 3px);
 }
 
 .wb-nav__item:disabled {
@@ -1265,6 +1273,12 @@ select.picker {
   min-width: 16px;
   padding: 0 4px;
   text-align: center;
+}
+
+/* A count that means "act on this" rather than "here is how many": the
+   error tone, so it is not read as the accent of a selected entry. */
+.wb-nav__badge--attention {
+  background: var(--error);
 }
 
 /* The dock's cycle and the rail's own collapse, apart from the pages. */
@@ -1304,6 +1318,12 @@ select.picker {
   .wb-nav__item {
     justify-content: center;
     padding: var(--space-1) 0;
+  }
+
+  /* The current entry's 3px bar comes out of the same width, on the side the
+     bar is not, so its glyph stays centred where the others' are. */
+  .wb-nav__item[aria-current="page"] {
+    padding-inline: 0 3px;
   }
 
   .wb-nav__badge {
@@ -1440,16 +1460,21 @@ select.picker {
 }
 
 /* `.wb-split2` and `.wb-cols3` are utilities for the pages built from
-   Task 12 on -- a two-column reading layout and a three-card row -- laid
-   down now because the breakpoint they collapse at is spec, not a per-page
-   choice. Neither is applied by anything in `workbench/` itself. */
+   Task 12 on -- a two-column reading layout and a three-card row. The
+   two-column layout collapses at a window width that is spec, not a per-page
+   choice; the card row follows the width of its page (below). */
 .wb-split2 {
   display: grid;
 }
 
+/* Three cards when the page has room for three 200px columns, two or one
+   when it does not. The page's width decides, not the window's: beside the
+   page sit a sidebar (open or a rail) and a dock (pinned or not), so the same
+   window gives pages anywhere from 470px to 950px, and a fixed three columns
+   under a window query was either cramped or collapsed too early. */
 .wb-cols3 {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
 }
 
 @media (max-width: 1280px) {
@@ -1462,10 +1487,11 @@ select.picker {
   }
 }
 
-@media (max-width: 900px) {
-  /* The rail whatever the user last chose; their choice returns when the
-     window widens, and the button that would change it does nothing here,
-     so it is not drawn. */
+/* The rail whatever the user last chose; their choice returns when the
+   window widens, and the button that would change it does nothing here, so
+   it is not drawn. This comes before the dock goes (below, at 900px): with
+   the dock still pinned, an open sidebar would leave the page too narrow. */
+@media (max-width: 1100px) {
   .wb-sidebar {
     width: 48px;
   }
@@ -1473,7 +1499,9 @@ select.picker {
   .wb-sidebar__collapse {
     display: none;
   }
+}
 
+@media (max-width: 900px) {
   .wb-split {
     grid-template-columns: minmax(0, 1fr) !important;
   }
@@ -1484,10 +1512,6 @@ select.picker {
 
   .wb-strip {
     display: flex !important;
-  }
-
-  .wb-cols3 {
-    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
 
