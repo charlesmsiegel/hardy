@@ -7,9 +7,9 @@
 // the fallback says so in words rather than rendering a blank panel.
 //
 // `chat` and `tree` are Task 13a: `Shell.jsx` treats both routes as the chat
-// surface (mounted once, shown full width, no dock aside) -- `tree` has no
-// tab of its own (`TabBar.jsx` lights the Chat tab for it too) and is
-// reached only through the transcript/tree toggle in Chat's own header.
+// surface (mounted once, shown full width, no dock aside) -- `tree` is
+// reached from its own sidebar entry and from the transcript/tree toggle in
+// Chat's own header.
 //
 // `jobs`, `library` and `ledger` (its graph half; the list half shipped in
 // `e074b9a`) are Task 13b. `files` (read-only; the editor is shipment 3) is

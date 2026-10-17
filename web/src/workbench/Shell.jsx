@@ -1,16 +1,17 @@
-// The frame every workbench page lives inside: a four-row grid (top bar, tab
-// bar, body, footer strip) with the body itself splitting into the active
-// page and the chat dock when the dock is pinned and the page is not Chat.
+// The frame every workbench page lives inside: a grid of the top bar across
+// the top, the sidebar down the left, and beside it the body over the footer
+// strip -- the body itself splitting into the active page and the chat dock
+// when the dock is pinned and the page is not Chat.
 //
 // Two mounting rules hold at once here, and they pull in opposite
-// directions on purpose. Every page but Chat is mounted only while its tab
-// is the active route -- `Panels.jsx` in the old client named why: a hidden
+// directions on purpose. Every page but Chat is mounted only while it is
+// the active route -- `Panels.jsx` in the old client named why: a hidden
 // panel has no effect running, so opening one is a mount and a mount is a
 // fetch, without a line of code saying so. Chat is the deliberate exception:
-// it is built once, below, and handed to `Dock` to place, so switching tabs
+// it is built once, below, and handed to `Dock` to place, so switching pages
 // or cycling the dock never refetches its transcript. `PAGES[route.page]`
 // is a lookup rather than a switch for the same reason `pages/index.js`
-// gives -- a tab three tasks have not reached yet should draw the same
+// gives -- a page three tasks have not reached yet should draw the same
 // honest "not built yet" as one that legitimately has nothing to show,
 // never a blank panel that looks like a bug.
 
@@ -25,12 +26,12 @@ import DropOverlay from './DropOverlay.jsx';
 import Footer from './Footer.jsx';
 import Landing from './Landing.jsx';
 import Peek from './Peek.jsx';
-import TabBar from './TabBar.jsx';
+import Sidebar from './Sidebar.jsx';
 import TopBar from './TopBar.jsx';
 
-// Every tab and top-bar link the app offers now has a page in `PAGES`, so the
-// only route that can miss is one nothing ever asked for -- a stray hash, a
-// typo, a link that used to exist. That is honestly "not a route at all", and
+// Every sidebar entry the app draws has a page in `PAGES`, so the only route
+// that can miss is one nothing ever asked for -- a stray hash, a typo, a link
+// that used to exist. That is honestly "not a route at all", and
 // `unknownRoute` says exactly that.
 //
 // There used to be a `PLANNED_NOT_BUILT` list beside this and a `notBuilt`
@@ -66,11 +67,16 @@ export default function Shell() {
   //: lives here rather than in the hash or the server. `pinned` first, same
   //: as the prototype's own default.
   const [dock, setDock] = useState('pinned');
-  //: The tab bar's own red count pill (Task 13b's Jobs page is what gives it
-  //: a number to show): one small panel read here rather than inside
-  //: `TabBar.jsx`, which stays a plain, stateless row of buttons. Reading it
-  //: at the shell costs one request per `revision`, the same as any other
-  //: panel, and does not touch the Chat/Tree mounting rules above.
+  //: Whether the user has narrowed the sidebar to its rail of glyphs. Chrome
+  //: state for the same reason as `dock`; below 900px the rail is forced by
+  //: `styles.css` whatever this says, and this is what returns when the
+  //: window widens again.
+  const [collapsed, setCollapsed] = useState(false);
+  //: The Jobs entry's attention count in the sidebar (Task 13b's Jobs page
+  //: is what gives it a number to show): one small panel read here rather
+  //: than inside `Sidebar.jsx`, which stays a stateless list of buttons.
+  //: Reading it at the shell costs one request per `revision`, the same as
+  //: any other panel, and does not touch the Chat/Tree mounting rules above.
   //: Nothing open: the server started with no registered project, or the
   //: user closed the one that was. `false`, not falsy -- the status is
   //: `EMPTY_STATUS` before the first load, and that must draw the loading
@@ -93,11 +99,12 @@ export default function Shell() {
   const closePeek = useCallback(() => setPeek(null), []);
 
   const isChat = route.page === 'chat';
-  // Tree (Task 13a) is reached only through the toggle in Chat's own header
-  // and shares its full-width, no-dock-aside layout -- it is a view of the
-  // same chat, not a separate page the dock should sit beside. `isChat`
-  // alone still picks which mount holds `<ChatPage/>` (below): Tree is its
-  // own registered page, drawn through `pageContent`, not through the dock.
+  // Tree (Task 13a) has its own sidebar entry beside the toggle in Chat's
+  // own header, and shares Chat's full-width, no-dock-aside layout -- it is
+  // a view of the same chat, not a separate page the dock should sit
+  // beside. `isChat` alone still picks which mount holds `<ChatPage/>`
+  // (below): Tree is its own registered page, drawn through `pageContent`,
+  // not through the dock.
   const isTree = route.page === 'tree';
   const ChatPage = PAGES.chat;
   const chatContent = ChatPage ? <ChatPage arg={route.arg} onPeek={openPeek} /> : notBuilt('chat');
@@ -124,20 +131,35 @@ export default function Shell() {
       ? <Page key={`${status.path}/${route.page}`} arg={route.arg} onPeek={openPeek} />
       : unknownRoute(route.page);
 
+  // One sidebar for all three shapes below. Disabled while nothing is open
+  // (still loading, or no project), which also drops the counts and the dock
+  // toggle; `collapsed` holds in every shape, so opening a project does not
+  // move the rail.
+  const sidebar = (disabled) => (
+    <Sidebar
+      route={route}
+      go={go}
+      badges={{jobs: jobsAttention, chat: prompts.length}}
+      collapsed={collapsed}
+      onToggleCollapsed={setCollapsed}
+      dock={dock}
+      onToggleDock={setDock}
+      disabled={disabled}
+    />
+  );
+
   if (!loaded) {
     return (
       <div className="wb-shell">
         <TopBar
           status={status}
           runningTool={runningTool}
-          route={route}
-          go={go}
           projects={projects}
           setProjects={setProjects}
           refreshProjects={refreshProjects}
           revision={revision}
         />
-        <TabBar route={route} go={go} dock="hidden" onToggleDock={() => {}} jobsAttention={0} disabled />
+        {sidebar(true)}
         <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
           <div className="wb-page">
             {loadError
@@ -155,14 +177,12 @@ export default function Shell() {
         <TopBar
           status={status}
           runningTool={runningTool}
-          route={route}
-          go={go}
           projects={projects}
           setProjects={setProjects}
           refreshProjects={refreshProjects}
           revision={revision}
         />
-        <TabBar route={route} go={go} dock="hidden" onToggleDock={() => {}} jobsAttention={0} disabled />
+        {sidebar(true)}
         <div className="wb-split" style={{gridTemplateColumns: 'minmax(0,1fr)'}}>
           <div className="wb-page">
             <Landing status={status} projects={projects} setProjects={setProjects} refreshProjects={refreshProjects} />
@@ -183,14 +203,12 @@ export default function Shell() {
       <TopBar
         status={status}
         runningTool={runningTool}
-        route={route}
-        go={go}
         projects={projects}
         setProjects={setProjects}
         refreshProjects={refreshProjects}
         revision={revision}
       />
-      <TabBar route={route} go={go} dock={dock} onToggleDock={setDock} jobsAttention={jobsAttention} />
+      {sidebar(false)}
       <div className="wb-split" style={{gridTemplateColumns: bodyCols}}>
         {pageContent !== null ? <div className="wb-page">{pageContent}</div> : null}
         <Dock

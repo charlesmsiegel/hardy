@@ -1093,11 +1093,22 @@ select.picker {
  * collide with, the three-column client's own rules above.
  */
 
+/* The top bar across the top; the sidebar down the left; beside it the body
+   over the footer strip, which summarises the dock and so sits under the
+   body it belongs to. Named areas, so each piece is placed by name rather
+   than by its order among the shell's children: the sidebar spans two rows,
+   and the strip is not always drawn (`Shell` leaves it out on Chat and
+   Tree). */
 .wb-shell {
   background: var(--bg);
   color: var(--fg);
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top top"
+    "nav body"
+    "nav foot";
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
 }
@@ -1110,6 +1121,7 @@ select.picker {
   flex-wrap: wrap;
   font-size: 12px;
   gap: 14px;
+  grid-area: top;
   padding: 6px 16px;
 }
 
@@ -1153,62 +1165,161 @@ select.picker {
   margin-left: auto;
 }
 
-.wb-toplinks {
-  display: flex;
-  font-family: var(--ui);
-  gap: 2px;
-}
-
-.wb-toplink {
-  color: var(--muted);
-  padding: 2px 8px;
-}
-
-.wb-toplink--on {
-  color: var(--accent);
-}
-
-.wb-tabbar {
-  align-items: flex-end;
+/* -- Sidebar: the one navigation ------------------------------------------
+ * Two widths and nothing else: `--collapsed` (the user's choice) and the
+ * 900px query below both only narrow the rail, and the `wb-nav` container
+ * query is the one place that decides what a rail that narrow shows -- so
+ * the two ways of collapsing cannot drift apart. Every button names itself
+ * in `aria-label`, which is why the words can be `display: none` here
+ * without leaving a button unnamed. */
+.wb-sidebar {
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  container: wb-nav / inline-size;
   display: flex;
-  flex-wrap: wrap;
-  font: 13px/1.5 var(--ui);
-  gap: 2px;
-  padding: 4px 10px 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  grid-area: nav;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-2);
+  width: 184px;
 }
 
-.wb-tab {
+.wb-sidebar--collapsed {
+  width: 48px;
+}
+
+.wb-nav__heading {
+  display: block;
+  padding: 0 var(--space-2) var(--space-1);
+}
+
+.wb-nav__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wb-nav__item {
   align-items: center;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r2);
+  color: var(--fg);
   cursor: pointer;
   display: flex;
-  font: inherit;
-  gap: 6px;
-  padding: 5px 10px;
+  font: 13px/1.3 var(--ui);
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-2);
+  position: relative;
+  text-align: start;
+  width: 100%;
 }
 
-.wb-tab--on {
-  border-bottom-color: var(--accent);
-  color: var(--accent);
+.wb-nav__item:hover:enabled {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.wb-dock-toggle {
-  background: none;
-  border: none;
+/* The current page: the accent tint a selected table row wears, a bar on
+   the leading edge so it still reads in the rail, and the text left in
+   `--fg` so its contrast is the text's own. */
+.wb-nav__item[aria-current="page"] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 600;
+}
+
+.wb-nav__item:disabled {
   color: var(--muted);
-  cursor: pointer;
-  font: 12px/1.5 var(--ui);
-  margin-left: auto;
-  padding: 5px 10px;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.wb-nav__glyph {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  width: 18px;
+}
+
+.wb-nav__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-nav__badge {
+  background: var(--accent);
+  border-radius: 8px;
+  color: var(--bg);
+  flex: none;
+  font: 600 11px/16px var(--mono);
+  min-width: 16px;
+  padding: 0 4px;
+  text-align: center;
+}
+
+/* The dock's cycle and the rail's own collapse, apart from the pages. */
+.wb-sidebar__foot {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
+.wb-sidebar__foot .wb-nav__item {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The dock's label says what pressing it does next, which is longer than a
+   page name; it wraps rather than losing its last words to an ellipsis. */
+.wb-sidebar__foot .wb-nav__label {
+  white-space: normal;
+}
+
+@container wb-nav (max-width: 64px) {
+  .wb-nav__heading,
+  .wb-nav__label {
+    display: none;
+  }
+
+  /* With the group names gone, a rule is what still says where one group
+     ends. */
+  .wb-nav__group + .wb-nav__group {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
+  }
+
+  .wb-nav__item {
+    justify-content: center;
+    padding: var(--space-1) 0;
+  }
+
+  .wb-nav__badge {
+    font-size: 10px;
+    line-height: 14px;
+    min-width: 14px;
+    padding: 0 3px;
+    position: absolute;
+    right: -2px;
+    top: 0;
+  }
 }
 
 .wb-split {
   display: grid;
+  grid-area: body;
   min-height: 0;
 }
 
@@ -1287,6 +1398,7 @@ select.picker {
   flex-wrap: wrap;
   font-size: 12px;
   gap: 12px;
+  grid-area: foot;
   padding: 6px 16px;
 }
 
@@ -1351,6 +1463,17 @@ select.picker {
 }
 
 @media (max-width: 900px) {
+  /* The rail whatever the user last chose; their choice returns when the
+     window widens, and the button that would change it does nothing here,
+     so it is not drawn. */
+  .wb-sidebar {
+    width: 48px;
+  }
+
+  .wb-sidebar__collapse {
+    display: none;
+  }
+
   .wb-split {
     grid-template-columns: minmax(0, 1fr) !important;
   }
@@ -1603,12 +1726,6 @@ select.picker {
 
 .wb-switcher__forget:hover {
   color: var(--error);
-}
-
-.wb-tabbar--disabled .wb-tab {
-  color: var(--muted);
-  cursor: default;
-  opacity: 0.6;
 }
 
 /* -- DropOverlay: the fixed drag-and-drop hint ---------------------------- */

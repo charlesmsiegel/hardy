@@ -1,8 +1,8 @@
 // Tree: the git-style graph over `/api/tree`'s `{entry_id, parent_id, type,
 // lesson}` list -- every branch of the conversation, not just the active
-// one. Reached only through the transcript/tree toggle in Chat's own header
-// (`TabBar.jsx` gives it no tab of its own), so this page and `pages/Chat.jsx`
-// share `chat/Header.jsx` and both read `/api/tree` independently.
+// one. Reached from its sidebar entry and from the transcript/tree toggle in
+// Chat's own header, so this page and `pages/Chat.jsx` share
+// `chat/Header.jsx` and both read `/api/tree` independently.
 //
 // `chat/tree.js`'s `layout()` does the actual git-log column assignment; this
 // file turns that into SVG coordinates and the two buttons the data can
