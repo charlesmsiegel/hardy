@@ -441,6 +441,71 @@ def test_a_primed_theorem_name_can_be_audited(tmp_path) -> None:
     assert result.axioms == ('propext',)
 
 
+@pytest.mark.parametrize('name', ('solve!', 'Option.get?', '«first result»', 'Foo.«a.b»', 'α₁'))
+def test_a_theorem_name_lean_accepts_is_verified_not_refused_as_a_hole(tmp_path, name) -> None:
+    """The verifier reads names with the one Lean grammar, `formal/syntax/`.
+
+    It kept an ASCII pattern of its own after the batch and workspace scanners
+    learned that `solve!` and `«first result»` are names, so a staged claim so
+    named spent its whole budget and was then recorded `forbidden_hole` --
+    for a proof with no hole in it.
+    """
+    result = _verify_reporting(tmp_path, name, f"'{name}' depends on axioms: [propext]")
+
+    assert result.reason is None
+    assert result.verified
+
+
+@pytest.mark.parametrize('name', ('two eq', 'Foo..bar', 'Foo.', '1st', 'x := sorry', '«a\nb»', ''))
+def test_a_theorem_name_that_is_not_one_lean_name_is_still_refused(tmp_path, name) -> None:
+    domain = importlib.import_module('hardy.workflows.contracts')
+    result = _verify_reporting(tmp_path, name, f"'{name}' depends on axioms: []")
+
+    assert not result.verified
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+
+
+@pytest.mark.parametrize('name', ('get!', 'Classical.em?', '«first axiom»', 'Foo.«b.c»', 'β'))
+def test_a_declared_assumption_may_carry_any_name_lean_accepts(name) -> None:
+    domain = importlib.import_module('hardy.workflows.contracts')
+    verifier = importlib.import_module('hardy.formal.verifier')
+    declared = domain.DeclaredAssumption(name=name, statement='True', source='Hardy, 2026')
+
+    assert verifier.declaration_violation(declared) is None
+
+
+@pytest.mark.parametrize('name', ('a b', 'Foo..bar', 'Foo.', '1st', 'f→g', 'x axiom y'))
+def test_a_declared_assumption_name_that_is_not_one_lean_name_is_refused(name) -> None:
+    domain = importlib.import_module('hardy.workflows.contracts')
+    verifier = importlib.import_module('hardy.formal.verifier')
+    declared = domain.DeclaredAssumption(name=name, statement='True', source='Hardy, 2026')
+
+    assert 'is not a single Lean declaration name' in verifier.declaration_violation(declared)
+
+
+def test_an_assumption_naming_the_goal_through_a_guillemet_is_refused(tmp_path) -> None:
+    """`X.«a.b»` declares `«a.b»` under `X`; splitting on the last dot reads `b»`."""
+    domain = importlib.import_module('hardy.workflows.contracts')
+    storage = importlib.import_module('hardy.workflows.storage')
+    verifier = importlib.import_module('hardy.formal.verifier')
+    claim = _claim(domain)
+    proposal = claim.proposal.model_copy(update={'theorem_name': '«a.b»'})
+    claim = domain.freeze_claim(claim.original_text, proposal, claim.environment, NOW)
+    final = verifier.FinalVerifier(
+        lake=tmp_path / 'lake.exe',
+        lean_project=tmp_path,
+        environment=claim.environment,
+        limits=domain.RunLimits(),
+        runner=lambda _: pytest.fail('assuming the goal must not reach Lean'),
+    )
+    goal = domain.DeclaredAssumption(name='X.«a.b»', statement='2 = 2', source='Hardy, 2026')
+
+    result = final.verify(claim, 'by rfl', _store(storage, tmp_path), (goal,))
+
+    assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+    assert 'assuming the goal' in result.diagnostics[-1].message
+
+
 def test_a_duplicated_axiom_report_is_not_resolved_by_position(tmp_path) -> None:
     """Two reports for one name means something other than Lean printed one."""
     result = _verify_reporting(

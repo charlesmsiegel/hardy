@@ -23,7 +23,13 @@ from hardy.formal.syntax.lexer import (
     normalise_lean,
     strip_comments,
 )
-from hardy.formal.syntax.names import QUALIFIED_NAME, _components, declared_name
+from hardy.formal.syntax.names import (
+    NOT_NAME_AFTER,
+    NOT_NAME_BEFORE,
+    QUALIFIED_NAME,
+    _components,
+    declared_name,
+)
 from hardy.formal.syntax.scopes import SCOPE_KEYWORDS, _prefix_at, _scopes
 
 # Scanned over the whole source rather than line by line, because Lean allows a
@@ -49,6 +55,20 @@ WRAPPER = r"(?:(?:set_option|open|attribute|universe|variable|section)\b[^\n]*?\
 # `theorem«name»` needs no space. The modifiers are the ones read backwards
 # from the keyword; attributes before them change nothing here.
 DECLARATION_KINDS = frozenset({"theorem", "lemma"})
+# What may stand between the start of a declaration and its keyword, read
+# forwards: any attributes, then any modifiers. `@[simp] theorem T`,
+# `protected theorem T` and `nonrec theorem T` are ordinary Lean, and a head
+# grammar blind to them had no name to print, so `batch` refused such a request
+# as anonymous before a single model turn. Request validation, the request's
+# head and the declaration index all read a head through these. The attribute
+# body is matched without nesting, an approximation: an attribute holding its
+# own `]` fails to match, which leaves a head unread rather than misnamed.
+DECLARATION_MODIFIERS = (
+    "private", "protected", "public", "meta", "noncomputable", "nonrec", "unsafe", "partial",
+    "scoped", "local",
+)
+ATTRIBUTES = r"(?:@\[[^\]]*\]\s*)*"
+MODIFIERS = rf"(?:(?:{'|'.join(DECLARATION_MODIFIERS)})\s+)*"
 _DECLARATION_NAME = re.compile(rf"(?:\s+|(?=«))({QUALIFIED_NAME})")
 _HEAD_MODIFIERS = frozenset({"private", "protected", "nonrec", "noncomputable", "public", "meta"})
 _LINE_PREFIX = re.compile(rf"[ \t]*{WRAPPER}")
@@ -158,11 +178,10 @@ ASSUMPTION = re.compile(
     rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local|public|meta)\s+)*"
     rf"(?:axiom|constant|opaque)\s+({QUALIFIED_NAME})\s*:(.*)$"
 )
-# The keyword itself, for finding an axiom this pattern cannot read. The
-# boundary is `IDENTIFIER`'s alphabet with `!` and `?`, so `axiom?` and `get!`
-# are names rather than keywords, and the guillemets go with them because
-# `def «axiom» : Nat` names a declaration rather than making one.
-AXIOM_KEYWORD = re.compile(r"(?<![\w'!?.«])(?:axiom|constant|opaque)(?![\w'!?»])")
+# The keyword itself, for finding an axiom this pattern cannot read, bounded
+# so that `axiom?`, `get!` and `def «axiom» : Nat` are names (see
+# `NOT_NAME_BEFORE`).
+AXIOM_KEYWORD = re.compile(rf"{NOT_NAME_BEFORE}(?:axiom|constant|opaque){NOT_NAME_AFTER}")
 # Where a declaration stops, so the one before it is not read as running on.
 # Approximate on purpose: over-reading appends text to a statement and the
 # comparison refuses a save that should have passed, which is visible and
