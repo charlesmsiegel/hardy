@@ -220,13 +220,6 @@ class ClaudeAgentRuntime:
 
     backend = "claude"
     endpoint = "claude-code (subscription)"
-    # Who keeps each bound. `max_turns` is handed to the SDK, which owns the
-    # loop and is therefore the only thing in a position to count turns;
-    # `_within_budget` keeps the wall clock here because nothing else bounds a
-    # stalled request. Published rather than assumed by the caller, so a
-    # trajectory records who actually applied each limit -- which is the honesty
-    # problem issue #23 exists for, stated instead of hidden.
-    enforcement = {"turns": "provider sdk", "wall_clock": "hardy"}
 
     def __init__(
         self,
@@ -309,6 +302,19 @@ class ClaudeAgentRuntime:
         self._drawn: list[_DrawnBlock] = []
         self._drawing: int | None = None
         self._checkpointed_at = 0.0
+
+    @property
+    def enforcement(self) -> dict[str, str]:
+        """Who keeps each bound.
+
+        `max_turns` is handed to the SDK, which owns the loop and is therefore
+        the only thing in a position to count turns; `_within_budget` keeps the
+        wall clock here because nothing else bounds a stalled request.
+        Published rather than assumed by the caller, so a trajectory records
+        who actually applied each limit -- which is the honesty problem issue
+        #23 exists for, stated instead of hidden.
+        """
+        return {"turns": "provider sdk", "wall_clock": "hardy"}
 
     def _loaded(self) -> Any:
         """The SDK, and the tool server built on it, on first use.
