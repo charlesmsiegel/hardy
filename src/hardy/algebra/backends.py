@@ -650,6 +650,67 @@ class SingularBackend(SentinelBackend):
         return (str(command) if command else "Singular", "-q")
 
 
+class _EchoReader:
+    """M2's echo of the text it was fed, recognised line by line in feed order.
+
+    `Macaulay2Backend._strip_echo` says which lines count as echo and why.
+    """
+
+    def __init__(self, lines: list[str], fed: str, prompt: re.Pattern[str]) -> None:
+        self._prompt = prompt
+        self._pending = [line.rstrip() for line in fed.splitlines() if line.strip()]
+        source_counts = Counter(self._pending)
+        prompt_counts = Counter(
+            line[found.end():].rstrip()
+            for line in lines
+            if (found := prompt.match(line)) is not None
+        )
+        # Prompt text seen more often than it was fed: some of it is the
+        # cell's own output, and no occurrence can be told from the rest.
+        self._ambiguous = {
+            shown for shown, count in prompt_counts.items() if count > source_counts[shown]
+        }
+        self._cursor = 0
+        self._width = 0
+
+    def consumes(self, line: str) -> bool:
+        """Whether `line` is echo, moving past it in the fed text if so."""
+        found = self._prompt.match(line)
+        if found is not None:
+            return self._consumes_prompt(line[found.end():].rstrip(), found.end())
+        if not line:
+            self._width = 0
+            return False
+        if self._continues(line):
+            self._cursor += 1
+            return True
+        return False
+
+    def _consumes_prompt(self, shown: str, width: int) -> bool:
+        if not shown:
+            # An empty interpreter prompt can introduce the next continuation
+            # block, or remain after EOF.
+            self._width = width
+            return True
+        # User output can itself look like `i42 : coefficient`. The prefix
+        # alone is not evidence that this line was echoed.
+        if shown in self._ambiguous or shown not in self._pending[self._cursor:]:
+            self._width = 0
+            return False
+        self._cursor = self._pending.index(shown, self._cursor) + 1
+        self._width = width
+        return True
+
+    def _continues(self, line: str) -> bool:
+        width = self._width
+        return (
+            bool(width)
+            and self._cursor < len(self._pending)
+            and line.startswith(" " * width)
+            and line[width:].rstrip() == self._pending[self._cursor]
+        )
+
+
 class Macaulay2Backend(SentinelBackend):
     """Macaulay2, whose echo, output counters and stderr banners need taming.
 
@@ -756,51 +817,9 @@ class Macaulay2Backend(SentinelBackend):
         indented by exactly the prompt width, abutting the echo with no blank
         line between, whose text is verbatim the *next* line to be echoed.
         """
-        pending = [line.rstrip() for line in fed.splitlines() if line.strip()]
-        source_counts = Counter(pending)
-        prompt_counts = Counter(
-            line[prompt.end():].rstrip()
-            for line in stdout.split("\n")
-            if (prompt := self._echo_prompt.match(line)) is not None
-        )
-        cursor = 0
-        kept: list[str] = []
-        width = 0
-        for line in stdout.split("\n"):
-            prompt = self._echo_prompt.match(line)
-            if prompt is not None:
-                shown = line[prompt.end():].rstrip()
-                if not shown:
-                    # An empty interpreter prompt can introduce the next
-                    # continuation block, or remain after EOF.
-                    width = prompt.end()
-                    continue
-                if prompt_counts[shown] > source_counts[shown]:
-                    width = 0
-                    kept.append(line)
-                    continue
-                # User output can itself look like `i42 : coefficient`.
-                # The prefix alone is not evidence that this line was echoed.
-                try:
-                    cursor = pending.index(shown, cursor) + 1
-                except ValueError:
-                    width = 0
-                    kept.append(line)
-                else:
-                    width = prompt.end()
-                continue
-            if not line:
-                width = 0
-            elif (
-                width
-                and cursor < len(pending)
-                and line.startswith(" " * width)
-                and line[width:].rstrip() == pending[cursor]
-            ):
-                cursor += 1
-                continue
-            kept.append(line)
-        return "\n".join(kept)
+        lines = stdout.split("\n")
+        echo = _EchoReader(lines, fed, self._echo_prompt)
+        return "\n".join([line for line in lines if not echo.consumes(line)])
 
     def sanitize(self, stdout: str, fed: str = "") -> str:
         """Drop M2's echoed prompts and make its output counters comparable.
