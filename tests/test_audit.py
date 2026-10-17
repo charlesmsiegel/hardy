@@ -269,3 +269,19 @@ def test_an_open_verdict_says_nothing_of_assumptions_when_there_are_none():
     assert describe(classify([report("sorryAx")], ())) == (
         "open -- ['T'] rest on a hole ['sorryAx']"
     )
+
+
+def test_statuses_and_grades_are_the_words_stored_records_already_hold():
+    """Typed in code, unchanged on disk: a record written before the enums
+    existed reads back as the same status, and a new one is written the same."""
+    from hardy.formal.audit import GRADES, UNESTABLISHED, AuditStatus, Grade
+
+    assert [status.value for status in AuditStatus] == [
+        "clean", "modulo", "open", "rejected", "not audited", "not established",
+    ]
+    assert GRADES == ("ambiguous", "unaudited", "stale", "unapproved", "open", "assumed", "verified")
+    assert {"ambiguous", "unaudited", "stale"} == UNESTABLISHED
+    record = classify((AxiomReport("t", ("propext",)),), ()).as_dict()
+    assert type(record["status"]) is str and json.dumps(record["status"]) == '"clean"'
+    assert type(unestablished("no report")["status"]) is str
+    assert f"{AuditStatus.NOT_AUDITED}" == "not audited" and f"{Grade.STALE}" == "stale"

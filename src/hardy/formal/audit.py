@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 # The axioms every ordinary Mathlib proof rests on. Their presence is not news.
@@ -24,23 +25,56 @@ STANDARD = frozenset({"propext", "Classical.choice", "Quot.sound"})
 FORBIDDEN = frozenset({"sorryAx"})
 
 
+class _Word(str, Enum):
+    """A closed vocabulary that compares, hashes, prints and serialises as its word.
+
+    `str` and `Enum` rather than `StrEnum`: this module is copied verbatim into
+    standalone replay bundles, which promise any Python 3, and `StrEnum` is
+    3.11's.
+    """
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+class AuditStatus(_Word):
+    """The `status` of a stored audit record, as it is written to disk.
+
+    The first four are `classify`'s verdicts on a module. The last two are
+    records that are not verdicts at all: an audit nothing reached, and one
+    that was attempted and could not be completed.
+    """
+
+    CLEAN = "clean"
+    MODULO = "modulo"
+    OPEN = "open"
+    REJECTED = "rejected"
+    NOT_AUDITED = "not audited"
+    NOT_ESTABLISHED = "not established"
+
+
 @dataclass(frozen=True)
 class AxiomReport:
+    """The axioms Lean's `#print axioms` named for one declaration."""
+
     declaration: str
     axioms: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class Verdict:
-    status: str  # "clean" | "modulo" | "open" | "rejected"
+    """A module's audit graded: which axioms are holes, unapproved or approved."""
+
+    status: AuditStatus
     reports: tuple[AxiomReport, ...]
     forbidden: tuple[str, ...]
     unapproved: tuple[str, ...]
     assumed: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
+        """The stored record: what `summarise` and `open_declarations` read back."""
         return {
-            "status": self.status,
+            "status": self.status.value,
             "declarations": [
                 {"name": item.declaration, "axioms": list(item.axioms)} for item in self.reports
             ],
@@ -105,34 +139,39 @@ def classify(reports: Sequence[AxiomReport], approved: Iterable[str]) -> Verdict
     consulted at all, so that no approved-list entry can launder a hole.
     """
     sanctioned = set(approved)
-    names: list[str] = []
-    for item in reports:
-        names.extend(axiom for axiom in item.axioms if axiom not in names)
+    # Every axiom once, in the order Lean first named it.
+    names = list(dict.fromkeys(axiom for item in reports for axiom in item.axioms))
     forbidden = tuple(name for name in names if name in FORBIDDEN)
     extra = [name for name in names if name not in FORBIDDEN and name not in STANDARD]
     assumed = tuple(name for name in extra if name in sanctioned)
     unapproved = tuple(name for name in extra if name not in sanctioned)
+    status = _status(bool(reports), forbidden, unapproved, assumed)
+    return Verdict(status, tuple(reports), forbidden, unapproved, assumed)
+
+
+def _status(
+    reported: bool, forbidden: Sequence[str], unapproved: Sequence[str], assumed: Sequence[str]
+) -> AuditStatus:
     # No reports at all is a rejection, not a clean sweep. A caller that audited
     # nothing has established nothing, and grading that as clean is the exact
     # shape of the bug this module exists to end.
-    if not reports:
-        status = "rejected"
-    elif unapproved:
+    if not reported:
+        return AuditStatus.REJECTED
+    if unapproved:
         # Ahead of the hole: an unapproved axiom is the half a caller can act
         # on, and a save carrying both must be told about that one.
-        status = "rejected"
-    elif forbidden:
+        return AuditStatus.REJECTED
+    if forbidden:
         # A hole is not an assumption and no human may approve one -- but it is
         # a proof that is not finished yet, which is a different fact from a
         # proof that may not be accepted. Callers with nobody to ask refuse
         # anything that is not "clean", and so still refuse this.
-        status = "open"
-    else:
-        status = "modulo" if assumed else "clean"
-    return Verdict(status, tuple(reports), forbidden, unapproved, assumed)
+        return AuditStatus.OPEN
+    return AuditStatus.MODULO if assumed else AuditStatus.CLEAN
 
 
 def dependents(reports: Sequence[AxiomReport], axiom: str) -> tuple[str, ...]:
+    """The declarations whose report names `axiom`, in report order."""
     return tuple(item.declaration for item in reports if axiom in item.axioms)
 
 
@@ -153,6 +192,22 @@ def open_declarations(record: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
+class Grade(_Word):
+    """How one declaration stands across the stored verdicts, worst first.
+
+    Declared in `GRADES`' order, which is the order `declaration_status` and
+    every surface rank by.
+    """
+
+    AMBIGUOUS = "ambiguous"
+    UNAUDITED = "unaudited"
+    STALE = "stale"
+    UNAPPROVED = "unapproved"
+    OPEN = "open"
+    ASSUMED = "assumed"
+    VERIFIED = "verified"
+
+
 @dataclass(frozen=True)
 class DeclarationStatus:
     """What the stored verdicts say about ONE declaration.
@@ -171,7 +226,7 @@ class DeclarationStatus:
     the hole leaves a reader believing the rest is Lean's own.
     """
 
-    kind: str                                   # see `GRADES`
+    kind: Grade
     assumed: tuple[str, ...] = ()
     unapproved: tuple[str, ...] = ()
     #: Why, where the kind alone does not say it: a stale record's reason.
@@ -183,21 +238,21 @@ class DeclarationStatus:
     modules: tuple[str, ...] = ()
 
     def __str__(self) -> str:
-        if self.kind == "ambiguous":
+        if self.kind == Grade.AMBIGUOUS:
             return (
                 f"not graded -- {list(self.modules)} each declare this name, so no "
                 "one statement or verdict answers for it"
             )
-        if self.kind == "unaudited":
+        if self.kind == Grade.UNAUDITED:
             return "not audited -- no stored verdict names it"
-        if self.kind == "stale":
+        if self.kind == Grade.STALE:
             return f"no longer established -- {self.detail or 'the verdict has expired'}"
-        if self.kind == "unapproved":
+        if self.kind == Grade.UNAPPROVED:
             return f"rests on unapproved axioms {list(self.unapproved)}"
-        if self.kind == "open":
+        if self.kind == Grade.OPEN:
             opened = "open -- rests on a hole"
             return f"{opened}; approved assumptions {list(self.assumed)}" if self.assumed else opened
-        if self.kind == "assumed":
+        if self.kind == Grade.ASSUMED:
             return f"rests on approved assumptions {list(self.assumed)}"
         return "kernel-verified -- standard axioms only"
 
@@ -205,10 +260,10 @@ class DeclarationStatus:
 #: The kinds, worst first. `unapproved` outranks `open` for `classify`'s own
 #: reason: it is the half a reader can act on, and a result carrying both must
 #: be described by that one.
-GRADES = ("ambiguous", "unaudited", "stale", "unapproved", "open", "assumed", "verified")
+GRADES = tuple(Grade)
 #: The kinds that are not a verdict about anything, so a surface must not file
 #: them under a heading that claims one.
-UNESTABLISHED = frozenset({"ambiguous", "unaudited", "stale"})
+UNESTABLISHED = frozenset({Grade.AMBIGUOUS, Grade.UNAUDITED, Grade.STALE})
 
 
 def declaration_status(
@@ -240,46 +295,45 @@ def declaration_status(
     to grade rather than a grade nobody can check.
     """
     if shared and name in shared:
-        return DeclarationStatus("ambiguous", modules=tuple(shared[name]))
-    mentions = [
-        record
-        for record in records.values()
-        if any(str(item.get("name")) == name for item in record.get("declarations", ()))
-    ]
+        return DeclarationStatus(Grade.AMBIGUOUS, modules=tuple(shared[name]))
+    mentions = [record for record in records.values() if _own_axioms(record, name) is not None]
     if not mentions:
-        return DeclarationStatus("unaudited")
+        return DeclarationStatus(Grade.UNAUDITED)
     current = [record for record in mentions if not record.get("stale")]
     if not current:
         return DeclarationStatus(
-            "stale", detail=str(mentions[0].get("reason", "")).strip()
+            Grade.STALE, detail=str(mentions[0].get("reason", "")).strip()
         )
+    return _graded(name, current)
 
-    assumed: list[str] = []
-    unapproved: list[str] = []
+
+def _graded(name: str, current: Sequence[Mapping[str, Any]]) -> DeclarationStatus:
+    """`name`'s own axioms, read against what each current record sanctioned or refused."""
+    assumed: set[str] = set()
+    unapproved: set[str] = set()
     opened = False
     for record in current:
-        sanctioned = {str(item) for item in record.get("assumed", ())}
-        refused = {str(item) for item in record.get("unapproved", ())}
-        for entry in record.get("declarations", ()):
-            if str(entry.get("name")) != name:
-                continue
-            axioms = [str(axiom) for axiom in entry.get("axioms", ())]
-            opened = opened or any(axiom in FORBIDDEN for axiom in axioms)
-            assumed.extend(
-                axiom for axiom in axioms if axiom in sanctioned and axiom not in assumed
-            )
-            unapproved.extend(
-                axiom for axiom in axioms if axiom in refused and axiom not in unapproved
-            )
+        axioms = _own_axioms(record, name) or set()
+        opened = opened or not FORBIDDEN.isdisjoint(axioms)
+        assumed |= axioms & {str(item) for item in record.get("assumed", ())}
+        unapproved |= axioms & {str(item) for item in record.get("unapproved", ())}
     if unapproved:
-        kind = "unapproved"
+        kind = Grade.UNAPPROVED
     elif opened:
-        kind = "open"
+        kind = Grade.OPEN
     elif assumed:
-        kind = "assumed"
+        kind = Grade.ASSUMED
     else:
-        kind = "verified"
+        kind = Grade.VERIFIED
     return DeclarationStatus(kind, tuple(sorted(assumed)), tuple(sorted(unapproved)))
+
+
+def _own_axioms(record: Mapping[str, Any], name: str) -> set[str] | None:
+    """The axioms `record` lists for `name` itself, or None when it does not name it."""
+    entries = [entry for entry in record.get("declarations", ()) if str(entry.get("name")) == name]
+    if not entries:
+        return None
+    return {str(axiom) for entry in entries for axiom in entry.get("axioms", ())}
 
 
 def unestablished(reason: str) -> dict[str, Any]:
@@ -290,7 +344,7 @@ def unestablished(reason: str) -> dict[str, Any]:
     it as no attempt would misdescribe the run.
     """
     return {
-        "status": "not established",
+        "status": AuditStatus.NOT_ESTABLISHED.value,
         "reason": reason,
         "declarations": [],
         "forbidden": [],
@@ -308,11 +362,11 @@ def summarise(record: dict[str, Any]) -> str:
     record read back from disk has no `Verdict` to offer.
     """
     status = record["status"]
-    if status == "not audited":
+    if status == AuditStatus.NOT_AUDITED:
         return "not audited -- nothing reached the audit"
-    if status == "not established":
+    if status == AuditStatus.NOT_ESTABLISHED:
         return f"not established -- {record['reason']}"
-    if status == "open":
+    if status == AuditStatus.OPEN:
         # The assumptions travel with it. A proof that is both unfinished and
         # resting on an approved axiom has two limitations, and a line naming
         # only the hole leaves the reader believing the rest is Lean's own.
@@ -338,4 +392,5 @@ def summarise(record: dict[str, Any]) -> str:
 
 
 def describe(verdict: Verdict) -> str:
+    """`summarise`, for a verdict still in hand."""
     return summarise(verdict.as_dict())
