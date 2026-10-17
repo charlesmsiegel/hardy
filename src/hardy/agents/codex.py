@@ -19,11 +19,13 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
+from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar
+from types import ModuleType
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -34,6 +36,11 @@ from hardy.workflows.contracts import ProofSubmission, RunPhase
 from hardy.workflows.storage import RunStore
 
 T = TypeVar("T", bound=BaseModel)
+
+#: How long an expired turn waits to learn whether its interrupt went
+#: through. Barely at all: a transport's interrupt may itself stall, and the
+#: deadline has already passed.
+INTERRUPT_GRACE_SECONDS = 0.01
 
 SDK_MISSING = (
     "the Codex backend needs the Codex SDK: pip install 'hardy-prover[codex]', "
@@ -52,7 +59,8 @@ ASSUMPTIONS_UNSUPPORTED = (
 )
 
 
-def load_sdk():
+def load_sdk() -> ModuleType:
+    """The Codex SDK, imported on first use: it is an optional install."""
     try:
         import openai_codex
     except ImportError as error:  # pragma: no cover - depends on the install
@@ -62,6 +70,8 @@ def load_sdk():
 
 @dataclass(slots=True)
 class AgentThread:
+    """One stage's Codex thread, and the turn open on it, if any."""
+
     sdk_thread: Any
     active_turn: Any | None = None
     # The bound this thread's turns run under, or None for unbounded. This
@@ -71,6 +81,8 @@ class AgentThread:
 
 
 class CodexRuntime:
+    """Runs the workflow's stages on the Codex SDK, one thread per stage."""
+
     model = "codex"
     backend = "codex"
     # None, because Hardy cannot establish one here. The SDK's `read_only`
@@ -116,18 +128,35 @@ class CodexRuntime:
     ) -> AgentThread:
         """Open one stage's thread, in the working directory that stage may see.
 
+        `isolated` is the faithfulness reader's: see `_reader_thread` for what
+        that buys on this SDK and what it does not. Every other thread is
+        served Hardy's tools over stdio MCP (`_tool_thread`).
+
         `allowed` is refused rather than ignored on a thread that would serve
         Lean tools: see `ASSUMPTIONS_UNSUPPORTED`. A thread with no claim, or
-        an isolated one, serves none and has nothing to scope.
+        an isolated one, serves none and has nothing to scope. `phase` is
+        accepted for the contract; this runtime files a turn's events by its
+        stage instead (`_phase_for_stage`).
+        """
+        if allowed and claim is not None and not isolated:
+            raise ValueError(ASSUMPTIONS_UNSUPPORTED)
+        sdk = load_sdk()
+        sdk_thread = (
+            self._reader_thread(sdk, model) if isolated else self._tool_thread(sdk, model, run_dir, claim)
+        )
+        return AgentThread(sdk_thread=sdk_thread, wall_seconds=wall_seconds)
 
-        `isolated` is the faithfulness reader's, and here it is the *directory*
-        that matters rather than the tools. This SDK gives the agent its own
-        file access over `cwd`, and `cwd` was the run directory -- which by
-        then holds `formalization.json` and the trajectory of the conversation
-        that wrote it. A reader able to open those is reading the translation
-        through the reasoning that produced it, which is exactly what the gate
-        is built to prevent, so it is given an empty directory of its own and
-        the narrowest sandbox this SDK offers.
+    def _reader_thread(self, sdk: Any, model: str) -> Any:
+        """The faithfulness reader's thread, where the *directory* matters
+        rather than the tools.
+
+        This SDK gives the agent its own file access over `cwd`, and `cwd` was
+        the run directory -- which by then holds `formalization.json` and the
+        trajectory of the conversation that wrote it. A reader able to open
+        those is reading the translation through the reasoning that produced
+        it, which is exactly what the gate is built to prevent, so it is given
+        an empty directory of its own and the narrowest sandbox this SDK
+        offers.
 
         What this does NOT achieve is stated plainly, because the gate's whole
         value is that its claim is true. `Sandbox.read_only` is documented by
@@ -141,40 +170,40 @@ class CodexRuntime:
         obvious route and nothing more.
 
         Hardy therefore cannot establish this reader's independence, and says
-        so rather than claiming it: see `isolation_guarantee` below, which the
-        gate reads and records. Closing this needs the process confinement
-        docs/design/trust-boundary.md defers, or a readable-root control this SDK does not offer.
+        so rather than claiming it: see `isolation_guarantee`, which the gate
+        reads and records. Closing this needs the process confinement
+        docs/design/trust-boundary.md defers, or a readable-root control this
+        SDK does not offer.
         """
-        if allowed and claim is not None and not isolated:
-            raise ValueError(ASSUMPTIONS_UNSUPPORTED)
-        sdk = load_sdk()
-        if isolated:
-            # Kept for the life of the runtime and removed by `close`: it must
-            # outlive the turn, and nothing is ever written into it.
-            directory = Path(tempfile.mkdtemp(prefix="hardy-faithfulness-"))
-            self._isolated.append(directory)
-            sdk_thread = self._client.thread_start(
-                model=model,
-                cwd=str(directory),
-                # Read-only where the SDK has it; a reader writes nothing
-                # either way, and the empty directory is the real guarantee.
-                sandbox=sdk.Sandbox.read_only,
-                # Escalations denied rather than auto-approved. This narrows
-                # the reader; it does not confine it -- see the docstring.
-                approval_mode=sdk.ApprovalMode.deny_all,
-                base_instructions=BASE_INSTRUCTIONS,
-                developer_instructions=DEVELOPER_INSTRUCTIONS,
-                config={},
-            )
-            return AgentThread(sdk_thread=sdk_thread, wall_seconds=wall_seconds)
-        # Hardy's tools are served to the agent over stdio MCP. With a claim
-        # the server is pinned to this run and this claim, so a Lean tool call
-        # cannot address another. Before one exists -- the formalization
-        # thread -- the server is still started, and serves the computer
-        # algebra session alone: deciding what to formalize is exactly when
-        # examples get computed, and the Claude staged runtime offers CAS in
-        # every stage. The claim hash is simply absent, and the server reads
-        # its absence as "no Lean tools yet" rather than as a broken launch.
+        # Kept for the life of the runtime and removed by `close`: it must
+        # outlive the turn, and nothing is ever written into it.
+        directory = Path(tempfile.mkdtemp(prefix="hardy-faithfulness-"))
+        self._isolated.append(directory)
+        return self._client.thread_start(
+            model=model,
+            cwd=str(directory),
+            # Read-only where the SDK has it; a reader writes nothing
+            # either way, and the empty directory is the real guarantee.
+            sandbox=sdk.Sandbox.read_only,
+            # Escalations denied rather than auto-approved. This narrows
+            # the reader; it does not confine it -- see the docstring.
+            approval_mode=sdk.ApprovalMode.deny_all,
+            base_instructions=BASE_INSTRUCTIONS,
+            developer_instructions=DEVELOPER_INSTRUCTIONS,
+            config={},
+        )
+
+    def _tool_thread(self, sdk: Any, model: str, run_dir: Path, claim: FrozenClaim | None) -> Any:
+        """A thread served Hardy's tools by a `hardy.mcp_server` process.
+
+        With a claim the server is pinned to this run and this claim, so a
+        Lean tool call cannot address another. Before one exists -- the
+        formalization thread -- the server is still started, and serves the
+        computer algebra session alone: deciding what to formalize is exactly
+        when examples get computed, and the Claude staged runtime offers CAS
+        in every stage. The claim hash is simply absent, and the server reads
+        its absence as "no Lean tools yet" rather than as a broken launch.
+        """
         environment = {
             "HARDY_RUN_DIR": str(run_dir),
             "HARDY_CONFIG": str(self._config_path),
@@ -193,7 +222,7 @@ class CodexRuntime:
                 }
             }
         }
-        sdk_thread = self._client.thread_start(
+        return self._client.thread_start(
             model=model,
             cwd=str(run_dir),
             sandbox=sdk.Sandbox.workspace_write,
@@ -202,7 +231,6 @@ class CodexRuntime:
             developer_instructions=DEVELOPER_INSTRUCTIONS,
             config=configuration,
         )
-        return AgentThread(sdk_thread=sdk_thread, wall_seconds=wall_seconds)
 
     def run_structured(
         self,
@@ -211,128 +239,50 @@ class CodexRuntime:
         prompt: str,
         output_type: type[T],
     ) -> T:
+        """One exchange on `thread`, answered as `output_type` within its deadline.
+
+        The deadline is kept on the caller's side, because this SDK's `turn`
+        takes none: see `_StructuredTurn`. Every event is journaled as it
+        arrives. An answer that arrived before the deadline passed is still
+        the stage's answer; otherwise an expired turn is interrupted and
+        raises `TimeoutError`, and a turn that ends without a valid structured
+        answer is a failed stage.
+        """
         self._asked += 1
         deadline = time.monotonic() + thread.wall_seconds if thread.wall_seconds else None
         phase = _phase_for_stage(stage)
-        outbox: queue.Queue = queue.Queue()
-        abandoned = threading.Event()
-        publication = threading.Lock()
-        published_handle = None
-        interrupt_claimed = False
-        handle = None
-        final_response: T | None = None
-        malformed = False
-
-        def start_interrupt(sdk_handle: Any) -> tuple[threading.Thread, list[str]]:
-            # Daemons never journal: the caller can return and seal the run
-            # while SDK startup or interruption is still blocked.
-            failures: list[str] = []
-
-            def interrupt() -> None:
-                try:
-                    sdk_handle.interrupt()
-                except Exception as error:
-                    failures.append(str(error))
-
-            worker = threading.Thread(target=interrupt, name="hardy-codex-interrupt", daemon=True)
-            worker.start()
-            return worker, failures
-
-        def pump() -> None:
-            nonlocal published_handle, interrupt_claimed
-            # Both SDK startup and stream reads can block. Only this daemon
-            # touches the SDK; the caller owns the deadline and the record.
-            try:
-                sdk_handle = thread.sdk_thread.turn(
-                    prompt, output_schema=output_type.model_json_schema()
-                )
-                with publication:
-                    published_handle = sdk_handle
-                    late = abandoned.is_set()
-                    if late:
-                        interrupt_claimed = True
-                if late:
-                    start_interrupt(sdk_handle)
-                    return
-                outbox.put(("handle", sdk_handle, time.monotonic()))
-                for event in sdk_handle.stream():
-                    if abandoned.is_set():
-                        return
-                    outbox.put(("event", event, time.monotonic()))
-            except BaseException as error:
-                outbox.put(("error", error, time.monotonic()))
-            finally:
-                outbox.put(("done", None, time.monotonic()))
-
-        threading.Thread(target=pump, name="hardy-codex-turn", daemon=True).start()
-        expired = False
-        stream_finished = False
-        interruption = None
+        turn = _StructuredTurn(thread, prompt, output_type)
+        turn.start()
+        finished = False
         try:
-            while True:
-                remaining = None if deadline is None else max(0, deadline - time.monotonic())
-                try:
-                    kind, value, received_at = outbox.get(timeout=remaining)
-                    if deadline is not None and received_at > deadline:
-                        expired = True
-                        break
-                except queue.Empty:
-                    expired = True
-                    break
-                if kind == "handle":
-                    handle = value
-                    thread.active_turn = handle
-                elif kind == "event":
-                    normalized = normalize_event(value)
-                    method = str(normalized.get("method", "unknown"))
-                    self._store.append("codex." + method.replace("/", "."), normalized, phase=phase)
-                    candidate = _agent_message_text(normalized)
-                    if candidate is not None:
-                        try:
-                            final_response = output_type.model_validate_json(candidate)
-                            malformed = False
-                        except (ValidationError, ValueError):
-                            final_response = None
-                            malformed = True
-                elif kind == "error":
-                    raise value
-                else:
-                    stream_finished = True
-                    break
+            finished = turn.read(deadline, journal=partial(self._journal, phase=phase))
         finally:
-            with publication:
-                abandoned.set()
-                interrupt_handle = None
-                if not stream_finished and published_handle is not None and not interrupt_claimed:
-                    interrupt_claimed = True
-                    interrupt_handle = published_handle
             # Cleanup must not depend on optional record writes: event
             # processing can fail while the SDK stream is still blocked, and
             # the deadline's own journal writes can fail as well.
-            if interrupt_handle is not None:
-                interruption = start_interrupt(interrupt_handle)
-            if thread.active_turn is handle:
-                thread.active_turn = None
-        if expired:
-            if interruption is not None:
-                # A transport's interrupt may itself stall. Wait only briefly
-                # for its outcome; the daemon never writes to the run record.
-                self._store.append("codex.interrupt_requested", {}, phase=phase)
-                interrupter, failures = interruption
-                interrupter.join(timeout=0.01)
-                if failures:
-                    self._store.append("codex.interrupt_failed", {"error": failures[0]}, phase=phase)
-                elif interrupter.is_alive():
-                    self._store.append("codex.interrupt_pending", {}, phase=phase)
-            if final_response is not None:
-                self._store.append("codex.deadline_raced", {}, phase=phase)
-                return final_response
-            raise TimeoutError(f"the {stage} turn exceeded its {thread.wall_seconds:g}s budget")
-        if malformed:
-            raise ValueError(f"{stage} turn returned malformed structured output")
-        if final_response is None:
-            raise ValueError(f"{stage} turn returned no structured final response")
-        return final_response
+            interruption = turn.abandon(finished=finished)
+        if not finished:
+            return self._expired(turn, interruption, stage, phase)
+        return turn.answer(stage)
+
+    def _journal(self, event: dict[str, Any], *, phase: RunPhase) -> None:
+        method = str(event.get("method", "unknown"))
+        self._store.append("codex." + method.replace("/", "."), event, phase=phase)
+
+    def _expired(self, turn: _StructuredTurn[T], interruption: _Interruption | None, stage: str, phase: RunPhase) -> T:
+        """Settle a turn whose deadline passed: record the interrupt, keep an
+        answer that raced the deadline, and otherwise raise `TimeoutError`."""
+        if interruption is not None:
+            # A transport's interrupt may itself stall. Wait only briefly
+            # for its outcome; the daemon never writes to the run record.
+            self._store.append("codex.interrupt_requested", {}, phase=phase)
+            outcome = interruption.outcome()
+            if outcome is not None:
+                self._store.append(*outcome, phase=phase)
+        if turn.response is not None:
+            self._store.append("codex.deadline_raced", {}, phase=phase)
+            return turn.response
+        raise TimeoutError(f"the {stage} turn exceeded its {turn.thread.wall_seconds:g}s budget")
 
     def run_proof(self, thread: AgentThread, prompt: str) -> ProofSubmission:
         return self.run_structured(thread, "proof", prompt, ProofSubmission)
@@ -344,6 +294,7 @@ class CodexRuntime:
                 handle.interrupt()
 
     def close(self) -> None:
+        """Remove the readers' empty directories and close the SDK client."""
         for directory in self._isolated:
             # Nothing was written into it, and a reader that somehow did write
             # produced no evidence: the run's record is the run directory.
@@ -354,7 +305,157 @@ class CodexRuntime:
             close()
 
 
-def normalize_event(event: Any) -> dict[str, Any]:
+@dataclass(frozen=True)
+class _Interruption:
+    """An interrupt asked of the SDK on a daemon thread, and how it went."""
+
+    worker: threading.Thread
+    failures: list[str]
+
+    def outcome(self) -> tuple[str, dict[str, Any]] | None:
+        """The journal entry for how the interrupt went after a brief wait:
+        failed, still pending, or None for done."""
+        self.worker.join(timeout=INTERRUPT_GRACE_SECONDS)
+        if self.failures:
+            return "codex.interrupt_failed", {"error": self.failures[0]}
+        if self.worker.is_alive():
+            return "codex.interrupt_pending", {}
+        return None
+
+
+def _interrupt(sdk_handle: Any) -> _Interruption:
+    """Ask the SDK to interrupt a turn, without waiting for it to answer.
+
+    A daemon, which never journals: the caller can return and seal the run
+    while SDK startup or interruption is still blocked.
+    """
+    failures: list[str] = []
+
+    def interrupt() -> None:
+        try:
+            sdk_handle.interrupt()
+        except Exception as error:
+            failures.append(str(error))
+
+    worker = threading.Thread(target=interrupt, name="hardy-codex-interrupt", daemon=True)
+    worker.start()
+    return _Interruption(worker, failures)
+
+
+class _StructuredTurn(Generic[T]):
+    """One structured turn: a daemon reads the SDK, the caller reads the daemon.
+
+    Both SDK startup and stream reads can block, so only the daemon touches
+    the SDK and the caller keeps the deadline and the record. The two meet
+    under `_publication`: whichever learns first that the turn is abandoned
+    -- the caller giving up, or the daemon publishing its handle after that --
+    claims the turn's one interrupt.
+    """
+
+    def __init__(self, thread: AgentThread, prompt: str, output_type: type[T]) -> None:
+        self.thread = thread
+        self._prompt, self._output_type = prompt, output_type
+        self._outbox: queue.Queue = queue.Queue()
+        self._abandoned = threading.Event()
+        self._publication = threading.Lock()
+        self._published: Any = None
+        self._interrupt_claimed = False
+        #: The handle the caller received, which it publishes on the thread
+        #: for `CodexRuntime.cancel` while the turn is open.
+        self._handle: Any = None
+        #: The last agent message, validated, and whether it failed to be.
+        self.response: T | None = None
+        self.malformed = False
+
+    def start(self) -> None:
+        threading.Thread(target=self._pump, name="hardy-codex-turn", daemon=True).start()
+
+    def _pump(self) -> None:
+        try:
+            sdk_handle = self.thread.sdk_thread.turn(
+                self._prompt, output_schema=self._output_type.model_json_schema()
+            )
+            if self._publish_late(sdk_handle):
+                return
+            self._outbox.put(("handle", sdk_handle, time.monotonic()))
+            for event in sdk_handle.stream():
+                if self._abandoned.is_set():
+                    return
+                self._outbox.put(("event", event, time.monotonic()))
+        except BaseException as error:
+            self._outbox.put(("error", error, time.monotonic()))
+        finally:
+            self._outbox.put(("done", None, time.monotonic()))
+
+    def _publish_late(self, sdk_handle: Any) -> bool:
+        """Publish the handle; if the caller has already given up, claim and
+        send its interrupt instead and say so."""
+        with self._publication:
+            self._published = sdk_handle
+            late = self._abandoned.is_set()
+            if late:
+                self._interrupt_claimed = True
+        if late:
+            _interrupt(sdk_handle)
+        return late
+
+    def read(self, deadline: float | None, *, journal: Callable[[dict[str, Any]], None]) -> bool:
+        """Read the turn until its stream finishes (True) or the deadline
+        passes (False), journaling each event and keeping the latest answer.
+
+        Something received after the deadline is not read: the turn had
+        expired by the time it arrived, however late the caller woke.
+        """
+        while True:
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            try:
+                kind, value, received_at = self._outbox.get(timeout=remaining)
+            except queue.Empty:
+                return False
+            if deadline is not None and received_at > deadline:
+                return False
+            if kind == "done":
+                return True
+            if kind == "error":
+                raise value
+            if kind == "handle":
+                self._handle = self.thread.active_turn = value
+            else:
+                normalized = normalize_event(value)
+                journal(normalized)
+                self._consider(_agent_message_text(normalized))
+
+    def _consider(self, candidate: str | None) -> None:
+        if candidate is None:
+            return
+        try:
+            self.response, self.malformed = self._output_type.model_validate_json(candidate), False
+        except (ValidationError, ValueError):
+            self.response, self.malformed = None, True
+
+    def abandon(self, *, finished: bool) -> _Interruption | None:
+        """Stop reading, and interrupt the turn unless its stream finished or
+        its interrupt is already claimed. Clears the thread's open turn."""
+        with self._publication:
+            self._abandoned.set()
+            claimed = None
+            if not finished and self._published is not None and not self._interrupt_claimed:
+                self._interrupt_claimed = True
+                claimed = self._published
+        interruption = _interrupt(claimed) if claimed is not None else None
+        if self.thread.active_turn is self._handle:
+            self.thread.active_turn = None
+        return interruption
+
+    def answer(self, stage: str) -> T:
+        if self.malformed:
+            raise ValueError(f"{stage} turn returned malformed structured output")
+        if self.response is None:
+            raise ValueError(f"{stage} turn returned no structured final response")
+        return self.response
+
+
+def normalize_event(event: object) -> dict[str, Any]:
     """Reduce an SDK event to something the trajectory can hold."""
     if isinstance(event, dict):
         normalized = _json_value(event)
@@ -368,7 +469,7 @@ def normalize_event(event: Any) -> dict[str, Any]:
     return normalized
 
 
-def _json_value(value: Any) -> Any:
+def _json_value(value: object) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     if is_dataclass(value) and not isinstance(value, type):
