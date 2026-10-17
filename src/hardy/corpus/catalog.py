@@ -19,6 +19,7 @@ from pydantic import Field, ValidationError
 
 from hardy.corpus import taxonomy
 from hardy.corpus.problems import Entry, ProblemSet
+from hardy.foundation.locking import atomic_write_bytes
 from hardy.foundation.values import FrozenModel
 
 DEFAULT_CORPUS = Path("corpus")
@@ -443,15 +444,17 @@ def release(root: Path, version: str, notes: list[str], *, today: str) -> list[s
             raise CorpusError(f"{shard.name}: not a shard envelope. No shard was rewritten")
         payload["corpus_version"] = version
         stamped.append((shard, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"))
+    # Each file is replaced whole, so a crash mid-release leaves every shard
+    # either on the old version or the new one, never half written.
     for shard, text in stamped:
-        shard.write_text(text, encoding="utf-8", newline="\n")
+        atomic_write_bytes(shard, text.encode("utf-8"))
 
     changelog = root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
     entry = "\n".join(f"- {note}" for note in notes) or "- (no note given)"
     section = f"## {version} - {today} - manifest {manifest_digest(root)} - scheme {MANIFEST_DIGEST_SCHEME}\n\n{entry}\n\n"
     at = text.index(f"## {current}")
-    changelog.write_text(text[:at] + section + text[at:], encoding="utf-8", newline="\n")
+    atomic_write_bytes(changelog, (text[:at] + section + text[at:]).encode("utf-8"))
     return check_issues(root)
 
 
