@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from hardy.documents import conversation, export
+from hardy.documents import conversation, export, markup, redaction
 
 # POSIX mode bits and fifos have no Windows counterpart: `chmod` there toggles
 # a read-only flag, `umask` is a no-op, and `os.mkfifo` does not exist.
@@ -1638,3 +1638,14 @@ def test_authorization_redaction_preserves_the_scheme_on_repeat():
         assert 'hunter2' not in once and 'private-value' not in once
         assert export.redact(once) == once
         assert ('Basic' in once if 'Basic' in original else 'Digest' in once)
+
+
+def test_free_text_is_redacted_on_the_page_and_audited_source_is_not():
+    """The two escapers are the two rules: `escape` runs the token shapes,
+    `verbatim` never does, because a Lean string literal can hold any shape and
+    the page may not alter what the kernel checked."""
+    token = 'sk-' + 'A' * 20
+    assert markup.escape(f'key {token} <b>') == 'key [REDACTED-KEY] &lt;b&gt;'
+    statement = f'theorem t : "{token}" = x'
+    assert markup.verbatim(statement) == statement.replace('"', '&quot;')
+    assert redaction.redact(f'{token}', keys=False) == '[REDACTED-KEY]'
