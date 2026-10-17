@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy.algebra.cas import CasSession, SympyBackend, _SentinelBackend
+from hardy.algebra.backends import SentinelBackend, SympyBackend
 from hardy.algebra.scripts import can_sweep_descendants
+from hardy.algebra.session import CasSession
 from hardy.workflows.contracts import RunLimits
 
 FAKE_CAS = Path(__file__).parents[1] / "fake_cas.py"
@@ -111,7 +112,7 @@ def reproduced():
 FAKE_SENTINEL = Path(__file__).parents[1] / "fake_sentinel_cas.py"
 
 
-class FakeSentinelBackend(_SentinelBackend):
+class FakeSentinelBackend(SentinelBackend):
     """Sentinel framing against a scripted line-oriented interpreter."""
 
     name = "singular"  # a real backend name, so config paths accept it
@@ -151,7 +152,7 @@ def sentinel_session(tmp_path):
 FAKE_SENTINEL_ECHO = Path(__file__).parents[1] / "fake_sentinel_cas_echo.py"
 
 
-class FakeEchoingSentinelBackend(_SentinelBackend):
+class FakeEchoingSentinelBackend(SentinelBackend):
     """Sentinel framing against a scripted interpreter that echoes stdin and
     writes errors to stderr -- Macaulay2's behaviour, unlike
     `FakeSentinelBackend` above, which is modelled on Singular and does
