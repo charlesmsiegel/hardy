@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal, get_args
 
 from hardy.documents.reader import Displayed, assemble, without_definitions
 from hardy.documents.reader import displayed as displayed
@@ -50,7 +51,10 @@ PROOF = ":="
 #: `theorem` sits third: a document asserting a claim nothing backs is worse
 #: than one that backs its claims imprecisely, and not as bad as having no Lean
 #: at all.
-KINDS = ("open", "lean", "conditional", "theorem", "statement", "record", "label", "appendix", "assumption")
+ObligationKind = Literal[
+    "open", "lean", "conditional", "theorem", "statement", "record", "label", "appendix", "assumption"
+]
+KINDS: tuple[ObligationKind, ...] = get_args(ObligationKind)
 # `\newtheorem{theorem}{Theorem}` declares an environment; the last group is the
 # word printed in front of the number. Matched on that word rather than on the
 # environment name, because the name is the author's private choice while the
@@ -65,7 +69,7 @@ LABEL = re.compile(r"\\label\{([^}]*)\}")
 class Obligation:
     """One reason the workspace is not finished, and what would settle it."""
 
-    kind: str      # one of KINDS
+    kind: ObligationKind
     subject: str   # the Lean name it is about; "" when it is about the document
     detail: str
 
