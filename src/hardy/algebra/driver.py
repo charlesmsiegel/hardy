@@ -60,6 +60,8 @@ CELL_FILENAME = "<hardy-cell>"
 # where a child the cell spawned still holds the write end and has queued
 # output ahead of it.
 SETTLE_SECONDS = 5.0
+# How much one drain of a captured descriptor reads at a time.
+READ_BYTES = 65_536
 
 
 # Set when an interrupt arrives with no cell to abandon: between cells, or
@@ -633,7 +635,7 @@ class _Capture:
         stream = self.streams[fd]
         while True:
             try:
-                chunk = os.read(stream.read_fd, 65_536)
+                chunk = os.read(stream.read_fd, READ_BYTES)
             except OSError:
                 chunk = b""
             if not chunk:

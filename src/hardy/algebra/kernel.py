@@ -40,6 +40,20 @@ def _is_set(event: threading.Event | None) -> bool:
     return event is not None and event.is_set()
 
 
+def _settle_job(process: subprocess.Popen, readers: list[threading.Thread]) -> None:
+    """Wait, briefly, for a terminated Windows job to let go of its handles.
+
+    TerminateJobObject returns before its members have released their
+    handles. The venv launcher exiting is not proof its interpreter has
+    released cwd; close must settle that job before a rename.
+    """
+    deadline = time.monotonic() + _SETTLE_SECONDS
+    while tree_has_members(process) is True and time.monotonic() < deadline:
+        time.sleep(0.01)
+    for reader in readers:
+        reader.join(timeout=max(0, deadline - time.monotonic()))
+
+
 class Kernel:
     """One live child, drained by threads so a deadline can always be enforced."""
 
@@ -187,6 +201,11 @@ class Kernel:
             self._tail = b""
 
     def send(self, payload: bytes) -> bool:
+        """Write `payload` to the child's stdin; False if it did not all go.
+
+        Returns as soon as the kernel is stopped, even with a write still
+        blocked on a pipe nobody reads.
+        """
         # Claim ownership before touching BufferedWriter. Shutdown must never
         # wait for its IO lock when an escaped helper keeps the input pipe open.
         with self._input_lock:
@@ -314,21 +333,8 @@ class Kernel:
         # SIGTERM taking the leader is not proof its helpers stopped.
         kill_group(self.process)
         if os.name == "nt" and not immediate:
-            self._settle_job()
+            _settle_job(self.process, [reader for _, reader in self._readers])
         self._close_released_streams()
-
-    def _settle_job(self) -> None:
-        """Wait, briefly, for a terminated Windows job to let go of its handles.
-
-        TerminateJobObject returns before its members have released their
-        handles. The venv launcher exiting is not proof its interpreter has
-        released cwd; close must settle that job before a rename.
-        """
-        deadline = time.monotonic() + _SETTLE_SECONDS
-        while tree_has_members(self.process) is True and time.monotonic() < deadline:
-            time.sleep(0.01)
-        for _, reader in self._readers:
-            reader.join(timeout=max(0, deadline - time.monotonic()))
 
     def _close_released_streams(self) -> None:
         """Close every stream no thread still holds.
