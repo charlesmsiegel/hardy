@@ -30,11 +30,13 @@ from typing import Any, Self
 
 from pydantic import Field, model_validator
 
+from hardy.agents.usage import REPORTED_COUNTERS, token_count
 from hardy.foundation.files import WriteGuard
 from hardy.foundation.locking import FileLock
 from hardy.foundation.values import FrozenModel, json_digest
 
-COUNTERS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+#: What a settlement records, one entry per counter: the reported vocabulary.
+COUNTERS = REPORTED_COUNTERS
 
 
 class Tariff(FrozenModel):
@@ -235,8 +237,7 @@ class SpendBudget:
     def _settlement(self, identifier: str, usage: Mapping | None) -> dict[str, Any]:
         if usage is not None and not isinstance(usage, Mapping):
             raise ValueError("provider settlement requires a usage object")
-        reported = {key: value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-                    for key in COUNTERS for value in [(usage or {}).get(key)]}
+        reported = {key: token_count((usage or {}).get(key)) for key in COUNTERS}
         complete = all(value is not None for value in reported.values())
         cost = self.policy.tariff.cost(reported) if complete and self.policy.tariff else None
         return {"id": identifier, "reported": reported, "tokens": sum(reported.values()) if complete else None,
