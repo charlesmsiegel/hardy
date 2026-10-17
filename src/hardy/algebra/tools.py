@@ -226,6 +226,12 @@ def _is_control(character: str) -> bool:
     return character < " " or character == "\x7f" or character in "\x85\u2028\u2029"
 
 
+def _leaves_the_tree(relative: PurePosixPath) -> bool:
+    """Whether `relative` is absolute, empty, or steps anywhere but down."""
+    parts = relative.parts
+    return relative.is_absolute() or not parts or any(part in {"..", ".", ""} for part in parts)
+
+
 def _is_hardys_own(relative: PurePosixPath, suffix: str) -> bool:
     """Whether `relative` names one of Hardy's own files at the top of `cas/`."""
     if len(relative.parts) != 1:
@@ -246,13 +252,13 @@ def cas_relative(path: str, suffix: str) -> PurePosixPath:
     if any(_is_control(character) for character in str(path)):
         raise CasError(f"control characters are not allowed in a cell path: {path!r}")
     relative = PurePosixPath(str(path).replace("\\", "/"))
-    parts = relative.parts
-    if relative.is_absolute() or not parts or any(part in {"..", ".", ""} for part in parts):
+    if _leaves_the_tree(relative):
         raise CasError(f"not a path inside cas/: {path!r}")
     if not relative.name.endswith(suffix) or relative.name == suffix:
         raise CasError(f"a cell for this backend is filed with the {suffix} suffix: {path!r}")
-    if portable_key(parts[0]) in CAS_SCRATCH:
-        raise CasError(f"{parts[0]}/ is scratch an export empties; file the cell elsewhere: {path!r}")
+    top = relative.parts[0]
+    if portable_key(top) in CAS_SCRATCH:
+        raise CasError(f"{top}/ is scratch an export empties; file the cell elsewhere: {path!r}")
     if _is_hardys_own(relative, suffix):
         raise CasError(f"{relative.name} is Hardy's own file under cas/ and not a cell's: {path!r}")
     return relative
