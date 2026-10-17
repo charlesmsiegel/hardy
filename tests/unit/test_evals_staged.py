@@ -60,7 +60,7 @@ class _Runtime:
 def test_the_canonical_prompt_carries_both_statements_and_lives_outside_the_staged_hash():
     text = prompts.canonical_prompt("theorem A : P", "theorem B : Q")
     assert "theorem A : P" in text and "theorem B : Q" in text and "CANONICAL" in text and "MODEL" in text
-    assert "canonical" not in prompts._prompt_set_payload()
+    assert "canonical" not in prompts.STAGED_PROMPT_SET.payload()
 
 
 def _verdict_kwargs(**overrides) -> dict:

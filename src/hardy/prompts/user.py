@@ -6,7 +6,7 @@ text that gets sent. The repeatable asks in mathematics are stereotyped --
 "restate this in the style of the existing writeup" -- and they are worth
 keeping next to the project rather than retyping.
 
-Deliberately outside `_prompt_set_payload`, so nothing here moves
+Deliberately outside `STAGED_PROMPT_SET`, so nothing here moves
 `PROMPT_SET_SHA256`. That hash identifies the *instructions Hardy sends*, and a
 user template is not one of them: it is input, typed by the person at the
 prompt, and expanding it is a convenience over typing the same paragraph again.

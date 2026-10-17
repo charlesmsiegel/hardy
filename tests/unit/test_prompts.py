@@ -157,7 +157,7 @@ def test_line_endings_do_not_change_the_recorded_hash(tmp_path: Path):
         template.write_bytes(original.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
         prompts.source.cache_clear()
         assert "\r" not in prompts.source("staged/base")
-        assert prompts._prompt_set_hash() == prompts.PROMPT_SET_SHA256
+        assert prompts.STAGED_PROMPT_SET.sha256() == prompts.PROMPT_SET_SHA256
     finally:
         template.write_bytes(original)
         prompts.source.cache_clear()
@@ -167,8 +167,8 @@ def test_the_prompt_set_hash_covers_the_template_files():
     """The hash goes into every run manifest, so it must follow the text that
     is actually sent — which now lives in files, not in this module."""
     prompts = importlib.import_module("hardy.prompts")
-    assert prompts._prompt_set_hash() == prompts.PROMPT_SET_SHA256
-    payload = prompts._prompt_set_payload()
+    assert prompts.STAGED_PROMPT_SET.sha256() == prompts.PROMPT_SET_SHA256
+    payload = prompts.STAGED_PROMPT_SET.payload()
     assert payload["proof"] == prompts.source("staged/proof")
     assert payload["version"] == prompts.PROMPT_SET_VERSION
 
@@ -183,7 +183,7 @@ def test_the_prompt_set_hash_covers_every_staged_template():
     repeat that quietly.
     """
     prompts = importlib.import_module("hardy.prompts")
-    payload = prompts._prompt_set_payload()
+    payload = prompts.STAGED_PROMPT_SET.payload()
     templates = _staged_template_names(prompts.SUFFIX)
     assert templates, "no staged templates found; the glob is looking in the wrong place"
     missing = [name for name in templates if payload.get(name) != prompts.source(f"staged/{name}")]
@@ -201,20 +201,20 @@ def test_the_prompt_set_hash_is_the_staged_set_and_says_so():
     to the payload is defensible; doing it by accident is not.
     """
     prompts = importlib.import_module("hardy.prompts")
-    assert set(prompts._prompt_set_payload()) == set(_staged_template_names(prompts.SUFFIX)) | {"version"}
+    assert set(prompts.STAGED_PROMPT_SET.payload()) == set(_staged_template_names(prompts.SUFFIX)) | {"version"}
 
 
 def test_the_batch_prompt_set_hash_is_its_own_and_covers_only_the_batch_templates():
     """The evals set runner's batch condition needs a hash over what a batch
     row actually sends -- `batch/system` and `batch/task` -- distinct from
     `PROMPT_SET_SHA256`, which covers the staged templates and must not widen
-    to include these (`_prompt_set_payload`'s docstring)."""
+    to include these (the comment above `STAGED_PROMPT_SET`)."""
     prompts = importlib.import_module("hardy.prompts")
     assert len(prompts.BATCH_PROMPT_SET_SHA256) == 64
     assert all(c in "0123456789abcdef" for c in prompts.BATCH_PROMPT_SET_SHA256)
     assert prompts.BATCH_PROMPT_SET_SHA256 != prompts.PROMPT_SET_SHA256
-    assert prompts._batch_prompt_set_hash() == prompts.BATCH_PROMPT_SET_SHA256
-    assert prompts._batch_prompt_set_payload() == {"system": prompts.source("batch/system"), "task": prompts.source("batch/task")}
+    assert prompts.BATCH_PROMPT_SET.sha256() == prompts.BATCH_PROMPT_SET_SHA256
+    assert prompts.BATCH_PROMPT_SET.payload() == {"system": prompts.source("batch/system"), "task": prompts.source("batch/task")}
 
 
 def test_the_batch_prompt_set_hash_changes_when_a_batch_template_does(monkeypatch):
@@ -227,7 +227,7 @@ def test_the_batch_prompt_set_hash_changes_when_a_batch_template_does(monkeypatc
         return text + " " if name == "batch/task" else text
 
     monkeypatch.setattr(prompts, "source", patched)
-    assert prompts._batch_prompt_set_hash() != original
+    assert prompts.BATCH_PROMPT_SET.sha256() != original
 
 
 def test_the_chat_prompt_describes_the_file_tree():
@@ -360,3 +360,4 @@ def test_context_candidate_fence_collision_lengthens_marker(monkeypatch):
 
     monkeypatch.setattr(prompts.hashlib, "sha256", lambda payload: Digest())
     assert prompts._fence("claim", "Lean", "context ===HARDY-12345678===") == "===HARDY-123456789==="
+
