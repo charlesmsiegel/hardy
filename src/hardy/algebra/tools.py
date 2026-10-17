@@ -20,8 +20,9 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from hardy.algebra.cas import CasError, CasSession, CellRecord, backend_for
-from hardy.algebra.contracts import MERGED_CAPTURE_NOTE
+from hardy.algebra.backends import backend_for
+from hardy.algebra.contracts import MERGED_CAPTURE_NOTE, CasError, CellRecord
+from hardy.algebra.session import CasSession
 from hardy.foundation.files import LayoutError, files_under, guard_for, portable_key, read_text
 from hardy.foundation.values import FrozenModel
 from hardy.prompts import cas_spill_note
