@@ -35,17 +35,16 @@ import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from hardy.algebra.backends import CasBackend
 from hardy.algebra.contracts import (
     MERGED_CAPTURE_NOTE,
     CasError,
+    CellOutcome,
     CellRecord,
-    reproduces,
-    same_output,
-    state_unchecked,
-    unobservable,
+    Verdict,
+    check_replay,
 )
 from hardy.algebra.operations import OperationControl
 from hardy.algebra.replay import replay_in_fresh_kernel
@@ -60,16 +59,18 @@ WARNING = (
     "sandbox: execute it only in a disposable environment you trust."
 )
 
-Verdict = Literal["verified", "diverged", "failed", "unverified"]
-
-
 class CellVerdict(FrozenModel):
+    """One accepted cell's replay verdict, as `export.json` and the notebook
+    publish it (`check_replay` decides it)."""
+
     seq: int
     verdict: Verdict
     detail: str = ""
 
 
 class ExportReport(FrozenModel):
+    """Where an export wrote its artifacts, and what each of its two checks found."""
+
     script_path: str
     notebook_path: str
     manifest_path: str
@@ -95,90 +96,9 @@ class ExportReport(FrozenModel):
         )
 
 
-def _verdicts(
-    cells: tuple[CellRecord, ...], outcomes: list[Any], backend: Any = None
-) -> list[CellVerdict]:
-    # Whether a missing digest on these records means anything. On the default
-    # backend it does: the protocol carries one, so its absence says Hardy
-    # could not fingerprint that namespace. On a sentinel backend every record
-    # is digestless and the absence says nothing at all, so drawing a verdict
-    # from it would mark every Singular and Macaulay2 cell unverified forever.
-    records_state = getattr(backend, "records_state", False)
-    verdicts = []
-    for record, outcome in zip(cells, outcomes, strict=True):
-        if outcome is None:
-            verdicts.append(
-                CellVerdict(seq=record.seq, verdict="unverified", detail="not reached")
-            )
-        elif outcome.status != "ok":
-            verdicts.append(
-                CellVerdict(
-                    seq=record.seq,
-                    verdict="failed",
-                    detail=f"replay {outcome.status}: {(outcome.stderr or outcome.stdout).strip()[:160]}",
-                )
-            )
-        elif not reproduces(record, outcome):
-            # Which comparison failed, not just that one did. A silent
-            # `x = random.random()` reproduces every printed field and fails
-            # only on the digest, and reporting that as "different output"
-            # told `export.json` and the notebook the opposite of what
-            # happened -- hiding exactly the state discrepancy the digest was
-            # added to expose.
-            verdicts.append(
-                CellVerdict(
-                    seq=record.seq,
-                    verdict="diverged",
-                    detail=(
-                        "replay produced different output"
-                        if not same_output(record, outcome)
-                        else "replay reproduced the output and rebuilt a different namespace"
-                    ),
-                )
-            )
-        elif record.capture_truncated or outcome.capture_truncated:
-            # The prefixes match and nothing is known about the rest. Calling
-            # that "verified" would let `reproduces` claim complete reproduction
-            # on evidence that stops at `cas_output_bytes`; AGENTS.md asks for a
-            # partial result to state its limits rather than round itself up.
-            verdicts.append(
-                CellVerdict(
-                    seq=record.seq,
-                    verdict="unverified",
-                    detail=(
-                        "capture truncated at cas_output_bytes: the retained prefixes "
-                        "match, and the discarded tails could not be compared"
-                    ),
-                )
-            )
-        elif records_state and state_unchecked(record, outcome):
-            # The replay reproduced everything Hardy can see and nothing more.
-            # `_restore` already refuses to call this a checked rebuild; an
-            # export publishing the same replay as `verified` would be the
-            # same overclaim on the other path.
-            #
-            # Either side of the comparison missing puts a cell here. A record
-            # with no fingerprint and a replay that could not take one are
-            # different causes with the same consequence: nothing was compared.
-            verdicts.append(
-                CellVerdict(
-                    seq=record.seq,
-                    verdict="unverified",
-                    detail=(
-                        "output reproduced, state not compared: "
-                        + (
-                            "this kernel could not fingerprint the namespace this "
-                            "cell left"
-                            if unobservable(record)
-                            else "the replay could not fingerprint the namespace it "
-                            "rebuilt"
-                        )
-                    ),
-                )
-            )
-        else:
-            verdicts.append(CellVerdict(seq=record.seq, verdict="verified"))
-    return verdicts
+def _verdict(record: CellRecord, outcome: CellOutcome | None) -> CellVerdict:
+    check = check_replay(record, outcome)
+    return CellVerdict(seq=record.seq, verdict=check.verdict, detail=check.detail)
 
 
 def _content_lines(text: str) -> list[str]:
@@ -363,7 +283,7 @@ def _one_line(text: str) -> str:
     """An excerpt with no newline left in it, for quoting into a comment.
 
     A comment ends at the first newline in every language Hardy drives, so
-    anything written into one has to be flattened first. `_verdicts` builds a
+    anything written into one has to be flattened first. `check_replay` builds a
     `failed` detail out of the replay's stderr, and for the default backend
     that is a traceback: emitted as one comment line, its second line onward
     landed in the published script as *source*, and the file died with
@@ -836,7 +756,7 @@ def _export_held(session: CasSession, directory: Path, *,
     )
     if control is not None:
         control.check()
-    verdicts = _verdicts(cells, outcomes, session.backend)
+    verdicts = [_verdict(record, outcome) for record, outcome in zip(cells, outcomes, strict=True)]
 
     script_path = directory / f"session{session.backend.script_suffix}"
     notebook_path = directory / "session.ipynb"

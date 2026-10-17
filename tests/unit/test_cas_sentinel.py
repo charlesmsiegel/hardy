@@ -137,7 +137,7 @@ def test_export_does_not_certify_a_legacy_separate_capture(tmp_path, sentinel_se
 
 
 def test_an_exported_sentinel_script_is_run_and_compared(
-    tmp_path, sentinel_session, script_agreed, reproduced
+    tmp_path, sentinel_session, script_agreed
 ) -> None:
     """The published script is fed back to the interpreter, as a reader would.
 
@@ -150,4 +150,22 @@ def test_an_exported_sentinel_script_is_run_and_compared(
     session.execute("second;")
     report = export_session(session, tmp_path / "cas")
     assert script_agreed(report), report.script_detail
-    assert reproduced(report), report.model_dump_json(indent=2)
+    assert report.diverged == 0 and report.failed == 0, report.model_dump_json(indent=2)
+
+
+def test_a_sentinel_export_does_not_call_an_uncompared_namespace_verified(
+    tmp_path, sentinel_session
+) -> None:
+    """The rule a rebuild applies, on the path that publishes.
+
+    A sentinel interpreter carries no namespace digest, so a rebuild names
+    every replayed cell as reconstructed and not verified. The export replays
+    the same cells the same way, and calling them `verified` there was the
+    overclaim the rebuild refused, written into the artifact a reader keeps.
+    """
+    session = sentinel_session()
+    session.execute("hello;")
+    report = export_session(session, tmp_path / "cas")
+    assert [verdict.verdict for verdict in report.verdicts] == ["unverified"]
+    assert "output reproduced, state not compared" in report.verdicts[0].detail
+    assert report.reproduces is False

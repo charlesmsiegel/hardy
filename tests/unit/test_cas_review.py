@@ -111,9 +111,9 @@ def test_an_honest_rebuild_still_succeeds(sympy_session) -> None:
 
 
 def test_a_backend_with_no_digest_says_what_it_could_not_check(cas_session) -> None:
-    """The fake kernel speaks the protocol without describing its namespace.
+    """`noisy` leaves the fake kernel holding something it cannot describe.
 
-    Neither Singular nor Macaulay2 can be asked for one either. A replay there
+    Neither Singular nor Macaulay2 can be asked for a digest at all. A replay there
     is still worth running -- it catches everything observable -- but a cell
     that printed nothing agrees with its record whatever it rebuilt, and the
     session has to say so rather than report a rebuild as if it had been
