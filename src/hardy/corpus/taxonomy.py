@@ -13,6 +13,9 @@ from contextvars import ContextVar
 from functools import cache
 from pathlib import Path
 
+# The repository's own corpus, found from this file. It exists in a source
+# checkout; an installed wheel packages `src/hardy` alone, so there it names
+# nothing and a caller has to name the corpus it reads.
 CORPUS = Path(__file__).resolve().parents[3] / "corpus"
 
 # Which corpus these lookups read. `--corpus` may name an extracted release or

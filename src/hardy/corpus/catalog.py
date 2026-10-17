@@ -1,7 +1,10 @@
 """The corpus as a directory: sharded loading, tombstones, manifest, checks.
 
-`corpus/` is data. This module is its only reader and writer, so the rule that
-the corpus holds statements only (spec §1) has one place to be enforced.
+`corpus/` is data. This module loads it, checks it and writes its releases, so
+the rule that the corpus holds statements only (spec §1) has one place to be
+enforced. One other writer exists: the corpus viewer (`app/corpus_viewer.py`)
+rewrites a shard when it records a review, after validating the entry through
+`Entry` and checking the corpus again with `check_issues`.
 """
 from __future__ import annotations
 
@@ -71,7 +74,7 @@ def _load_corpus(root: Path) -> tuple[ProblemSet, set[str]]:
     """Concatenate the shards into one validated set.
 
     The filename must agree with `entry.shard`, or the derivation of the shard
-    from `msc[0][:2]` is a fiction nobody checks.
+    from the primary code is a fiction nobody checks.
     """
     entries: list[Entry] = []
     versions: set[str] = set()
@@ -154,7 +157,7 @@ def _load_shard(path: Path) -> Shard:
 
 
 def load_sources(root: Path) -> dict[str, dict]:
-    """The texts entries cite. Absent until phase 3 populates it."""
+    """The texts entries cite, by source id; none when the file is absent."""
     path = root / "sources.json"
     if not path.exists():
         return {}
@@ -169,9 +172,9 @@ def load_sources(root: Path) -> dict[str, dict]:
 def source_issues(problems: ProblemSet, sources: dict[str, dict]) -> list[str]:
     """Occurrences citing a text `sources.json` does not carry.
 
-    The primary occurrence decides the field, the source level C6 reports on,
-    and which prior results may be antecedents (spec §9.0); a citation
-    pointing at no text decides all three from nothing.
+    The primary occurrence decides the source level C6 reports on and which
+    prior results may be antecedents (spec §9.0); a citation pointing at no
+    text decides both from nothing.
     """
     return sorted(
         f"{entry.id!r}: occurrence cites {occurrence.source_id!r}, which is not in sources.json"
@@ -295,6 +298,18 @@ def _scheme_of(text: str) -> str | None:
     return scheme
 
 
+def _describes(root: Path, bound: str, scheme: str | None, current: str) -> bool:
+    """Whether a manifest digest a changelog head binds is the corpus at `root` as it stands.
+
+    `current` is the corpus's digest under the current scheme. A head written
+    before schemes existed bound the legacy digest, which is computed only
+    when the current one does not already match.
+    """
+    if bound == current:
+        return True
+    return scheme is None and bound == manifest_digest(root, scheme="legacy-v1")
+
+
 def changelog_head(root: Path) -> tuple[str, str, str | None]:
     return head_of((root / "CHANGELOG.md").read_text(encoding="utf-8"))
 
@@ -314,10 +329,7 @@ def release_issues(root: Path, prior_changelog: str) -> list[str]:
     version = corpus_version(root)
     manifest = manifest_digest(root)
     prior_scheme = _scheme_of(prior_changelog)
-    unchanged = prior_manifest == manifest
-    if prior_scheme is None and prior_manifest is not None:
-        unchanged = unchanged or prior_manifest == manifest_digest(root, scheme="legacy-v1")
-    if prior_manifest is None or unchanged:
+    if prior_manifest is None or _describes(root, prior_manifest, prior_scheme, manifest):
         return []
     if version == prior_version:
         return [
@@ -374,7 +386,7 @@ def version_issues(root: Path, *, versions: set[str] | None = None) -> list[str]
     else:
         actual = manifest_digest(root)
         scheme = _scheme_of((root / "CHANGELOG.md").read_text(encoding="utf-8"))
-        if bound == actual or (scheme is None and bound == manifest_digest(root, scheme="legacy-v1")):
+        if _describes(root, bound, scheme, actual):
             return issues
 
         issues.append(
@@ -493,7 +505,7 @@ def report(root: Path) -> list[str]:
     """Coverage: where the corpus actually is, by group, status and difficulty."""
     problems = load_corpus(root)
     with taxonomy.using(root):
-        groups = Counter(taxonomy.group_of(e.msc[0]) for e in problems.entries)
+        groups = Counter(taxonomy.group_of(e.primary_code) for e in problems.entries)
     statuses = Counter(e.status for e in problems.entries)
     difficulties = Counter(e.difficulty for e in problems.entries)
     twins = sum(1 for e in problems.entries if e.expected == "false")
