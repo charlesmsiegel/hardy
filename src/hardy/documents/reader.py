@@ -21,16 +21,16 @@ from dataclasses import dataclass, field
 from hardy.documents.scanner import (
     INLINE_VERBATIM,
     Conditionals,
-    _executed_line,
-    _MacroState,
-    _next_conditional,
-    _Purpose,
-    _Reading,
-    _skip_balanced,
-    _tex_lines,
+    MacroState,
+    Purpose,
+    Reading,
+    executed_line,
+    next_conditional,
+    skip_balanced,
+    tex_lines,
     uncommented,
 )
-from hardy.documents.syntax import INCLUSION, ROOT_DOCUMENT, _normalise_include, read_conditionals
+from hardy.documents.syntax import INCLUSION, ROOT_DOCUMENT, normalise_include, read_conditionals
 
 # A branch TeX compiles without typesetting. Bounded to the literal spelling:
 # this is a scanner, not a TeX engine, and the general conditional is a limit
@@ -115,7 +115,7 @@ def displayed(source: str, conditionals: Conditionals | None = None) -> Displaye
     if conditionals is None:
         conditionals = read_conditionals({ROOT_DOCUMENT: source})
     scan = _DisplayScan(conditionals)
-    for raw, ending in _tex_lines(source):
+    for raw, ending in tex_lines(source):
         scan.read_line(raw, ending)
     return scan.result()
 
@@ -143,8 +143,8 @@ class _DisplayScan:
 
     def __init__(self, conditionals: Conditionals) -> None:
         self.conditionals = conditionals
-        self.reading = _Reading(_Purpose.DISPLAY, conditionals, self._inline)
-        self.state = _MacroState()
+        self.reading = Reading(Purpose.DISPLAY, conditionals, self._inline)
+        self.state = MacroState()
         self.ran: list[str] = []
         self.runs: list[tuple[int, int, int]] = []
         self.blocks: list[tuple[int, str]] = []
@@ -208,7 +208,7 @@ class _DisplayScan:
         # `% \fi` while it skips.
         visible = uncommented(line)
         cursor = 0
-        while self.skipping and (found := _next_conditional(visible, self.conditionals, cursor)) is not None:
+        while self.skipping and (found := next_conditional(visible, self.conditionals, cursor)) is not None:
             cursor = found.end()
             self._note_ambiguous(found)
             self.skipping += self.conditionals.nesting(found)
@@ -232,7 +232,7 @@ class _DisplayScan:
 
     def _live(self, line: str) -> str | None:
         self.piece, self.inline = line, []
-        visible, environment, _, _ = _executed_line(line, self.state, self.reading)
+        visible, environment, _, _ = executed_line(line, self.state, self.reading)
         opening = OPENING.match(line, len(visible)) if environment is not None else None
         skipped = FALSE_BRANCH.search(visible)
         self.blocks.extend(
@@ -276,7 +276,7 @@ def target(name: str, tex: Mapping[str, str]) -> str:
     fails in the unhelpful direction, refusing a document whose reader can see
     everything in it.
     """
-    stem = _normalise_include(name)
+    stem = normalise_include(name)
     if not stem:
         return ""
     # `syntax._resolver` answers the same question for the reachability walk,
@@ -361,6 +361,6 @@ def without_definitions(text: str) -> str:
         out.append(text[index : found.start()])
         index = found.end()
         if index < len(text) and text[index] == "{":
-            index = _skip_balanced(text, index, "{", "}")
+            index = skip_balanced(text, index, "{", "}")
     out.append(text[index:])
     return "".join(out)
