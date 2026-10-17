@@ -27,12 +27,25 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
-from hardy.agents.contracts import TurnEvent, final_text
+from hardy.agents.contracts import TurnEvent, final_text, wall_clock_limit
 from hardy.agents.loop import TurnLimitReached
 from hardy.agents.usage import ExchangeReport, stated_counters, token_count
 from hardy.foundation.values import ToolResult
+
+if TYPE_CHECKING:
+    # The SDK is an optional install loaded on first use (`load_sdk`); its
+    # types are named here for the reader and never imported at runtime.
+    from claude_agent_sdk import (
+        AssistantMessage,
+        HookContext,
+        McpSdkServerConfig,
+        PermissionResult,
+        SdkMcpTool,
+        ToolPermissionContext,
+    )
 
 SERVER = "hardy"
 
@@ -43,7 +56,7 @@ TEARDOWN_SECONDS = 5.0
 # How often, at most, text still being streamed is copied into the record
 # before its block completes. A hard kill runs no `finally`, so this interval
 # bounds how many seconds of an answer the user watched arrive a crash can
-# take with it. Per delta would be a line per token; see `_checkpoint`.
+# take with it. Per delta would be a line per token; see `_DrawnText.checkpoint`.
 CHECKPOINT_SECONDS = 2.0
 
 
@@ -53,6 +66,186 @@ class _DrawnBlock:
     text: str = ""
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     checkpointed: str | None = None
+
+
+class _MessageUsage:
+    """What one exchange's own streamed messages moved: a floor under its spend.
+
+    The CLI streams one assistant message per content block, each repeating
+    its API message's usage, so counts are kept per API message id -- which
+    is what stops a three-block answer counting three times -- and the largest
+    of each counter, because output counts can lag in the earlier blocks.
+    """
+
+    def __init__(self) -> None:
+        self._held: dict[str, dict[str, int]] = {}
+
+    def restart(self) -> None:
+        """Forget the last exchange's messages as a new one starts."""
+        self._held = {}
+
+    def note(self, message: AssistantMessage) -> None:
+        """Hold one assistant message's usage, under its API message id."""
+        counted = stated_counters(getattr(message, "usage", None))
+        if not counted:
+            return
+        # An id-less message cannot be matched to its repeats, so it is kept
+        # under its own key: counted once more than it should be rather than
+        # dropped, which would lower the floor below spend.
+        key = getattr(message, "message_id", None) or f"#{len(self._held)}"
+        held = self._held.setdefault(str(key), {})
+        for name, figure in counted.items():
+            held[name] = max(held.get(name, 0), figure)
+
+    def take(self) -> dict[str, int]:
+        """The exchange's floor, summed over its messages; the next starts empty."""
+        own: dict[str, int] = {}
+        for held in self._held.values():
+            for name, figure in held.items():
+                own[name] = own.get(name, 0) + figure
+        self._held = {}
+        return own
+
+
+class _DrawnText:
+    """Text a turn has drawn that no completed block has superseded yet.
+
+    Deltas draw and blocks are authoritative: a completed block consumes its
+    own entry. Whatever is left was drawn and never superseded, and goes into
+    the record marked `partial` -- in checkpoints while a block is still open,
+    and whole when the turn ends however it ends -- so the transcript never
+    denies text the user watched arrive.
+    """
+
+    def __init__(self, observe: Callable[[dict[str, Any]], None], interval: float | None) -> None:
+        self._observe = observe
+        #: How often, at most, an open block is copied into the record. None
+        #: turns checkpointing off; 0 checkpoints on every delta.
+        self.interval = interval
+        #: One entry per streamed text block not completed yet, oldest first,
+        #: and the block index the last delta belonged to.
+        self.blocks: list[_DrawnBlock] = []
+        self._drawing: int | None = None
+        self.checkpointed_at = 0.0
+
+    def restart(self) -> None:
+        """Forget the last turn's blocks as a new turn starts."""
+        self.blocks, self._drawing = [], None
+        # The interval is counted from here, not from the first delta: the
+        # first checkpoint of a turn lands one interval in, like every other.
+        self.checkpointed_at = time.monotonic()
+
+    def draw(self, index: int, text: str) -> None:
+        """Remember a delta as drawn, under the block it belongs to.
+
+        Kept per block, not per turn: one message can carry several text blocks,
+        and each has to be able to recognise the deltas that already drew *it*.
+        """
+        if not self.blocks or index != self._drawing:
+            self.blocks.append(_DrawnBlock())
+            self._drawing = index
+        self.blocks[-1].text += text
+        if self.interval == 0:
+            self.checkpoint()
+
+    def oldest(self) -> _DrawnBlock | None:
+        """The open block the next completed block supersedes, if deltas drew one."""
+        return self.blocks[0] if self.blocks else None
+
+    def consume(self) -> None:
+        """Retire the oldest open block, which a completed block now stands for.
+
+        Its own entry only, oldest first: clearing the lot would make every
+        later block in the same message look undrawn and get drawn twice.
+        """
+        self.blocks.pop(0)
+
+    def settle(self) -> str:
+        """Record the text that was drawn and that no completed block superseded.
+
+        Normally there is none: the block supersedes the deltas that built it,
+        which is the whole rule -- deltas draw, blocks are authoritative. But an
+        interrupt, a wall-clock deadline, or a provider error lands where it
+        lands, and a block that never finished has no authoritative form while
+        its words are already on the user's screen. Dropping them would leave
+        `transcript.jsonl` denying text the user watched arrive.
+
+        Recorded as `partial`, because that is what distinguishes it from a
+        block the provider actually completed. Returned as well, so a caller can
+        decide whether it also belongs in a reply: a cancelled turn's does, and
+        a turn that raises has no reply to put it in.
+        """
+        if not self.blocks:
+            return ""
+        # Joined as blocks are joined: each entry was a block of its own.
+        blocks = self.blocks
+        said = "\n\n".join(block.text for block in blocks if block.text)
+        self.blocks, self._drawing = [], None
+        if not said:
+            return ""
+        if any(block.checkpointed is not None for block in blocks):
+            for block in blocks:
+                if block.text:
+                    self._observe({"type": "assistant", "block_id": block.id,
+                        "message": {"role": "assistant", "content": block.text}, "partial": True})
+        else:
+            self._observe({
+                "type": "assistant",
+                "message": {"role": "assistant", "content": said},
+                "partial": True,
+            })
+        return said
+
+    async def keep_checkpointing(self, *, owned: Callable[[], bool]) -> None:
+        """Persist displayed text even while the provider stops sending deltas,
+        for as long as the turn still `owned` the text."""
+        if self.interval is None or self.interval <= 0:
+            return
+        while True:
+            await asyncio.sleep(self.interval)
+            if not owned():
+                return  # An abandoned turn no longer owns the shared drawn text.
+            self.checkpoint()
+
+    def checkpoint(self) -> None:
+        """Copy the drawn text into the record, at most once per interval.
+
+        The completed block is still the authoritative form and still arrives
+        as before; this is insurance against the process not living to see it.
+        `settle` covers every way a turn can *end* -- interrupt, deadline,
+        provider error -- but a hard kill, a crash, or the power going runs no
+        `finally` at all, and until this the transcript then lost every word of
+        an answer the user had already watched arrive: a lost exchange
+        indistinguishable from one that never happened.
+
+        Paced by `interval` rather than written per delta. Each open block
+        carries its own identity and complete text so far. Completing one
+        cannot discard another block's unfinished words. Unchanged blocks cost
+        no further writes while the provider stalls.
+
+        Marked `partial`, like the text `settle` keeps, because no provider
+        completed it -- and `checkpoint` besides, because unlike that text it
+        is expected to be superseded: by the next checkpoint, or by the block
+        itself. A replay (`export._conversation`) uses exactly that rule to
+        show each answer once.
+        """
+        if self.interval is None:
+            return
+        now = time.monotonic()
+        if now - self.checkpointed_at < self.interval:
+            return
+        changed = [block for block in self.blocks if block.text and block.text != block.checkpointed]
+        if not changed:
+            return
+        for block in changed:
+            self._observe({
+                "type": "assistant", "block_id": block.id,
+                "message": {"role": "assistant", "content": block.text},
+                "partial": True,
+                "checkpoint": True,
+            })
+            block.checkpointed = block.text
+        self.checkpointed_at = now
 
 # Put on the queue by the SDK's thread when it has nothing further to say.
 _FINISHED = object()
@@ -81,8 +274,8 @@ SDK_MISSING = (
 
 # The CLI's built-in tools would read and write the workspace without Hardy
 # seeing it, which is the one thing the harness cannot allow. The list is a
-# belt-and-braces measure; `_permit` below is the part that actually holds,
-# because it refuses by default rather than by enumeration.
+# belt-and-braces measure; `_ToolGate.permit` below is the part that actually
+# holds, because it refuses by default rather than by enumeration.
 REFUSED = ("Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Glob", "Grep", "ToolSearch")
 
 
@@ -188,7 +381,8 @@ def _cumulative(reported: dict[str, Any] | None, own: dict[str, int]) -> bool | 
     return any(figure > own.get(key, 0) for key, figure in stated.items())
 
 
-def load_sdk():
+def load_sdk() -> ModuleType:
+    """The agent SDK, imported on first use: it is an optional install."""
     try:
         import claude_agent_sdk
     except ImportError as error:  # pragma: no cover - depends on the install
@@ -196,12 +390,16 @@ def load_sdk():
     return claude_agent_sdk
 
 
-def build_server(sdk: Any, specs: list[dict[str, Any]], dispatch: Callable[[str, dict[str, Any]], ToolResult]) -> Any:
+def build_server(
+    sdk: ModuleType, specs: list[dict[str, Any]], dispatch: Callable[[str, dict[str, Any]], ToolResult]
+) -> McpSdkServerConfig:
     """Expose Hardy's tools to the SDK, each one still executed by Hardy."""
     return sdk.create_sdk_mcp_server(name=SERVER, tools=[_wrap(sdk, spec["function"], dispatch) for spec in specs])
 
 
-def _wrap(sdk: Any, function: dict[str, Any], dispatch: Callable[[str, dict[str, Any]], ToolResult]) -> Any:
+def _wrap(
+    sdk: ModuleType, function: dict[str, Any], dispatch: Callable[[str, dict[str, Any]], ToolResult]
+) -> SdkMcpTool[Any]:
     name = function["name"]
     schema = function.get("parameters") or {"type": "object", "properties": {}}
 
@@ -213,6 +411,95 @@ def _wrap(sdk: Any, function: dict[str, Any], dispatch: Callable[[str, dict[str,
         return {"content": [{"type": "text", "text": json.dumps(result.as_dict())}], "is_error": not result.ok}
 
     return run
+
+
+class _ToolGate:
+    """The default-deny rule for tool calls: Hardy's own tools run, nothing else.
+
+    Two gates enforce it -- the SDK's permission callback (`permit`) and a
+    `PreToolUse` hook (`gate`) -- and the stream notices a refused call as
+    well, so each refusal is recorded once however many of them saw it.
+    """
+
+    def __init__(self, sdk: Callable[[], Any], observe: Callable[[dict[str, Any]], None]) -> None:
+        self._sdk = sdk
+        self._observe = observe
+        # Tool-use ids already recorded as refused, so a call denied twice over
+        # -- the `PreToolUse` hook and the stream's own `ToolUseBlock`, or the
+        # permission callback and either of those -- is recorded once rather
+        # than once per gate that saw it (issue #320 fix round 1). Restarted
+        # with the other per-turn state, so it cannot grow across a long
+        # session; an id-less refusal is never deduplicated, only ever added.
+        self._refused: set[str] = set()
+
+    def restart(self) -> None:
+        """Forget the last turn's refusals as a new turn starts."""
+        self._refused = set()
+
+    def refused_once(self, tool_use_id: str | None) -> bool:
+        """True the first time a given tool call is refused; false on a repeat.
+
+        `permit`, `gate` and `ClaudeAgentRuntime._note` each independently
+        notice a refused call, so one denied built-in reaching more than one of them must not
+        turn into more than one `refused_tool` event in the transcript --
+        `documents/export.py` renders every such event as its own line, with
+        no deduplication of its own, and the fifty-slot clip it applies counts
+        raw events. A call with no id -- an older SDK, or a caller that has
+        none to give -- is never deduplicated: recording a real refusal twice
+        is a cosmetic doubling, but dropping one because it happened to share
+        an absent id with another is a refusal the record would then deny.
+        """
+        if tool_use_id is None:
+            return True
+        if tool_use_id in self._refused:
+            return False
+        self._refused.add(tool_use_id)
+        return True
+
+    async def permit(
+        self, name: str, arguments: dict[str, Any], context: ToolPermissionContext | None
+    ) -> PermissionResult:
+        """Allow Hardy's own tools; refuse everything else by default.
+
+        A denylist has to anticipate every built-in the CLI might grow. This
+        cannot: anything that is not one of the tools Hardy registered is
+        refused, whatever it is called.
+        """
+        if name.startswith(f"mcp__{SERVER}__"):
+            return self._sdk().PermissionResultAllow(behavior="allow")
+        # `context` is a `ToolPermissionContext` carrying `tool_use_id` on every
+        # real call (the wire protocol guarantees it); `None` here only in a
+        # test that calls this directly.
+        if self.refused_once(getattr(context, "tool_use_id", None)):
+            self._observe({"type": "refused_tool", "name": name})
+        return self._sdk().PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
+
+    async def gate(
+        self, data: Mapping[str, Any], tool_use_id: str | None, context: HookContext | None
+    ) -> dict[str, Any]:
+        """The `PreToolUse` hook: a second default-deny gate for whatever
+        `tools=[]` and `permit` above do not stop.
+
+        `can_use_tool` is bypassed by any built-in whose own permission check
+        answers "allow" outright rather than "ask", which is exactly the class
+        of tool `tools=[]` exists to remove from the conversation. This hook
+        fires on every tool call regardless, so a call that still arrives --
+        because a future CLI stops honouring an empty `tools` list, say --
+        is refused here too, by the same rule: allowed only when it is one of
+        Hardy's own tools, whatever else it is called.
+        """
+        name = str(data.get("tool_name", ""))
+        if name.startswith(f"mcp__{SERVER}__"):
+            return {}
+        if self.refused_once(tool_use_id):
+            self._observe({"type": "refused_tool", "name": name, "via": "hook"})
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Hardy runs its own tools only.",
+            }
+        }
 
 
 class ClaudeAgentRuntime:
@@ -243,7 +530,6 @@ class ClaudeAgentRuntime:
             or not math.isfinite(checkpoint_seconds) or checkpoint_seconds < 0
         ):
             raise ValueError("checkpoint interval must be finite and nonnegative, or None")
-        self.checkpoint_seconds = checkpoint_seconds
         # The session a runtime that resumes nothing will open, chosen here
         # rather than left to the CLI. Left to the CLI, a `claude` started
         # inside another Claude Code session took that session's id from its
@@ -258,6 +544,9 @@ class ClaudeAgentRuntime:
         self._system_prompt, self._specs, self._dispatch = system_prompt, specs, dispatch
         self._cwd = cwd
         self._observe = observe or (lambda event: None)
+        # Drawn text the record does not yet hold authoritatively, reset with
+        # each turn. See `_note` and `_DrawnText.settle`.
+        self._text = _DrawnText(self._observe, checkpoint_seconds)
         # Loaded on the first turn, not here. A run whose cheap closers close
         # the statement asks this backend nothing -- and loading the SDK
         # eagerly meant such a run died on a machine without it *after* Lean
@@ -277,31 +566,11 @@ class ClaudeAgentRuntime:
         # Tool-use id -> bare name, so a completed call can be named when the
         # SDK reports it back by id alone.
         self._called: dict[str, str] = {}
-        # Tool-use ids already recorded as refused, so a call denied twice over
-        # -- the `PreToolUse` hook and the stream's own `ToolUseBlock`, or the
-        # permission callback and either of those -- is recorded once rather
-        # than once per gate that saw it (issue #320 fix round 1). Reset with
-        # the other per-turn state in `stream`, so it cannot grow across a long
-        # session; an id-less refusal is never deduplicated, only ever added.
-        self._refused_tool_use_ids: set[str] = set()
-        # API message id -> the largest of each token counter any assistant
-        # message under that id stated, for the exchange in flight. The CLI
-        # streams one assistant message per content block, each repeating its
-        # API message's usage, so keying by id is what stops a three-block
-        # answer counting three times; the largest, because output counts can
-        # lag in the earlier blocks. Summed into the `result` event, and reset
-        # with each exchange.
-        self._message_usage: dict[str, dict[str, int]] = {}
-        # One entry per streamed text block that has not completed yet, oldest
-        # first, and the block index the last delta belonged to. A completed
-        # block consumes its own entry; whatever is left at the end of the turn
-        # was drawn and never superseded. See `_note` and `_settle_drawn`.
-        # While a block is still open, `_checkpoint` copies these entries into
-        # the record every `checkpoint_seconds`, so a process that dies before
-        # the block arrives leaves them behind rather than nothing.
-        self._drawn: list[_DrawnBlock] = []
-        self._drawing: int | None = None
-        self._checkpointed_at = 0.0
+        # Hardy's own tools run; anything else is refused and recorded once.
+        self._tools = _ToolGate(self._loaded, self._observe)
+        # The exchange in flight's own messages' usage, summed into its
+        # `result` event and restarted with each exchange.
+        self._message_usage = _MessageUsage()
 
     @property
     def enforcement(self) -> dict[str, str]:
@@ -346,9 +615,10 @@ class ClaudeAgentRuntime:
             strict_mcp_config=True,
             # A second gate for whatever still reaches the model despite the
             # above -- an older CLI, a future built-in class this version does
-            # not empty `tools` for. `_gate` denies by the same default-deny
-            # rule as `_permit` below, and records the refusal either way.
-            hooks={"PreToolUse": [sdk.HookMatcher(matcher=None, hooks=[self._gate])]},
+            # not empty `tools` for. `_ToolGate.gate` denies by the same
+            # default-deny rule as `_ToolGate.permit`, and records the refusal
+            # either way.
+            hooks={"PreToolUse": [sdk.HookMatcher(matcher=None, hooks=[self._tools.gate])]},
             # Deliberately no `allowed_tools`: an entry there auto-approves
             # before `can_use_tool` is consulted, which would leave the callback
             # gating only the tools it was never the point of gating.
@@ -357,7 +627,7 @@ class ClaudeAgentRuntime:
             # which the CLI refuses to run as root, so it would break Hardy in
             # every container. Approving Hardy's own tools and refusing the rest
             # is both narrower and works everywhere.
-            can_use_tool=self._permit,
+            can_use_tool=self._tools.permit,
             # Ignore the user's own Claude Code settings and CLAUDE.md files: a
             # run that silently inherits them is not the run its record claims.
             setting_sources=[],
@@ -375,67 +645,6 @@ class ClaudeAgentRuntime:
             # why `_note` draws from one and records from the other.
             include_partial_messages=True,
         )
-
-    def _refused_once(self, tool_use_id: str | None) -> bool:
-        """True the first time a given tool call is refused; false on a repeat.
-
-        `_permit`, `_gate` and `_note` each independently notice a refused
-        call, so one denied built-in reaching more than one of them must not
-        turn into more than one `refused_tool` event in the transcript --
-        `documents/export.py` renders every such event as its own line, with
-        no deduplication of its own, and the fifty-slot clip it applies counts
-        raw events. A call with no id -- an older SDK, or a caller that has
-        none to give -- is never deduplicated: recording a real refusal twice
-        is a cosmetic doubling, but dropping one because it happened to share
-        an absent id with another is a refusal the record would then deny.
-        """
-        if tool_use_id is None:
-            return True
-        if tool_use_id in self._refused_tool_use_ids:
-            return False
-        self._refused_tool_use_ids.add(tool_use_id)
-        return True
-
-    async def _permit(self, name: str, arguments: dict[str, Any], context: Any) -> Any:
-        """Allow Hardy's own tools; refuse everything else by default.
-
-        A denylist has to anticipate every built-in the CLI might grow. This
-        cannot: anything that is not one of the tools Hardy registered is
-        refused, whatever it is called.
-        """
-        if name.startswith(f"mcp__{SERVER}__"):
-            return self._loaded().PermissionResultAllow(behavior="allow")
-        # `context` is a `ToolPermissionContext` carrying `tool_use_id` on every
-        # real call (the wire protocol guarantees it); `None` here only in a
-        # test that calls this directly.
-        if self._refused_once(getattr(context, "tool_use_id", None)):
-            self._observe({"type": "refused_tool", "name": name})
-        return self._loaded().PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
-
-    async def _gate(self, data: Mapping[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
-        """The `PreToolUse` hook: a second default-deny gate for whatever
-        `tools=[]` and `_permit` above do not stop.
-
-        `can_use_tool` is bypassed by any built-in whose own permission check
-        answers "allow" outright rather than "ask", which is exactly the class
-        of tool `tools=[]` exists to remove from the conversation. This hook
-        fires on every tool call regardless, so a call that still arrives --
-        because a future CLI stops honouring an empty `tools` list, say --
-        is refused here too, by the same rule: allowed only when it is one of
-        Hardy's own tools, whatever else it is called.
-        """
-        name = str(data.get("tool_name", ""))
-        if name.startswith(f"mcp__{SERVER}__"):
-            return {}
-        if self._refused_once(tool_use_id):
-            self._observe({"type": "refused_tool", "name": name, "via": "hook"})
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "Hardy runs its own tools only.",
-            }
-        }
 
     def ask(self, text: str) -> str:
         """One exchange, for a caller with nothing to draw it on."""
@@ -474,12 +683,9 @@ class ClaudeAgentRuntime:
         with self._state_lock:
             self._cancelled = False
             self._loop, self._client, self._called = None, None, {}
-            self._drawn, self._drawing = [], None
-            self._refused_tool_use_ids = set()
-            self._message_usage = {}
-            # The interval is counted from here, not from the first delta: the
-            # first checkpoint of a turn lands one interval in, like every other.
-            self._checkpointed_at = time.monotonic()
+            self._text.restart()
+            self._tools.restart()
+            self._message_usage.restart()
 
             self._worker = worker
         worker.start()
@@ -598,11 +804,8 @@ class ClaudeAgentRuntime:
         # now runs after the caller has been told: the text the user watched
         # arrive belongs on the record before the limit that ended the turn,
         # and before a caller that writes the record the moment it hears.
-        self._settle_drawn()
-        # The bound asked for and the moment it fired. No deadline is exact,
-        # and a tool call already running is not interrupted, so the record
-        # says by how much rather than reporting the budget back as kept.
-        self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds, "elapsed": round(elapsed, 3)})
+        self._text.settle()
+        self._observe(wall_clock_limit(self.wall_seconds, elapsed))
         outbox.put(_Failed(TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")))
         exchange.cancel()
         await asyncio.wait({exchange})
@@ -614,7 +817,9 @@ class ClaudeAgentRuntime:
             self.failure = None
             self._loop = asyncio.get_running_loop()
         spoken: list[str] = []
-        checkpoints = asyncio.create_task(self._checkpoint_loop())
+        checkpoints = asyncio.create_task(
+            self._text.keep_checkpointing(owned=lambda: threading.current_thread() is self._worker)
+        )
         try:
             await self._ask(text, outbox, spoken)
         finally:
@@ -628,7 +833,7 @@ class ClaudeAgentRuntime:
             # A deadline lets the caller start another turn while this SDK
             # client is still closing. Its eventual cleanup must not settle
             # or erase the new turn's deltas from the old worker thread.
-            drawn = self._settle_drawn() if threading.current_thread() is self._worker else ""
+            drawn = self._text.settle() if threading.current_thread() is self._worker else ""
             if drawn:
                 spoken.append(drawn)
         reply = "\n\n".join(spoken).strip()
@@ -679,233 +884,134 @@ class ClaudeAgentRuntime:
                     if self._client is client:
                         self._client = None
 
-    def _settle_drawn(self) -> str:
-        """Text that was drawn and that no completed block ever superseded.
-
-        Normally there is none: the block supersedes the deltas that built it,
-        which is the whole rule -- deltas draw, blocks are authoritative. But an
-        interrupt, a wall-clock deadline, or a provider error lands where it
-        lands, and a block that never finished has no authoritative form while
-        its words are already on the user's screen. Dropping them would leave
-        `transcript.jsonl` denying text the user watched arrive.
-
-        Recorded as `partial`, because that is what distinguishes it from a
-        block the provider actually completed. Returned as well, so a caller can
-        decide whether it also belongs in a reply: a cancelled turn's does, and
-        a turn that raises has no reply to put it in.
-        """
-        if not self._drawn:
-            return ""
-        # Joined as blocks are joined: each entry was a block of its own.
-        blocks = self._drawn
-        said = "\n\n".join(block.text for block in blocks if block.text)
-        self._drawn, self._drawing = [], None
-        if not said:
-            return ""
-        if any(block.checkpointed is not None for block in blocks):
-            for block in blocks:
-                if block.text:
-                    self._observe({"type": "assistant", "block_id": block.id,
-                        "message": {"role": "assistant", "content": block.text}, "partial": True})
-        else:
-            self._observe({
-                "type": "assistant",
-                "message": {"role": "assistant", "content": said},
-                "partial": True,
-            })
-        return said
-
-    def _draw(self, index: int, text: str) -> None:
-        """Remember a delta as drawn, under the block it belongs to.
-
-        Kept per block, not per turn: one message can carry several text blocks,
-        and each has to be able to recognise the deltas that already drew *it*.
-        """
-        if not self._drawn or index != self._drawing:
-            self._drawn.append(_DrawnBlock())
-            self._drawing = index
-        self._drawn[-1].text += text
-        if self.checkpoint_seconds == 0:
-            self._checkpoint()
-
-    async def _checkpoint_loop(self) -> None:
-        """Persist displayed text even while the provider stops sending deltas."""
-        interval = self.checkpoint_seconds
-        if interval is None or interval <= 0:
-            return
-        while True:
-            await asyncio.sleep(interval)
-            if threading.current_thread() is not self._worker:
-                return  # An abandoned turn no longer owns the shared drawn text.
-            self._checkpoint()
-
-    def _checkpoint(self) -> None:
-        """Copy the drawn text into the record, at most once per interval.
-
-        The completed block is still the authoritative form and still arrives
-        as before; this is insurance against the process not living to see it.
-        `_settle_drawn` covers every way a turn can *end* -- interrupt,
-        deadline, provider error -- but a hard kill, a crash, or the power
-        going runs no `finally` at all, and until this the transcript then lost
-        every word of an answer the user had already watched arrive: a lost
-        exchange indistinguishable from one that never happened.
-
-        Paced by `checkpoint_seconds` rather than written per delta. Each open
-        block carries its own identity and complete text so far. Completing one
-        cannot discard another block's unfinished words. Unchanged blocks cost
-        no further writes while the provider stalls.
-
-        Marked `partial`, like the text `_settle_drawn` keeps, because no
-        provider completed it -- and `checkpoint` besides, because unlike that
-        text it is expected to be superseded: by the next checkpoint, or by the
-        block itself. A replay (`export._conversation`) uses exactly that rule
-        to show each answer once.
-        """
-        interval = self.checkpoint_seconds
-        if interval is None:
-            return
-        now = time.monotonic()
-        if now - self._checkpointed_at < interval:
-            return
-        changed = [block for block in self._drawn if block.text and block.text != block.checkpointed]
-        if not changed:
-            return
-        for block in changed:
-            self._observe({
-                "type": "assistant", "block_id": block.id,
-                "message": {"role": "assistant", "content": block.text},
-                "partial": True,
-                "checkpoint": True,
-            })
-            block.checkpointed = block.text
-        self._checkpointed_at = now
-
     def _note(self, message: Any, spoken: list[str]) -> Iterator[TurnEvent]:
         """Record what the SDK reports, and say what a watcher should draw.
 
         Two granularities, on purpose. What it *yields* is for the terminal and
         includes partial text; what it hands `observe` -- and so what reaches
         `transcript.jsonl` -- is whole blocks, plus the interval checkpoints
-        `_checkpoint` takes of a block still being written.
+        `_DrawnText.checkpoint` takes of a block still being written.
         """
         # Resuming by session id is how a conversation survives both the next
         # exchange and the next process.
         session = getattr(message, "session_id", None)
         if session:
             self.session_id = session
-        if type(message).__name__ == "AssistantMessage":
-            counted = stated_counters(getattr(message, "usage", None))
-            if counted:
-                # An id-less message cannot be matched to its repeats, so it is
-                # kept under its own key: counted once more than it should be
-                # rather than dropped, which would lower the floor below spend.
-                key = getattr(message, "message_id", None) or f"#{len(self._message_usage)}"
-                held = self._message_usage.setdefault(str(key), {})
-                for name, figure in counted.items():
-                    held[name] = max(held.get(name, 0), figure)
+        kind = type(message).__name__
+        if kind == "AssistantMessage":
+            self._message_usage.note(message)
         delta = _delta(message)
         if delta is not None:
             index, text = delta
             # Drawn, never recorded, and deliberately never added to `spoken`
             # here: the completed TextBlock below carries this same text, and
-            # counting both would return every answer twice. Kept in `_drawn`
+            # counting both would return every answer twice. Kept in `_text`
             # only so that block knows it has already been shown -- and so an
             # interrupt that stops the block from ever arriving does not take
-            # these words down with it (`_settle_drawn`).
-            self._draw(index, text)
+            # these words down with it (`_DrawnText.settle`).
+            self._text.draw(index, text)
             yield TurnEvent("text", text=text)
         for block in getattr(message, "content", None) or []:
-            kind = type(block).__name__
-            if kind == "TextBlock" and getattr(block, "text", ""):
-                spoken.append(block.text)
-                identity = {"block_id": self._drawn[0].id} if self._drawn and self._drawn[0].checkpointed is not None else {}
-                self._observe({"type": "assistant", **identity, "message": {"role": "assistant", "content": block.text}})
-                if self._drawn:
-                    # Deltas already put these words on screen; the block is
-                    # the record's copy of them and must not be drawn again.
-                    # Its own entry only, oldest first: clearing the lot would
-                    # make every later block in this same message look undrawn
-                    # and get drawn a second time.
-                    self._drawn.pop(0)
-                else:
-                    # Nothing streamed this block -- an older CLI, a provider
-                    # that does not stream. Drawn here, in the order it
-                    # happened: left to `TurnPainter.finish()`, prose said
-                    # before a tool call would appear after that call's result.
-                    yield TurnEvent("text", text=block.text)
-            elif kind == "ToolUseBlock":
-                name = getattr(block, "name", "")
-                identifier = str(getattr(block, "id", ""))
-                # Kept so the result below can be named. The SDK identifies a
-                # completed call by the id it was asked under, not by name --
-                # and two calls to the same tool can be in flight at once.
-                self._called[identifier] = plain(name)
-                self._observe({"type": "tool_use", "name": name, "input": getattr(block, "input", {})})
-                if not name.startswith(f"mcp__{SERVER}__") and self._refused_once(identifier or None):
-                    # `_gate` and `_permit` are what actually stop this from
-                    # running; this is the stream's own record that one was
-                    # attempted, distinguished by `via` from the hook's report
-                    # of the same refusal -- and deduplicated against it by
-                    # `_refused_once`, since the same call can reach both.
-                    self._observe({"type": "refused_tool", "name": name, "via": "stream"})
-                yield TurnEvent("tool_use", name=plain(name), call_id=identifier)
-            elif kind == "ToolResultBlock":
-                # The far end of a tool call, which Hardy used to drop. Drawing
-                # it is what keeps a three-minute Lean check from looking like
-                # a hang. Not observed: `MathematicsSession._dispatch` already
-                # records the result it produced, in more detail than this.
-                identifier = str(getattr(block, "tool_use_id", ""))
-                yield TurnEvent(
-                    "tool_result",
-                    name=self._called.pop(identifier, ""),
-                    ok=not getattr(block, "is_error", False),
-                    call_id=identifier,
-                )
-            elif kind == "ThinkingBlock":
-                self._observe({"type": "thinking"})
-                yield TurnEvent("thinking")
-        if type(message).__name__ == "ResultMessage":
+            yield from self._note_block(block, spoken)
+        if kind == "ResultMessage":
             # The SDK ran the loop, so it is the only thing that knows how many
             # turns that took. Hardy counting tool calls would be a different
             # number wearing the same name.
             self.turns = getattr(message, "num_turns", None)
-            if getattr(message, "is_error", False):
-                subtype = getattr(message, "subtype", None)
-                if subtype and subtype != "success":
-                    self.failure = subtype
-                else:
-                    status = getattr(message, "api_error_status", None)
-                    details = "; ".join(getattr(message, "errors", None) or []) or getattr(message, "result", None) or "unknown"
-                    self.failure = (f"api_error {status}: {details}" if status is not None else details)[:500]
-            reported = _counts(getattr(message, "usage", None))
-            own: dict[str, int] = {}
-            for held in self._message_usage.values():
-                for name, figure in held.items():
-                    own[name] = own.get(name, 0) + figure
-            self._message_usage = {}
-            self._observe(ExchangeReport(
-                session_id=self.session_id,
-                turns=self.turns,
-                cost_usd=getattr(message, "total_cost_usd", None),
-                # The provider's own token counts, passed through unchanged and
-                # left absent when it reported none. `{}` would be read
-                # downstream as a measured zero, which is the one thing a spend
-                # meter must not say about a backend that measured nothing.
-                # Either the session's running total or this turn's alone,
-                # depending on the CLI (see `Usage.record`): a fresh client per
-                # turn still resumes the same session (`_options`).
-                usage=reported,
-                is_error=getattr(message, "is_error", None),
-                api_error_status=getattr(message, "api_error_status", None),
-                errors=getattr(message, "errors", None),
-                # What this exchange's own messages moved, whether the report
-                # above states more than that, and the `modelUsage` counters
-                # that share the cost's lifecycle. Together they let the ledger
-                # decide, for tokens and for cost separately, whether a report
-                # is a restored running total, without trusting either reading
-                # of the CLI.
-                guarded=True,
-                exchange_usage=own or None,
-                cumulative=_cumulative(reported, own),
-                model_usage=_model_tokens(getattr(message, "model_usage", None)),
-            ).event())
+            failure = _failure(message)
+            if failure is not None:
+                self.failure = failure
+            self._observe(_result_report(message, self.session_id, self.turns, self._message_usage.take()).event())
+
+    def _note_block(self, block: Any, spoken: list[str]) -> Iterator[TurnEvent]:
+        """One content block, recorded whole and drawn unless deltas drew it."""
+        kind = type(block).__name__
+        if kind == "TextBlock" and getattr(block, "text", ""):
+            spoken.append(block.text)
+            drawn = self._text.oldest()
+            identity = {"block_id": drawn.id} if drawn is not None and drawn.checkpointed is not None else {}
+            self._observe({"type": "assistant", **identity, "message": {"role": "assistant", "content": block.text}})
+            if drawn is not None:
+                # Deltas already put these words on screen; the block is
+                # the record's copy of them and must not be drawn again.
+                self._text.consume()
+            else:
+                # Nothing streamed this block -- an older CLI, a provider
+                # that does not stream. Drawn here, in the order it
+                # happened: left to `TurnPainter.finish()`, prose said
+                # before a tool call would appear after that call's result.
+                yield TurnEvent("text", text=block.text)
+        elif kind == "ToolUseBlock":
+            name = getattr(block, "name", "")
+            identifier = str(getattr(block, "id", ""))
+            # Kept so the result below can be named. The SDK identifies a
+            # completed call by the id it was asked under, not by name --
+            # and two calls to the same tool can be in flight at once.
+            self._called[identifier] = plain(name)
+            self._observe({"type": "tool_use", "name": name, "input": getattr(block, "input", {})})
+            if not name.startswith(f"mcp__{SERVER}__") and self._tools.refused_once(identifier or None):
+                # `_ToolGate.gate` and `permit` are what actually stop this
+                # from running; this is the stream's own record that one was
+                # attempted, distinguished by `via` from the hook's report of
+                # the same refusal -- and deduplicated against it by
+                # `refused_once`, since the same call can reach both.
+                self._observe({"type": "refused_tool", "name": name, "via": "stream"})
+            yield TurnEvent("tool_use", name=plain(name), call_id=identifier)
+        elif kind == "ToolResultBlock":
+            # The far end of a tool call, which Hardy used to drop. Drawing
+            # it is what keeps a three-minute Lean check from looking like
+            # a hang. Not observed: `MathematicsSession._dispatch` already
+            # records the result it produced, in more detail than this.
+            identifier = str(getattr(block, "tool_use_id", ""))
+            yield TurnEvent(
+                "tool_result",
+                name=self._called.pop(identifier, ""),
+                ok=not getattr(block, "is_error", False),
+                call_id=identifier,
+            )
+        elif kind == "ThinkingBlock":
+            self._observe({"type": "thinking"})
+            yield TurnEvent("thinking")
+
+
+def _failure(message: Any) -> str | None:
+    """What ended an errored exchange, as the record states it; None if it did not error."""
+    if not getattr(message, "is_error", False):
+        return None
+    subtype = getattr(message, "subtype", None)
+    if subtype and subtype != "success":
+        return subtype
+    status = getattr(message, "api_error_status", None)
+    details = "; ".join(getattr(message, "errors", None) or []) or getattr(message, "result", None) or "unknown"
+    return (f"api_error {status}: {details}" if status is not None else details)[:500]
+
+
+def _result_report(message: Any, session_id: str | None, turns: int | None, own: dict[str, int]) -> ExchangeReport:
+    """The `result` event for one `ResultMessage`, with this exchange's own
+    messages' usage (`own`) beside what the CLI reported."""
+    reported = _counts(getattr(message, "usage", None))
+    return ExchangeReport(
+        session_id=session_id,
+        turns=turns,
+        cost_usd=getattr(message, "total_cost_usd", None),
+        # The provider's own token counts, passed through unchanged and left
+        # absent when it reported none. `{}` would be read downstream as a
+        # measured zero, which is the one thing a spend meter must not say
+        # about a backend that measured nothing. Either the session's running
+        # total or this turn's alone, depending on the CLI (see
+        # `Usage.record`): a fresh client per turn still resumes the same
+        # session (`_options`).
+        usage=reported,
+        is_error=getattr(message, "is_error", None),
+        api_error_status=getattr(message, "api_error_status", None),
+        errors=getattr(message, "errors", None),
+        # What this exchange's own messages moved, whether the report above
+        # states more than that, and the `modelUsage` counters that share the
+        # cost's lifecycle. Together they let the ledger decide, for tokens and
+        # for cost separately, whether a report is a restored running total,
+        # without trusting either reading of the CLI.
+        guarded=True,
+        exchange_usage=own or None,
+        cumulative=_cumulative(reported, own),
+        model_usage=_model_tokens(getattr(message, "model_usage", None)),
+    )

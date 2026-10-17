@@ -25,7 +25,7 @@ def runtime(**kwargs) -> claude_runtime.ClaudeAgentRuntime:
 
 
 def test_hardy_tools_are_permitted():
-    allowed = asyncio.run(runtime()._permit("mcp__hardy__check_lean", {}, None))
+    allowed = asyncio.run(runtime()._tools.permit("mcp__hardy__check_lean", {}, None))
     assert allowed.behavior == "allow"
 
 
@@ -34,7 +34,7 @@ def test_everything_else_is_refused_by_default(name: str):
     """A denylist has to anticipate every built-in the CLI grows; refusing by
     default does not."""
     seen: list[dict] = []
-    denied = asyncio.run(runtime(observe=seen.append)._permit(name, {}, None))
+    denied = asyncio.run(runtime(observe=seen.append)._tools.permit(name, {}, None))
     assert denied.behavior == "deny"
     assert seen == [{"type": "refused_tool", "name": name}]
 
@@ -204,7 +204,7 @@ def test_no_builtin_tools_are_offered():
 
 
 def test_pre_tool_use_hook_allows_hardy_tools():
-    out = asyncio.run(runtime()._gate({"tool_name": "mcp__hardy__check_lean", "tool_input": {}}, "id-1", None))
+    out = asyncio.run(runtime()._tools.gate({"tool_name": "mcp__hardy__check_lean", "tool_input": {}}, "id-1", None))
     assert out == {}
 
 
@@ -214,7 +214,7 @@ def test_pre_tool_use_hook_denies_non_hardy_tools():
     PreToolUse is refused there too, and recorded so the transcript can say
     what the model tried."""
     seen: list[dict] = []
-    out = asyncio.run(runtime(observe=seen.append)._gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
+    out = asyncio.run(runtime(observe=seen.append)._tools.gate({"tool_name": "TaskCreate", "tool_input": {}}, None, None))
     assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert out["hookSpecificOutput"]["permissionDecisionReason"]

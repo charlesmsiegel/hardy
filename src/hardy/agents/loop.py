@@ -36,7 +36,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
 
-from hardy.agents.contracts import ProviderRequestTimeout, TurnEvent
+from hardy.agents.contracts import ProviderRequestTimeout, TurnEvent, wall_clock_limit
 from hardy.agents.spend_budget import SpendLimitReached
 from hardy.agents.usage import ExchangeReport
 from hardy.foundation.values import ToolResult
@@ -641,14 +641,8 @@ class AgentLoop:
         if not budget.expired():
             return
         # The bound asked for and the moment it fired (issue #27). The fifth
-        # point above means the two differ by up to one tool call, and the
-        # record says by how much rather than reporting the budget back as
-        # though it had been kept to the microsecond.
-        self._observe({
-            "type": "wall_clock_limit",
-            "seconds": self.wall_seconds,
-            "elapsed": round(budget.elapsed_seconds(), 3),
-        })
+        # point above means the two differ by up to one tool call.
+        self._observe(wall_clock_limit(self.wall_seconds, budget.elapsed_seconds()))
         raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
 
     def _settle(self, turn: ProviderTurn) -> Iterator[TurnEvent]:

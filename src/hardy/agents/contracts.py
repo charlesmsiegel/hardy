@@ -123,6 +123,17 @@ class StagedRuntime(Protocol[ThreadT]):
         ...
 
 
+def wall_clock_limit(seconds: float, elapsed: float) -> dict[str, Any]:
+    """The event a runtime records when its wall clock fires.
+
+    The bound asked for and how long the exchange had actually run, to the
+    millisecond: no deadline is exact, and a tool call already running is not
+    interrupted, so the record says by how much rather than reporting the
+    budget back as kept.
+    """
+    return {"type": "wall_clock_limit", "seconds": seconds, "elapsed": round(elapsed, 3)}
+
+
 def final_text(events: Iterable[TurnEvent]) -> str:
     """Drain a turn and keep the reply it settled on.
 
