@@ -733,13 +733,13 @@ def test_a_kernel_that_stopped_reading_can_still_be_escalated(cas_session) -> No
         seen: dict[str, object] = {}
 
         def press_twice() -> None:
-            seen["sent"] = session._sending.wait(30)
+            seen["sent"] = session._exchange._sending.wait(30)
             # Long enough that a write which was ever going to complete has.
             # What is still pending after this is genuinely blocked on a kernel
             # that is not reading -- which is the situation under test, and not
             # something the test can otherwise tell it reached.
             time.sleep(0.3)
-            seen["blocked"] = session._sending.is_set()
+            seen["blocked"] = session._exchange._sending.is_set()
             # Timed across both presses, because both take the lock and both
             # run on the terminal's event loop: whichever one waits on the
             # write is a frozen interface either way.
