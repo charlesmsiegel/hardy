@@ -45,6 +45,12 @@ TYPED_DIRECTORY = "typed"
 RESERVED_NAMES = frozenset({"cells.jsonl", "cells.jsonl.spend.json", "cells.jsonl.lock",
                             "session.ipynb", "export.json"})
 
+# A spilled answer's first guess at how much of each output field fits: a
+# share of the observation budget, never less than a readable minimum. The
+# encoded envelope then decides, halving the guess until it fits.
+_FIELD_SHARE = 4
+_MIN_FIELD_CHARS = 256
+
 CAS_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -156,6 +162,8 @@ def build_runtime(
 
 
 class CasCellResult(FrozenModel):
+    """One cell's record as a binding hands it to the model, within its budget."""
+
     seq: int
     status: str
     accepted: bool
@@ -172,8 +180,27 @@ class CasCellResult(FrozenModel):
     # and carried here so the caller still learns the kernel was rebuilt.
     restart_note: str = ""
 
+    @classmethod
+    def of(cls, record: CellRecord) -> CasCellResult:
+        """The whole record's answer, before any observation budget applies."""
+        return cls(
+            seq=record.seq,
+            status=record.status,
+            accepted=record.accepted,
+            stdout=record.stdout,
+            stderr=record.stderr,
+            value_repr=record.value_repr,
+            duration_ms=record.duration_ms,
+            capture_truncated=record.capture_truncated,
+            capture_mode=record.capture_mode,
+            note=MERGED_CAPTURE_NOTE if record.capture_mode == "merged" else None,
+            restart_note=record.restart_note,
+        )
+
 
 class CasStateResult(FrozenModel):
+    """What `cas_state` reports: the backend, the kernel, and the accepted cells."""
+
     backend: str
     version: str | None
     kernel: str
@@ -194,6 +221,19 @@ class CasStateResult(FrozenModel):
     note: str | None = None
 
 
+def _is_control(character: str) -> bool:
+    """C0 controls, DEL, and the line breaks Python recognises beyond them."""
+    return character < " " or character == "\x7f" or character in "\x85\u2028\u2029"
+
+
+def _is_hardys_own(relative: PurePosixPath, suffix: str) -> bool:
+    """Whether `relative` names one of Hardy's own files at the top of `cas/`."""
+    if len(relative.parts) != 1:
+        return False
+    name = portable_key(relative.name)
+    return name in RESERVED_NAMES or name == portable_key(f"session{suffix}")
+
+
 def cas_relative(path: str, suffix: str) -> PurePosixPath:
     """The `cas/`-relative path a cell is filed as, or a refusal.
 
@@ -203,8 +243,7 @@ def cas_relative(path: str, suffix: str) -> PurePosixPath:
     backend's, so a Singular session cannot file a `.py` it would then feed to
     Singular.
     """
-    if any(ord(character) < 32 or ord(character) == 127 or character in "\x85\u2028\u2029"
-           for character in str(path)):
+    if any(_is_control(character) for character in str(path)):
         raise CasError(f"control characters are not allowed in a cell path: {path!r}")
     relative = PurePosixPath(str(path).replace("\\", "/"))
     parts = relative.parts
@@ -214,7 +253,7 @@ def cas_relative(path: str, suffix: str) -> PurePosixPath:
         raise CasError(f"a cell for this backend is filed with the {suffix} suffix: {path!r}")
     if portable_key(parts[0]) in CAS_SCRATCH:
         raise CasError(f"{parts[0]}/ is scratch an export empties; file the cell elsewhere: {path!r}")
-    if len(parts) == 1 and (portable_key(relative.name) in RESERVED_NAMES or portable_key(relative.name) == portable_key(f"session{suffix}")):
+    if _is_hardys_own(relative, suffix):
         raise CasError(f"{relative.name} is Hardy's own file under cas/ and not a cell's: {path!r}")
     return relative
 
@@ -299,6 +338,7 @@ class CasToolRuntime:
                      and not (len(relative.parts) == 1 and relative.name == f"session{self.suffix}"))
 
     def state(self) -> CasStateResult:
+        """The accepted cells that built the current state, newest kept if it must be cut."""
         session = self.session
         lines = [
             f"[{record.seq}] {record.path + ': ' if record.path else ''}"
@@ -359,19 +399,7 @@ class CasToolRuntime:
         return self.state()
 
     def _bound(self, record: CellRecord) -> CasCellResult:
-        result = CasCellResult(
-            seq=record.seq,
-            status=record.status,
-            accepted=record.accepted,
-            stdout=record.stdout,
-            stderr=record.stderr,
-            value_repr=record.value_repr,
-            duration_ms=record.duration_ms,
-            capture_truncated=record.capture_truncated,
-            capture_mode=record.capture_mode,
-            note=MERGED_CAPTURE_NOTE if record.capture_mode == "merged" else None,
-            restart_note=record.restart_note,
-        )
+        result = CasCellResult.of(record)
         if self._size(result) <= self.observation_bytes:
             return result
 
@@ -389,7 +417,7 @@ class CasToolRuntime:
         # larger than the cap. Recovery details are bounded too: the list of
         # failed cells can itself outgrow the cap. Keep a warning about the
         # rebuilt state even when its full explanation has to stay in the log.
-        room = max(256, self.observation_bytes // 4)
+        room = max(_MIN_FIELD_CHARS, self.observation_bytes // _FIELD_SHARE)
         while True:
             restart_note = result.restart_note
             if len(restart_note) > room:
