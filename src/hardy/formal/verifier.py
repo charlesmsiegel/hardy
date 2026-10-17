@@ -32,11 +32,15 @@ from hardy.formal.lean import LeanDiagnostic, elaborate, render_theorem, scannab
 # the `sorry` on the next line, so the hole check passed on a proof that had
 # one. Two implementations of the same job drifted, and only one was fixed.
 from hardy.formal.syntax import (
+    DECLARATION_NAME,
+    NOT_NAME_AFTER,
+    NOT_NAME_BEFORE,
     Lexed,
     identifier_tokens,
     lex,
     numeral_ends,
     strip_comments,
+    unqualified,
 )
 from hardy.foundation.process import ProcessResult, ProcessSpec, run_process
 from hardy.foundation.values import FrozenModel
@@ -47,11 +51,9 @@ from hardy.workflows.storage import RunStore
 # as a name here because readers and tests reach for it; `hardy.formal.audit` owns the
 # set, so the three surfaces cannot drift into disagreeing about it.
 ALLOWED_AXIOMS = audit.STANDARD
-_NOT_IDENT_BEFORE = r"(?<![\w'!?.«])"
-_NOT_IDENT_AFTER = r"(?![\w'!?»])"
 FORBIDDEN_TOKEN = re.compile(
-    rf"{_NOT_IDENT_BEFORE}(sorryAx|sorry|admit|axiom|opaque){_NOT_IDENT_AFTER}"
-    rf"|{_NOT_IDENT_BEFORE}by\?"
+    rf"{NOT_NAME_BEFORE}(sorryAx|sorry|admit|axiom|opaque){NOT_NAME_AFTER}"
+    rf"|{NOT_NAME_BEFORE}by\?"
 )
 # A word that starts a Lean command rather than continuing a term or a tactic
 # block. The proof body is pasted after `:=`, so a body holding one of these has
@@ -77,7 +79,7 @@ COMMAND_WORDS = (
     "run_conv", "by_elab", "declare_simp_like_tactic", "irreducible_def", "alias",
 )
 COMMAND_IN_BODY = re.compile(
-    r"(?<![\w'!?.«])(#[A-Za-z_]\w*|@\[|eval%|(?:" + "|".join(COMMAND_WORDS) + r"))(?![\w'!?»])"
+    rf"{NOT_NAME_BEFORE}(#[A-Za-z_]\w*|@\[|eval%|(?:{'|'.join(COMMAND_WORDS)})){NOT_NAME_AFTER}"
 )
 # The same commands found by where Lean's tokens start, beside the lookbehind
 # rather than instead of it. Lean ends a name at `#` and a numeral before a
@@ -104,9 +106,9 @@ HASH_COMMANDS = frozenset({
 _BITVEC_WIDTH = 2
 ESCAPED_HOLE = re.compile(r"«\s*sorryAx\s*»")
 UNAUTHORIZED_SIGNATURE_TOKEN = re.compile(
-    _NOT_IDENT_BEFORE
+    NOT_NAME_BEFORE
     + r"(axiom|opaque|theorem|lemma|def|abbrev|example|instance|import|namespace|section|end)"
-    + _NOT_IDENT_AFTER
+    + NOT_NAME_AFTER
 )
 
 
@@ -454,7 +456,7 @@ def declaration_violation(item: DeclaredAssumption) -> str | None:
     so, and was then recorded as `forbidden_hole` for a declaration with no
     hole in it.
     """
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'.\u00c0-\uffff]*", item.name):
+    if not DECLARATION_NAME.fullmatch(item.name):
         return f"{item.name!r} is not a single Lean declaration name"
     stripped = strip_comments(item.statement)
     if ":=" in stripped:
@@ -502,7 +504,7 @@ def _declaration_violation(
         violation = declaration_violation(item)
         if violation is not None:
             return violation
-        if item.name == target or item.name.rsplit(".", 1)[-1] == target:
+        if item.name == target or unqualified(item.name) == target:
             return (
                 f"{item.name!r} is the theorem being proved; assuming the goal is not a "
                 "proof of it"
@@ -511,10 +513,7 @@ def _declaration_violation(
 
 
 def _signature_violation(claim: FrozenClaim) -> str | None:
-    if not re.fullmatch(
-        r"[A-Za-z_][A-Za-z0-9_-￿'.]*",
-        claim.proposal.theorem_name,
-    ):
+    if not DECLARATION_NAME.fullmatch(claim.proposal.theorem_name):
         return "invalid theorem name"
     signature_fields = claim.proposal.binders + "\n" + claim.proposal.proposition
     stripped = strip_comments(signature_fields)
