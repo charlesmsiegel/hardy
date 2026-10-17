@@ -308,6 +308,18 @@ class _Stream:
         if len(data) > room:
             self.truncated = True
 
+    @property
+    def lossy(self) -> bool:
+        """Whether anything this capture should report was not kept."""
+        return self.truncated or self.stray
+
+    def disarm(self) -> None:
+        """Stop keeping anything, once this cell's capture has been reported."""
+        self.marker = b""
+        # Cleared only now that it has been reported. Anything arriving from
+        # here on belongs to the next cell's account of what it could not keep.
+        self.stray = False
+
     def take_what_arrived(self) -> None:
         """Keep the unterminated remainder, and say the capture is not whole."""
         if self.pending:
@@ -500,14 +512,7 @@ class _Capture:
         """
         self._write_marker(marker)
         with self._changed:
-            deadline = time.monotonic() + SETTLE_SECONDS
-            while not all(
-                stream.done or stream.closed for stream in self.streams.values()
-            ):
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                self._changed.wait(remaining)
+            self._await_end_markers()
             out, err = self.streams[1], self.streams[2]
             for stream in (out, err):
                 # A descriptor a cell closed or replaced ends the wait without
@@ -522,22 +527,20 @@ class _Capture:
                     stream.take_what_arrived()
             out_text, out_exact = out.text()
             err_text, err_exact = err.text()
-            captured = (
-                out_text,
-                err_text,
-                out.truncated
-                or err.truncated
-                or out.stray
-                or err.stray
-                or not (out_exact and err_exact),
-            )
+            whole = out_exact and err_exact and not (out.lossy or err.lossy)
             for stream in self.streams.values():
-                stream.marker = b""
-                # Cleared only now that it has been reported. Anything arriving
-                # from here on belongs to the next cell's account of what it
-                # could not keep.
-                stream.stray = False
-            return captured
+                stream.disarm()
+            return out_text, err_text, not whole
+
+    def _await_end_markers(self) -> None:
+        """Wait, holding the condition, until every stream has seen its end
+        marker or closed, or until the settle grace runs out."""
+        deadline = time.monotonic() + SETTLE_SECONDS
+        while not all(stream.done or stream.closed for stream in self.streams.values()):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._changed.wait(remaining)
 
     def write_reply(self, payload: bytes) -> None:
         header = f"{len(payload):0{HEADER_BYTES}d}".encode("ascii")
@@ -552,10 +555,6 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     global PENDING_INTERRUPT
     try:
         parsed = ast.parse(source, filename=CELL_FILENAME)
-    # Hardy asked for this one; handled below, together with every other
-    # interrupt this function can raise into.
-    except KeyboardInterrupt:
-        raise
     # Not `except SyntaxError`. `ast.parse` raises far more than that against a
     # cell Hardy did not write: a source deep enough that converting its AST
     # exhausts the recursion limit raises `RecursionError`, not `SyntaxError`
@@ -563,37 +562,20 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     # of a few thousand terms, well under the cell's byte cap, killed the
     # kernel and every value the session held. A cell is untrusted input the
     # same way its execution below already treats it: every failure to parse
-    # it is this cell's error, never the driver's.
-    except BaseException:
+    # it is this cell's error, never the driver's. Parsing runs no code, so
+    # what it can raise is an `Exception`; the one other thing that can land
+    # here is a stop, which Hardy asked for and which goes up to be answered
+    # with every other interrupt this function can raise into.
+    except Exception:
         # Clipped like any other reply: a syntax error quotes the offending
-        # source back, and the source is allowed to be 64 KiB. `_describe_failure`
-        # rather than a bare `traceback.format_exc()`, so a failure to *format*
-        # this traceback is answered too rather than escaping in its place.
-        stderr, truncated = clip(_describe_failure(), limit)
-        return {
-            "status": "error",
-            "stdout": "",
-            "stderr": stderr,
-            "value_repr": "",
-            "capture_truncated": truncated,
-        }
+        # source back, and the source is allowed to be 64 KiB.
+        return _failed_reply(limit)
 
-    # The trailing expression is evaluated rather than executed so its value
-    # survives; anything before it is ordinary statement execution.
-    trailing = None
-    if parsed.body and isinstance(parsed.body[-1], ast.Expr):
-        trailing = ast.Expression(parsed.body.pop().value)
-
+    trailing = _split_trailing(parsed)
     marker = capture.begin()
     status, value_repr, oversized, failure = "ok", "", False, ""
     try:
-        if parsed.body:
-            exec(compile(parsed, CELL_FILENAME, "exec"), namespace)
-        if trailing is not None:
-            value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
-            if value is not None:
-                namespace["_"] = value
-                value_repr, oversized = bounded_repr(value, limit)
+        value_repr, oversized = _evaluate(parsed, trailing, namespace, limit)
     # Hardy asked for this one, so it is reported under its own name rather
     # than as the cell having gone wrong -- and, far more importantly, it is
     # *answered*. Catching it here is what makes an interrupt cost one cell
@@ -635,6 +617,52 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
         "status": status,
         **fields,
         "capture_truncated": truncated or overran or oversized,
+    }
+
+
+def _split_trailing(parsed: ast.Module) -> ast.Expression | None:
+    """Take a trailing expression off the cell, to be evaluated rather than run.
+
+    Its value survives that way; anything before it is ordinary statement
+    execution.
+    """
+    if parsed.body and isinstance(parsed.body[-1], ast.Expr):
+        return ast.Expression(parsed.body.pop().value)
+    return None
+
+
+def _evaluate(
+    parsed: ast.Module, trailing: ast.Expression | None, namespace: dict, limit: int
+) -> tuple[str, bool]:
+    """Run a cell in the namespace: its value's bounded repr, and whether it was cut.
+
+    Everything a cell raises goes to the caller, which answers it.
+    """
+    if parsed.body:
+        exec(compile(parsed, CELL_FILENAME, "exec"), namespace)
+    if trailing is None:
+        return "", False
+    value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
+    if value is None:
+        return "", False
+    namespace["_"] = value
+    return bounded_repr(value, limit)
+
+
+def _failed_reply(limit: int) -> dict:
+    """The reply for a cell that failed before it could run: its traceback.
+
+    Called inside the handler for that failure. `_describe_failure` rather
+    than a bare `traceback.format_exc()`, so a failure to *format* the
+    traceback is answered too rather than escaping in its place.
+    """
+    stderr, truncated = clip(_describe_failure(), limit)
+    return {
+        "status": "error",
+        "stdout": "",
+        "stderr": stderr,
+        "value_repr": "",
+        "capture_truncated": truncated,
     }
 
 
@@ -715,112 +743,125 @@ def main() -> None:
 
 def _cell_loop(stdin, namespace: dict, baseline: dict, limit: int, capture: _Capture) -> None:
     """Read frames and answer them, for as long as the parent keeps sending."""
-    global PENDING_INTERRUPT
     while True:
         # Deferred across the read, raised across the cell. The cell is the one
         # place a stop *should* interrupt Python directly -- that is what makes
         # it abandon the computation and leave the namespace standing -- and
         # everywhere else it is a flag.
         _handle_stops_by(_remember)
-        header = read_exact(stdin, HEADER_BYTES)
-        if header is None:
+        request = _read_request(stdin)
+        if request is None:
             return
-        try:
-            length = int(header.decode("ascii"))
-        except ValueError:
-            return
-        payload = read_exact(stdin, length)
-        if payload is None:
-            return
-        # Parsed with the stop still deferred, so nothing here can be
-        # interrupted into killing the kernel.
-        try:
-            request = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return
-        # The raising handler goes up *inside* the `try` and comes down in the
-        # `finally`, because each switch is itself a window: a signal landing
-        # after the handler is installed but before the block is entered, or
-        # after the block ends but before deferral is restored, would escape
-        # `main` and kill the kernel over a press meant to cost one cell. Hardy
-        # signals the instant it has written a frame, so those are exactly the
-        # moments an early press arrives.
-        #
-        # The deferred flag is read *after* the switch, never before. Read
-        # first, a signal arriving in between would set it again with nobody
-        # left to look, and the cell would run on with the press already spent
-        # -- until Hardy gave up waiting and killed the kernel.
-        try:
-            _handle_stops_by(signal.default_int_handler)
-            held = PENDING_INTERRUPT
-            PENDING_INTERRUPT = False
-            # `stopping` is Hardy's own word that a press is in force as this
-            # cell goes out, written into the frame under the same lock that
-            # orders presses against sends -- and it decides on its own. It
-            # used to be honoured only together with a remembered signal, and
-            # the signal is the half that can be late or lost: a shared runner
-            # dropped it two runs in three, the cell ran to its deadline, and
-            # the kernel was taken with it -- the exact loss a remembered press
-            # exists to prevent. Hardy sends no signal for a frame that says
-            # `stopping`, so nothing can land in the handler switch below.
-            #
-            # `held` without `stopping` is a signal that arrived in the moment
-            # after the last reply was flushed and before Hardy had read it. It
-            # was aimed at a cell that was already over, and Hardy -- which
-            # knows whether it still wants a stop -- says it does not.
-            # Rejecting this cell for it would stop something nobody asked to
-            # stop. A frame with no flag at all is an older parent's, and
-            # there the remembered signal is all there is to go on.
-            if request.get("stopping", held):
-                # The stop reached this kernel before the cell did. Answering
-                # without running it is what the parent is waiting for: it gets
-                # a framed reply straight away, the namespace is untouched, and
-                # the kernel is still here for the next cell.
-                reply = _interrupted_reply()
-            else:
-                reply = run_cell(str(request.get("source", "")), namespace, limit, capture)
-        except KeyboardInterrupt:
-            reply = _interrupted_reply()
-        # `run_cell` answers everything a cell's own source can raise. What
-        # can still land here is `SystemExit` from somewhere that is not a
-        # cell's `exec`/`eval` -- there is none today -- or a bug in this
-        # loop's own bookkeeping above. Either way it is reported as this
-        # cell's error rather than allowed to end the session over it: no
-        # path from a cell's source may cost the loop itself (issue #311).
-        except BaseException:
-            stderr, truncated = clip(_describe_failure(), limit)
-            reply = {
-                "status": "error",
-                "stdout": "",
-                "stderr": stderr,
-                "value_repr": "",
-                "capture_truncated": truncated,
-            }
-        finally:
-            _handle_stops_by(_remember)
+        reply = _answer(request, namespace, limit, capture)
         # Taken after every cell, failed ones included: a cell that raised
         # partway through has still changed the namespace, and the parent
         # needs to know whether it did before it decides that replaying only
         # the accepted cells can rebuild this state.
-        try:
-            reply["state_digest"] = state_digest(namespace, baseline, limit)
-        except BaseException:
-            # A namespace Hardy cannot fingerprint is one it must not claim to
-            # have fingerprinted, and it is emphatically not a reason to end a
-            # session: an empty digest is the value that means "not compared",
-            # which is what a backend with no digest at all reports.
-            reply["state_digest"] = ""
-        try:
-            payload_out = json.dumps(reply, ensure_ascii=False).encode("utf-8")
-        except BaseException:
-            # `clip`/`clip_jointly` already keep every field in `reply` free of
-            # anything strict UTF-8 cannot carry, so this is a defence against
-            # what they do not reach -- a cell that replaced `json` itself, for
-            # one. Not `json.dumps` again: that is exactly what a cell may have
-            # broken. A bare bytes literal, valid JSON and already ASCII, is
-            # answered instead, so the kernel survives whatever this was.
-            payload_out = _SERIALISATION_FAILED_REPLY
-        capture.write_reply(payload_out)
+        reply["state_digest"] = _digest_or_nothing(namespace, baseline, limit)
+        capture.write_reply(_serialised(reply))
+
+
+def _read_request(stdin: BinaryIO) -> dict | None:
+    """The next frame's request, or None when the stream ended or desynchronised.
+
+    Read and parsed with the stop still deferred, so nothing here can be
+    interrupted into killing the kernel.
+    """
+    header = read_exact(stdin, HEADER_BYTES)
+    if header is None:
+        return None
+    try:
+        length = int(header.decode("ascii"))
+    except ValueError:
+        return None
+    payload = read_exact(stdin, length)
+    if payload is None:
+        return None
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _answer(request: dict, namespace: dict, limit: int, capture: _Capture) -> dict:
+    """Answer one request: run its cell, or answer it unrun if a stop is in force."""
+    global PENDING_INTERRUPT
+    # The raising handler goes up *inside* the `try` and comes down in the
+    # `finally`, because each switch is itself a window: a signal landing
+    # after the handler is installed but before the block is entered, or
+    # after the block ends but before deferral is restored, would escape
+    # `main` and kill the kernel over a press meant to cost one cell. Hardy
+    # signals the instant it has written a frame, so those are exactly the
+    # moments an early press arrives.
+    #
+    # The deferred flag is read *after* the switch, never before. Read
+    # first, a signal arriving in between would set it again with nobody
+    # left to look, and the cell would run on with the press already spent
+    # -- until Hardy gave up waiting and killed the kernel.
+    try:
+        _handle_stops_by(signal.default_int_handler)
+        held = PENDING_INTERRUPT
+        PENDING_INTERRUPT = False
+        # `stopping` is Hardy's own word that a press is in force as this
+        # cell goes out, written into the frame under the same lock that
+        # orders presses against sends -- and it decides on its own. It
+        # used to be honoured only together with a remembered signal, and
+        # the signal is the half that can be late or lost: a shared runner
+        # dropped it two runs in three, the cell ran to its deadline, and
+        # the kernel was taken with it -- the exact loss a remembered press
+        # exists to prevent. Hardy sends no signal for a frame that says
+        # `stopping`, so nothing can land in the handler switch below.
+        #
+        # `held` without `stopping` is a signal that arrived in the moment
+        # after the last reply was flushed and before Hardy had read it. It
+        # was aimed at a cell that was already over, and Hardy -- which
+        # knows whether it still wants a stop -- says it does not.
+        # Rejecting this cell for it would stop something nobody asked to
+        # stop. A frame with no flag at all is an older parent's, and
+        # there the remembered signal is all there is to go on.
+        if request.get("stopping", held):
+            # The stop reached this kernel before the cell did. Answering
+            # without running it is what the parent is waiting for: it gets
+            # a framed reply straight away, the namespace is untouched, and
+            # the kernel is still here for the next cell.
+            return _interrupted_reply()
+        return run_cell(str(request.get("source", "")), namespace, limit, capture)
+    except KeyboardInterrupt:
+        return _interrupted_reply()
+    # `run_cell` answers everything a cell's own source can raise. What
+    # can still land here is `SystemExit` from somewhere that is not a
+    # cell's `exec`/`eval` -- there is none today -- or a bug in this
+    # loop's own bookkeeping above. Either way it is reported as this
+    # cell's error rather than allowed to end the session over it: no
+    # path from a cell's source may cost the loop itself (issue #311).
+    except BaseException:
+        return _failed_reply(limit)
+    finally:
+        _handle_stops_by(_remember)
+
+
+def _digest_or_nothing(namespace: dict, baseline: dict, limit: int) -> str:
+    try:
+        return state_digest(namespace, baseline, limit)
+    except BaseException:
+        # A namespace Hardy cannot fingerprint is one it must not claim to
+        # have fingerprinted, and it is emphatically not a reason to end a
+        # session: an empty digest is the value that means "not compared",
+        # which is what a backend with no digest at all reports.
+        return ""
+
+
+def _serialised(reply: dict) -> bytes:
+    try:
+        return json.dumps(reply, ensure_ascii=False).encode("utf-8")
+    except BaseException:
+        # `clip`/`clip_jointly` already keep every field in `reply` free of
+        # anything strict UTF-8 cannot carry, so this is a defence against
+        # what they do not reach -- a cell that replaced `json` itself, for
+        # one. Not `json.dumps` again: that is exactly what a cell may have
+        # broken. A bare bytes literal, valid JSON and already ASCII, is
+        # answered instead, so the kernel survives whatever this was.
+        return _SERIALISATION_FAILED_REPLY
 
 
 # A framed reply that does not depend on `json` working, because the failure
