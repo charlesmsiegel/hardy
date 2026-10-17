@@ -56,13 +56,13 @@ import threading
 from pathlib import Path
 
 from hardy.formal.lean import (
-    _ATTRIBUTES,
-    _MODIFIERS,
     DeclarationRecord,
     DeclarationSearch,
     LeanDiagnostic,
 )
 from hardy.formal.syntax import (
+    ATTRIBUTES,
+    MODIFIERS,
     QUALIFIED_NAME,
     WRAPPER,
     identifier_tokens,
@@ -93,7 +93,7 @@ _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|ins
 # suggestion. Mathlib does not put two commands on one line, and matching
 # mid-line here would buy nothing but a slower walk over every file it ships.
 DECLARATION = re.compile(
-    rf"(?m)^[ \t]*{WRAPPER}{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
+    rf"(?m)^[ \t]*{WRAPPER}{ATTRIBUTES}({MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
 )
 
 # The same bound `retrieval.py` puts on a signature a model reads, restated

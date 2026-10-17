@@ -203,8 +203,6 @@
   "MISSING_MODULE",
   "ProcessResult",
   "Request",
-  "_ATTRIBUTES",
-  "_MODIFIERS",
   "elaborate",
   "environment_identity",
   "lean_identity",

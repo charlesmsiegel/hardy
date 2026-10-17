@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from hardy.formal.contracts import EnvironmentIdentity, FrozenClaim, Request
 from hardy.formal.syntax import (
-    QUALIFIED_NAME,
+    ATTRIBUTES,
+    DECLARATION_NAME,
+    MODIFIERS,
     blank_bounded_quotations,
     declared_name,
     declares_tokens,
@@ -93,39 +95,21 @@ def translate_missing_modules(output: str, modules: ModuleIndex | None) -> str:
     return "\n".join((*lines, "", output))
 
 
-# A Lean declaration name: identifier components joined by dots. Stricter than
-# `[A-Za-z_][A-Za-z0-9_'.]*`, which admits `Foo..bar` and `Foo.`, and wider --
-# `\w` is Unicode-aware here, so `α`, `x₁`, and `Nat.add_comm'` all pass, as
-# Lean identifiers are not ASCII. An approximation of Lean's grammar, not a
-# reimplementation of it.
+# A Lean declaration name, from the one grammar (`syntax.names`). Unicode, as
+# Lean identifiers are, with the `!` and `?` that end `List.head!` and the
+# guillemets of `theorem «first result»`: this pattern once omitted both, so a
+# `theorem solve!` was frozen as `solve` and `batch` refused a guillemet name as
+# anonymous before a single model turn. An approximation of Lean's grammar, not
+# a reimplementation of it.
 #
-# Shared with the workspace scanner rather than restated. Kept apart, the two
-# drifted: this one omitted the `!` and `?` that end `List.head!` and
-# `Option.get?`, so those names failed the validators below and a `theorem
-# solve!` was frozen as `solve` -- leaving `#print axioms solve`, an unknown
-# identifier, and a proof that could never verify.
-#
-# Guillemets included, which this once refused. `theorem «first result»` is a
-# name the interactive workspace declares and audits, and `hardy.formal.audit` reads a
-# report for it; only `batch` could not, rejecting the request as anonymous
-# before a single model turn. Refusing here bought nothing but the asymmetry.
-DECLARATION_NAME = re.compile(QUALIFIED_NAME)
 # Where a name Hardy will interpolate into `#print axioms` comes from: the head
 # of the declaration the request froze. Matched rather than split apart --
 # splitting on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`
 # into `Foo.`, and `#print axioms Foo.` is not a command, so a
-# universe-polymorphic request could never verify.
-# What may stand between the start of a declaration and its keyword. Without
-# these, `@[simp] theorem T` had no name to print, so `batch` refused it as
-# anonymous before spending a single model turn -- and `@[simp]` on a theorem is
-# ordinary Lean, as are `protected` and `nonrec`. The attribute body is matched
-# without nesting, which is an approximation: an attribute containing its own
-# `]` simply fails to match, leaving the previous behaviour rather than a wrong
-# name.
-_ATTRIBUTES = r"(?:@\[[^\]]*\]\s*)*"
-_MODIFIERS = r"(?:(?:private|protected|public|meta|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"
+# universe-polymorphic request could never verify. Attributes and modifiers
+# before the keyword are read through (`syntax.scans.ATTRIBUTES`).
 DECLARATION_HEAD = re.compile(
-    rf"\s*{_ATTRIBUTES}{_MODIFIERS}(?:theorem|lemma)\s+({DECLARATION_NAME.pattern})"
+    rf"\s*{ATTRIBUTES}{MODIFIERS}(?:theorem|lemma)\s+({DECLARATION_NAME.pattern})"
 )
 
 # Lean's own output is bounded generously; what a model is shown is bounded
