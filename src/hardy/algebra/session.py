@@ -200,7 +200,7 @@ class CasSession:
         self.limits = limits
         self.cwd = cwd or log_path.parent
         self.observe = observe
-        self.state = KernelState.COLD
+        self.state: KernelState = KernelState.COLD
         self.version: str | None = None
         # This process's spend, and what `cas_session_seconds` bounds: a guard
         # against a runaway computation, not the session's figure. That is
