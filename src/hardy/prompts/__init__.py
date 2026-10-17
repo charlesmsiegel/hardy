@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from functools import cache
 from importlib import resources
 
@@ -28,6 +29,8 @@ from hardy.formal.contracts import FrozenClaim
 PROMPT_SET_VERSION = "2026-10-13.1"
 
 SUFFIX = ".md.j2"
+# The shortest digest prefix a quoting marker is built from (see `_fence`).
+_MARKER_DIGEST_CHARS = 8
 
 
 class PromptError(RuntimeError):
@@ -41,7 +44,7 @@ class _PackageLoader(BaseLoader):
     install does not have. `resources` is the interface that answers for both.
     """
 
-    def get_source(self, environment: Environment, template: str):
+    def get_source(self, environment: Environment, template: str) -> tuple[str, None, Callable[[], bool]]:
         parts = (template + SUFFIX).split("/")
         anchor = resources.files(__package__)
         for part in parts[:-1]:
@@ -224,7 +227,7 @@ def _fence(*texts: str) -> str:
     """
     joined = "\u0000".join(texts).encode("utf-8")
     digest = hashlib.sha256(joined).hexdigest()
-    for length in range(8, len(digest) + 1):
+    for length in range(_MARKER_DIGEST_CHARS, len(digest) + 1):
         marker = "===HARDY-" + digest[:length] + "==="
         if all(marker not in text for text in texts):
             return marker

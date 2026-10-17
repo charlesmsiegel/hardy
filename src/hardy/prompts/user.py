@@ -33,6 +33,8 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from hardy.foundation.paths import HARDY_DIR
+
 #: Where a project keeps them, under `.hardy/`.
 DIRECTORY = "prompts"
 SUFFIX = ".md"
@@ -209,31 +211,11 @@ def expand(template: Template, argument: str) -> str:
     missing: list[str] = []
 
     def substitute(found: re.Match[str]) -> str:
-        token = found.group(1)
-        if token == "$":
-            return "$"
-        if token == "@":
-            # Empty is missing, exactly as `$1` with no first word is. The
-            # contract is that a placeholder with nothing to fill it refuses;
-            # `/formalize` with no argument was sending and recording
-            # "Formalize ." instead, which is the malformed prompt the rule
-            # exists to prevent.
-            if not rest:
-                missing.append("$@")
-            return rest
-        # Bounded before the conversion, not after. Python refuses to turn a
-        # string of more than 4,300 digits into an int at all, and `$` followed
-        # by 5,000 of them fits comfortably inside a template -- so a checked-in
-        # file could raise `ValueError` here instead of the `TemplateError` the
-        # dispatcher handles, which in a plain session ends the session.
-        if len(token) > len(str(len(words))) and len(token) > 1:
-            missing.append(f"${token}")
+        value = _placeholder_value(found.group(1), rest, words)
+        if value is None:
+            missing.append(f"${found.group(1)}")
             return ""
-        index = int(token)
-        if index < 1 or index > len(words):
-            missing.append(f"${token}")
-            return ""
-        return words[index - 1]
+        return value
 
     expanded = PLACEHOLDER.sub(substitute, template.body)
     if missing:
@@ -247,10 +229,32 @@ def expand(template: Template, argument: str) -> str:
     return expanded.strip()
 
 
+def _placeholder_value(token: str, rest: str, words: list[str]) -> str | None:
+    """What one placeholder's `token` stands for, or None when nothing typed fills it."""
+    if token == "$":
+        return "$"
+    if token == "@":
+        # Empty is missing, exactly as `$1` with no first word is. The
+        # contract is that a placeholder with nothing to fill it refuses;
+        # `/formalize` with no argument was sending and recording
+        # "Formalize ." instead, which is the malformed prompt the rule
+        # exists to prevent.
+        return rest if rest else None
+    # Bounded before the conversion, not after. Python refuses to turn a
+    # string of more than 4,300 digits into an int at all, and `$` followed
+    # by 5,000 of them fits comfortably inside a template -- so a checked-in
+    # file could raise `ValueError` here instead of the `TemplateError` the
+    # dispatcher handles, which in a plain session ends the session.
+    if len(token) > len(str(len(words))) and len(token) > 1:
+        return None
+    index = int(token)
+    if index < 1 or index > len(words):
+        return None
+    return words[index - 1]
+
+
 def directory(root: Path) -> Path:
     """Where `root`'s templates live. One place, named once."""
-    from hardy.foundation.paths import HARDY_DIR
-
     return root / HARDY_DIR / DIRECTORY
 
 
@@ -277,113 +281,145 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
     session exists to report it.
     """
     where = directory(root)
-    problems: list[str] = []
     try:
-        # Every component from `root` down, not only the leaf. `.hardy` itself
-        # can be the link: a checkout shipping `.hardy -> ~/somewhere` with an
-        # ordinary `prompts/*.md` beneath it passes a check on `prompts` alone
-        # and loads host files as prompts to send. Above `root` is the user's
-        # own filesystem and none of Hardy's business.
-        walked = root
-        for name in where.relative_to(root).parts:
-            walked = walked / name
-            if walked.is_symlink():
-                return [], [
-                    f"{walked} is a symlink; refusing to read prompt templates through it."
-                ]
+        linked = _linked_component(root, where)
+        if linked is not None:
+            return [], [f"{linked} is a symlink; refusing to read prompt templates through it."]
         if not where.is_dir():
-            return [], problems
+            return [], []
         files = sorted(where.iterdir(), key=lambda item: item.name)
     except OSError as error:
         return [], [f"Could not read {where}: {error}"]
 
     found: dict[str, Template] = {}
+    problems: list[str] = []
     for item in files:
         if item.suffix != SUFFIX:
             continue
-        name = item.stem.lower()
         try:
-            # Opened ONCE, with no-follow, and judged through the descriptor
-            # rather than through the path. Checking `is_symlink`, `is_file`
-            # and `stat` and then calling `read_text` looks at the name four
-            # times: a process that swaps the file in between -- a checkout
-            # landing, a sync client -- gets Hardy to follow a link it just
-            # refused, and a template's body is SENT, so the link could name a
-            # host credential file. `O_NOFOLLOW` makes the refusal atomic with
-            # the open, and `fstat` then judges the thing actually opened, so
-            # neither the type nor the size can change under the check.
-            #
-            # `O_NONBLOCK` so a fifo cannot hang the open itself; the type
-            # check below refuses it a moment later either way.
-            #
-            # The ancestors are checked by path, not held as descriptors, so a
-            # process that replaces `.hardy` or `prompts` with a link between
-            # the walk and this open is followed. That is deliberate and it is
-            # `layout.WriteGuard`'s stated threat model, not an oversight: what
-            # Hardy defends against here is a symlink SHIPPED IN A REPOSITORY,
-            # because a clone is a hostile artifact opened before any human has
-            # read it. A concurrent local attacker is explicitly out of scope
-            # there -- "an adversary who can race Hardy on its own filesystem
-            # can simply read the source it is about to run" -- and closing it
-            # needs `openat` traversal this file has no more right to invent
-            # than `WriteGuard` did. The leaf is still opened no-follow, which
-            # is what closes the window that matters for a checked-out link.
-            #
-            # `_NOFOLLOW` is 0 on Windows, which has no equivalent flag --
-            # `layout` states the same thing for the same reason. Naming
-            # `os.O_NOFOLLOW` directly raised `AttributeError` there, and this
-            # runs before the session's own error handling, so a project with
-            # any template in it could not open a Windows session at all. Where
-            # the flag is absent the `is_symlink` check below is the whole of
-            # the leaf check, exactly as it is in `WriteGuard`: narrower than
-            # the atomic refusal, and far better than none.
-            if not _NOFOLLOW and item.is_symlink():
-                problems.append(
-                    f"{item.name} is a symlink, so it was not loaded. A template's "
-                    "body is sent to the model; Hardy reads one only where it lies."
-                )
-                continue
-            try:
-                flags = os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
-                descriptor = os.open(item, flags)
-            except OSError as error:
-                if error.errno in (errno.ELOOP, errno.EMLINK):
-                    problems.append(
-                        f"{item.name} is a symlink, so it was not loaded. A template's "
-                        "body is sent to the model; Hardy reads one only where it lies."
-                    )
-                    continue
-                raise
-            with os.fdopen(descriptor, "rb") as handle:
-                stated = os.fstat(handle.fileno())
-                # A regular file and nothing else: a directory named `x.md`, a
-                # fifo, or a device would each get past a bare existence test,
-                # and two of those never finish being read.
-                if not stat.S_ISREG(stated.st_mode):
-                    continue
-                if stated.st_size > LIMIT:
-                    problems.append(
-                        f"{item.name} is larger than {LIMIT} bytes, so it was not loaded. "
-                        "A prompt template is prose."
-                    )
-                    continue
-                # Bounded by the size just measured on this descriptor, so a
-                # file growing under the read cannot exceed the limit either.
-                text = handle.read(LIMIT + 1).decode("utf-8")
-        except (OSError, UnicodeDecodeError) as error:
-            problems.append(f"Could not read {item.name}: {error}")
-            continue
-        if name in reserved:
-            problems.append(
-                f"{item.name} would shadow the built-in /{name}, so it was not loaded. "
-                "Rename the file."
-            )
-            continue
-        if name in found:
-            problems.append(f"{item.name} names /{name}, which {found[name].path} already does.")
-            continue
-        try:
-            found[name] = parse(name, text, path=item)
+            template = _load_one(item, reserved, found)
         except TemplateError as error:
-            problems.append(f"{item.name}: {error}")
+            problems.append(str(error))
+            continue
+        if template is not None:
+            found[template.name] = template
     return list(found.values()), problems
+
+
+def _load_one(item: Path, reserved: frozenset[str] | set[str], found: dict[str, Template]) -> Template | None:
+    """The template `item` defines, or None when it is not a regular file.
+
+    Every refusal raises `TemplateError` carrying the sentence `load`
+    reports: a file that cannot be read, a name a built-in or an earlier file
+    already holds, and a body `parse` refuses.
+    """
+    name = item.stem.lower()
+    text = _read_template(item)
+    if text is None:
+        return None
+    if name in reserved:
+        raise TemplateError(
+            f"{item.name} would shadow the built-in /{name}, so it was not loaded. "
+            "Rename the file."
+        )
+    if name in found:
+        raise TemplateError(f"{item.name} names /{name}, which {found[name].path} already does.")
+    try:
+        return parse(name, text, path=item)
+    except TemplateError as error:
+        raise TemplateError(f"{item.name}: {error}") from error
+
+
+def _linked_component(root: Path, where: Path) -> Path | None:
+    """The first component from `root` down to `where` that is a symlink, if any.
+
+    Every component, not only the leaf. `.hardy` itself can be the link: a
+    checkout shipping `.hardy -> ~/somewhere` with an ordinary `prompts/*.md`
+    beneath it passes a check on `prompts` alone and loads host files as
+    prompts to send. Above `root` is the user's own filesystem and none of
+    Hardy's business.
+    """
+    walked = root
+    for name in where.relative_to(root).parts:
+        walked = walked / name
+        if walked.is_symlink():
+            return walked
+    return None
+
+
+def _read_template(item: Path) -> str | None:
+    """The text of one template file, or None when it is not a regular file at all.
+
+    A link, an oversized file, or one that cannot be read or decoded raises
+    `TemplateError` carrying the sentence `load` reports.
+
+    Opened ONCE, with no-follow, and judged through the descriptor rather
+    than through the path. Checking `is_symlink`, `is_file` and `stat` and
+    then calling `read_text` looks at the name four times: a process that
+    swaps the file in between -- a checkout landing, a sync client -- gets
+    Hardy to follow a link it just refused, and a template's body is SENT, so
+    the link could name a host credential file. `O_NOFOLLOW` makes the
+    refusal atomic with the open, and `fstat` then judges the thing actually
+    opened, so neither the type nor the size can change under the check.
+
+    `O_NONBLOCK` so a fifo cannot hang the open itself; the type check
+    refuses it a moment later either way.
+
+    The ancestors are checked by path, not held as descriptors, so a process
+    that replaces `.hardy` or `prompts` with a link between the walk and this
+    open is followed. That is deliberate and it is `layout.WriteGuard`'s
+    stated threat model, not an oversight: what Hardy defends against here is
+    a symlink SHIPPED IN A REPOSITORY, because a clone is a hostile artifact
+    opened before any human has read it. A concurrent local attacker is
+    explicitly out of scope there -- "an adversary who can race Hardy on its
+    own filesystem can simply read the source it is about to run" -- and
+    closing it needs `openat` traversal this file has no more right to invent
+    than `WriteGuard` did. The leaf is still opened no-follow, which is what
+    closes the window that matters for a checked-out link.
+
+    `_NOFOLLOW` is 0 on Windows, which has no equivalent flag -- `layout`
+    states the same thing for the same reason. Naming `os.O_NOFOLLOW`
+    directly raised `AttributeError` there, and this runs before the
+    session's own error handling, so a project with any template in it could
+    not open a Windows session at all. Where the flag is absent the
+    `is_symlink` check below is the whole of the leaf check, exactly as it is
+    in `WriteGuard`: narrower than the atomic refusal, and far better than
+    none.
+    """
+    try:
+        if not _NOFOLLOW and item.is_symlink():
+            raise _refused_link(item)
+        with os.fdopen(_open_unfollowed(item), "rb") as handle:
+            stated = os.fstat(handle.fileno())
+            # A regular file and nothing else: a directory named `x.md`, a
+            # fifo, or a device would each get past a bare existence test,
+            # and two of those never finish being read.
+            if not stat.S_ISREG(stated.st_mode):
+                return None
+            if stated.st_size > LIMIT:
+                raise TemplateError(
+                    f"{item.name} is larger than {LIMIT} bytes, so it was not loaded. "
+                    "A prompt template is prose."
+                )
+            # Bounded by the size just measured on this descriptor, so a
+            # file growing under the read cannot exceed the limit either.
+            return handle.read(LIMIT + 1).decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise TemplateError(f"Could not read {item.name}: {error}") from error
+
+
+def _open_unfollowed(item: Path) -> int:
+    """A read-only descriptor on `item` itself, refusing a final symlink where the platform can."""
+    try:
+        return os.open(item, os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.EMLINK):
+            raise _refused_link(item) from error
+        raise
+
+
+def _refused_link(item: Path) -> TemplateError:
+    return TemplateError(
+        f"{item.name} is a symlink, so it was not loaded. A template's "
+        "body is sent to the model; Hardy reads one only where it lies."
+    )
