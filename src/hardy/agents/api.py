@@ -111,54 +111,60 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     between, and the API expects the two sides to alternate.
     """
     out: list[dict[str, Any]] = []
-    pending: list[dict[str, Any]] = []
-
-    def flush() -> None:
-        if pending:
-            out.append({"role": "user", "content": list(pending)})
-            pending.clear()
-
+    results: list[dict[str, Any]] = []
     for message in messages:
         if message.role == "tool_result":
-            pending.append({
+            results.append({
                 "type": "tool_result",
                 "tool_use_id": message.call_id,
                 "content": message.text or "",
                 "is_error": message.ok is False,
             })
             continue
-        flush()
+        if results:
+            out.append({"role": "user", "content": results})
+            results = []
         if message.role == "user":
-            if not message.text:
-                continue
-            if out and out[-1]["role"] == "user":
-                out[-1]["content"].append({"type": "text", "text": message.text})
-            else:
-                out.append({"role": "user", "content": [{"type": "text", "text": message.text}]})
-            continue
-        # The turn as the provider sent it, when the transport kept it. Every
-        # block verbatim and in its own order: the thinking blocks the API
-        # requires back unchanged and first, and the text and tool calls in the
-        # arrangement the model chose. Rebuilt by kind instead, a turn whose
-        # text followed its tool call came back with the text moved in front,
-        # so the continuation asked the model to carry on from a message it had
-        # not written.
-        if message.blocks:
-            out.append({"role": "assistant", "content": [_block(item) for item in message.blocks]})
-            continue
-        # And the reconstruction, for a message that carries no blocks: one
-        # adopted from another backend, or replayed from a record. Reasoning
-        # first, because the API requires it first in the turn it belongs to.
-        content: list[dict[str, Any]] = []
-        content.extend(_block(item) for item in message.reasoning)
-        if message.text:
-            content.append({"type": "text", "text": message.text})
-        for call in message.tool_calls:
-            content.append({"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments})
-        if content:
+            _add_user_text(out, message.text)
+        elif content := _assistant_content(message):
             out.append({"role": "assistant", "content": content})
-    flush()
+    if results:
+        out.append({"role": "user", "content": results})
     return out
+
+
+def _add_user_text(out: list[dict[str, Any]], text: str) -> None:
+    """Hardy's words, joined to a `user` message already last rather than
+    sent as a second one in a row."""
+    if not text:
+        return
+    if out and out[-1]["role"] == "user":
+        out[-1]["content"].append({"type": "text", "text": text})
+    else:
+        out.append({"role": "user", "content": [{"type": "text", "text": text}]})
+
+
+def _assistant_content(message: Message) -> list[Any]:
+    """An assistant turn's content blocks, as the API is to be handed them back."""
+    # The turn as the provider sent it, when the transport kept it. Every
+    # block verbatim and in its own order: the thinking blocks the API
+    # requires back unchanged and first, and the text and tool calls in the
+    # arrangement the model chose. Rebuilt by kind instead, a turn whose
+    # text followed its tool call came back with the text moved in front,
+    # so the continuation asked the model to carry on from a message it had
+    # not written.
+    if message.blocks:
+        return [_block(item) for item in message.blocks]
+    # And the reconstruction, for a message that carries no blocks: one
+    # adopted from another backend, or replayed from a record. Reasoning
+    # first, because the API requires it first in the turn it belongs to.
+    content: list[Any] = [_block(item) for item in message.reasoning]
+    if message.text:
+        content.append({"type": "text", "text": message.text})
+    content.extend(
+        {"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments} for call in message.tool_calls
+    )
+    return content
 
 
 def redacted(url: str) -> str:
