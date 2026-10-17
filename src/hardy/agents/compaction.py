@@ -48,6 +48,9 @@ from hardy.workflows.interactive import summary as summary_module
 CONTEXT_WINDOW = 200_000
 RESERVE_TOKENS = 16_384
 RECENT_TOKENS = 20_000
+#: On a smaller window the reserve shrinks to one part in this many of it;
+#: see `_reserve`.
+RESERVE_SHARE = 4
 
 #: Said above the summary, so a model reads it as a record of what happened
 #: rather than as a conversation to carry on. Model-facing text, so it is a
@@ -223,7 +226,7 @@ def _reserve(context_window: int, reserve_tokens: int, output_tokens: int = 0) -
     the runtime states it may write; zero when it states nothing, which leaves
     the proportional figure as it was.
     """
-    proportional = min(reserve_tokens, max(context_window // 4, 0))
+    proportional = min(reserve_tokens, max(context_window // RESERVE_SHARE, 0))
     return max(proportional, min(output_tokens, context_window))
 
 
@@ -279,14 +282,7 @@ def plan(
     # inside a budget of five is not a smaller context, it is the same
     # overflow with a summary bolted on top.
     budget = min(keep_tokens, max(available - summary_tokens - overhead_tokens, 0))
-    keep = 0
-    running = 0
-    for message in reversed(messages):
-        running += estimate_tokens([message])
-        if running > budget and keep:
-            break
-        keep += 1
-    cut = first_legal_cut(messages, keep)
+    cut = first_legal_cut(messages, _tail_within(messages, budget))
     if cut <= 0:
         return Plan(False, before=before, after=before, available=available, overflow=True)
     # The summary is part of what will be sent, so it is part of what `after`
@@ -299,6 +295,19 @@ def plan(
         after=overhead_tokens + summary_tokens + estimate_tokens(messages[cut:]),
         available=available,
     )
+
+
+def _tail_within(messages: Sequence[Message], budget: int) -> int:
+    """How many messages at the end fit in `budget` tokens: at least the last
+    one, whatever it costs."""
+    keep = 0
+    running = 0
+    for message in reversed(messages):
+        running += estimate_tokens([message])
+        if running > budget and keep:
+            break
+        keep += 1
+    return keep
 
 
 def compacted(messages: Sequence[Message], cut: int, summary: summary_module.Summary) -> list[Message]:
