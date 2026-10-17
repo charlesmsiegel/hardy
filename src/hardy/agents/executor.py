@@ -14,7 +14,11 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Generic, Protocol, TypeVar
+
+#: What a job returns: opaque here, and handed back unread by its handle.
+R = TypeVar("R")
+R_co = TypeVar("R_co", covariant=True)
 
 
 class WorkerCancelled(Exception):
@@ -46,6 +50,11 @@ class CancelToken:
         callback()
 
     def cancel(self) -> None:
+        """Set the flag and run every callback once, even if some of them fail.
+
+        The first failure is raised after all have run, carrying the others
+        as notes: a failed interrupt must not keep the rest from being asked.
+        """
         with self._lock:
             if self._event.is_set():
                 return
@@ -66,34 +75,40 @@ class CancelToken:
 
 
 @dataclass(frozen=True)
-class WorkerJob:
+class WorkerJob(Generic[R]):
+    """One opaque job: a name to report it by, and the work, which reads its token."""
+
     name: str
-    run: Callable[[CancelToken], Any]
+    run: Callable[[CancelToken], R]
 
 
-class WorkerHandle(Protocol):
+class WorkerHandle(Protocol[R_co]):
+    """A submitted job: its token, its outcome once done, and a way to ask it to stop."""
+
     name: str
     token: CancelToken
 
     def done(self) -> bool: ...
-    def result(self, timeout: float | None = None) -> Any: ...
+    def result(self, timeout: float | None = None) -> R_co: ...
     def cancel(self) -> None: ...
-    def add_done_callback(self, fn: Callable[[WorkerHandle], None]) -> None: ...
+    def add_done_callback(self, fn: Callable[[WorkerHandle[R_co]], None]) -> None: ...
 
 
 class WorkerExecutor(Protocol):
+    """Bounded worker slots that run submitted jobs, in process or elsewhere."""
+
     slots: int
 
-    def submit(self, job: WorkerJob) -> WorkerHandle: ...
+    def submit(self, job: WorkerJob[R]) -> WorkerHandle[R]: ...
     def active(self) -> int: ...
     def shutdown(self, *, wait: bool) -> None: ...
 
 
-class JobHandle:
+class JobHandle(Generic[R]):
     """A `WorkerHandle` over a future: the pool's own jobs use it, and so does a
     computation that runs on a thread of its own and resolves the future itself."""
 
-    def __init__(self, name: str, token: CancelToken, future: Future) -> None:
+    def __init__(self, name: str, token: CancelToken, future: Future[R]) -> None:
         self.name = name
         self.token = token
         self._future = future
@@ -101,13 +116,13 @@ class JobHandle:
     def done(self) -> bool:
         return self._future.done()
 
-    def result(self, timeout: float | None = None) -> Any:
+    def result(self, timeout: float | None = None) -> R:
         return self._future.result(timeout)
 
     def cancel(self) -> None:
         self.token.cancel()
 
-    def add_done_callback(self, fn: Callable[[WorkerHandle], None]) -> None:
+    def add_done_callback(self, fn: Callable[[WorkerHandle[R]], None]) -> None:
         self._future.add_done_callback(lambda _: fn(self))
 
 
@@ -122,10 +137,11 @@ class LocalExecutor:
         self._running = 0
         self._lock = threading.Lock()
 
-    def submit(self, job: WorkerJob) -> WorkerHandle:
+    def submit(self, job: WorkerJob[R]) -> WorkerHandle[R]:
+        """Queue `job` for the next free slot; it never starts if cancelled first."""
         token = CancelToken()
 
-        def run() -> Any:
+        def run() -> R:
             # A job cancelled while it waited for a slot never starts.
             token.check()
             with self._lock:

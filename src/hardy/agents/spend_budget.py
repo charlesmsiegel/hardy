@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -37,6 +37,8 @@ from hardy.foundation.values import FrozenModel, json_digest
 
 #: What a settlement records, one entry per counter: the reported vocabulary.
 COUNTERS = REPORTED_COUNTERS
+
+RuntimeT = TypeVar("RuntimeT")
 
 
 #: How many tokens a tariff's prices are quoted for.
@@ -416,7 +418,7 @@ def budget_record_issues(directory: Path, recorded: Mapping[str, Any] | None) ->
     return ()
 
 
-def bind_spend_budget(factory: Callable, path: Path) -> Callable:
+def bind_spend_budget(factory: Callable[..., RuntimeT], path: Path) -> Callable[..., RuntimeT]:
     """Bind every runtime from one factory to the same durable run/session owner."""
     policy = getattr(factory, "spend_policy", None)
     if policy is None and not path.exists():
@@ -427,7 +429,7 @@ def bind_spend_budget(factory: Callable, path: Path) -> Callable:
         first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
         policy = SpendPolicy.model_validate(first["payload"]["policy"])
     owner = SpendBudget(path, policy)
-    def bound(*args: Any, **kwargs: Any) -> Any:
+    def bound(*args: Any, **kwargs: Any) -> RuntimeT:
         return factory(*args, **kwargs, spend_budget=owner)
     bound.spend_budget = owner
     return bound
